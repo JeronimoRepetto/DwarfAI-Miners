@@ -6,6 +6,9 @@
 
 export type {
   Dwarf,
+  DwarfCapabilities,
+  DwarfKickRequest,
+  DwarfKickResult,
   DwarfProvider,
   DwarfRole,
   DwarfStatus,

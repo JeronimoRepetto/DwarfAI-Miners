@@ -4,6 +4,9 @@ import type { Mine } from '../../shared/contracts'
 export type {
   Dwarf,
   DwarfActivation,
+  DwarfCapabilities,
+  DwarfKickRequest,
+  DwarfKickResult,
   DwarfProvider,
   DwarfRole,
   DwarfStatus,
@@ -42,6 +45,24 @@ export interface DwarfMessagingState {
 }
 
 export function defaultDwarfMessagingState(): DwarfMessagingState {
+  return { byDwarfId: {} }
+}
+
+/** What the panel shows about one dwarf's most recent kick: in flight, or the verdict. */
+export interface DwarfKickState {
+  phase: 'kicking' | 'delivered' | 'failed'
+  /** The channel the kick used, once one was chosen. */
+  via?: string
+  /** Why it failed, shown on the marker. */
+  error?: string
+}
+
+/** Root state for the dwarf-kicking store, keyed by dwarf id. */
+export interface DwarfKickingState {
+  byDwarfId: Record<string, DwarfKickState>
+}
+
+export function defaultDwarfKickingState(): DwarfKickingState {
   return { byDwarfId: {} }
 }
 

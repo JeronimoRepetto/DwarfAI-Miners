@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DwarfActivation, DwarfTextRequest, DwarfTextResult, Mine } from '../shared/contracts'
+import type {
+  DwarfActivation,
+  DwarfKickRequest,
+  DwarfKickResult,
+  DwarfTextRequest,
+  DwarfTextResult,
+  Mine
+} from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 
 /** API surface exposed to the renderer as `window.api`. */
@@ -14,6 +21,8 @@ export interface DwarfAiMinersApi {
   activateDwarf: (dwarfId: string) => Promise<DwarfActivation>
   /** Deliver a typed message to the dwarf's live session; the panel stays open. */
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
+  /** Cancel the dwarf's current work; the panel stays open for the verdict. */
+  kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
 }
 
 const api: DwarfAiMinersApi = {
@@ -25,7 +34,8 @@ const api: DwarfAiMinersApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.minesUpdated, wrapped)
   },
   activateDwarf: (dwarfId) => ipcRenderer.invoke(IPC_CHANNELS.activateDwarf, dwarfId),
-  sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request)
+  sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
+  kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request)
 }
 
 contextBridge.exposeInMainWorld('api', api)

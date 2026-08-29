@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { INTERIOR_SRC } from '../lib/art'
 import { createBubbleBoard } from '../lib/bubbles'
 import { tierLabel } from '../lib/presentation'
-import type { Dwarf, DwarfSendState, Mine } from '../types'
+import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
 
 const props = defineProps<{
@@ -11,12 +11,15 @@ const props = defineProps<{
   activatingId?: string | null
   /** Delivery state per dwarf id, so each sprite can show its own verdict. */
   sendStates?: Record<string, DwarfSendState>
+  /** Kick state per dwarf id, so each sprite can show its own kick verdict. */
+  kickStates?: Record<string, DwarfKickState>
 }>()
 
 const emit = defineEmits<{
   back: []
   activate: [dwarf: Dwarf]
   'send-text': [dwarf: Dwarf, payload: { text: string; pressEnter: boolean }]
+  kick: [dwarf: Dwarf]
 }>()
 
 const foremen = computed(() => props.mine.dwarfs.filter((dwarf) => dwarf.role === 'foreman'))
@@ -68,8 +71,10 @@ onBeforeUnmount(() => board.dispose())
             :bubble-text="bubbles.get(dwarf.id)"
             :activating="activatingId === dwarf.id"
             :send-state="sendStates?.[dwarf.id]"
+            :kick-state="kickStates?.[dwarf.id]"
             @activate="emit('activate', dwarf)"
             @send-text="emit('send-text', dwarf, $event)"
+            @kick="emit('kick', dwarf)"
           />
         </div>
         <div class="crew">
@@ -80,8 +85,10 @@ onBeforeUnmount(() => board.dispose())
             :bubble-text="bubbles.get(dwarf.id)"
             :activating="activatingId === dwarf.id"
             :send-state="sendStates?.[dwarf.id]"
+            :kick-state="kickStates?.[dwarf.id]"
             @activate="emit('activate', dwarf)"
             @send-text="emit('send-text', dwarf, $event)"
+            @kick="emit('kick', dwarf)"
           />
         </div>
       </div>

@@ -3,7 +3,14 @@ import { join } from 'node:path'
 import { NodeFs, type FsLike } from './adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from './adapters/sqliteLike'
 import type { AppConfig } from './config'
-import type { DwarfActivation, DwarfTextRequest, DwarfTextResult, Mine } from '../shared/contracts'
+import type {
+  DwarfActivation,
+  DwarfKickRequest,
+  DwarfKickResult,
+  DwarfTextRequest,
+  DwarfTextResult,
+  Mine
+} from '../shared/contracts'
 import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
 import { focusPid } from './focus'
@@ -17,7 +24,7 @@ import {
   type ViewerPathOptions
 } from './terminalLauncher'
 import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
-import { resolveTextDelivery, stampTextDelivery } from './textDelivery/resolve'
+import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './textDelivery/resolve'
 import { WindowsTextDelivery } from './textDelivery/windowsTextDelivery'
 import { TierService } from './tier/tierService'
 
@@ -27,6 +34,19 @@ const FEED_LIMIT = 12
 const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
+const NO_KICK_CHANNEL = "This session type can't be canceled yet."
+
+/**
+ * Fixed instructions Kick delivers over the relay tier. Never user text, so
+ * unlike sendDwarfText's payload there is nothing here to keep out of the log
+ * beyond what the existing terse verdict line already omits.
+ */
+const CANCEL_INSTRUCTION =
+  'The user asks you to STOP your current work now. Interrupt what you are doing, ' +
+  'leave things in a safe state, and wait for further instructions.'
+/** Addressed at a specific worker through its foreman; resolveKickDelivery's '[cancel agent X] ' prefix already names which one. */
+const CANCEL_WORKER_INSTRUCTION =
+  'Stop that agent now. Interrupt its work, leave things in a safe state, and wait for further instructions.'
 
 /** Expand only a leading home shorthand; other paths are passed through. */
 export function expandHomePath(path: string, home: string = homedir()): string {
@@ -220,6 +240,55 @@ export class AgentRuntime {
         delivered: false,
         via: resolved.channel,
         error: 'The message could not be delivered.'
+      }
+    }
+  }
+
+  /**
+   * Cancel a dwarf's current work (Kick). Mirrors sendDwarfText's refusals and
+   * channel routing, but never carries user text: a terminal-hosted session
+   * gets a raw interrupt keystroke (ESC), and a relay tier gets one of the two
+   * fixed instructions above — this session's own turn, or (through its
+   * foreman) a named worker's.
+   */
+  async kickDwarf(request: DwarfKickRequest): Promise<DwarfKickResult> {
+    const dwarf = this.mines
+      .flatMap((mine) => mine.dwarfs)
+      .find((item) => item.id === request.dwarfId)
+    // Same reasoning as sendDwarfText: a 'leaving' dwarf's agent has already
+    // finished, so its retained pid/session are stale and there is nothing
+    // safe to interrupt.
+    if (dwarf === undefined || dwarf.status === 'leaving') {
+      return { delivered: false, via: 'none', error: NO_SUCH_DWARF }
+    }
+
+    const resolved = resolveKickDelivery(request.dwarfId, (id) => this.deliveryTargetOf(id))
+    if (resolved === null) return { delivered: false, via: 'none', error: NO_KICK_CHANNEL }
+
+    try {
+      const outcome =
+        resolved.endpoint.kind === 'terminal'
+          ? await this.textDelivery.sendInterrupt({ pid: resolved.endpoint.pid })
+          : await this.textDelivery.relayToClaudeSession({
+              sessionName: resolved.endpoint.sessionName,
+              text:
+                resolved.prefix === ''
+                  ? CANCEL_INSTRUCTION
+                  : `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
+            })
+      console.log(
+        `[runtime] Kick for ${request.dwarfId} via ${resolved.channel}: ` +
+          `${outcome.delivered ? 'delivered' : 'failed'}`
+      )
+      return outcome.delivered
+        ? { delivered: true, via: resolved.channel }
+        : { delivered: false, via: resolved.channel, error: outcome.error }
+    } catch (error) {
+      console.warn(`[runtime] Kick for ${request.dwarfId} threw`, error)
+      return {
+        delivered: false,
+        via: resolved.channel,
+        error: 'The kick could not be delivered.'
       }
     }
   }

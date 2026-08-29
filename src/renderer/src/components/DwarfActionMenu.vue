@@ -1,22 +1,26 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { MAX_DWARF_TEXT_CHARS } from '../../../shared/contracts'
-import type { Dwarf, DwarfSendState, TextDeliveryChannel } from '../types'
+import { describeEffort } from '../lib/effort'
+import type { Dwarf, DwarfKickState, DwarfSendState, TextDeliveryChannel } from '../types'
 
 /**
  * The little parchment note that opens when a dwarf is clicked: keep working
  * the way clicking always did (Open console), or hand the session a message
- * without leaving the panel.
+ * without leaving the panel — and now Kick (cancel) and Work harder (raise
+ * effort), rendered from the dwarf's capability matrix (see #11).
  */
 
 const props = defineProps<{
   dwarf: Dwarf
   sendState?: DwarfSendState
+  kickState?: DwarfKickState
 }>()
 
 const emit = defineEmits<{
   'open-console': []
   send: [payload: { text: string; pressEnter: boolean }]
+  kick: []
   close: []
 }>()
 
@@ -29,10 +33,26 @@ const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   'foreman-relay': "Delivered to this worker's foreman, tagged for them."
 }
 
+const NO_KICK_REASON = "This session type can't be canceled yet."
+
+/**
+ * What kicking that channel actually does, in honest terms: a terminal gets a
+ * real interrupt keystroke, but a relay tier is a semantic ask — the session
+ * decides how (or whether) to stop.
+ */
+const KICK_HINT: Record<TextDeliveryChannel, string> = {
+  terminal: 'Sends an interrupt keystroke to the session console.',
+  'claude-relay': 'Asks the agent to stop — it decides how.',
+  'foreman-relay': "Asks this worker's foreman to stop it — it decides how."
+}
+
+const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."
+
 const composing = ref(false)
 const message = ref('')
 const pressEnter = ref(true)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+const kickArmed = ref(false)
 
 const canReceive = computed(() => props.dwarf.textDelivery !== undefined)
 const channelHint = computed(() =>
@@ -42,10 +62,39 @@ const isSending = computed(() => props.sendState?.phase === 'sending')
 const canSend = computed(() => message.value.trim() !== '' && !isSending.value)
 const remaining = computed(() => MAX_DWARF_TEXT_CHARS - message.value.length)
 
+const isKicking = computed(() => props.kickState?.phase === 'kicking')
+const kickChannel = computed(() => props.dwarf.capabilities?.cancel ?? null)
+const canKick = computed(() => kickChannel.value !== null && !isKicking.value)
+const kickHint = computed(() =>
+  kickChannel.value === null ? NO_KICK_REASON : KICK_HINT[kickChannel.value]
+)
+const kickLabel = computed(() => {
+  if (isKicking.value) return 'Kicking...'
+  return kickArmed.value ? 'Confirm kick?' : 'Kick'
+})
+
+/** Normalized per provider — see lib/effort.ts — so the disabled reason still names a real value. */
+const effortHint = computed(
+  () =>
+    `${NO_EFFORT_REASON} Currently: ${describeEffort(props.dwarf.provider, props.dwarf.effort)}.`
+)
+
 async function startComposing(): Promise<void> {
+  kickArmed.value = false
   composing.value = true
   await nextTick()
   inputRef.value?.focus()
+}
+
+/** First click arms the confirmation, second click fires it — cheap insurance against a stray click. */
+function onKickClick(): void {
+  if (!canKick.value) return
+  if (!kickArmed.value) {
+    kickArmed.value = true
+    return
+  }
+  kickArmed.value = false
+  emit('kick')
 }
 
 function submit(): void {
@@ -114,6 +163,28 @@ function onInputKeydown(event: KeyboardEvent): void {
         Delivered via {{ sendState.via }}.
       </p>
     </div>
+
+    <button
+      class="action-kick"
+      type="button"
+      role="menuitem"
+      :disabled="!canKick"
+      :class="{ 'is-armed': kickArmed }"
+      :title="kickHint"
+      @click="onKickClick"
+    >
+      {{ kickLabel }}
+    </button>
+    <p v-if="kickState?.phase === 'failed'" class="kick-error" role="alert">
+      {{ kickState.error ?? 'The kick could not be delivered.' }}
+    </p>
+    <p v-else-if="kickState?.phase === 'delivered'" class="kick-ok" role="status">
+      Kicked via {{ kickState.via }}.
+    </p>
+
+    <button class="action-effort" type="button" role="menuitem" disabled :title="effortHint">
+      Work harder
+    </button>
   </div>
 </template>
 
@@ -231,6 +302,22 @@ function onInputKeydown(event: KeyboardEvent): void {
   color: #8c2f14;
 }
 .send-ok {
+  color: #3d6b2f;
+}
+.action-kick.is-armed {
+  border-color: #8c2f14;
+  color: #8c2f14;
+}
+.kick-error,
+.kick-ok {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.25;
+}
+.kick-error {
+  color: #8c2f14;
+}
+.kick-ok {
   color: #3d6b2f;
 }
 </style>

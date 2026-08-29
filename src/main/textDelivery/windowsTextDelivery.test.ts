@@ -130,3 +130,49 @@ describe('WindowsTextDelivery.relayToClaudeSession', () => {
     expect(result.error).not.toContain('my-secret-payload')
   })
 })
+
+describe('WindowsTextDelivery.sendInterrupt', () => {
+  it('brings the hosting terminal forward before sending the interrupt keystroke', async () => {
+    const order: string[] = []
+    const focus = vi.fn().mockImplementation(async () => {
+      order.push('focus')
+      return true
+    })
+    const runPowerShell = vi.fn().mockImplementation(async () => {
+      order.push('interrupt')
+      return { stdout: '', exitCode: 0 }
+    })
+    const port = delivery({ focus, runPowerShell })
+
+    await expect(port.sendInterrupt({ pid: 42 })).resolves.toEqual({ delivered: true })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(order).toEqual(['focus', 'interrupt'])
+    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('{ESC}')")
+  })
+
+  it('never sends the keystroke when the terminal could not be foregrounded', async () => {
+    const runPowerShell = vi.fn()
+    const port = delivery({ focus: vi.fn().mockResolvedValue(false), runPowerShell })
+
+    const result = await port.sendInterrupt({ pid: 42 })
+    expect(result.delivered).toBe(false)
+    expect(result.error).toMatch(/foreground|terminal/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  it('reports a failure when the keystroke command exits non-zero', async () => {
+    const port = delivery({
+      runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 })
+    })
+    const result = await port.sendInterrupt({ pid: 42 })
+    expect(result.delivered).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  it('turns a crashing shell into a failed verdict instead of a rejection', async () => {
+    const port = delivery({
+      runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
+    })
+    await expect(port.sendInterrupt({ pid: 42 })).resolves.toMatchObject({ delivered: false })
+  })
+})

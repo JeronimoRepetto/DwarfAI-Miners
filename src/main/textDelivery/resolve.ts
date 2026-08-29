@@ -20,6 +20,15 @@ export interface ResolvedTextDelivery {
   prefix: string
 }
 
+/** Same shape as ResolvedTextDelivery; kept as its own type since Kick's prefix means something different. */
+export interface ResolvedKickDelivery {
+  /** Tier reported to the panel and the logs. */
+  channel: TextDeliveryChannel
+  endpoint: TextDeliveryEndpoint
+  /** Prepended tag naming the worker being cancelled, e.g. '[cancel agent Explorer] '. Empty for a direct kick. */
+  prefix: string
+}
+
 /**
  * Bound on foreman hops. One hop is all a real crew needs (a worker's parent is
  * a session, never another worker); the bound exists so a malformed or circular
@@ -29,16 +38,22 @@ const MAX_FOREMAN_HOPS = 4
 
 export type TextDeliveryLookup = (dwarfId: string) => TextDeliveryTarget | null
 
+/** A target followed all the way to a writable endpoint, before either caller's prefix is applied. */
+interface ForemanHops {
+  channel: TextDeliveryChannel
+  endpoint: TextDeliveryEndpoint
+  /** Worker names crossed while following foreman-relay hops, outermost first. */
+  workerNames: string[]
+}
+
 /**
- * Follow `dwarfId` to a writable endpoint, or null when no channel exists.
- * A worker contributes an `[for agent <name>] ` prefix so the foreman reading
- * the message knows who it was meant for.
+ * Follow `dwarfId` through any foreman-relay hops to a writable endpoint, or
+ * null when no channel exists at all. Shared by resolveTextDelivery and
+ * resolveKickDelivery, which only differ in how they phrase the worker names
+ * this collects into a prefix.
  */
-export function resolveTextDelivery(
-  dwarfId: string,
-  targetOf: TextDeliveryLookup
-): ResolvedTextDelivery | null {
-  const prefixes: string[] = []
+function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): ForemanHops | null {
+  const workerNames: string[] = []
   const visited = new Set<string>()
   let currentId = dwarfId
 
@@ -50,15 +65,51 @@ export function resolveTextDelivery(
     if (target === null) return null
     if (target.kind !== 'foreman-relay') {
       return {
-        channel: prefixes.length === 0 ? target.kind : 'foreman-relay',
+        channel: workerNames.length === 0 ? target.kind : 'foreman-relay',
         endpoint: target,
-        prefix: prefixes.join('')
+        workerNames
       }
     }
-    prefixes.push(`[for agent ${target.workerName}] `)
+    workerNames.push(target.workerName)
     currentId = target.foremanDwarfId
   }
   return null
+}
+
+/**
+ * Follow `dwarfId` to a writable endpoint, or null when no channel exists.
+ * A worker contributes an `[for agent <name>] ` prefix so the foreman reading
+ * the message knows who it was meant for.
+ */
+export function resolveTextDelivery(
+  dwarfId: string,
+  targetOf: TextDeliveryLookup
+): ResolvedTextDelivery | null {
+  const hops = followForemanHops(dwarfId, targetOf)
+  if (hops === null) return null
+  return {
+    channel: hops.channel,
+    endpoint: hops.endpoint,
+    prefix: hops.workerNames.map((name) => `[for agent ${name}] `).join('')
+  }
+}
+
+/**
+ * Same routing as resolveTextDelivery, for Kick: a worker contributes a
+ * `[cancel agent <name>] ` tag instead, so the foreman relaying the instruction
+ * knows which of its agents to stop.
+ */
+export function resolveKickDelivery(
+  dwarfId: string,
+  targetOf: TextDeliveryLookup
+): ResolvedKickDelivery | null {
+  const hops = followForemanHops(dwarfId, targetOf)
+  if (hops === null) return null
+  return {
+    channel: hops.channel,
+    endpoint: hops.endpoint,
+    prefix: hops.workerNames.map((name) => `[cancel agent ${name}] `).join('')
+  }
 }
 
 /**
@@ -66,6 +117,11 @@ export function resolveTextDelivery(
  * renderer can enable or disable the send action without a second IPC round
  * trip. A 'leaving' dwarf is skipped: its session has already finished, so its
  * pid is stale and its name no longer addressable.
+ *
+ * capabilities.cancel mirrors the same resolved channel: Kick reuses whatever
+ * routing sendText would use (see resolveKickDelivery), just with a raw
+ * keystroke or a fixed instruction instead of the user's text. adjustEffort is
+ * always null — no provider exposes a channel for it yet.
  */
 export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): Mine[] {
   return mines.map((mine) => ({
@@ -73,7 +129,17 @@ export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): 
     dwarfs: mine.dwarfs.map((dwarf) => {
       if (dwarf.status === 'leaving') return dwarf
       const resolved = resolveTextDelivery(dwarf.id, targetOf)
-      return resolved === null ? dwarf : { ...dwarf, textDelivery: resolved.channel }
+      return resolved === null
+        ? dwarf
+        : {
+            ...dwarf,
+            textDelivery: resolved.channel,
+            capabilities: {
+              sendText: resolved.channel,
+              cancel: resolved.channel,
+              adjustEffort: null
+            }
+          }
     })
   }))
 }

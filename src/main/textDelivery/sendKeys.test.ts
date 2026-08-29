@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildSendKeysCommand, escapeSendKeys, toConsoleLine } from './sendKeys'
+import {
+  buildSendInterruptCommand,
+  buildSendKeysCommand,
+  escapeSendKeys,
+  toConsoleLine
+} from './sendKeys'
 
 describe('escapeSendKeys', () => {
   it('leaves ordinary text untouched', () => {
@@ -78,5 +83,24 @@ describe('buildSendKeysCommand', () => {
     )
     // Exactly one live ENTER keystroke: our own trailing one.
     expect(command.match(/SendWait\('\{ENTER\}'\)/g)).toHaveLength(1)
+  })
+})
+
+describe('buildSendInterruptCommand', () => {
+  it('sends the raw ESC keystroke Claude Code interrupts a turn on', () => {
+    const command = buildSendInterruptCommand()
+    expect(command).toContain('Add-Type -AssemblyName System.Windows.Forms')
+    expect(command).toContain("SendWait('{ESC}')")
+  })
+
+  it('never routes {ESC} through the message-escaping path, which would neutralize it', () => {
+    // escapeSendKeys would turn the keyname into three literal characters
+    // ({{}ESC{}}) instead of the actual Escape keystroke — see escapeSendKeys's
+    // own 'smuggle a literal ENTER' test for what that transform does.
+    expect(buildSendInterruptCommand()).not.toContain(escapeSendKeys('{ESC}'))
+  })
+
+  it('takes no arguments: the interrupt is a fixed keystroke, never user text', () => {
+    expect(buildSendInterruptCommand).toHaveLength(0)
   })
 })

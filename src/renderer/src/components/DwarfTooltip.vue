@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { describeEffort } from '../lib/effort'
 import type { Dwarf } from '../types'
 
 const props = defineProps<{ dwarf: Dwarf }>()
@@ -17,7 +18,7 @@ function roleLabel(): string {
     <strong>{{ dwarf.name }}</strong>
     <span>{{ roleLabel() }} · {{ dwarf.provider }}</span>
     <span>{{ dwarf.model ?? 'Model unknown' }}</span>
-    <span v-if="dwarf.effort">Effort: {{ dwarf.effort }}</span>
+    <span v-if="dwarf.effort">Effort: {{ describeEffort(dwarf.provider, dwarf.effort) }}</span>
     <em>{{ capitalize(dwarf.status) }}</em>
   </div>
 </template>

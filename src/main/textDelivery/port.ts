@@ -39,6 +39,12 @@ export interface RelayTextRequest {
   text: string
 }
 
+/** Kick's terminal path: no text at all, just a keystroke. */
+export interface InterruptRequest {
+  /** The session pid; its hosting terminal window receives the keystroke. */
+  pid: number
+}
+
 /** Result of one write attempt. Never echoes the message back (privacy). */
 export interface TextDeliveryOutcome {
   delivered: boolean
@@ -50,4 +56,10 @@ export interface TextDeliveryPort {
   sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome>
   /** Hand the text to a named, window-less Claude session over its own messaging. */
   relayToClaudeSession(request: RelayTextRequest): Promise<TextDeliveryOutcome>
+  /**
+   * Send a raw interrupt keystroke (ESC) to the console hosting `pid` —
+   * Kick's terminal path. Never routed through the message path: there is no
+   * text to escape, only a keystroke to synthesize.
+   */
+  sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome>
 }

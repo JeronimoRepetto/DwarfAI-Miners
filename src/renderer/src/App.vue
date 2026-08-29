@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FeedModal from './components/FeedModal.vue'
 import MapView from './components/MapView.vue'
 import MineScene from './components/MineScene.vue'
+import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useMines } from './composables/useMines'
 import { useView } from './composables/useView'
@@ -12,6 +13,7 @@ import type { Dwarf, FeedMessage, Mine } from './types'
 const { state, setMines } = useMines()
 const { state: viewState, openMine, showMap, syncWithMines } = useView()
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
+const { state: kickingState, kick } = useDwarfKicking()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -104,6 +106,11 @@ function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }):
   void sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
 }
 
+/** Same reasoning as sendText: fire-and-observe, verdict lands on the dwarf itself. */
+function kickDwarf(dwarf: Dwarf): void {
+  void kick(dwarf.id)
+}
+
 onMounted(() => {
   void load()
   unsubscribe = window.api.onMinesUpdated(update)
@@ -129,9 +136,11 @@ onBeforeUnmount(() => unsubscribe?.())
         :mine="currentMine"
         :activating-id="activating"
         :send-states="messagingState.byDwarfId"
+        :kick-states="kickingState.byDwarfId"
         @back="backToMap"
         @activate="activate"
         @send-text="sendText"
+        @kick="kickDwarf"
       />
       <MapView v-else :mines="state.mines" @open="enterMine" />
       <p v-if="error" class="notice" role="alert">{{ error }}</p>

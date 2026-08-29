@@ -1,7 +1,13 @@
 import { config as loadDotenv } from 'dotenv'
 import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
-import type { DwarfTextRequest, DwarfTextResult, Mine } from '../shared/contracts'
+import type {
+  DwarfKickRequest,
+  DwarfKickResult,
+  DwarfTextRequest,
+  DwarfTextResult,
+  Mine
+} from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 import {
   enable as enableAutostart,
@@ -21,6 +27,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
+  ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
 }
 
 /**
@@ -37,6 +44,14 @@ function parseTextRequest(payload: unknown): DwarfTextRequest | null {
     text: record.text,
     pressEnter: record.pressEnter === true
   }
+}
+
+/** Same boundary discipline as parseTextRequest: kick carries no user text at all. */
+function parseKickRequest(payload: unknown): DwarfKickRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string') return null
+  return { dwarfId: record.dwarfId }
 }
 
 async function init(): Promise<void> {
@@ -96,6 +111,17 @@ async function init(): Promise<void> {
     const request = parseTextRequest(payload)
     if (request === null) return notDelivered
     return runtime?.sendDwarfText(request) ?? notDelivered
+  })
+
+  const notKicked: DwarfKickResult = {
+    delivered: false,
+    via: 'none',
+    error: 'The kick could not be delivered.'
+  }
+  ipcMain.handle(IPC_CHANNELS.kickDwarf, (_event, payload: unknown) => {
+    const request = parseKickRequest(payload)
+    if (request === null) return notKicked
+    return runtime?.kickDwarf(request) ?? notKicked
   })
 }
 

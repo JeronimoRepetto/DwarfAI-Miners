@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { focusPid, type ShellRunner } from '../focus'
 import type {
   ConsoleTextRequest,
+  InterruptRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
   TextDeliveryPort
@@ -13,7 +14,7 @@ import {
   buildRelayInstruction,
   resolveClaudeBinaryPath
 } from './relay'
-import { buildSendKeysCommand } from './sendKeys'
+import { buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
 
 /**
  * Windows implementation of TextDeliveryPort.
@@ -180,6 +181,29 @@ export class WindowsTextDelivery implements TextDeliveryPort {
       return { delivered: true }
     } catch {
       return { delivered: false, error: 'The relay could not be started.' }
+    }
+  }
+
+  /**
+   * Kick's terminal path: bring the console forward, same as sendToConsole,
+   * then synthesize a bare ESC — the keystroke the Claude Code TUI interrupts
+   * a turn on — instead of typing anything.
+   */
+  async sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome> {
+    try {
+      if (!(await this.focus(request.pid))) {
+        return {
+          delivered: false,
+          error: 'The agent terminal could not be brought to the foreground.'
+        }
+      }
+      const result = await this.runPowerShell(buildSendInterruptCommand())
+      if (result.exitCode !== 0) {
+        return { delivered: false, error: 'The interrupt keystroke could not be sent.' }
+      }
+      return { delivered: true }
+    } catch {
+      return { delivered: false, error: 'The agent terminal could not be reached.' }
     }
   }
 }

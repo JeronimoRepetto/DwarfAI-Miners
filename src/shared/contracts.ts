@@ -53,6 +53,35 @@ export interface Dwarf {
    * action for this dwarf (see TextDeliveryChannel).
    */
   textDelivery?: TextDeliveryChannel
+  /**
+   * What the action menu can offer for this dwarf right now, resolved by the
+   * runtime on every poll alongside textDelivery. Absent has the same meaning
+   * as every field being null: no provider channel was reachable at all.
+   */
+  capabilities?: DwarfCapabilities
+}
+
+/**
+ * Per-dwarf action capability matrix. Each member names the channel that
+ * capability would use, or null when there is no way to offer it right now —
+ * the action menu renders every button unconditionally and disables the ones
+ * that resolve to null, with a reason, instead of hiding them.
+ */
+export interface DwarfCapabilities {
+  /** Same channel model as textDelivery; kept here too so the matrix is self-contained. */
+  sendText: TextDeliveryChannel | null
+  /**
+   * Cancelling reuses whichever channel sendText would use — a terminal gets a
+   * raw interrupt keystroke instead of typed text, a relay tier gets a fixed
+   * instruction instead of the user's message — so it is null exactly when
+   * sendText is null (see resolveKickDelivery).
+   */
+  cancel: TextDeliveryChannel | null
+  /**
+   * Always null in v1: no provider exposes a channel to change a running
+   * session's effort. Modeled now so a future channel plugs in without a UI change.
+   */
+  adjustEffort: null
 }
 
 export interface Mine {
@@ -115,10 +144,25 @@ export interface DwarfTextResult {
   error?: string
 }
 
+/** One request to cancel a dwarf's current work. No user text is ever involved. */
+export interface DwarfKickRequest {
+  dwarfId: string
+}
+
+/** Verdict of one kick attempt. Same shape as DwarfTextResult for a consistent panel. */
+export interface DwarfKickResult {
+  delivered: boolean
+  /** The channel used, or 'none' when no attempt was possible. */
+  via: TextDeliveryChannel | 'none'
+  /** Human-readable reason shown in the panel when delivered is false. */
+  error?: string
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   getMines: 'mines:get',
   minesUpdated: 'mines:update',
   activateDwarf: 'dwarf:activate',
-  sendDwarfText: 'dwarf:sendText'
+  sendDwarfText: 'dwarf:sendText',
+  kickDwarf: 'dwarf:kick'
 } as const

@@ -140,6 +140,48 @@ describe('DwarfSprite', () => {
     })
   })
 
+  describe('kick', () => {
+    function kickableDwarf() {
+      return defaultDwarf({
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      })
+    }
+
+    it('forwards a confirmed kick and keeps the menu open for the verdict', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: kickableDwarf() } })
+      await wrapper.find('.dwarf-hit').trigger('click')
+      await wrapper.find('.action-kick').trigger('click')
+      await wrapper.find('.action-kick').trigger('click')
+
+      expect(wrapper.emitted('kick')).toHaveLength(1)
+      expect(wrapper.find('.action-menu').exists()).toBe(true)
+    })
+
+    it('marks a delivered kick on the dwarf', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: kickableDwarf(), kickState: { phase: 'delivered', via: 'terminal' } }
+      })
+      expect(wrapper.find('.kick-result').classes()).toContain('is-delivered')
+    })
+
+    it('marks a failed kick and carries its reason', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: {
+          dwarf: kickableDwarf(),
+          kickState: { phase: 'failed', error: 'The agent terminal could not be reached.' }
+        }
+      })
+      const marker = wrapper.find('.kick-result')
+      expect(marker.classes()).toContain('is-failed')
+      expect(marker.attributes('title')).toBe('The agent terminal could not be reached.')
+    })
+
+    it('shows no kick marker while nothing has been kicked', () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: kickableDwarf() } })
+      expect(wrapper.find('.kick-result').exists()).toBe(false)
+    })
+  })
+
   it('shows a speech bubble only when bubble text is provided', () => {
     const silent = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
     expect(silent.find('.speech-bubble').exists()).toBe(false)

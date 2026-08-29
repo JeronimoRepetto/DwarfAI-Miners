@@ -9,7 +9,7 @@ import {
   statusAnimationClass
 } from '../lib/presentation'
 import { computeTooltipPlacement } from '../lib/tooltip'
-import type { Dwarf, DwarfSendState } from '../types'
+import type { Dwarf, DwarfKickState, DwarfSendState } from '../types'
 import DwarfActionMenu from './DwarfActionMenu.vue'
 import DwarfTooltip from './DwarfTooltip.vue'
 import SpeechBubble from './SpeechBubble.vue'
@@ -19,11 +19,13 @@ const props = defineProps<{
   bubbleText?: string
   activating?: boolean
   sendState?: DwarfSendState
+  kickState?: DwarfKickState
 }>()
 
 const emit = defineEmits<{
   activate: []
   'send-text': [payload: { text: string; pressEnter: boolean }]
+  kick: []
 }>()
 
 const hitRef = ref<HTMLButtonElement | null>(null)
@@ -79,6 +81,11 @@ function openConsole(): void {
 function sendText(payload: { text: string; pressEnter: boolean }): void {
   // The menu stays open so the delivery verdict has somewhere to land.
   emit('send-text', payload)
+}
+
+function kick(): void {
+  // Same reasoning as sendText: the menu stays open so the verdict has somewhere to land.
+  emit('kick')
 }
 
 onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
@@ -175,6 +182,21 @@ const sendMarker = computed(() => {
   if (phase === 'sending') return { cls: 'is-sending', glyph: '…', title: 'Sending...' }
   return null
 })
+
+/** Same shape as sendMarker, for the kick verdict; positioned on the opposite corner so both can show at once. */
+const kickMarker = computed(() => {
+  const phase = props.kickState?.phase
+  if (phase === 'delivered') return { cls: 'is-delivered', glyph: '✓', title: 'Kick delivered' }
+  if (phase === 'failed') {
+    return {
+      cls: 'is-failed',
+      glyph: '✕',
+      title: props.kickState?.error ?? 'The kick could not be delivered.'
+    }
+  }
+  if (phase === 'kicking') return { cls: 'is-sending', glyph: '…', title: 'Kicking...' }
+  return null
+})
 </script>
 
 <template>
@@ -207,6 +229,13 @@ const sendMarker = computed(() => {
         :title="sendMarker.title"
         >{{ sendMarker.glyph }}</span
       >
+      <span
+        v-if="kickMarker"
+        class="kick-result"
+        :class="kickMarker.cls"
+        :title="kickMarker.title"
+        >{{ kickMarker.glyph }}</span
+      >
     </button>
     <span class="dwarf-name">{{ dwarf.name }}</span>
     <DwarfTooltip
@@ -223,8 +252,10 @@ const sendMarker = computed(() => {
       :style="menuStyle"
       :dwarf="dwarf"
       :send-state="sendState"
+      :kick-state="kickState"
       @open-console="openConsole"
       @send="sendText"
+      @kick="kick"
       @close="closeMenu"
     />
   </div>
@@ -401,6 +432,35 @@ const sendMarker = computed(() => {
   background: #e08466;
 }
 .send-result.is-sending {
+  color: var(--ink);
+  background: #4b3c28;
+}
+
+/* Kick's own verdict marker: same styling, opposite corner so both can show at once. */
+.kick-result {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #000000a6;
+  border-radius: 50%;
+  color: #14100b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.kick-result.is-delivered {
+  background: #8fd07a;
+}
+.kick-result.is-failed {
+  background: #e08466;
+}
+.kick-result.is-sending {
   color: var(--ink);
   background: #4b3c28;
 }

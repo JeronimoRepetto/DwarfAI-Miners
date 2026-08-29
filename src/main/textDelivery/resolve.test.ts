@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Dwarf, Mine } from '../domain/types'
 import type { TextDeliveryTarget } from './port'
-import { resolveTextDelivery, stampTextDelivery } from './resolve'
+import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './resolve'
 
 function targetsFrom(entries: Record<string, TextDeliveryTarget>) {
   return (id: string): TextDeliveryTarget | null => entries[id] ?? null
@@ -100,6 +100,80 @@ describe('resolveTextDelivery', () => {
   })
 })
 
+describe('resolveKickDelivery', () => {
+  it('returns null for a dwarf no provider claims', () => {
+    expect(resolveKickDelivery('claude:ghost', targetsFrom({}))).toBeNull()
+  })
+
+  it('resolves a terminal target to its own console endpoint with no prefix', () => {
+    const resolved = resolveKickDelivery(
+      'claude:s1',
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42 } })
+    )
+    expect(resolved).toEqual({
+      channel: 'terminal',
+      endpoint: { kind: 'terminal', pid: 42 },
+      prefix: ''
+    })
+  })
+
+  it('resolves a headless session to its relay endpoint with no prefix', () => {
+    const resolved = resolveKickDelivery(
+      'claude:s1',
+      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' } })
+    )
+    expect(resolved).toEqual({
+      channel: 'claude-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      prefix: ''
+    })
+  })
+
+  it("routes a worker to its foreman endpoint under a '[cancel agent X]' tag, not the send prefix", () => {
+    const resolved = resolveKickDelivery(
+      'claude:s1:agent-9',
+      targetsFrom({
+        'claude:s1:agent-9': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+      })
+    )
+    expect(resolved).toEqual({
+      channel: 'foreman-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      prefix: '[cancel agent Explorer] '
+    })
+  })
+
+  it('returns null when the foreman itself has no channel', () => {
+    const resolved = resolveKickDelivery(
+      'claude:s1:agent-9',
+      targetsFrom({
+        'claude:s1:agent-9': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        }
+      })
+    )
+    expect(resolved).toBeNull()
+  })
+
+  it('gives up instead of looping when foreman links form a cycle', () => {
+    const resolved = resolveKickDelivery(
+      'a',
+      targetsFrom({
+        a: { kind: 'foreman-relay', foremanDwarfId: 'b', workerName: 'A' },
+        b: { kind: 'foreman-relay', foremanDwarfId: 'a', workerName: 'B' }
+      })
+    )
+    expect(resolved).toBeNull()
+  })
+})
+
 describe('stampTextDelivery', () => {
   function dwarf(overrides: Partial<Dwarf> = {}): Dwarf {
     return {
@@ -158,5 +232,38 @@ describe('stampTextDelivery', () => {
     const targetOf = vi.fn().mockReturnValue(null)
     stampTextDelivery([mine([dwarf(), dwarf({ id: 'claude:s2' })])], targetOf)
     expect(targetOf).toHaveBeenCalledTimes(2)
+  })
+
+  it('mirrors the resolved channel onto capabilities.sendText and capabilities.cancel', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf()])],
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42 } })
+    )
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null
+    })
+  })
+
+  it('leaves capabilities unset for an unreachable dwarf, same as textDelivery', () => {
+    const [stamped] = stampTextDelivery([mine([dwarf()])], targetsFrom({}))
+    expect(stamped?.dwarfs[0]?.capabilities).toBeUndefined()
+  })
+
+  it('never offers capabilities to a leaving dwarf whose session is already gone', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf({ status: 'leaving' })])],
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42 } })
+    )
+    expect(stamped?.dwarfs[0]?.capabilities).toBeUndefined()
+  })
+
+  it('always reports adjustEffort as null: no provider exposes a channel for it yet', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf()])],
+      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' } })
+    )
+    expect(stamped?.dwarfs[0]?.capabilities?.adjustEffort).toBeNull()
   })
 })

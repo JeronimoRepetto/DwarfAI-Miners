@@ -61,3 +61,22 @@ export function buildSendKeysCommand(text: string, pressEnter: boolean): string 
   }
   return lines.join('\n')
 }
+
+/**
+ * PowerShell that sends a raw ESC keystroke to the foreground window — this is
+ * how the Claude Code TUI interrupts (Kick's cancel), not typed text.
+ *
+ * Deliberately built without escapeSendKeys/buildSendKeysCommand: `{ESC}` here
+ * IS the SendKeys keyname, and running it through the escaping path meant for
+ * arbitrary user text would turn it into the three literal characters
+ * `{{}ESC{}}` instead of the actual Escape keypress. There is no user text
+ * involved at all — this command takes no arguments.
+ */
+export function buildSendInterruptCommand(): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Start-Sleep -Milliseconds 150',
+    "[System.Windows.Forms.SendKeys]::SendWait('{ESC}')"
+  ].join('\n')
+}

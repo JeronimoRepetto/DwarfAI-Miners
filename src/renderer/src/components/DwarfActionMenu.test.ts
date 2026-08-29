@@ -106,3 +106,108 @@ describe('DwarfActionMenu', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 })
+
+describe('DwarfActionMenu kick', () => {
+  function armedMenu() {
+    return menu({
+      dwarf: defaultDwarf({
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      })
+    })
+  }
+
+  it('disables kick, with a reason, when the session has no cancel channel', () => {
+    const wrapper = menu({
+      dwarf: defaultDwarf({ capabilities: { sendText: null, cancel: null, adjustEffort: null } })
+    })
+    const action = wrapper.find('.action-kick')
+    expect(action.attributes('disabled')).toBeDefined()
+    expect(action.attributes('title')).toBe("This session type can't be canceled yet.")
+  })
+
+  it('disables kick when the dwarf carries no capabilities at all', () => {
+    const wrapper = menu({ dwarf: defaultDwarf({ capabilities: undefined }) })
+    expect(wrapper.find('.action-kick').attributes('disabled')).toBeDefined()
+  })
+
+  it('names the channel-specific limitation for an enabled kick', () => {
+    const relay = menu({
+      dwarf: defaultDwarf({
+        capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+      })
+    })
+    expect(relay.find('.action-kick').attributes('title')).toBe(
+      'Asks the agent to stop — it decides how.'
+    )
+  })
+
+  it('requires a second click to confirm before emitting kick', async () => {
+    const wrapper = armedMenu()
+    const action = wrapper.find('.action-kick')
+    expect(action.attributes('disabled')).toBeUndefined()
+
+    await action.trigger('click')
+    expect(wrapper.emitted('kick')).toBeUndefined()
+    expect(wrapper.find('.action-kick').text()).toContain('Confirm kick?')
+
+    await wrapper.find('.action-kick').trigger('click')
+    expect(wrapper.emitted('kick')).toHaveLength(1)
+  })
+
+  it('resets the armed confirmation once fired', async () => {
+    const wrapper = armedMenu()
+    await wrapper.find('.action-kick').trigger('click')
+    await wrapper.find('.action-kick').trigger('click')
+    expect(wrapper.emitted('kick')).toHaveLength(1)
+    expect(wrapper.find('.action-kick').text()).not.toContain('Confirm kick?')
+  })
+
+  it('shows a kicking label while a kick is in flight', () => {
+    const wrapper = menu({
+      dwarf: defaultDwarf({
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      }),
+      kickState: { phase: 'kicking' }
+    })
+    expect(wrapper.find('.action-kick').text()).toContain('Kicking')
+    expect(wrapper.find('.action-kick').attributes('disabled')).toBeDefined()
+  })
+
+  it('shows the kick verdict in the menu', () => {
+    const failed = menu({
+      dwarf: defaultDwarf({
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      }),
+      kickState: { phase: 'failed', error: 'The agent terminal could not be reached.' }
+    })
+    expect(failed.find('.kick-error').text()).toBe('The agent terminal could not be reached.')
+
+    const delivered = menu({
+      dwarf: defaultDwarf({
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      }),
+      kickState: { phase: 'delivered', via: 'terminal' }
+    })
+    expect(delivered.find('.kick-ok').text()).toContain('terminal')
+  })
+})
+
+describe('DwarfActionMenu work harder', () => {
+  it('is always disabled: no provider supports it yet', () => {
+    const wrapper = menu()
+    const action = wrapper.find('.action-effort')
+    expect(action.attributes('disabled')).toBeDefined()
+  })
+
+  it("names the limitation and the dwarf's current effort, normalized per provider", () => {
+    const wrapper = menu({ dwarf: defaultDwarf({ provider: 'claude', effort: 'xhigh' }) })
+    const title = wrapper.find('.action-effort').attributes('title') ?? ''
+    expect(title).toContain("No provider supports changing a running session's effort yet.")
+    expect(title).toContain('Extra high')
+  })
+
+  it('passes a Codex reasoning_effort value through as-is in the tooltip', () => {
+    const wrapper = menu({ dwarf: defaultDwarf({ provider: 'codex', effort: 'medium' }) })
+    expect(wrapper.find('.action-effort').attributes('title')).toContain('medium')
+  })
+})
