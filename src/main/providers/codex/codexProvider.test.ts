@@ -378,6 +378,47 @@ describe('CodexProvider', () => {
     })
   })
 
+  describe('secret redaction at the provider boundary', () => {
+    // Fixture-shaped fake, never a real credential.
+    const FAKE_TOKEN = 'xoxb-1234567890-1234567890123-FAKEFAKEFAKEFAKEFAKEFAKE'
+
+    it('redacts a pasted token out of the busy dwarf lastMessage', async () => {
+      const agentMessage =
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-08-29T11:59:00.000Z',
+          payload: { type: 'agent_message', message: `Set the bot token to ${FAKE_TOKEN}.` }
+        }) + '\n'
+      fake.addFile(
+        `${ROOT}\\2026\\08\\28\\rollout-2026-08-28T23-59-00-${BUSY_SESSION_ID}.jsonl`,
+        busyLines() + agentMessage,
+        NOW - 120_000
+      )
+      const snapshots = await makeProvider().scan()
+      const busy = snapshots.find((s) => s.sessionId === BUSY_SESSION_ID)!
+      expect(busy.dwarfs[0]!.lastMessage).toBe('Set the bot token to [redacted].')
+    })
+
+    it('redacts user and assistant feed messages alike', async () => {
+      const userMessage =
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-08-29T11:58:00.000Z',
+          payload: { type: 'user_message', message: `here is ${FAKE_TOKEN} for slack` }
+        }) + '\n'
+      fake.addFile(
+        `${ROOT}\\2026\\08\\28\\rollout-2026-08-28T23-59-00-${BUSY_SESSION_ID}.jsonl`,
+        busyLines() + userMessage,
+        NOW - 120_000
+      )
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`codex:${BUSY_SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toContain('here is [redacted] for slack')
+      expect(JSON.stringify(feed)).not.toContain(FAKE_TOKEN)
+    })
+  })
+
   /**
    * Regression (issue #12): scan() used to clear() the shared feedSources map
    * and repopulate it across awaits, so a click landing mid-scan read a

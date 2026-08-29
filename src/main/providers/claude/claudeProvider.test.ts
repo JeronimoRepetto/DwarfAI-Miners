@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
 import { ClaudeProvider } from './claudeProvider'
 
@@ -417,6 +417,181 @@ describe('ClaudeProvider', () => {
 
       gate.release()
       await scanning
+    })
+  })
+
+  describe('secret redaction at the provider boundary', () => {
+    // Fixture-shaped fake, never a real credential.
+    const FAKE_PAT = 'ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE1234'
+
+    function assistantLine(text: string): string {
+      return (
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            model: 'claude-fable-5',
+            content: [{ type: 'text', text }]
+          }
+        }) + '\n'
+      )
+    }
+
+    function userLine(text: string): string {
+      return JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n'
+    }
+
+    it('redacts a pasted token out of the foreman lastMessage', async () => {
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript + assistantLine(`Configured auth with ${FAKE_PAT} as requested.`),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      // Redaction happens before the renderer's truncation ever sees the text,
+      // so no truncated prefix can still carry a whole key.
+      expect(snapshots[0]!.dwarfs[0]!.lastMessage).toBe(
+        'Configured auth with [redacted] as requested.'
+      )
+    })
+
+    it('redacts a worker lastMessage read from its subagent transcript', async () => {
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-a34eaebecc3d57381.jsonl`,
+        subagentTranscript + assistantLine(`Found key ${FAKE_PAT} in the env file.`),
+        43_000
+      )
+      const snapshots = await makeProvider().scan()
+      const worker = snapshots[0]!.dwarfs[1]!
+      expect(worker.lastMessage).toBe('Found key [redacted] in the env file.')
+    })
+
+    it('redacts user and assistant feed messages alike', async () => {
+      // The feed modal shows what the USER typed too — pasting a key into a
+      // session is exactly the most common way a secret enters a transcript.
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript +
+          userLine(`use ${FAKE_PAT} for the deploy`) +
+          assistantLine(`Done, ${FAKE_PAT} is configured.`),
+        42_000
+      )
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`claude:${SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toContain('use [redacted] for the deploy')
+      expect(feed!.map((m) => m.text)).toContain('Done, [redacted] is configured.')
+      expect(JSON.stringify(feed)).not.toContain(FAKE_PAT)
+    })
+  })
+
+  describe('pid-reuse guard', () => {
+    /** session-entry.json's procStart ("134324755721362761") as epoch ms. */
+    const REGISTRY_START_MS = 1_788_001_972_136
+
+    function providerWithProbe(probe: (pid: number) => Promise<number | null>): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        processStartTimeMs: probe,
+        now: () => 99_000
+      })
+    }
+
+    it('drops a session whose pid now belongs to another process', async () => {
+      // The registry file outlived its process and the OS handed 32896 to an
+      // unrelated program: process.kill(pid, 0) still succeeds, but the real
+      // creation time is nowhere near procStart. The dead session must vanish.
+      const provider = providerWithProbe(async () => REGISTRY_START_MS + 60_000)
+      expect(await provider.scan()).toEqual([])
+      // The choke point: no snapshot means no delivery target either, so
+      // focus/Send/Kick can never reach the recycled pid's window.
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).toBeNull()
+    })
+
+    it('keeps a session whose probed start time matches within the tolerance', async () => {
+      // POSIX probes are second-resolution (lstart) or 10ms ticks (/proc), so
+      // a small skew against the FILETIME conversion is normal, not a reuse.
+      const provider = providerWithProbe(async () => REGISTRY_START_MS + 1_500)
+      expect(await provider.scan()).toHaveLength(1)
+    })
+
+    it('keeps the session when the probe answers null', async () => {
+      // An unreadable process list is "unknown", and unknown must never make
+      // things worse than today's kill(pid, 0) behavior: the dwarf stays.
+      const provider = providerWithProbe(async () => null)
+      expect(await provider.scan()).toHaveLength(1)
+    })
+
+    it('keeps the session when the probe throws', async () => {
+      const provider = providerWithProbe(async () => {
+        throw new Error('boom')
+      })
+      expect(await provider.scan()).toHaveLength(1)
+    })
+
+    it('keeps a session whose registry entry has no procStart', async () => {
+      const entry: Record<string, unknown> = JSON.parse(sessionEntry)
+      delete entry.procStart
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, JSON.stringify(entry), 1_000)
+      // A probe that would report a mismatch must never even be consulted:
+      // there is nothing trustworthy to compare against.
+      const probe = vi.fn(async () => REGISTRY_START_MS + 60_000)
+      const provider = providerWithProbe(probe)
+      expect(await provider.scan()).toHaveLength(1)
+      expect(probe).not.toHaveBeenCalled()
+    })
+
+    it('keeps a session with an unparseable procStart without consulting the probe', async () => {
+      const entry: Record<string, unknown> = JSON.parse(sessionEntry)
+      entry.procStart = 'not-a-filetime'
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, JSON.stringify(entry), 1_000)
+      const probe = vi.fn(async () => REGISTRY_START_MS + 60_000)
+      const provider = providerWithProbe(probe)
+      expect(await provider.scan()).toHaveLength(1)
+      expect(probe).not.toHaveBeenCalled()
+    })
+
+    it('probes each (pid, procStart) pair once, not once per poll tick', async () => {
+      // The poller runs every 2s; a PowerShell spawn per session per tick
+      // would dwarf the cost of the scan itself. The verdict is cached.
+      const probe = vi.fn(async () => REGISTRY_START_MS)
+      const provider = providerWithProbe(probe)
+      await provider.scan()
+      await provider.scan()
+      expect(probe).toHaveBeenCalledTimes(1)
+    })
+
+    it('caches a mismatch verdict too, so a stale entry costs one probe total', async () => {
+      const probe = vi.fn(async () => REGISTRY_START_MS + 60_000)
+      const provider = providerWithProbe(probe)
+      expect(await provider.scan()).toEqual([])
+      expect(await provider.scan()).toEqual([])
+      expect(probe).toHaveBeenCalledTimes(1)
+    })
+
+    it('re-probes after the pid dies, so a later recycle cannot ride a stale verdict', async () => {
+      // Verified alive, then the process exits (kill starts failing), then the
+      // OS recycles 32896. Without eviction the cached "match" would resurrect
+      // the stale registry entry as a live dwarf — the exact bug being fixed.
+      const probe = vi.fn(async () => REGISTRY_START_MS)
+      const provider = providerWithProbe(probe)
+      expect(await provider.scan()).toHaveLength(1)
+
+      alivePids.clear()
+      expect(await provider.scan()).toEqual([])
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      alivePids.add(32896)
+      await provider.scan()
+      expect(probe).toHaveBeenCalledTimes(2)
+    })
+
+    it('changes nothing when no probe is wired at all', async () => {
+      // makeProvider() has no processStartTimeMs — exactly today's behavior,
+      // covered by every other test in this file. Pin it explicitly anyway.
+      expect(await makeProvider().scan()).toHaveLength(1)
     })
   })
 

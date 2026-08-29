@@ -1,5 +1,7 @@
 import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
+import { filetimeToEpochMs } from '../../adapters/processProbe'
+import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'
@@ -17,6 +19,18 @@ import {
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024
 const SUBAGENT_TAIL_BYTES = 64 * 1024
 
+/**
+ * How far a probed process creation time may sit from the registry's procStart
+ * before the pid is declared recycled. The POSIX probes answer in whole
+ * seconds (ps lstart) or 10ms ticks (/proc starttime), and the FILETIME
+ * conversion truncates — 2s absorbs every unit-rounding artifact while still
+ * being orders of magnitude tighter than any real pid-recycling interval.
+ */
+const PROC_START_TOLERANCE_MS = 2_000
+
+/** What one (pid, procStart) probe concluded; 'unknown' means the guard stands aside. */
+type ProcStartVerdict = 'match' | 'mismatch' | 'unknown'
+
 export interface ClaudeProviderOptions {
   fs: FsLike
   /**
@@ -26,6 +40,13 @@ export interface ClaudeProviderOptions {
   roots: string[]
   /** Injected for tests; defaults to a real process.kill(pid, 0) probe. */
   isPidAlive?: (pid: number) => boolean
+  /**
+   * When the process that owns a pid was created, as epoch ms, from the
+   * platform ProcessProbePort. Omitted (or answering null) the pid-reuse guard
+   * stands aside and liveness stays exactly what isPidAlive says — the guard
+   * may only ever remove sessions kill(pid, 0) would wrongly keep.
+   */
+  processStartTimeMs?: (pid: number) => Promise<number | null>
   now?: () => number
 }
 
@@ -49,7 +70,22 @@ export class ClaudeProvider implements Provider {
   private readonly fs: FsLike
   private readonly roots: string[]
   private readonly isPidAlive: (pid: number) => boolean
+  private readonly processStartTimeMs?: (pid: number) => Promise<number | null>
   private readonly now: () => number
+  /**
+   * "pid|procStart" -> what probing that exact pair concluded.
+   *
+   * The poller runs every 2s and the probe spawns a process, so a probe per
+   * session per tick is not affordable: each pair is probed once and the
+   * verdict trusted for as long as kill(pid, 0) keeps succeeding. 'unknown'
+   * (an errored probe) is cached too — retrying a broken process list every
+   * 2s would be the per-tick spawn again, and fail-open is the required
+   * reading either way. Entries for a pid are evicted the moment kill fails
+   * (see scan), because after a death the same pair can name a NEW process:
+   * a stale 'match' would resurrect the dead session on the recycled pid —
+   * the exact bug this guard exists to prevent.
+   */
+  private readonly procStartVerdicts = new Map<string, ProcStartVerdict>()
   /**
    * dwarfId -> transcript path, used by feed()/transcriptPath().
    *
@@ -94,6 +130,9 @@ export class ClaudeProvider implements Provider {
     this.fs = options.fs
     this.roots = options.roots
     this.isPidAlive = options.isPidAlive ?? defaultIsPidAlive
+    if (options.processStartTimeMs !== undefined) {
+      this.processStartTimeMs = options.processStartTimeMs
+    }
     this.now = options.now ?? Date.now
   }
 
@@ -113,7 +152,16 @@ export class ClaudeProvider implements Provider {
         const session = await this.readSessionEntry(join(sessionsDir, entry.name))
         if (session === null) continue
         if (seenSessions.has(session.sessionId)) continue
-        if (!this.isPidAlive(session.pid)) continue
+        if (!this.isPidAlive(session.pid)) {
+          this.evictProcStartVerdicts(session.pid)
+          continue
+        }
+        // kill(pid, 0) proves SOME process owns the pid, not that it is the
+        // one this registry entry was written about. A stale entry over a
+        // recycled pid would render as a live dwarf whose focus/Send/Kick
+        // land in an unrelated application, so a procStart mismatch is a
+        // dead session exactly as if the kill probe had failed.
+        if ((await this.procStartVerdict(session)) === 'mismatch') continue
         seenSessions.add(session.sessionId)
         snapshots.push(await this.snapshotSession(root, session, feedSources, deliveryTargets))
       }
@@ -134,7 +182,12 @@ export class ClaudeProvider implements Provider {
     const path = this.feedSources.get(dwarfId)
     if (path === undefined) return null
     if (!(await this.fs.exists(path))) return []
-    return extractClaudeFeed(await this.fs.readTextTail(path, TRANSCRIPT_TAIL_BYTES), limit)
+    // Redacted here — user text included, since pasting a key into one's own
+    // session is exactly how secrets enter transcripts — so preload/renderer
+    // never hold the raw string (see domain/redactSecrets).
+    return extractClaudeFeed(await this.fs.readTextTail(path, TRANSCRIPT_TAIL_BYTES), limit).map(
+      (message) => ({ ...message, text: redactSecrets(message.text) })
+    )
   }
 
   /** Path backing feed(), used to open a terminal that tails the transcript live. */
@@ -147,6 +200,46 @@ export class ClaudeProvider implements Provider {
       return parseClaudeSessionEntry(await this.fs.readJson(path))
     } catch {
       return null
+    }
+  }
+
+  /**
+   * Does the process that owns this entry's pid look like the one the entry
+   * was written about? 'unknown' whenever any prerequisite is missing (no
+   * procStart recorded, no probe wired, unparseable value, probe errored or
+   * answered null) — the guard must only ever act on positive evidence of a
+   * recycled pid, never degrade liveness below today's kill(pid, 0) behavior.
+   */
+  private async procStartVerdict(session: ClaudeSessionEntry): Promise<ProcStartVerdict> {
+    if (session.procStart === undefined || this.processStartTimeMs === undefined) return 'unknown'
+    const registryStartMs = filetimeToEpochMs(session.procStart)
+    if (registryStartMs === null) return 'unknown'
+
+    const key = `${session.pid}|${session.procStart}`
+    const cached = this.procStartVerdicts.get(key)
+    if (cached !== undefined) return cached
+
+    let probedStartMs: number | null
+    try {
+      probedStartMs = await this.processStartTimeMs(session.pid)
+    } catch {
+      probedStartMs = null
+    }
+    const verdict: ProcStartVerdict =
+      probedStartMs === null
+        ? 'unknown'
+        : Math.abs(probedStartMs - registryStartMs) <= PROC_START_TOLERANCE_MS
+          ? 'match'
+          : 'mismatch'
+    this.procStartVerdicts.set(key, verdict)
+    return verdict
+  }
+
+  /** Forget every verdict for `pid`: after a death the same pair can name a new process. */
+  private evictProcStartVerdicts(pid: number): void {
+    const prefix = `${pid}|`
+    for (const key of [...this.procStartVerdicts.keys()]) {
+      if (key.startsWith(prefix)) this.procStartVerdicts.delete(key)
     }
   }
 
@@ -192,7 +285,9 @@ export class ClaudeProvider implements Provider {
         model: info.model,
         effort: info.effort,
         status: session.status === 'busy' ? 'working' : 'waiting',
-        lastMessage: info.lastAssistantText,
+        // Redacted BEFORE the renderer's 70-char bubble truncation can ever
+        // slice it: a truncated prefix can still contain a whole key.
+        lastMessage: redactSecrets(info.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,
         startedAt: session.startedAt,
@@ -232,7 +327,7 @@ export class ClaudeProvider implements Provider {
         effort: info.effort,
         status: 'working',
         description: agent.description,
-        lastMessage: workerInfo.lastAssistantText,
+        lastMessage: redactSecrets(workerInfo.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,
         ...(workerTokens !== undefined ? { tokensObserved: workerTokens } : {})

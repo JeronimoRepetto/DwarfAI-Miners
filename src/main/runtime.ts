@@ -107,7 +107,10 @@ export class AgentRuntime {
     this.providers = options.providers ?? [
       new ClaudeProvider({
         fs,
-        roots: options.config.claudeConfigDirs.map((path) => expandHomePath(path, home))
+        roots: options.config.claudeConfigDirs.map((path) => expandHomePath(path, home)),
+        // The pid-reuse guard's source of truth: a registry entry only counts
+        // as alive when the pid's real creation time matches its procStart.
+        processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid)
       }),
       new CodexProvider({
         isCodexProcessRunning: () => platform.processProbe.isCodexProcessRunning(),

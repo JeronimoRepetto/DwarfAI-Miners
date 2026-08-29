@@ -12,7 +12,12 @@ export interface ClaudeSessionEntry {
   sessionId: string
   cwd: string
   status: SessionStatus
-  /** Windows FILETIME process start value, kept for a future PID-reuse probe. */
+  /**
+   * Windows FILETIME process start value. The pid-reuse guard compares it
+   * against the pid's real creation time (see ClaudeProvider.procStartVerdict)
+   * so a registry file that outlived its process cannot make the recycled
+   * pid's window a focus/Send/Kick target.
+   */
   procStart?: string
   /**
    * How the session was started: 'interactive' for a TUI the user is looking

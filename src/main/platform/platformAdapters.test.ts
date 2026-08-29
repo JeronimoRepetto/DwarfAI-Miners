@@ -53,6 +53,20 @@ describe('createPlatformAdapters — process probe', () => {
     }
     expect(seen.map((command) => command.command)).toEqual(['powershell.exe', 'pgrep', 'pgrep'])
   })
+
+  it('resolves a process start time via Get-Process, /proc and ps lstart per platform', async () => {
+    const seen: ProbeCommand[] = []
+    const probeRun = async (command: ProbeCommand) => {
+      seen.push(command)
+      return ''
+    }
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      await createPlatformAdapters(options(platform, { probeRun })).processProbe.processStartTimeMs(
+        42
+      )
+    }
+    expect(seen.map((command) => command.command)).toEqual(['powershell.exe', 'ps', 'cat'])
+  })
 })
 
 describe('createPlatformAdapters — focus', () => {

@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
 import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../adapters/processProbe'
 import type { SqliteLike } from '../../adapters/sqliteLike'
+import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import type { Provider } from '../provider'
@@ -387,7 +388,11 @@ export class CodexProvider implements Provider {
     const path = this.feedSources.get(dwarfId)
     if (path === undefined) return null
     if (!(await this.fs.exists(path))) return []
-    return extractCodexFeed(await this.fs.readTextTail(path, FEED_TAIL_BYTES), limit)
+    // Redacted here — user text included — so preload/renderer never hold the
+    // raw string (see domain/redactSecrets).
+    return extractCodexFeed(await this.fs.readTextTail(path, FEED_TAIL_BYTES), limit).map(
+      (message) => ({ ...message, text: redactSecrets(message.text) })
+    )
   }
 
   /** Path backing feed(), used to open a terminal that tails the transcript live. */
@@ -457,7 +462,10 @@ export class CodexProvider implements Provider {
       model: thread?.model ?? rollout?.info.model,
       effort: thread?.effort ?? rollout?.info.effort,
       status: busy ? 'working' : 'waiting',
-      lastMessage: rollout?.info.lastMessage,
+      // Redacted BEFORE the renderer's bubble truncation can ever slice it: a
+      // truncated prefix can still contain a whole key. The rolloutCache keeps
+      // the raw parse; only what leaves the provider is scrubbed.
+      lastMessage: redactSecrets(rollout?.info.lastMessage),
       sessionId
     }
     if (thread?.tokensUsed !== undefined) {
