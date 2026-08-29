@@ -39,15 +39,15 @@ separate mutation: `enable_codex_hooks()` (lines 292–315) patches
 `~/.codex/config.toml` to insert `[features]\nhooks = true` if it isn't already
 there — checked idempotently by scanning existing lines for `hooks=true` before
 writing. The catalog note for Codex (`lib.rs`/`hooks.rs` line 71) is explicit that
-this alone is not enough: *"After enabling, run `/hooks` in Codex and Trust the
-AgentPet hook"* — Codex itself gates hook execution behind a one-time interactive
+this alone is not enough: _"After enabling, run `/hooks` in Codex and Trust the
+AgentPet hook"_ — Codex itself gates hook execution behind a one-time interactive
 trust step inside the CLI that no installer can automate.
 
 **Idempotency**, the part directly reusable regardless of language: entries are
 identified by substring-matching the hook's own `command` string
 (`fn is_ours`, line 103–106: `cmd.to_lowercase().contains("agentpet") &&
 cmd.contains("hook")`), never by any other marker. `install()` (lines 180–219)
-filters out any of *our own* prior entries per event before appending a fresh
+filters out any of _our own_ prior entries per event before appending a fresh
 one (so re-running install replaces, never duplicates), and never touches an
 entry that fails `is_ours`. `uninstall()` (lines 221–241) mirrors this: it
 removes only matching entries, drops an event key once its array is empty, and
@@ -74,8 +74,8 @@ generic `agentpet run --` wrapper — normalizes it into one `Payload` struct
 subagent, terminal info, timestamp) and POSTs it with a hand-rolled minimal
 HTTP/1.1 request (`fn post`, lines 412–427), bounded by a 500 ms connect/write
 timeout. The doc comment on `run_hook` (lines 1–9) states the contract plainly:
-*"ALWAYS exits 0 so it never blocks an agent (Copilot PreToolUse is
-fail-closed)."*
+_"ALWAYS exits 0 so it never blocks an agent (Copilot PreToolUse is
+fail-closed)."_
 
 One deliberate exception: a whitelisted `PreToolUse` (opt-in via
 `~/.agentpet/approval-gate.json`) uses `post_await` instead (lines 128–145),
@@ -85,10 +85,10 @@ blocking up to 12 s to relay the app's Allow/Deny back as Claude's
 timeout or if the app isn't running.
 
 **Why this matters for us:** a fixed loopback TCP port needs zero
-platform-specific server *or* client code — the same hook `command` string
+platform-specific server _or_ client code — the same hook `command` string
 works on every OS a given provider's hooks run on. A named pipe would need
 Windows-specific server code (`net.createServer({ path: '\\\\.\\pipe\\...' })`
-in Node) *and* a Windows-specific invocation from the hook command itself.
+in Node) _and_ a Windows-specific invocation from the hook command itself.
 agentpet's own Windows engineers, building the exact port we're evaluating,
 chose HTTP over a pipe. We should follow that precedent rather than the
 issue's original "named pipe on Windows, Unix socket elsewhere" framing.
@@ -101,7 +101,7 @@ JSON payload to `%LOCALAPPDATA%/AgentPet/queue/<ts>-<pid>.json` whenever `post()
 fails (app not running). `server.rs::start()` (lines 108–123) drains that
 directory in filename order (= chronological, since names are millisecond
 timestamps) on the next launch, replaying each line through the same
-`handle_event()` a live POST would use — the comment calls out *why*:
+`handle_event()` a live POST would use — the comment calls out _why_:
 "replayed with their original timestamps so stale sessions prune instead of
 resurrecting."
 
@@ -128,7 +128,8 @@ event, on a spawned thread so the HTTP responder isn't blocked.
 
 Two more details worth carrying over independent of the hooks-vs-polling
 question:
-- Token/cost accounting reuses the *same* transcript file a hook event points
+
+- Token/cost accounting reuses the _same_ transcript file a hook event points
   at, via a byte-offset cache (`USAGE_OFFSETS`, keyed per path) so a hook only
   ever triggers a delta read of newly appended `usage` objects, never a
   full re-scan (`transcript.rs::new_usage_delta`, lines 60–110).
@@ -156,7 +157,7 @@ failing never kills the loop), aggregates into `Mine[]`, and pushes over the
   256 KB of each session's transcript for model/effort/last-assistant-text/
   in-flight subagents (`parseClaudeTranscriptTail`). This already extracts
   **more** per-session detail than agentpet's hook payload ever carries (see
-  §2.2) — we already read model *and* effort; agentpet's normalized `Payload`
+  §2.2) — we already read model _and_ effort; agentpet's normalized `Payload`
   struct has neither field.
 - `CodexProvider` reads Codex's own SQLite registry (`state_5.sqlite` thread
   rows + spawn edges, `logs_2.sqlite` as a heartbeat source) plus a day-directory
@@ -186,27 +187,27 @@ Checked directly against `cli.rs`'s `Payload` struct and `statemap.rs`'s
 `state()` table — not assumed:
 
 - **Model/effort detail.** agentpet's `Payload` carries `agent, event, session,
-  project, message, tool, file, desc, transcript, subagent, terminal_program,
-  terminal_focus_url, ts` — no model, no effort, anywhere. It relies entirely on
+project, message, tool, file, desc, transcript, subagent, terminal_program,
+terminal_focus_url, ts` — no model, no effort, anywhere. It relies entirely on
   the same transcript-tail read we already do. Hooks add nothing here; we would
   keep tailing transcripts for model+effort exactly as today.
 - **Tokens/cost.** Same story: the hook payload carries no usage numbers.
   agentpet re-opens the transcript/rollout file after every hook event and
-  diffs a byte offset — hooks only tell it *when* to re-check, they don't
+  diffs a byte offset — hooks only tell it _when_ to re-check, they don't
   replace the read.
 - **Startup state.** Confirmed in §1.3: zero information about sessions that
   started and produced no further hook traffic before the app (or our
   listener) launched. The 2 s poller remains our only startup-reconciliation
   source, full stop.
 - **cwd — partial exception.** Claude's and Codex's own native hook payloads
-  *do* carry `cwd`/`workspace_roots` (that's how agentpet's `cli.rs` extracts
+  _do_ carry `cwd`/`workspace_roots` (that's how agentpet's `cli.rs` extracts
   `project` at all), so this is one thing a hook event gives us essentially for
   free and slightly more reliably than inference — but it's a minor win, not a
   gap we currently have.
 
 ### 2.3 A finding agentpet's architecture forces, that ours doesn't need
 
-agentpet has to run `looks_like_question` text-heuristics on the *transcript*
+agentpet has to run `looks_like_question` text-heuristics on the _transcript_
 because its only signal for "did Claude finish or just ask something" is the
 `Stop` hook, which is identical either way, and it has no access to Claude
 Code's own live session registry. **We already have that registry.**
@@ -309,9 +310,9 @@ silently" directly.
     machine's built-in `csc.exe` (see the `mic-toggle` project's WinForms
     binary) — no new dependency, and it removes the curl.exe assumption
     entirely.
-  Recommendation: (b) as the primary path (self-contained, no environment
-  assumption), with (a) as a fast spike to validate the architecture before
-  committing to a compiled helper.
+    Recommendation: (b) as the primary path (self-contained, no environment
+    assumption), with (a) as a fast spike to validate the architecture before
+    committing to a compiled helper.
 - **Foreign hook coexistence.** Since Claude Code's `hooks` field is an array
   per event, an idempotent installer only ever touches its own entries — any
   hook already installed by another tool (agentpet itself, a user's own
@@ -344,6 +345,7 @@ throwaway `node:http` listener. Exit criterion: relay completes in well under
 mechanism before any installer code exists. No files beyond a scratch spike.
 
 **Phase 1 — Loopback listener + debounced trigger (1–2 days).**
+
 - `src/main/hooks/hookServer.ts`: `http.createServer` on `127.0.0.1:<port>`,
   parses `POST /event`, ignores malformed/unrecognized bodies, always responds
   200 (never blocks the caller).
@@ -354,10 +356,11 @@ mechanism before any installer code exists. No files beyond a scratch spike.
   coalescing (N events in the debounce window → one `tick()`).
 
 **Phase 2 — Claude hook installer + tray toggle (1–2 days).**
+
 - `src/main/hooks/claudeHookInstaller.ts`: idempotent install/uninstall across
   every root in `config.claudeConfigDirs`, using the Phase-0 relay as the
   command string, events `SessionStart, Notification, Stop, SubagentStop,
-  SessionEnd`.
+SessionEnd`.
 - `src/main/tray.ts`: add a checkbox item next to "Start with Windows",
   default OFF, persisted via a small JSON flag under `app.getPath('userData')`
   (autostart persists at the OS level via `setLoginItemSettings`, which this
