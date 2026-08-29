@@ -1,9 +1,22 @@
 import { config as loadDotenv } from 'dotenv'
 import { app, ipcMain } from 'electron'
+import { join } from 'node:path'
+import type { Mine } from '../shared/contracts'
+import { IPC_CHANNELS } from '../shared/contracts'
+import { enable as enableAutostart, ensureDefaultAutostart } from './autostart'
 import { loadConfig } from './config'
+import { AgentRuntime } from './runtime'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts'
 import { createTray } from './tray'
 import { createMainWindow, hidePanel, markQuitting, showPanel, togglePanel } from './window'
+
+let runtime: AgentRuntime | null = null
+
+function removeIpcHandlers(): void {
+  ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
+  ipcMain.removeHandler(IPC_CHANNELS.getMines)
+  ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
+}
 
 async function init(): Promise<void> {
   app.setAppUserModelId('com.ai-tools.agent-name')
@@ -13,11 +26,33 @@ async function init(): Promise<void> {
   const config = loadConfig()
   console.log('[main] Config loaded:', config)
 
-  createMainWindow() // starts hidden
+  await ensureDefaultAutostart({
+    isPackaged: app.isPackaged,
+    markerPath: join(app.getPath('userData'), 'autostart-default-v1.marker'),
+    enable: enableAutostart,
+    warn: (message, error) => console.warn(message, error)
+  })
+
+  const mainWindow = createMainWindow() // starts hidden
   await createTray()
   registerShortcuts(togglePanel)
 
-  ipcMain.on('panel:hide', () => hidePanel())
+  runtime = new AgentRuntime({
+    config,
+    onMinesUpdated: (mines: Mine[]) => {
+      if (!mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, mines)
+      }
+    }
+  })
+  runtime.start()
+
+  ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
+  ipcMain.handle(IPC_CHANNELS.getMines, () => runtime?.getMines() ?? [])
+  ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
+    if (typeof dwarfId !== 'string') return { focused: false, feed: [] }
+    return runtime?.activateDwarf(dwarfId) ?? { focused: false, feed: [] }
+  })
 }
 
 // Single instance: a second launch just shows the existing panel.
@@ -34,7 +69,12 @@ if (!app.requestSingleInstanceLock()) {
       app.exit(1)
     })
 
-  app.on('before-quit', () => markQuitting())
+  app.on('before-quit', () => {
+    runtime?.stop()
+    runtime = null
+    removeIpcHandlers()
+    markQuitting()
+  })
   app.on('will-quit', () => unregisterShortcuts())
 
   // Keep running in the tray even with every window hidden.
