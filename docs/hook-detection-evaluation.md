@@ -14,7 +14,7 @@
 >   the extra build step buys nothing. Presence of `curl.exe` is verified when the
 >   toggle is enabled and refuses with an explanation if it is absent.
 > - **Command shape: every argument is one whitespace-free, quote-free token.**
->   Claude Code parses a shell-form hook with `sh` on Unix but with Git Bash *or*
+>   Claude Code parses a shell-form hook with `sh` on Unix but with Git Bash _or_
 >   PowerShell on Windows, and a bare `@-` is a hard PowerShell parse error. `-d@-`
 >   was verified to parse identically in all three, which is why the command looks
 >   the way it does.
