@@ -3,4 +3,5 @@
 # electron's postinstall never runs and node_modules/electron/dist is empty.
 allowBuilds:
   electron: true
+  electron-winstaller: true
   esbuild: true

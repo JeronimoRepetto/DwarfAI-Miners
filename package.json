@@ -6,9 +6,33 @@
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
+  "build": {
+    "appId": "com.ai-tools.agent-name",
+    "productName": "AgentName",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    }
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package": "pnpm build && electron-builder --win nsis portable --x64",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
@@ -27,6 +51,7 @@
   "devDependencies": {
     "@types/node": "26.4.0",
     "@vitejs/plugin-vue": "6.0.8",
+    "electron-builder": "26.15.3",
     "electron": "44.0.0",
     "electron-vite": "5.0.0",
     "eslint": "10.9.1",

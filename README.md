@@ -1,98 +1,113 @@
 # AgentName
 
-A floating desktop panel for Windows that visualizes AI coding agents running on this PC as
-dwarfs working in mines. Each agent provider (Claude Code, Codex, ...) becomes a mine; each
-running agent session becomes a dwarf digging in it.
+AgentName is a floating Windows panel that turns active AI coding sessions into mines and
+dwarfs. A mine represents one project; workers and foremen represent the agents currently
+operating in that project.
 
-Current status: **scaffold only** — window shell, tray, hotkey, config and tooling are in
-place. Provider scanning (which processes/sessions feed the mines) is not implemented yet.
+**Status:** functional MVP. Claude Code and Codex session detection, live IPC updates, mine
+tiers, animated dwarfs, terminal focus with transcript fallback, Windows autostart, and
+Windows packaging are implemented.
 
-## Stack
-
-Electron + electron-vite + Vue 3 + TypeScript, tested with Vitest, linted with ESLint +
-Prettier, managed with pnpm.
-
-## Dev quickstart
+## Quick start
 
 ```powershell
 pnpm install
 pnpm dev
 ```
 
-The window starts **hidden**. Bring it up with the global hotkey or the tray icon.
+The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to show it.
 
-> pnpm 11 note: build scripts are allowed via `allowBuilds` in `pnpm-workspace.yaml`
-> (`onlyBuiltDependencies` in package.json is ignored by pnpm 11). If
-> `node_modules/electron/dist/electron.exe` is missing after install, run
-> `pnpm rebuild electron`.
+> pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
+> Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
 
-## Hotkey
+## What the panel shows
 
-**Ctrl+Alt+Shift+P** toggles panel visibility (registered globally at startup). If another
-application already owns the combination, registration fails and a warning is logged — the
-tray icon still toggles the panel.
+- One mine per project with an observed AI CLI session.
+- Bronze, copper, silver, gold, or uranium tiers based on bounded source-file counts.
+- Workers for active agents and a foreman with a folder when a parent is coordinating agents.
+- Provider, model, and effort in an accessible tooltip.
+- Truncated activity bubbles and a recent transcript feed when terminal focus is unavailable.
+- Empty mines when a session is open but no agent is currently working.
 
-The ✕ button and the window close event only **hide** the panel; the app keeps running in
-the tray. Quit via the tray menu.
+Selecting a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
+this works when their process ancestry reaches a supported terminal host. Codex rollouts do
+not expose a reliable PID; AgentName therefore falls back to the recent activity feed.
 
-## Tray menu
+## Provider support
 
-- **Show/Hide Panel** — toggles the floating panel (clicking the tray icon does the same).
-- **Start with Windows** — checkbox controlling autostart via the registry Run key
-  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `AgentName`. Default OFF;
-  only this checkbox ever writes the key (dev runs never register silently).
-- **Quit** — actually exits.
+| Provider    | Support | Liveness and hierarchy                                                                                                                            |
+| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | Active  | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported.           |
+| Codex       | Active  | Uses recent rollout mtimes and open-turn events. `thread_spawn.parent_thread_id` is used for verified worker/foreman relationships.               |
+| Gemini CLI  | Planned | No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed. |
+
+Codex liveness is heuristic: a recently modified rollout can remain visible until the
+configured liveness window expires after the CLI closes.
+
+## Startup and tray behavior
+
+- Packaged builds enable **Start with Windows** on the first successful launch.
+- A marker in Electron's user-data directory prevents later launches from overriding a tray
+  opt-out.
+- Development runs never write the registry or the marker.
+- Closing the panel hides it; **Quit** in the tray exits the process.
+
+The registry entry is `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
+`AgentName`.
 
 ## Configuration
 
-Copy `.env.example` to `.env`. All keys are optional; invalid values fail fast at startup.
+Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast at startup.
 
-| Variable            | Default | Meaning                                                                  |
-| ------------------- | ------- | ------------------------------------------------------------------------ |
-| `POLL_INTERVAL_MS`  | `2000`  | How often the provider scanner polls for agent activity (ms, int >= 1).  |
-| `LIVENESS_WINDOW_S` | `90`    | How long an agent counts as alive after its last activity (s, int >= 1). |
+| Variable                  | Default                        | Meaning                                 |
+| ------------------------- | ------------------------------ | --------------------------------------- |
+| `POLL_INTERVAL_MS`        | `2000`                         | Provider scan interval in milliseconds. |
+| `LIVENESS_WINDOW_S`       | `90`                           | Reserved general activity window.       |
+| `CODEX_LIVENESS_WINDOW_S` | `300`                          | Maximum rollout age considered live.    |
+| `TIER_CACHE_TTL_S`        | `600`                          | Mine-tier cache lifetime.               |
+| `TIER_COPPER_AT`          | `25`                           | Source-file threshold for copper.       |
+| `TIER_SILVER_AT`          | `100`                          | Source-file threshold for silver.       |
+| `TIER_GOLD_AT`            | `400`                          | Source-file threshold for gold.         |
+| `TIER_URANIUM_AT`         | `1500`                         | Source-file threshold for uranium.      |
+| `CLAUDE_CONFIG_DIRS`      | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.       |
 
-## Scripts
+Tier thresholds must be strictly increasing.
 
-| Script           | What it does                          |
-| ---------------- | ------------------------------------- |
-| `pnpm dev`       | Run the app with hot reload           |
-| `pnpm build`     | Build main/preload/renderer to `out/` |
-| `pnpm test`      | Run unit tests (Vitest)               |
-| `pnpm lint`      | ESLint over the whole project         |
-| `pnpm format`    | Prettier write                        |
-| `pnpm typecheck` | Strict TS check (node + web projects) |
+## Verification and packaging
 
-## Project structure
-
+```powershell
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm test
+pnpm build
+pnpm package
 ```
-agent-name/
-├── electron.vite.config.ts    # main/preload/renderer build config
-├── vitest.config.ts
-├── eslint.config.mjs
-├── src/
-│   ├── main/                  # Electron main process
-│   │   ├── index.ts           # app lifecycle, IPC wiring
-│   │   ├── window.ts          # frameless always-on-top panel window
-│   │   ├── tray.ts            # tray icon + context menu
-│   │   ├── shortcuts.ts       # global hotkey registration
-│   │   ├── autostart.ts       # HKCU Run key enable/disable/isEnabled
-│   │   ├── config.ts          # typed env config, fails fast
-│   │   └── config.test.ts
-│   ├── preload/
-│   │   ├── index.ts           # contextBridge -> typed window.api
-│   │   └── index.d.ts
-│   └── renderer/              # Vue 3 app
-│       ├── index.html
-│       └── src/
-│           ├── App.vue        # title bar (drag region + hide) and mines grid
-│           ├── types.ts       # data shapes + defaultX() factories
-│           └── composables/
-│               └── useMines.ts # singleton mines store
-└── pnpm-workspace.yaml        # allowBuilds for electron/esbuild (pnpm 11)
+
+`pnpm package` creates unsigned NSIS and portable x64 executables in `release/`. Windows
+SmartScreen can warn because no signing certificate is configured. Until a custom application
+icon is added, electron-builder uses Electron's default icon.
+
+## Architecture
+
+```text
+ClaudeProvider / CodexProvider
+            |
+          Poller -> aggregateMines + TierService
+            |
+        AgentRuntime
+            |
+      Electron IPC / preload
+            |
+       Vue renderer
 ```
+
+The shared contract in `src/shared/contracts.ts` is the single type boundary for main,
+preload, and renderer. Providers depend on the `FsLike` port so parsers and scans can be tested
+without the real filesystem.
 
 ## Security posture
 
-`contextIsolation: on`, `nodeIntegration: off`, a strict CSP in `index.html`, and a minimal
-typed `window.api` exposed via `contextBridge`. External links open in the default browser.
+The renderer runs with context isolation enabled and Node integration disabled. The preload
+exposes only the typed AgentName API. External navigation is denied in the panel and opened in
+the system browser instead.
