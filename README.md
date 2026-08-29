@@ -1,6 +1,27 @@
-# DwarfAI-Miners
+<p align="center">
+  <img src="docs/assets/logo.png" width="160" alt="DwarfAI-Miners logo — the painted gold mound on a dark circular badge">
+</p>
+
+<h1 align="center">DwarfAI-Miners</h1>
+
+<p align="center">
+  Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
+</p>
+
+<div align="center">
 
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/JeronimoRepetto/DwarfAI-Miners?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/JeronimoRepetto/DwarfAI-Miners/total?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4a5568?style=flat-square)
+
+![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)
+![Vue 3](https://img.shields.io/badge/Vue%203-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)
+![pnpm](https://img.shields.io/badge/pnpm-F69220?style=flat-square&logo=pnpm&logoColor=white)
+
+</div>
 
 DwarfAI-Miners is a floating desktop panel that turns active AI coding sessions into mines and
 dwarfs. A mine represents one project; workers and foremen represent the agents currently
@@ -10,6 +31,41 @@ operating in that project.
 tiers, animated dwarfs, terminal focus with transcript fallback, autostart, and packaging are
 implemented. Windows is the verified platform; macOS and Linux build and are unit-tested but
 have not been run end to end yet — see the support matrix below.
+
+## What it looks like
+
+<!-- TODO: drop real captures in docs/assets/ -->
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/screenshot-map.png" width="420" alt="Map view — a moonlit valley where every project appears as a painted mine mound">
+    </td>
+    <td align="center">
+      <img src="docs/assets/screenshot-mine.png" width="420" alt="Mine interior — the crew of animated dwarfs on the walkable floor">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><em>Map view — one mound per project</em></td>
+    <td align="center"><em>Mine interior — one dwarf per agent</em></td>
+  </tr>
+</table>
+
+## Highlights
+
+- **Live session detection** — Claude Code and Codex sessions become dwarfs the moment they
+  appear, no configuration required.
+- **Two painted views** — an isometric map of mine mounds (one per project) and a mine interior
+  where the crew swings pickaxes, naps, or walks out.
+- **Send and kick** — deliver a message to a session or kick an agent straight from the panel.
+- **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
+  milliseconds.
+- **Terminal focus** — clicking a dwarf focuses its terminal window, with a live transcript
+  viewer as the fallback.
+- **Autostart and tray** — starts at login, lives in the tray, and hides instead of closing.
+
+Platform caveats apply — the [support matrix](#platform-support) below is honest about what is
+verified versus built and unit-tested only.
 
 ## Install
 
@@ -32,12 +88,32 @@ Every release is built and packaged on the target OS, but Windows is the only pl
 been run end to end — see the support matrix below for exactly what is verified versus built and
 unit-tested only.
 
+## Quick start
+
+```bash
+pnpm install
+pnpm dev
+```
+
+The panel starts hidden. Press **Ctrl+Alt+Shift+P** (configurable soon —
+[#17](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues/17)) or click the tray icon to
+show it.
+
+> pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
+> Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, tests, and build on every
+push to `main` and on every pull request.
+
 ## Platform support
 
 Every operating-system-specific behavior sits behind a port selected in one place
 (`src/main/platform/platformAdapters.ts`), and each adapter's commands and file contents are
 unit-tested as pure builders. What has _not_ happened is running those commands on a real Mac
 or Linux desktop, so the table is honest about the difference.
+
+<details>
+<summary><strong>Full support matrix</strong> (Windows verified; macOS/Linux built, integration-pending)</summary>
 
 | Capability                              | Windows                       | macOS                                  | Linux                                  |
 | --------------------------------------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
@@ -64,20 +140,7 @@ Notes on the three honest gaps:
   platforms. They are home-relative already and nothing in the formats is Windows-specific, but
   this has not been confirmed against real macOS/Linux fixtures.
 
-## Quick start
-
-```bash
-pnpm install
-pnpm dev
-```
-
-The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to show it.
-
-> pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
-> Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
-
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, tests, and build on every
-push to `main` and on every pull request.
+</details>
 
 ## What the panel shows
 
@@ -103,18 +166,7 @@ The provider is shown by a small badge on the sprite rather than by tinting the 
 Hovering a dwarf shows name, provider, model, effort, and status. When an agent's last
 message changes, a comic speech bubble appears above it for a few seconds.
 
-### Art pipeline
-
-The renderer ships processed art in `src/renderer/src/assets/art/` — committed, so a clone
-builds and runs without the source paintings. `pnpm art:build` regenerates it from the
-originals, which live outside the repository (default `<home>/Downloads/DwarfAI-Miners`,
-overridable with `--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified. The script
-itself is platform-neutral: every path goes through `node:path`.
-
-The script chroma-keys the dwarf and mound paintings off their flat backdrop — sampling the
-key color from each image's own four corners, because it differs per image — crops all nine
-dwarf poses to one shared canvas so animation frames never jitter, and downscales the opaque
-background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.mjs`.
+### Focusing a session's terminal
 
 Clicking a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
 this works when their process ancestry reaches a supported terminal host (and on a platform
@@ -129,6 +181,19 @@ the app already bundles (`process.execPath`, via `ELECTRON_RUN_AS_NODE`), so no 
 required. If that formatter cannot run, the viewer falls back to showing the raw JSONL rather
 than nothing.
 
+### Art pipeline
+
+The renderer ships processed art in `src/renderer/src/assets/art/` — committed, so a clone
+builds and runs without the source paintings. `pnpm art:build` regenerates it from the
+originals, which live outside the repository (default `<home>/Downloads/DwarfAI-Miners`,
+overridable with `--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified. The script
+itself is platform-neutral: every path goes through `node:path`.
+
+The script chroma-keys the dwarf and mound paintings off their flat backdrop — sampling the
+key color from each image's own four corners, because it differs per image — crops all nine
+dwarf poses to one shared canvas so animation frames never jitter, and downscales the opaque
+background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.mjs`.
+
 ### Application icon
 
 Same idea as the art pipeline: committed, derived output, regenerated by a script rather than
@@ -138,7 +203,8 @@ shrunk to a 16x16 tray icon — and writes every size electron-builder and the a
 `build/icon.ico` (Windows, multi-size), `build/icon.icns` (macOS), `build/icon.png` (Linux, 512),
 and `resources/tray-icon.png` / `tray-icon@2x.png` / `app-icon.png` for the tray and window icons
 at runtime. The badge math is unit tested in `scripts/art/badge.test.mjs`; running the script
-twice in a row reproduces every output file byte-for-byte.
+twice in a row reproduces every output file byte-for-byte. The README logo
+(`docs/assets/logo.png`) is a committed copy of that same `build/icon.png`.
 
 ## Provider support
 
@@ -169,7 +235,8 @@ tail can never come back as a ghost. Codex promotion still comes from a verified
 - On macOS the app hides its Dock tile: it lives in the menu bar, and its only window is the
   floating panel.
 
-Where the entry is written, per platform:
+<details>
+<summary><strong>Where the autostart entry is written</strong>, per platform</summary>
 
 | Platform | Location                                                                                          |
 | -------- | ------------------------------------------------------------------------------------------------- |
@@ -181,6 +248,8 @@ Only Windows has a migration to run: existing installs move automatically on fir
 the update — the legacy `AgentName` Run value is removed, and the new value is written only if
 autostart was on. No macOS or Linux build shipped before the rename, so there is nothing to
 migrate there.
+
+</details>
 
 ## Instant updates (Claude hooks)
 
@@ -227,6 +296,9 @@ harmless (Claude Code treats a failed hook command as a non-blocking error) but 
 
 Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast at startup.
 
+<details>
+<summary><strong>All environment variables</strong> (defaults work out of the box)</summary>
+
 | Variable                  | Default                        | Meaning                                                                             |
 | ------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
 | `POLL_INTERVAL_MS`        | `2000`                         | Provider scan interval in milliseconds.                                             |
@@ -242,9 +314,11 @@ Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast a
 | `TIER_GOLD_AT`            | `400`                          | Source-file threshold for gold.                                                     |
 | `TIER_URANIUM_AT`         | `1500`                         | Source-file threshold for uranium.                                                  |
 | `CLAUDE_CONFIG_DIRS`      | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.                                                   |
-| `HOOKS_PORT`              | `47821`                        | Loopback port for instant updates (see below). Nothing binds it until you opt in.   |
+| `HOOKS_PORT`              | `47821`                        | Loopback port for instant updates (see above). Nothing binds it until you opt in.   |
 
 Tier thresholds must be strictly increasing.
+
+</details>
 
 ## Verification and packaging
 
