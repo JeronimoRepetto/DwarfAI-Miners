@@ -9,6 +9,10 @@ import type { FeedMessage } from '../../domain/types'
 export interface CodexRolloutHead {
   sessionId: string
   cwd: string
+  /** Present only for a Codex subagent spawned by another thread. */
+  parentSessionId?: string
+  /** Provider-supplied nickname for a spawned Codex subagent. */
+  agentName?: string
 }
 
 /** Live state read from the tail of a rollout. */
@@ -18,6 +22,12 @@ export interface CodexRolloutInfo {
   /** True when the last task_started has no matching task_complete. */
   busy: boolean
   lastMessage?: string
+}
+
+/** Model settings found in one or more `turn_context` records. */
+export interface CodexRolloutContext {
+  model?: string
+  effort?: string
 }
 
 type Rec = Record<string, unknown>
@@ -58,7 +68,17 @@ export function parseCodexRolloutHead(headText: string): CodexRolloutHead | null
     const sessionId = asString(record.payload.id) ?? asString(record.payload.session_id)
     const cwd = asString(record.payload.cwd)
     if (sessionId === undefined || cwd === undefined) return null
-    return { sessionId, cwd }
+    const source = record.payload.source
+    const subagent = isRecord(source) ? source.subagent : undefined
+    const threadSpawn = isRecord(subagent) ? subagent.thread_spawn : undefined
+    const head: CodexRolloutHead = { sessionId, cwd }
+    if (isRecord(threadSpawn)) {
+      const parentSessionId = asString(threadSpawn.parent_thread_id)
+      const agentName = asString(threadSpawn.agent_nickname)
+      if (parentSessionId !== undefined) head.parentSessionId = parentSessionId
+      if (agentName !== undefined) head.agentName = agentName
+    }
+    return head
   }
   return null
 }
@@ -73,19 +93,33 @@ function outputText(payload: Rec): string | undefined {
   return texts.length > 0 ? texts.join('\n') : undefined
 }
 
-/** Extract model/effort, open-turn state and the latest reply from a rollout tail. */
-export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
+/**
+ * Reads the latest model/effort available in a complete rollout fragment.
+ *
+ * `turn_context` is normally emitted near the start of a turn. Large turns can
+ * push it outside a tail read, so providers use this on the rollout head as a
+ * fallback only; tail context remains authoritative for newer turns.
+ */
+export function parseCodexRolloutContext(text: string): CodexRolloutContext {
   let model: string | undefined
   let effort: string | undefined
+
+  for (const record of jsonlRecords(text)) {
+    if (record.type !== 'turn_context') continue
+    model = asString(record.payload.model) ?? model
+    effort = asString(record.payload.effort) ?? effort
+  }
+
+  return { model, effort }
+}
+
+/** Extract model/effort, open-turn state and the latest reply from a rollout tail. */
+export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
+  const context = parseCodexRolloutContext(tailText)
   let lastMessage: string | undefined
   let openTurnId: string | null | undefined
 
   for (const record of jsonlRecords(tailText)) {
-    if (record.type === 'turn_context') {
-      model = asString(record.payload.model) ?? model
-      effort = asString(record.payload.effort) ?? effort
-      continue
-    }
     if (record.type === 'response_item') {
       if (record.payload.type === 'message' && record.payload.role === 'assistant') {
         lastMessage = outputText(record.payload) ?? lastMessage
@@ -112,7 +146,7 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
     }
   }
 
-  return { model, effort, busy: openTurnId !== undefined, lastMessage }
+  return { ...context, busy: openTurnId !== undefined, lastMessage }
 }
 
 /**

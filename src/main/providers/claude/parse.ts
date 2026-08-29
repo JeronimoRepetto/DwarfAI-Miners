@@ -11,6 +11,8 @@ export interface ClaudeSessionEntry {
   sessionId: string
   cwd: string
   status: SessionStatus
+  /** Windows FILETIME process start value, kept for a future PID-reuse probe. */
+  procStart?: string
   name?: string
   startedAt?: number
   updatedAt?: number
@@ -66,7 +68,11 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     pid,
     sessionId,
     cwd,
+    // The registry can report `waiting`. The domain only has busy/idle, so it
+    // intentionally normalizes waiting (and unknown values) to idle. A parent
+    // with in-flight agents is still rendered as a foreman by ClaudeProvider.
     status: json.status === 'busy' ? 'busy' : 'idle',
+    procStart: asString(json.procStart),
     name: asString(json.name),
     startedAt: asNumber(json.startedAt),
     updatedAt: asNumber(json.updatedAt)

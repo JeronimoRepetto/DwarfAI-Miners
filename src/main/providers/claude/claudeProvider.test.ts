@@ -105,7 +105,12 @@ describe('ClaudeProvider', () => {
   it('maps an idle session to a snapshot with no dwarfs', async () => {
     fake.addFile(
       `${ROOT2}\\sessions\\40000.json`,
-      otherEntry(40000, 'bbbbbbbb-0000-0000-0000-000000000000', 'C:\\Users\\jeron\\Desktop\\Other', 'idle')
+      otherEntry(
+        40000,
+        'bbbbbbbb-0000-0000-0000-000000000000',
+        'C:\\Users\\jeron\\Desktop\\Other',
+        'idle'
+      )
     )
     alivePids.add(40000)
     const snapshots = await makeProvider().scan()
@@ -120,7 +125,12 @@ describe('ClaudeProvider', () => {
   it('scans multiple config roots and skips missing ones', async () => {
     fake.addFile(
       `${ROOT2}\\sessions\\40000.json`,
-      otherEntry(40000, 'bbbbbbbb-0000-0000-0000-000000000000', 'C:\\Users\\jeron\\Desktop\\Other', 'busy')
+      otherEntry(
+        40000,
+        'bbbbbbbb-0000-0000-0000-000000000000',
+        'C:\\Users\\jeron\\Desktop\\Other',
+        'busy'
+      )
     )
     alivePids.add(40000)
     const snapshots = await makeProvider().scan()

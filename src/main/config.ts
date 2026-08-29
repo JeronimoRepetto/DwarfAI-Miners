@@ -1,3 +1,5 @@
+import type { TierThresholds } from './tier/tierService'
+
 /**
  * Typed app configuration loaded from environment variables.
  * Invalid values fail fast at startup instead of being silently corrected.
@@ -7,10 +9,28 @@ export interface AppConfig {
   pollIntervalMs: number
   /** How long an agent counts as alive after its last observed activity, in seconds. */
   livenessWindowS: number
+  /** Codex-specific liveness: rollout mtime age that still counts as an open session. */
+  codexLivenessWindowS: number
+  /** How long a computed project tier stays cached, in seconds. */
+  tierCacheTtlS: number
+  /** Source-file counts at which a mine upgrades to the next tier. */
+  tierThresholds: TierThresholds
+  /**
+   * Claude config roots to scan (semicolon-separated in the env var). This PC
+   * runs two accounts with separate dirs; roots that do not exist are skipped.
+   */
+  claudeConfigDirs: string[]
 }
 
 export function defaultConfig(): AppConfig {
-  return { pollIntervalMs: 2000, livenessWindowS: 90 }
+  return {
+    pollIntervalMs: 2000,
+    livenessWindowS: 90,
+    codexLivenessWindowS: 300,
+    tierCacheTtlS: 600,
+    tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
+    claudeConfigDirs: ['~/.claude', '~/.claude-multitec']
+  }
 }
 
 type Env = Record<string, string | undefined>
@@ -27,10 +47,53 @@ function readPositiveInt(env: Env, key: string, fallback: number): number {
   return value
 }
 
+function readDirList(env: Env, key: string, fallback: string[]): string[] {
+  const raw = env[key]
+  if (raw === undefined || raw.trim() === '') {
+    return [...fallback]
+  }
+  const dirs = raw
+    .split(';')
+    .map((dir) => dir.trim())
+    .filter((dir) => dir !== '')
+  if (dirs.length === 0) {
+    throw new Error(`[config] ${key} must contain at least one directory, got "${raw}"`)
+  }
+  return dirs
+}
+
+function readTierThresholds(env: Env, fallback: TierThresholds): TierThresholds {
+  const thresholds: TierThresholds = {
+    copperAt: readPositiveInt(env, 'TIER_COPPER_AT', fallback.copperAt),
+    silverAt: readPositiveInt(env, 'TIER_SILVER_AT', fallback.silverAt),
+    goldAt: readPositiveInt(env, 'TIER_GOLD_AT', fallback.goldAt),
+    uraniumAt: readPositiveInt(env, 'TIER_URANIUM_AT', fallback.uraniumAt)
+  }
+  const ordered =
+    thresholds.copperAt < thresholds.silverAt &&
+    thresholds.silverAt < thresholds.goldAt &&
+    thresholds.goldAt < thresholds.uraniumAt
+  if (!ordered) {
+    throw new Error(
+      '[config] tier thresholds must be strictly increasing ' +
+        '(TIER_COPPER_AT < TIER_SILVER_AT < TIER_GOLD_AT < TIER_URANIUM_AT)'
+    )
+  }
+  return thresholds
+}
+
 export function loadConfig(env: Env = process.env): AppConfig {
   const defaults = defaultConfig()
   return {
     pollIntervalMs: readPositiveInt(env, 'POLL_INTERVAL_MS', defaults.pollIntervalMs),
-    livenessWindowS: readPositiveInt(env, 'LIVENESS_WINDOW_S', defaults.livenessWindowS)
+    livenessWindowS: readPositiveInt(env, 'LIVENESS_WINDOW_S', defaults.livenessWindowS),
+    codexLivenessWindowS: readPositiveInt(
+      env,
+      'CODEX_LIVENESS_WINDOW_S',
+      defaults.codexLivenessWindowS
+    ),
+    tierCacheTtlS: readPositiveInt(env, 'TIER_CACHE_TTL_S', defaults.tierCacheTtlS),
+    tierThresholds: readTierThresholds(env, defaults.tierThresholds),
+    claudeConfigDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', defaults.claudeConfigDirs)
   }
 }

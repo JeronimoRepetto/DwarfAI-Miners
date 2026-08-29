@@ -3,11 +3,19 @@ import { defaultConfig, loadConfig } from './config'
 
 describe('defaultConfig', () => {
   it('returns the documented defaults', () => {
-    expect(defaultConfig()).toEqual({ pollIntervalMs: 2000, livenessWindowS: 90 })
+    expect(defaultConfig()).toEqual({
+      pollIntervalMs: 2000,
+      livenessWindowS: 90,
+      codexLivenessWindowS: 300,
+      tierCacheTtlS: 600,
+      tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
+      claudeConfigDirs: ['~/.claude', '~/.claude-multitec']
+    })
   })
 
   it('returns a fresh object on every call', () => {
     expect(defaultConfig()).not.toBe(defaultConfig())
+    expect(defaultConfig().tierThresholds).not.toBe(defaultConfig().tierThresholds)
   })
 })
 
@@ -21,15 +29,44 @@ describe('loadConfig', () => {
   })
 
   it('parses valid integer values', () => {
-    const config = loadConfig({ POLL_INTERVAL_MS: '5000', LIVENESS_WINDOW_S: '120' })
-    expect(config).toEqual({ pollIntervalMs: 5000, livenessWindowS: 120 })
+    const config = loadConfig({
+      POLL_INTERVAL_MS: '5000',
+      LIVENESS_WINDOW_S: '120',
+      CODEX_LIVENESS_WINDOW_S: '900',
+      TIER_CACHE_TTL_S: '60'
+    })
+    expect(config.pollIntervalMs).toBe(5000)
+    expect(config.livenessWindowS).toBe(120)
+    expect(config.codexLivenessWindowS).toBe(900)
+    expect(config.tierCacheTtlS).toBe(60)
+  })
+
+  it('parses tier thresholds per key', () => {
+    const config = loadConfig({ TIER_COPPER_AT: '10', TIER_URANIUM_AT: '2000' })
+    expect(config.tierThresholds).toEqual({
+      copperAt: 10,
+      silverAt: 100,
+      goldAt: 400,
+      uraniumAt: 2000
+    })
+  })
+
+  it('fails fast when tier thresholds are not strictly increasing', () => {
+    expect(() => loadConfig({ TIER_COPPER_AT: '500' })).toThrowError(/threshold/i)
   })
 
   it('applies defaults per key independently', () => {
-    expect(loadConfig({ POLL_INTERVAL_MS: '250' })).toEqual({
-      pollIntervalMs: 250,
-      livenessWindowS: 90
-    })
+    expect(loadConfig({ POLL_INTERVAL_MS: '250' }).pollIntervalMs).toBe(250)
+    expect(loadConfig({ POLL_INTERVAL_MS: '250' }).livenessWindowS).toBe(90)
+  })
+
+  it('parses CLAUDE_CONFIG_DIRS as a semicolon-separated list', () => {
+    const config = loadConfig({ CLAUDE_CONFIG_DIRS: 'C:\\a ; C:\\b;;~/.claude ' })
+    expect(config.claudeConfigDirs).toEqual(['C:\\a', 'C:\\b', '~/.claude'])
+  })
+
+  it('fails fast when CLAUDE_CONFIG_DIRS has no usable entries', () => {
+    expect(() => loadConfig({ CLAUDE_CONFIG_DIRS: ' ; ; ' })).toThrowError(/CLAUDE_CONFIG_DIRS/)
   })
 
   it('fails fast on a non-numeric value', () => {

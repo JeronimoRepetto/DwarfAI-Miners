@@ -1,7 +1,12 @@
 import type { FsLike } from '../../adapters/fsLike'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import type { Provider } from '../provider'
-import { extractCodexFeed, parseCodexRolloutHead, parseCodexRolloutTail } from './parse'
+import {
+  extractCodexFeed,
+  parseCodexRolloutContext,
+  parseCodexRolloutHead,
+  parseCodexRolloutTail
+} from './parse'
 
 const HEAD_BYTES = 64 * 1024
 const TAIL_BYTES = 256 * 1024
@@ -14,6 +19,13 @@ export interface CodexProviderOptions {
   /** A rollout counts as live while its mtime is at most this many seconds old. */
   livenessWindowS: number
   now?: () => number
+}
+
+interface DiscoveredCodexSnapshot {
+  snapshot: ProviderSnapshot
+  /** Always retained internally so an idle parent can become a foreman. */
+  mainDwarf: Dwarf
+  parentSessionId?: string
 }
 
 function datePath(date: Date): string {
@@ -53,7 +65,7 @@ export class CodexProvider implements Provider {
     const today = new Date(nowMs)
     const yesterday = new Date(nowMs - 24 * 60 * 60 * 1_000)
 
-    const snapshots: ProviderSnapshot[] = []
+    const discovered: DiscoveredCodexSnapshot[] = []
     const seenSessions = new Set<string>()
     for (const day of [datePath(today), datePath(yesterday)]) {
       const dir = `${this.sessionsRoot}\\${day}`
@@ -62,13 +74,15 @@ export class CodexProvider implements Provider {
         const path = `${dir}\\${entry.name}`
         const stat = await this.fs.stat(path)
         if (stat === null || stat.mtimeMs < freshAfter) continue
-        const snapshot = await this.snapshotRollout(path, stat.mtimeMs)
-        if (snapshot === null || seenSessions.has(snapshot.sessionId)) continue
-        seenSessions.add(snapshot.sessionId)
-        snapshots.push(snapshot)
+        const discoveredSnapshot = await this.snapshotRollout(path, stat.mtimeMs)
+        if (discoveredSnapshot === null || seenSessions.has(discoveredSnapshot.snapshot.sessionId))
+          continue
+        seenSessions.add(discoveredSnapshot.snapshot.sessionId)
+        discovered.push(discoveredSnapshot)
       }
     }
-    return snapshots
+    this.linkSubagents(discovered)
+    return discovered.map(({ snapshot }) => snapshot)
   }
 
   async feed(dwarfId: string, limit: number): Promise<FeedMessage[] | null> {
@@ -78,36 +92,71 @@ export class CodexProvider implements Provider {
     return extractCodexFeed(await this.fs.readTextTail(path, TAIL_BYTES), limit)
   }
 
-  private async snapshotRollout(path: string, mtimeMs: number): Promise<ProviderSnapshot | null> {
-    const head = parseCodexRolloutHead(await this.fs.readTextHead(path, HEAD_BYTES))
+  private async snapshotRollout(
+    path: string,
+    mtimeMs: number
+  ): Promise<DiscoveredCodexSnapshot | null> {
+    const headText = await this.fs.readTextHead(path, HEAD_BYTES)
+    const head = parseCodexRolloutHead(headText)
     if (head === null) return null
-    const info = parseCodexRolloutTail(await this.fs.readTextTail(path, TAIL_BYTES))
+    const headContext = parseCodexRolloutContext(headText)
+    const tailInfo = parseCodexRolloutTail(await this.fs.readTextTail(path, TAIL_BYTES))
+    // A newer turn_context in the tail wins; the head preserves the initial
+    // context when a large turn pushed it outside the bounded tail read.
+    const info = {
+      ...tailInfo,
+      model: tailInfo.model ?? headContext.model,
+      effort: tailInfo.effort ?? headContext.effort
+    }
 
     const dwarfId = `codex:${head.sessionId}`
     this.feedSources.set(dwarfId, path)
 
+    const mainDwarf: Dwarf = {
+      id: dwarfId,
+      provider: 'codex',
+      role: 'worker',
+      name: head.agentName ?? `codex-${head.sessionId.slice(0, 8)}`,
+      model: info.model,
+      effort: info.effort,
+      status: info.busy ? 'working' : 'idle',
+      lastMessage: info.lastMessage,
+      sessionId: head.sessionId
+    }
     const dwarfs: Dwarf[] = []
     if (info.busy) {
-      dwarfs.push({
-        id: dwarfId,
-        provider: 'codex',
-        role: 'worker',
-        name: `codex-${head.sessionId.slice(0, 8)}`,
-        model: info.model,
-        effort: info.effort,
-        status: 'working',
-        lastMessage: info.lastMessage,
-        sessionId: head.sessionId
-      })
+      dwarfs.push(mainDwarf)
     }
 
     return {
-      provider: 'codex',
-      sessionId: head.sessionId,
-      cwd: head.cwd,
-      status: info.busy ? 'busy' : 'idle',
-      dwarfs,
-      updatedAt: mtimeMs
+      snapshot: {
+        provider: 'codex',
+        sessionId: head.sessionId,
+        cwd: head.cwd,
+        status: info.busy ? 'busy' : 'idle',
+        dwarfs,
+        updatedAt: mtimeMs
+      },
+      mainDwarf,
+      parentSessionId: head.parentSessionId
+    }
+  }
+
+  /**
+   * Codex records a spawned worker's parent thread in session_meta. Promote a
+   * parent only when both sessions were observed in this scan; we never infer
+   * a hierarchy from shared cwd, process ancestry or transcript recency.
+   */
+  private linkSubagents(discovered: DiscoveredCodexSnapshot[]): void {
+    const bySessionId = new Map(discovered.map((item) => [item.snapshot.sessionId, item]))
+    for (const child of discovered) {
+      if (child.parentSessionId === undefined || child.snapshot.status !== 'busy') continue
+      const parent = bySessionId.get(child.parentSessionId)
+      if (parent === undefined) continue
+      parent.mainDwarf.role = 'foreman'
+      if (!parent.snapshot.dwarfs.some((dwarf) => dwarf.id === parent.mainDwarf.id)) {
+        parent.snapshot.dwarfs.unshift(parent.mainDwarf)
+      }
     }
   }
 }

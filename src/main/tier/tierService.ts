@@ -14,9 +14,38 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'out', '.venv', 'targ
 
 /** Extensions considered "source-ish" for the complexity heuristic. */
 const SOURCE_EXTENSIONS = new Set([
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'vue', 'svelte',
-  'py', 'go', 'rs', 'java', 'kt', 'kts', 'cs', 'c', 'h', 'cpp', 'hpp', 'cc',
-  'rb', 'php', 'swift', 'scala', 'lua', 'sql', 'sh', 'ps1', 'html', 'css', 'scss', 'less'
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'vue',
+  'svelte',
+  'py',
+  'go',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'cs',
+  'c',
+  'h',
+  'cpp',
+  'hpp',
+  'cc',
+  'rb',
+  'php',
+  'swift',
+  'scala',
+  'lua',
+  'sql',
+  'sh',
+  'ps1',
+  'html',
+  'css',
+  'scss',
+  'less'
 ])
 
 /** Default cap: stop walking once this many source files have been counted. */

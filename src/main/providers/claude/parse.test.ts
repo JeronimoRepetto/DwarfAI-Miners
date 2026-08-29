@@ -11,7 +11,9 @@ import {
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')
 const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'), 'utf8')
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
-const sessionEntryJson: unknown = JSON.parse(readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8'))
+const sessionEntryJson: unknown = JSON.parse(
+  readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
+)
 
 describe('encodeClaudeProjectDir', () => {
   it('replaces every non-alphanumeric character with a dash', () => {
@@ -34,6 +36,7 @@ describe('parseClaudeSessionEntry', () => {
       sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
       cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools',
       status: 'busy',
+      procStart: '134324755721362761',
       name: 'ai-tools-70',
       startedAt: 1788001972417,
       updatedAt: 1788003794280
@@ -51,6 +54,18 @@ describe('parseClaudeSessionEntry', () => {
   it('defaults an unknown status to idle', () => {
     const entry = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', status: 'weird' })
     expect(entry?.status).toBe('idle')
+  })
+
+  it('normalizes waiting to idle while preserving procStart for a future PID-reuse probe', () => {
+    expect(
+      parseClaudeSessionEntry({
+        pid: 1,
+        sessionId: 's',
+        cwd: 'c',
+        status: 'waiting',
+        procStart: '134324755721362761'
+      })
+    ).toMatchObject({ status: 'idle', procStart: '134324755721362761' })
   })
 })
 
@@ -89,13 +104,19 @@ describe('parseClaudeTranscriptTail', () => {
     const launch = JSON.stringify({
       type: 'user',
       message: { role: 'user', content: [] },
-      toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'agentx', description: 'd' }
+      toolUseResult: {
+        isAsync: true,
+        status: 'async_launched',
+        agentId: 'agentx',
+        description: 'd'
+      }
     })
     const failure = JSON.stringify({
       type: 'user',
       message: {
         role: 'user',
-        content: '<task-notification>\n<task-id>agentx</task-id>\n<status>failed</status>\n</task-notification>'
+        content:
+          '<task-notification>\n<task-id>agentx</task-id>\n<status>failed</status>\n</task-notification>'
       }
     })
     expect(parseClaudeTranscriptTail(launch + '\n' + failure + '\n').inFlightAgents).toEqual([])

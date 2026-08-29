@@ -102,7 +102,9 @@ export class ClaudeProvider implements Provider {
     const info =
       transcriptStat === null
         ? parseClaudeTranscriptTail('')
-        : parseClaudeTranscriptTail(await this.fs.readTextTail(transcriptPath, TRANSCRIPT_TAIL_BYTES))
+        : parseClaudeTranscriptTail(
+            await this.fs.readTextTail(transcriptPath, TRANSCRIPT_TAIL_BYTES)
+          )
 
     const mainDwarfId = `claude:${session.sessionId}`
     this.feedSources.set(mainDwarfId, transcriptPath)

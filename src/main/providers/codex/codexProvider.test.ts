@@ -24,17 +24,49 @@ function busyLines(): string {
     .replaceAll('Sample-Project', 'Busy-Project')
 }
 
+function largeBusyRollout(): string {
+  const head = rolloutLines.slice(0, 3).join('\n')
+  const padding = JSON.stringify({
+    type: 'response_item',
+    payload: { type: 'reasoning', encrypted_content: 'x'.repeat(300_000) }
+  })
+  const taskStarted = JSON.stringify({
+    type: 'event_msg',
+    payload: { type: 'task_started', turn_id: 'large-turn' }
+  })
+  return `${head}\n${padding}\n${taskStarted}\n`
+}
+
+function withThreadSpawn(rolloutText: string, parentSessionId: string, agentName: string): string {
+  const lines = rolloutText.split('\n').filter(Boolean)
+  const sessionMeta: { payload: Record<string, unknown> } = JSON.parse(lines[0]!)
+  sessionMeta.payload.source = {
+    subagent: { thread_spawn: { parent_thread_id: parentSessionId, agent_nickname: agentName } }
+  }
+  lines[0] = JSON.stringify(sessionMeta)
+  return lines.join('\n') + '\n'
+}
+
 describe('CodexProvider', () => {
   let fake: FakeFs
 
   function makeProvider(): CodexProvider {
-    return new CodexProvider({ fs: fake, sessionsRoot: ROOT, livenessWindowS: WINDOW_S, now: () => NOW })
+    return new CodexProvider({
+      fs: fake,
+      sessionsRoot: ROOT,
+      livenessWindowS: WINDOW_S,
+      now: () => NOW
+    })
   }
 
   beforeEach(() => {
     fake = new FakeFs()
     // finished rollout from today, fresh mtime
-    fake.addFile(`${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-00-00-${SESSION_ID}.jsonl`, rollout, NOW - 60_000)
+    fake.addFile(
+      `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-00-00-${SESSION_ID}.jsonl`,
+      rollout,
+      NOW - 60_000
+    )
     // busy rollout from yesterday, fresh mtime
     fake.addFile(
       `${ROOT}\\2026\\08\\28\\rollout-2026-08-28T23-59-00-${BUSY_SESSION_ID}.jsonl`,
@@ -77,6 +109,49 @@ describe('CodexProvider', () => {
       lastMessage: 'Latest codex reply placeholder.',
       sessionId: BUSY_SESSION_ID
     })
+  })
+
+  it('falls back to head context when a large turn pushes it outside the tail read', async () => {
+    const largeSessionId = '01a048b5-large-7312-ab78-000000000000'
+    fake.addFile(
+      `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-30-00-${largeSessionId}.jsonl`,
+      largeBusyRollout().replaceAll(SESSION_ID, largeSessionId),
+      NOW - 30_000
+    )
+
+    const snapshots = await makeProvider().scan()
+    const large = snapshots.find((snapshot) => snapshot.sessionId === largeSessionId)!
+    expect(large).toMatchObject({ status: 'busy' })
+    expect(large.dwarfs[0]).toMatchObject({
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+      status: 'working'
+    })
+  })
+
+  it('uses explicit Codex thread_spawn data to name a worker and promote its observed parent', async () => {
+    const parentSessionId = '01a048b5-parent-7312-ab78-000000000000'
+    const childSessionId = '01a048b5-child-7312-ab78-000000000000'
+    fake.addFile(
+      `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-31-00-${parentSessionId}.jsonl`,
+      busyLines().replaceAll(BUSY_SESSION_ID, parentSessionId),
+      NOW - 20_000
+    )
+    fake.addFile(
+      `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-32-00-${childSessionId}.jsonl`,
+      withThreadSpawn(
+        busyLines().replaceAll(BUSY_SESSION_ID, childSessionId),
+        parentSessionId,
+        'Focused worker'
+      ),
+      NOW - 10_000
+    )
+
+    const snapshots = await makeProvider().scan()
+    const parent = snapshots.find((snapshot) => snapshot.sessionId === parentSessionId)!
+    const child = snapshots.find((snapshot) => snapshot.sessionId === childSessionId)!
+    expect(parent.dwarfs[0]).toMatchObject({ role: 'foreman', sessionId: parentSessionId })
+    expect(child.dwarfs[0]).toMatchObject({ role: 'worker', name: 'Focused worker' })
   })
 
   it('skips rollouts whose mtime is outside the liveness window', async () => {

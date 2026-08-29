@@ -9,14 +9,14 @@ Legend: **[V]** = verified against real files on this PC; **[I]** = inferred, no
 
 ### 1.1 Paths
 
-| What | Path |
-|---|---|
-| Transcript (main session) | `C:\Users\jeron\.claude\projects\<encoded-cwd>\<session-uuid>.jsonl` **[V]** |
-| Subagent transcripts | `...\projects\<encoded-cwd>\<session-uuid>\subagents\agent-<agentId>.jsonl` + `agent-<agentId>.meta.json` **[V]** |
-| Big tool results (hooks etc.) | `...\projects\<encoded-cwd>\<session-uuid>\tool-results\*.txt` **[V]** |
-| Live-session registry | `C:\Users\jeron\.claude\sessions\<pid>.json` (+ `<pid>.<hash>.key`) **[V]** — the single best liveness source |
-| Prompt history (global) | `C:\Users\jeron\.claude\history.jsonl` — `{display, pastedContents, timestamp, project, sessionId}` **[V]** |
-| Agent completion payloads | `%LOCALAPPDATA%\Temp\claude\<encoded-cwd>\<session-uuid>\tasks\<agentId>.output` **[V]** (path seen inside task-notifications) |
+| What                          | Path                                                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Transcript (main session)     | `C:\Users\jeron\.claude\projects\<encoded-cwd>\<session-uuid>.jsonl` **[V]**                                                   |
+| Subagent transcripts          | `...\projects\<encoded-cwd>\<session-uuid>\subagents\agent-<agentId>.jsonl` + `agent-<agentId>.meta.json` **[V]**              |
+| Big tool results (hooks etc.) | `...\projects\<encoded-cwd>\<session-uuid>\tool-results\*.txt` **[V]**                                                         |
+| Live-session registry         | `C:\Users\jeron\.claude\sessions\<pid>.json` (+ `<pid>.<hash>.key`) **[V]** — the single best liveness source                  |
+| Prompt history (global)       | `C:\Users\jeron\.claude\history.jsonl` — `{display, pastedContents, timestamp, project, sessionId}` **[V]**                    |
+| Agent completion payloads     | `%LOCALAPPDATA%\Temp\claude\<encoded-cwd>\<session-uuid>\tasks\<agentId>.output` **[V]** (path seen inside task-notifications) |
 
 ### 1.2 Directory-name encoding of cwd
 
@@ -41,35 +41,75 @@ Common envelope on user/assistant/system/attachment lines **[V]**:
 - **subagent lines** (in `subagents/agent-*.jsonl`) additionally carry `agentId` and `isSidechain:true`; assistant lines there also have `attributionAgent` **[V]**. In current versions subagents are **not** interleaved in the parent file (the live parent had 0 sidechain lines).
 
 Minimal example (assistant, trimmed) **[V]**:
+
 ```json
-{"parentUuid":"dd1ea5fc...","isSidechain":false,"type":"assistant","uuid":"2ed956a9...","timestamp":"2026-08-29T11:22:50.389Z","effort":"xhigh","requestId":"req_011CeW...","cwd":"C:\\Users\\jeron\\Desktop\\AI-Tools","sessionId":"5efdffdd-53df-4509-b30d-c9e56552a22e","version":"2.1.251","gitBranch":"HEAD","message":{"model":"claude-fable-5","role":"assistant","content":[{"type":"text","text":"Listo, ya está en marcha..."}],"usage":{"output_tokens":2586,"output_tokens_details":{"thinking_tokens":2250}}}}
+{
+  "parentUuid": "dd1ea5fc...",
+  "isSidechain": false,
+  "type": "assistant",
+  "uuid": "2ed956a9...",
+  "timestamp": "2026-08-29T11:22:50.389Z",
+  "effort": "xhigh",
+  "requestId": "req_011CeW...",
+  "cwd": "C:\\Users\\jeron\\Desktop\\AI-Tools",
+  "sessionId": "5efdffdd-53df-4509-b30d-c9e56552a22e",
+  "version": "2.1.251",
+  "gitBranch": "HEAD",
+  "message": {
+    "model": "claude-fable-5",
+    "role": "assistant",
+    "content": [{ "type": "text", "text": "Listo, ya está en marcha..." }],
+    "usage": { "output_tokens": 2586, "output_tokens_details": { "thinking_tokens": 2250 } }
+  }
+}
 ```
 
 ### 1.4 The Agent tool (subagents)
 
 Spawn — assistant `tool_use` block **[V]**:
+
 ```json
-{"type":"tool_use","id":"toolu_01SqxjWtW7bcsXUEQQnKmprS","name":"Agent","input":{"description":"Map AI provider session formats","subagent_type":"general-purpose","prompt":"You are researching..."}}
+{
+  "type": "tool_use",
+  "id": "toolu_01SqxjWtW7bcsXUEQQnKmprS",
+  "name": "Agent",
+  "input": {
+    "description": "Map AI provider session formats",
+    "subagent_type": "general-purpose",
+    "prompt": "You are researching..."
+  }
+}
 ```
+
 (`input.model` optional; may be absent.) The tool name is `Agent` in v2.x (`Task` in older versions **[I]**).
 
 Launch ack — the tool_result arrives **immediately** (agents run async/background). The `user` line contains `content[].tool_result` with matching `tool_use_id`, and the top-level `toolUseResult` is the machine-readable one **[V]**:
+
 ```json
 "toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a5d803981d4c3340f","description":"Map AI provider session formats","resolvedModel":"claude-fable-5","prompt":"..."}
 ```
+
 `resolvedModel` gives the actual agent model even when `input.model` was empty.
 
 Sidecar metadata — `subagents\agent-<agentId>.meta.json` **[V]**:
+
 ```json
-{"agentType":"general-purpose","description":"Map AI provider session formats","toolUseId":"toolu_01SqxjWtW7bcsXUEQQnKmprS","spawnDepth":1}
+{
+  "agentType": "general-purpose",
+  "description": "Map AI provider session formats",
+  "toolUseId": "toolu_01SqxjWtW7bcsXUEQQnKmprS",
+  "spawnDepth": 1
+}
 ```
 
 Completion — a `queue-operation` line (`operation:"enqueue"`) and later a `user` line whose content is a `<task-notification>` XML-ish blob **[V]**:
+
 ```
 <task-notification><task-id>ab5a348f033df1e7d</task-id><tool-use-id>toolu_017f...</tool-use-id><output-file>...\tasks\ab5a348f033df1e7d.output</output-file><status>completed</status><summary>Agent "Configure custom statusline" finished</summary>...
 ```
 
 **Agent-in-flight algorithm** (verified against the live session, which had 2 agents running):
+
 1. Scan parent `.jsonl` for `toolUseResult.status == "async_launched"` → collect `agentId`, `description`, `resolvedModel`, `toolUseId`.
 2. Agent is **done** iff a later line contains `<task-id>AGENTID</task-id>` with `<status>completed</status>` (or failed). No such line → **in flight**. **[V]** (live agents had launch acks but no task-notification yet; the completed 24-Aug session had both.)
 3. Cross-checks: `subagents\agent-<agentId>.jsonl` mtime still advancing (mine was, live) **[V]**; last `system` line's `pendingBackgroundAgentCount > 0` **[V]** (live file showed `pending=2`).
@@ -77,20 +117,39 @@ Completion — a `queue-operation` line (`operation:"enqueue"`) and later a `use
 ### 1.5 Liveness — RUNNING session detection
 
 **Best signal: `~/.claude/sessions/<pid>.json`** **[V]** — one file per live interactive session:
+
 ```json
-{"pid":32896,"sessionId":"5efdffdd-53df-4509-b30d-c9e56552a22e","cwd":"C:\\Users\\jeron\\Desktop\\AI-Tools","startedAt":1788001972417,"procStart":"134324755721362761","version":"2.1.251","kind":"interactive","entrypoint":"cli","pidDomain":"win32:m435tr0-turc0","messagingSocketPath":"\\\\.\\pipe\\LOCAL\\cc-msg-952f...","name":"ai-tools-70","nameSource":"derived","status":"busy","updatedAt":1788002904281,"statusUpdatedAt":1788002904281}
+{
+  "pid": 32896,
+  "sessionId": "5efdffdd-53df-4509-b30d-c9e56552a22e",
+  "cwd": "C:\\Users\\jeron\\Desktop\\AI-Tools",
+  "startedAt": 1788001972417,
+  "procStart": "134324755721362761",
+  "version": "2.1.251",
+  "kind": "interactive",
+  "entrypoint": "cli",
+  "pidDomain": "win32:m435tr0-turc0",
+  "messagingSocketPath": "\\\\.\\pipe\\LOCAL\\cc-msg-952f...",
+  "name": "ai-tools-70",
+  "nameSource": "derived",
+  "status": "busy",
+  "updatedAt": 1788002904281,
+  "statusUpdatedAt": 1788002904281
+}
 ```
-- Maps **sessionId → PID → cwd → status** directly. `status` observed values: `"busy"`, `"idle"` **[V]**.
+
+- Maps **sessionId → PID → cwd → status** directly. `status` observed values: `"busy"`, `"idle"` **[V]**. The current registry also reports `"waiting"` **[V]**; AgentName's two-state domain deliberately normalizes `waiting` (and unknown values) to `idle`. If transcript evidence still shows in-flight subagents, that parent remains visible as a foreman with active workers.
 - All 3 files present corresponded to 3 alive `claude.exe` PIDs (verified with `Get-Process`) — stale files appear to be cleaned, but guard against PID reuse anyway: `procStart` is the Windows FILETIME of process start; compare with the process's real start time. **[V]**
 - `updatedAt` is **not** a per-second heartbeat (was ~550s old on a busy session) — treat as "last state change", not liveness. **[V]**
 - `messagingSocketPath` is a named pipe; pipe existence (`\\.\pipe\LOCAL\cc-msg-<hash>`) is a secondary liveness probe **[I]** (not tested).
 
 Other candidates checked:
+
 - `~/.claude/ide/` — **empty** here; only gets `<port>.lock` files when an IDE extension connects **[V empty / I semantics]**. Not usable for terminal sessions.
 - `~/.claude/shell-snapshots/` — `snapshot-bash-<epochms>-<rand>.sh` written at session start; not reliably cleaned → weak signal, only tells you a session started around that time **[V]**.
 - `~/.claude/tasks/<uuid>/` — contains `.lock`/`.highwatermark`; **stale** dirs from weeks ago persist → not a liveness signal **[V]**.
 - `~/.claude/statsig` — does **not exist** in this version **[V]**.
-- Transcript `.jsonl` mtime — good *activity* fallback (the live file's mtime advanced during observation) and the only signal for `claude -p`/SDK runs that may not register in `sessions/` **[V mtime / I about -p]**.
+- Transcript `.jsonl` mtime — good _activity_ fallback (the live file's mtime advanced during observation) and the only signal for `claude -p`/SDK runs that may not register in `sessions/` **[V mtime / I about -p]**.
 
 ### 1.6 Speech bubbles & thinking metadata
 
@@ -114,6 +173,7 @@ Other candidates checked:
 Every line: `{"timestamp":"ISO-8601","type":"...","payload":{...}}` **[V]**. Top-level `type`: `session_meta`, `turn_context`, `response_item`, `event_msg`, `world_state`, `inter_agent_communication_metadata`.
 
 - **`session_meta`** (line 1): `payload = {id (session uuid), timestamp, cwd, originator, cli_version, source, model_provider, base_instructions, history_mode, context_window}`. Observed `originator`: `"codex-tui"` (CLI) and `"Codex Desktop"` **[V]**. **cwd lives here.**
+  - Spawned Codex workers observed locally use `source.subagent.thread_spawn = {parent_thread_id, agent_nickname, agent_role, agent_path, depth}` **[V schema]**. `parent_thread_id` is the only safe parent link: promote a session to foreman only while that worker and its referenced parent rollout are both live in the same scan. Do not infer a hierarchy from a shared cwd, process ancestry, or recency. Plain `source` values (`"cli"`/`"vscode"`) and non-`thread_spawn` subagent shapes carry no usable relationship. **[V]**
 - **`turn_context`**: `payload = {turn_id, cwd, workspace_roots[], current_date, timezone, approval_policy, sandbox_policy, permission_profile, `**`model, effort, summary`**`, personality, collaboration_mode, ...}` — **model + reasoning effort live here** **[V keys]**.
 - **`response_item`** `payload.type`:
   - `message` — `{role: user|assistant|developer, content:[{type:"input_text"|"output_text","text":...}]}` → assistant `output_text` = speech-bubble text **[V]**
@@ -124,8 +184,19 @@ Every line: `{"timestamp":"ISO-8601","type":"...","payload":{...}}` **[V]**. Top
 - **`event_msg`** `payload.type`: `task_started`, `task_complete`, `token_count` ({info.total_token_usage..., model_context_window, rate_limits}), `user_message` ({message}), `agent_message` ({message} — plain-text assistant reply, easiest bubble source), `item_completed`, `mcp_tool_call_end`, `patch_apply_end`, `thread_settings_applied` **[V]**.
 
 Minimal example (trimmed) **[V]**:
+
 ```json
-{"timestamp":"2026-08-28T14:10:45.797Z","type":"session_meta","payload":{"id":"01a048b5-5f35-7312-ab78-38db464920de","cwd":"C:\\Users\\jeron\\Documents\\Codex\\...","originator":"Codex Desktop","cli_version":"0.150.0-alpha.8","model_provider":"openai"}}
+{
+  "timestamp": "2026-08-28T14:10:45.797Z",
+  "type": "session_meta",
+  "payload": {
+    "id": "01a048b5-5f35-7312-ab78-38db464920de",
+    "cwd": "C:\\Users\\jeron\\Documents\\Codex\\...",
+    "originator": "Codex Desktop",
+    "cli_version": "0.150.0-alpha.8",
+    "model_provider": "openai"
+  }
+}
 ```
 
 ### 2.3 Liveness & turn detection
@@ -142,6 +213,7 @@ Minimal example (trimmed) **[V]**:
 **Plain answer: on this machine, `C:\Users\jeron\.gemini` contains no Gemini CLI session data at all, and no live-session signal.** **[V]**
 
 What's actually there:
+
 - The directory is owned by **Google Antigravity** (IDE/agent product): `antigravity\`, `antigravity-cli\`, `antigravity-ide\`, `config\` (plugins + `projects\<uuid>.json` registry entries like `{"id":..., "name":"ToryLib", "projectResources":{resources:[{gitFolder:{folderUri:"file:///c%3A/Users/jeron/Desktop/ToryLib"}}]}}`), `GEMINI.md`, `settings.json` (MCP config). **[V]**
 - Antigravity conversations exist as **binary protobuf** blobs: `antigravity\conversations\<uuid>.pb` (up to 22MB, last touched 2026-05-21). Messages/models are not recoverable without Antigravity's proto schema — impractical. **[V binary / I schema]**
 - Gemini CLI's usual artifacts are absent: no `tmp\` (which would hold `tmp\<project-hash>\logs.json` + `chats\` session files **[I — standard Gemini CLI layout]**), no `history\`, no `oauth_creds.json`, no `google_accounts.json`. → Gemini CLI has effectively never been used here. **[V absence]**
@@ -166,13 +238,13 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 
 ## 5. Confidence summary
 
-| Claim | Status |
-|---|---|
-| Claude dir encoding lossy; `cwd` field per line | Verified |
-| Claude line schema, `effort`, model, thinking blocks | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name) |
-| `sessions/<pid>.json` busy/idle + PID mapping | Verified live (cleanup-on-crash not tested) |
-| Agent async launch / task-notification completion / `subagents\` layout | Verified live + on completed session |
-| Codex rollout layout & record types | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred |
-| Codex liveness = mtime + task_started/complete + process | Partially inferred (no live codex run observed) |
-| Gemini CLI: nothing on disk here | Verified absence |
-| Click-to-focus via PPID walk to terminal | Process data verified; focusing mechanics inferred |
+| Claim                                                                   | Status                                                                                  |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Claude dir encoding lossy; `cwd` field per line                         | Verified                                                                                |
+| Claude line schema, `effort`, model, thinking blocks                    | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)    |
+| `sessions/<pid>.json` busy/idle + PID mapping                           | Verified live (cleanup-on-crash not tested)                                             |
+| Agent async launch / task-notification completion / `subagents\` layout | Verified live + on completed session                                                    |
+| Codex rollout layout & record types                                     | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred |
+| Codex liveness = mtime + task_started/complete + process                | Partially inferred (no live codex run observed)                                         |
+| Gemini CLI: nothing on disk here                                        | Verified absence                                                                        |
+| Click-to-focus via PPID walk to terminal                                | Process data verified; focusing mechanics inferred                                      |

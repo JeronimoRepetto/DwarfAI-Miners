@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { extractCodexFeed, parseCodexRolloutHead, parseCodexRolloutTail } from './parse'
+import {
+  extractCodexFeed,
+  parseCodexRolloutContext,
+  parseCodexRolloutHead,
+  parseCodexRolloutTail
+} from './parse'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'codex')
 const rollout = readFileSync(join(FIXTURES, 'rollout.jsonl'), 'utf8')
@@ -15,6 +20,28 @@ describe('parseCodexRolloutHead', () => {
     expect(parseCodexRolloutHead(rollout)).toEqual({
       sessionId: '01a048b5-5f35-7312-ab78-38db464920de',
       cwd: 'C:\\Users\\jeron\\Desktop\\Sample-Project'
+    })
+  })
+
+  it('reads a spawned worker parent and nickname only from the documented thread_spawn shape', () => {
+    const spawned = JSON.stringify({
+      type: 'session_meta',
+      payload: {
+        id: 'child',
+        cwd: 'C:\\work',
+        source: {
+          subagent: {
+            thread_spawn: { parent_thread_id: 'parent', agent_nickname: 'Parser worker' }
+          }
+        }
+      }
+    })
+
+    expect(parseCodexRolloutHead(spawned)).toEqual({
+      sessionId: 'child',
+      cwd: 'C:\\work',
+      parentSessionId: 'parent',
+      agentName: 'Parser worker'
     })
   })
 
@@ -65,6 +92,24 @@ describe('parseCodexRolloutTail', () => {
   it('survives a partial first line from the tail read', () => {
     const partial = '"payload":{"type":"task_started","turn' + '\n' + rollout
     expect(parseCodexRolloutTail(partial)).toEqual(parseCodexRolloutTail(rollout))
+  })
+})
+
+describe('parseCodexRolloutContext', () => {
+  it('keeps the latest model and effort from a rollout fragment', () => {
+    const first = JSON.stringify({
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-luna', effort: 'medium' }
+    })
+    const latest = JSON.stringify({
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-terra', effort: 'high' }
+    })
+
+    expect(parseCodexRolloutContext(first + '\n' + latest + '\n')).toEqual({
+      model: 'gpt-5.6-terra',
+      effort: 'high'
+    })
   })
 })
 

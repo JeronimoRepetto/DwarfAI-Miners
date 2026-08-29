@@ -9,7 +9,11 @@ describe('FakeFs', () => {
   function makeFake(): FakeFs {
     const fake = new FakeFs()
     fake.addFile('C:\\Users\\jeron\\.claude\\sessions\\100.json', '{"pid":100}', 1_000)
-    fake.addFile('C:\\Users\\jeron\\.claude\\projects\\enc\\s1.jsonl', 'line1\nline2\nline3\n', 2_000)
+    fake.addFile(
+      'C:\\Users\\jeron\\.claude\\projects\\enc\\s1.jsonl',
+      'line1\nline2\nline3\n',
+      2_000
+    )
     return fake
   }
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { aggregateMines } from './aggregate'
-import { defaultDwarf, defaultProviderSnapshot, type MineTier, type ProviderSnapshot } from './types'
+import {
+  defaultDwarf,
+  defaultProviderSnapshot,
+  type MineTier,
+  type ProviderSnapshot
+} from './types'
 
 function snapshot(overrides: Partial<ProviderSnapshot>): ProviderSnapshot {
   return { ...defaultProviderSnapshot(), ...overrides }
@@ -80,7 +85,10 @@ describe('aggregateMines', () => {
   })
 
   it('uses the last path segment as the mine name, handling trailing slashes', () => {
-    const mines = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\Deep\\Nested\\Proj\\' })], tierOf)
+    const mines = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\Deep\\Nested\\Proj\\' })],
+      tierOf
+    )
     expect(mines[0]!.name).toBe('Proj')
   })
 
