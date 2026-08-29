@@ -59,7 +59,10 @@ describe('createPlatformAdapters — focus', () => {
   it('uses the PowerShell user32 path on Windows', async () => {
     const runShell = vi.fn().mockResolvedValue({ stdout: '[]', exitCode: 0 })
     await createPlatformAdapters(options('win32', { runShell })).focusPid(42)
-    expect(runShell.mock.calls[0]?.[0]).toContain('Get-CimInstance Win32_Process')
+    // Console-window resolution (pid-exact) runs first...
+    expect(runShell.mock.calls[0]?.[0]).toContain('AttachConsole')
+    // ...falling back to the ancestor-name chain walk once it reports no handle.
+    expect(runShell.mock.calls[1]?.[0]).toContain('Get-CimInstance Win32_Process')
   })
 
   it('uses ps plus osascript on macOS', async () => {
