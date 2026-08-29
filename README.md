@@ -22,18 +22,31 @@ The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to sh
 
 ## What the panel shows
 
-- One mine per project with an observed AI CLI session.
-- Bronze, copper, silver, gold, or uranium tiers based on bounded source-file counts.
-- Workers for active agents and a foreman with a folder when a parent is coordinating agents.
-- Provider, model, and effort in an accessible tooltip.
-- Truncated activity bubbles and a recent transcript feed when terminal focus is unavailable.
-- Empty mines when a session is open but no agent is currently working.
-- Each dwarf shows a plain-text status: **working** (actively producing), **waiting** (session
-  alive, paused), or **leaving** (its agent just finished/disappeared; kept visible briefly).
+The panel is an isometric idle-game with two views:
 
-Selecting a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
+**Map view (default).** A dark 2.5D landscape where every project with an observed AI CLI
+session appears as a mine mound. Positions are derived from a hash of the mine id, so mounds
+stay put across refreshes. Each tier has its own mineral palette — bronze (earthy brown),
+copper (teal patina), silver (grey shimmer), gold (warm glow), uranium (dark rock with a
+radioactive green pulse). Hovering a mound shows project name, tier, path, and dwarf count;
+clicking enters the mine.
+
+**Mine interior.** A layered cave scene (parallax rock, glowing mineral veins in the tier
+palette) where each agent is an animated SVG dwarf:
+
+- **working** swings a pickaxe at the rock with spark particles,
+- **waiting** rests on the pick with a drifting "z z z",
+- **leaving** walks toward the exit and fades during the runtime grace window,
+- the **foreman** stands apart holding a clipboard and checks it now and then.
+
+Hovering a dwarf shows name, provider, model, effort, and status. When an agent's last
+message changes, a comic speech bubble appears above it for a few seconds. A mine with no
+dwarfs shows tools resting against the wall.
+
+Clicking a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
 this works when their process ancestry reaches a supported terminal host. Codex rollouts do
-not expose a reliable PID; AgentName therefore falls back to the recent activity feed.
+not expose a reliable PID; AgentName then opens the recent activity feed on a parchment
+board inside the panel.
 
 ## Provider support
 

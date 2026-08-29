@@ -1,0 +1,73 @@
+/*
+ * AgentName palette tokens — cozy dark idle-game with warm lantern accents.
+ * Tier palettes attach to any element carrying data-tier, so map mounds and
+ * mine interiors share the same mineral colors.
+ */
+:root {
+  --bg-night-top: #171a26;
+  --bg-night-bottom: #0e0b08;
+  --bg-panel: #14100b;
+  --line-soft: #3f3222;
+  --line-strong: #665239;
+  --ink: #f4ead8;
+  --ink-dim: #b9aa91;
+  --ink-faint: #8d7f6a;
+  --lantern: #f6b644;
+  --lantern-soft: #e8b65c;
+  --danger-ink: #f1c9b9;
+  --danger-bg: #472c25;
+  --danger-line: #d78361;
+  --parchment: #f0e3c8;
+  --parchment-line: #ad9772;
+  --parchment-ink: #33261a;
+}
+
+/* Earthy brown */
+[data-tier='bronze'] {
+  --tier-accent: #c08447;
+  --tier-deep: #4c331d;
+  --tier-mid: #6d4b2a;
+  --tier-glow: rgba(192, 132, 71, 0.4);
+}
+
+/* Teal-green patina */
+[data-tier='copper'] {
+  --tier-accent: #58b79b;
+  --tier-deep: #1d4a40;
+  --tier-mid: #2e6d5c;
+  --tier-glow: rgba(88, 183, 155, 0.4);
+}
+
+/* Cool grey shimmer */
+[data-tier='silver'] {
+  --tier-accent: #c9d5df;
+  --tier-deep: #454f58;
+  --tier-mid: #6e7c88;
+  --tier-glow: rgba(201, 213, 223, 0.42);
+}
+
+/* Warm glow */
+[data-tier='gold'] {
+  --tier-accent: #f0c24f;
+  --tier-deep: #6d4d14;
+  --tier-mid: #a2761f;
+  --tier-glow: rgba(240, 194, 79, 0.5);
+}
+
+/* Dark rock, radioactive green glow */
+[data-tier='uranium'] {
+  --tier-accent: #71e582;
+  --tier-deep: #182a1a;
+  --tier-mid: #24402a;
+  --tier-glow: rgba(113, 229, 130, 0.5);
+}
+
+/* Global, so it reaches every component's scoped animations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
