@@ -1,0 +1,141 @@
+import type { FeedMessage } from '../../domain/types'
+
+/**
+ * Pure parsers for Codex CLI rollout files (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
+ * Every record is {timestamp, type, payload} — see docs/provider-formats.md.
+ */
+
+/** Session identity from the session_meta record (line 1 of a rollout). */
+export interface CodexRolloutHead {
+  sessionId: string
+  cwd: string
+}
+
+/** Live state read from the tail of a rollout. */
+export interface CodexRolloutInfo {
+  model?: string
+  effort?: string
+  /** True when the last task_started has no matching task_complete. */
+  busy: boolean
+  lastMessage?: string
+}
+
+type Rec = Record<string, unknown>
+
+function isRecord(value: unknown): value is Rec {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function jsonlRecords(text: string): { type: string; payload: Rec; timestamp: string }[] {
+  const records: { type: string; payload: Rec; timestamp: string }[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+      if (isRecord(parsed) && typeof parsed.type === 'string' && isRecord(parsed.payload)) {
+        records.push({
+          type: parsed.type,
+          payload: parsed.payload,
+          timestamp: asString(parsed.timestamp) ?? ''
+        })
+      }
+    } catch {
+      // partial or corrupt line — skip
+    }
+  }
+  return records
+}
+
+/** Parse the head of a rollout for the session_meta identity; null when absent. */
+export function parseCodexRolloutHead(headText: string): CodexRolloutHead | null {
+  for (const record of jsonlRecords(headText)) {
+    if (record.type !== 'session_meta') continue
+    const sessionId = asString(record.payload.id) ?? asString(record.payload.session_id)
+    const cwd = asString(record.payload.cwd)
+    if (sessionId === undefined || cwd === undefined) return null
+    return { sessionId, cwd }
+  }
+  return null
+}
+
+function outputText(payload: Rec): string | undefined {
+  if (!Array.isArray(payload.content)) return undefined
+  const texts = payload.content
+    .filter(isRecord)
+    .filter((block) => block.type === 'output_text')
+    .map((block) => asString(block.text) ?? '')
+    .filter((text) => text !== '')
+  return texts.length > 0 ? texts.join('\n') : undefined
+}
+
+/** Extract model/effort, open-turn state and the latest reply from a rollout tail. */
+export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
+  let model: string | undefined
+  let effort: string | undefined
+  let lastMessage: string | undefined
+  let openTurnId: string | null | undefined
+
+  for (const record of jsonlRecords(tailText)) {
+    if (record.type === 'turn_context') {
+      model = asString(record.payload.model) ?? model
+      effort = asString(record.payload.effort) ?? effort
+      continue
+    }
+    if (record.type === 'response_item') {
+      if (record.payload.type === 'message' && record.payload.role === 'assistant') {
+        lastMessage = outputText(record.payload) ?? lastMessage
+      }
+      continue
+    }
+    if (record.type !== 'event_msg') continue
+    switch (record.payload.type) {
+      case 'task_started':
+        openTurnId = asString(record.payload.turn_id) ?? null
+        break
+      case 'task_complete': {
+        const turnId = asString(record.payload.turn_id)
+        // Close the open turn when ids match, or when either side has no id.
+        if (openTurnId === null || turnId === undefined || turnId === openTurnId) {
+          openTurnId = undefined
+        }
+        lastMessage = asString(record.payload.last_agent_message) ?? lastMessage
+        break
+      }
+      case 'agent_message':
+        lastMessage = asString(record.payload.message) ?? lastMessage
+        break
+    }
+  }
+
+  return { model, effort, busy: openTurnId !== undefined, lastMessage }
+}
+
+/**
+ * The last `limit` human-readable messages of a rollout: user_message events
+ * and assistant response_items. agent_message events are skipped because they
+ * duplicate the response_item text of the same reply.
+ */
+export function extractCodexFeed(tailText: string, limit: number): FeedMessage[] {
+  const feed: FeedMessage[] = []
+  for (const record of jsonlRecords(tailText)) {
+    if (record.type === 'event_msg' && record.payload.type === 'user_message') {
+      const text = asString(record.payload.message)
+      if (text !== undefined) feed.push({ role: 'user', text, timestamp: record.timestamp })
+      continue
+    }
+    if (
+      record.type === 'response_item' &&
+      record.payload.type === 'message' &&
+      record.payload.role === 'assistant'
+    ) {
+      const text = outputText(record.payload)
+      if (text !== undefined) feed.push({ role: 'assistant', text, timestamp: record.timestamp })
+    }
+  }
+  return feed.slice(-limit)
+}
