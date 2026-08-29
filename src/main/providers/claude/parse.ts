@@ -31,6 +31,12 @@ export interface ClaudeTranscriptInfo {
   effort?: string
   lastAssistantText?: string
   inFlightAgents: ClaudeInFlightAgent[]
+  /**
+   * Every agent id seen reaching a terminal status in this tail, whether or not
+   * its launch record is still in the window. The provider remembers these
+   * across polls so a finished agent can never come back (see claudeProvider).
+   */
+  terminalAgentIds: string[]
   pendingBackgroundAgentCount?: number
 }
 
@@ -69,8 +75,8 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     sessionId,
     cwd,
     // The registry can report `waiting`. The domain only has busy/idle, so it
-    // intentionally normalizes waiting (and unknown values) to idle. A parent
-    // with in-flight agents is still rendered as a foreman by ClaudeProvider.
+    // intentionally normalizes waiting (and unknown values) to idle. The main
+    // session dwarf is a foreman either way — status changes, rank does not.
     status: json.status === 'busy' ? 'busy' : 'idle',
     procStart: asString(json.procStart),
     name: asString(json.name),
@@ -122,15 +128,20 @@ function userContentStrings(line: Rec): string[] {
   return []
 }
 
+/**
+ * Terminal statuses a `<task-notification>` can report. `killed` is the one an
+ * accidental stop writes — leaving it out was the ghost-dwarf bug: the agent
+ * never notified as completed, so it mined forever (see docs/provider-formats.md).
+ */
 const TASK_NOTIFICATION_RE =
-  /<task-id>([^<]+)<\/task-id>[\s\S]*?<status>(completed|failed)<\/status>/g
+  /<task-id>([^<]+)<\/task-id>[\s\S]*?<status>(completed|failed|killed)<\/status>/g
 
 /**
  * Extract model/effort, the latest assistant text and the set of in-flight
  * subagents from the tail of a session (or subagent) transcript.
  *
  * An agent is in flight when a `toolUseResult.status == "async_launched"` line
- * exists with no later task-notification for the same task-id (completed or failed).
+ * exists with no task-notification for the same task-id in this tail.
  */
 export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInfo {
   let model: string | undefined
@@ -178,6 +189,7 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     effort,
     lastAssistantText,
     inFlightAgents: [...launched.values()].filter((agent) => !finished.has(agent.agentId)),
+    terminalAgentIds: [...finished],
     pendingBackgroundAgentCount
   }
 }

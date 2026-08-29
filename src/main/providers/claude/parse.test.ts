@@ -69,6 +69,32 @@ describe('parseClaudeSessionEntry', () => {
   })
 })
 
+/** The `toolUseResult` line Claude writes the moment an Agent tool call starts. */
+function launchLine(agentId: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [] },
+      toolUseResult: { isAsync: true, status: 'async_launched', agentId, description: 'd' }
+    }) + '\n'
+  )
+}
+
+/** The `<task-notification>` blob Claude enqueues when an agent stops. */
+function notificationLine(agentId: string, status: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content:
+          `<task-notification>\n<task-id>${agentId}</task-id>\n` +
+          `<status>${status}</status>\n</task-notification>`
+      }
+    }) + '\n'
+  )
+}
+
 describe('parseClaudeTranscriptTail', () => {
   const info = parseClaudeTranscriptTail(parentTranscript)
 
@@ -100,29 +126,38 @@ describe('parseClaudeTranscriptTail', () => {
     expect(parseClaudeTranscriptTail(partial)).toEqual(info)
   })
 
-  it('treats a failed task-notification as completion too', () => {
-    const launch = JSON.stringify({
-      type: 'user',
-      message: { role: 'user', content: [] },
-      toolUseResult: {
-        isAsync: true,
-        status: 'async_launched',
-        agentId: 'agentx',
-        description: 'd'
-      }
-    })
-    const failure = JSON.stringify({
-      type: 'user',
-      message: {
-        role: 'user',
-        content:
-          '<task-notification>\n<task-id>agentx</task-id>\n<status>failed</status>\n</task-notification>'
-      }
-    })
-    expect(parseClaudeTranscriptTail(launch + '\n' + failure + '\n').inFlightAgents).toEqual([])
-    expect(parseClaudeTranscriptTail(launch + '\n').inFlightAgents).toEqual([
+  it('reports the agent ids that reached a terminal status', () => {
+    expect(info.terminalAgentIds).toEqual(['a5d803981d4c3340f'])
+  })
+
+  it.each(['completed', 'failed', 'killed'])('treats a %s task-notification as terminal', (s) => {
+    const parsed = parseClaudeTranscriptTail(launchLine('agentx') + notificationLine('agentx', s))
+    expect(parsed.inFlightAgents).toEqual([])
+    expect(parsed.terminalAgentIds).toEqual(['agentx'])
+  })
+
+  it('keeps an agent in flight while no notification has arrived', () => {
+    const parsed = parseClaudeTranscriptTail(launchLine('agentx'))
+    expect(parsed.inFlightAgents).toEqual([
       { agentId: 'agentx', description: 'd', resolvedModel: undefined }
     ])
+    expect(parsed.terminalAgentIds).toEqual([])
+  })
+
+  it('ignores a status the notification format does not use', () => {
+    const parsed = parseClaudeTranscriptTail(
+      launchLine('agentx') + notificationLine('agentx', 'running')
+    )
+    expect(parsed.inFlightAgents).toHaveLength(1)
+    expect(parsed.terminalAgentIds).toEqual([])
+  })
+
+  it('reports a terminal agent whose launch record already scrolled out of the tail', () => {
+    // The 256KiB tail can hold the notification long after the launch is gone,
+    // and the provider needs it to keep a completed agent from coming back.
+    const parsed = parseClaudeTranscriptTail(notificationLine('agentx', 'completed'))
+    expect(parsed.inFlightAgents).toEqual([])
+    expect(parsed.terminalAgentIds).toEqual(['agentx'])
   })
 
   it('returns an empty result for empty input', () => {
@@ -131,6 +166,7 @@ describe('parseClaudeTranscriptTail', () => {
       effort: undefined,
       lastAssistantText: undefined,
       inFlightAgents: [],
+      terminalAgentIds: [],
       pendingBackgroundAgentCount: undefined
     })
   })

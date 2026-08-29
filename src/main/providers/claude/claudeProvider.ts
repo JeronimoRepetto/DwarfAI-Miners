@@ -48,6 +48,17 @@ export class ClaudeProvider implements Provider {
   private readonly now: () => number
   /** dwarfId -> transcript path, rebuilt on every scan (used by feed()). */
   private readonly feedSources = new Map<string, string>()
+  /**
+   * Every agent id ever seen reaching a terminal status, remembered for the
+   * life of the process.
+   *
+   * A completion notification can scroll out of the transcript tail while the
+   * `async_launched` record that started the agent is still inside it, and then
+   * a finished agent looks in flight again forever — the ghost dwarf. Agent ids
+   * are globally unique, so one flat set is enough, and it only grows by one
+   * short string per agent actually launched on this machine.
+   */
+  private readonly terminalAgents = new Set<string>()
 
   constructor(options: ClaudeProviderOptions) {
     this.fs = options.fs
@@ -106,16 +117,23 @@ export class ClaudeProvider implements Provider {
             await this.fs.readTextTail(transcriptPath, TRANSCRIPT_TAIL_BYTES)
           )
 
+    for (const agentId of info.terminalAgentIds) this.terminalAgents.add(agentId)
+    const inFlightAgents = info.inFlightAgents.filter(
+      (agent) => !this.terminalAgents.has(agent.agentId)
+    )
+
     const mainDwarfId = `claude:${session.sessionId}`
     this.feedSources.set(mainDwarfId, transcriptPath)
 
     const dwarfs: Dwarf[] = []
-    const hasSubagents = info.inFlightAgents.length > 0
-    if (hasSubagents || session.status === 'busy') {
+    if (inFlightAgents.length > 0 || session.status === 'busy') {
       dwarfs.push({
         id: mainDwarfId,
         provider: 'claude',
-        role: hasSubagents ? 'foreman' : 'worker',
+        // The main session is the orchestrator: it is the foreman whether or
+        // not it currently has agents out. Deriving the role from the headcount
+        // instead made the same dwarf swap identity mid-session.
+        role: 'foreman',
         name: session.name ?? session.sessionId.slice(0, 8),
         model: info.model,
         effort: info.effort,
@@ -126,7 +144,7 @@ export class ClaudeProvider implements Provider {
         startedAt: session.startedAt
       })
     }
-    for (const agent of info.inFlightAgents) {
+    for (const agent of inFlightAgents) {
       const workerId = `${mainDwarfId}:${agent.agentId}`
       const subagentPath = `${projectDir}\\${session.sessionId}\\subagents\\agent-${agent.agentId}.jsonl`
       this.feedSources.set(workerId, subagentPath)

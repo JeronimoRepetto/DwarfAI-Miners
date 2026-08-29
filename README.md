@@ -24,24 +24,37 @@ The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to sh
 
 The panel is an isometric idle-game with two views:
 
-**Map view (default).** A dark 2.5D landscape where every project with an observed AI CLI
+**Map view (default).** A painted moonlit valley where every project with an observed AI CLI
 session appears as a mine mound. Positions are derived from a hash of the mine id, so mounds
-stay put across refreshes. Each tier has its own mineral palette — bronze (earthy brown),
-copper (teal patina), silver (grey shimmer), gold (warm glow), uranium (dark rock with a
-radioactive green pulse). Hovering a mound shows project name, tier, path, and dwarf count;
-clicking enters the mine.
+stay put across refreshes. Each tier has its own painted entrance and mineral palette —
+bronze (earthy brown), copper (teal patina), silver (grey shimmer), gold (warm glow), uranium
+(dark rock with a radioactive green pulse). Hovering a mound shows project name, tier, path,
+and dwarf count; clicking enters the mine.
 
-**Mine interior.** A layered cave scene (parallax rock, glowing mineral veins in the tier
-palette) where each agent is an animated SVG dwarf:
+**Mine interior.** The painted cave for that tier, with the crew standing on the walkable
+floor along the bottom. Each agent is a dwarf animated by swapping painted poses:
 
-- **working** swings a pickaxe at the rock with spark particles,
-- **waiting** rests on the pick with a drifting "z z z",
-- **leaving** walks toward the exit and fades during the runtime grace window,
-- the **foreman** stands apart holding a clipboard and checks it now and then.
+- **working** alternates two pickaxe swings,
+- **waiting** alternates two resting poses with a drifting "z z z",
+- **leaving** alternates two walking poses, mirrored toward the exit, fading during the
+  runtime grace window,
+- the **foreman** stands apart and looks up from his log book now and then.
 
+The provider is shown by a small badge on the sprite rather than by tinting the painting.
 Hovering a dwarf shows name, provider, model, effort, and status. When an agent's last
-message changes, a comic speech bubble appears above it for a few seconds. A mine with no
-dwarfs shows tools resting against the wall.
+message changes, a comic speech bubble appears above it for a few seconds.
+
+### Art pipeline
+
+The renderer ships processed art in `src/renderer/src/assets/art/` — committed, so a clone
+builds and runs without the source paintings. `pnpm art:build` regenerates it from the
+originals, which live outside the repository (default `C:\Users\jeron\Downloads\DwarfAI-Miners`,
+overridable with `--src <dir>` or `AGENT_NAME_ART_SRC`) and are never modified.
+
+The script chroma-keys the dwarf and mound paintings off their flat backdrop — sampling the
+key color from each image's own four corners, because it differs per image — crops all nine
+dwarf poses to one shared canvas so animation frames never jitter, and downscales the opaque
+background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.mjs`.
 
 Clicking a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
 this works when their process ancestry reaches a supported terminal host. Codex rollouts do
@@ -58,6 +71,13 @@ board inside the panel.
 
 Codex liveness is heuristic: a recently modified rollout can remain visible until the
 configured liveness window expires after the CLI closes.
+
+For Claude, the main session dwarf is always the foreman — it is the orchestrator whether or
+not it currently has subagents out — and subagents are always workers. A subagent leaves the
+crew as soon as its `<task-notification>` reports `completed`, `failed` or `killed`, and
+AgentName remembers that so an agent whose notification later scrolls out of the transcript
+tail can never come back as a ghost. Codex promotion still comes from a verified
+`thread_spawn` parent link.
 
 ## Startup and tray behavior
 

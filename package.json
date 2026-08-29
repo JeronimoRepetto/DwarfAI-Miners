@@ -30,6 +30,7 @@
     }
   },
   "scripts": {
+    "art:build": "node scripts/build-art.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "package": "pnpm build && electron-builder --win nsis portable --x64",
@@ -58,6 +59,7 @@
     "eslint": "10.9.1",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-vue": "10.10.0",
+    "jimp": "1.6.1",
     "jsdom": "^30.0.1",
     "prettier": "3.9.6",
     "typescript": "6.0.3",

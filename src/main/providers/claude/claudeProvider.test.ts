@@ -16,8 +16,35 @@ const SESSION_ID = '5efdffdd-53df-4509-b30d-c9e56552a22e'
 const CWD = 'C:\\Users\\jeron\\Desktop\\AI-Tools'
 const ENCODED = 'C--Users-jeron-Desktop-AI-Tools'
 
+const parentLines = parentTranscript.split('\n').filter(Boolean)
+
 /** Transcript slice where the only launched agent already completed (busy, no subagents). */
-const noAgentTranscript = parentTranscript.split('\n').filter(Boolean).slice(0, 6).join('\n') + '\n'
+const noAgentTranscript = parentLines.slice(0, 6).join('\n') + '\n'
+
+/**
+ * The same agent's launch record with its completion notification no longer in
+ * the window — exactly what a 256KiB tail read returns once a busy session has
+ * written enough to push the notification out. This is the ghost-dwarf shape.
+ */
+const scrolledTailTranscript = parentLines.slice(0, 4).join('\n') + '\n'
+
+const FINISHED_AGENT = 'a5d803981d4c3340f'
+const LIVE_AGENT = 'a34eaebecc3d57381'
+
+/** A `<task-notification>` line as Claude enqueues it when an agent stops. */
+function notification(agentId: string, status: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content:
+          `<task-notification>\n<task-id>${agentId}</task-id>\n` +
+          `<status>${status}</status>\n</task-notification>`
+      }
+    }) + '\n'
+  )
+}
 
 function otherEntry(pid: number, sessionId: string, cwd: string, status: string): string {
   return JSON.stringify({ pid, sessionId, cwd, status, name: 'other-1', updatedAt: 5_000 })
@@ -91,14 +118,89 @@ describe('ClaudeProvider', () => {
     })
   })
 
-  it('maps a busy session without subagents to a single worker', async () => {
+  it('keeps the main session dwarf a foreman even with no subagents', async () => {
+    // The main session is the orchestrator whether or not it currently has
+    // agents out. Flipping its role would read as a different dwarf arriving.
     fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, noAgentTranscript, 42_000)
     const snapshots = await makeProvider().scan()
     expect(snapshots[0]!.dwarfs).toHaveLength(1)
     expect(snapshots[0]!.dwarfs[0]).toMatchObject({
       id: `claude:${SESSION_ID}`,
-      role: 'worker',
+      role: 'foreman',
       status: 'working'
+    })
+  })
+
+  it('keeps the main dwarf identical when its last agent finishes', async () => {
+    const provider = makeProvider()
+    const withAgent = (await provider.scan())[0]!.dwarfs[0]!
+    fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, noAgentTranscript, 43_000)
+    const alone = (await provider.scan())[0]!.dwarfs[0]!
+    expect(alone.id).toBe(withAgent.id)
+    expect(alone.role).toBe(withAgent.role)
+  })
+
+  it('leaves a waiting main session a foreman too', async () => {
+    fake.addFile(
+      `${ROOT1}\\sessions\\32896.json`,
+      JSON.stringify({ ...JSON.parse(sessionEntry), status: 'idle' }),
+      1_000
+    )
+    const snapshots = await makeProvider().scan()
+    expect(snapshots[0]!.dwarfs[0]).toMatchObject({ role: 'foreman', status: 'waiting' })
+  })
+
+  describe('finished agents', () => {
+    it('drops an agent killed by an accidental stop', async () => {
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript + notification(LIVE_AGENT, 'killed'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([`claude:${SESSION_ID}`])
+    })
+
+    it('shows an agent whose launch record is all this provider has ever seen', async () => {
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        scrolledTailTranscript,
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        `claude:${SESSION_ID}`,
+        `claude:${SESSION_ID}:${FINISHED_AGENT}`
+      ])
+    })
+
+    it('never re-lists an agent whose completion scrolled out of the tail', async () => {
+      const provider = makeProvider()
+      // Poll one still has the completion notification in the window.
+      fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, noAgentTranscript, 42_000)
+      expect((await provider.scan())[0]!.dwarfs).toHaveLength(1)
+
+      // Poll two only reaches back as far as the launch record.
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        scrolledTailTranscript,
+        43_000
+      )
+      const second = await provider.scan()
+      expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([`claude:${SESSION_ID}`])
+    })
+
+    it('remembers a killed agent across polls as well', async () => {
+      const provider = makeProvider()
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript + notification(LIVE_AGENT, 'killed'),
+        42_000
+      )
+      await provider.scan()
+      fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, parentTranscript, 43_000)
+      const second = await provider.scan()
+      expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([`claude:${SESSION_ID}`])
     })
   })
 

@@ -1,22 +1,61 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultDwarf } from '../testing/factories'
 import DwarfSprite from './DwarfSprite.vue'
 
+/** The pose file a sprite is currently showing, e.g. "dwarf-pick-1". */
+function poseOf(wrapper: ReturnType<typeof mount>): string {
+  const src = wrapper.find('.dwarf-frame').attributes('src') ?? ''
+  return (
+    src
+      .split('/')
+      .pop()
+      ?.replace(/\.png.*$/, '') ?? ''
+  )
+}
+
 describe('DwarfSprite', () => {
-  it('gives a worker a pickaxe and no clipboard', () => {
-    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ role: 'worker' }) } })
-    expect(wrapper.find('.pickaxe').exists()).toBe(true)
-    expect(wrapper.find('.clipboard').exists()).toBe(false)
+  it('swings a pickaxe while a worker is working', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
   })
 
-  it('gives a foreman a clipboard and no pickaxe', () => {
+  it('puts the foreman on his own pose instead of a pickaxe', () => {
     const wrapper = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ role: 'foreman', name: 'Boss' }) }
+      props: { dwarf: defaultDwarf({ role: 'foreman', name: 'Boss', status: 'working' }) }
     })
-    expect(wrapper.find('.clipboard').exists()).toBe(true)
-    expect(wrapper.find('.pickaxe').exists()).toBe(false)
+    expect(poseOf(wrapper)).toBe('dwarf-foreman-idle')
+  })
+
+  it('rests a waiting worker and shows the zzz overlay', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'waiting' }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+    expect(wrapper.find('.zzz').exists()).toBe(true)
+  })
+
+  it('walks a leaving dwarf and mirrors it toward the exit', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'leaving' }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-walk-1')
+    expect(wrapper.classes()).toContain('is-flipped')
+  })
+
+  it('does not mirror a dwarf that is staying put', () => {
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
+    expect(wrapper.classes()).not.toContain('is-flipped')
+  })
+
+  it('stands neutral while its terminal is being focused', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), activating: true }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-idle')
   })
 
   it('applies the animation class for its status', () => {
@@ -30,9 +69,15 @@ describe('DwarfSprite', () => {
     }
   })
 
+  it('marks the provider with a badge instead of tinting the painted art', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ provider: 'codex' }) }
+    })
+    expect(wrapper.find('.provider-dot').classes()).toContain('provider-codex')
+  })
+
   it('emits activate when clicked', async () => {
-    const dwarf = defaultDwarf()
-    const wrapper = mount(DwarfSprite, { props: { dwarf } })
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
     await wrapper.find('button').trigger('click')
     expect(wrapper.emitted('activate')).toHaveLength(1)
   })
@@ -62,5 +107,51 @@ describe('DwarfSprite', () => {
     for (const detail of ['Gimli', 'codex', 'gpt-test', 'high', 'Waiting']) {
       expect(tooltip.text()).toContain(detail)
     }
+  })
+
+  describe('frame cycling', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('alternates the two working poses on the pick cadence', async () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working' }) }
+      })
+      expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+      vi.advanceTimersByTime(550)
+      await wrapper.vm.$nextTick()
+      expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+      vi.advanceTimersByTime(550)
+      await wrapper.vm.$nextTick()
+      expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+    })
+
+    it('holds a single-frame animation still', async () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
+      })
+      vi.advanceTimersByTime(10_000)
+      await wrapper.vm.$nextTick()
+      expect(poseOf(wrapper)).toBe('dwarf-foreman-idle')
+    })
+
+    it('restarts the cycle from the first frame when the status changes', async () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working' }) }
+      })
+      vi.advanceTimersByTime(550)
+      await wrapper.vm.$nextTick()
+      expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+      await wrapper.setProps({ dwarf: defaultDwarf({ status: 'waiting' }) })
+      expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+    })
+
+    it('stops its timer when unmounted', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working' }) }
+      })
+      wrapper.unmount()
+      expect(vi.getTimerCount()).toBe(0)
+    })
   })
 })

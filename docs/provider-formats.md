@@ -102,17 +102,41 @@ Sidecar metadata — `subagents\agent-<agentId>.meta.json` **[V]**:
 }
 ```
 
+**It carries no status, no completion flag, and no end timestamp.** Re-checked on 2026-08-29 against every `agent-*.meta.json` in four live `AI-Tools` sessions (12 files, 136–157 bytes each): the only keys ever present are `agentType`, `description`, `toolUseId`, `spawnDepth` and an optional `model` (`"opus"`, `"sonnet"` — the requested alias, not the resolved id). Files for long-finished agents are byte-identical in shape to files for agents still running, and the file is not rewritten when the agent stops. **[V]** So the sidecar is useful for naming a worker, and useless as a completion authority — AgentName keys completion on the task-notification instead (below).
+
+The `.output` sidecar is no better: `%LOCALAPPDATA%\Temp\claude\<encoded-cwd>\<session-uuid>\tasks\<agentId>.output` existed for six agents in one session but was **0 bytes for five of them**, including agents that had completed successfully. Presence and size carry no completion signal. **[V]**
+
 Completion — a `queue-operation` line (`operation:"enqueue"`) and later a `user` line whose content is a `<task-notification>` XML-ish blob **[V]**:
 
 ```
 <task-notification><task-id>ab5a348f033df1e7d</task-id><tool-use-id>toolu_017f...</tool-use-id><output-file>...\tasks\ab5a348f033df1e7d.output</output-file><status>completed</status><summary>Agent "Configure custom statusline" finished</summary>...
 ```
 
+**`<status>` values — all three are terminal.** Counted across one real 1.5 MB parent transcript on 2026-08-29: `completed` ×21, `failed` ×2, **`killed` ×4** **[V]**. `killed` is what an accidental stop writes, with `<summary>Agent "…" was stopped by user</summary>`. Every notification's `<note>` also warns:
+
+> A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.
+
+In that transcript each of the 6 agents was launched exactly once and notified exactly once, and every notification came **after** its launch record. **[V]**
+
 **Agent-in-flight algorithm** (verified against the live session, which had 2 agents running):
 
 1. Scan parent `.jsonl` for `toolUseResult.status == "async_launched"` → collect `agentId`, `description`, `resolvedModel`, `toolUseId`.
-2. Agent is **done** iff a later line contains `<task-id>AGENTID</task-id>` with `<status>completed</status>` (or failed). No such line → **in flight**. **[V]** (live agents had launch acks but no task-notification yet; the completed 24-Aug session had both.)
+2. Agent is **done** iff a line contains `<task-id>AGENTID</task-id>` with `<status>` of `completed`, `failed` **or `killed`**. No such line → **in flight**. **[V]**
 3. Cross-checks: `subagents\agent-<agentId>.jsonl` mtime still advancing (mine was, live) **[V]**; last `system` line's `pendingBackgroundAgentCount > 0` **[V]** (live file showed `pending=2`).
+
+#### Ghost dwarfs — bug found and fixed (2026-08-29)
+
+An agent stayed rendered as WORKING forever after its session had moved on. Two causes stacked:
+
+- `killed` was not in the terminal-status list, so a stopped agent never registered as finished at all.
+- Even with the status list complete, **the notification can scroll out of the 256 KiB transcript tail while the launch record is still inside it**. The launch is one short `toolUseResult` line; the notification lands hundreds of KB later, and the two are read through the same fixed-size window. Once the window slides past the notification but not past the launch, a re-parse resurrects a finished agent — permanently.
+
+Fixed in two layers (`parse.ts`, `claudeProvider.ts`):
+
+1. `killed` joined `completed`/`failed` in `TASK_NOTIFICATION_RE`.
+2. `parseClaudeTranscriptTail` now also returns `terminalAgentIds` — every id seen reaching a terminal status in this tail, **whether or not its launch record is still in the window**. `ClaudeProvider` accumulates those into a process-lifetime `Set` and filters in-flight agents through it, so an agent that has ever been seen finishing can never re-enter the crew. Agent ids are globally unique 17-hex-char strings, so one flat set covers all sessions and grows by one short string per agent actually launched.
+
+Since the sidecar files carry no completion state (§1.4), the task-notification plus that memory **is** the authority. Known trade-off: the `<note>` above says a killed agent can be resumed and would notify again; a resumed agent stays hidden until the app restarts. A ghost that never leaves is the worse failure, so this is the deliberate choice.
 
 ### 1.5 Liveness — RUNNING session detection
 
@@ -138,7 +162,8 @@ Completion — a `queue-operation` line (`operation:"enqueue"`) and later a `use
 }
 ```
 
-- Maps **sessionId → PID → cwd → status** directly. `status` observed values: `"busy"`, `"idle"` **[V]**. The current registry also reports `"waiting"` **[V]**; AgentName's two-state domain deliberately normalizes `waiting` (and unknown values) to `idle`. If transcript evidence still shows in-flight subagents, that parent remains visible as a foreman with active workers.
+- Maps **sessionId → PID → cwd → status** directly. `status` observed values: `"busy"`, `"idle"` **[V]**. The current registry also reports `"waiting"` **[V]**; AgentName's two-state domain deliberately normalizes `waiting` (and unknown values) to `idle`. A parent that is idle but still has in-flight subagents stays visible, waiting, with its workers around it.
+- **Rank is identity, not headcount.** The main session dwarf is always a `foreman`: it is the orchestrator whether or not it currently has agents out. Deriving the role from the in-flight count (the original behaviour) made the same dwarf change appearance mid-session, which read as a different dwarf arriving every time an agent started or finished. Only its `status` tracks the registry (busy → working, idle → waiting). Subagents are always workers. Codex is unaffected — its foreman promotion comes from a real `thread_spawn` parent link (§2.2), not from a count.
 - All 3 files present corresponded to 3 alive `claude.exe` PIDs (verified with `Get-Process`) — stale files appear to be cleaned, but guard against PID reuse anyway: `procStart` is the Windows FILETIME of process start; compare with the process's real start time. **[V]**
 - `updatedAt` is **not** a per-second heartbeat (was ~550s old on a busy session) — treat as "last state change", not liveness. **[V]**
 - `messagingSocketPath` is a named pipe; pipe existence (`\\.\pipe\LOCAL\cc-msg-<hash>`) is a secondary liveness probe **[I]** (not tested).
@@ -252,6 +277,8 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 | Claude line schema, `effort`, model, thinking blocks                    | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)    |
 | `sessions/<pid>.json` busy/idle + PID mapping                           | Verified live (cleanup-on-crash not tested)                                             |
 | Agent async launch / task-notification completion / `subagents\` layout | Verified live + on completed session                                                    |
+| `<status>` is one of completed/failed/killed; all terminal              | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                        |
+| `agent-*.meta.json` and `tasks\*.output` carry no completion state      | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                |
 | Codex rollout layout & record types                                     | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred |
 | Codex liveness = mtime + task_started/complete + process                | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap) |
 | Gemini CLI: nothing on disk here                                        | Verified absence                                                                        |
