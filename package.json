@@ -1,0 +1,42 @@
+{
+  "name": "agent-name",
+  "productName": "AgentName",
+  "version": "0.1.0",
+  "description": "Floating panel that visualizes AI coding agents running on this PC as dwarfs working in mines.",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "vue": "3.5.42"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.0",
+    "@vitejs/plugin-vue": "6.0.8",
+    "electron": "44.0.0",
+    "electron-vite": "5.0.0",
+    "eslint": "10.9.1",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.10.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.68.0",
+    "vite": "7.3.6",
+    "vitest": "4.1.11",
+    "vue-tsc": "3.3.11"
+  }
+}

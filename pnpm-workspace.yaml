@@ -1,0 +1,6 @@
+# pnpm 11 gotcha (learned on sibling project cypanel): `onlyBuiltDependencies`
+# in package.json is IGNORED. Build scripts must be allowed here, otherwise
+# electron's postinstall never runs and node_modules/electron/dist is empty.
+allowBuilds:
+  electron: true
+  esbuild: true

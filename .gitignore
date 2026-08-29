@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+.env
+*.local
+coverage/
+.DS_Store
+Thumbs.db
