@@ -135,7 +135,13 @@ export class AgentRuntime {
     const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
     if (dwarf === undefined) return { focused: false, openedTerminal: false, feed: [] }
 
-    if (dwarf.pid !== undefined) {
+    // A 'leaving' dwarf's agent has already finished/disappeared: its
+    // retained pid is stale, and on a long-running machine could even have
+    // been reused by an unrelated process. There is nothing to focus, so
+    // skip straight to the terminal/feed fallbacks below (which still read
+    // from disk and work fine for as long as the dwarf stays in its grace
+    // period) instead of risking a focus on the wrong window.
+    if (dwarf.pid !== undefined && dwarf.status !== 'leaving') {
       try {
         if (await this.focus(dwarf.pid)) {
           return { focused: true, openedTerminal: false, feed: [] }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FeedMessage } from '../shared/contracts'
 import { FakeFs } from './adapters/fakeFs'
 import { defaultConfig } from './config'
@@ -200,7 +200,133 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
   })
 })
 
+/**
+ * R3-leaving-dwarf-activation: a 'leaving' dwarf's agent has already
+ * finished/disappeared, so its retained pid is stale (or, worst case, reused
+ * by an unrelated process) — attempting to focus it serves no purpose and
+ * risks focusing the wrong window. The terminal/feed fallbacks still read
+ * from disk, so they should still work for as long as the dwarf stays in its
+ * grace period.
+ */
+describe('AgentRuntime activation for a leaving dwarf', () => {
+  function leavingScan() {
+    const workingDwarf = {
+      id: 'claude:session-1',
+      provider: 'claude' as const,
+      role: 'worker' as const,
+      name: 'worker',
+      status: 'working' as const,
+      sessionId: 'session-1',
+      pid: 42
+    }
+    return vi
+      .fn<Provider['scan']>()
+      .mockResolvedValueOnce([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\work\\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [workingDwarf]
+        }
+      ])
+      .mockResolvedValue([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\work\\project',
+          status: 'idle',
+          updatedAt: 2,
+          dwarfs: []
+        }
+      ])
+  }
+
+  it('skips focusing a leaving dwarf and opens a terminal tailing its transcript instead', async () => {
+    const focus = vi.fn().mockResolvedValue(true)
+    const launchTerminal = vi.fn().mockResolvedValue(true)
+    const source: Provider = {
+      kind: 'claude',
+      scan: leavingScan(),
+      feed: vi.fn().mockResolvedValue([]),
+      transcriptPath: vi.fn().mockReturnValue('C:\\claude\\session-1.jsonl')
+    }
+    let now = 0
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [source],
+      focus,
+      launchTerminal,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh() // dwarf is 'working'
+    now = 1_000
+    await runtime.refresh() // the agent disappeared -> dwarf is now 'leaving'
+    expect(runtime.getMines()[0]!.dwarfs).toMatchObject([{ status: 'leaving', pid: 42 }])
+
+    await expect(runtime.activateDwarf('claude:session-1')).resolves.toEqual({
+      focused: false,
+      openedTerminal: true,
+      feed: []
+    })
+    expect(focus).not.toHaveBeenCalled()
+    expect(launchTerminal).toHaveBeenCalledWith('worker', 'C:\\claude\\session-1.jsonl')
+  })
+
+  it('falls all the way back to the transcript feed for a leaving dwarf when no terminal can be opened', async () => {
+    const feed = [{ role: 'assistant' as const, text: 'Final message', timestamp: 'now' }]
+    const focus = vi.fn().mockResolvedValue(true)
+    const launchTerminal = vi.fn().mockResolvedValue(false)
+    const source: Provider = {
+      kind: 'claude',
+      scan: leavingScan(),
+      feed: vi.fn().mockResolvedValue(feed),
+      transcriptPath: vi.fn().mockReturnValue('C:\\claude\\session-1.jsonl')
+    }
+    let now = 0
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [source],
+      focus,
+      launchTerminal,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    now = 1_000
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs).toMatchObject([{ status: 'leaving' }])
+
+    await expect(runtime.activateDwarf('claude:session-1')).resolves.toEqual({
+      focused: false,
+      openedTerminal: false,
+      feed
+    })
+    expect(focus).not.toHaveBeenCalled()
+  })
+})
+
 describe('AgentRuntime provider wiring', () => {
+  /**
+   * R3-wiring-test-real-clock: this test builds a real (non-injected)
+   * CodexProvider, which resolves "today" from Date.now() internally — using
+   * the real clock here too was a flaky risk (a day-boundary tick between
+   * computing fiveDaysAgo and the provider's own scan could shift which day
+   * directory each side means). A fake clock keeps both sides reading the
+   * exact same "now".
+   */
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date(2026, 7, 29, 12, 0, 0) })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('builds the real CodexProvider from config.codexSessionsRoot (expanded) and config.codexScanDays', async () => {
     const home = 'C:\\Users\\jeron'
     const fake = new FakeFs()

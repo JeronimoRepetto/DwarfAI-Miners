@@ -7,7 +7,9 @@ import {
   extractCodexFeed,
   parseCodexRolloutContext,
   parseCodexRolloutHead,
-  parseCodexRolloutTail
+  parseCodexRolloutTail,
+  type CodexRolloutHead,
+  type CodexRolloutInfo
 } from './parse'
 import {
   readCodexHeartbeats,
@@ -29,6 +31,14 @@ const FEED_TAIL_BYTES = 256 * 1024
  */
 const BUSY_TAIL_BYTES = 4 * 1024 * 1024
 const ROLLOUT_RE = /^rollout-.*\.jsonl$/
+/**
+ * How long a resolved isCodexProcessRunning() verdict is reused across scan
+ * ticks when no override is supplied. A quiet session past freshAfter but
+ * still inside retainAfter would otherwise re-spawn PowerShell on every 2s
+ * tick for as long as it stays quiet; the TTL bounds that to one spawn per
+ * window while staying responsive enough to notice codex opening or closing.
+ */
+const DEFAULT_PROCESS_PROBE_CACHE_TTL_S = 15
 
 export interface CodexProviderOptions {
   fs: FsLike
@@ -66,6 +76,11 @@ export interface CodexProviderOptions {
   logsDbPath?: string
   /** Injected for tests; defaults to a real process-list probe. */
   isCodexProcessRunning?: () => Promise<boolean>
+  /**
+   * How long a resolved isCodexProcessRunning() verdict is reused across scan
+   * ticks, in seconds. Defaults to DEFAULT_PROCESS_PROBE_CACHE_TTL_S.
+   */
+  processProbeCacheTtlS?: number
   now?: () => number
 }
 
@@ -96,6 +111,12 @@ const EMPTY_REGISTRY: CodexRegistry = {
 interface CodexCandidate {
   path: string
   thread?: CodexThread
+}
+
+/** Parsed head+tail of one rollout, as returned (fresh or cached) by readRollout(). */
+interface RolloutParseResult {
+  head: CodexRolloutHead
+  info: CodexRolloutInfo
 }
 
 /**
@@ -146,12 +167,25 @@ export class CodexProvider implements Provider {
   private readonly stateDbPath?: string
   private readonly logsDbPath?: string
   private readonly isCodexProcessRunning: () => Promise<boolean>
+  private readonly processProbeCacheTtlS: number
   private readonly now: () => number
   /**
    * Rollout path -> size at the previous scan. Growth between two scans is the
    * only liveness signal a frozen mtime cannot contradict.
    */
   private readonly lastSeenSizes = new Map<string, number>()
+  /**
+   * Rollout path -> tail-derived info at the size it was last read. A rollout
+   * whose size hasn't changed since the previous scan has produced no new
+   * bytes to parse (rollouts are append-only), so its previous busy/model/
+   * lastMessage verdict is reused instead of paying the BUSY_TAIL_BYTES (4MiB)
+   * read again. The head is always re-read (HEAD_BYTES is cheap, and it keeps
+   * a real read happening on every candidate every scan). Pruned to the
+   * current scan's candidates at the end of every scan().
+   */
+  private readonly rolloutCache = new Map<string, { size: number; info: CodexRolloutInfo }>()
+  /** Last isCodexProcessRunning() verdict, reused for processProbeCacheTtlS seconds. */
+  private probeCache: { running: boolean; checkedAtMs: number } | undefined
   /**
    * dwarfId -> rollout path, used by feed()/transcriptPath().
    *
@@ -173,6 +207,7 @@ export class CodexProvider implements Provider {
     this.stateDbPath = options.stateDbPath
     this.logsDbPath = options.logsDbPath
     this.isCodexProcessRunning = options.isCodexProcessRunning ?? defaultIsCodexProcessRunning
+    this.processProbeCacheTtlS = options.processProbeCacheTtlS ?? DEFAULT_PROCESS_PROBE_CACHE_TTL_S
     this.now = options.now ?? Date.now
   }
 
@@ -206,6 +241,10 @@ export class CodexProvider implements Provider {
       // Growth between two scans is proof of writes happening right now, and
       // is the one signal a frozen mtime cannot contradict.
       const grew = previousSize !== undefined && size !== undefined && size > previousSize
+      // The mirror image of grew: a rollout that produced no new bytes since
+      // the previous scan has nothing new to parse (rollouts are append-only),
+      // so its cached parse result can be reused as-is.
+      const unchanged = previousSize !== undefined && size !== undefined && size === previousSize
 
       const heartbeatMs =
         thread === undefined ? undefined : registry.heartbeats.get(thread.threadId)
@@ -214,14 +253,14 @@ export class CodexProvider implements Provider {
       if (!grew) {
         if (activityMs < retainAfter) continue
         if (activityMs < freshAfter) {
-          codexProcessRunning ??= await this.isCodexProcessRunning()
+          codexProcessRunning ??= await this.getCachedProcessRunning(nowMs)
           if (!codexProcessRunning) continue
         }
       }
 
       const discoveredSnapshot = await this.snapshotSession(
         { path, thread },
-        { activityMs: Math.max(activityMs, grew ? nowMs : 0), grew, feedSources }
+        { activityMs: Math.max(activityMs, grew ? nowMs : 0), grew, unchanged, size, feedSources }
       )
       if (discoveredSnapshot === null || seenSessions.has(discoveredSnapshot.snapshot.sessionId)) {
         continue
@@ -233,10 +272,34 @@ export class CodexProvider implements Provider {
     this.linkSubagents(discovered, registry.edges)
     this.lastSeenSizes.clear()
     for (const [path, size] of sizesThisScan) this.lastSeenSizes.set(path, size)
+    // Drop cached parses for rollouts no longer scanned this tick, so a
+    // retired session's parse result does not linger forever.
+    for (const path of [...this.rolloutCache.keys()]) {
+      if (!sizesThisScan.has(path)) this.rolloutCache.delete(path)
+    }
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
     this.feedSources = feedSources
     return discovered.map(({ snapshot }) => snapshot)
+  }
+
+  /**
+   * isCodexProcessRunning() spawns a PowerShell process. scan() already
+   * memoizes it to at most one call per tick (codexProcessRunning above), but
+   * a session that stays in the "past freshAfter, still inside retainAfter"
+   * band keeps needing it on every subsequent 2s tick. Reusing the verdict
+   * for processProbeCacheTtlS seconds bounds that to one spawn per window.
+   */
+  private async getCachedProcessRunning(nowMs: number): Promise<boolean> {
+    if (
+      this.probeCache !== undefined &&
+      nowMs - this.probeCache.checkedAtMs < this.processProbeCacheTtlS * 1_000
+    ) {
+      return this.probeCache.running
+    }
+    const running = await this.isCodexProcessRunning()
+    this.probeCache = { running, checkedAtMs: nowMs }
+    return running
   }
 
   /**
@@ -328,10 +391,21 @@ export class CodexProvider implements Provider {
    */
   private async snapshotSession(
     candidate: CodexCandidate,
-    context: { activityMs: number; grew: boolean; feedSources: Map<string, string> }
+    context: {
+      activityMs: number
+      grew: boolean
+      /** True when this rollout's size is unchanged since the previous scan. */
+      unchanged: boolean
+      /** This scan's observed size, used as the rolloutCache key alongside path. */
+      size: number | undefined
+      feedSources: Map<string, string>
+    }
   ): Promise<DiscoveredCodexSnapshot | null> {
     const { path, thread } = candidate
-    const rollout = await this.readRollout(path)
+    const rollout = await this.readRollout(path, {
+      unchanged: context.unchanged,
+      size: context.size
+    })
     if (rollout === null && thread === undefined) return null
 
     const sessionId = thread?.threadId ?? rollout!.head.sessionId
@@ -372,11 +446,23 @@ export class CodexProvider implements Provider {
     return discovered
   }
 
-  /** Parse a rollout's head and tail; null when it is missing or has no session_meta. */
-  private async readRollout(path: string): Promise<{
-    head: NonNullable<ReturnType<typeof parseCodexRolloutHead>>
-    info: ReturnType<typeof parseCodexRolloutTail>
-  } | null> {
+  /**
+   * Parse a rollout's head and tail; null when it is missing or has no
+   * session_meta.
+   *
+   * The head (HEAD_BYTES, 64KiB) is always read fresh — it is cheap, and a
+   * real per-candidate read every scan keeps directory/file churn (a retired
+   * rollout disappearing between the walk and the read) handled the same way
+   * regardless of caching. The tail (BUSY_TAIL_BYTES, 4MiB) is the expensive
+   * part; when `cache.unchanged` is true (this rollout's size matches the
+   * previous scan's) a rolloutCache hit is reused instead of re-reading it —
+   * rollouts are append-only, so no growth means no new bytes to parse and
+   * the previous busy/model/lastMessage verdict is still exactly correct.
+   */
+  private async readRollout(
+    path: string,
+    cache: { unchanged: boolean; size: number | undefined }
+  ): Promise<RolloutParseResult | null> {
     // Codex can retire a rollout between the directory walk and either read,
     // which must degrade to "no rollout data" rather than failing the tick.
     let headText: string
@@ -390,6 +476,13 @@ export class CodexProvider implements Provider {
     const head = parseCodexRolloutHead(headText)
     if (head === null) return null
 
+    if (cache.unchanged && cache.size !== undefined) {
+      const cached = this.rolloutCache.get(path)
+      if (cached !== undefined && cached.size === cache.size) {
+        return { head, info: cached.info }
+      }
+    }
+
     let tailText: string
     try {
       tailText = await this.fs.readTextTail(path, BUSY_TAIL_BYTES)
@@ -400,14 +493,13 @@ export class CodexProvider implements Provider {
     const tailInfo = parseCodexRolloutTail(tailText)
     // A newer turn_context in the tail wins; the head preserves the initial
     // context when a large turn pushed it outside the bounded tail read.
-    return {
-      head,
-      info: {
-        ...tailInfo,
-        model: tailInfo.model ?? headContext.model,
-        effort: tailInfo.effort ?? headContext.effort
-      }
+    const info: CodexRolloutInfo = {
+      ...tailInfo,
+      model: tailInfo.model ?? headContext.model,
+      effort: tailInfo.effort ?? headContext.effort
     }
+    if (cache.size !== undefined) this.rolloutCache.set(path, { size: cache.size, info })
+    return { head, info }
   }
 
   /**

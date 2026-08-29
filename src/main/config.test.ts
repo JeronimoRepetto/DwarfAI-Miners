@@ -60,7 +60,7 @@ describe('loadConfig', () => {
     )
   })
 
-  it('fails fast when CODEX_SESSIONS_ROOT is blank', () => {
+  it('falls back to the default sessions root when CODEX_SESSIONS_ROOT is blank', () => {
     expect(() => loadConfig({ CODEX_SESSIONS_ROOT: '   ' })).not.toThrow()
     expect(loadConfig({ CODEX_SESSIONS_ROOT: '   ' }).codexSessionsRoot).toBe('~/.codex/sessions')
   })

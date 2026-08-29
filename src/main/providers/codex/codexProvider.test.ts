@@ -237,6 +237,33 @@ describe('CodexProvider', () => {
     expect(snapshots.map((s) => s.sessionId)).not.toContain(tooOldDirSessionId)
   })
 
+  describe('scanDays boundary (off-by-one)', () => {
+    // NOW is local noon on 2026-08-29 with scanDays: 7, so the loop visits
+    // daysAgo 0..6 (today back to 2026-08-23 inclusive) and must stop there:
+    // 2026-08-22 (daysAgo 7) is exactly one day past the window.
+    it('scans the oldest day directory still inside the window (daysAgo = scanDays - 1)', async () => {
+      const oldestInWindowSessionId = '01a048b5-oldestin-7312-ab78-000000000000'
+      fake.addFile(
+        `${ROOT}\\2026\\08\\23\\rollout-2026-08-23T09-00-00-${oldestInWindowSessionId}.jsonl`,
+        rollout.replaceAll(SESSION_ID, oldestInWindowSessionId),
+        NOW - 5_000
+      )
+      const snapshots = await makeProvider({ scanDays: 7 }).scan()
+      expect(snapshots.map((s) => s.sessionId)).toContain(oldestInWindowSessionId)
+    })
+
+    it('excludes the day directory exactly scanDays days ago (daysAgo = scanDays)', async () => {
+      const oneDayTooOldSessionId = '01a048b5-onedaytoo-7312-ab78-000000000000'
+      fake.addFile(
+        `${ROOT}\\2026\\08\\22\\rollout-2026-08-22T09-00-00-${oneDayTooOldSessionId}.jsonl`,
+        rollout.replaceAll(SESSION_ID, oneDayTooOldSessionId),
+        NOW - 5_000
+      )
+      const snapshots = await makeProvider({ scanDays: 7 }).scan()
+      expect(snapshots.map((s) => s.sessionId)).not.toContain(oneDayTooOldSessionId)
+    })
+  })
+
   it('keeps a quiet rollout visible past the liveness window while a codex process is running', async () => {
     const quietSessionId = '01a048b5-quiet-7312-ab78-000000000000'
     fake.addFile(
@@ -413,6 +440,88 @@ describe('CodexProvider', () => {
 
       gate.release()
       await scanning
+    })
+  })
+
+  /**
+   * R3-busy-tail-cost: BUSY_TAIL_BYTES (4MiB) is the expensive read per
+   * rollout per scan. A rollout that hasn't grown since the previous scan is
+   * append-only, so its content (and therefore its busy/model/lastMessage
+   * verdict) cannot have changed — the previous read can be reused instead of
+   * paying that read again.
+   */
+  describe('busy-tail read caching', () => {
+    it('skips the busy-tail read for a rollout whose size is unchanged since the previous scan', async () => {
+      const tailSpy = vi.spyOn(fake, 'readTextTail')
+      const provider = makeProvider()
+
+      await provider.scan()
+      const afterFirstScan = tailSpy.mock.calls.length
+      expect(afterFirstScan).toBeGreaterThan(0)
+
+      await provider.scan() // nothing changed on disk
+      expect(tailSpy.mock.calls.length).toBe(afterFirstScan)
+    })
+
+    it('re-reads the busy tail once a rollout actually grows', async () => {
+      const tailSpy = vi.spyOn(fake, 'readTextTail')
+      const provider = makeProvider()
+      await provider.scan()
+      const afterFirstScan = tailSpy.mock.calls.length
+
+      fake.addFile(
+        `${ROOT}\\2026\\08\\28\\rollout-2026-08-28T23-59-00-${BUSY_SESSION_ID}.jsonl`,
+        busyLines() + '\n',
+        NOW - 120_000
+      )
+      await provider.scan()
+      expect(tailSpy.mock.calls.length).toBe(afterFirstScan + 1)
+    })
+
+    it('keeps reporting the correct busy/idle status when reusing a cached parse', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const second = await provider.scan()
+      expect(second.find((s) => s.sessionId === SESSION_ID)?.status).toBe('idle')
+      expect(second.find((s) => s.sessionId === BUSY_SESSION_ID)?.status).toBe('busy')
+    })
+  })
+
+  /**
+   * R3-probe-spawn-per-tick: isCodexProcessRunning() spawns powershell.exe.
+   * scan() already memoizes it to at most one call per tick, but a session
+   * stuck in the "past freshAfter, still inside retainAfter" band would
+   * otherwise re-spawn it on every 2s tick for as long as it stays quiet.
+   */
+  describe('process probe caching', () => {
+    it('reuses the isCodexProcessRunning verdict across scans within the TTL, then re-probes once it expires', async () => {
+      const quietSessionId = '01a048b5-probettl-7312-ab78-000000000000'
+      fake.addFile(
+        `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T09-00-00-${quietSessionId}.jsonl`,
+        rollout.replaceAll(SESSION_ID, quietSessionId),
+        // Past livenessWindowS (600s) but inside livenessWindowS + idleRetentionS,
+        // so every scan below needs the process probe to decide.
+        NOW - (WINDOW_S + 120) * 1_000
+      )
+      let currentNow = NOW
+      const probe = vi.fn(async () => true)
+      const provider = makeProvider({
+        idleRetentionS: 3600,
+        isCodexProcessRunning: probe,
+        processProbeCacheTtlS: 15,
+        now: () => currentNow
+      })
+
+      await provider.scan()
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      currentNow += 5_000 // well inside the 15s TTL
+      await provider.scan()
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      currentNow += 11_000 // 16s since the first probe: past the TTL
+      await provider.scan()
+      expect(probe).toHaveBeenCalledTimes(2)
     })
   })
 })

@@ -52,7 +52,22 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
         2
       )
     )
-    expect(Array.isArray(snapshots)).toBe(true)
+    // Real-machine invariants on whatever this scan actually found — an empty
+    // result (no active Codex session right now) is a legitimate outcome, so
+    // this only checks the shape of what comes back, not that anything does.
+    for (const snapshot of snapshots) {
+      expect(snapshot.provider).toBe('codex')
+      expect(snapshot.sessionId.length).toBeGreaterThan(0)
+      expect(['busy', 'idle']).toContain(snapshot.status)
+      expect(Array.isArray(snapshot.dwarfs)).toBe(true)
+      // busy <=> exactly one dwarf (the main session thread); idle <=> none.
+      expect(snapshot.dwarfs).toHaveLength(snapshot.status === 'busy' ? 1 : 0)
+      expect(snapshot.updatedAt).toBeLessThanOrEqual(Date.now())
+      for (const dwarf of snapshot.dwarfs) {
+        expect(dwarf.id).toBe(`codex:${snapshot.sessionId}`)
+        expect(dwarf.status).toBe('working')
+      }
+    }
   })
 
   it('reads the real Codex registry read-only through node:sqlite', async () => {
@@ -84,12 +99,27 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
     })
 
     it('shows a busy mine with a working dwarf once written to CODEX_SESSIONS_ROOT', async () => {
-      // Real session_meta + turn_context lines captured from an actual rollout
-      // on this machine (2026-08-29, agent-name project), trimmed of the
-      // long base_instructions/developer_instructions text (irrelevant to
-      // parsing) but keeping every field name the parser reads.
+      // session_meta + turn_context shape captured from an actual rollout on
+      // this machine (2026-08-29, agent-name project) — trimmed of the long
+      // base_instructions/developer_instructions text (irrelevant to parsing)
+      // but keeping every field name the parser reads. The provider below
+      // gets no `now` override, so it resolves "today" from the real clock —
+      // every date here is computed relative to that same real `now` instead
+      // of a fixed calendar date, so this stays valid regardless of when the
+      // suite actually runs.
+      const now = new Date()
+      const isoNow = now.toISOString()
+      const isoSlightlyLater = new Date(now.getTime() + 2_000).toISOString()
+      const isoLater = new Date(now.getTime() + 30_000).toISOString()
+      const year = String(now.getFullYear())
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const day = String(now.getDate()).padStart(2, '0')
+      const hour = String(now.getHours()).padStart(2, '0')
+      const minute = String(now.getMinutes()).padStart(2, '0')
+      const second = String(now.getSeconds()).padStart(2, '0')
+
       const realSessionMeta = JSON.stringify({
-        timestamp: '2026-08-29T12:27:32.174Z',
+        timestamp: isoNow,
         type: 'session_meta',
         payload: {
           session_id: '01a04d79-real-0000-0000-000000000000',
@@ -102,7 +132,7 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
         }
       })
       const realTurnContext = JSON.stringify({
-        timestamp: '2026-08-29T12:27:32.598Z',
+        timestamp: isoSlightlyLater,
         type: 'turn_context',
         payload: {
           turn_id: 'still-open-turn',
@@ -113,7 +143,7 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
         }
       })
       const taskStarted = JSON.stringify({
-        timestamp: '2026-08-29T12:27:32.600Z',
+        timestamp: isoSlightlyLater,
         type: 'event_msg',
         payload: { type: 'task_started', turn_id: 'still-open-turn' }
       })
@@ -121,16 +151,16 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
       // yet — reproduces the real observed gap (347,167 bytes on this
       // machine) between task_started and its eventual task_complete.
       const largeBody = JSON.stringify({
-        timestamp: '2026-08-29T12:28:00.000Z',
+        timestamp: isoLater,
         type: 'response_item',
         payload: { type: 'reasoning', encrypted_content: 'x'.repeat(300_000) }
       })
 
-      const dir = join(scratchRoot, '2026', '08', '29')
+      const dir = join(scratchRoot, year, month, day)
       await mkdir(dir, { recursive: true })
       const file = join(
         dir,
-        'rollout-2026-08-29T12-27-32-01a04d79-real-0000-0000-000000000000.jsonl'
+        `rollout-${year}-${month}-${day}T${hour}-${minute}-${second}-01a04d79-real-0000-0000-000000000000.jsonl`
       )
       await writeFile(
         file,
