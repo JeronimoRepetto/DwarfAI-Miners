@@ -16,6 +16,7 @@ export type {
   DwarfTextResult,
   FeedMessage,
   Mine,
+  MinesSnapshot,
   MineTier,
   ProviderSnapshot,
   SessionStatus,
@@ -36,7 +37,15 @@ export function defaultDwarf(): Dwarf {
 }
 
 export function defaultMine(): Mine {
-  return { id: '', path: '', name: 'Mine', tier: 'bronze', dwarfs: [], updatedAt: 0 }
+  return {
+    id: '',
+    path: '',
+    name: 'Mine',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
 }
 
 export function defaultProviderSnapshot(): ProviderSnapshot {

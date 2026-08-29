@@ -45,6 +45,14 @@ export interface ClaudeTranscriptInfo {
    */
   terminalAgentIds: string[]
   pendingBackgroundAgentCount?: number
+  /**
+   * The latest usage block seen in this tail (input+output+cache tokens for
+   * that one turn), used by the provider as a floor for its runtime-lifetime
+   * counter — see ClaudeProvider. Not a sum across turns: Claude resends the
+   * whole conversation each turn, so summing input_tokens across turns would
+   * wildly over-count. "Latest observed" is the honest cheap approximation.
+   */
+  tokensObserved?: number
 }
 
 type Rec = Record<string, unknown>
@@ -137,6 +145,22 @@ function contentBlocks(message: unknown): Rec[] {
   return message.content.filter(isRecord)
 }
 
+/**
+ * Sum of input+output+cache tokens on one assistant line's usage block, or
+ * undefined when there is none (older transcripts, or a line the API never
+ * attached usage to). Read cheaply from data the bounded tail already parses.
+ */
+function usageTokens(message: unknown): number | undefined {
+  if (!isRecord(message) || !isRecord(message.usage)) return undefined
+  const usage = message.usage
+  const total =
+    (asNumber(usage.input_tokens) ?? 0) +
+    (asNumber(usage.output_tokens) ?? 0) +
+    (asNumber(usage.cache_creation_input_tokens) ?? 0) +
+    (asNumber(usage.cache_read_input_tokens) ?? 0)
+  return total > 0 ? total : undefined
+}
+
 function assistantText(line: Rec): string | undefined {
   const texts = contentBlocks(line.message)
     .filter((block) => block.type === 'text')
@@ -176,6 +200,7 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   let effort: string | undefined
   let lastAssistantText: string | undefined
   let pendingBackgroundAgentCount: number | undefined
+  let tokensObserved: number | undefined
   const launched = new Map<string, ClaudeInFlightAgent>()
   const finished = new Set<string>()
 
@@ -184,6 +209,7 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
       if (isRecord(line.message)) model = asString(line.message.model) ?? model
       effort = asString(line.effort) ?? effort
       lastAssistantText = assistantText(line) ?? lastAssistantText
+      tokensObserved = usageTokens(line.message) ?? tokensObserved
       continue
     }
     if (line.type === 'user') {
@@ -218,7 +244,8 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     lastAssistantText,
     inFlightAgents: [...launched.values()].filter((agent) => !finished.has(agent.agentId)),
     terminalAgentIds: [...finished],
-    pendingBackgroundAgentCount
+    pendingBackgroundAgentCount,
+    tokensObserved
   }
 }
 

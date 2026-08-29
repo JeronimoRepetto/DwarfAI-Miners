@@ -5,7 +5,7 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
-  Mine
+  MinesSnapshot
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 
@@ -14,9 +14,9 @@ export interface DwarfAiMinersApi {
   /** Hide the floating panel (the app keeps running in the tray). */
   hidePanel: () => void
   /** Snapshot used by the renderer when it initializes after a poll update. */
-  getMines: () => Promise<Mine[]>
+  getMines: () => Promise<MinesSnapshot>
   /** Subscribe to push updates. Returns an unsubscribe function. */
-  onMinesUpdated: (listener: (mines: Mine[]) => void) => () => void
+  onMinesUpdated: (listener: (snapshot: MinesSnapshot) => void) => () => void
   /** Focus the dwarf's terminal, or return recent transcript text as fallback. */
   activateDwarf: (dwarfId: string) => Promise<DwarfActivation>
   /** Deliver a typed message to the dwarf's live session; the panel stays open. */
@@ -29,7 +29,8 @@ const api: DwarfAiMinersApi = {
   hidePanel: () => ipcRenderer.send(IPC_CHANNELS.hidePanel),
   getMines: () => ipcRenderer.invoke(IPC_CHANNELS.getMines),
   onMinesUpdated: (listener) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, mines: Mine[]) => listener(mines)
+    const wrapped = (_event: Electron.IpcRendererEvent, snapshot: MinesSnapshot) =>
+      listener(snapshot)
     ipcRenderer.on(IPC_CHANNELS.minesUpdated, wrapped)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.minesUpdated, wrapped)
   },

@@ -14,6 +14,7 @@ export type {
   DwarfTextResult,
   FeedMessage,
   Mine,
+  MinesSnapshot,
   MineTier,
   TextDeliveryChannel
 } from '../../shared/contracts'
@@ -21,10 +22,12 @@ export type {
 /** Root state for the mines store. */
 export interface MinesState {
   mines: Mine[]
+  /** Sum of every mine's tokensObserved — the vault total for the map-view chip. */
+  tokensObserved: number
 }
 
 export function defaultMinesState(): MinesState {
-  return { mines: [] }
+  return { mines: [], tokensObserved: 0 }
 }
 
 /**

@@ -33,6 +33,17 @@ describe('MapView', () => {
     expect(wrapper.emitted('open')).toEqual([['C:/dev/beta']])
   })
 
+  it('shows the vault chip with the given token total', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES, tokensObserved: 25_000 } })
+    expect(wrapper.get('.vault-tokens').text()).toBe('25K')
+    expect(wrapper.get('.vault-ore').text()).toBe('2 ore')
+  })
+
+  it('defaults the vault chip to zero when no total is given', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    expect(wrapper.get('.vault-ore').text()).toBe('0 ore')
+  })
+
   it('keeps a mound anchored to the same slot across refreshes', () => {
     const first = mount(MapView, { props: { mines: MINES } })
     const second = mount(MapView, { props: { mines: [...MINES].reverse() } })

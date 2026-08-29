@@ -460,7 +460,12 @@ export class CodexProvider implements Provider {
       lastMessage: rollout?.info.lastMessage,
       sessionId
     }
-    if (thread?.tokensUsed !== undefined) mainDwarf.tokensUsed = thread.tokensUsed
+    if (thread?.tokensUsed !== undefined) {
+      mainDwarf.tokensUsed = thread.tokensUsed
+      // Mirrors tokensUsed so the ore/vault economy has one field to sum
+      // across providers (see Mine.tokensObserved).
+      mainDwarf.tokensObserved = thread.tokensUsed
+    }
 
     const discovered: DiscoveredCodexSnapshot = {
       snapshot: {

@@ -23,6 +23,7 @@ export function defaultMine(overrides: Partial<Mine> = {}): Mine {
     name: 'sample',
     tier: 'bronze',
     dwarfs: [],
+    tokensObserved: 0,
     updatedAt: 0,
     ...overrides
   }

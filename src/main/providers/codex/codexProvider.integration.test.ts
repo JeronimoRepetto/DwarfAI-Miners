@@ -45,7 +45,8 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
             status: d.status,
             model: d.model,
             effort: d.effort,
-            tokensUsed: d.tokensUsed
+            tokensUsed: d.tokensUsed,
+            tokensObserved: d.tokensObserved
           }))
         })),
         null,

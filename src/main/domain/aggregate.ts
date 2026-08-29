@@ -1,5 +1,5 @@
 import { currentPlatform, normalizePathKey, type Platform } from '../platform/platform'
-import type { Mine, MineTier, ProviderSnapshot } from './types'
+import type { Dwarf, Mine, MineTier, ProviderSnapshot } from './types'
 
 /**
  * Group provider snapshots into mines: one mine per real project path.
@@ -28,6 +28,7 @@ export function aggregateMines(
         name: lastSegment(displayPath),
         tier: tierOf(displayPath),
         dwarfs: [],
+        tokensObserved: 0,
         updatedAt: snapshot.updatedAt
       }
       byPath.set(key, mine)
@@ -36,7 +37,24 @@ export function aggregateMines(
     mine.updatedAt = Math.max(mine.updatedAt, snapshot.updatedAt)
   }
 
-  return [...byPath.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+  const mines = [...byPath.values()]
+  // Computed once the full crew is known, after every snapshot has been folded in.
+  for (const mine of mines) mine.tokensObserved = sumDwarfTokens(mine.dwarfs)
+  return mines.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+function sumDwarfTokens(dwarfs: Dwarf[]): number {
+  return dwarfs.reduce((total, dwarf) => total + (dwarf.tokensObserved ?? 0), 0)
+}
+
+/**
+ * The vault total for the mines-update payload: sum of every mine's
+ * tokensObserved. A pure post-processing step over aggregateMines' own
+ * output, so the main process and its tests can derive one grand total
+ * without re-walking dwarfs.
+ */
+export function sumTokensObserved(mines: Mine[]): number {
+  return mines.reduce((total, mine) => total + mine.tokensObserved, 0)
 }
 
 function trimTrailingSlashes(path: string): string {

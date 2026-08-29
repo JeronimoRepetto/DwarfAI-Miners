@@ -4,8 +4,11 @@ import { MAP_BG_SRC } from '../lib/art'
 import { MAP_SLOTS, assignSlots } from '../lib/placement'
 import type { Mine } from '../types'
 import MineMound from './MineMound.vue'
+import VaultChip from './VaultChip.vue'
 
-const props = defineProps<{ mines: Mine[] }>()
+const props = withDefaults(defineProps<{ mines: Mine[]; tokensObserved?: number }>(), {
+  tokensObserved: 0
+})
 
 const emit = defineEmits<{ open: [mineId: string] }>()
 
@@ -22,6 +25,7 @@ function positionStyle(mineId: string): Record<string, string> {
     <img class="map-art" :src="MAP_BG_SRC" alt="" aria-hidden="true" draggable="false" />
     <!-- Darkens the edges and the valley floor so the lit mounds carry the eye. -->
     <div class="map-vignette" aria-hidden="true"></div>
+    <VaultChip :tokens-observed="tokensObserved" />
     <p v-if="mines.length === 0" class="map-empty">
       The hills are quiet.<br />
       No agents are mining right now — start a coding session and a mine will appear.

@@ -6,7 +6,8 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
-  Mine
+  Mine,
+  MinesSnapshot
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 import {
@@ -15,6 +16,7 @@ import {
   migrateLegacyAutostart
 } from './autostart'
 import { loadConfig } from './config'
+import { sumTokensObserved } from './domain/aggregate'
 import { AgentRuntime } from './runtime'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts'
 import { createTray } from './tray'
@@ -52,6 +54,11 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+/** Wraps a mines list with its vault total for both getMines() and the push. */
+function toMinesSnapshot(mines: Mine[]): MinesSnapshot {
+  return { mines, tokensObserved: sumTokensObserved(mines) }
 }
 
 async function init(): Promise<void> {
@@ -93,7 +100,7 @@ async function init(): Promise<void> {
     },
     onMinesUpdated: (mines: Mine[]) => {
       if (!mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, mines)
+        mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines))
       }
     }
   })
@@ -101,7 +108,7 @@ async function init(): Promise<void> {
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
-  ipcMain.handle(IPC_CHANNELS.getMines, () => runtime?.getMines() ?? [])
+  ipcMain.handle(IPC_CHANNELS.getMines, () => toMinesSnapshot(runtime?.getMines() ?? []))
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noActivation
     return runtime?.activateDwarf(dwarfId) ?? noActivation

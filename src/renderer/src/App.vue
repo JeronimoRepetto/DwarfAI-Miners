@@ -8,7 +8,7 @@ import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useMines } from './composables/useMines'
 import { useView } from './composables/useView'
 import { shouldHidePanelAfterActivation } from './lib/activation'
-import type { Dwarf, FeedMessage, Mine } from './types'
+import type { Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, showMap, syncWithMines } = useView()
@@ -31,15 +31,16 @@ function hidePanel(): void {
   window.api.hidePanel()
 }
 
-function update(mines: Mine[]): void {
-  setMines(mines)
+function update(snapshot: MinesSnapshot): void {
+  setMines(snapshot)
   loading.value = false
-  syncWithMines(mines.map((mine) => mine.id))
+  syncWithMines(snapshot.mines.map((mine) => mine.id))
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
-      mines.map((mine) => `${mine.name} (${mine.tier}, ${mine.dwarfs.length} dwarfs)`).join('; ') ||
-        'none'
+      snapshot.mines
+        .map((mine) => `${mine.name} (${mine.tier}, ${mine.dwarfs.length} dwarfs)`)
+        .join('; ') || 'none'
     )
   }
 }
@@ -142,7 +143,12 @@ onBeforeUnmount(() => unsubscribe?.())
         @send-text="sendText"
         @kick="kickDwarf"
       />
-      <MapView v-else :mines="state.mines" @open="enterMine" />
+      <MapView
+        v-else
+        :mines="state.mines"
+        :tokens-observed="state.tokensObserved"
+        @open="enterMine"
+      />
       <p v-if="error" class="notice" role="alert">{{ error }}</p>
     </main>
     <FeedModal v-if="feedFor" :title="feedFor" :messages="feed" @close="closeFeed" />

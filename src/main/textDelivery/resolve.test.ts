@@ -194,6 +194,7 @@ describe('stampTextDelivery', () => {
       name: 'work',
       tier: 'bronze',
       dwarfs,
+      tokensObserved: 0,
       updatedAt: 1
     }
   }

@@ -2,9 +2,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { INTERIOR_SRC } from '../lib/art'
 import { createBubbleBoard } from '../lib/bubbles'
+import { oreCount, orePileStep } from '../lib/economy'
 import { tierLabel } from '../lib/presentation'
 import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
+import VaultChip from './VaultChip.vue'
 
 const props = defineProps<{
   mine: Mine
@@ -25,6 +27,7 @@ const emit = defineEmits<{
 const foremen = computed(() => props.mine.dwarfs.filter((dwarf) => dwarf.role === 'foreman'))
 const workers = computed(() => props.mine.dwarfs.filter((dwarf) => dwarf.role !== 'foreman'))
 const interiorSrc = computed(() => INTERIOR_SRC[props.mine.tier])
+const pileStep = computed(() => orePileStep(oreCount(props.mine.tokensObserved)))
 
 const bubbles = ref<ReadonlyMap<string, string>>(new Map())
 const board = createBubbleBoard((visible) => {
@@ -48,6 +51,7 @@ onBeforeUnmount(() => board.dispose())
         <h1 id="mine-title">{{ mine.name }}</h1>
         <p class="scene-path">{{ mine.path }}</p>
       </div>
+      <VaultChip class="scene-vault" variant="inline" :tokens-observed="mine.tokensObserved" />
       <span class="tier-badge">{{ tierLabel(mine.tier) }}</span>
     </header>
 
@@ -55,6 +59,10 @@ onBeforeUnmount(() => board.dispose())
       <img class="cave-art" :src="interiorSrc" alt="" aria-hidden="true" draggable="false" />
       <!-- Keeps the crew readable against a busy painting. -->
       <div class="cave-vignette" aria-hidden="true"></div>
+      <!-- Ore mined so far, near the entrance: layered CSS nuggets, no new art. -->
+      <div v-if="pileStep > 0" class="ore-pile" :data-step="pileStep" aria-label="Ore mined pile">
+        <span v-for="n in pileStep" :key="n" class="nugget"></span>
+      </div>
 
       <!-- idle mine: nobody on the floor -->
       <div v-if="mine.dwarfs.length === 0" class="mine-idle">
@@ -132,6 +140,9 @@ onBeforeUnmount(() => board.dispose())
   flex: 1;
   min-width: 0;
 }
+.scene-vault {
+  flex: none;
+}
 .scene-heading h1 {
   overflow: hidden;
   margin: 0;
@@ -188,6 +199,58 @@ onBeforeUnmount(() => board.dispose())
   background:
     radial-gradient(110% 70% at 50% 40%, transparent 45%, #0a06034d 80%, #0a060399 100%),
     linear-gradient(transparent 55%, #0a0603a6);
+}
+.ore-pile {
+  position: absolute;
+  z-index: 1;
+  bottom: 6%;
+  left: 4%;
+  width: 70px;
+  height: 46px;
+  pointer-events: none;
+}
+.nugget {
+  position: absolute;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--tier-glow),
+    var(--tier-accent) 55%,
+    var(--tier-deep) 100%
+  );
+  box-shadow: 0 2px 4px #0008;
+}
+.nugget:nth-child(1) {
+  left: 22px;
+  width: 24px;
+  height: 24px;
+}
+.nugget:nth-child(2) {
+  bottom: 2px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+}
+.nugget:nth-child(3) {
+  bottom: 3px;
+  left: 40px;
+  width: 16px;
+  height: 16px;
+}
+.nugget:nth-child(4) {
+  bottom: 16px;
+  left: 14px;
+  width: 15px;
+  height: 15px;
+}
+.nugget:nth-child(5) {
+  bottom: 17px;
+  left: 32px;
+  width: 14px;
+  height: 14px;
 }
 .mine-idle {
   position: absolute;

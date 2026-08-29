@@ -9,7 +9,8 @@ import {
   extractClaudeFeed,
   parseClaudeSessionEntry,
   parseClaudeTranscriptTail,
-  type ClaudeSessionEntry
+  type ClaudeSessionEntry,
+  type ClaudeTranscriptInfo
 } from './parse'
 
 /** Read at most this many bytes from the end of a transcript per scan. */
@@ -76,6 +77,18 @@ export class ClaudeProvider implements Provider {
    * short string per agent actually launched on this machine.
    */
   private readonly terminalAgents = new Set<string>()
+  /**
+   * dwarfId -> highest tokensObserved reading seen for it so far, remembered
+   * for the life of the process.
+   *
+   * Each poll only reads a bounded transcript tail, so this is not a sum
+   * across turns (see usageTokens in parse.ts) — it is the latest usage block
+   * a tail happened to contain, taken as a floor. Tracking the running max
+   * turns that floor into a monotonic runtime-lifetime counter per dwarf: it
+   * only ever grows, even if a context reset or a scrolled-tail poll reads a
+   * smaller number than a previous poll already saw.
+   */
+  private readonly tokenTotals = new Map<string, number>()
 
   constructor(options: ClaudeProviderOptions) {
     this.fs = options.fs
@@ -162,6 +175,9 @@ export class ClaudeProvider implements Provider {
     feedSources.set(mainDwarfId, transcriptPath)
     const sessionTarget = claudeSessionDeliveryTarget(session)
     if (sessionTarget !== null) deliveryTargets.set(mainDwarfId, sessionTarget)
+    // Tracked unconditionally, even when the foreman isn't listed below (idle,
+    // no agents out), so an idle-then-busy session never loses its total.
+    const mainTokens = this.trackTokens(mainDwarfId, info.tokensObserved)
 
     const dwarfs: Dwarf[] = []
     if (inFlightAgents.length > 0 || session.status === 'busy') {
@@ -179,7 +195,8 @@ export class ClaudeProvider implements Provider {
         lastMessage: info.lastAssistantText,
         sessionId: session.sessionId,
         pid: session.pid,
-        startedAt: session.startedAt
+        startedAt: session.startedAt,
+        ...(mainTokens !== undefined ? { tokensObserved: mainTokens } : {})
       })
     }
     for (const agent of inFlightAgents) {
@@ -200,6 +217,12 @@ export class ClaudeProvider implements Provider {
         foremanDwarfId: mainDwarfId,
         workerName
       })
+      // Attributed to the worker when its own subagent tail cheaply carries
+      // usage (the common case); when it doesn't, trackTokens simply returns
+      // whatever total was already known for this worker id instead of
+      // fabricating one, so nothing is double-counted against the foreman.
+      const workerInfo = await this.subagentTranscriptInfo(subagentPath)
+      const workerTokens = this.trackTokens(workerId, workerInfo.tokensObserved)
       dwarfs.push({
         id: workerId,
         provider: 'claude',
@@ -209,9 +232,10 @@ export class ClaudeProvider implements Provider {
         effort: info.effort,
         status: 'working',
         description: agent.description,
-        lastMessage: await this.subagentLastMessage(subagentPath),
+        lastMessage: workerInfo.lastAssistantText,
         sessionId: session.sessionId,
-        pid: session.pid
+        pid: session.pid,
+        ...(workerTokens !== undefined ? { tokensObserved: workerTokens } : {})
       })
     }
 
@@ -225,9 +249,20 @@ export class ClaudeProvider implements Provider {
     }
   }
 
-  private async subagentLastMessage(path: string): Promise<string | undefined> {
-    if (!(await this.fs.exists(path))) return undefined
-    const info = parseClaudeTranscriptTail(await this.fs.readTextTail(path, SUBAGENT_TAIL_BYTES))
-    return info.lastAssistantText
+  private async subagentTranscriptInfo(path: string): Promise<ClaudeTranscriptInfo> {
+    if (!(await this.fs.exists(path))) return parseClaudeTranscriptTail('')
+    return parseClaudeTranscriptTail(await this.fs.readTextTail(path, SUBAGENT_TAIL_BYTES))
+  }
+
+  /**
+   * Fold one new usage reading into id's running total and return it.
+   * Monotonic (Math.max): see tokenTotals above for why. `undefined` when
+   * neither this reading nor any previous one has ever reported tokens.
+   */
+  private trackTokens(id: string, observed: number | undefined): number | undefined {
+    if (observed === undefined) return this.tokenTotals.get(id)
+    const next = Math.max(this.tokenTotals.get(id) ?? 0, observed)
+    this.tokenTotals.set(id, next)
+    return next
   }
 }

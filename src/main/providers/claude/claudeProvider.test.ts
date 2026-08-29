@@ -140,6 +140,63 @@ describe('ClaudeProvider', () => {
     expect(alone.role).toBe(withAgent.role)
   })
 
+  describe('tokensObserved', () => {
+    it('reports the foreman and worker tokensObserved from their transcript tails', async () => {
+      const snapshots = await makeProvider().scan()
+      const [foreman, worker] = snapshots[0]!.dwarfs
+      // Parent's last assistant line: 2+517+616+116448 = 117583.
+      expect(foreman!.tokensObserved).toBe(117_583)
+      // Subagent's only assistant line: 2+1152+7879+117478 = 126511.
+      expect(worker!.tokensObserved).toBe(126_511)
+    })
+
+    it('never decreases across polls even if a later tail reads a smaller usage block', async () => {
+      const provider = makeProvider()
+      const first = (await provider.scan())[0]!.dwarfs[0]!
+      expect(first.tokensObserved).toBe(117_583)
+
+      // Same transcript again — a context reset would report smaller numbers,
+      // but the runtime-lifetime counter must never go backwards.
+      const smallerUsage =
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            model: 'claude-fable-5',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'after reset' }],
+            usage: { input_tokens: 1, output_tokens: 1 }
+          }
+        }) + '\n'
+      fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, smallerUsage, 50_000)
+      const second = (await provider.scan())[0]!.dwarfs[0]!
+      expect(second.tokensObserved).toBe(117_583)
+    })
+
+    it('raises the running total when a later poll observes more usage than before', async () => {
+      const provider = makeProvider()
+      const first = (await provider.scan())[0]!.dwarfs[0]!
+      expect(first.tokensObserved).toBe(117_583)
+
+      // A later turn whose usage block is bigger than everything seen so far
+      // (conversation kept growing) must raise the running total to match.
+      const moreUsage =
+        parentTranscript +
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            model: 'claude-fable-5',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'more work' }],
+            usage: { input_tokens: 1, output_tokens: 200_000 }
+          }
+        }) +
+        '\n'
+      fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, moreUsage, 50_000)
+      const second = (await provider.scan())[0]!.dwarfs[0]!
+      expect(second.tokensObserved).toBe(200_001)
+    })
+  })
+
   it('leaves a waiting main session a foreman too', async () => {
     fake.addFile(
       `${ROOT1}\\sessions\\32896.json`,

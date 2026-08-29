@@ -158,6 +158,12 @@ describe('parseClaudeTranscriptTail', () => {
     expect(info.pendingBackgroundAgentCount).toBe(2)
   })
 
+  it('reports the latest observed usage (input+output+cache) as tokensObserved', () => {
+    // The last assistant line in the fixture carries input:2, output:517,
+    // cache_creation:616, cache_read:116448 -> 2+517+616+116448 = 117583.
+    expect(info.tokensObserved).toBe(117_583)
+  })
+
   it('skips a partial first line produced by the tail read', () => {
     const partial = '"cwd":"C:\\\\x","message":{"content":[{"type"' + '\n' + parentTranscript
     expect(parseClaudeTranscriptTail(partial)).toEqual(info)
@@ -204,8 +210,37 @@ describe('parseClaudeTranscriptTail', () => {
       lastAssistantText: undefined,
       inFlightAgents: [],
       terminalAgentIds: [],
-      pendingBackgroundAgentCount: undefined
+      pendingBackgroundAgentCount: undefined,
+      tokensObserved: undefined
     })
+  })
+
+  it('ignores an assistant line with no usage block', () => {
+    const line =
+      JSON.stringify({
+        type: 'assistant',
+        message: { model: 'm', role: 'assistant', content: [{ type: 'text', text: 'hi' }] }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(line).tokensObserved).toBeUndefined()
+  })
+
+  it('keeps the previous tokensObserved reading when a later line has no usage', () => {
+    const withUsage =
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'm',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'a' }],
+          usage: { input_tokens: 10, output_tokens: 20 }
+        }
+      }) + '\n'
+    const withoutUsage =
+      JSON.stringify({
+        type: 'assistant',
+        message: { model: 'm', role: 'assistant', content: [{ type: 'text', text: 'b' }] }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(withUsage + withoutUsage).tokensObserved).toBe(30)
   })
 })
 
@@ -242,5 +277,10 @@ describe('parseClaudeTranscriptTail on subagent transcripts', () => {
     const info = parseClaudeTranscriptTail(subagentTranscript)
     expect(info.lastAssistantText).toBe('Subagent latest reply placeholder.')
     expect(info.model).toBe('claude-fable-5')
+  })
+
+  it('reads tokensObserved from the subagent transcript too', () => {
+    // input:2, output:1152, cache_creation:7879, cache_read:117478 -> 126511.
+    expect(parseClaudeTranscriptTail(subagentTranscript).tokensObserved).toBe(126_511)
   })
 })

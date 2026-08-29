@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { MOUND_SRC } from '../lib/art'
+import { oreCount } from '../lib/economy'
 import { tierLabel } from '../lib/presentation'
 import type { Mine } from '../types'
 
@@ -13,6 +14,7 @@ const countLabel = computed(
   () => `${dwarfCount.value} ${dwarfCount.value === 1 ? 'dwarf' : 'dwarfs'}`
 )
 const moundSrc = computed(() => MOUND_SRC[props.mine.tier])
+const mineOre = computed(() => oreCount(props.mine.tokensObserved))
 </script>
 
 <template>
@@ -25,6 +27,7 @@ const moundSrc = computed(() => MOUND_SRC[props.mine.tier])
     >
       <img class="mound-art" :src="moundSrc" alt="" aria-hidden="true" draggable="false" />
       <span class="mound-count" aria-hidden="true">{{ dwarfCount }}</span>
+      <span v-if="mineOre > 0" class="mound-ore" aria-hidden="true">{{ mineOre }}</span>
       <span class="mound-name">{{ mine.name }}</span>
     </button>
     <div class="mine-tooltip" role="tooltip">
@@ -32,6 +35,7 @@ const moundSrc = computed(() => MOUND_SRC[props.mine.tier])
       <em>{{ tierLabel(mine.tier) }} mine</em>
       <span class="tooltip-path">{{ mine.path }}</span>
       <span>{{ countLabel }} inside</span>
+      <span v-if="mineOre > 0">{{ mineOre }} ore mined</span>
     </div>
   </div>
 </template>
@@ -91,6 +95,22 @@ const moundSrc = computed(() => MOUND_SRC[props.mine.tier])
   color: var(--ink);
   background: #15100be6;
   font-size: 10px;
+}
+.mound-ore {
+  position: absolute;
+  top: 2px;
+  left: 8px;
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid #d8a53d;
+  border-radius: 9px;
+  color: #2a1c08;
+  background: radial-gradient(circle at 35% 30%, #ffe29c, #d8a53d 65%, #8a611f 100%);
+  font-size: 10px;
+  font-weight: 700;
 }
 .mound-name {
   max-width: 112px;

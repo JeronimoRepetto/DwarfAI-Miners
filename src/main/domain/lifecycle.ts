@@ -90,6 +90,7 @@ export class DwarfLifecycleTracker {
           name: entry.mineName,
           tier: entry.mineTier,
           dwarfs: [],
+          tokensObserved: 0,
           updatedAt: entry.missingSince
         }
         byMineId.set(entry.mineId, target)

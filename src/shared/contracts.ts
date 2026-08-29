@@ -48,6 +48,14 @@ export interface Dwarf {
    */
   tokensUsed?: number
   /**
+   * Tokens observed for the ore/vault economy (see Mine.tokensObserved): a
+   * lightweight, honest approximation of what this dwarf has burned — never
+   * exact billing. Codex mirrors tokensUsed; Claude accumulates a monotonic
+   * runtime-lifetime counter from the latest usage block seen in its bounded
+   * transcript tail (see ClaudeProvider).
+   */
+  tokensObserved?: number
+  /**
    * The channel a typed message would travel through right now, resolved by
    * the runtime on every poll. Absent means the panel must offer no send
    * action for this dwarf (see TextDeliveryChannel).
@@ -90,6 +98,8 @@ export interface Mine {
   name: string
   tier: MineTier
   dwarfs: Dwarf[]
+  /** Sum of every dwarf's tokensObserved currently in this mine — the ore this mine has produced. */
+  tokensObserved: number
   updatedAt: number
 }
 
@@ -156,6 +166,17 @@ export interface DwarfKickResult {
   via: TextDeliveryChannel | 'none'
   /** Human-readable reason shown in the panel when delivered is false. */
   error?: string
+}
+
+/**
+ * Wire payload for both the getMines() pull and the minesUpdated push: the
+ * per-mine breakdown plus the cross-mine vault total, so the panel never has
+ * to re-derive the grand total from a partial view of the mines.
+ */
+export interface MinesSnapshot {
+  mines: Mine[]
+  /** Sum of every mine's tokensObserved — the vault total shown in the map-view chip. */
+  tokensObserved: number
 }
 
 export const IPC_CHANNELS = {

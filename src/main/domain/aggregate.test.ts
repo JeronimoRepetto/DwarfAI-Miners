@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateMines } from './aggregate'
+import { aggregateMines, sumTokensObserved } from './aggregate'
 import {
   defaultDwarf,
+  defaultMine,
   defaultProviderSnapshot,
   type MineTier,
   type ProviderSnapshot
@@ -150,5 +151,61 @@ describe('aggregateMines', () => {
 
   it('returns [] for no snapshots', () => {
     expect(aggregateMines([], tierOf)).toEqual([])
+  })
+
+  it('sums every dwarfs tokensObserved into the mine total', () => {
+    const mines = aggregateMines(
+      [
+        snapshot({
+          sessionId: 's1',
+          cwd: 'C:\\X\\Proj',
+          dwarfs: [
+            { ...defaultDwarf(), id: 'a', tokensObserved: 1_000 },
+            { ...defaultDwarf(), id: 'b', tokensObserved: 250 }
+          ]
+        }),
+        snapshot({
+          sessionId: 's2',
+          cwd: 'C:\\X\\Proj',
+          dwarfs: [{ ...defaultDwarf(), id: 'c', tokensObserved: 500 }]
+        })
+      ],
+      tierOf
+    )
+    expect(mines[0]!.tokensObserved).toBe(1_750)
+  })
+
+  it('treats a dwarf with no tokensObserved as contributing zero', () => {
+    const mines = aggregateMines(
+      [
+        snapshot({
+          sessionId: 's1',
+          cwd: 'C:\\X\\Proj',
+          dwarfs: [{ ...defaultDwarf(), id: 'a' }]
+        })
+      ],
+      tierOf
+    )
+    expect(mines[0]!.tokensObserved).toBe(0)
+  })
+
+  it('defaults tokensObserved to 0 for a mine with no dwarfs', () => {
+    const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\X' })], tierOf)
+    expect(mine!.tokensObserved).toBe(0)
+  })
+})
+
+describe('sumTokensObserved', () => {
+  it('sums tokensObserved across every mine', () => {
+    expect(
+      sumTokensObserved([
+        { ...defaultMine(), tokensObserved: 100 },
+        { ...defaultMine(), tokensObserved: 250 }
+      ])
+    ).toBe(350)
+  })
+
+  it('returns 0 for no mines', () => {
+    expect(sumTokensObserved([])).toBe(0)
   })
 })

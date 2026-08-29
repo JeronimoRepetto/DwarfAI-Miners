@@ -144,6 +144,9 @@ describe('CodexProvider with the Codex SQLite registry', () => {
       model: 'gpt-5.6-luna',
       effort: 'medium',
       tokensUsed: 19343971,
+      // Mirrors tokensUsed so the ore/vault economy has one field to sum
+      // across providers (see Mine.tokensObserved).
+      tokensObserved: 19343971,
       status: 'working'
     })
   })

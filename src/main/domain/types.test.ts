@@ -36,6 +36,7 @@ describe('defaultMine', () => {
       name: 'Mine',
       tier: 'bronze',
       dwarfs: [],
+      tokensObserved: 0,
       updatedAt: 0
     })
   })
