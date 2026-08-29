@@ -1,5 +1,6 @@
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, app, shell } from 'electron'
 import { join } from 'node:path'
+import { resolveResourcePath } from './resourcePaths'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
@@ -19,6 +20,14 @@ export function createMainWindow(): BrowserWindow {
     resizable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // Windows and Linux use this for the taskbar/Alt-Tab icon; Electron
+    // ignores it on macOS, where the app bundle's own icon applies instead
+    // (and this app hides its Dock tile regardless — see app.dock?.hide()).
+    icon: resolveResourcePath('app-icon.png', {
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath()
+    }),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
       contextIsolation: true,

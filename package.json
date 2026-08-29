@@ -68,6 +68,7 @@
   },
   "scripts": {
     "art:build": "node scripts/build-art.mjs",
+    "icons": "node scripts/build-icons.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "package": "pnpm build && electron-builder --win nsis portable --x64",
@@ -100,6 +101,7 @@
     "eslint-plugin-vue": "10.10.0",
     "jimp": "1.6.1",
     "jsdom": "^30.0.1",
+    "png2icons": "2.0.1",
     "prettier": "3.9.6",
     "typescript": "6.0.3",
     "typescript-eslint": "8.68.0",
