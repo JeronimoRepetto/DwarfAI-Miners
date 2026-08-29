@@ -71,9 +71,9 @@
     "icons": "node scripts/build-icons.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "package": "pnpm build && electron-builder --win nsis portable --x64",
-    "package:mac": "pnpm build && electron-builder --mac dmg zip",
-    "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64",
+    "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
+    "package:mac": "pnpm build && electron-builder --mac dmg zip --publish never",
+    "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
@@ -108,5 +108,9 @@
     "vite": "7.3.6",
     "vitest": "4.1.11",
     "vue-tsc": "3.3.11"
+  },
+  "author": {
+    "name": "Jeronimo Repetto",
+    "email": "jeronimo.repetto@multitecua.com"
   }
 }
