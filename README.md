@@ -161,6 +161,47 @@ the update — the legacy `AgentName` Run value is removed, and the new value is
 autostart was on. No macOS or Linux build shipped before the rename, so there is nothing to
 migrate there.
 
+## Instant updates (Claude hooks)
+
+Off by default, opt-in from the tray: **Instant updates (Claude hooks)**. It adds a push
+channel on top of the 2-second poller so a session appearing, a turn ending or a subagent
+finishing shows up in tens of milliseconds instead of on the next poll.
+
+Turning it on does three things, and turning it off undoes all three:
+
+1. Binds a loopback HTTP listener on `127.0.0.1:HOOKS_PORT` (47821 by default). Loopback only —
+   it is never reachable from the network.
+2. Writes one hook entry per event into `settings.json` in every configured Claude root, for
+   `SessionStart`, `Notification`, `Stop`, `SubagentStop` and `SessionEnd`. The command is a
+   one-line `curl.exe` that forwards the hook's own JSON to the listener and exits; Windows
+   10 1803+ ships `curl.exe`, and enabling refuses with an explanation if it is missing.
+3. Records the choice in a marker file under Electron's user-data directory, so the channel
+   comes back on the next launch.
+
+Every event triggers the same full rescan the poller already runs, coalesced so a burst inside
+one turn costs one extra scan rather than one per event. **The poller stays the ground truth**:
+it remains the only startup-reconciliation source, and a missed or malformed hook self-heals on
+the next 2-second tick. A user who never opts in sees no behavior change at all.
+
+Safety around `settings.json`, which is the user's own global Claude configuration:
+
+- A pristine copy is taken as `settings.json.dwarfai-backup` before the file is modified for
+  the first time, and never overwritten afterwards.
+- Install and uninstall only ever touch entries whose command carries the `dwarfai-miners-hook`
+  marker. Hooks belonging to any other tool keep their position and content, and unknown keys
+  anywhere in the file are preserved.
+- Re-enabling replaces our entries instead of duplicating them; disabling removes only ours,
+  dropping an event key (and `hooks` itself) once it held nothing else.
+- Indentation, line endings and the trailing newline are read back and reproduced, so the diff
+  is our addition and nothing more. A file that cannot be parsed is reported and left untouched.
+- Requests carry a per-install random token generated on first enable, so another local process
+  cannot forge events; a request without it is dropped before its body is read, and bodies are
+  capped at 4 KB.
+
+**Turn the toggle off before uninstalling DwarfAI-Miners.** Nothing runs a hook-removal pass at
+uninstall time yet, so entries left behind would point at a listener that no longer exists —
+harmless (Claude Code treats a failed hook command as a non-blocking error) but untidy.
+
 ## Configuration
 
 Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast at startup.
@@ -180,6 +221,7 @@ Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast a
 | `TIER_GOLD_AT`            | `400`                          | Source-file threshold for gold.                                                     |
 | `TIER_URANIUM_AT`         | `1500`                         | Source-file threshold for uranium.                                                  |
 | `CLAUDE_CONFIG_DIRS`      | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.                                                   |
+| `HOOKS_PORT`              | `47821`                        | Loopback port for instant updates (see below). Nothing binds it until you opt in.   |
 
 Tier thresholds must be strictly increasing.
 

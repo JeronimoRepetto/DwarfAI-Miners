@@ -1,5 +1,24 @@
 # Hook-Based Session Detection — Evaluation (Issue #13)
 
+> **Status: implemented (phase 1: Claude).** Phases 1 and 2 shipped in issue #14 —
+> loopback listener, debounced nudge, idempotent Claude installer, tray opt-in. See
+> `src/main/hooks/` and the "Instant updates (Claude hooks)" section of the README.
+> Phase 3 (Codex) and Phase 4 (uninstall-time hook removal) remain open.
+>
+> Two decisions changed during implementation, both settled by measurement rather
+> than by the reasoning below:
+>
+> - **Relay mechanism: option (a), `curl.exe`, not the compiled helper (b).** §3.3
+>   recommended (b) as primary. The measured relay is a sub-millisecond loopback
+>   round trip, which is far inside Phase 0's "well under 50 ms" exit criterion, so
+>   the extra build step buys nothing. Presence of `curl.exe` is verified when the
+>   toggle is enabled and refuses with an explanation if it is absent.
+> - **Command shape: every argument is one whitespace-free, quote-free token.**
+>   Claude Code parses a shell-form hook with `sh` on Unix but with Git Bash *or*
+>   PowerShell on Windows, and a bare `@-` is a hard PowerShell parse error. `-d@-`
+>   was verified to parse identically in all three, which is why the command looks
+>   the way it does.
+
 Push-based detection via provider hooks, evaluated against DwarfAI-Miners' current
 polling architecture. Source: `ntd4996/agentpet` (MIT), read directly from its
 `windows/` Tauri/Rust port (the closest analog to our own Windows/Electron app —

@@ -17,12 +17,15 @@ import {
 } from './autostart'
 import { loadConfig } from './config'
 import { sumTokensObserved } from './domain/aggregate'
-import { AgentRuntime } from './runtime'
+import { HookChannel } from './hooks/hookChannel'
+import { NodeHookFs } from './hooks/hookFs'
+import { AgentRuntime, expandHomePath } from './runtime'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts'
 import { createTray } from './tray'
 import { createMainWindow, hidePanel, markQuitting, showPanel, togglePanel } from './window'
 
 let runtime: AgentRuntime | null = null
+let hooks: HookChannel | null = null
 
 function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
@@ -88,8 +91,6 @@ async function init(): Promise<void> {
   })
 
   const mainWindow = createMainWindow() // starts hidden
-  await createTray()
-  registerShortcuts(togglePanel)
 
   runtime = new AgentRuntime({
     config,
@@ -105,6 +106,27 @@ async function init(): Promise<void> {
     }
   })
   runtime.start()
+
+  // Optional push channel. Nothing binds a port and nothing is written to the
+  // user's Claude configuration until they tick the tray item; restore() only
+  // brings back a choice they already made on a previous launch.
+  hooks = new HookChannel({
+    fs: new NodeHookFs(),
+    roots: config.claudeConfigDirs.map((path) => expandHomePath(path)),
+    userDataDir: app.getPath('userData'),
+    port: config.hooksPort,
+    platform: process.platform,
+    onEvent: (event) => {
+      console.log(`[hooks] ${event.event}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`)
+      runtime?.nudge()
+    },
+    log: (message) => console.log(message),
+    warn: (message, error) => console.warn(message, error)
+  })
+  await hooks.restore()
+
+  await createTray({ hooks })
+  registerShortcuts(togglePanel)
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
@@ -154,6 +176,12 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     runtime?.stop()
     runtime = null
+    // Releases the port only: the installed hooks and the opt-in marker are
+    // what bring the channel back on the next launch. A hook that fires while
+    // the app is closed simply fails to connect, which Claude Code treats as a
+    // non-blocking error.
+    void hooks?.shutdown()
+    hooks = null
     removeIpcHandlers()
     markQuitting()
   })

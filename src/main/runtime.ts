@@ -168,6 +168,19 @@ export class AgentRuntime {
     await this.poller.tick()
   }
 
+  /**
+   * Report that something outside the poller says the state just changed —
+   * today, a Claude Code hook arriving on the loopback listener.
+   *
+   * Deliberately fire-and-forget and deliberately coarse: it asks for a full
+   * rescan rather than trying to update one session, so the push channel reuses
+   * the same already-tested scan path and can never produce a state the regular
+   * poll would not have produced two seconds later.
+   */
+  nudge(): void {
+    this.poller.nudge()
+  }
+
   getMines(): Mine[] {
     return this.mines
   }

@@ -4,12 +4,20 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled
 } from './autostart'
+import { applyHookToggle, HOOKS_MENU_LABEL, type HookToggleTarget } from './hooks/hookChannel'
 import { autostartMenuLabel } from './platform/autostartEntries'
 import { currentPlatform } from './platform/platform'
 import { resolveResourcePath } from './resourcePaths'
 import { togglePanel } from './window'
 
 let tray: Tray | null = null
+
+/**
+ * The optional hook channel, when the app wired one up. Null keeps the menu
+ * item out entirely, so nothing about this feature can appear in a build or a
+ * test that never constructed it.
+ */
+let hooks: HookToggleTarget | null = null
 
 /**
  * Electron's nativeImage automatically picks up a "@2x" sibling for HiDPI
@@ -26,13 +34,49 @@ function trayIconPath(): string {
   })
 }
 
-export async function createTray(): Promise<Tray> {
+export interface TrayOptions {
+  /** Opt-in push channel; omitted when the app did not build one. */
+  hooks?: HookToggleTarget
+}
+
+export async function createTray(options: TrayOptions = {}): Promise<Tray> {
+  hooks = options.hooks ?? null
   const icon = nativeImage.createFromPath(trayIconPath())
   tray = new Tray(icon)
   tray.setToolTip('DwarfAI-Miners')
   tray.on('click', () => togglePanel())
   await refreshTrayMenu()
   return tray
+}
+
+/**
+ * The instant-updates checkbox, or nothing when no channel was wired up.
+ *
+ * Default OFF and never enabled on the user's behalf: turning it on writes
+ * hook entries into their global Claude configuration, which is not something
+ * to do without an explicit click. A click that cannot be honoured puts the
+ * checkbox back where it was and says why, so it can never show "on" while
+ * nothing is listening.
+ */
+function hookMenuItems(): Electron.MenuItemConstructorOptions[] {
+  const channel = hooks
+  if (channel === null) return []
+  return [
+    {
+      label: HOOKS_MENU_LABEL,
+      type: 'checkbox',
+      checked: channel.isActive(),
+      click: (item) => {
+        void (async () => {
+          const outcome = await applyHookToggle(channel, item.checked)
+          if (outcome.warning !== undefined) {
+            console.warn(`[tray] Instant updates: ${outcome.warning}`)
+          }
+          await refreshTrayMenu()
+        })()
+      }
+    }
+  ]
 }
 
 async function refreshTrayMenu(): Promise<void> {
@@ -60,6 +104,7 @@ async function refreshTrayMenu(): Promise<void> {
         })()
       }
     },
+    ...hookMenuItems(),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ])

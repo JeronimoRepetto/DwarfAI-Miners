@@ -18,7 +18,8 @@ describe('defaultConfig', () => {
       codexStateDb: '~/.codex/state_5.sqlite',
       codexLogsDb: '~/.codex/logs_2.sqlite',
       sendTextRelayModel: 'haiku',
-      sendTextTimeoutS: 60
+      sendTextTimeoutS: 60,
+      hooksPort: 47821
     })
   })
 
@@ -148,5 +149,22 @@ describe('loadConfig', () => {
     it('fails fast on an unusable timeout', () => {
       expect(() => loadConfig({ SENDTEXT_TIMEOUT_S: '0' })).toThrowError(/SENDTEXT_TIMEOUT_S/)
     })
+  })
+
+  describe('hook listener port', () => {
+    it('overrides the loopback port the hook relay posts to', () => {
+      expect(loadConfig({ HOOKS_PORT: '51000' }).hooksPort).toBe(51000)
+    })
+
+    it('falls back to the default when blank', () => {
+      expect(loadConfig({ HOOKS_PORT: '  ' }).hooksPort).toBe(47821)
+    })
+
+    it.each(['0', '-1', '70000', '4782.5', 'abc'])(
+      'fails fast on the unusable port %s',
+      (value) => {
+        expect(() => loadConfig({ HOOKS_PORT: value })).toThrowError(/HOOKS_PORT/)
+      }
+    )
   })
 })

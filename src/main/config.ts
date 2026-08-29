@@ -58,6 +58,12 @@ export interface AppConfig {
   sendTextRelayModel: string
   /** How long a message delivery may take before it is reported as timed out, in seconds. */
   sendTextTimeoutS: number
+  /**
+   * Loopback TCP port the optional hook listener binds, and the port the hook
+   * commands written into Claude's settings.json post to. Nothing listens here
+   * until the user enables "Instant updates" in the tray.
+   */
+  hooksPort: number
 }
 
 export function defaultConfig(): AppConfig {
@@ -76,7 +82,8 @@ export function defaultConfig(): AppConfig {
     codexStateDb: '~/.codex/state_5.sqlite',
     codexLogsDb: '~/.codex/logs_2.sqlite',
     sendTextRelayModel: 'haiku',
-    sendTextTimeoutS: 60
+    sendTextTimeoutS: 60,
+    hooksPort: 47821
   }
 }
 
@@ -107,6 +114,15 @@ function readDirList(env: Env, key: string, fallback: string[]): string[] {
     throw new Error(`[config] ${key} must contain at least one directory, got "${raw}"`)
   }
   return dirs
+}
+
+/** A TCP port number; anything outside 1-65535 is a startup error, not a silent clamp. */
+function readPort(env: Env, key: string, fallback: number): number {
+  const port = readPositiveInt(env, key, fallback)
+  if (port > 65535) {
+    throw new Error(`[config] ${key} must be a port between 1 and 65535, got "${env[key]}"`)
+  }
+  return port
 }
 
 /** A trimmed free-form string (a path, a model name); blank counts as unset. */
@@ -164,6 +180,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     codexStateDb: readTrimmed(env, 'CODEX_STATE_DB', defaults.codexStateDb),
     codexLogsDb: readTrimmed(env, 'CODEX_LOGS_DB', defaults.codexLogsDb),
     sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
-    sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS)
+    sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS),
+    hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort)
   }
 }

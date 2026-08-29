@@ -895,3 +895,46 @@ describe('AgentRuntime provider wiring', () => {
     )
   })
 })
+
+describe('AgentRuntime.nudge', () => {
+  it('runs a scan out of band, without waiting for the poll interval', async () => {
+    vi.useFakeTimers()
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
+    const onMinesUpdated = vi.fn()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), pollIntervalMs: 60_000 },
+      providers: [{ kind: 'claude', scan, feed: async () => null }],
+      onMinesUpdated
+    })
+    try {
+      runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(1)
+
+      runtime.nudge()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(2)
+    } finally {
+      runtime.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces a burst of push events into a single extra scan', async () => {
+    vi.useFakeTimers()
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), pollIntervalMs: 60_000 },
+      providers: [{ kind: 'claude', scan, feed: async () => null }],
+      onMinesUpdated: vi.fn()
+    })
+    try {
+      for (let i = 0; i < 25; i++) runtime.nudge()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(scan).toHaveBeenCalledTimes(2)
+    } finally {
+      runtime.stop()
+      vi.useRealTimers()
+    }
+  })
+})
