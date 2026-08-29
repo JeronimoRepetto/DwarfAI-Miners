@@ -9,12 +9,15 @@ import type {
   TextDeliveryPort
 } from './port'
 import {
-  buildRelayArgs,
-  buildRelayEnv,
-  buildRelayInstruction,
-  resolveClaudeBinaryPath
-} from './relay'
+  deliverViaRelay,
+  runRelayProcess,
+  type RelayInvocation,
+  type RelayResult,
+  type RelayRunner
+} from './relayRunner'
 import { buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
+
+export type { RelayInvocation, RelayResult, RelayRunner }
 
 /**
  * Windows implementation of TextDeliveryPort.
@@ -28,21 +31,6 @@ import { buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
 
 /** How long the local keystroke command may run before it is abandoned. */
 const CONSOLE_COMMAND_TIMEOUT_MS = 120_000
-
-export interface RelayInvocation {
-  command: string
-  args: string[]
-  env: NodeJS.ProcessEnv
-  cwd: string
-  timeoutMs: number
-}
-
-export interface RelayResult {
-  exitCode: number
-  timedOut: boolean
-}
-
-export type RelayRunner = (invocation: RelayInvocation) => Promise<RelayResult>
 
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
@@ -77,39 +65,10 @@ function runPowerShellCommand(command: string): Promise<{ stdout: string; exitCo
   })
 }
 
-function runRelayProcess(invocation: RelayInvocation): Promise<RelayResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      invocation.command,
-      invocation.args,
-      {
-        cwd: invocation.cwd,
-        env: invocation.env,
-        timeout: invocation.timeoutMs,
-        windowsHide: true,
-        maxBuffer: 1024 * 1024
-      },
-      (error) => {
-        if (error === null) {
-          resolve({ exitCode: 0, timedOut: false })
-          return
-        }
-        // execFile reports a timeout kill through `killed`, with no exit code.
-        if (error.killed === true) {
-          resolve({ exitCode: 1, timedOut: true })
-          return
-        }
-        if (typeof error.code === 'number') {
-          resolve({ exitCode: error.code, timedOut: false })
-          return
-        }
-        reject(error) // the binary could not be started at all
-      }
-    )
-  })
-}
-
 export class WindowsTextDelivery implements TextDeliveryPort {
+  /** user32 SendKeys can type into any foreground console on Windows. */
+  readonly supportsConsoleInput = true
+
   private readonly home: string
   private readonly env: NodeJS.ProcessEnv
   private readonly relayModel: string
@@ -154,34 +113,16 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   }
 
   async relayToClaudeSession(request: RelayTextRequest): Promise<TextDeliveryOutcome> {
-    const command = resolveClaudeBinaryPath(this.home)
-    try {
-      const result = await this.runRelay({
-        command,
-        args: buildRelayArgs({
-          model: this.relayModel,
-          instruction: buildRelayInstruction(request.sessionName, request.text)
-        }),
-        env: buildRelayEnv(this.env, command),
-        cwd: this.home,
-        timeoutMs: this.relayTimeoutMs
-      })
-      if (result.timedOut) {
-        return {
-          delivered: false,
-          error: `The relay timed out after ${Math.round(this.relayTimeoutMs / 1_000)}s.`
-        }
-      }
-      if (result.exitCode !== 0) {
-        return {
-          delivered: false,
-          error: `The relay could not deliver the message (exit ${result.exitCode}).`
-        }
-      }
-      return { delivered: true }
-    } catch {
-      return { delivered: false, error: 'The relay could not be started.' }
-    }
+    return deliverViaRelay({
+      sessionName: request.sessionName,
+      text: request.text,
+      home: this.home,
+      env: this.env,
+      platform: 'win32',
+      model: this.relayModel,
+      timeoutMs: this.relayTimeoutMs,
+      run: this.runRelay
+    })
   }
 
   /**

@@ -59,15 +59,55 @@ describe('aggregateMines', () => {
         snapshot({ sessionId: 's1', cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools' }),
         snapshot({ sessionId: 's2', cwd: 'c:\\users\\jeron\\desktop\\ai-tools' })
       ],
-      tierOf
+      tierOf,
+      'win32'
     )
     expect(mines).toHaveLength(1)
     expect(mines[0]!.path).toBe('C:\\Users\\jeron\\Desktop\\AI-Tools')
   })
 
+  it('groups the two Windows separators as one project', () => {
+    const mines = aggregateMines(
+      [
+        snapshot({ sessionId: 's1', cwd: 'C:\\X\\Proj' }),
+        snapshot({ sessionId: 's2', cwd: 'C:/X/Proj' })
+      ],
+      tierOf,
+      'win32'
+    )
+    expect(mines).toHaveLength(1)
+  })
+
+  it('keeps two Linux projects that differ only in case apart', () => {
+    // /home/j/Proj and /home/j/proj really are two different directories
+    // there; folding them would put two crews in the wrong mine.
+    const mines = aggregateMines(
+      [
+        snapshot({ sessionId: 's1', cwd: '/home/j/Proj' }),
+        snapshot({ sessionId: 's2', cwd: '/home/j/proj' })
+      ],
+      tierOf,
+      'linux'
+    )
+    expect(mines).toHaveLength(2)
+  })
+
+  it('still groups two macOS spellings of one project', () => {
+    const mines = aggregateMines(
+      [
+        snapshot({ sessionId: 's1', cwd: '/Users/j/Proj' }),
+        snapshot({ sessionId: 's2', cwd: '/users/j/proj' })
+      ],
+      tierOf,
+      'darwin'
+    )
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.path).toBe('/Users/j/Proj')
+  })
+
   it('produces a stable id derived from the normalized path', () => {
-    const [a] = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\X\\Proj' })], tierOf)
-    const [b] = aggregateMines([snapshot({ sessionId: 's9', cwd: 'c:\\x\\proj' })], tierOf)
+    const [a] = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\X\\Proj' })], tierOf, 'win32')
+    const [b] = aggregateMines([snapshot({ sessionId: 's9', cwd: 'c:\\x\\proj' })], tierOf, 'win32')
     expect(a!.id).toBe(b!.id)
     expect(a!.id).not.toBe('')
   })
@@ -102,7 +142,8 @@ describe('aggregateMines', () => {
       (path) => {
         asked.push(path)
         return 'gold'
-      }
+      },
+      'win32'
     )
     expect(asked).toEqual(['C:\\X\\Proj'])
   })

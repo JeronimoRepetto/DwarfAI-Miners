@@ -1,7 +1,9 @@
+import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
 import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../adapters/processProbe'
 import type { SqliteLike } from '../../adapters/sqliteLike'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
+import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import type { Provider } from '../provider'
 import {
   extractCodexFeed,
@@ -76,6 +78,8 @@ export interface CodexProviderOptions {
   logsDbPath?: string
   /** Injected for tests; defaults to a real process-list probe. */
   isCodexProcessRunning?: () => Promise<boolean>
+  /** Decides how rollout paths are compared; defaults to this machine's platform. */
+  platform?: Platform
   /**
    * How long a resolved isCodexProcessRunning() verdict is reused across scan
    * ticks, in seconds. Defaults to DEFAULT_PROCESS_PROBE_CACHE_TTL_S.
@@ -120,19 +124,23 @@ interface RolloutParseResult {
 }
 
 /**
- * Windows paths are case-insensitive, and the registry's rollout_path and the
- * day-directory walk can spell the same file differently. Keyed this way a
- * rollout is read once per scan instead of twice.
+ * The registry's rollout_path and the day-directory walk can spell the same
+ * file differently. Keyed this way a rollout is read once per scan instead of
+ * twice. The folding is platform-aware (see normalizePathKey): merging two
+ * spellings is right on Windows and macOS, and wrong on Linux, where two
+ * rollouts differing only in case really are two different files.
  */
-function candidateKey(path: string): string {
-  return path.replaceAll('/', '\\').toLowerCase()
+function candidateKey(path: string, platform: Platform): string {
+  return normalizePathKey(path, platform)
 }
 
-function datePath(date: Date): string {
-  const year = String(date.getFullYear())
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}\\${month}\\${day}`
+/** The YYYY/MM/DD directory a rollout started on that day lives in. */
+function dateSegments(date: Date): [string, string, string] {
+  return [
+    String(date.getFullYear()),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ]
 }
 
 /**
@@ -168,6 +176,7 @@ export class CodexProvider implements Provider {
   private readonly logsDbPath?: string
   private readonly isCodexProcessRunning: () => Promise<boolean>
   private readonly processProbeCacheTtlS: number
+  private readonly platform: Platform
   private readonly now: () => number
   /**
    * Rollout path -> size at the previous scan. Growth between two scans is the
@@ -208,6 +217,7 @@ export class CodexProvider implements Provider {
     this.logsDbPath = options.logsDbPath
     this.isCodexProcessRunning = options.isCodexProcessRunning ?? defaultIsCodexProcessRunning
     this.processProbeCacheTtlS = options.processProbeCacheTtlS ?? DEFAULT_PROCESS_PROBE_CACHE_TTL_S
+    this.platform = options.platform ?? currentPlatform()
     this.now = options.now ?? Date.now
   }
 
@@ -352,15 +362,19 @@ export class CodexProvider implements Provider {
   ): Promise<CodexCandidate[]> {
     const byPath = new Map<string, CodexCandidate>()
     for (const thread of registry.threads.values()) {
-      byPath.set(candidateKey(thread.rolloutPath), { path: thread.rolloutPath, thread })
+      byPath.set(candidateKey(thread.rolloutPath, this.platform), {
+        path: thread.rolloutPath,
+        thread
+      })
     }
 
     for (let daysAgo = 0; daysAgo < this.scanDays; daysAgo++) {
-      const dir = `${this.sessionsRoot}\\${datePath(new Date(nowMs - daysAgo * 24 * 60 * 60 * 1_000))}`
+      const day = new Date(nowMs - daysAgo * 24 * 60 * 60 * 1_000)
+      const dir = join(this.sessionsRoot, ...dateSegments(day))
       for (const entry of await this.fs.listDir(dir)) {
         if (entry.isDirectory || !ROLLOUT_RE.test(entry.name)) continue
-        const path = `${dir}\\${entry.name}`
-        const key = candidateKey(path)
+        const path = join(dir, entry.name)
+        const key = candidateKey(path, this.platform)
         // A registry thread already claimed this rollout (and carries richer
         // metadata than the file does), so it is not added twice.
         if (!byPath.has(key)) byPath.set(key, { path })

@@ -30,6 +30,21 @@ describe('FakeFs', () => {
     expect(await fake.exists('C:/Users/jeron/.claude/sessions/100.json')).toBe(true)
   })
 
+  it('resolves a POSIX-registered tree through POSIX or Windows separators', async () => {
+    // The single normalization point: fixtures written with `/` (or `\`) are
+    // found by providers that build their paths with node:path.join, whichever
+    // host the suite runs on. That is what lets one set of fixtures prove
+    // path portability without being rewritten per platform.
+    const fake = new FakeFs()
+    fake.addFile('/home/jeron/.claude/sessions/100.json', '{"pid":100}')
+    expect(await fake.exists('/home/jeron/.claude/sessions/100.json')).toBe(true)
+    expect(await fake.exists('\\home\\jeron\\.claude\\sessions\\100.json')).toBe(true)
+    expect(await fake.listDir('/home/jeron/.claude')).toEqual([
+      { name: 'sessions', isDirectory: true }
+    ])
+    expect(await fake.readJson('\\home\\jeron\\.claude\\sessions\\100.json')).toEqual({ pid: 100 })
+  })
+
   it('listDir() returns files and directories with the isDirectory flag', async () => {
     const fake = makeFake()
     const entries = await fake.listDir('C:\\Users\\jeron\\.claude')

@@ -11,9 +11,14 @@ describe('resolveClaudeBinaryPath', () => {
   it('points at the real native binary, not whatever PATH resolves first', () => {
     // An 'effort-autopilot' shim sits earlier on PATH on this machine and
     // breaks non-interactive spawns, so the relay never goes through PATH.
-    expect(resolveClaudeBinaryPath('C:\\Users\\jeron')).toBe(
+    expect(resolveClaudeBinaryPath('C:\\Users\\jeron', 'win32')).toBe(
       'C:\\Users\\jeron\\.local\\bin\\claude.exe'
     )
+  })
+
+  it('drops the .exe and uses POSIX separators on macOS and Linux', () => {
+    expect(resolveClaudeBinaryPath('/Users/jeron', 'darwin')).toBe('/Users/jeron/.local/bin/claude')
+    expect(resolveClaudeBinaryPath('/home/jeron', 'linux')).toBe('/home/jeron/.local/bin/claude')
   })
 })
 
@@ -21,24 +26,50 @@ describe('buildRelayEnv', () => {
   it('prepends the real binary directory so a child re-exec cannot hit the shim', () => {
     const env = buildRelayEnv(
       { Path: 'C:\\shim;C:\\Windows' },
-      'C:\\Users\\jeron\\.local\\bin\\claude.exe'
+      'C:\\Users\\jeron\\.local\\bin\\claude.exe',
+      'win32'
     )
     expect(env.Path).toBe('C:\\Users\\jeron\\.local\\bin;C:\\shim;C:\\Windows')
   })
 
   it('reuses the existing PATH key casing Windows handed us', () => {
-    const env = buildRelayEnv({ PATH: 'C:\\Windows' }, 'C:\\bin\\claude.exe')
+    const env = buildRelayEnv({ PATH: 'C:\\Windows' }, 'C:\\bin\\claude.exe', 'win32')
     expect(env.PATH).toBe('C:\\bin;C:\\Windows')
     expect(env.Path).toBeUndefined()
   })
 
   it('still sets a PATH when the parent environment has none', () => {
-    expect(buildRelayEnv({}, 'C:\\bin\\claude.exe').PATH).toBe('C:\\bin')
+    expect(buildRelayEnv({}, 'C:\\bin\\claude.exe', 'win32').PATH).toBe('C:\\bin')
   })
 
   it('does not prepend a directory that already leads PATH', () => {
-    const env = buildRelayEnv({ PATH: 'C:\\bin;C:\\Windows' }, 'C:\\bin\\claude.exe')
+    const env = buildRelayEnv({ PATH: 'C:\\bin;C:\\Windows' }, 'C:\\bin\\claude.exe', 'win32')
     expect(env.PATH).toBe('C:\\bin;C:\\Windows')
+  })
+
+  it('separates POSIX PATH entries with a colon', () => {
+    const env = buildRelayEnv({ PATH: '/usr/bin:/bin' }, '/home/j/.local/bin/claude', 'linux')
+    expect(env.PATH).toBe('/home/j/.local/bin:/usr/bin:/bin')
+  })
+
+  it('does not prepend a POSIX directory that already leads PATH', () => {
+    const env = buildRelayEnv(
+      { PATH: '/home/j/.local/bin:/usr/bin' },
+      '/home/j/.local/bin/claude',
+      'linux'
+    )
+    expect(env.PATH).toBe('/home/j/.local/bin:/usr/bin')
+  })
+
+  it('compares PATH entries case-sensitively on Linux', () => {
+    // /home/J/bin and /home/j/bin are different directories there, so the
+    // leading entry must not be mistaken for the binary directory.
+    const env = buildRelayEnv(
+      { PATH: '/home/J/.local/bin:/usr/bin' },
+      '/home/j/.local/bin/claude',
+      'linux'
+    )
+    expect(env.PATH).toBe('/home/j/.local/bin:/home/J/.local/bin:/usr/bin')
   })
 })
 

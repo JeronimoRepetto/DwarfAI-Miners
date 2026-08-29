@@ -2,17 +2,50 @@
 
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
 
-DwarfAI-Miners is a floating Windows panel that turns active AI coding sessions into mines and
+DwarfAI-Miners is a floating desktop panel that turns active AI coding sessions into mines and
 dwarfs. A mine represents one project; workers and foremen represent the agents currently
 operating in that project.
 
 **Status:** functional MVP. Claude Code and Codex session detection, live IPC updates, mine
-tiers, animated dwarfs, terminal focus with transcript fallback, Windows autostart, and
-Windows packaging are implemented.
+tiers, animated dwarfs, terminal focus with transcript fallback, autostart, and packaging are
+implemented. Windows is the verified platform; macOS and Linux build and are unit-tested but
+have not been run end to end yet — see the support matrix below.
+
+## Platform support
+
+Every operating-system-specific behavior sits behind a port selected in one place
+(`src/main/platform/platformAdapters.ts`), and each adapter's commands and file contents are
+unit-tested as pure builders. What has _not_ happened is running those commands on a real Mac
+or Linux desktop, so the table is honest about the difference.
+
+| Capability                              | Windows                       | macOS                                  | Linux                                  |
+| --------------------------------------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
+| Overall                                 | **Verified**                  | Built, integration-pending             | Built, integration-pending             |
+| Session detection (Claude Code / Codex) | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
+| Codex liveness probe                    | PowerShell `Win32_Process`    | `pgrep -f codex`                       | `pgrep -f codex`                       |
+| Click-to-focus a terminal               | user32 via PowerShell         | `ps` + System Events (`osascript`)     | **Unsupported** — falls back to viewer |
+| Live transcript viewer                  | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
+| Type a message into a terminal session  | SendKeys                      | **Disabled** (built, gated)            | **Unsupported**                        |
+| Relay a message to a named session      | Supported                     | Supported                              | Supported                              |
+| Start at login                          | HKCU Run key                  | `~/Library/LaunchAgents` plist         | `~/.config/autostart` desktop entry    |
+| Packaging                               | NSIS + portable               | dmg + zip (arm64 & x64)                | AppImage + deb                         |
+
+Notes on the three honest gaps:
+
+- **Linux window focus** is unsupported on purpose. `wmctrl`/`xdotool` are X11-only, absent by
+  default, and blocked outright under Wayland; guessing would mean hanging on a tool that is not
+  there. Clicking a dwarf goes straight to the transcript viewer instead.
+- **macOS keystroke injection** is implemented (`osascript` + System Events) and unit-tested,
+  but it is gated off behind `DARWIN_CONSOLE_INPUT_ENABLED` until it has been run on a real Mac —
+  it also needs the user to grant Accessibility permission, which the app cannot detect. While it
+  is off, Send and Kick render disabled with their reason rather than silently typing nowhere.
+- **Session-data layouts** (`~/.claude`, `~/.codex`) are assumed to be identical on all three
+  platforms. They are home-relative already and nothing in the formats is Windows-specific, but
+  this has not been confirmed against real macOS/Linux fixtures.
 
 ## Quick start
 
-```powershell
+```bash
 pnpm install
 pnpm dev
 ```
@@ -53,8 +86,9 @@ message changes, a comic speech bubble appears above it for a few seconds.
 
 The renderer ships processed art in `src/renderer/src/assets/art/` — committed, so a clone
 builds and runs without the source paintings. `pnpm art:build` regenerates it from the
-originals, which live outside the repository (default `C:\Users\jeron\Downloads\DwarfAI-Miners`,
-overridable with `--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified.
+originals, which live outside the repository (default `<home>/Downloads/DwarfAI-Miners`,
+overridable with `--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified. The script
+itself is platform-neutral: every path goes through `node:path`.
 
 The script chroma-keys the dwarf and mound paintings off their flat backdrop — sampling the
 key color from each image's own four corners, because it differs per image — crops all nine
@@ -62,9 +96,17 @@ dwarf poses to one shared canvas so animation frames never jitter, and downscale
 background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.mjs`.
 
 Clicking a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
-this works when their process ancestry reaches a supported terminal host. Codex rollouts do
-not expose a reliable PID; DwarfAI-Miners then opens the recent activity feed on a parchment
-board inside the panel.
+this works when their process ancestry reaches a supported terminal host (and on a platform
+where focusing is supported at all — see the matrix above). Codex rollouts do not expose a
+reliable PID; DwarfAI-Miners then opens a terminal tailing the transcript live, and failing
+that shows the recent activity feed on a parchment board inside the panel.
+
+The live viewer ships twice, once per shell: `resources/dwarf-feed-viewer.ps1` for Windows and
+`resources/dwarf-feed-viewer.sh` for macOS and Linux. The POSIX one is a plain `sh` script
+around `tail -f`, and it parses JSONL with a small JavaScript formatter run on the Node runtime
+the app already bundles (`process.execPath`, via `ELECTRON_RUN_AS_NODE`), so no system Node is
+required. If that formatter cannot run, the viewer falls back to showing the raw JSONL rather
+than nothing.
 
 ## Provider support
 
@@ -86,15 +128,27 @@ tail can never come back as a ghost. Codex promotion still comes from a verified
 
 ## Startup and tray behavior
 
-- Packaged builds enable **Start with Windows** on the first successful launch.
+- Packaged builds enable autostart on the first successful launch (the tray item reads **Start
+  with Windows** on Windows and **Start at login** elsewhere).
 - A marker in Electron's user-data directory prevents later launches from overriding a tray
   opt-out.
-- Development runs never write the registry or the marker.
+- Development runs never write an autostart entry or the marker.
 - Closing the panel hides it; **Quit** in the tray exits the process.
+- On macOS the app hides its Dock tile: it lives in the menu bar, and its only window is the
+  floating panel.
 
-The registry entry is `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
-`DwarfAI-Miners`. Existing installs migrate automatically on first launch after the update: the
-legacy `AgentName` value is removed, and the new value is written only if autostart was on.
+Where the entry is written, per platform:
+
+| Platform | Location                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------- |
+| Windows  | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `DwarfAI-Miners`                      |
+| macOS    | `~/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist` (`RunAtLoad`, `KeepAlive=false`) |
+| Linux    | `$XDG_CONFIG_HOME/autostart/dwarfai-miners.desktop`, defaulting to `~/.config/autostart/`         |
+
+Only Windows has a migration to run: existing installs move automatically on first launch after
+the update — the legacy `AgentName` Run value is removed, and the new value is written only if
+autostart was on. No macOS or Linux build shipped before the rename, so there is nothing to
+migrate there.
 
 ## Configuration
 
@@ -120,18 +174,30 @@ Tier thresholds must be strictly increasing.
 
 ## Verification and packaging
 
-```powershell
+```bash
 pnpm typecheck
 pnpm lint
 pnpm format:check
 pnpm test
 pnpm build
-pnpm package
 ```
 
-`pnpm package` creates unsigned NSIS and portable x64 executables in `release/`. Windows
-SmartScreen can warn because no signing certificate is configured. Until a custom application
-icon is added, electron-builder uses Electron's default icon.
+The whole test suite is platform-independent: every per-OS builder is tested by passing the
+platform explicitly, so the same assertions run and pass on any host. CI currently runs the
+Windows leg only; a macOS/Linux matrix is a follow-up (see `.github/workflows/ci.yml`).
+
+Packaging is per-platform and must run on that platform (electron-builder cannot cross-build a
+dmg or a deb):
+
+| Command              | Runs on | Output in `release/`                        |
+| -------------------- | ------- | ------------------------------------------- |
+| `pnpm package`       | Windows | unsigned NSIS installer + portable exe, x64 |
+| `pnpm package:mac`   | macOS   | dmg + zip, arm64 and x64                    |
+| `pnpm package:linux` | Linux   | AppImage + deb, x64                         |
+
+Nothing is code-signed or notarized, so Windows SmartScreen and macOS Gatekeeper will both warn.
+Until a custom application icon is added (issue #8), electron-builder uses Electron's default
+icon on every platform.
 
 ## Architecture
 
@@ -140,7 +206,7 @@ ClaudeProvider / CodexProvider
             |
           Poller -> aggregateMines + TierService
             |
-        AgentRuntime
+        AgentRuntime  <- createPlatformAdapters (focus, viewer, text delivery, process probe)
             |
       Electron IPC / preload
             |
@@ -150,6 +216,13 @@ ClaudeProvider / CodexProvider
 The shared contract in `src/shared/contracts.ts` is the single type boundary for main,
 preload, and renderer. Providers depend on the `FsLike` port so parsers and scans can be tested
 without the real filesystem.
+
+`src/main/platform/platformAdapters.ts` is the single composition point for everything
+operating-system-specific. Nothing else in the app reads `process.platform`: the runtime gets a
+focus function, a `TextDeliveryPort`, a transcript-viewer launcher and a `ProcessProbePort`, and
+autostart gets an `AutostartPort` — all selected there and all injectable in tests. Each adapter
+is split into pure builders (a command's argv, a plist's exact bytes) and a thin runner, which is
+what makes platforms that cannot be executed here still testable here.
 
 ## Security posture
 

@@ -57,6 +57,11 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
 async function init(): Promise<void> {
   app.setAppUserModelId('com.jeronimorepetto.dwarfaiminers')
 
+  // DwarfAI-Miners lives in the tray/menu bar and its only window is a hidden
+  // floating panel, so it has no business owning a Dock tile. `app.dock` only
+  // exists on macOS; every other platform leaves this untouched.
+  app.dock?.hide()
+
   // Typed config, fails fast on invalid values before any window exists.
   loadDotenv({ quiet: true })
   const config = loadConfig()

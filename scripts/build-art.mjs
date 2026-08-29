@@ -31,6 +31,7 @@
  * dark enough that the remainder reads as glow.
  */
 import { mkdir, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Jimp } from 'jimp'
@@ -45,8 +46,13 @@ import {
   unionBox
 } from './art/keying.mjs'
 
-/** Where the product owner drops the source paintings on this machine. */
-const DEFAULT_SOURCE_DIR = 'C:\\Users\\jeron\\Downloads\\DwarfAI-Miners'
+/**
+ * Where the product owner drops the source paintings: the Downloads folder of
+ * whoever is running the script. Derived from the home directory rather than
+ * hard-coded so the script runs unchanged on macOS and Linux; `--src` or
+ * DWARFAI_MINERS_ART_SRC overrides it anywhere.
+ */
+const DEFAULT_SOURCE_DIR = join(homedir(), 'Downloads', 'DwarfAI-Miners')
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(REPO_ROOT, 'src', 'renderer', 'src', 'assets', 'art')

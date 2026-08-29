@@ -18,9 +18,11 @@ env:
 jobs:
   checks:
     name: Typecheck, lint, test, build
-    # Windows-only for now: this is currently a Windows-only Electron panel.
-    # macOS/ubuntu legs join this matrix once cross-platform support lands
-    # (see issue #5) — do not add them ad hoc before that.
+    # Windows-only for now. Cross-platform support has landed (issue #5) and
+    # the whole suite is platform-independent — every per-OS builder is tested
+    # by passing the platform explicitly — so a macos-latest/ubuntu-latest
+    # matrix would pass as-is. Expanding it is a deliberate follow-up (it also
+    # needs matching `release` legs for dmg/AppImage), not an ad-hoc addition.
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -71,6 +73,8 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # electron-builder cannot cross-build a dmg or a deb, so macOS/Linux
+  # artifacts need their own runners. Adding them is the follow-up noted above.
   release:
     name: Package Windows installers
     needs: checks

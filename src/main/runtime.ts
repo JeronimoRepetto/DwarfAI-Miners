@@ -13,19 +13,14 @@ import type {
 } from '../shared/contracts'
 import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
-import { focusPid } from './focus'
+import { createPlatformAdapters, type PlatformAdapters } from './platform/platformAdapters'
 import { Poller } from './poller'
 import { ClaudeProvider } from './providers/claude/claudeProvider'
 import { CodexProvider } from './providers/codex/codexProvider'
 import type { Provider } from './providers/provider'
-import {
-  launchTranscriptViewer,
-  resolveViewerScriptPath,
-  type ViewerPathOptions
-} from './terminalLauncher'
+import type { ViewerPathOptions } from './terminalLauncher'
 import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
 import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './textDelivery/resolve'
-import { WindowsTextDelivery } from './textDelivery/windowsTextDelivery'
 import { TierService } from './tier/tierService'
 
 const FEED_LIMIT = 12
@@ -72,6 +67,8 @@ export interface RuntimeOptions {
   launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   /** Writes a typed message into a live session; injected for tests. */
   textDelivery?: TextDeliveryPort
+  /** Every per-OS adapter, already selected; injected for tests. */
+  platformAdapters?: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
   now?: () => number
 }
@@ -91,12 +88,29 @@ export class AgentRuntime {
   constructor(options: RuntimeOptions) {
     const home = options.home ?? homedir()
     const fs = options.fs ?? new NodeFs()
+    const appPaths: ViewerPathOptions = options.appPaths ?? {
+      isPackaged: false,
+      resourcesPath: process.resourcesPath ?? '',
+      appPath: process.cwd()
+    }
+    // The one place the running operating system is consulted: everything
+    // below depends on ports, never on process.platform.
+    const platform =
+      options.platformAdapters ??
+      createPlatformAdapters({
+        home,
+        appPaths,
+        relayModel: options.config.sendTextRelayModel,
+        relayTimeoutMs: options.config.sendTextTimeoutS * 1_000
+      })
+
     this.providers = options.providers ?? [
       new ClaudeProvider({
         fs,
         roots: options.config.claudeConfigDirs.map((path) => expandHomePath(path, home))
       }),
       new CodexProvider({
+        isCodexProcessRunning: () => platform.processProbe.isCodexProcessRunning(),
         fs,
         sessionsRoot: expandHomePath(options.config.codexSessionsRoot, home),
         livenessWindowS: options.config.codexLivenessWindowS,
@@ -108,29 +122,11 @@ export class AgentRuntime {
         logsDbPath: expandHomePath(options.config.codexLogsDb, home)
       })
     ]
-    this.focus = options.focus ?? focusPid
-
-    const appPaths: ViewerPathOptions = options.appPaths ?? {
-      isPackaged: false,
-      resourcesPath: process.resourcesPath ?? '',
-      appPath: process.cwd()
-    }
+    this.focus = options.focus ?? ((pid) => platform.focusPid(pid))
     this.launchTerminal =
       options.launchTerminal ??
-      ((dwarfName, transcriptPath) =>
-        launchTranscriptViewer({
-          dwarfName,
-          transcriptPath,
-          viewerScriptPath: resolveViewerScriptPath(appPaths)
-        }))
-
-    this.textDelivery =
-      options.textDelivery ??
-      new WindowsTextDelivery({
-        home,
-        relayModel: options.config.sendTextRelayModel,
-        relayTimeoutMs: options.config.sendTextTimeoutS * 1_000
-      })
+      ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
+    this.textDelivery = options.textDelivery ?? platform.textDelivery
 
     const tiers = new TierService({
       fs,
@@ -180,11 +176,21 @@ export class AgentRuntime {
    * Ask whichever provider owns `dwarfId` how a message could reach it. A
    * provider that predates the capability surface (or does not implement it)
    * simply reports no channel.
+   *
+   * A 'terminal' target is dropped on platforms whose delivery port cannot
+   * type into a console (macOS until its osascript path is verified, Linux
+   * always). Providers answer from what the SESSION offers, which is a fact
+   * about the session, not about this machine; intersecting the two here is
+   * what makes the panel show a disabled button with a reason instead of a
+   * Send that quietly types nowhere.
    */
   private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
+    const consoleSupported = this.textDelivery.supportsConsoleInput !== false
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
-      if (target !== undefined && target !== null) return target
+      if (target === undefined || target === null) continue
+      if (target.kind === 'terminal' && !consoleSupported) return null
+      return target
     }
     return null
   }

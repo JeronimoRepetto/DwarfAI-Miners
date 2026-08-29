@@ -598,6 +598,36 @@ describe('AgentRuntime.sendDwarfText', () => {
     const { runtime } = await runtimeWith({})
     expect(runtime.getMines()[0]!.dwarfs[0]?.textDelivery).toBeUndefined()
   })
+
+  it('withholds the terminal channel where the platform cannot type into a console', async () => {
+    // The session offers a console; this operating system cannot reach it
+    // (Linux always, macOS until its osascript path is verified). The panel
+    // must show the honest disabled button rather than a Send that types
+    // nowhere, so the channel is never published at all.
+    const port = { ...fakePort(), supportsConsoleInput: false }
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+
+    expect(runtime.getMines()[0]!.dwarfs[0]?.textDelivery).toBeUndefined()
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: false, via: 'none' })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('keeps the relay channel where console input is unavailable', async () => {
+    // The relay spawns a CLI rather than talking to a window server, so it is
+    // the tier that survives on every platform.
+    const port = { ...fakePort(), supportsConsoleInput: false }
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    expect(runtime.getMines()[0]!.dwarfs[0]?.textDelivery).toBe('claude-relay')
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+  })
 })
 
 describe('AgentRuntime.kickDwarf', () => {

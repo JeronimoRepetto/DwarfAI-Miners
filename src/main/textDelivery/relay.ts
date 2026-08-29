@@ -1,10 +1,15 @@
-import { dirname, join } from 'node:path'
+import { posix, win32 } from 'node:path'
+import { currentPlatform, isCaseInsensitiveFs, type Platform } from '../platform/platform'
 
 /**
  * Native relay for a headless Claude session: one throwaway `claude -p` turn
  * whose only job is to hand the text to the target session over Claude Code's
  * own cross-session messaging (sessions on this machine are addressable by the
  * name their registry entry records). No injection, no window required.
+ *
+ * This tier is the platform-neutral one: it spawns a CLI instead of talking to
+ * a window server, so it works the same on all three platforms. Only the
+ * binary's name and the PATH separator differ, and both are resolved here.
  */
 
 /** The only two tools the relay needs: find the session, hand it the message. */
@@ -13,13 +18,28 @@ export const RELAY_TOOLS = 'ListAgents,SendMessage'
 const MESSAGE_OPEN = '<message-to-deliver>'
 const MESSAGE_CLOSE = '</message-to-deliver>'
 
+/** How this platform separates PATH entries. */
+function pathDelimiter(platform: Platform): string {
+  return platform === 'win32' ? ';' : ':'
+}
+
 /**
- * The real native binary. `claude` on PATH resolves to an 'effort-autopilot'
- * shim on this machine, and that shim breaks non-interactive spawns, so the
- * relay always addresses the executable directly instead of trusting PATH.
+ * The real native binary, always addressed directly rather than through PATH.
+ *
+ * On Windows `claude` on PATH resolves to an 'effort-autopilot' shim on this
+ * machine, and that shim breaks non-interactive spawns. On macOS and Linux the
+ * same directory is where the native installer puts the executable, so the one
+ * rule holds everywhere — only the file extension differs. A Claude installed
+ * somewhere else (npm global, Homebrew) is not found: the relay then reports
+ * "could not be started" rather than silently doing nothing.
  */
-export function resolveClaudeBinaryPath(home: string): string {
-  return join(home, '.local', 'bin', 'claude.exe')
+export function resolveClaudeBinaryPath(
+  home: string,
+  platform: Platform = currentPlatform()
+): string {
+  return platform === 'win32'
+    ? win32.join(home, '.local', 'bin', 'claude.exe')
+    : posix.join(home, '.local', 'bin', 'claude')
 }
 
 /**
@@ -28,15 +48,23 @@ export function resolveClaudeBinaryPath(home: string): string {
  * env keys are case-insensitive but a Node env object is not, so the existing
  * key's casing is reused rather than adding a second one.
  */
-export function buildRelayEnv(env: NodeJS.ProcessEnv, binaryPath: string): NodeJS.ProcessEnv {
-  const binaryDir = dirname(binaryPath)
+export function buildRelayEnv(
+  env: NodeJS.ProcessEnv,
+  binaryPath: string,
+  platform: Platform = currentPlatform()
+): NodeJS.ProcessEnv {
+  const binaryDir = platform === 'win32' ? win32.dirname(binaryPath) : posix.dirname(binaryPath)
+  const delimiter = pathDelimiter(platform)
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
   const current = env[pathKey]
   if (current === undefined || current === '') {
     return { ...env, [pathKey]: binaryDir }
   }
-  const alreadyLeading = current.split(';')[0]?.toLowerCase() === binaryDir.toLowerCase()
-  return { ...env, [pathKey]: alreadyLeading ? current : `${binaryDir};${current}` }
+  const leading = current.split(delimiter)[0] ?? ''
+  const alreadyLeading = isCaseInsensitiveFs(platform)
+    ? leading.toLowerCase() === binaryDir.toLowerCase()
+    : leading === binaryDir
+  return { ...env, [pathKey]: alreadyLeading ? current : `${binaryDir}${delimiter}${current}` }
 }
 
 /**

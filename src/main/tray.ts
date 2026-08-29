@@ -4,6 +4,8 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled
 } from './autostart'
+import { autostartMenuLabel } from './platform/autostartEntries'
+import { currentPlatform } from './platform/platform'
 import { togglePanel } from './window'
 
 /** 16x16 amber diamond, generated at scaffold time (no binary asset needed). */
@@ -28,7 +30,7 @@ async function refreshTrayMenu(): Promise<void> {
     { label: 'Show/Hide Panel', click: () => togglePanel() },
     { type: 'separator' },
     {
-      label: 'Start with Windows',
+      label: autostartMenuLabel(currentPlatform()),
       type: 'checkbox',
       checked: autostartOn,
       click: (item) => {

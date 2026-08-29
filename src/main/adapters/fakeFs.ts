@@ -5,6 +5,16 @@ interface FakeFile {
   mtimeMs: number
 }
 
+/**
+ * The single normalization point for every path this fake sees, on the way in
+ * (addFile) and on the way out (every read).
+ *
+ * Both separators collapse to one, so a fixture registered with POSIX paths is
+ * found by a provider that built its path with node:path.join on Windows and
+ * vice versa. That is deliberate: it is what lets one set of fixtures prove
+ * path portability without being rewritten for each host, and what keeps the
+ * fake's own key format from leaking into any test's expectations.
+ */
 function normalize(path: string): string {
   return path.replace(/\//g, '\\').replace(/\\+$/, '')
 }

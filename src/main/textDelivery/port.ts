@@ -52,6 +52,17 @@ export interface TextDeliveryOutcome {
 }
 
 export interface TextDeliveryPort {
+  /**
+   * Whether this platform can actually type into a console at all. Undefined
+   * means yes (the Windows reading, and what every test fake wants).
+   *
+   * Linux has no portable way to synthesize a keystroke into someone else's
+   * terminal, and the macOS path is not integration-verified yet, so both
+   * report false. The runtime reads this before offering a 'terminal' channel
+   * to the panel: a button that cannot deliver is shown disabled with a reason
+   * rather than failing after the user has typed.
+   */
+  readonly supportsConsoleInput?: boolean
   /** Type the text into the console hosting `pid`. */
   sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome>
   /** Hand the text to a named, window-less Claude session over its own messaging. */

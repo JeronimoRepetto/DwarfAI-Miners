@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
@@ -92,11 +93,11 @@ export class ClaudeProvider implements Provider {
     const seenSessions = new Set<string>()
 
     for (const root of this.roots) {
-      const sessionsDir = `${root}\\sessions`
+      const sessionsDir = join(root, 'sessions')
       if (!(await this.fs.exists(sessionsDir))) continue
       for (const entry of await this.fs.listDir(sessionsDir)) {
         if (entry.isDirectory || !entry.name.endsWith('.json')) continue
-        const session = await this.readSessionEntry(`${sessionsDir}\\${entry.name}`)
+        const session = await this.readSessionEntry(join(sessionsDir, entry.name))
         if (session === null) continue
         if (seenSessions.has(session.sessionId)) continue
         if (!this.isPidAlive(session.pid)) continue
@@ -142,8 +143,8 @@ export class ClaudeProvider implements Provider {
     feedSources: Map<string, string>,
     deliveryTargets: Map<string, TextDeliveryTarget>
   ): Promise<ProviderSnapshot> {
-    const projectDir = `${root}\\projects\\${encodeClaudeProjectDir(session.cwd)}`
-    const transcriptPath = `${projectDir}\\${session.sessionId}.jsonl`
+    const projectDir = join(root, 'projects', encodeClaudeProjectDir(session.cwd))
+    const transcriptPath = join(projectDir, `${session.sessionId}.jsonl`)
     const transcriptStat = await this.fs.stat(transcriptPath)
     const info =
       transcriptStat === null
@@ -183,7 +184,12 @@ export class ClaudeProvider implements Provider {
     }
     for (const agent of inFlightAgents) {
       const workerId = `${mainDwarfId}:${agent.agentId}`
-      const subagentPath = `${projectDir}\\${session.sessionId}\\subagents\\agent-${agent.agentId}.jsonl`
+      const subagentPath = join(
+        projectDir,
+        session.sessionId,
+        'subagents',
+        `agent-${agent.agentId}.jsonl`
+      )
       feedSources.set(workerId, subagentPath)
       const workerName = agent.description ?? `agent-${agent.agentId.slice(0, 7)}`
       // A running subagent has no channel of its own: nothing outside its

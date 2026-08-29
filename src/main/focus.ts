@@ -21,8 +21,8 @@ export interface ShellResult {
 
 export type ShellRunner = (command: string) => Promise<ShellResult>
 
-/** Processes that own a focusable terminal window. */
-const TERMINAL_HOSTS = new Set([
+/** Windows processes that own a focusable terminal window. */
+export const WINDOWS_TERMINAL_HOSTS: ReadonlySet<string> = new Set([
   'windowsterminal.exe',
   'conhost.exe',
   'code.exe',
@@ -60,16 +60,22 @@ export function parseProcessRows(json: unknown): ProcessRow[] {
 
 /**
  * Walk from `startPid` up the parent chain and return the pid of the first
- * terminal-host process, or null when the chain has none.
+ * terminal-host process, or null when the chain has none. The chain walk is
+ * the same everywhere; only the set of names that count as a terminal differs
+ * per platform (see platform/unixFocus.ts), so it is a parameter.
  */
-export function selectFocusTargetPid(rows: ProcessRow[], startPid: number): number | null {
+export function selectFocusTargetPid(
+  rows: ProcessRow[],
+  startPid: number,
+  hosts: ReadonlySet<string> = WINDOWS_TERMINAL_HOSTS
+): number | null {
   const byPid = new Map(rows.map((row) => [row.pid, row]))
   const visited = new Set<number>()
   let current = byPid.get(startPid)
   for (let depth = 0; current !== undefined && depth < MAX_CHAIN_DEPTH; depth++) {
     if (visited.has(current.pid)) return null
     visited.add(current.pid)
-    if (TERMINAL_HOSTS.has(current.name.toLowerCase())) return current.pid
+    if (hosts.has(current.name.toLowerCase())) return current.pid
     current = byPid.get(current.parentPid)
   }
   return null
