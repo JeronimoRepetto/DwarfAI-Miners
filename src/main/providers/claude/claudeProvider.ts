@@ -119,7 +119,7 @@ export class ClaudeProvider implements Provider {
         name: session.name ?? session.sessionId.slice(0, 8),
         model: info.model,
         effort: info.effort,
-        status: session.status === 'busy' ? 'working' : 'idle',
+        status: session.status === 'busy' ? 'working' : 'waiting',
         lastMessage: info.lastAssistantText,
         sessionId: session.sessionId,
         pid: session.pid,

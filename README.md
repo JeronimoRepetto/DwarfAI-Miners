@@ -28,6 +28,8 @@ The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to sh
 - Provider, model, and effort in an accessible tooltip.
 - Truncated activity bubbles and a recent transcript feed when terminal focus is unavailable.
 - Empty mines when a session is open but no agent is currently working.
+- Each dwarf shows a plain-text status: **working** (actively producing), **waiting** (session
+  alive, paused), or **leaving** (its agent just finished/disappeared; kept visible briefly).
 
 Selecting a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
 this works when their process ancestry reaches a supported terminal host. Codex rollouts do
@@ -59,17 +61,21 @@ The registry entry is `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, valu
 
 Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast at startup.
 
-| Variable                  | Default                        | Meaning                                 |
-| ------------------------- | ------------------------------ | --------------------------------------- |
-| `POLL_INTERVAL_MS`        | `2000`                         | Provider scan interval in milliseconds. |
-| `LIVENESS_WINDOW_S`       | `90`                           | Reserved general activity window.       |
-| `CODEX_LIVENESS_WINDOW_S` | `300`                          | Maximum rollout age considered live.    |
-| `TIER_CACHE_TTL_S`        | `600`                          | Mine-tier cache lifetime.               |
-| `TIER_COPPER_AT`          | `25`                           | Source-file threshold for copper.       |
-| `TIER_SILVER_AT`          | `100`                          | Source-file threshold for silver.       |
-| `TIER_GOLD_AT`            | `400`                          | Source-file threshold for gold.         |
-| `TIER_URANIUM_AT`         | `1500`                         | Source-file threshold for uranium.      |
-| `CLAUDE_CONFIG_DIRS`      | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.       |
+| Variable                  | Default                        | Meaning                                                                             |
+| ------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| `POLL_INTERVAL_MS`        | `2000`                         | Provider scan interval in milliseconds.                                             |
+| `LIVENESS_WINDOW_S`       | `90`                           | Reserved general activity window.                                                   |
+| `CODEX_LIVENESS_WINDOW_S` | `300`                          | Maximum rollout mtime age considered live.                                          |
+| `CODEX_SCAN_DAYS`         | `7`                            | How many day-directories (today back N-1 days) to scan for rollouts.                |
+| `CODEX_IDLE_RETENTION_S`  | `3600`                         | Extra time a quiet-but-open rollout stays visible while a codex process is running. |
+| `CODEX_SESSIONS_ROOT`     | `~/.codex/sessions`            | The Codex rollout directory to scan. A leading `~` is expanded.                     |
+| `DWARF_LEAVE_GRACE_S`     | `20`                           | How long a dwarf whose agent finished/disappeared stays visible as "leaving".       |
+| `TIER_CACHE_TTL_S`        | `600`                          | Mine-tier cache lifetime.                                                           |
+| `TIER_COPPER_AT`          | `25`                           | Source-file threshold for copper.                                                   |
+| `TIER_SILVER_AT`          | `100`                          | Source-file threshold for silver.                                                   |
+| `TIER_GOLD_AT`            | `400`                          | Source-file threshold for gold.                                                     |
+| `TIER_URANIUM_AT`         | `1500`                         | Source-file threshold for uranium.                                                  |
+| `CLAUDE_CONFIG_DIRS`      | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.                                                   |
 
 Tier thresholds must be strictly increasing.
 

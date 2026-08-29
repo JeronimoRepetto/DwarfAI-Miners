@@ -17,7 +17,7 @@ describe('defaultDwarf', () => {
       provider: 'claude',
       role: 'worker',
       name: 'Dwarf',
-      status: 'idle',
+      status: 'waiting',
       sessionId: ''
     })
   })

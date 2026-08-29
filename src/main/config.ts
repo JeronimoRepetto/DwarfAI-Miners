@@ -11,6 +11,21 @@ export interface AppConfig {
   livenessWindowS: number
   /** Codex-specific liveness: rollout mtime age that still counts as an open session. */
   codexLivenessWindowS: number
+  /**
+   * How many day-directories (today back N-1 days) to scan under the Codex
+   * sessions root. A rollout lives in its START-date directory forever, so
+   * scanning only today/yesterday hides a session opened earlier that is
+   * still active; mtime filtering keeps this cheap even at a week of days.
+   */
+  codexScanDays: number
+  /**
+   * How long a Codex rollout stays visible past codexLivenessWindowS while a
+   * codex process is still running (idle CLI writes nothing to its rollout,
+   * so mtime alone can't tell "open but quiet" from "closed").
+   */
+  codexIdleRetentionS: number
+  /** How long a disappeared dwarf stays visible with status 'leaving' before being dropped. */
+  dwarfLeaveGraceS: number
   /** How long a computed project tier stays cached, in seconds. */
   tierCacheTtlS: number
   /** Source-file counts at which a mine upgrades to the next tier. */
@@ -20,6 +35,8 @@ export interface AppConfig {
    * runs two accounts with separate dirs; roots that do not exist are skipped.
    */
   claudeConfigDirs: string[]
+  /** The Codex sessions root. A leading ~ is expanded against the real home dir. */
+  codexSessionsRoot: string
 }
 
 export function defaultConfig(): AppConfig {
@@ -27,9 +44,13 @@ export function defaultConfig(): AppConfig {
     pollIntervalMs: 2000,
     livenessWindowS: 90,
     codexLivenessWindowS: 300,
+    codexScanDays: 7,
+    codexIdleRetentionS: 3600,
+    dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
     tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
-    claudeConfigDirs: ['~/.claude', '~/.claude-multitec']
+    claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
+    codexSessionsRoot: '~/.codex/sessions'
   }
 }
 
@@ -62,6 +83,11 @@ function readDirList(env: Env, key: string, fallback: string[]): string[] {
   return dirs
 }
 
+function readPath(env: Env, key: string, fallback: string): string {
+  const raw = env[key]
+  return raw === undefined || raw.trim() === '' ? fallback : raw.trim()
+}
+
 function readTierThresholds(env: Env, fallback: TierThresholds): TierThresholds {
   const thresholds: TierThresholds = {
     copperAt: readPositiveInt(env, 'TIER_COPPER_AT', fallback.copperAt),
@@ -92,8 +118,16 @@ export function loadConfig(env: Env = process.env): AppConfig {
       'CODEX_LIVENESS_WINDOW_S',
       defaults.codexLivenessWindowS
     ),
+    codexScanDays: readPositiveInt(env, 'CODEX_SCAN_DAYS', defaults.codexScanDays),
+    codexIdleRetentionS: readPositiveInt(
+      env,
+      'CODEX_IDLE_RETENTION_S',
+      defaults.codexIdleRetentionS
+    ),
+    dwarfLeaveGraceS: readPositiveInt(env, 'DWARF_LEAVE_GRACE_S', defaults.dwarfLeaveGraceS),
     tierCacheTtlS: readPositiveInt(env, 'TIER_CACHE_TTL_S', defaults.tierCacheTtlS),
     tierThresholds: readTierThresholds(env, defaults.tierThresholds),
-    claudeConfigDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', defaults.claudeConfigDirs)
+    claudeConfigDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', defaults.claudeConfigDirs),
+    codexSessionsRoot: readPath(env, 'CODEX_SESSIONS_ROOT', defaults.codexSessionsRoot)
   }
 }

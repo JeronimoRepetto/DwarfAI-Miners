@@ -60,6 +60,9 @@ async function activate(dwarf: Dwarf): Promise<void> {
 function label(tier: MineTier): string {
   return tier.slice(0, 1).toUpperCase() + tier.slice(1)
 }
+function statusLabel(status: Dwarf['status']): string {
+  return status.slice(0, 1).toUpperCase() + status.slice(1)
+}
 function info(dwarf: Dwarf): string {
   return [
     dwarf.role === 'foreman' ? 'Foreman' : 'Worker',
@@ -119,7 +122,8 @@ onBeforeUnmount(() => unsubscribe?.())
               ><span class="dwarf" aria-hidden="true"
                 ><span class="helmet"></span><span class="face"><i></i><i></i></span
                 ><span class="beard"></span><span class="pick">&#x26CF;</span></span
-              ><span class="dwarf-name">{{ dwarf.name }}</span>
+              ><span class="dwarf-name">{{ dwarf.name }}</span
+              ><span class="dwarf-status">{{ statusLabel(dwarf.status) }}</span>
             </button>
             <span :id="'details-' + dwarf.id" class="tooltip" role="tooltip">{{
               info(dwarf)
@@ -552,6 +556,15 @@ button {
 }
 .activating .dwarf {
   opacity: 0.55;
+}
+.leaving .dwarf {
+  opacity: 0.5;
+}
+.dwarf-status {
+  color: #a99a7f;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .foreman .helmet {
   background: linear-gradient(#78a1bd, #365873);

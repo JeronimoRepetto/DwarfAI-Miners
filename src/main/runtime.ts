@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { NodeFs, type FsLike } from './adapters/fsLike'
 import type { AppConfig } from './config'
 import type { DwarfActivation, Mine } from '../shared/contracts'
+import { DwarfLifecycleTracker } from './domain/lifecycle'
 import { focusPid } from './focus'
 import { Poller } from './poller'
 import { ClaudeProvider } from './providers/claude/claudeProvider'
@@ -28,6 +29,8 @@ export interface RuntimeOptions {
   fs?: FsLike
   providers?: Provider[]
   focus?: (pid: number) => Promise<boolean>
+  /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
+  now?: () => number
 }
 
 /**
@@ -50,8 +53,10 @@ export class AgentRuntime {
       }),
       new CodexProvider({
         fs,
-        sessionsRoot: join(home, '.codex', 'sessions'),
-        livenessWindowS: options.config.codexLivenessWindowS
+        sessionsRoot: expandHomePath(options.config.codexSessionsRoot, home),
+        livenessWindowS: options.config.codexLivenessWindowS,
+        scanDays: options.config.codexScanDays,
+        idleRetentionS: options.config.codexIdleRetentionS
       })
     ]
     this.focus = options.focus ?? focusPid
@@ -61,13 +66,18 @@ export class AgentRuntime {
       thresholds: options.config.tierThresholds,
       ttlS: options.config.tierCacheTtlS
     })
+    const lifecycle = new DwarfLifecycleTracker({
+      graceMs: options.config.dwarfLeaveGraceS * 1_000,
+      now: options.now
+    })
     this.poller = new Poller({
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
       tierOf: (path) => tiers.tierOf(path),
       onUpdate: (mines) => {
-        this.mines = mines
-        options.onMinesUpdated(mines)
+        const withLeaving = lifecycle.apply(mines)
+        this.mines = withLeaving
+        options.onMinesUpdated(withLeaving)
       },
       logError: (message, error) => console.warn(message, error)
     })

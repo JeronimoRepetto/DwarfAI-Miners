@@ -9,7 +9,12 @@ export type DwarfProvider = 'claude' | 'codex'
 
 export type DwarfRole = 'foreman' | 'worker'
 
-export type DwarfStatus = 'working' | 'idle'
+/**
+ * working: actively producing (busy). waiting: session alive but paused/awaiting
+ * (a resting dwarf). leaving: present in the previous runtime tick but its
+ * agent finished/disappeared — kept for a grace period, then dropped.
+ */
+export type DwarfStatus = 'working' | 'waiting' | 'leaving'
 
 export interface Dwarf {
   id: string

@@ -7,9 +7,13 @@ describe('defaultConfig', () => {
       pollIntervalMs: 2000,
       livenessWindowS: 90,
       codexLivenessWindowS: 300,
+      codexScanDays: 7,
+      codexIdleRetentionS: 3600,
+      dwarfLeaveGraceS: 20,
       tierCacheTtlS: 600,
       tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
-      claudeConfigDirs: ['~/.claude', '~/.claude-multitec']
+      claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
+      codexSessionsRoot: '~/.codex/sessions'
     })
   })
 
@@ -33,12 +37,29 @@ describe('loadConfig', () => {
       POLL_INTERVAL_MS: '5000',
       LIVENESS_WINDOW_S: '120',
       CODEX_LIVENESS_WINDOW_S: '900',
-      TIER_CACHE_TTL_S: '60'
+      TIER_CACHE_TTL_S: '60',
+      CODEX_SCAN_DAYS: '3',
+      CODEX_IDLE_RETENTION_S: '1800',
+      DWARF_LEAVE_GRACE_S: '45'
     })
     expect(config.pollIntervalMs).toBe(5000)
     expect(config.livenessWindowS).toBe(120)
     expect(config.codexLivenessWindowS).toBe(900)
     expect(config.tierCacheTtlS).toBe(60)
+    expect(config.codexScanDays).toBe(3)
+    expect(config.codexIdleRetentionS).toBe(1800)
+    expect(config.dwarfLeaveGraceS).toBe(45)
+  })
+
+  it('parses CODEX_SESSIONS_ROOT, keeping the leading ~ unexpanded', () => {
+    expect(loadConfig({ CODEX_SESSIONS_ROOT: '~/custom/sessions' }).codexSessionsRoot).toBe(
+      '~/custom/sessions'
+    )
+  })
+
+  it('fails fast when CODEX_SESSIONS_ROOT is blank', () => {
+    expect(() => loadConfig({ CODEX_SESSIONS_ROOT: '   ' })).not.toThrow()
+    expect(loadConfig({ CODEX_SESSIONS_ROOT: '   ' }).codexSessionsRoot).toBe('~/.codex/sessions')
   })
 
   it('parses tier thresholds per key', () => {

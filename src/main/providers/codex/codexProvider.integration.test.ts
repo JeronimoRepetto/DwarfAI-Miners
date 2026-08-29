@@ -1,0 +1,139 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { NodeFs } from '../../adapters/fsLike'
+import { isCodexProcessRunning } from '../../adapters/processProbe'
+import { defaultConfig } from '../../config'
+import { CodexProvider } from './codexProvider'
+
+/**
+ * Opt-in real-machine checks (RUN_INTEGRATION=1 pnpm test) per the project's
+ * "integration tests opt-in" convention — these touch the real filesystem
+ * and the real Codex sessions root, so they are excluded from the default
+ * deterministic `pnpm test` run.
+ */
+describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine checks', () => {
+  it('reports what the provider detects right now against the real ~/.codex/sessions', async () => {
+    const config = defaultConfig()
+    const provider = new CodexProvider({
+      fs: new NodeFs(),
+      sessionsRoot: join(homedir(), '.codex', 'sessions'),
+      livenessWindowS: config.codexLivenessWindowS,
+      scanDays: config.codexScanDays,
+      idleRetentionS: config.codexIdleRetentionS
+    })
+
+    const snapshots = await provider.scan()
+    console.log('[integration] isCodexProcessRunning():', await isCodexProcessRunning())
+    console.log(
+      '[integration] real ~/.codex/sessions scan result:',
+      JSON.stringify(
+        snapshots.map((s) => ({
+          sessionId: s.sessionId,
+          cwd: s.cwd,
+          status: s.status,
+          dwarfs: s.dwarfs.map((d) => ({
+            id: d.id,
+            role: d.role,
+            status: d.status,
+            model: d.model
+          }))
+        })),
+        null,
+        2
+      )
+    )
+    expect(Array.isArray(snapshots)).toBe(true)
+  })
+
+  describe('synthetic large-turn rollout (bug: task_started pushed out of a small tail read)', () => {
+    let scratchRoot: string
+
+    beforeAll(async () => {
+      scratchRoot = await mkdtemp(join(tmpdir(), 'agent-name-codex-scratch-'))
+    })
+
+    afterAll(async () => {
+      await rm(scratchRoot, { recursive: true, force: true })
+    })
+
+    it('shows a busy mine with a working dwarf once written to CODEX_SESSIONS_ROOT', async () => {
+      // Real session_meta + turn_context lines captured from an actual rollout
+      // on this machine (2026-08-29, agent-name project), trimmed of the
+      // long base_instructions/developer_instructions text (irrelevant to
+      // parsing) but keeping every field name the parser reads.
+      const realSessionMeta = JSON.stringify({
+        timestamp: '2026-08-29T12:27:32.174Z',
+        type: 'session_meta',
+        payload: {
+          session_id: '01a04d79-real-0000-0000-000000000000',
+          id: '01a04d79-real-0000-0000-000000000000',
+          cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+          originator: 'codex-tui',
+          cli_version: '0.150.1',
+          source: 'cli',
+          model_provider: 'openai'
+        }
+      })
+      const realTurnContext = JSON.stringify({
+        timestamp: '2026-08-29T12:27:32.598Z',
+        type: 'turn_context',
+        payload: {
+          turn_id: 'still-open-turn',
+          cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+          model: 'gpt-5.6-sol',
+          effort: 'high',
+          summary: 'auto'
+        }
+      })
+      const taskStarted = JSON.stringify({
+        timestamp: '2026-08-29T12:27:32.600Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'still-open-turn' }
+      })
+      // A large in-progress body (tool output/reasoning) with NO task_complete
+      // yet — reproduces the real observed gap (347,167 bytes on this
+      // machine) between task_started and its eventual task_complete.
+      const largeBody = JSON.stringify({
+        timestamp: '2026-08-29T12:28:00.000Z',
+        type: 'response_item',
+        payload: { type: 'reasoning', encrypted_content: 'x'.repeat(300_000) }
+      })
+
+      const dir = join(scratchRoot, '2026', '08', '29')
+      await mkdir(dir, { recursive: true })
+      const file = join(
+        dir,
+        'rollout-2026-08-29T12-27-32-01a04d79-real-0000-0000-000000000000.jsonl'
+      )
+      await writeFile(
+        file,
+        [realSessionMeta, realTurnContext, taskStarted, largeBody].join('\n') + '\n',
+        'utf8'
+      )
+
+      const config = defaultConfig()
+      const provider = new CodexProvider({
+        fs: new NodeFs(),
+        sessionsRoot: scratchRoot,
+        livenessWindowS: config.codexLivenessWindowS,
+        scanDays: config.codexScanDays,
+        idleRetentionS: config.codexIdleRetentionS
+      })
+      const snapshots = await provider.scan()
+      console.log(
+        '[integration] synthetic large-turn scan result:',
+        JSON.stringify(snapshots, null, 2)
+      )
+
+      expect(snapshots).toHaveLength(1)
+      expect(snapshots[0]).toMatchObject({
+        cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+        status: 'busy'
+      })
+      expect(snapshots[0]!.dwarfs).toHaveLength(1)
+      expect(snapshots[0]!.dwarfs[0]).toMatchObject({ status: 'working', model: 'gpt-5.6-sol' })
+    })
+  })
+})

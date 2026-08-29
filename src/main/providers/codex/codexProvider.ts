@@ -1,4 +1,5 @@
 import type { FsLike } from '../../adapters/fsLike'
+import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../adapters/processProbe'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import type { Provider } from '../provider'
 import {
@@ -9,7 +10,17 @@ import {
 } from './parse'
 
 const HEAD_BYTES = 64 * 1024
-const TAIL_BYTES = 256 * 1024
+/** Tail size used to answer the click-to-focus feed(); a short human-readable window is enough. */
+const FEED_TAIL_BYTES = 256 * 1024
+/**
+ * Tail size used for busy detection. A verbose in-progress turn (tool
+ * output, reasoning) can push its own task_started event out of a small
+ * tail read before task_complete ever arrives, making a genuinely busy
+ * session look idle. On a real machine rollout the observed gap between
+ * task_started and its matching task_complete was 347,167 bytes; 4MiB keeps
+ * a wide margin while staying a single bounded read per scan.
+ */
+const BUSY_TAIL_BYTES = 4 * 1024 * 1024
 const ROLLOUT_RE = /^rollout-.*\.jsonl$/
 
 export interface CodexProviderOptions {
@@ -18,6 +29,21 @@ export interface CodexProviderOptions {
   sessionsRoot: string
   /** A rollout counts as live while its mtime is at most this many seconds old. */
   livenessWindowS: number
+  /**
+   * How many day-directories (today back N-1 days) to scan. A rollout lives
+   * in its START-date directory forever, so a session opened days ago and
+   * still active today would be invisible without this.
+   */
+  scanDays: number
+  /**
+   * A rollout past livenessWindowS still counts as live for this many extra
+   * seconds while isCodexProcessRunning() reports true. Codex writes nothing
+   * to the rollout while its CLI is open but idle, so mtime alone can't
+   * distinguish "open but quiet" from "closed".
+   */
+  idleRetentionS: number
+  /** Injected for tests; defaults to a real process-list probe. */
+  isCodexProcessRunning?: () => Promise<boolean>
   now?: () => number
 }
 
@@ -47,6 +73,9 @@ export class CodexProvider implements Provider {
   private readonly fs: FsLike
   private readonly sessionsRoot: string
   private readonly livenessWindowS: number
+  private readonly scanDays: number
+  private readonly idleRetentionS: number
+  private readonly isCodexProcessRunning: () => Promise<boolean>
   private readonly now: () => number
   /** dwarfId -> rollout path, rebuilt on every scan (used by feed()). */
   private readonly feedSources = new Map<string, string>()
@@ -55,6 +84,9 @@ export class CodexProvider implements Provider {
     this.fs = options.fs
     this.sessionsRoot = options.sessionsRoot
     this.livenessWindowS = options.livenessWindowS
+    this.scanDays = options.scanDays
+    this.idleRetentionS = options.idleRetentionS
+    this.isCodexProcessRunning = options.isCodexProcessRunning ?? defaultIsCodexProcessRunning
     this.now = options.now ?? Date.now
   }
 
@@ -62,18 +94,27 @@ export class CodexProvider implements Provider {
     this.feedSources.clear()
     const nowMs = this.now()
     const freshAfter = nowMs - this.livenessWindowS * 1_000
-    const today = new Date(nowMs)
-    const yesterday = new Date(nowMs - 24 * 60 * 60 * 1_000)
+    // Retention is ADDITIVE to the liveness window (as documented for
+    // CODEX_IDLE_RETENTION_S): retainAfter is always at or before freshAfter,
+    // so no configuration can silently shrink the liveness window itself.
+    const retainAfter = nowMs - (this.livenessWindowS + this.idleRetentionS) * 1_000
+    // Only probed once per scan, and only when a rollout actually needs the
+    // extended window — most ticks never touch the process list at all.
+    let codexProcessRunning: boolean | undefined
 
     const discovered: DiscoveredCodexSnapshot[] = []
     const seenSessions = new Set<string>()
-    for (const day of [datePath(today), datePath(yesterday)]) {
-      const dir = `${this.sessionsRoot}\\${day}`
+    for (let daysAgo = 0; daysAgo < this.scanDays; daysAgo++) {
+      const dir = `${this.sessionsRoot}\\${datePath(new Date(nowMs - daysAgo * 24 * 60 * 60 * 1_000))}`
       for (const entry of await this.fs.listDir(dir)) {
         if (entry.isDirectory || !ROLLOUT_RE.test(entry.name)) continue
         const path = `${dir}\\${entry.name}`
         const stat = await this.fs.stat(path)
-        if (stat === null || stat.mtimeMs < freshAfter) continue
+        if (stat === null || stat.mtimeMs < retainAfter) continue
+        if (stat.mtimeMs < freshAfter) {
+          codexProcessRunning ??= await this.isCodexProcessRunning()
+          if (!codexProcessRunning) continue
+        }
         const discoveredSnapshot = await this.snapshotRollout(path, stat.mtimeMs)
         if (discoveredSnapshot === null || seenSessions.has(discoveredSnapshot.snapshot.sessionId))
           continue
@@ -89,7 +130,7 @@ export class CodexProvider implements Provider {
     const path = this.feedSources.get(dwarfId)
     if (path === undefined) return null
     if (!(await this.fs.exists(path))) return []
-    return extractCodexFeed(await this.fs.readTextTail(path, TAIL_BYTES), limit)
+    return extractCodexFeed(await this.fs.readTextTail(path, FEED_TAIL_BYTES), limit)
   }
 
   private async snapshotRollout(
@@ -100,7 +141,7 @@ export class CodexProvider implements Provider {
     const head = parseCodexRolloutHead(headText)
     if (head === null) return null
     const headContext = parseCodexRolloutContext(headText)
-    const tailInfo = parseCodexRolloutTail(await this.fs.readTextTail(path, TAIL_BYTES))
+    const tailInfo = parseCodexRolloutTail(await this.fs.readTextTail(path, BUSY_TAIL_BYTES))
     // A newer turn_context in the tail wins; the head preserves the initial
     // context when a large turn pushed it outside the bounded tail read.
     const info = {
@@ -119,7 +160,7 @@ export class CodexProvider implements Provider {
       name: head.agentName ?? `codex-${head.sessionId.slice(0, 8)}`,
       model: info.model,
       effort: info.effort,
-      status: info.busy ? 'working' : 'idle',
+      status: info.busy ? 'working' : 'waiting',
       lastMessage: info.lastMessage,
       sessionId: head.sessionId
     }
