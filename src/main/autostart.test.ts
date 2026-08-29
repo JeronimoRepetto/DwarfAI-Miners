@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ensureDefaultAutostart } from './autostart'
+import { ensureDefaultAutostart, planAutostartMigration } from './autostart'
 
 describe('ensureDefaultAutostart', () => {
   it('does nothing in development', async () => {
@@ -60,5 +60,38 @@ describe('ensureDefaultAutostart', () => {
     })
     expect(writeMarker).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalledOnce()
+  })
+})
+
+describe('planAutostartMigration', () => {
+  it('does nothing when the legacy value is absent and autostart is off', () => {
+    expect(planAutostartMigration({ legacyValuePresent: false, autostartEnabled: false })).toEqual({
+      deleteLegacy: false,
+      writeNew: false
+    })
+  })
+
+  it('does nothing when the legacy value is absent, even if autostart reads as on', () => {
+    // Cannot happen through the real registry (the legacy value's presence is
+    // the only "was enabled" signal), but the pure function must not invent
+    // a legacy value to delete just because autostart is on.
+    expect(planAutostartMigration({ legacyValuePresent: false, autostartEnabled: true })).toEqual({
+      deleteLegacy: false,
+      writeNew: false
+    })
+  })
+
+  it('removes a stale legacy value without re-enabling autostart when it was off', () => {
+    expect(planAutostartMigration({ legacyValuePresent: true, autostartEnabled: false })).toEqual({
+      deleteLegacy: true,
+      writeNew: false
+    })
+  })
+
+  it('migrates the legacy value to the new name when autostart was on', () => {
+    expect(planAutostartMigration({ legacyValuePresent: true, autostartEnabled: true })).toEqual({
+      deleteLegacy: true,
+      writeNew: true
+    })
   })
 })

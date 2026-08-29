@@ -1,6 +1,6 @@
-# AgentName
+# DwarfAI-Miners
 
-AgentName is a floating Windows panel that turns active AI coding sessions into mines and
+DwarfAI-Miners is a floating Windows panel that turns active AI coding sessions into mines and
 dwarfs. A mine represents one project; workers and foremen represent the agents currently
 operating in that project.
 
@@ -49,7 +49,7 @@ message changes, a comic speech bubble appears above it for a few seconds.
 The renderer ships processed art in `src/renderer/src/assets/art/` — committed, so a clone
 builds and runs without the source paintings. `pnpm art:build` regenerates it from the
 originals, which live outside the repository (default `C:\Users\jeron\Downloads\DwarfAI-Miners`,
-overridable with `--src <dir>` or `AGENT_NAME_ART_SRC`) and are never modified.
+overridable with `--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified.
 
 The script chroma-keys the dwarf and mound paintings off their flat backdrop — sampling the
 key color from each image's own four corners, because it differs per image — crops all nine
@@ -58,7 +58,7 @@ background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.
 
 Clicking a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so
 this works when their process ancestry reaches a supported terminal host. Codex rollouts do
-not expose a reliable PID; AgentName then opens the recent activity feed on a parchment
+not expose a reliable PID; DwarfAI-Miners then opens the recent activity feed on a parchment
 board inside the panel.
 
 ## Provider support
@@ -75,7 +75,7 @@ configured liveness window expires after the CLI closes.
 For Claude, the main session dwarf is always the foreman — it is the orchestrator whether or
 not it currently has subagents out — and subagents are always workers. A subagent leaves the
 crew as soon as its `<task-notification>` reports `completed`, `failed` or `killed`, and
-AgentName remembers that so an agent whose notification later scrolls out of the transcript
+DwarfAI-Miners remembers that so an agent whose notification later scrolls out of the transcript
 tail can never come back as a ghost. Codex promotion still comes from a verified
 `thread_spawn` parent link.
 
@@ -88,7 +88,8 @@ tail can never come back as a ghost. Codex promotion still comes from a verified
 - Closing the panel hides it; **Quit** in the tray exits the process.
 
 The registry entry is `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
-`AgentName`.
+`DwarfAI-Miners`. Existing installs migrate automatically on first launch after the update: the
+legacy `AgentName` value is removed, and the new value is written only if autostart was on.
 
 ## Configuration
 
@@ -148,5 +149,5 @@ without the real filesystem.
 ## Security posture
 
 The renderer runs with context isolation enabled and Node integration disabled. The preload
-exposes only the typed AgentName API. External navigation is denied in the panel and opened in
+exposes only the typed DwarfAI-Miners API. External navigation is denied in the panel and opened in
 the system browser instead.

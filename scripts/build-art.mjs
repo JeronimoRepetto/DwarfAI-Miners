@@ -9,7 +9,7 @@
  * src/renderer/src/assets/art/ is committed, so a clone builds and runs without
  * the source art present — you only need it to re-run this script.
  *
- * Point it somewhere else with `--src <dir>` or AGENT_NAME_ART_SRC.
+ * Point it somewhere else with `--src <dir>` or DWARFAI_MINERS_ART_SRC.
  *
  * Three groups, three treatments:
  *
@@ -204,7 +204,7 @@ async function buildScene(sourceDir, rows, name) {
 function sourceDirFromArgs(argv) {
   const flag = argv.indexOf('--src')
   if (flag !== -1 && argv[flag + 1] !== undefined) return argv[flag + 1]
-  return process.env.AGENT_NAME_ART_SRC ?? DEFAULT_SOURCE_DIR
+  return process.env.DWARFAI_MINERS_ART_SRC ?? DEFAULT_SOURCE_DIR
 }
 
 async function main() {

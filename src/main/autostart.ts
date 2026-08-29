@@ -6,7 +6,9 @@ import { access, writeFile } from 'node:fs/promises'
 const execFileAsync = promisify(execFile)
 
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
-const VALUE_NAME = 'AgentName'
+const VALUE_NAME = 'DwarfAI-Miners'
+/** Pre-rename Run value name, kept only to migrate existing installs away from it. */
+const LEGACY_VALUE_NAME = 'AgentName'
 const DEFAULT_MARKER = 'autostart-default-v1'
 
 export interface DefaultAutostartOptions {
@@ -61,7 +63,7 @@ function autostartCommand(): string {
 }
 
 /**
- * Registers AgentName in HKCU\...\CurrentVersion\Run.
+ * Registers DwarfAI-Miners in HKCU\...\CurrentVersion\Run.
  *
  * Packaged builds call this once through ensureDefaultAutostart(); later
  * changes come only from the explicit "Start with Windows" tray checkbox.
@@ -86,19 +88,90 @@ export async function enable(): Promise<void> {
   ])
 }
 
-export async function disable(): Promise<void> {
+async function queryRegistryValue(valueName: string): Promise<boolean> {
   try {
-    await execFileAsync('reg', ['delete', RUN_KEY, '/v', VALUE_NAME, '/f'])
-  } catch {
-    // Value not present — already disabled.
-  }
-}
-
-export async function isEnabled(): Promise<boolean> {
-  try {
-    await execFileAsync('reg', ['query', RUN_KEY, '/v', VALUE_NAME])
+    await execFileAsync('reg', ['query', RUN_KEY, '/v', valueName])
     return true
   } catch {
     return false
+  }
+}
+
+async function deleteRegistryValue(valueName: string): Promise<void> {
+  try {
+    await execFileAsync('reg', ['delete', RUN_KEY, '/v', valueName, '/f'])
+  } catch {
+    // Value not present — already gone.
+  }
+}
+
+export async function disable(): Promise<void> {
+  await deleteRegistryValue(VALUE_NAME)
+}
+
+export async function isEnabled(): Promise<boolean> {
+  return queryRegistryValue(VALUE_NAME)
+}
+
+export interface AutostartMigrationState {
+  /** Whether the legacy 'AgentName' Run value is currently present in the registry. */
+  legacyValuePresent: boolean
+  /** Whether autostart was enabled, checked before the legacy value is touched. */
+  autostartEnabled: boolean
+}
+
+export interface AutostartMigrationPlan {
+  /** Remove the legacy 'AgentName' Run value. */
+  deleteLegacy: boolean
+  /** (Re)write the 'DwarfAI-Miners' Run value. */
+  writeNew: boolean
+}
+
+/**
+ * Pure decision table for the one-time 'AgentName' -> 'DwarfAI-Miners' Run
+ * value rename.
+ *
+ * | legacyValuePresent | autostartEnabled | deleteLegacy | writeNew |
+ * | ------------------ | ---------------- | ------------ | -------- |
+ * | false               | false            | false        | false    |
+ * | false               | true             | false        | false    |
+ * | true                | false            | true         | false    |
+ * | true                | true             | true         | true     |
+ *
+ * A legacy value, once found, is always removed (rows 3-4). The new value is
+ * written only when autostart was actually on (row 4), so a user who had
+ * opted out stays opted out under the new name. This is naturally
+ * idempotent: once the legacy value is gone, every later startup observes
+ * legacyValuePresent = false and does nothing further.
+ */
+export function planAutostartMigration(state: AutostartMigrationState): AutostartMigrationPlan {
+  return {
+    deleteLegacy: state.legacyValuePresent,
+    writeNew: state.legacyValuePresent && state.autostartEnabled
+  }
+}
+
+/**
+ * Runs the one-time registry migration from the legacy 'AgentName' Run value
+ * to 'DwarfAI-Miners'. Only for packaged builds — development runs never
+ * touch the registry (see enable()/ensureDefaultAutostart()).
+ */
+export async function migrateLegacyAutostart(
+  isPackaged: boolean,
+  warn: (message: string, error: unknown) => void = (message, error) => console.warn(message, error)
+): Promise<void> {
+  if (!isPackaged) return
+  try {
+    const legacyValuePresent = await queryRegistryValue(LEGACY_VALUE_NAME)
+    // The legacy value's presence is the only "was autostart enabled" signal
+    // available before it is removed, so both plan inputs share one read.
+    const plan = planAutostartMigration({
+      legacyValuePresent,
+      autostartEnabled: legacyValuePresent
+    })
+    if (plan.deleteLegacy) await deleteRegistryValue(LEGACY_VALUE_NAME)
+    if (plan.writeNew) await enable()
+  } catch (error) {
+    warn('[autostart] Failed to migrate legacy AgentName autostart entry:', error)
   }
 }

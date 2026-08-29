@@ -3,7 +3,11 @@ import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
 import type { Mine } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
-import { enable as enableAutostart, ensureDefaultAutostart } from './autostart'
+import {
+  enable as enableAutostart,
+  ensureDefaultAutostart,
+  migrateLegacyAutostart
+} from './autostart'
 import { loadConfig } from './config'
 import { AgentRuntime } from './runtime'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts'
@@ -19,13 +23,19 @@ function removeIpcHandlers(): void {
 }
 
 async function init(): Promise<void> {
-  app.setAppUserModelId('com.ai-tools.agent-name')
+  app.setAppUserModelId('com.jeronimorepetto.dwarfaiminers')
 
   // Typed config, fails fast on invalid values before any window exists.
   loadDotenv({ quiet: true })
   const config = loadConfig()
   console.log('[main] Config loaded:', config)
 
+  // One-time rename migration, before the marker-gated first-run default below.
+  await migrateLegacyAutostart(app.isPackaged)
+
+  // userData follows productName (AgentName -> DwarfAI-Miners), so this path
+  // moved with the rename. The only thing ever written under it is this
+  // first-run marker; config is env-based, so no data migration is needed.
   await ensureDefaultAutostart({
     isPackaged: app.isPackaged,
     markerPath: join(app.getPath('userData'), 'autostart-default-v1.marker'),

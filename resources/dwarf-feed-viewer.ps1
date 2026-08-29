@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Live viewer for a dwarf's transcript, opened by AgentName when no existing
+  Live viewer for a dwarf's transcript, opened by DwarfAI-Miners when no existing
   terminal window can be focused for a click-to-focus session (see
   src/main/terminalLauncher.ts and src/main/runtime.ts).
 
@@ -29,7 +29,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Host.UI.RawUI.WindowTitle = "$Title - AgentName"
+$Host.UI.RawUI.WindowTitle = "$Title - DwarfAI-Miners"
 
 Write-Host "=== $Title ===" -ForegroundColor Yellow
 Write-Host "Transcript: $Path" -ForegroundColor DarkGray

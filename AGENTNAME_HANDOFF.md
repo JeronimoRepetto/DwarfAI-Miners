@@ -1,5 +1,8 @@
 ﻿# AgentName Handoff
 
+> **Note:** the product was later renamed from AgentName to DwarfAI-Miners. This document is
+> kept as-is below for historical record; it is not updated to the new name.
+
 This document is the continuation brief for a future AgentName session.
 
 ## 1. Current state

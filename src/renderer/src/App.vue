@@ -44,7 +44,8 @@ async function load(): Promise<void> {
   try {
     update(await window.api.getMines())
   } catch {
-    error.value = 'AgentName could not load active mines. It will keep trying as activity changes.'
+    error.value =
+      'DwarfAI-Miners could not load active mines. It will keep trying as activity changes.'
     loading.value = false
   }
 }
@@ -102,7 +103,7 @@ onBeforeUnmount(() => unsubscribe?.())
 <template>
   <div class="panel">
     <header class="titlebar">
-      <span class="title"><i aria-hidden="true"></i>AgentName</span>
+      <span class="title"><i aria-hidden="true"></i>DwarfAI-Miners</span>
       <button class="close" type="button" aria-label="Hide panel" @click="hidePanel">
         &times;
       </button>

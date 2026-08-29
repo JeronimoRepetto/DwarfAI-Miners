@@ -15,7 +15,7 @@ let tray: Tray | null = null
 export async function createTray(): Promise<Tray> {
   const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_BASE64}`)
   tray = new Tray(icon)
-  tray.setToolTip('AgentName')
+  tray.setToolTip('DwarfAI-Miners')
   tray.on('click', () => togglePanel())
   await refreshTrayMenu()
   return tray

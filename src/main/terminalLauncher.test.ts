@@ -13,10 +13,12 @@ describe('resolveViewerScriptPath', () => {
   it('resolves inside process.resourcesPath once packaged', () => {
     const result = resolveViewerScriptPath({
       isPackaged: true,
-      resourcesPath: 'C:\\Program Files\\AgentName\\resources',
-      appPath: 'C:\\Program Files\\AgentName\\resources\\app.asar'
+      resourcesPath: 'C:\\Program Files\\DwarfAI-Miners\\resources',
+      appPath: 'C:\\Program Files\\DwarfAI-Miners\\resources\\app.asar'
     })
-    expect(result).toBe(join('C:\\Program Files\\AgentName\\resources', 'dwarf-feed-viewer.ps1'))
+    expect(result).toBe(
+      join('C:\\Program Files\\DwarfAI-Miners\\resources', 'dwarf-feed-viewer.ps1')
+    )
   })
 
   it('resolves next to the project resources dir in dev', () => {

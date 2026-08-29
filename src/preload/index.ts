@@ -3,7 +3,7 @@ import type { DwarfActivation, Mine } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 
 /** API surface exposed to the renderer as `window.api`. */
-export interface AgentNameApi {
+export interface DwarfAiMinersApi {
   /** Hide the floating panel (the app keeps running in the tray). */
   hidePanel: () => void
   /** Snapshot used by the renderer when it initializes after a poll update. */
@@ -14,7 +14,7 @@ export interface AgentNameApi {
   activateDwarf: (dwarfId: string) => Promise<DwarfActivation>
 }
 
-const api: AgentNameApi = {
+const api: DwarfAiMinersApi = {
   hidePanel: () => ipcRenderer.send(IPC_CHANNELS.hidePanel),
   getMines: () => ipcRenderer.invoke(IPC_CHANNELS.getMines),
   onMinesUpdated: (listener) => {
