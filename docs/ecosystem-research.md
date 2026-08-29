@@ -1,0 +1,116 @@
+# Ecosystem research for DwarfAI-Miners (AgentName)
+
+Scope: prior art / reusable code / protocols for a Windows Electron floating panel that
+visualizes live AI coding-CLI sessions as an idle game (mines = projects, dwarfs =
+agents/subagents), with a roadmap of send-text-to-session, cancel, raise-effort,
+token-burn economy, and cross-platform support.
+
+Research date: 2026-08-29. All claims below were verified by fetching README/docs pages
+directly, not taken from search snippets alone, unless marked "unverified".
+
+---
+
+## 1. Multi-agent session managers / dashboards
+
+| Project | Owner | What it is |
+|---|---|---|
+| **claude-squad** | smtg-ai | Go TUI. Runs Claude Code/Codex/Gemini/Aider each in its own **tmux session + git worktree**. Attach/detach (`o`), pause/resume, autoyes mode. |
+| **vibe-kanban** | BloopAI | Rust backend + TS/React frontend. Kanban board for coding-agent tasks: plan → run agent in isolated workspace → review diff → merge. Provider-agnostic (10+ agents) but abstraction layer internals aren't public in the README. **Sunsetting** — repo carries an explicit shutdown banner, no successor named yet. |
+| **opcode** (formerly Claudia) | getAsterisk | Tauri 2 + React/TS desktop GUI *specifically* for Claude Code. Custom agents, session management/resume/checkpointing, and a built-in **Usage Analytics Dashboard** (cost tracking, token breakdown by model/project/time). 22.4k stars. No evidence of send-message-to-running-session or cancel; focuses on launching/resuming, not live-steering. |
+| **crystal → Nimbalyst** | stravu / nimbalyst | Electron desktop app running multiple Claude Code + Codex sessions in parallel git worktrees, kanban view, visual diff/mockup/markdown editors, iOS companion. Crystal deprecated Feb 2026, fully succeeded by **Nimbalyst** (open-sourced Apr 2026), which is adding OpenCode/Copilot support. Desktop app + iOS: **MIT**; team-collab server: **AGPL**. |
+| **Conductor** (Melty Labs) | melty-labs | Native Mac app (closed source, not on GitHub) orchestrating parallel Claude Code/Codex agents per git worktree, with checkpoints/rollback and a "multi-model mode" (same prompt, Claude + Codex tabs side by side). Useful for **UX ideas** (multi-model compare) only — no code to reuse. |
+| **Claude Code Agent Farm** | Dicklesworthstone | Python 3.13 + tmux orchestrator running up to 50 Claude Code agents for automated sweeps. State via `.claude_agent_farm_state.json` + per-agent heartbeat files + tmux pane titles — i.e. **exactly the on-disk/heartbeat pattern we'd want for our own session-liveness detection**, generalized beyond a single machine's live processes. License: "MIT with OpenAI/Anthropic Rider" (read the rider before vendoring). Send-to-session = broadcast `/clear` via tmux keys; cancel = `Ctrl-C`/force-kill — crude but functional, and instructive as a **fallback control channel when no API exists** (send literal keystrokes into the owning terminal/tmux pane). |
+| **sniffly** | chiphuyen | Python 3.10+ tool, MIT. Parses Claude Code JSONL logs into a local dashboard (usage patterns, error-mode breakdown, shareable message history) at `localhost:8081`. **After-the-fact analysis only, not live monitoring** — good for the "error analysis" angle but not for our real-time mine/dwarf state. |
+| **claude-code-dashboard** | Stargx | Node/Express + chokidar, 2 prod deps, MIT. Watches `~/.claude/projects/*.jsonl` and tails new lines in real time to show thinking/waiting/idle/stale status, token cost, subagents spawned, active file edits, git branch, permission mode — **this is closest in spirit to our own session-state model** and is small enough to read end-to-end for the parsing logic (state machine over JSONL events → thinking/waiting/idle/stale). Single-machine, browser-based, not a native/Electron/game UI. |
+| **claude-usage** | phuryn | Python stdlib only + SQLite + Chart.js CDN, MIT. Parses `~/.claude/projects/` JSONL into `usage.db`, serves a local dashboard with a Pro/Max quota progress bar Claude Code itself doesn't show. Also ships as a VS Code extension. Minimal-dependency JSONL→SQLite parsing pattern worth copying for our token-accounting layer. |
+
+**Verdict:** nobody has combined (a) real-time multi-provider session detection, (b) a
+game/pet visualization, and (c) a send-text/cancel control channel in one project — see
+§5 for the closest thing (agentpet), which has (a)+(b) but not (c) as far as documented.
+
+---
+
+## 2. Protocols for controlling coding agents
+
+### Zed's Agent Client Protocol (ACP)
+- Spec + SDKs: Zed Industries, **Apache-2.0**, ~4k stars on the spec repo. JSON-RPC 2.0 over stdio, modeled on LSP (turns N×M editor↔agent integrations into N+M).
+- Confirmed adapters: **Claude Agent** (`@zed-industries/claude-code-acp`, built on the official Claude Agent SDK, Apache-2.0, npm package), **Gemini CLI** (Google's own, reference ACP implementation), **Codex CLI** (live in Zed with streaming terminal output), plus GitHub Copilot, OpenHands, Cursor and ~40 others per Zed's agent directory.
+- Relevant methods (verified against agentclientprotocol.com):
+  - `session/prompt` — send a user message to a running session. **This is exactly issue #10 (send text) for any ACP-wrapped agent.**
+  - `session/cancel` — one-way cancel notification, no response expected. **This is exactly issue #11 (cancel).**
+  - `session/set_mode` — switches operating mode (ask/architect/code-style contexts), **not** a model/effort selector. No documented method sets model or reasoning-effort/thinking level; docs mention a newer "Session Config Options" surface but it isn't detailed publicly yet.
+- **Implication for us:** if a session was launched through (or can be re-attached via) an ACP adapter, we get a real send-message/cancel channel for free instead of reverse-engineering each CLI's IPC. Effort/model selection would still need a provider-specific side channel (e.g. Claude Agent SDK's own `effort` field, see below) — ACP doesn't standardize it yet.
+
+### OpenCode (sst/opencode) HTTP/SSE API
+- Verified endpoints: `POST /session` (create), `POST /session/:id/message` (send a message; sync) or `POST /session/:id/prompt_async` (returns 204 immediately), `POST /session/:id/abort` (cancel — returns bool), `GET/POST /config`, `/config/providers`. Real-time updates via an SSE/event bus (`Session.Event.Created/Updated`).
+- Model is selected per-message via the `model` field in the message body; **no dedicated reasoning-effort endpoint documented**.
+- Official SDKs: `sst/opencode-sdk-js`, `-go`, `-python`, generated from an OpenAPI spec — directly embeddable as a typed client if we ever want to drive OpenCode sessions from our panel.
+- **This is the most concrete, already-networked control plane we found** — a real REST API a Windows Electron app could call over `localhost` with no protocol reverse-engineering, for any session the user chose to run under OpenCode instead of raw Claude Code/Codex.
+
+### Claude Agent SDK (anthropics/claude-agent-sdk-{typescript,python})
+- Official, actively maintained (600+ npm dependents as of Mar 2026).
+- `effort` is a first-class option: settable per-session in `query()` options, or per-subagent via `AgentDefinition.effort`, values `low/medium/high/xhigh/max` depending on model. **This is the authoritative effort vocabulary we should mirror/normalize against** for our "raise effort" roadmap item.
+- Cancellation: `ClaudeSDKClient.interrupt()` (formerly abort-controller based) keeps the session alive; `ResultMessage.terminal_reason` reports `aborted_streaming`/`aborted_tools`/etc. Known rough edges: interrupting mid-"thinking" can surface as an error result rather than a clean cancel (open SDK issues #366, #120), and there's an open Claude Code issue (#34476) about no way to cancel a spawned agent team without killing the whole session — i.e. **even Anthropic's own SDK doesn't yet cleanly solve our issue #11 for subagent/team cancellation**, so we shouldn't assume it's a solved problem to build on.
+
+### Claude Code hooks (the channel we already use, confirmed complete list)
+Full event set (from official docs, code.claude.com/docs/en/hooks): `SessionStart, Setup, SessionEnd, UserPromptSubmit, UserPromptExpansion, Stop, StopFailure, PreToolUse, PostToolUse, PostToolUseFailure, PostToolBatch, PermissionRequest, PermissionDenied, SubagentStart, SubagentStop, TeammateIdle, TaskCreated, TaskCompleted, FileChanged, CwdChanged, ConfigChange, InstructionsLoaded, WorktreeCreate, WorktreeRemove, Notification, MessageDisplay, PreCompact, PostCompact, Elicitation, ElicitationResult`.
+- We're likely only using session liveness files today; `SubagentStart`/`SubagentStop`/`TeammateIdle`/`TaskCreated`/`TaskCompleted` map directly onto "dwarf spawned/finished" events for the idle-game visualization, and `PreToolUse` payloads reportedly carry an `effort` field — worth checking against our current parser.
+- **agentpet (§5) uses a lightweight per-agent hook + local Unix-socket daemon instead of polling `~/.claude`** — this is a materially better architecture than pure on-disk-file polling for low-latency dwarf animations, and is cross-platform-friendly (works the same on Windows via a named pipe instead of a Unix socket).
+
+### Codex CLI
+- No user-facing hook system as rich as Claude Code's; the closest is the **`notify` config key** — an argv program invoked once per completed turn with a JSON blob describing what happened (it does *not* stream over stdin continuously, contrary to some blog claims — verify against our own Codex integration code, this is a common misconception per the sources).
+- Session state lives at `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (JSONL "rollout" files, replayable) — same shape as Claude's transcript files, so our existing JSONL-tailing code for Claude should generalize with a different schema, not a different mechanism.
+
+---
+
+## 3. Token/usage tracking
+
+| Project | Scope | Notes |
+|---|---|---|
+| **ccusage** (ryoppippi, MIT, 18.2k★, TS/JS + some Rust, npm) | Broadest multi-provider coverage found: Claude Code, Codex, OpenCode, Amp, Droid, Codebuff, Hermes Agent, pi-agent, Goose, OpenClaw, Kilo, Kimi, Qwen, GitHub Copilot CLI, Gemini CLI, Grok Build CLI. | After-the-fact JSONL analysis (daily/weekly/monthly/session), per-model cost with overridable pricing, separate cache-read/cache-creation accounting. **This is the reference implementation for "multi-provider token accounting from local logs"** the task asked about — its per-provider log-path/schema table (if present in source, not just README) is worth mining directly for our own parser instead of re-deriving each CLI's JSONL shape from scratch. |
+| **claude-usage** (phuryn, MIT) | Claude Code only | Minimal-dependency (Python stdlib + SQLite) JSONL→SQLite ingestion is a good lightweight pattern for embedding token accounting inside an Electron main process without a heavy runtime. |
+| **claude-code-dashboard** (Stargx, MIT) | Claude Code only, live | Live token/cost display tied to session state, not just historical reports — closer to what our token-burn economy needs than ccusage's batch reports. |
+
+**Gap:** none of these do *live, cross-provider* token streaming into a "burn rate" the way a game economy needs (tokens/sec feeding a meter) — they're either batch reports (ccusage, sniffly, claude-usage) or single-provider live (claude-code-dashboard). ccusage's provider/log-path table + claude-code-dashboard's live-tail loop is the combination to imitate.
+
+---
+
+## 4. Effort/model normalization across providers
+
+- **Anthropic**: `effort` field (`low/medium/high/xhigh/max`, model-dependent) via Claude Agent SDK, or raw `budget_tokens` for thinking via the Messages API.
+- **OpenAI**: `reasoning_effort` (`none/low/medium/high/xhigh`).
+- **Google Gemini 3**: `thinkingLevel` — Flash exposes `MINIMAL/LOW/MEDIUM/HIGH`; Pro/Pro 3.1 omit `MINIMAL`.
+- **LiteLLM** (BerriAI, open source): normalizes `reasoning_effort` across Anthropic/Bedrock/Vertex/Azure routes for Claude models uniformly, and branches internally on a model's `supports_adaptive_thinking` capability rather than string-matching model names — **this capability-flag pattern (not a name-based switch) is the right design for our own model→effort-levels-available lookup**, since providers keep adding/removing levels per model (e.g. Gemini Pro dropping `MINIMAL`).
+- **OpenRouter**: normalizes provider-specific reasoning knobs into one `reasoning.effort` parameter and silently maps an unsupported requested level to the "nearest supported level" per model.
+- **No dedicated small open-source library exists purely for effort normalization** — it's a feature buried inside LiteLLM/OpenRouter's much larger gateway codebases. If we want this for the panel's "raise effort" button, the practical move is either (a) vendor just LiteLLM's mapping table/capability-flag logic, or (b) hand-maintain our own small table since we only need Claude Code + Codex CLI today, not the full gateway surface.
+
+---
+
+## 5. Gamified dev monitors (idle-game / pet-style) — direct prior art
+
+This category turned up the **most directly competitive/relevant prior art** for DwarfAI-Miners. All are desktop-pet framings rather than a mine/dwarf framing, but architecturally overlap heavily with our roadmap.
+
+| Project | Owner | Detection mechanism | Economy/game loop | Stack | License | Platforms | Maintenance |
+|---|---|---|---|---|---|---|---|
+| **agentpet** | ntd4996 | **Lightweight per-agent hooks → local Unix-socket daemon** (one-click hook install for Claude Code, Codex, Gemini CLI, Cursor, Windsurf, etc.; generic wrapper `agentpet run -- <cmd>` for anything else) | Pet "eats" real burned tokens + completed sessions (incl. subagents) → XP → 5 evolution stages (Hatchling→Companion→Scout→Hero→Legend); **networked leaderboard** (GitHub sign-in) by level/sessions/tokens, hosted on Astro+Cloudflare Workers/D1 | macOS: native Swift/SwiftUI; Windows/Linux: **Tauri (Rust)** | MIT (app code); pet art has separate community-asset terms | macOS, Windows, Linux | Active — 11+ agent integrations, achievements, localizations, community pet gallery |
+| **agent-pet** | xiangking | File-watches each tool's activity files → forwards events over a **local WebSocket** (`ws://127.0.0.1:8765`) that the animation engine consumes | Sprite-sheet-driven reactions (Codex-compatible 1536×1872 8×9 atlas), no economy/leaderboard documented | Tauri v2 + Rust + React + Vite | MIT | macOS/Windows tested, Linux unverified | Active roadmap toward public release builds |
+| **openpets** | alvinunreal | **Local MCP integration** — agents call MCP tools directly to trigger reactions (not log polling); discovery-token-gated local IPC | Reactive companion only (idle/wander/react), sandboxed Plugin SDK v3 (JS/TS, isolated BrowserWindow) for third-party pet behaviors/AI-provider hooks | Electron + Node 20 + TS + pnpm | MIT | macOS (Intel+ARM), Windows, Linux | Active, documented monorepo/CI |
+| **agentpets-dev** | agiagentsdev | Unclear from README (mentions "agent hooks" in CLI) | Static pet gallery format (`pet.json` + spritesheet, states: idle/wave/run/failed/review/jump), install/create/share model | Next.js 16 + React 19 + Drizzle + Postgres + Redis + Clerk + Cloudflare R2 (this is the **gallery/platform**, not the client monitor) | MIT (code); assets separately owned | n/a (web platform) | 575 commits but **0 stars** — low external adoption signal |
+| **petdex** | crafter-station | Unverified in this pass | Gallery of sprite-based pets, 9 animation states (idle/running-right/running-left/waving/jumping/failed/waiting/running/review) across Codex, Claude Code, DeepSeek Harness, Hermes, OpenCode, Gemini CLI | Unverified | Unverified | Unverified | Unverified |
+| **codepet** | jnMetaCode | Unverified in this pass | Chinese-market desktop pet, XP/level/mood tied to coding/AI-agent activity, "全本地、隐私优先、开源" (fully local, privacy-first, open source) | Unverified | Unverified | Unverified | Unverified |
+
+**Key finding: agentpet is functionally the closest thing to DwarfAI-Miners that exists today** — real-time multi-provider hook-based detection, a token-burn XP economy, cross-platform Tauri/Swift split, MIT-licensed. It does **not** appear to do send-text/cancel control (its README emphasizes passive monitoring + gamification, not steering sessions), and it visualizes a single pet rather than a per-project "mine" with per-agent "dwarf" population — so there's real room for us, but this project should be treated as the benchmark to differentiate against, and its **hook-installer + Unix-socket-daemon architecture is worth studying directly** (fetch its actual hook scripts / daemon source, not just the README) before we design our own Windows equivalent (named pipe instead of Unix socket).
+
+---
+
+## Recommendations for us, ranked by impact
+
+1. **Adopt agentpet's detection architecture, not on-disk-polling-only.** Read its actual hook scripts (`ntd4996/agentpet`, likely under a `hooks/` or `daemon/` dir) to see exactly which Claude Code hook events + Codex `notify` payloads it wires up, and replace/augment our current `~/.claude/sessions/<pid>.json` + Codex-rollout-file polling with a push-based local daemon (named pipe on Windows) fed by hooks. This directly improves the responsiveness our idle-game visualization needs and is the single most load-bearing architectural change available from this research.
+
+2. **Wire ACP as our send-text/cancel channel wherever an agent is ACP-wrapped, and OpenCode's REST API (`/session/:id/message`, `/session/:id/prompt_async`, `/session/:id/abort`) for any session running under OpenCode.** These are the only two *documented, supported* external-control channels found — everything else (claude-squad's tmux keystrokes, Claude Code Agent Farm's `Ctrl-C`/`/clear` broadcast) is a keystroke-injection hack into a terminal, which remains our necessary fallback for raw Claude Code/Codex CLI sessions not fronted by ACP/OpenCode, but shouldn't be our primary design.
+
+3. **Mirror the Claude Agent SDK's `effort` vocabulary (`low/medium/high/xhigh/max`) and LiteLLM's capability-flag pattern (per-model "supported effort levels" lookup, not a hardcoded switch) for the "raise effort" roadmap item**, since providers add/remove levels per model over time (e.g., Gemini Pro drops `MINIMAL` that Flash has). Budget for the fact that even Anthropic's own SDK has open issues around clean cancellation of subagents/teams — don't assume issue #11 has a fully solved upstream answer to copy.
+
+4. **Steal ccusage's per-provider log-location/schema table** (Claude Code, Codex, OpenCode, Amp, Gemini CLI, etc. — MIT, 18.2k★, actively maintained) instead of re-deriving each CLI's JSONL format ourselves, and combine it with claude-code-dashboard's live-tail-and-classify-state loop (thinking/waiting/idle/stale from a chokidar watch) for our real-time token-burn meter — none of the existing tools do live + multi-provider together, so this is a genuine gap we'd be filling, not duplicating.
+
+5. **Treat vibe-kanban (sunsetting) and Crystal (deprecated → Nimbalyst) as reference architecture only, not vendor targets** — both prove the "per-session git worktree + kanban" pattern works but are Apache-2.0/MIT-permissive enough to read freely for git-worktree-isolation code if we ever add a "spawn a new session" feature, which is adjacent to but not currently on our roadmap.
