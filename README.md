@@ -1,5 +1,7 @@
 # DwarfAI-Miners
 
+[![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
+
 DwarfAI-Miners is a floating Windows panel that turns active AI coding sessions into mines and
 dwarfs. A mine represents one project; workers and foremen represent the agents currently
 operating in that project.
@@ -19,6 +21,9 @@ The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to sh
 
 > pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
 > Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, tests, and build on every
+push to `main` and on every pull request.
 
 ## What the panel shows
 
