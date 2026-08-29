@@ -109,6 +109,27 @@ describe('DwarfSprite', () => {
     }
   })
 
+  describe('tooltip visibility', () => {
+    it('hides the tooltip until the sprite is hovered or focused', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      expect(wrapper.find('.tooltip-holder').classes()).not.toContain('is-visible')
+
+      await wrapper.find('.dwarf-hit').trigger('mouseenter')
+      expect(wrapper.find('.tooltip-holder').classes()).toContain('is-visible')
+
+      await wrapper.find('.dwarf-hit').trigger('mouseleave')
+      expect(wrapper.find('.tooltip-holder').classes()).not.toContain('is-visible')
+    })
+
+    it('also shows the tooltip on keyboard focus', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      await wrapper.find('.dwarf-hit').trigger('focus')
+      expect(wrapper.find('.tooltip-holder').classes()).toContain('is-visible')
+      await wrapper.find('.dwarf-hit').trigger('blur')
+      expect(wrapper.find('.tooltip-holder').classes()).not.toContain('is-visible')
+    })
+  })
+
   describe('frame cycling', () => {
     beforeEach(() => vi.useFakeTimers())
     afterEach(() => vi.useRealTimers())

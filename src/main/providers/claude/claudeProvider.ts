@@ -95,6 +95,11 @@ export class ClaudeProvider implements Provider {
     return extractClaudeFeed(await this.fs.readTextTail(path, TRANSCRIPT_TAIL_BYTES), limit)
   }
 
+  /** Path backing feed(), used to open a terminal that tails the transcript live. */
+  transcriptPath(dwarfId: string): string | undefined {
+    return this.feedSources.get(dwarfId)
+  }
+
   private async readSessionEntry(path: string): Promise<ClaudeSessionEntry | null> {
     try {
       return parseClaudeSessionEntry(await this.fs.readJson(path))

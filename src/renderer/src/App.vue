@@ -5,6 +5,7 @@ import MapView from './components/MapView.vue'
 import MineScene from './components/MineScene.vue'
 import { useMines } from './composables/useMines'
 import { useView } from './composables/useView'
+import { shouldHidePanelAfterActivation } from './lib/activation'
 import type { Dwarf, FeedMessage, Mine } from './types'
 
 const { state, setMines } = useMines()
@@ -68,8 +69,14 @@ async function activate(dwarf: Dwarf): Promise<void> {
   error.value = null
   try {
     const result = await window.api.activateDwarf(dwarf.id)
-    if (result.focused) {
+    if (shouldHidePanelAfterActivation(result)) {
       hidePanel()
+      return
+    }
+    if (result.focused || result.openedTerminal) {
+      // A window was focused, or a new terminal now tails the transcript
+      // live — nothing else to do, and the panel stays visible (it is
+      // alwaysOnTop, so it never needs to get out of the way).
       return
     }
     if (result.feed.length) {

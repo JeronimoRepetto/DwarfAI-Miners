@@ -9,6 +9,11 @@ import { Poller } from './poller'
 import { ClaudeProvider } from './providers/claude/claudeProvider'
 import { CodexProvider } from './providers/codex/codexProvider'
 import type { Provider } from './providers/provider'
+import {
+  launchTranscriptViewer,
+  resolveViewerScriptPath,
+  type ViewerPathOptions
+} from './terminalLauncher'
 import { TierService } from './tier/tierService'
 
 const FEED_LIMIT = 12
@@ -29,6 +34,10 @@ export interface RuntimeOptions {
   fs?: FsLike
   providers?: Provider[]
   focus?: (pid: number) => Promise<boolean>
+  /** Electron packaging info, used only to resolve the transcript-viewer script path. */
+  appPaths?: ViewerPathOptions
+  /** Opens a terminal tailing a dwarf's transcript; injected for tests. */
+  launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
   now?: () => number
 }
@@ -41,6 +50,7 @@ export class AgentRuntime {
   private readonly providers: Provider[]
   private readonly poller: Poller
   private readonly focus: (pid: number) => Promise<boolean>
+  private readonly launchTerminal: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -60,6 +70,20 @@ export class AgentRuntime {
       })
     ]
     this.focus = options.focus ?? focusPid
+
+    const appPaths: ViewerPathOptions = options.appPaths ?? {
+      isPackaged: false,
+      resourcesPath: process.resourcesPath ?? '',
+      appPath: process.cwd()
+    }
+    this.launchTerminal =
+      options.launchTerminal ??
+      ((dwarfName, transcriptPath) =>
+        launchTranscriptViewer({
+          dwarfName,
+          transcriptPath,
+          viewerScriptPath: resolveViewerScriptPath(appPaths)
+        }))
 
     const tiers = new TierService({
       fs,
@@ -102,12 +126,12 @@ export class AgentRuntime {
 
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {
     const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
-    if (dwarf === undefined) return { focused: false, feed: [] }
+    if (dwarf === undefined) return { focused: false, openedTerminal: false, feed: [] }
 
     if (dwarf.pid !== undefined) {
       try {
         if (await this.focus(dwarf.pid)) {
-          return { focused: true, feed: [] }
+          return { focused: true, openedTerminal: false, feed: [] }
         }
       } catch (error) {
         console.warn(`[runtime] Failed to focus dwarf ${dwarfId}`, error)
@@ -115,12 +139,30 @@ export class AgentRuntime {
     }
 
     const provider = this.providers.find((item) => item.kind === dwarf.provider)
-    if (provider === undefined) return { focused: false, feed: [] }
+    if (provider === undefined) return { focused: false, openedTerminal: false, feed: [] }
+
+    // No window to focus (or focusing it failed) — try opening a new terminal
+    // tailing the transcript live before falling back to the static feed.
+    const transcriptPath = provider.transcriptPath?.(dwarfId)
+    if (transcriptPath !== undefined) {
+      try {
+        if (await this.launchTerminal(dwarf.name, transcriptPath)) {
+          return { focused: false, openedTerminal: true, feed: [] }
+        }
+      } catch (error) {
+        console.warn(`[runtime] Failed to open a terminal for ${dwarfId}`, error)
+      }
+    }
+
     try {
-      return { focused: false, feed: (await provider.feed(dwarfId, FEED_LIMIT)) ?? [] }
+      return {
+        focused: false,
+        openedTerminal: false,
+        feed: (await provider.feed(dwarfId, FEED_LIMIT)) ?? []
+      }
     } catch (error) {
       console.warn(`[runtime] Failed to read feed for ${dwarfId}`, error)
-      return { focused: false, feed: [] }
+      return { focused: false, openedTerminal: false, feed: [] }
     }
   }
 }

@@ -39,6 +39,11 @@ async function init(): Promise<void> {
 
   runtime = new AgentRuntime({
     config,
+    appPaths: {
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath()
+    },
     onMinesUpdated: (mines: Mine[]) => {
       if (!mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, mines)
@@ -47,11 +52,12 @@ async function init(): Promise<void> {
   })
   runtime.start()
 
+  const noActivation = { focused: false, openedTerminal: false, feed: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
   ipcMain.handle(IPC_CHANNELS.getMines, () => runtime?.getMines() ?? [])
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
-    if (typeof dwarfId !== 'string') return { focused: false, feed: [] }
-    return runtime?.activateDwarf(dwarfId) ?? { focused: false, feed: [] }
+    if (typeof dwarfId !== 'string') return noActivation
+    return runtime?.activateDwarf(dwarfId) ?? noActivation
   })
 }
 

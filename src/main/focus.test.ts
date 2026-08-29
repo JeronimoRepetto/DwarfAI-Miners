@@ -89,6 +89,28 @@ describe('buildFocusCommand', () => {
     expect(command).toContain('ShowWindow')
     expect(command).toContain('MainWindowHandle')
   })
+
+  it('restores a minimized window before foregrounding it', () => {
+    const command = buildFocusCommand(4242)
+    expect(command).toContain('IsIconic')
+    // SW_RESTORE
+    expect(command).toContain('ShowWindow($handle, 9)')
+  })
+
+  it('attaches to the foreground thread input to lift the SetForegroundWindow restriction', () => {
+    const command = buildFocusCommand(4242)
+    expect(command).toContain('AttachThreadInput')
+    expect(command).toContain('GetWindowThreadProcessId')
+    expect(command).toContain('GetCurrentThreadId')
+    // Detaches again afterward instead of leaving the thread input attached.
+    expect(command).toContain('AttachThreadInput($currentThreadId, $foregroundThreadId, $false)')
+  })
+
+  it('verifies the switch by reading GetForegroundWindow() back instead of trusting the API result', () => {
+    const command = buildFocusCommand(4242)
+    expect(command).toContain('GetForegroundWindow')
+    expect(command).toContain('[Win32.Native]::GetForegroundWindow() -eq $handle')
+  })
 })
 
 describe('focusPid', () => {

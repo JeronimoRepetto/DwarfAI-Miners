@@ -10,4 +10,9 @@ export interface Provider {
   scan(): Promise<ProviderSnapshot[]>
   /** Last `limit` messages of the dwarf's transcript; null for unknown ids. */
   feed(dwarfId: string, limit: number): Promise<FeedMessage[] | null>
+  /**
+   * Path to the file backing feed(), used to open a terminal that tails the
+   * transcript live when no window can be focused. Undefined for unknown ids.
+   */
+  transcriptPath?(dwarfId: string): string | undefined
 }

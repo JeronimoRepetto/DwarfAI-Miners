@@ -59,8 +59,11 @@ export interface FeedMessage {
 
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
+  /** True when an existing terminal window was found and brought to the foreground. */
   focused: boolean
-  /** Recent transcript messages when focus is unavailable; empty on success. */
+  /** True when no window could be focused, but a new terminal was opened tailing the transcript. */
+  openedTerminal: boolean
+  /** Recent transcript messages, used only when both focused and openedTerminal are false. */
   feed: FeedMessage[]
 }
 

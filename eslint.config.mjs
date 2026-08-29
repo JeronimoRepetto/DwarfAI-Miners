@@ -14,5 +14,12 @@ export default tseslint.config(
       }
     }
   },
+  {
+    rules: {
+      // A leading underscore is this codebase's existing convention for an
+      // intentionally-unused parameter (e.g. IPC handlers' `_event`).
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }]
+    }
+  },
   prettierConfig
 )

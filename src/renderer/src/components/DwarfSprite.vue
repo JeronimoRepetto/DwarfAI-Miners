@@ -8,6 +8,7 @@ import {
   isSpriteFlipped,
   statusAnimationClass
 } from '../lib/presentation'
+import { computeTooltipPlacement } from '../lib/tooltip'
 import type { Dwarf } from '../types'
 import DwarfTooltip from './DwarfTooltip.vue'
 import SpeechBubble from './SpeechBubble.vue'
@@ -19,6 +20,37 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ activate: [] }>()
+
+const hitRef = ref<HTMLButtonElement | null>(null)
+const tooltipRef = ref<InstanceType<typeof DwarfTooltip> | null>(null)
+const tooltipVisible = ref(false)
+const tooltipStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
+
+/**
+ * The tooltip stays mounted at all times (its content never depends on
+ * hover), so its rendered size is always available to measure. Only its
+ * position and visibility change on hover/focus — clamped inside the panel
+ * and flipped below the sprite when it would otherwise clip an edge (see
+ * lib/tooltip.ts), which used to make the leftmost foreman's tooltip
+ * unreadable.
+ */
+function showTooltip(): void {
+  const anchorEl = hitRef.value
+  const tooltipEl = tooltipRef.value?.$el as HTMLElement | undefined
+  if (anchorEl && tooltipEl) {
+    const placement = computeTooltipPlacement(
+      anchorEl.getBoundingClientRect(),
+      tooltipEl.getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+    tooltipStyle.value = { left: `${placement.left}px`, top: `${placement.top}px` }
+  }
+  tooltipVisible.value = true
+}
+
+function hideTooltip(): void {
+  tooltipVisible.value = false
+}
 
 // Cheap after the first sprite: every later call is a no-op.
 preloadDwarfArt()
@@ -76,7 +108,17 @@ const ariaLabel = computed(
 <template>
   <div class="dwarf-sprite" :class="rootClasses" :style="exitStyle">
     <SpeechBubble v-if="bubbleText" class="bubble-holder" :text="bubbleText" />
-    <button class="dwarf-hit" type="button" :aria-label="ariaLabel" @click="emit('activate')">
+    <button
+      ref="hitRef"
+      class="dwarf-hit"
+      type="button"
+      :aria-label="ariaLabel"
+      @click="emit('activate')"
+      @mouseenter="showTooltip"
+      @mouseleave="hideTooltip"
+      @focus="showTooltip"
+      @blur="hideTooltip"
+    >
       <img class="dwarf-frame" :src="frameSrc" alt="" aria-hidden="true" draggable="false" />
       <span
         class="provider-dot"
@@ -87,7 +129,13 @@ const ariaLabel = computed(
       <span v-if="dwarf.status === 'waiting'" class="zzz" aria-hidden="true">z z z</span>
     </button>
     <span class="dwarf-name">{{ dwarf.name }}</span>
-    <DwarfTooltip class="tooltip-holder" :dwarf="dwarf" />
+    <DwarfTooltip
+      ref="tooltipRef"
+      class="tooltip-holder"
+      :class="{ 'is-visible': tooltipVisible }"
+      :style="tooltipStyle"
+      :dwarf="dwarf"
+    />
   </div>
 </template>
 
@@ -215,18 +263,20 @@ const ariaLabel = computed(
   bottom: calc(100% + 2px);
   left: 46%;
 }
+/*
+ * Fixed positioning (not relative to .dwarf-sprite): left/top come from
+ * computeTooltipPlacement() in viewport coordinates, so the tooltip can be
+ * clamped/flipped inside the panel instead of always centering under the
+ * sprite and clipping off-screen near an edge.
+ */
 .tooltip-holder {
-  position: absolute;
+  position: fixed;
   z-index: 30;
-  bottom: calc(100% + 6px);
-  left: 50%;
   opacity: 0;
   pointer-events: none;
-  translate: -50% 0;
   transition: opacity 0.15s;
 }
-.dwarf-hit:hover ~ .tooltip-holder,
-.dwarf-hit:focus-visible ~ .tooltip-holder {
+.tooltip-holder.is-visible {
   opacity: 1;
 }
 </style>

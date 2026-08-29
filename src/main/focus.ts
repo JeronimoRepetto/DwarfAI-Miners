@@ -75,7 +75,20 @@ export function selectFocusTargetPid(rows: ProcessRow[], startPid: number): numb
   return null
 }
 
-/** PowerShell that restores + foregrounds the main window of `targetPid`. */
+/**
+ * PowerShell that restores + foregrounds the main window of `targetPid`, then
+ * verifies the switch actually happened.
+ *
+ * A plain `SetForegroundWindow` call from a background process (this app has
+ * no window of its own) is silently denied by Windows most of the time — the
+ * call can return true while the foreground window never changes. The
+ * standard workaround is `AttachThreadInput`: temporarily sharing input state
+ * with the thread that owns the current foreground window lifts the
+ * restriction for the duration of the call. Because even that is not
+ * guaranteed (e.g. the foreground-lock timeout), success is verified by
+ * reading `GetForegroundWindow()` back and comparing it to the target handle
+ * — the exit code reflects that comparison, not merely the API call result.
+ */
 export function buildFocusCommand(targetPid: number): string {
   return `
 $ErrorActionPreference = 'Stop'
@@ -86,9 +99,30 @@ Add-Type -Namespace Win32 -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 '@
 if ([Win32.Native]::IsIconic($handle)) { [void][Win32.Native]::ShowWindow($handle, 9) }
-if ([Win32.Native]::SetForegroundWindow($handle)) { exit 0 } else { exit 1 }
+
+$currentThreadId = [Win32.Native]::GetCurrentThreadId()
+$foregroundWindow = [Win32.Native]::GetForegroundWindow()
+$foregroundThreadId = [uint32]0
+if ($foregroundWindow -ne [IntPtr]::Zero) {
+  [void][Win32.Native]::GetWindowThreadProcessId($foregroundWindow, [ref]$foregroundThreadId)
+}
+$attached = $false
+if ($foregroundThreadId -ne 0 -and $foregroundThreadId -ne $currentThreadId) {
+  $attached = [Win32.Native]::AttachThreadInput($currentThreadId, $foregroundThreadId, $true)
+}
+try {
+  [void][Win32.Native]::SetForegroundWindow($handle)
+} finally {
+  if ($attached) { [void][Win32.Native]::AttachThreadInput($currentThreadId, $foregroundThreadId, $false) }
+}
+
+if ([Win32.Native]::GetForegroundWindow() -eq $handle) { exit 0 } else { exit 1 }
 `.trim()
 }
 

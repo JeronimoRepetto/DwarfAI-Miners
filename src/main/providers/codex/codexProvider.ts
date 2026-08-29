@@ -133,6 +133,11 @@ export class CodexProvider implements Provider {
     return extractCodexFeed(await this.fs.readTextTail(path, FEED_TAIL_BYTES), limit)
   }
 
+  /** Path backing feed(), used to open a terminal that tails the transcript live. */
+  transcriptPath(dwarfId: string): string | undefined {
+    return this.feedSources.get(dwarfId)
+  }
+
   private async snapshotRollout(
     path: string,
     mtimeMs: number

@@ -63,26 +63,84 @@ describe('AgentRuntime activation', () => {
 
     await expect(runtime.activateDwarf('claude:session-1')).resolves.toEqual({
       focused: true,
+      openedTerminal: false,
       feed: []
     })
     expect(source.feed).not.toHaveBeenCalled()
   })
 
-  it('returns a transcript fallback when terminal focus fails', async () => {
-    const feed = [{ role: 'assistant' as const, text: 'Still working', timestamp: 'now' }]
-    const source = provider(feed)
+  it('opens a terminal tailing the transcript when focus fails but a transcript path is known', async () => {
+    const source: Provider = {
+      kind: 'claude',
+      scan,
+      feed: vi.fn().mockResolvedValue([]),
+      transcriptPath: vi.fn().mockReturnValue('C:\\claude\\session-1.jsonl')
+    }
+    const launchTerminal = vi.fn().mockResolvedValue(true)
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
+      launchTerminal,
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
 
     await expect(runtime.activateDwarf('claude:session-1')).resolves.toEqual({
       focused: false,
+      openedTerminal: true,
+      feed: []
+    })
+    expect(launchTerminal).toHaveBeenCalledWith('worker', 'C:\\claude\\session-1.jsonl')
+    expect(source.feed).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the transcript feed when focus fails and no terminal could be opened', async () => {
+    const feed = [{ role: 'assistant' as const, text: 'Still working', timestamp: 'now' }]
+    const source: Provider = {
+      kind: 'claude',
+      scan,
+      feed: vi.fn().mockResolvedValue(feed),
+      transcriptPath: vi.fn().mockReturnValue('C:\\claude\\session-1.jsonl')
+    }
+    const launchTerminal = vi.fn().mockResolvedValue(false)
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      focus: vi.fn().mockResolvedValue(false),
+      launchTerminal,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    await expect(runtime.activateDwarf('claude:session-1')).resolves.toEqual({
+      focused: false,
+      openedTerminal: false,
       feed
     })
+    expect(launchTerminal).toHaveBeenCalledWith('worker', 'C:\\claude\\session-1.jsonl')
+    expect(source.feed).toHaveBeenCalledWith('claude:session-1', 12)
+  })
+
+  it('skips straight to the transcript feed when the provider exposes no transcript path', async () => {
+    const feed = [{ role: 'assistant' as const, text: 'Still working', timestamp: 'now' }]
+    const source = provider(feed)
+    const launchTerminal = vi.fn().mockResolvedValue(true)
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      focus: vi.fn().mockResolvedValue(false),
+      launchTerminal,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    await expect(runtime.activateDwarf('claude:session-1')).resolves.toEqual({
+      focused: false,
+      openedTerminal: false,
+      feed
+    })
+    expect(launchTerminal).not.toHaveBeenCalled()
     expect(source.feed).toHaveBeenCalledWith('claude:session-1', 12)
   })
 })
