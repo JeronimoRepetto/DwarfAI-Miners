@@ -46,8 +46,15 @@ export class ClaudeProvider implements Provider {
   private readonly roots: string[]
   private readonly isPidAlive: (pid: number) => boolean
   private readonly now: () => number
-  /** dwarfId -> transcript path, rebuilt on every scan (used by feed()). */
-  private readonly feedSources = new Map<string, string>()
+  /**
+   * dwarfId -> transcript path, used by feed()/transcriptPath().
+   *
+   * Rebuilt on every scan into a SEPARATE map that replaces this reference in
+   * one assignment at the end (issue #12). Clearing and repopulating the live
+   * map across awaits let a click landing mid-scan read a half-rebuilt map and
+   * resolve to another dwarf's transcript.
+   */
+  private feedSources: ReadonlyMap<string, string> = new Map()
   /**
    * Every agent id ever seen reaching a terminal status, remembered for the
    * life of the process.
@@ -68,7 +75,9 @@ export class ClaudeProvider implements Provider {
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
-    this.feedSources.clear()
+    // Built off to the side; swapped in atomically once the scan completes so
+    // concurrent feed()/transcriptPath() calls always see a whole generation.
+    const feedSources = new Map<string, string>()
     const snapshots: ProviderSnapshot[] = []
     const seenSessions = new Set<string>()
 
@@ -82,9 +91,12 @@ export class ClaudeProvider implements Provider {
         if (seenSessions.has(session.sessionId)) continue
         if (!this.isPidAlive(session.pid)) continue
         seenSessions.add(session.sessionId)
-        snapshots.push(await this.snapshotSession(root, session))
+        snapshots.push(await this.snapshotSession(root, session, feedSources))
       }
     }
+    // Only reached on success: a throwing scan leaves the previous generation
+    // in place rather than stripping it.
+    this.feedSources = feedSources
     return snapshots
   }
 
@@ -110,7 +122,8 @@ export class ClaudeProvider implements Provider {
 
   private async snapshotSession(
     root: string,
-    session: ClaudeSessionEntry
+    session: ClaudeSessionEntry,
+    feedSources: Map<string, string>
   ): Promise<ProviderSnapshot> {
     const projectDir = `${root}\\projects\\${encodeClaudeProjectDir(session.cwd)}`
     const transcriptPath = `${projectDir}\\${session.sessionId}.jsonl`
@@ -128,7 +141,7 @@ export class ClaudeProvider implements Provider {
     )
 
     const mainDwarfId = `claude:${session.sessionId}`
-    this.feedSources.set(mainDwarfId, transcriptPath)
+    feedSources.set(mainDwarfId, transcriptPath)
 
     const dwarfs: Dwarf[] = []
     if (inFlightAgents.length > 0 || session.status === 'busy') {
@@ -152,7 +165,7 @@ export class ClaudeProvider implements Provider {
     for (const agent of inFlightAgents) {
       const workerId = `${mainDwarfId}:${agent.agentId}`
       const subagentPath = `${projectDir}\\${session.sessionId}\\subagents\\agent-${agent.agentId}.jsonl`
-      this.feedSources.set(workerId, subagentPath)
+      feedSources.set(workerId, subagentPath)
       dwarfs.push({
         id: workerId,
         provider: 'claude',

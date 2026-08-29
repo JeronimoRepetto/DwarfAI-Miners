@@ -350,4 +350,69 @@ describe('CodexProvider', () => {
       expect(await provider.feed('codex:nope', 20)).toBeNull()
     })
   })
+
+  /**
+   * Regression (issue #12): scan() used to clear() the shared feedSources map
+   * and repopulate it across awaits, so a click landing mid-scan read a
+   * half-rebuilt map. The map must be built off to the side and swapped in
+   * atomically at the end of the scan.
+   */
+  describe('feed sources during a concurrent scan', () => {
+    /** Suspends the next rollout read and resolves once the scan is parked there. */
+    function gateNextRolloutRead(): { reached: Promise<void>; release: () => void } {
+      let release!: () => void
+      let markReached!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const reached = new Promise<void>((resolve) => {
+        markReached = resolve
+      })
+      fake.onBeforeRead = async (path) => {
+        if (!path.endsWith('.jsonl')) return
+        fake.onBeforeRead = undefined
+        markReached()
+        await gate
+      }
+      return { reached, release }
+    }
+
+    it('keeps the previous scan resolvable while the next scan is in flight', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const busyId = `codex:${BUSY_SESSION_ID}`
+      const settled = provider.transcriptPath(busyId)
+      expect(settled).toContain(BUSY_SESSION_ID)
+
+      const gate = gateNextRolloutRead()
+      const scanning = provider.scan()
+      await gate.reached
+
+      expect(provider.transcriptPath(busyId)).toBe(settled)
+      expect((await provider.feed(busyId, 20))!.length).toBeGreaterThan(0)
+
+      gate.release()
+      await scanning
+      expect(provider.transcriptPath(busyId)).toBe(settled)
+    })
+
+    it('never resolves a dwarf id to another session rollout mid-scan', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const idleId = `codex:${SESSION_ID}`
+      const idlePath = provider.transcriptPath(idleId)
+      expect(idlePath).toContain(SESSION_ID)
+
+      const gate = gateNextRolloutRead()
+      const scanning = provider.scan()
+      await gate.reached
+
+      const midScan = provider.transcriptPath(idleId)
+      expect(midScan).toBe(idlePath)
+      expect(midScan).not.toContain(BUSY_SESSION_ID)
+
+      gate.release()
+      await scanning
+    })
+  })
 })

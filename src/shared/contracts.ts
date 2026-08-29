@@ -29,6 +29,11 @@ export interface Dwarf {
   sessionId: string
   pid?: number
   startedAt?: number
+  /**
+   * Cumulative tokens the session has spent, when the provider knows it.
+   * Codex records it on its registry row; Claude does not expose an equivalent.
+   */
+  tokensUsed?: number
 }
 
 export interface Mine {

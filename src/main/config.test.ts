@@ -7,13 +7,16 @@ describe('defaultConfig', () => {
       pollIntervalMs: 2000,
       livenessWindowS: 90,
       codexLivenessWindowS: 300,
+      codexHeartbeatWindowS: 300,
       codexScanDays: 7,
       codexIdleRetentionS: 3600,
       dwarfLeaveGraceS: 20,
       tierCacheTtlS: 600,
       tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
       claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
-      codexSessionsRoot: '~/.codex/sessions'
+      codexSessionsRoot: '~/.codex/sessions',
+      codexStateDb: '~/.codex/state_5.sqlite',
+      codexLogsDb: '~/.codex/logs_2.sqlite'
     })
   })
 
@@ -88,6 +91,29 @@ describe('loadConfig', () => {
 
   it('fails fast when CLAUDE_CONFIG_DIRS has no usable entries', () => {
     expect(() => loadConfig({ CLAUDE_CONFIG_DIRS: ' ; ; ' })).toThrowError(/CLAUDE_CONFIG_DIRS/)
+  })
+
+  it('parses the Codex registry database paths, keeping a leading ~ unexpanded', () => {
+    const config = loadConfig({
+      CODEX_STATE_DB: '~/.codex-alt/state_5.sqlite',
+      CODEX_LOGS_DB: 'D:\\codex\\logs_2.sqlite',
+      CODEX_HEARTBEAT_WINDOW_S: '45'
+    })
+    expect(config.codexStateDb).toBe('~/.codex-alt/state_5.sqlite')
+    expect(config.codexLogsDb).toBe('D:\\codex\\logs_2.sqlite')
+    expect(config.codexHeartbeatWindowS).toBe(45)
+  })
+
+  it('falls back to the default registry paths when the vars are blank', () => {
+    const config = loadConfig({ CODEX_STATE_DB: '  ', CODEX_LOGS_DB: '' })
+    expect(config.codexStateDb).toBe('~/.codex/state_5.sqlite')
+    expect(config.codexLogsDb).toBe('~/.codex/logs_2.sqlite')
+  })
+
+  it('fails fast on a non-integer CODEX_HEARTBEAT_WINDOW_S', () => {
+    expect(() => loadConfig({ CODEX_HEARTBEAT_WINDOW_S: '0' })).toThrowError(
+      /CODEX_HEARTBEAT_WINDOW_S/
+    )
   })
 
   it('fails fast on a non-numeric value', () => {

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { NodeFs } from '../../adapters/fsLike'
 import { isCodexProcessRunning } from '../../adapters/processProbe'
+import { NodeSqlite } from '../../adapters/sqliteLike'
 import { defaultConfig } from '../../config'
 import { CodexProvider } from './codexProvider'
 
@@ -14,30 +15,37 @@ import { CodexProvider } from './codexProvider'
  * deterministic `pnpm test` run.
  */
 describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine checks', () => {
-  it('reports what the provider detects right now against the real ~/.codex/sessions', async () => {
+  it('reports what the provider detects right now against the real ~/.codex', async () => {
     const config = defaultConfig()
     const provider = new CodexProvider({
       fs: new NodeFs(),
       sessionsRoot: join(homedir(), '.codex', 'sessions'),
       livenessWindowS: config.codexLivenessWindowS,
       scanDays: config.codexScanDays,
-      idleRetentionS: config.codexIdleRetentionS
+      idleRetentionS: config.codexIdleRetentionS,
+      heartbeatWindowS: config.codexHeartbeatWindowS,
+      sqlite: new NodeSqlite(),
+      stateDbPath: join(homedir(), '.codex', 'state_5.sqlite'),
+      logsDbPath: join(homedir(), '.codex', 'logs_2.sqlite')
     })
 
     const snapshots = await provider.scan()
     console.log('[integration] isCodexProcessRunning():', await isCodexProcessRunning())
     console.log(
-      '[integration] real ~/.codex/sessions scan result:',
+      '[integration] real ~/.codex scan result:',
       JSON.stringify(
         snapshots.map((s) => ({
           sessionId: s.sessionId,
           cwd: s.cwd,
           status: s.status,
+          updatedAt: new Date(s.updatedAt).toISOString(),
           dwarfs: s.dwarfs.map((d) => ({
             id: d.id,
             role: d.role,
             status: d.status,
-            model: d.model
+            model: d.model,
+            effort: d.effort,
+            tokensUsed: d.tokensUsed
           }))
         })),
         null,
@@ -45,6 +53,23 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
       )
     )
     expect(Array.isArray(snapshots)).toBe(true)
+  })
+
+  it('reads the real Codex registry read-only through node:sqlite', async () => {
+    // Guards the whole premise of issue #1's fix: node:sqlite must be able to
+    // open Codex's live WAL databases with no native dependency.
+    const db = await new NodeSqlite().openReadOnly(join(homedir(), '.codex', 'state_5.sqlite'))
+    if (db === null) {
+      console.log('[integration] no state_5.sqlite on this machine — registry discovery disabled')
+      return
+    }
+    try {
+      const rows = db.all('SELECT count(*) AS n FROM threads')
+      console.log('[integration] state_5.sqlite threads row count:', JSON.stringify(rows))
+      expect(rows).toHaveLength(1)
+    } finally {
+      db.close()
+    }
   })
 
   describe('synthetic large-turn rollout (bug: task_started pushed out of a small tail read)', () => {

@@ -296,4 +296,70 @@ describe('ClaudeProvider', () => {
       expect(await provider.feed('claude:nope', 20)).toBeNull()
     })
   })
+
+  /**
+   * Regression (issue #12): scan() used to clear() the shared feedSources map
+   * and repopulate it across awaits, so a click landing mid-scan read a
+   * half-rebuilt map — observed once as the first activation after boot
+   * resolving another dwarf's transcript. The map must be built off to the
+   * side and swapped in atomically at the end of the scan.
+   */
+  describe('feed sources during a concurrent scan', () => {
+    /** Suspends the next transcript read and resolves once the scan is parked there. */
+    function gateNextTranscriptRead(): { reached: Promise<void>; release: () => void } {
+      let release!: () => void
+      let markReached!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const reached = new Promise<void>((resolve) => {
+        markReached = resolve
+      })
+      fake.onBeforeRead = async (path) => {
+        if (!path.endsWith('.jsonl')) return
+        fake.onBeforeRead = undefined
+        markReached()
+        await gate
+      }
+      return { reached, release }
+    }
+
+    it('keeps the previous scan resolvable while the next scan is in flight', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const mainId = `claude:${SESSION_ID}`
+      const settled = provider.transcriptPath(mainId)
+      expect(settled).toBe(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`)
+
+      const gate = gateNextTranscriptRead()
+      const scanning = provider.scan()
+      await gate.reached
+
+      expect(provider.transcriptPath(mainId)).toBe(settled)
+      expect((await provider.feed(mainId, 20))!.length).toBeGreaterThan(0)
+
+      gate.release()
+      await scanning
+      expect(provider.transcriptPath(mainId)).toBe(settled)
+    })
+
+    it('never resolves a dwarf id to another dwarf transcript mid-scan', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const workerId = `claude:${SESSION_ID}:${LIVE_AGENT}`
+      const workerPath = provider.transcriptPath(workerId)
+      expect(workerPath).toContain(`agent-${LIVE_AGENT}.jsonl`)
+
+      const gate = gateNextTranscriptRead()
+      const scanning = provider.scan()
+      await gate.reached
+
+      // Whatever the in-flight scan is doing, a worker id must never come back
+      // pointing at the parent transcript (or any other dwarf's file).
+      expect(provider.transcriptPath(workerId)).toBe(workerPath)
+
+      gate.release()
+      await scanning
+    })
+  })
 })

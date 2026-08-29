@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFs, type FsLike } from './adapters/fsLike'
+import { NodeSqlite, type SqliteLike } from './adapters/sqliteLike'
 import type { AppConfig } from './config'
 import type { DwarfActivation, Mine } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
@@ -32,6 +33,8 @@ export interface RuntimeOptions {
   onMinesUpdated: (mines: Mine[]) => void
   home?: string
   fs?: FsLike
+  /** Read-only SQLite access for the Codex registry; injected for tests. */
+  sqlite?: SqliteLike
   providers?: Provider[]
   focus?: (pid: number) => Promise<boolean>
   /** Electron packaging info, used only to resolve the transcript-viewer script path. */
@@ -66,7 +69,11 @@ export class AgentRuntime {
         sessionsRoot: expandHomePath(options.config.codexSessionsRoot, home),
         livenessWindowS: options.config.codexLivenessWindowS,
         scanDays: options.config.codexScanDays,
-        idleRetentionS: options.config.codexIdleRetentionS
+        idleRetentionS: options.config.codexIdleRetentionS,
+        heartbeatWindowS: options.config.codexHeartbeatWindowS,
+        sqlite: options.sqlite ?? new NodeSqlite(),
+        stateDbPath: expandHomePath(options.config.codexStateDb, home),
+        logsDbPath: expandHomePath(options.config.codexLogsDb, home)
       })
     ]
     this.focus = options.focus ?? focusPid

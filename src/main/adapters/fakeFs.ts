@@ -17,6 +17,13 @@ function normalize(path: string): string {
 export class FakeFs implements FsLike {
   private readonly files = new Map<string, FakeFile>()
 
+  /**
+   * Awaited before every read. Tests set it to suspend a scan mid-flight and
+   * observe what a concurrent caller (a click arriving during a poll tick)
+   * sees while the provider is still rebuilding its internal state.
+   */
+  onBeforeRead?: (path: string) => Promise<void>
+
   addFile(path: string, content: string, mtimeMs = 0): void {
     this.files.set(normalize(path), { content, mtimeMs })
   }
@@ -38,6 +45,7 @@ export class FakeFs implements FsLike {
   }
 
   async readTextTail(path: string, maxBytes: number): Promise<string> {
+    await this.onBeforeRead?.(path)
     const file = this.files.get(normalize(path))
     if (!file) throw new Error(`FakeFs: no such file ${path}`)
     const bytes = Buffer.from(file.content, 'utf8')
@@ -45,6 +53,7 @@ export class FakeFs implements FsLike {
   }
 
   async readTextHead(path: string, maxBytes: number): Promise<string> {
+    await this.onBeforeRead?.(path)
     const file = this.files.get(normalize(path))
     if (!file) throw new Error(`FakeFs: no such file ${path}`)
     const bytes = Buffer.from(file.content, 'utf8')
@@ -52,6 +61,7 @@ export class FakeFs implements FsLike {
   }
 
   async readJson(path: string): Promise<unknown> {
+    await this.onBeforeRead?.(path)
     const file = this.files.get(normalize(path))
     if (!file) throw new Error(`FakeFs: no such file ${path}`)
     return JSON.parse(file.content)

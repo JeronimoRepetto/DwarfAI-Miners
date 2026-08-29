@@ -9,8 +9,14 @@ export interface AppConfig {
   pollIntervalMs: number
   /** How long an agent counts as alive after its last observed activity, in seconds. */
   livenessWindowS: number
-  /** Codex-specific liveness: rollout mtime age that still counts as an open session. */
+  /** Codex-specific liveness: activity age that still counts as an open session. */
   codexLivenessWindowS: number
+  /**
+   * How recent a Codex logs_2.sqlite row must be to count as a liveness
+   * heartbeat, in seconds. Codex appends log rows continuously while a turn
+   * runs, which is the signal a rollout's mtime fails to provide on Windows.
+   */
+  codexHeartbeatWindowS: number
   /**
    * How many day-directories (today back N-1 days) to scan under the Codex
    * sessions root. A rollout lives in its START-date directory forever, so
@@ -37,6 +43,13 @@ export interface AppConfig {
   claudeConfigDirs: string[]
   /** The Codex sessions root. A leading ~ is expanded against the real home dir. */
   codexSessionsRoot: string
+  /**
+   * Codex's authoritative thread registry (CODEX_HOME/state_5.sqlite). Read
+   * read-only; a missing file simply disables registry-backed discovery.
+   */
+  codexStateDb: string
+  /** Codex's structured log stream (CODEX_HOME/logs_2.sqlite), used as a liveness heartbeat. */
+  codexLogsDb: string
 }
 
 export function defaultConfig(): AppConfig {
@@ -44,13 +57,16 @@ export function defaultConfig(): AppConfig {
     pollIntervalMs: 2000,
     livenessWindowS: 90,
     codexLivenessWindowS: 300,
+    codexHeartbeatWindowS: 300,
     codexScanDays: 7,
     codexIdleRetentionS: 3600,
     dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
     tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
     claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
-    codexSessionsRoot: '~/.codex/sessions'
+    codexSessionsRoot: '~/.codex/sessions',
+    codexStateDb: '~/.codex/state_5.sqlite',
+    codexLogsDb: '~/.codex/logs_2.sqlite'
   }
 }
 
@@ -118,6 +134,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
       'CODEX_LIVENESS_WINDOW_S',
       defaults.codexLivenessWindowS
     ),
+    codexHeartbeatWindowS: readPositiveInt(
+      env,
+      'CODEX_HEARTBEAT_WINDOW_S',
+      defaults.codexHeartbeatWindowS
+    ),
     codexScanDays: readPositiveInt(env, 'CODEX_SCAN_DAYS', defaults.codexScanDays),
     codexIdleRetentionS: readPositiveInt(
       env,
@@ -128,6 +149,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     tierCacheTtlS: readPositiveInt(env, 'TIER_CACHE_TTL_S', defaults.tierCacheTtlS),
     tierThresholds: readTierThresholds(env, defaults.tierThresholds),
     claudeConfigDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', defaults.claudeConfigDirs),
-    codexSessionsRoot: readPath(env, 'CODEX_SESSIONS_ROOT', defaults.codexSessionsRoot)
+    codexSessionsRoot: readPath(env, 'CODEX_SESSIONS_ROOT', defaults.codexSessionsRoot),
+    codexStateDb: readPath(env, 'CODEX_STATE_DB', defaults.codexStateDb),
+    codexLogsDb: readPath(env, 'CODEX_LOGS_DB', defaults.codexLogsDb)
   }
 }
