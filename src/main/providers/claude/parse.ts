@@ -1,4 +1,5 @@
 import type { FeedMessage, SessionStatus } from '../../domain/types'
+import type { TextDeliveryTarget } from '../../textDelivery/port'
 
 /**
  * Pure parsers for Claude Code on-disk session data. They take strings/objects
@@ -13,6 +14,12 @@ export interface ClaudeSessionEntry {
   status: SessionStatus
   /** Windows FILETIME process start value, kept for a future PID-reuse probe. */
   procStart?: string
+  /**
+   * How the session was started: 'interactive' for a TUI the user is looking
+   * at, 'bg' for a headless background job. This is what decides whether a
+   * typed message can be injected into a console or has to be relayed.
+   */
+  kind?: string
   name?: string
   startedAt?: number
   updatedAt?: number
@@ -79,10 +86,31 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     // session dwarf is a foreman either way — status changes, rank does not.
     status: json.status === 'busy' ? 'busy' : 'idle',
     procStart: asString(json.procStart),
+    kind: asString(json.kind),
     name: asString(json.name),
     startedAt: asNumber(json.startedAt),
     updatedAt: asNumber(json.updatedAt)
   }
+}
+
+/**
+ * Which channel a Claude session can receive typed text through.
+ *
+ * A headless job ('bg') has no console to type into, but Claude Code keeps
+ * every session on this machine addressable by the name in its registry entry,
+ * so a relay turn can hand it the message. Anything else — including an older
+ * entry that records no kind at all — is assumed to own a console: those
+ * predate background sessions, so a console is the safe reading.
+ */
+export function claudeSessionDeliveryTarget(session: {
+  pid: number
+  kind?: string
+  name?: string
+}): TextDeliveryTarget | null {
+  if (session.kind === 'bg') {
+    return session.name === undefined ? null : { kind: 'claude-relay', sessionName: session.name }
+  }
+  return { kind: 'terminal', pid: session.pid }
 }
 
 /**

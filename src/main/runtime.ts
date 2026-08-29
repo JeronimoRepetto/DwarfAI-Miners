@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { NodeFs, type FsLike } from './adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from './adapters/sqliteLike'
 import type { AppConfig } from './config'
-import type { DwarfActivation, Mine } from '../shared/contracts'
+import type { DwarfActivation, DwarfTextRequest, DwarfTextResult, Mine } from '../shared/contracts'
+import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
 import { focusPid } from './focus'
 import { Poller } from './poller'
@@ -15,9 +16,17 @@ import {
   resolveViewerScriptPath,
   type ViewerPathOptions
 } from './terminalLauncher'
+import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
+import { resolveTextDelivery, stampTextDelivery } from './textDelivery/resolve'
+import { WindowsTextDelivery } from './textDelivery/windowsTextDelivery'
 import { TierService } from './tier/tierService'
 
 const FEED_LIMIT = 12
+
+/** Refusals that never reach the delivery port, phrased for the panel. */
+const NO_SUCH_DWARF = 'That dwarf has left the mine.'
+const NO_CHANNEL = "This session type can't receive messages yet."
+const EMPTY_MESSAGE = 'Type a message first.'
 
 /** Expand only a leading home shorthand; other paths are passed through. */
 export function expandHomePath(path: string, home: string = homedir()): string {
@@ -41,6 +50,8 @@ export interface RuntimeOptions {
   appPaths?: ViewerPathOptions
   /** Opens a terminal tailing a dwarf's transcript; injected for tests. */
   launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
+  /** Writes a typed message into a live session; injected for tests. */
+  textDelivery?: TextDeliveryPort
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
   now?: () => number
 }
@@ -54,6 +65,7 @@ export class AgentRuntime {
   private readonly poller: Poller
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly launchTerminal: (dwarfName: string, transcriptPath: string) => Promise<boolean>
+  private readonly textDelivery: TextDeliveryPort
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -92,6 +104,14 @@ export class AgentRuntime {
           viewerScriptPath: resolveViewerScriptPath(appPaths)
         }))
 
+    this.textDelivery =
+      options.textDelivery ??
+      new WindowsTextDelivery({
+        home,
+        relayModel: options.config.sendTextRelayModel,
+        relayTimeoutMs: options.config.sendTextTimeoutS * 1_000
+      })
+
     const tiers = new TierService({
       fs,
       thresholds: options.config.tierThresholds,
@@ -106,9 +126,14 @@ export class AgentRuntime {
       intervalMs: options.config.pollIntervalMs,
       tierOf: (path) => tiers.tierOf(path),
       onUpdate: (mines) => {
-        const withLeaving = lifecycle.apply(mines)
-        this.mines = withLeaving
-        options.onMinesUpdated(withLeaving)
+        // The panel decides which actions to offer per dwarf, so the resolved
+        // delivery channel travels with the snapshot instead of costing an
+        // extra IPC round trip per sprite.
+        const published = stampTextDelivery(lifecycle.apply(mines), (dwarfId) =>
+          this.deliveryTargetOf(dwarfId)
+        )
+        this.mines = published
+        options.onMinesUpdated(published)
       },
       logError: (message, error) => console.warn(message, error)
     })
@@ -129,6 +154,74 @@ export class AgentRuntime {
 
   getMines(): Mine[] {
     return this.mines
+  }
+
+  /**
+   * Ask whichever provider owns `dwarfId` how a message could reach it. A
+   * provider that predates the capability surface (or does not implement it)
+   * simply reports no channel.
+   */
+  private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
+    for (const provider of this.providers) {
+      const target = provider.textDelivery?.(dwarfId)
+      if (target !== undefined && target !== null) return target
+    }
+    return null
+  }
+
+  /**
+   * Hand a typed message to a dwarf's live session.
+   *
+   * Refusals are explicit and cheap (unknown dwarf, a session already leaving,
+   * an empty message, no channel at all) so the panel can explain itself
+   * instead of leaving the user wondering whether the text landed. Nothing
+   * here logs the message: only its length, the channel and the verdict.
+   */
+  async sendDwarfText(request: DwarfTextRequest): Promise<DwarfTextResult> {
+    const dwarf = this.mines
+      .flatMap((mine) => mine.dwarfs)
+      .find((item) => item.id === request.dwarfId)
+    // A 'leaving' dwarf's agent has already finished: its pid is stale (and
+    // could have been reused) and its session name no longer resolves, so
+    // there is nothing safe to write to.
+    if (dwarf === undefined || dwarf.status === 'leaving') {
+      return { delivered: false, via: 'none', error: NO_SUCH_DWARF }
+    }
+
+    const text = request.text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+    if (text === '') return { delivered: false, via: 'none', error: EMPTY_MESSAGE }
+
+    const resolved = resolveTextDelivery(request.dwarfId, (id) => this.deliveryTargetOf(id))
+    if (resolved === null) return { delivered: false, via: 'none', error: NO_CHANNEL }
+
+    const payload = `${resolved.prefix}${text}`
+    try {
+      const outcome =
+        resolved.endpoint.kind === 'terminal'
+          ? await this.textDelivery.sendToConsole({
+              pid: resolved.endpoint.pid,
+              text: payload,
+              pressEnter: request.pressEnter
+            })
+          : await this.textDelivery.relayToClaudeSession({
+              sessionName: resolved.endpoint.sessionName,
+              text: payload
+            })
+      console.log(
+        `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
+          `${outcome.delivered ? 'delivered' : 'failed'} (${payload.length} chars)`
+      )
+      return outcome.delivered
+        ? { delivered: true, via: resolved.channel }
+        : { delivered: false, via: resolved.channel, error: outcome.error }
+    } catch (error) {
+      console.warn(`[runtime] Delivery to ${request.dwarfId} threw`, error)
+      return {
+        delivered: false,
+        via: resolved.channel,
+        error: 'The message could not be delivered.'
+      }
+    }
   }
 
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {

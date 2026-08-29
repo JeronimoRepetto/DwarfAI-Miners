@@ -1,4 +1,5 @@
 import type { DwarfProvider, FeedMessage, ProviderSnapshot } from '../domain/types'
+import type { TextDeliveryTarget } from '../textDelivery/port'
 
 /**
  * Port implemented by every AI CLI detector. scan() returns one snapshot per
@@ -15,4 +16,12 @@ export interface Provider {
    * transcript live when no window can be focused. Undefined for unknown ids.
    */
   transcriptPath?(dwarfId: string): string | undefined
+  /**
+   * Capability surface: how a typed message could reach this dwarf's live
+   * session right now, or null when no channel exists (unknown id, or a
+   * session type with no way in). Answered from data the latest scan already
+   * read, so it stays a synchronous map lookup — the panel asks for every
+   * dwarf on every poll to decide what actions to offer.
+   */
+  textDelivery?(dwarfId: string): TextDeliveryTarget | null
 }

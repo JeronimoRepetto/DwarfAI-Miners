@@ -362,4 +362,63 @@ describe('ClaudeProvider', () => {
       await scanning
     })
   })
+
+  describe('textDelivery', () => {
+    it('has no channel before the first scan or for an unknown dwarf', async () => {
+      const provider = makeProvider()
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).toBeNull()
+      await provider.scan()
+      expect(provider.textDelivery('claude:nobody')).toBeNull()
+    })
+
+    it('types into the console of an interactive session', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).toEqual({
+        kind: 'terminal',
+        pid: 32896
+      })
+    })
+
+    it('relays to a headless background session by its registry name', async () => {
+      fake.addFile(
+        `${ROOT1}\\sessions\\32896.json`,
+        JSON.stringify({
+          pid: 32896,
+          sessionId: SESSION_ID,
+          cwd: CWD,
+          status: 'busy',
+          kind: 'bg',
+          name: 'ai-tools-70'
+        }),
+        1_000
+      )
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).toEqual({
+        kind: 'claude-relay',
+        sessionName: 'ai-tools-70'
+      })
+    })
+
+    it('routes a subagent worker through its foreman', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const target = provider.textDelivery(`claude:${SESSION_ID}:${LIVE_AGENT}`)
+      expect(target).toMatchObject({
+        kind: 'foreman-relay',
+        foremanDwarfId: `claude:${SESSION_ID}`
+      })
+    })
+
+    it('drops the channel of a session that is gone by the next scan', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).not.toBeNull()
+
+      alivePids.clear()
+      await provider.scan()
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).toBeNull()
+    })
+  })
 })

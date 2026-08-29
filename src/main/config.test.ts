@@ -16,7 +16,9 @@ describe('defaultConfig', () => {
       claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
       codexSessionsRoot: '~/.codex/sessions',
       codexStateDb: '~/.codex/state_5.sqlite',
-      codexLogsDb: '~/.codex/logs_2.sqlite'
+      codexLogsDb: '~/.codex/logs_2.sqlite',
+      sendTextRelayModel: 'haiku',
+      sendTextTimeoutS: 60
     })
   })
 
@@ -130,5 +132,21 @@ describe('loadConfig', () => {
 
   it('fails fast on non-integer values', () => {
     expect(() => loadConfig({ LIVENESS_WINDOW_S: '90.5' })).toThrowError(/LIVENESS_WINDOW_S/)
+  })
+
+  describe('send-text delivery', () => {
+    it('overrides the relay model and the delivery timeout', () => {
+      const config = loadConfig({ SENDTEXT_RELAY_MODEL: 'sonnet', SENDTEXT_TIMEOUT_S: '30' })
+      expect(config.sendTextRelayModel).toBe('sonnet')
+      expect(config.sendTextTimeoutS).toBe(30)
+    })
+
+    it('trims a padded model name', () => {
+      expect(loadConfig({ SENDTEXT_RELAY_MODEL: '  opus  ' }).sendTextRelayModel).toBe('opus')
+    })
+
+    it('fails fast on an unusable timeout', () => {
+      expect(() => loadConfig({ SENDTEXT_TIMEOUT_S: '0' })).toThrowError(/SENDTEXT_TIMEOUT_S/)
+    })
   })
 })

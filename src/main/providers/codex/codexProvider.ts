@@ -382,6 +382,24 @@ export class CodexProvider implements Provider {
   }
 
   /**
+   * Codex sessions currently have no input channel, whichever product owns
+   * them.
+   *
+   * The CLI/TUI never records a pid anywhere this provider can read — neither
+   * the rollout's session_meta nor the state_5.sqlite `threads` row carries
+   * one — so there is no process to walk up to a console window, and matching
+   * a running codex.exe to a specific thread would be guesswork. The desktop
+   * app (`codex.exe app-server`) has no console at all, and Codex exposes no
+   * cross-session messaging the way Claude Code does.
+   *
+   * Reporting null for both keeps the panel honest: the send action renders
+   * disabled with an explanation instead of failing after the user has typed.
+   */
+  textDelivery(_dwarfId: string): null {
+    return null
+  }
+
+  /**
    * Build one session snapshot from its rollout, its registry row, or both.
    *
    * The rollout stays the content source (open-turn detection and the latest

@@ -76,10 +76,68 @@ describe('DwarfSprite', () => {
     expect(wrapper.find('.provider-dot').classes()).toContain('provider-codex')
   })
 
-  it('emits activate when clicked', async () => {
-    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-    await wrapper.find('button').trigger('click')
-    expect(wrapper.emitted('activate')).toHaveLength(1)
+  describe('action menu', () => {
+    it('opens the action menu on click instead of activating straight away', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      expect(wrapper.find('.action-menu').exists()).toBe(false)
+
+      await wrapper.find('.dwarf-hit').trigger('click')
+      expect(wrapper.find('.action-menu').exists()).toBe(true)
+      expect(wrapper.emitted('activate')).toBeUndefined()
+    })
+
+    it('closes the menu on a second click', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      await wrapper.find('.dwarf-hit').trigger('click')
+      await wrapper.find('.dwarf-hit').trigger('click')
+      expect(wrapper.find('.action-menu').exists()).toBe(false)
+    })
+
+    it('emits activate and closes when the console action is chosen', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      await wrapper.find('.dwarf-hit').trigger('click')
+      await wrapper.find('.action-open').trigger('click')
+
+      expect(wrapper.emitted('activate')).toHaveLength(1)
+      expect(wrapper.find('.action-menu').exists()).toBe(false)
+    })
+
+    it('forwards a composed message and keeps the menu open for the verdict', async () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }) }
+      })
+      await wrapper.find('.dwarf-hit').trigger('click')
+      await wrapper.find('.action-send').trigger('click')
+      await wrapper.find('.message-input').setValue('run the tests')
+      await wrapper.find('.send-button').trigger('click')
+
+      expect(wrapper.emitted('send-text')).toEqual([[{ text: 'run the tests', pressEnter: true }]])
+      expect(wrapper.find('.action-menu').exists()).toBe(true)
+    })
+
+    it('marks a delivered message on the dwarf', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), sendState: { phase: 'delivered', via: 'terminal' } }
+      })
+      expect(wrapper.find('.send-result').classes()).toContain('is-delivered')
+    })
+
+    it('marks a failed message and carries its reason', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: {
+          dwarf: defaultDwarf(),
+          sendState: { phase: 'failed', error: 'The terminal would not come forward.' }
+        }
+      })
+      const marker = wrapper.find('.send-result')
+      expect(marker.classes()).toContain('is-failed')
+      expect(marker.attributes('title')).toBe('The terminal would not come forward.')
+    })
+
+    it('shows no marker while nothing has been sent', () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      expect(wrapper.find('.send-result').exists()).toBe(false)
+    })
   })
 
   it('shows a speech bubble only when bubble text is provided', () => {

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  claudeSessionDeliveryTarget,
   encodeClaudeProjectDir,
   extractClaudeFeed,
   parseClaudeSessionEntry,
@@ -37,10 +38,20 @@ describe('parseClaudeSessionEntry', () => {
       cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools',
       status: 'busy',
       procStart: '134324755721362761',
+      kind: 'interactive',
       name: 'ai-tools-70',
       startedAt: 1788001972417,
       updatedAt: 1788003794280
     })
+  })
+
+  it('keeps the session kind, which is what separates a TUI from a headless job', () => {
+    expect(parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', kind: 'bg' })?.kind).toBe(
+      'bg'
+    )
+    expect(
+      parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', kind: 7 })?.kind
+    ).toBeUndefined()
   })
 
   it('returns null for malformed entries', () => {
@@ -66,6 +77,32 @@ describe('parseClaudeSessionEntry', () => {
         procStart: '134324755721362761'
       })
     ).toMatchObject({ status: 'idle', procStart: '134324755721362761' })
+  })
+})
+
+describe('claudeSessionDeliveryTarget', () => {
+  it('types straight into the console of an interactive TUI session', () => {
+    expect(
+      claudeSessionDeliveryTarget({ pid: 4242, kind: 'interactive', name: 'ai-tools-70' })
+    ).toEqual({ kind: 'terminal', pid: 4242 })
+  })
+
+  it('relays to a headless background job by its registry name', () => {
+    expect(claudeSessionDeliveryTarget({ pid: 4242, kind: 'bg', name: 'ai-tools-70' })).toEqual({
+      kind: 'claude-relay',
+      sessionName: 'ai-tools-70'
+    })
+  })
+
+  it('has no channel to a headless job that never got an addressable name', () => {
+    expect(claudeSessionDeliveryTarget({ pid: 4242, kind: 'bg' })).toBeNull()
+  })
+
+  it('assumes a console for an older entry that records no kind at all', () => {
+    expect(claudeSessionDeliveryTarget({ pid: 4242, name: 'ai-tools-70' })).toEqual({
+      kind: 'terminal',
+      pid: 4242
+    })
   })
 })
 

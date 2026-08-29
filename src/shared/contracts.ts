@@ -16,6 +16,19 @@ export type DwarfRole = 'foreman' | 'worker'
  */
 export type DwarfStatus = 'working' | 'waiting' | 'leaving'
 
+/**
+ * How a live session can be handed a typed message.
+ *
+ * terminal: the session owns a console window — keystrokes are injected into it.
+ * claude-relay: the session is headless but addressable by name, so a one-shot
+ *   `claude -p` turn delivers the text over Claude Code's cross-session messaging.
+ * foreman-relay: the dwarf is a subagent with no channel of its own; the text
+ *   goes to its foreman (parent session) under an explicit `[for agent X] ` prefix.
+ *
+ * A dwarf with no channel at all simply carries no value.
+ */
+export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay'
+
 export interface Dwarf {
   id: string
   provider: DwarfProvider
@@ -34,6 +47,12 @@ export interface Dwarf {
    * Codex records it on its registry row; Claude does not expose an equivalent.
    */
   tokensUsed?: number
+  /**
+   * The channel a typed message would travel through right now, resolved by
+   * the runtime on every poll. Absent means the panel must offer no send
+   * action for this dwarf (see TextDeliveryChannel).
+   */
+  textDelivery?: TextDeliveryChannel
 }
 
 export interface Mine {
@@ -72,9 +91,34 @@ export interface DwarfActivation {
   feed: FeedMessage[]
 }
 
+/**
+ * Longest message accepted for delivery. Long enough for a real instruction,
+ * short enough that keystroke injection stays a few seconds rather than a
+ * minute of the user's keyboard being taken over.
+ */
+export const MAX_DWARF_TEXT_CHARS = 4000
+
+/** One message the panel wants handed to a dwarf's live session. */
+export interface DwarfTextRequest {
+  dwarfId: string
+  text: string
+  /** Whether the session should also receive an ENTER, submitting the line. */
+  pressEnter: boolean
+}
+
+/** Verdict of one delivery attempt. Never carries the message itself. */
+export interface DwarfTextResult {
+  delivered: boolean
+  /** The channel used, or 'none' when no attempt was possible. */
+  via: TextDeliveryChannel | 'none'
+  /** Human-readable reason shown in the panel when delivered is false. */
+  error?: string
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   getMines: 'mines:get',
   minesUpdated: 'mines:update',
-  activateDwarf: 'dwarf:activate'
+  activateDwarf: 'dwarf:activate',
+  sendDwarfText: 'dwarf:sendText'
 } as const

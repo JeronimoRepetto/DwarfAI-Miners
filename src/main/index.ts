@@ -1,7 +1,7 @@
 import { config as loadDotenv } from 'dotenv'
 import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
-import type { Mine } from '../shared/contracts'
+import type { DwarfTextRequest, DwarfTextResult, Mine } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 import {
   enable as enableAutostart,
@@ -20,6 +20,23 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
+  ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
+}
+
+/**
+ * The renderer is trusted-but-typed: validate the shape at the boundary so a
+ * malformed payload becomes an explained refusal instead of a main-process
+ * throw. The message itself is never logged.
+ */
+function parseTextRequest(payload: unknown): DwarfTextRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string' || typeof record.text !== 'string') return null
+  return {
+    dwarfId: record.dwarfId,
+    text: record.text,
+    pressEnter: record.pressEnter === true
+  }
 }
 
 async function init(): Promise<void> {
@@ -68,6 +85,17 @@ async function init(): Promise<void> {
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noActivation
     return runtime?.activateDwarf(dwarfId) ?? noActivation
+  })
+
+  const notDelivered: DwarfTextResult = {
+    delivered: false,
+    via: 'none',
+    error: 'The message could not be delivered.'
+  }
+  ipcMain.handle(IPC_CHANNELS.sendDwarfText, (_event, payload: unknown) => {
+    const request = parseTextRequest(payload)
+    if (request === null) return notDelivered
+    return runtime?.sendDwarfText(request) ?? notDelivered
   })
 }
 

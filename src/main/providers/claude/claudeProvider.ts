@@ -1,7 +1,9 @@
 import type { FsLike } from '../../adapters/fsLike'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
+import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'
 import {
+  claudeSessionDeliveryTarget,
   encodeClaudeProjectDir,
   extractClaudeFeed,
   parseClaudeSessionEntry,
@@ -56,6 +58,13 @@ export class ClaudeProvider implements Provider {
    */
   private feedSources: ReadonlyMap<string, string> = new Map()
   /**
+   * dwarfId -> how that dwarf can be handed a typed message, used by
+   * textDelivery(). Rebuilt and swapped in atomically alongside feedSources,
+   * for the same reason: a click landing mid-scan must never read a
+   * half-rebuilt map and resolve to another session's console or name.
+   */
+  private deliveryTargets: ReadonlyMap<string, TextDeliveryTarget> = new Map()
+  /**
    * Every agent id ever seen reaching a terminal status, remembered for the
    * life of the process.
    *
@@ -78,6 +87,7 @@ export class ClaudeProvider implements Provider {
     // Built off to the side; swapped in atomically once the scan completes so
     // concurrent feed()/transcriptPath() calls always see a whole generation.
     const feedSources = new Map<string, string>()
+    const deliveryTargets = new Map<string, TextDeliveryTarget>()
     const snapshots: ProviderSnapshot[] = []
     const seenSessions = new Set<string>()
 
@@ -91,13 +101,19 @@ export class ClaudeProvider implements Provider {
         if (seenSessions.has(session.sessionId)) continue
         if (!this.isPidAlive(session.pid)) continue
         seenSessions.add(session.sessionId)
-        snapshots.push(await this.snapshotSession(root, session, feedSources))
+        snapshots.push(await this.snapshotSession(root, session, feedSources, deliveryTargets))
       }
     }
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
     this.feedSources = feedSources
+    this.deliveryTargets = deliveryTargets
     return snapshots
+  }
+
+  /** How this dwarf can be handed a typed message; null when there is no way in. */
+  textDelivery(dwarfId: string): TextDeliveryTarget | null {
+    return this.deliveryTargets.get(dwarfId) ?? null
   }
 
   async feed(dwarfId: string, limit: number): Promise<FeedMessage[] | null> {
@@ -123,7 +139,8 @@ export class ClaudeProvider implements Provider {
   private async snapshotSession(
     root: string,
     session: ClaudeSessionEntry,
-    feedSources: Map<string, string>
+    feedSources: Map<string, string>,
+    deliveryTargets: Map<string, TextDeliveryTarget>
   ): Promise<ProviderSnapshot> {
     const projectDir = `${root}\\projects\\${encodeClaudeProjectDir(session.cwd)}`
     const transcriptPath = `${projectDir}\\${session.sessionId}.jsonl`
@@ -142,6 +159,8 @@ export class ClaudeProvider implements Provider {
 
     const mainDwarfId = `claude:${session.sessionId}`
     feedSources.set(mainDwarfId, transcriptPath)
+    const sessionTarget = claudeSessionDeliveryTarget(session)
+    if (sessionTarget !== null) deliveryTargets.set(mainDwarfId, sessionTarget)
 
     const dwarfs: Dwarf[] = []
     if (inFlightAgents.length > 0 || session.status === 'busy') {
@@ -166,11 +185,20 @@ export class ClaudeProvider implements Provider {
       const workerId = `${mainDwarfId}:${agent.agentId}`
       const subagentPath = `${projectDir}\\${session.sessionId}\\subagents\\agent-${agent.agentId}.jsonl`
       feedSources.set(workerId, subagentPath)
+      const workerName = agent.description ?? `agent-${agent.agentId.slice(0, 7)}`
+      // A running subagent has no channel of its own: nothing outside its
+      // parent session can address it. Its foreman reads the message and
+      // routes it, which is exactly how a real crew works.
+      deliveryTargets.set(workerId, {
+        kind: 'foreman-relay',
+        foremanDwarfId: mainDwarfId,
+        workerName
+      })
       dwarfs.push({
         id: workerId,
         provider: 'claude',
         role: 'worker',
-        name: agent.description ?? `agent-${agent.agentId.slice(0, 7)}`,
+        name: workerName,
         model: agent.resolvedModel,
         effort: info.effort,
         status: 'working',

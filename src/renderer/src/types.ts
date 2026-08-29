@@ -7,9 +7,12 @@ export type {
   DwarfProvider,
   DwarfRole,
   DwarfStatus,
+  DwarfTextRequest,
+  DwarfTextResult,
   FeedMessage,
   Mine,
-  MineTier
+  MineTier,
+  TextDeliveryChannel
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */
@@ -19,6 +22,27 @@ export interface MinesState {
 
 export function defaultMinesState(): MinesState {
   return { mines: [] }
+}
+
+/**
+ * What the panel shows about one dwarf's most recent message: in flight, or
+ * the verdict, kept just long enough to be read.
+ */
+export interface DwarfSendState {
+  phase: 'sending' | 'delivered' | 'failed'
+  /** The channel the delivery used, once one was chosen. */
+  via?: string
+  /** Why it failed, shown on the marker. */
+  error?: string
+}
+
+/** Root state for the dwarf-messaging store, keyed by dwarf id. */
+export interface DwarfMessagingState {
+  byDwarfId: Record<string, DwarfSendState>
+}
+
+export function defaultDwarfMessagingState(): DwarfMessagingState {
+  return { byDwarfId: {} }
 }
 
 /** Where the panel currently is: the isometric map, or inside one mine. */

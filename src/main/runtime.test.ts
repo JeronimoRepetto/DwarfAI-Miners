@@ -3,6 +3,7 @@ import type { FeedMessage } from '../shared/contracts'
 import { FakeFs } from './adapters/fakeFs'
 import { defaultConfig } from './config'
 import type { Provider } from './providers/provider'
+import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
 import { AgentRuntime, expandHomePath } from './runtime'
 
 function datePath(date: Date): string {
@@ -307,6 +308,291 @@ describe('AgentRuntime activation for a leaving dwarf', () => {
       feed
     })
     expect(focus).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentRuntime.sendDwarfText', () => {
+  const FOREMAN_ID = 'claude:session-1'
+  const WORKER_ID = 'claude:session-1:agent-9'
+
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: FOREMAN_ID,
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1',
+            pid: 42
+          },
+          {
+            id: WORKER_ID,
+            provider: 'claude',
+            role: 'worker',
+            name: 'Explorer',
+            status: 'working',
+            sessionId: 'session-1',
+            pid: 42
+          }
+        ]
+      }
+    ])
+  }
+
+  function fakePort() {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true })
+    } satisfies TextDeliveryPort
+  }
+
+  async function runtimeWith(
+    targets: Record<string, TextDeliveryTarget>,
+    port: TextDeliveryPort = fakePort()
+  ) {
+    const source: Provider = {
+      kind: 'claude',
+      scan: crewScan(),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) => targets[dwarfId] ?? null
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      textDelivery: port,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, port }
+  }
+
+  it('types the message into the console of a terminal-hosted dwarf', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.sendToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'run the tests',
+      pressEnter: true
+    })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('relays the message to a headless session by name', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+    })
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'status?', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: 'status?'
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it("routes a worker's message to its foreman under an explicit prefix", async () => {
+    const { runtime, port } = await runtimeWith({
+      [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+    })
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'stop digging', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'foreman-relay' })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: '[for agent Explorer] stop digging'
+    })
+  })
+
+  it('refuses a dwarf that is no longer on the floor', async () => {
+    const { runtime, port } = await runtimeWith({})
+    const result = await runtime.sendDwarfText({
+      dwarfId: 'claude:ghost',
+      text: 'hello',
+      pressEnter: true
+    })
+    expect(result).toMatchObject({ delivered: false, via: 'none' })
+    expect(result.error).toBeTruthy()
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a dwarf whose session type has no input channel', async () => {
+    const { runtime, port } = await runtimeWith({})
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'hello',
+      pressEnter: true
+    })
+    expect(result).toMatchObject({ delivered: false, via: 'none' })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty message instead of waking the agent for nothing', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: '   \n  ',
+      pressEnter: true
+    })
+    expect(result.delivered).toBe(false)
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('trims the message to the 4000-character limit', async () => {
+    const port = fakePort()
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+    await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'x'.repeat(5_000),
+      pressEnter: false
+    })
+    expect(port.sendToConsole.mock.calls[0]?.[0].text).toHaveLength(4_000)
+  })
+
+  it('reports the failure reason the delivery port gave', async () => {
+    const port = {
+      sendToConsole: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
+      relayToClaudeSession: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'terminal',
+      error: 'The terminal would not come forward.'
+    })
+  })
+
+  it('turns a throwing delivery port into a failed verdict', async () => {
+    const port = {
+      sendToConsole: vi.fn().mockRejectedValue(new Error('boom')),
+      relayToClaudeSession: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: false })
+  })
+
+  it('refuses a leaving dwarf, whose retained pid and session are already stale', async () => {
+    const scan = vi
+      .fn<Provider['scan']>()
+      .mockResolvedValueOnce([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\work\\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: FOREMAN_ID,
+              provider: 'claude',
+              role: 'foreman',
+              name: 'boss',
+              status: 'working',
+              sessionId: 'session-1',
+              pid: 42
+            }
+          ]
+        }
+      ])
+      .mockResolvedValue([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\work\\project',
+          status: 'idle',
+          updatedAt: 2,
+          dwarfs: []
+        }
+      ])
+    const port = fakePort()
+    let now = 0
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [
+        {
+          kind: 'claude',
+          scan,
+          feed: vi.fn().mockResolvedValue([]),
+          textDelivery: () => ({ kind: 'terminal', pid: 42 })
+        }
+      ],
+      textDelivery: port,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    now = 1_000
+    await runtime.refresh()
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'hi',
+      pressEnter: false
+    })
+    expect(result.delivered).toBe(false)
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('never writes the message content to the log', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const port = {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' }),
+      relayToClaudeSession: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+
+    await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'my-secret-payload',
+      pressEnter: false
+    })
+    const written = [...warn.mock.calls, ...log.mock.calls].flat().join(' ')
+    expect(written).not.toContain('my-secret-payload')
+    warn.mockRestore()
+    log.mockRestore()
+  })
+
+  it('publishes the delivery channel on every dwarf so the panel can render it', async () => {
+    const { runtime } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 },
+      [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' }
+    })
+    const dwarfs = runtime.getMines()[0]!.dwarfs
+    expect(dwarfs.find((dwarf) => dwarf.id === FOREMAN_ID)?.textDelivery).toBe('terminal')
+    expect(dwarfs.find((dwarf) => dwarf.id === WORKER_ID)?.textDelivery).toBe('foreman-relay')
+  })
+
+  it('leaves a dwarf with no channel unmarked', async () => {
+    const { runtime } = await runtimeWith({})
+    expect(runtime.getMines()[0]!.dwarfs[0]?.textDelivery).toBeUndefined()
   })
 })
 

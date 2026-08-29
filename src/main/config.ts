@@ -50,6 +50,14 @@ export interface AppConfig {
   codexStateDb: string
   /** Codex's structured log stream (CODEX_HOME/logs_2.sqlite), used as a liveness heartbeat. */
   codexLogsDb: string
+  /**
+   * Model the one-shot `claude -p` relay runs on when delivering a message to
+   * a headless session. The relay only forwards a string, so the cheapest
+   * model is the right default.
+   */
+  sendTextRelayModel: string
+  /** How long a message delivery may take before it is reported as timed out, in seconds. */
+  sendTextTimeoutS: number
 }
 
 export function defaultConfig(): AppConfig {
@@ -66,7 +74,9 @@ export function defaultConfig(): AppConfig {
     claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
     codexSessionsRoot: '~/.codex/sessions',
     codexStateDb: '~/.codex/state_5.sqlite',
-    codexLogsDb: '~/.codex/logs_2.sqlite'
+    codexLogsDb: '~/.codex/logs_2.sqlite',
+    sendTextRelayModel: 'haiku',
+    sendTextTimeoutS: 60
   }
 }
 
@@ -99,7 +109,8 @@ function readDirList(env: Env, key: string, fallback: string[]): string[] {
   return dirs
 }
 
-function readPath(env: Env, key: string, fallback: string): string {
+/** A trimmed free-form string (a path, a model name); blank counts as unset. */
+function readTrimmed(env: Env, key: string, fallback: string): string {
   const raw = env[key]
   return raw === undefined || raw.trim() === '' ? fallback : raw.trim()
 }
@@ -149,8 +160,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
     tierCacheTtlS: readPositiveInt(env, 'TIER_CACHE_TTL_S', defaults.tierCacheTtlS),
     tierThresholds: readTierThresholds(env, defaults.tierThresholds),
     claudeConfigDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', defaults.claudeConfigDirs),
-    codexSessionsRoot: readPath(env, 'CODEX_SESSIONS_ROOT', defaults.codexSessionsRoot),
-    codexStateDb: readPath(env, 'CODEX_STATE_DB', defaults.codexStateDb),
-    codexLogsDb: readPath(env, 'CODEX_LOGS_DB', defaults.codexLogsDb)
+    codexSessionsRoot: readTrimmed(env, 'CODEX_SESSIONS_ROOT', defaults.codexSessionsRoot),
+    codexStateDb: readTrimmed(env, 'CODEX_STATE_DB', defaults.codexStateDb),
+    codexLogsDb: readTrimmed(env, 'CODEX_LOGS_DB', defaults.codexLogsDb),
+    sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
+    sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS)
   }
 }

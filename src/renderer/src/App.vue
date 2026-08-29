@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FeedModal from './components/FeedModal.vue'
 import MapView from './components/MapView.vue'
 import MineScene from './components/MineScene.vue'
+import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useMines } from './composables/useMines'
 import { useView } from './composables/useView'
 import { shouldHidePanelAfterActivation } from './lib/activation'
@@ -10,6 +11,7 @@ import type { Dwarf, FeedMessage, Mine } from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, showMap, syncWithMines } = useView()
+const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -93,6 +95,15 @@ async function activate(dwarf: Dwarf): Promise<void> {
   }
 }
 
+/**
+ * Delivery runs in the background: the panel stays open and usable, and the
+ * verdict lands on the dwarf itself (see DwarfSprite's send-result marker)
+ * rather than in a modal.
+ */
+function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }): void {
+  void sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
+}
+
 onMounted(() => {
   void load()
   unsubscribe = window.api.onMinesUpdated(update)
@@ -117,8 +128,10 @@ onBeforeUnmount(() => unsubscribe?.())
         v-else-if="currentMine"
         :mine="currentMine"
         :activating-id="activating"
+        :send-states="messagingState.byDwarfId"
         @back="backToMap"
         @activate="activate"
+        @send-text="sendText"
       />
       <MapView v-else :mines="state.mines" @open="enterMine" />
       <p v-if="error" class="notice" role="alert">{{ error }}</p>

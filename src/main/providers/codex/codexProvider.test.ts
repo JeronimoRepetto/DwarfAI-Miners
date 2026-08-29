@@ -524,4 +524,28 @@ describe('CodexProvider', () => {
       expect(probe).toHaveBeenCalledTimes(2)
     })
   })
+
+  /**
+   * Codex offers no way in: it records no pid for a thread (so no console can
+   * be located, TUI or not) and exposes no cross-session messaging channel the
+   * way Claude Code does. Both shapes must report "no channel" so the panel
+   * disables the action with an explanation instead of failing silently.
+   */
+  describe('textDelivery', () => {
+    it('has no channel for a CLI/TUI-hosted thread', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(`codex:${BUSY_SESSION_ID}`)).toBeNull()
+    })
+
+    it('has no channel for a desktop app-server thread', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(`codex:${SESSION_ID}`)).toBeNull()
+    })
+
+    it('has no channel for an unknown dwarf', () => {
+      expect(makeProvider().textDelivery('codex:nobody')).toBeNull()
+    })
+  })
 })

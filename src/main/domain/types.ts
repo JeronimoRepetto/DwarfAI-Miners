@@ -9,11 +9,14 @@ export type {
   DwarfProvider,
   DwarfRole,
   DwarfStatus,
+  DwarfTextRequest,
+  DwarfTextResult,
   FeedMessage,
   Mine,
   MineTier,
   ProviderSnapshot,
-  SessionStatus
+  SessionStatus,
+  TextDeliveryChannel
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

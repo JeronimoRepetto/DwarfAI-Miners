@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DWARF_FRAME_SRC, preloadDwarfArt } from '../lib/art'
 import {
   LEAVING_EXIT_MS,
@@ -9,7 +9,8 @@ import {
   statusAnimationClass
 } from '../lib/presentation'
 import { computeTooltipPlacement } from '../lib/tooltip'
-import type { Dwarf } from '../types'
+import type { Dwarf, DwarfSendState } from '../types'
+import DwarfActionMenu from './DwarfActionMenu.vue'
 import DwarfTooltip from './DwarfTooltip.vue'
 import SpeechBubble from './SpeechBubble.vue'
 
@@ -17,14 +18,70 @@ const props = defineProps<{
   dwarf: Dwarf
   bubbleText?: string
   activating?: boolean
+  sendState?: DwarfSendState
 }>()
 
-const emit = defineEmits<{ activate: [] }>()
+const emit = defineEmits<{
+  activate: []
+  'send-text': [payload: { text: string; pressEnter: boolean }]
+}>()
 
 const hitRef = ref<HTMLButtonElement | null>(null)
 const tooltipRef = ref<InstanceType<typeof DwarfTooltip> | null>(null)
 const tooltipVisible = ref(false)
 const tooltipStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
+
+/**
+ * Clicking a dwarf opens this note rather than acting immediately: the old
+ * behaviour (focus the console) is now its first entry, and sending a message
+ * is the second. Positioned like the tooltip — `fixed`, clamped inside the
+ * panel — because the mine's cave clips anything drawn inside it.
+ */
+const menuRef = ref<InstanceType<typeof DwarfActionMenu> | null>(null)
+const menuOpen = ref(false)
+const menuStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
+
+async function openMenu(): Promise<void> {
+  menuOpen.value = true
+  hideTooltip()
+  await nextTick()
+  const anchorEl = hitRef.value
+  const menuEl = menuRef.value?.$el as HTMLElement | undefined
+  if (anchorEl && menuEl) {
+    const placement = computeTooltipPlacement(
+      anchorEl.getBoundingClientRect(),
+      menuEl.getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+    menuStyle.value = { left: `${placement.left}px`, top: `${placement.top}px` }
+  }
+  document.addEventListener('click', closeMenu)
+}
+
+function closeMenu(): void {
+  menuOpen.value = false
+  document.removeEventListener('click', closeMenu)
+}
+
+function toggleMenu(): void {
+  if (menuOpen.value) {
+    closeMenu()
+    return
+  }
+  void openMenu()
+}
+
+function openConsole(): void {
+  closeMenu()
+  emit('activate')
+}
+
+function sendText(payload: { text: string; pressEnter: boolean }): void {
+  // The menu stays open so the delivery verdict has somewhere to land.
+  emit('send-text', payload)
+}
+
+onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
 
 /**
  * The tooltip stays mounted at all times (its content never depends on
@@ -101,8 +158,23 @@ const rootClasses = computed(() => [
 const exitStyle = computed(() => ({ '--exit-ms': `${LEAVING_EXIT_MS}ms` }))
 const ariaLabel = computed(
   () =>
-    `Open ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
+    `Actions for ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
 )
+
+/** Marker shown on the sprite once a message has a verdict. */
+const sendMarker = computed(() => {
+  const phase = props.sendState?.phase
+  if (phase === 'delivered') return { cls: 'is-delivered', glyph: '✓', title: 'Message delivered' }
+  if (phase === 'failed') {
+    return {
+      cls: 'is-failed',
+      glyph: '✕',
+      title: props.sendState?.error ?? 'The message could not be delivered.'
+    }
+  }
+  if (phase === 'sending') return { cls: 'is-sending', glyph: '…', title: 'Sending...' }
+  return null
+})
 </script>
 
 <template>
@@ -113,7 +185,8 @@ const ariaLabel = computed(
       class="dwarf-hit"
       type="button"
       :aria-label="ariaLabel"
-      @click="emit('activate')"
+      :aria-expanded="menuOpen"
+      @click.stop="toggleMenu"
       @mouseenter="showTooltip"
       @mouseleave="hideTooltip"
       @focus="showTooltip"
@@ -127,6 +200,13 @@ const ariaLabel = computed(
         aria-hidden="true"
       ></span>
       <span v-if="dwarf.status === 'waiting'" class="zzz" aria-hidden="true">z z z</span>
+      <span
+        v-if="sendMarker"
+        class="send-result"
+        :class="sendMarker.cls"
+        :title="sendMarker.title"
+        >{{ sendMarker.glyph }}</span
+      >
     </button>
     <span class="dwarf-name">{{ dwarf.name }}</span>
     <DwarfTooltip
@@ -135,6 +215,17 @@ const ariaLabel = computed(
       :class="{ 'is-visible': tooltipVisible }"
       :style="tooltipStyle"
       :dwarf="dwarf"
+    />
+    <DwarfActionMenu
+      v-if="menuOpen"
+      ref="menuRef"
+      class="menu-holder"
+      :style="menuStyle"
+      :dwarf="dwarf"
+      :send-state="sendState"
+      @open-console="openConsole"
+      @send="sendText"
+      @close="closeMenu"
     />
   </div>
 </template>
@@ -278,5 +369,39 @@ const ariaLabel = computed(
 }
 .tooltip-holder.is-visible {
   opacity: 1;
+}
+/* Same fixed/clamped placement as the tooltip, above every other sprite. */
+.menu-holder {
+  position: fixed;
+  z-index: 40;
+}
+
+/* Delivery verdict for the last message, cleared by the store after a moment. */
+.send-result {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #000000a6;
+  border-radius: 50%;
+  color: #14100b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.send-result.is-delivered {
+  background: #8fd07a;
+}
+.send-result.is-failed {
+  background: #e08466;
+}
+.send-result.is-sending {
+  color: var(--ink);
+  background: #4b3c28;
 }
 </style>
