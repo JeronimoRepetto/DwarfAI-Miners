@@ -1,0 +1,7 @@
+# Force LF on checkout everywhere (Prettier enforces LF; Windows runners
+# default to autocrlf=true and would otherwise flag every file).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
