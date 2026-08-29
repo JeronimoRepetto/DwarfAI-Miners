@@ -11,6 +11,27 @@ tiers, animated dwarfs, terminal focus with transcript fallback, autostart, and 
 implemented. Windows is the verified platform; macOS and Linux build and are unit-tested but
 have not been run end to end yet — see the support matrix below.
 
+## Install
+
+Download the installer for your OS from the
+[latest release](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest):
+
+| Platform | File                                                          |
+| -------- | ------------------------------------------------------------- |
+| Windows  | `DwarfAI-Miners-Setup-*.exe` (installer) or `-Portable-*.exe` |
+| macOS    | `DwarfAI-Miners-*.dmg` (arm64 or x64, matching your Mac)      |
+| Linux    | `DwarfAI-Miners-*.AppImage` or the `.deb` package             |
+
+Nothing is code-signed or notarized (see [`docs/signing.md`](docs/signing.md)), so:
+
+- **macOS**: Gatekeeper blocks the unsigned app on a normal double-click. Right-click (or
+  Control-click) the app and choose **Open**, then confirm in the dialog — only needed once.
+- **Linux**: make the AppImage executable before running it: `chmod +x DwarfAI-Miners-*.AppImage`.
+
+Every release is built and packaged on the target OS, but Windows is the only platform that has
+been run end to end — see the support matrix below for exactly what is verified versus built and
+unit-tested only.
+
 ## Platform support
 
 Every operating-system-specific behavior sits behind a port selected in one place

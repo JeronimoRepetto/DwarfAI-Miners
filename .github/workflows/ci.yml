@@ -21,8 +21,9 @@ jobs:
     # Windows-only for now. Cross-platform support has landed (issue #5) and
     # the whole suite is platform-independent — every per-OS builder is tested
     # by passing the platform explicitly — so a macos-latest/ubuntu-latest
-    # matrix would pass as-is. Expanding it is a deliberate follow-up (it also
-    # needs matching `release` legs for dmg/AppImage), not an ad-hoc addition.
+    # matrix would pass as-is. The `release` job below already covers all
+    # three OSes (issue #16); expanding `checks` to match is a separate,
+    # deliberate follow-up, not an ad-hoc addition.
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -74,12 +75,39 @@ jobs:
         run: pnpm build
 
   # electron-builder cannot cross-build a dmg or a deb, so macOS/Linux
-  # artifacts need their own runners. Adding them is the follow-up noted above.
+  # artifacts each need their own runner — hence the matrix below. Each leg
+  # packages its own installers and attaches them to the same GitHub Release
+  # for the pushed tag.
   release:
-    name: Package Windows installers
+    name: Package installers and publish release
     needs: checks
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            package_script: package
+            asset_files: |
+              release/DwarfAI-Miners-Setup-*.exe
+              release/DwarfAI-Miners-Portable-*.exe
+          # Mac artifact names come from the `build.mac.artifactName` template
+          # in package.json (`${productName}-${version}-${arch}.${ext}`), so
+          # the dmg/zip files carry no `-mac` suffix — e.g.
+          # `DwarfAI-Miners-0.1.0-arm64.dmg` / `DwarfAI-Miners-0.1.0-x64.zip`.
+          - os: macos-latest
+            package_script: package:mac
+            asset_files: |
+              release/*.dmg
+              release/*.zip
+          - os: ubuntu-latest
+            package_script: package:linux
+            asset_files: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -109,13 +137,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Package Windows installers
-        run: pnpm package
+      - name: Package installers
+        run: pnpm ${{ matrix.package_script }}
 
-      - name: Upload Windows installers
-        uses: actions/upload-artifact@v7
+      # softprops/action-gh-release's release() already retries and
+      # reconciles concurrent creates against the same tag (it picks the
+      # canonical non-draft/oldest-id release), so no separate "create the
+      # release first" job is needed for the three legs racing to create it.
+      #
+      # `generate_release_notes` is scoped to a single leg (ubuntu-latest) on
+      # purpose: GitHub's API re-generates notes from commits on every
+      # updateRelease call, and — because the other legs pass no body, the
+      # action falls back to re-sending the existing body — flipping this on
+      # for all three legs would prepend a fresh copy of the same notes on
+      # every leg that runs after the first, duplicating them. `append_body`
+      # stays on for all legs as a safety net: it only appends when a leg's
+      # own body is non-empty, which is never the case here, so it never
+      # clobbers whatever the notes-leg has already written.
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
         with:
-          name: DwarfAI-Miners-windows-x64
-          path: |
-            release/DwarfAI-Miners-Setup-*.exe
-            release/DwarfAI-Miners-Portable-*.exe
+          draft: false
+          generate_release_notes: ${{ matrix.os == 'ubuntu-latest' }}
+          append_body: true
+          fail_on_unmatched_files: true
+          files: ${{ matrix.asset_files }}
