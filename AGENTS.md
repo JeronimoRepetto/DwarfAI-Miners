@@ -149,9 +149,11 @@ reasoning, and this list is only the index. None of these is enforced by the typ
   _lower_ prunes surplus ones. A third reading treats zero as evicting everything older than the
   tail. That deeper read takes only endings, never adoptions. It says how many, never which.
   Absence of a count is not a count of zero. See `claudeProvider.ts` (issues #36, #45).
-- **Silence windows differ by role.** The stale window for a foreman is twice a worker's, and both
-  must elapse on top of an idle registry status before anything is dropped. The constants live on
-  the wire contract, not in the provider.
+- **Silence windows differ by who can answer, not by rank.** The long one belongs to a session a
+  human can type into, never to a `foreman` — rank is topology, and a headless `claude -p` run is a
+  root too. Choose only via `dwarfSilenceWindowMs`; unproven keeps the long window, `'unknown'`
+  stays distinct from `'attended'`, and both windows still elapse over an idle registry status
+  before anything drops. See `contracts.ts` (#47, #68).
 - **Anchors: check which coordinate space the file uses.** The map and the cave use _opposite_
   conventions, on purpose. Getting this wrong slides things off their rock when the panel resizes.
   The path-scoped rule above covers it.

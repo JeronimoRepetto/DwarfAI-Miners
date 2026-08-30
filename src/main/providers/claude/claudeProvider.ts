@@ -1,5 +1,9 @@
 import { join } from 'node:path'
-import { DWARF_SILENCE_WINDOW_MS, WAITING_ON_HUMAN_REASON } from '../../../shared/contracts'
+import {
+  DWARF_SILENCE_WINDOW_MS,
+  WAITING_ON_HUMAN_REASON,
+  dwarfSilenceWindowKey
+} from '../../../shared/contracts'
 import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../adapters/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
@@ -8,6 +12,7 @@ import { pollProfiler } from '../../runtime/perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'
 import {
+  claudeSessionAttendance,
   claudeSessionDeliveryTarget,
   claudeWaitingReason,
   encodeClaudeProjectDir,
@@ -66,9 +71,14 @@ const RECOVERY_TAIL_BYTES = 16 * 1024 * 1024
  * opposite error is the false departure #28 exists to prevent: a live subagent
  * grinding through one long tool call appends nothing at all until that call
  * returns.
+ *
+ * The longer one is NOT the foreman's by rank (issue #68). It belongs to a
+ * session a human can type into, and this provider scans headless ones too —
+ * so which of the two a given session's transcript is weighed by is decided
+ * per session, in pruneStaleLaunches, from the registry's own `kind`.
  */
-const STALE_FOREMAN_SILENCE_MS = DWARF_SILENCE_WINDOW_MS.foreman
-const STALE_WORKER_SILENCE_MS = DWARF_SILENCE_WINDOW_MS.worker
+const ATTENDED_SILENCE_MS = DWARF_SILENCE_WINDOW_MS.attended
+const UNATTENDED_SILENCE_MS = DWARF_SILENCE_WINDOW_MS.unattended
 
 /**
  * How far a probed process creation time may sit from the registry's procStart
@@ -100,16 +110,21 @@ export interface ClaudeProviderOptions {
   processStartTimeMs?: (pid: number) => Promise<number | null>
   now?: () => number
   /**
-   * How long the SESSION's own transcript must go unwritten before that
-   * silence counts toward dropping its remembered launches (see
-   * STALE_FOREMAN_SILENCE_MS). Injected so tests cross the boundary with an
+   * How long an ATTENDED session's own transcript must go unwritten before
+   * that silence counts toward dropping its remembered launches (see
+   * ATTENDED_SILENCE_MS). Injected so tests cross the boundary with an
    * injected clock instead of a real hour-long timer.
+   *
+   * Still spelled `foreman` because that is what it was called when tests
+   * started injecting it; a headless session's own transcript is weighed by
+   * the option below instead (issue #68).
    */
   foremanSilenceMs?: number
   /**
-   * The same for a WORKER's own subagent transcript (see
-   * STALE_WORKER_SILENCE_MS). Deliberately separate from the foreman's: the
-   * two silences carry different weight, so they are crossed independently.
+   * The same for a WORKER's own subagent transcript, and for the transcript of
+   * a session nobody can type into (see UNATTENDED_SILENCE_MS). Deliberately
+   * separate from the attended one: the two silences carry different weight,
+   * so they are crossed independently.
    */
   workerSilenceMs?: number
 }
@@ -294,8 +309,8 @@ export class ClaudeProvider implements Provider {
       this.processStartTimeMs = options.processStartTimeMs
     }
     this.now = options.now ?? Date.now
-    this.foremanSilenceMs = options.foremanSilenceMs ?? STALE_FOREMAN_SILENCE_MS
-    this.workerSilenceMs = options.workerSilenceMs ?? STALE_WORKER_SILENCE_MS
+    this.foremanSilenceMs = options.foremanSilenceMs ?? ATTENDED_SILENCE_MS
+    this.workerSilenceMs = options.workerSilenceMs ?? UNATTENDED_SILENCE_MS
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -546,6 +561,11 @@ export class ClaudeProvider implements Provider {
         // not it currently has agents out. Deriving the role from the headcount
         // instead made the same dwarf swap identity mid-session.
         role: 'foreman',
+        // ...and rank is all that says: being the root of its own tree is not
+        // the same fact as having a human in front of it (issue #68). A
+        // headless `claude -p` run is a root too, and the registry's `kind` is
+        // the only thing that can tell the two apart.
+        attendance: claudeSessionAttendance(session),
         name: session.name ?? session.sessionId.slice(0, 8),
         model: info.model,
         effort: info.effort,
@@ -609,6 +629,10 @@ export class ClaudeProvider implements Provider {
         id: workerId,
         provider: 'claude',
         role: 'worker',
+        // Its own fact, never inherited from the foreman above: nothing outside
+        // this subagent's parent session can address it at all, so no human is
+        // typing into it whatever kind of session launched it (issue #68).
+        attendance: 'unattended',
         name: workerName,
         model: agent.resolvedModel,
         effort: info.effort,
@@ -705,7 +729,7 @@ export class ClaudeProvider implements Provider {
     if (claudeWaitingReason(session) === WAITING_ON_HUMAN_REASON) return
     if (session.status !== 'idle') return
     const now = this.now()
-    if (this.writtenWithinWindow(options.parentMtimeMs, now, this.foremanSilenceMs)) return
+    if (this.writtenWithinWindow(options.parentMtimeMs, now, this.sessionSilenceMs(session))) return
     for (const agentId of [...remembered.keys()]) {
       const stat = await this.fs.stat(
         subagentTranscriptPath(options.projectDir, session.sessionId, agentId)
@@ -716,6 +740,23 @@ export class ClaudeProvider implements Provider {
       remembered.delete(agentId)
       this.abandonedAgents.add(agentId)
     }
+  }
+
+  /**
+   * How long THIS session's own transcript may stay unwritten before that
+   * silence counts against it (issue #68).
+   *
+   * The hour belongs to a session someone can type into, not to the rank the
+   * dwarf is drawn with. A headless `claude -p` run is the root of its own
+   * tree, so it is a foreman, and it was being granted an hour of patience for
+   * a keyboard nobody is at. The choice itself is the wire contract's — this
+   * only picks between the two numbers THIS provider is running with, which
+   * tests shrink to something a test can cross.
+   */
+  private sessionSilenceMs(session: ClaudeSessionEntry): number {
+    return dwarfSilenceWindowKey('foreman', claudeSessionAttendance(session)) === 'unattended'
+      ? this.workerSilenceMs
+      : this.foremanSilenceMs
   }
 
   /**

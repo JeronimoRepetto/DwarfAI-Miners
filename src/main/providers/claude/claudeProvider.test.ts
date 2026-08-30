@@ -2145,4 +2145,145 @@ describe('ClaudeProvider', () => {
       })
     })
   })
+
+  /**
+   * Issue #68. The hour of patience a foreman gets exists for one reason — a
+   * human may be typing the next prompt — but it was handed out on RANK, and
+   * rank here is topology: every root session is a foreman and a headless
+   * `claude -p` run is a root. So the registry's own `kind` had to reach the
+   * wire, and the staleness rule that seals a launch had to read it too.
+   */
+  describe('session attendance (issue #68)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    const WORKER_ID = `${MAIN_ID}:${LIVE_AGENT}`
+    /** Stand-ins for the product's hour and half hour, as #40's tests use. */
+    const FOREMAN_WINDOW = 60_000
+    const WORKER_WINDOW = 30_000
+    const LAST_WRITE = 42_000
+
+    let clock = LAST_WRITE
+
+    /** The fixture registry entry with its kind and status replaced. */
+    function entryOfKind(kind: string | undefined, status = 'busy'): string {
+      const base: Record<string, unknown> = { ...JSON.parse(sessionEntry), status }
+      if (kind === undefined) delete base.kind
+      else base.kind = kind
+      return JSON.stringify(base)
+    }
+
+    function registry(json: string): void {
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, json, 1_000)
+    }
+
+    /** The provider with this block's clock and windows small enough to cross. */
+    function providerHere(): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => clock,
+        foremanSilenceMs: FOREMAN_WINDOW,
+        workerSilenceMs: WORKER_WINDOW
+      })
+    }
+
+    beforeEach(() => {
+      clock = LAST_WRITE
+      fake.addFile(TRANSCRIPT, parentTranscript, LAST_WRITE)
+      fake.addFile(SUBAGENT, subagentTranscript, LAST_WRITE)
+    })
+
+    it('stamps attended on the foreman of a TUI session', async () => {
+      registry(entryOfKind('interactive'))
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman).toMatchObject({ id: MAIN_ID, role: 'foreman', attendance: 'attended' })
+    })
+
+    it('stamps unattended on the foreman of a headless background job', async () => {
+      // The defect itself: still a foreman, because it is still the root of
+      // its own session tree — but with nobody at the keyboard.
+      registry(entryOfKind('bg'))
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman).toMatchObject({ id: MAIN_ID, role: 'foreman', attendance: 'unattended' })
+    })
+
+    it('stamps unknown on an older entry that records no kind at all', async () => {
+      registry(entryOfKind(undefined))
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman!.attendance).toBe('unknown')
+    })
+
+    it('stamps unattended on every worker, which no human can type into', async () => {
+      // Not inherited from the foreman: a subagent has no channel of its own
+      // whatever its parent's kind is, so the fact is its own.
+      registry(entryOfKind('interactive'))
+      const dwarfs = (await providerHere().scan())[0]!.dwarfs
+      const worker = dwarfs.find((dwarf) => dwarf.id === WORKER_ID)!
+      expect(worker.attendance).toBe('unattended')
+    })
+
+    /**
+     * The behavioural half, and the one that seals: `pruneStaleLaunches`
+     * deletes a remembered launch permanently and adds its id to
+     * `abandonedAgents`, from which nothing ever returns. It weighed the
+     * SESSION's own transcript against the foreman hour, which is the same
+     * misplaced patience the panel was showing.
+     */
+    describe('the window the staleness rule weighs a headless session by', () => {
+      /** Past the worker's window and the session's, but not the foreman hour. */
+      function ageIntoTheGapBetweenTheTwoWindows(): void {
+        clock = LAST_WRITE + FOREMAN_WINDOW - 1
+      }
+
+      it('holds a remembered worker of an idle TUI session for the whole hour', async () => {
+        // The control, and #40's rule unchanged: a human may still be typing,
+        // so the session's silence is weak evidence and buys the long window.
+        registry(entryOfKind('interactive', 'idle'))
+        const provider = providerHere()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        ageIntoTheGapBetweenTheTwoWindows()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('drops a remembered worker of an idle headless session on the shorter window', async () => {
+        registry(entryOfKind('bg', 'idle'))
+        const provider = providerHere()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        ageIntoTheGapBetweenTheTwoWindows()
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+      })
+
+      it('keeps the hour when the entry proves nothing about attendance', async () => {
+        // Unproven falls the generous way here too, and for the reason it
+        // always has: the opposite error is the false departure #28 exists to
+        // prevent, and this rule is the one that cannot be undone.
+        registry(entryOfKind(undefined, 'idle'))
+        const provider = providerHere()
+        await provider.scan()
+
+        ageIntoTheGapBetweenTheTwoWindows()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('still needs the worker to have gone quiet too, headless or not', async () => {
+        // The shorter session window is half of a proof, never the whole of
+        // one: a background agent grinding through a long tool call appends
+        // nothing to its parent while it works.
+        registry(entryOfKind('bg', 'idle'))
+        const provider = providerHere()
+        await provider.scan()
+
+        ageIntoTheGapBetweenTheTwoWindows()
+        fake.addFile(SUBAGENT, subagentTranscript, clock)
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+    })
+  })
 })

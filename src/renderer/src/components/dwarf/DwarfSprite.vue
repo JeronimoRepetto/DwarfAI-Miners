@@ -239,15 +239,19 @@ function hideTooltip(): void {
 preloadDwarfArt()
 
 /**
- * Whether this dwarf has produced nothing for its role's whole window (issue
- * #47). Read off the wire figure the provider stamps, against the provider's
- * own windows — the sprite decides nothing about it, it only draws it.
+ * Whether this dwarf has produced nothing for its whole window (issue #47).
+ * Read off the wire figure the provider stamps, against the provider's own
+ * windows — the sprite decides nothing about it, it only draws it. The
+ * attendance goes with it because that is what picks the window (issue #68);
+ * the sprite never re-derives it from the rank.
  *
  * Note what this is NOT: a status. `props.dwarf.status` is untouched, so the
  * animation class, the accessible name and every consumer downstream still see
  * a working dwarf. Only the pose changes.
  */
-const silent = computed(() => isDwarfSilent(props.dwarf.role, props.dwarf.silentForMs))
+const silent = computed(() =>
+  isDwarfSilent(props.dwarf.role, props.dwarf.silentForMs, props.dwarf.attendance)
+)
 
 /**
  * Whether this viewer asked their operating system for less movement (issue

@@ -1,4 +1,4 @@
-import type { FeedMessage, SessionStatus, WaitingReason } from '../../domain/types'
+import type { DwarfAttendance, FeedMessage, SessionStatus, WaitingReason } from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 
 /**
@@ -202,6 +202,48 @@ export function claudeSessionDeliveryTarget(session: {
   return session.name === undefined
     ? { kind: 'terminal', pid: session.pid }
     : { kind: 'terminal', pid: session.pid, sessionName: session.name }
+}
+
+/**
+ * Every session kind Claude Code recognizes, and whether a human could be
+ * typing into one (issue #68).
+ *
+ * The four keys are the closed set the shipped binary validates the registry
+ * entry against — `kind: E.enum(["interactive","bg","daemon","daemon-worker"])`
+ * in 2.1.251 — three of which were live in this machine's registry while this
+ * was written. Only the first is a TUI somebody is looking at; the rest are
+ * headless, and a headless session's silence is exactly as strong evidence as
+ * a subagent's.
+ *
+ * Spelled out rather than written as `kind !== 'interactive'`, which is how
+ * Claude Code's own code says it. That form cannot tell a headless kind apart
+ * from a kind nobody has taught this table, and those two must not fall the
+ * same way — see claudeSessionAttendance.
+ */
+const CLAUDE_SESSION_ATTENDANCE: Record<string, DwarfAttendance> = {
+  interactive: 'attended',
+  bg: 'unattended',
+  daemon: 'unattended',
+  'daemon-worker': 'unattended'
+}
+
+/**
+ * Whether a human could be typing into this session, from the registry's own
+ * `kind` and from nothing else (issue #68).
+ *
+ * A kind this table does not name — a fifth one a later Claude Code invents,
+ * or an older entry that records none at all — is 'unknown' rather than
+ * 'unattended'. The vocabulary has grown before, and reading an unrecognized
+ * kind as headless would shorten the silence window on a session somebody is
+ * sitting at, which is the one error direction the window exists to avoid.
+ *
+ * Note the deliberate difference from claudeSessionDeliveryTarget above, which
+ * assumes a console for a kindless entry: guessing wrong there costs a fallback
+ * channel, guessing wrong here costs a live dwarf.
+ */
+export function claudeSessionAttendance(session: { kind?: string }): DwarfAttendance {
+  if (session.kind === undefined) return 'unknown'
+  return CLAUDE_SESSION_ATTENDANCE[session.kind] ?? 'unknown'
 }
 
 /**

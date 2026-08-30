@@ -5,7 +5,7 @@ import { DWARF_SILENCE_WINDOW_MS } from '../../../../shared/contracts'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { sceneDwarfAnimation } from '../../lib/presentation'
 import { defaultDwarf } from '../../testing/factories'
-import type { DwarfKickState, DwarfSendState } from '../../types'
+import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
 import DwarfSprite from './DwarfSprite.vue'
 import spriteSource from './DwarfSprite.vue?raw'
 
@@ -619,9 +619,9 @@ describe('DwarfSprite pick sparks', () => {
  */
 describe('DwarfSprite silence', () => {
   /** Just past the worker's half hour — a dwarf the provider is about to judge. */
-  const WORKER_SILENT = DWARF_SILENCE_WINDOW_MS.worker
+  const WORKER_SILENT = DWARF_SILENCE_WINDOW_MS.unattended
   /** Just past the foreman's hour, which is twice as long for good reason. */
-  const FOREMAN_SILENT = DWARF_SILENCE_WINDOW_MS.foreman
+  const FOREMAN_SILENT = DWARF_SILENCE_WINDOW_MS.attended
 
   it('stands a silent worker still, pick on the shoulder, instead of swinging', () => {
     const wrapper = mount(DwarfSprite, {
@@ -654,6 +654,53 @@ describe('DwarfSprite silence', () => {
     expect(wrapper.classes()).toContain('is-working')
     expect(wrapper.find('.dwarf-hit').attributes('aria-label')).toContain('working')
     expect(wrapper.find('.zzz').exists()).toBe(false)
+  })
+
+  /*
+   * Issue #68. Rank made a `claude -p` run a foreman — it is the root of its
+   * own session tree — and the hour that came with the rank exists for a human
+   * who might be typing. There is none, so the sprite has to read the
+   * attendance the provider stamped rather than the rank.
+   *
+   * A silent foreman and a busy one both stand on `foreman-idle` at frame 0,
+   * so only advancing the clock separates them: the busy one looks up from the
+   * log book, the silent one does not.
+   */
+  describe('a foreman nobody can type into', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    /** The pose after one full frame — 'foreman-check' only if still cycling. */
+    async function poseAfterOneFrame(attendance: Dwarf['attendance']): Promise<string> {
+      const wrapper = mount(DwarfSprite, {
+        props: {
+          dwarf: defaultDwarf({
+            role: 'foreman',
+            status: 'working',
+            silentForMs: WORKER_SILENT,
+            ...(attendance !== undefined ? { attendance } : {})
+          })
+        }
+      })
+      vi.advanceTimersByTime(1000)
+      await wrapper.vm.$nextTick()
+      return poseOf(wrapper)
+    }
+
+    it('stops at the half hour once the provider proves nobody is there', async () => {
+      expect(await poseAfterOneFrame('unattended')).toBe('dwarf-foreman-idle')
+    })
+
+    it('keeps working through the half hour while a human may be typing', async () => {
+      expect(await poseAfterOneFrame('attended')).toBe('dwarf-foreman-check')
+    })
+
+    it('keeps working through the half hour when attendance was never proved', async () => {
+      // Unproven leaves the hour standing, so nothing about this dwarf changes
+      // until a provider actually answers.
+      expect(await poseAfterOneFrame('unknown')).toBe('dwarf-foreman-check')
+      expect(await poseAfterOneFrame(undefined)).toBe('dwarf-foreman-check')
+    })
   })
 
   it('shows the exact figure in the tooltip beside the name and model', () => {

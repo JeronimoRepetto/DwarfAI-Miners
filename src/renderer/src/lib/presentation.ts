@@ -1,5 +1,6 @@
-import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
+import { dwarfSilenceWindowMs } from '../../../shared/contracts'
 import type {
+  DwarfAttendance,
   DwarfRole,
   DwarfStatus,
   Material,
@@ -179,17 +180,28 @@ export const WALK_ANIMATION: DwarfAnimation = { frames: ['walk-1', 'walk-2'], fr
 /**
  * Has this dwarf gone quiet for long enough to be worth showing as such?
  *
- * The windows are the PROVIDER's own (DWARF_SILENCE_WINDOW_MS, shared with
- * issue #40's staleness rule) and are read rather than restated, so the panel
- * can never call a dwarf busy while the provider is already counting it out.
- * A window that has exactly elapsed reads as silent, the same side of the
+ * The windows are the PROVIDER's own (dwarfSilenceWindowMs, shared with issue
+ * #40's staleness rule) and are read rather than restated, so the panel can
+ * never call a dwarf busy while the provider is already counting it out. A
+ * window that has exactly elapsed reads as silent, the same side of the
  * boundary the provider picks.
  *
- * `undefined` is the absence of evidence — a provider that keeps no per-agent
- * transcript — and is never treated as silence.
+ * `attendance` is what picks between the two windows, not the rank (issue
+ * #68): the long one exists for a session a human may be typing into, and a
+ * headless run is the root of its own tree and therefore a foreman too. Absent
+ * — a provider that has not been taught to report it — keeps the long window,
+ * so nothing about such a dwarf changes until somebody actually answers.
+ *
+ * `silentForMs` being `undefined` is the absence of the other evidence — a
+ * provider that keeps no per-agent transcript — and is never treated as
+ * silence.
  */
-export function isDwarfSilent(role: DwarfRole, silentForMs: number | undefined): boolean {
-  return silentForMs !== undefined && silentForMs >= DWARF_SILENCE_WINDOW_MS[role]
+export function isDwarfSilent(
+  role: DwarfRole,
+  silentForMs: number | undefined,
+  attendance?: DwarfAttendance
+): boolean {
+  return silentForMs !== undefined && silentForMs >= dwarfSilenceWindowMs(role, attendance)
 }
 
 /**

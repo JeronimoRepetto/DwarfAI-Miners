@@ -4,6 +4,7 @@ import type { MaterialTotals, Mine } from '../../shared/contracts'
 export type {
   Dwarf,
   DwarfActivation,
+  DwarfAttendance,
   DwarfCapabilities,
   DwarfKickRequest,
   DwarfKickResult,
