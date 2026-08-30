@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.png" width="160" alt="DwarfAI-Miners logo — the painted gold mound on a dark circular badge">
+  <img src="docs/assets/logo.png" width="160" alt="DwarfAI-Miners logo — the gold mine mound on a dark circular badge">
 </p>
 
 <h1 align="center">DwarfAI-Miners</h1>
@@ -39,7 +39,7 @@ have not been run end to end yet — see the support matrix below.
 <table>
   <tr>
     <td align="center">
-      <img src="docs/assets/screenshot-map.png" width="420" alt="Map view — a moonlit valley where each project is a painted mine mound, joined by trails, with a per-material vault total in the corner">
+      <img src="docs/assets/screenshot-map.png" width="420" alt="Map view — a moonlit valley where each project is a mine mound, joined by trails, with a per-material vault total in the corner">
     </td>
     <td align="center">
       <img src="docs/assets/screenshot-mine.png" width="420" alt="Mine interior — dwarfs swinging pickaxes at the ore veins while the foreman reads his log book, with the mined ore piled by the entrance">
@@ -58,7 +58,7 @@ an agent that was running when the shutter fell.
 
 - **Live session detection** — Claude Code and Codex sessions become dwarfs the moment they
   appear, no configuration required.
-- **Two painted views** — an isometric map of mine mounds (one per project) and a mine interior
+- **Two illustrated views** — an isometric map of mine mounds (one per project) and a mine interior
   where the crew swings pickaxes, naps, or walks out.
 - **Send and kick** — deliver a message to a session or kick an agent straight from the panel.
 - **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
@@ -150,15 +150,15 @@ Notes on the three honest gaps:
 
 The panel is an isometric idle-game with two views:
 
-**Map view (default).** A painted moonlit valley where every project with an observed AI CLI
+**Map view (default).** An illustrated moonlit valley where every project with an observed AI CLI
 session appears as a mine mound. Positions are derived from a hash of the mine id, so mounds
-stay put across refreshes. Each tier has its own painted entrance and mineral palette —
+stay put across refreshes. Each tier has its own entrance art and mineral palette —
 bronze (earthy brown), copper (teal patina), silver (grey shimmer), gold (warm glow), uranium
 (dark rock with a radioactive green pulse). Hovering a mound shows project name, tier, path,
 and dwarf count; clicking enters the mine.
 
-**Mine interior.** The painted cave for that tier, with the crew standing on the walkable
-floor along the bottom. Each agent is a dwarf animated by swapping painted poses:
+**Mine interior.** The cave art for that tier, with the crew standing on the walkable
+floor along the bottom. Each agent is a dwarf animated by swapping poses:
 
 - **working** alternates two pickaxe swings,
 - **waiting** alternates two resting poses with a drifting "z z z",
@@ -166,7 +166,7 @@ floor along the bottom. Each agent is a dwarf animated by swapping painted poses
   runtime grace window,
 - the **foreman** stands apart and looks up from his log book now and then.
 
-The provider is shown by a small badge on the sprite rather than by tinting the painting.
+The provider is shown by a small badge on the sprite rather than by tinting the art.
 Hovering a dwarf shows name, provider, model, effort, and status. When an agent's last
 message changes, a comic speech bubble appears above it for a few seconds.
 
@@ -188,12 +188,13 @@ than nothing.
 ### Art pipeline
 
 The renderer ships processed art in `src/renderer/src/assets/art/` — committed, so a clone
-builds and runs without the source paintings. `pnpm art:build` regenerates it from the
-originals, which live outside the repository (default `<home>/Downloads/DwarfAI-Miners`,
-overridable with `--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified. The script
-itself is platform-neutral: every path goes through `node:path`.
+builds and runs without the source images. `pnpm art:build` regenerates it from the
+originals: AI-generated, opaque high-resolution files delivered by the product owner, which
+live outside the repository (default `<home>/Downloads/DwarfAI-Miners`, overridable with
+`--src <dir>` or `DWARFAI_MINERS_ART_SRC`) and are never modified. The script itself is
+platform-neutral: every path goes through `node:path`.
 
-The script chroma-keys the dwarf and mound paintings off their flat backdrop — sampling the
+The script chroma-keys the dwarf and mound images off their flat backdrop — sampling the
 key color from each image's own four corners, because it differs per image — crops all nine
 dwarf poses to one shared canvas so animation frames never jitter, and downscales the opaque
 background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.mjs`.
@@ -201,7 +202,7 @@ background scenes. Its pure helpers are unit tested in `scripts/art/keying.test.
 ### Application icon
 
 Same idea as the art pipeline: committed, derived output, regenerated by a script rather than
-hand-edited. `pnpm icons` (`scripts/build-icons.mjs`) composites the painted `mound-gold.png`
+hand-edited. `pnpm icons` (`scripts/build-icons.mjs`) composites `mound-gold.png`
 onto a dark circular badge — a strong, high-contrast silhouette is what actually survives being
 shrunk to a 16x16 tray icon — and writes every size electron-builder and the app itself need:
 `build/icon.ico` (Windows, multi-size), `build/icon.icns` (macOS), `build/icon.png` (Linux, 512),
@@ -401,7 +402,7 @@ place that decides which architectures ship.
 
 Nothing is code-signed or notarized, so Windows SmartScreen and macOS Gatekeeper will both warn —
 see [`docs/signing.md`](docs/signing.md) for exactly what that means and what it takes to fix.
-The application icon (installer, exe, tray, and window) is generated from the painted mound art
+The application icon (installer, exe, tray, and window) is generated from the mound art
 by `pnpm icons` (`scripts/build-icons.mjs`); see `build/icon.*` and `resources/*-icon*.png`.
 
 ## Architecture

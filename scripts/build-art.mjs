@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Turns the hand-painted source art into the processed assets the renderer
+ * Turns the AI-generated source art into the processed assets the renderer
  * ships. Run it with `pnpm art:build`.
  *
  * The originals are never modified and never enter the repository: they are
@@ -24,7 +24,7 @@
  *             stack these shoulder to shoulder, and shared padding would space
  *             them apart with invisible margins. 96px wide PNG.
  *   interior-*, map-bg
- *             Opaque painted scenes, nothing to key. Downscaled to 1600px on
+ *             Opaque scenes, nothing to key. Downscaled to 1600px on
  *             the long side and re-encoded as JPEG.
  *
  * The backdrop color differs per image (roughly #FC02FA to #E801D1 across the
@@ -51,7 +51,7 @@ import {
 } from './art/keying.mjs'
 
 /**
- * Where the product owner drops the source paintings: the Downloads folder of
+ * Where the product owner drops the source images: the Downloads folder of
  * whoever is running the script. Derived from the home directory rather than
  * hard-coded so the script runs unchanged on macOS and Linux; `--src` or
  * DWARFAI_MINERS_ART_SRC overrides it anywhere.
@@ -68,8 +68,8 @@ const TIERS = ['bronze', 'copper', 'silver', 'gold', 'uranium']
  * than for the mine tier that yields them. The two vocabularies are close but
  * deliberately not identical: coal belongs to no tier (it is the backfill
  * material for tokens burned before the app was installed), and iron is
- * painted and shipped but currently maps to no tier at all — it is here so a
- * future tier between coal and bronze costs art nobody has to commission.
+ * generated and shipped but currently maps to no tier at all — it is here so
+ * a future tier between coal and bronze costs no new art.
  * src/renderer owns the tier-to-material table; see issue #22.
  *
  * Sources are named `<material>_nugget.jpg` as delivered; the output follows
@@ -94,10 +94,10 @@ const DWARF_POSES = [
 ]
 
 /**
- * Keying constants, tuned against the real paintings: corner samples on this
- * set scatter by at most ~22 units of RGB distance (JPEG noise on a flat fill),
- * so a tolerance of 55 swallows the noise with room to spare while staying far
- * below the ~200 that separates the backdrop from the nearest painted color.
+ * Keying constants, tuned against the real source images: corner samples on
+ * this set scatter by at most ~22 units of RGB distance (JPEG noise on a flat
+ * fill), so a tolerance of 55 swallows the noise with room to spare while
+ * staying far below the ~200 that separates the backdrop from the subject.
  */
 const KEY = {
   tolerance: 55,
@@ -226,8 +226,8 @@ async function buildMounds(sourceDir, rows) {
  * shoulder to shoulder, so shared canvas padding would space them apart with
  * invisible margins instead of letting them touch.
  *
- * A material whose painting has not been delivered yet is skipped with a note
- * rather than failing the run, so the pipeline stays usable while art arrives.
+ * A material whose source image has not been delivered yet is skipped with a
+ * note rather than failing the run, so the pipeline stays usable as art arrives.
  */
 async function buildNuggets(sourceDir, rows) {
   for (const material of NUGGET_MATERIALS) {
