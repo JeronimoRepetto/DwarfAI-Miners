@@ -574,3 +574,28 @@ keeps the behavioural change reviewable against real sessions, and leaves the re
 - **Explicitly out of scope**: Gemini, OpenCode and local providers. `CONTRIBUTING.md` requires
   verifiable session artifacts before a backend ships, and none exist here. This document is written
   so that when they do, the role question is already answered.
+
+---
+
+## 12. Addendum — since this was written (after `cc75a89`)
+
+This document is pinned to `cc75a89` and its claims about the tree at that commit still hold.
+One thing it argued for has since shipped, on a different axis than this document's subject
+(role and topology, issue #62), and is recorded here so nobody re-derives or re-files it.
+
+- **§8's `humanAttended` proposal has shipped, as `DwarfAttendance` (issue #68).** This
+  document named it out of scope for #62 and said it "should be its own issue" — it now is one,
+  and it is closed. `DWARF_SILENCE_WINDOW_MS` is no longer keyed on `role`; it is keyed on
+  whether a session is attended, and chosen by `dwarfSilenceWindowMs(role, attendance)`. Role
+  still narrows the window in one direction only — a worker can never lengthen it — which is
+  consistent with, not a reversal of, §2's finding that the window was never really about rank.
+- **§2's and §5's quotes describe the pre-#68 shape.** The `contracts.ts:100-104` blockquote in
+  §2 no longer exists in that form, and §5's `DWARF_SILENCE_WINDOW_MS[role]` lookup is
+  superseded by `isDwarfSilent`, which calls `dwarfSilenceWindowMs` rather than indexing the
+  constant by role.
+- **Ordinary line drift, unrelated to #68**: `claudeProvider.ts`'s role-write sites moved,
+  because #68 inserted the `attendance` field earlier in the file. The quoted comment text is
+  unchanged; only its line numbers moved.
+
+Nothing above touches this document's actual subject — the role and topology proposal for #62
+is still unimplemented, and sections 1 to 11 remain an accurate reading of `cc75a89`.

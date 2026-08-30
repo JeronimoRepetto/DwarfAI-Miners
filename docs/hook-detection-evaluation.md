@@ -29,7 +29,7 @@ optional event source layered on top of the existing 2-second poller — never a
 replacement for it. Ship Claude-only first (Phase 1–2 below); Codex is a
 straightforward fast-follow once the relay mechanism is proven (Phase 3). Do not
 build agentpet's 12-provider hook catalog — `DwarfProvider` is `'claude' | 'codex'`
-today (`src/shared/contracts.ts:8`) and stays that way.
+today (`src/shared/contracts.ts:79`) and stays that way.
 
 ---
 
@@ -164,8 +164,8 @@ question:
 ## 2. Mapping to our architecture
 
 Our current pipeline (confirmed via CodeGraph, not assumed): `Poller.tick()`
-(`src/main/poller.ts`) fires every `config.pollIntervalMs` — **2000 ms by
-default** (`src/main/config.ts:57`) — calls `provider.scan()` on
+(`src/main/runtime/poller.ts`) fires every `config.pollIntervalMs` — **2000 ms by
+default** (`src/main/config/config.ts:82`) — calls `provider.scan()` on
 `ClaudeProvider` and `CodexProvider` via `Promise.allSettled` (one provider
 failing never kills the loop), aggregates into `Mine[]`, and pushes over the
 `mines:update` IPC channel.
@@ -232,7 +232,7 @@ because its only signal for "did Claude finish or just ask something" is the
 Code's own live session registry. **We already have that registry.**
 `ClaudeProvider.snapshotSession` sets `status: session.status === 'busy' ?
 'working' : 'waiting'` straight from the registry's own `status` field
-(`src/main/providers/claude/claudeProvider.ts:158`) — a field Claude Code
+(`src/main/providers/claude/claudeProvider.ts:579`) — a field Claude Code
 itself writes. If a hook only triggers us to re-read the session registry (as
 proposed below), we get the done-vs-waiting distinction for free, with no
 question-detection heuristic to port or maintain.
@@ -262,7 +262,7 @@ question-detection heuristic to port or maintain.
 
 ### 3.1 Where it lives
 
-`src/main/tray.ts` already has the exact right pattern for an opt-in toggle: a
+`src/main/shell/tray.ts` already has the exact right pattern for an opt-in toggle: a
 `Menu.buildFromTemplate` checkbox item wired to `isAutostartEnabled()` /
 `enableAutostart()` / `disableAutostart()`, re-labeled via `refreshTrayMenu()`
 after every toggle (lines 24–52). A "Live hook detection (beta)" checkbox added
@@ -274,7 +274,7 @@ silently" directly.
 
 - **Claude Code** → `~/.claude/settings.json`, nested-hooks shape, for each of
   `config.claudeConfigDirs` (plural — multiple Claude roots/accounts are
-  supported; `src/main/config.ts:43`). Event set: mirror agentpet's minimal list minus
+  supported; `src/main/config/config.ts:91`). Event set: mirror agentpet's minimal list minus
   the two we don't need per-tool-call granularity for — **`SessionStart`,
   `Notification`, `Stop`, `SubagentStop`, `SessionEnd`** for v1. Skip
   `PreToolUse`/`UserPromptSubmit` initially: they fire on every tool call, and
@@ -368,7 +368,7 @@ mechanism before any installer code exists. No files beyond a scratch spike.
 - `src/main/hooks/hookServer.ts`: `http.createServer` on `127.0.0.1:<port>`,
   parses `POST /event`, ignores malformed/unrecognized bodies, always responds
   200 (never blocks the caller).
-- Wire into `src/main/runtime.ts`: on a received event, call a debounced
+- Wire into `src/main/runtime/runtime.ts`: on a received event, call a debounced
   `poller.tick()` (150–300 ms coalescing window).
 - Tests: `hookServer.test.ts` — real ephemeral port, raw socket client (no new
   test dependency), covering malformed JSON, an unrecognized event, and burst
@@ -376,11 +376,11 @@ mechanism before any installer code exists. No files beyond a scratch spike.
 
 **Phase 2 — Claude hook installer + tray toggle (1–2 days).**
 
-- `src/main/hooks/claudeHookInstaller.ts`: idempotent install/uninstall across
+- `src/main/hooks/hookInstaller.ts`: idempotent install/uninstall across
   every root in `config.claudeConfigDirs`, using the Phase-0 relay as the
   command string, events `SessionStart, Notification, Stop, SubagentStop,
 SessionEnd`.
-- `src/main/tray.ts`: add a checkbox item next to "Start with Windows",
+- `src/main/shell/tray.ts`: add a checkbox item next to "Start with Windows",
   default OFF, persisted via a small JSON flag under `app.getPath('userData')`
   (autostart persists at the OS level via `setLoginItemSettings`, which this
   toggle has no equivalent of — needs its own tiny store).

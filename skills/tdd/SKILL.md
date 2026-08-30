@@ -69,6 +69,6 @@ Copy these rather than inventing a style — verified against the suite:
 
 ## References
 
-- [`CONTRIBUTING.md`](../../CONTRIBUTING.md) — testing philosophy, the named fakes, the five local
-  checks
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md) — testing philosophy, the named fakes, the seven
+  checks CI runs
 - [`test-safety`](../test-safety/SKILL.md) — not losing tests that already exist

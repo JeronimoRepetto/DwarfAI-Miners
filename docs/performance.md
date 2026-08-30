@@ -381,9 +381,11 @@ noticed. Recorded honestly rather than claimed as a win.
 
 ## Recommendations, not applied
 
-Ranked by measured cost. None were applied because each one trades correctness
+Ranked by measured cost. R1–R3 were not applied because each trades correctness
 risk in an area that deserves its own review, and this audit's rule was that a
-fix must cite a number _and_ be safe to make blind.
+fix must cite a number _and_ be safe to make blind. R4 was a different kind of
+finding — an outright bug rather than a trade-off — and it has since been fixed;
+see its own note below.
 
 ### R1 — The Codex heartbeat query costs 3.36 ms of every poll (32%)
 
@@ -430,17 +432,20 @@ apparent cost (see [the `cl.list` illusion](#the-cllist-illusion)). Even after
 R1, the remaining queries block. A worker thread would take the whole registry
 read off the critical path. This is the structural version of R1 and subsumes it.
 
-### R4 — `sumSourceBytes` builds paths with a hard-coded backslash (correctness, not performance)
+### R4 — `sumSourceBytes` built paths with a hard-coded backslash (correctness, not performance) — FIXED
 
-Found while auditing the tier walk. `src/main/tier/tierService.ts` joins paths
-as `` `${dir}\\${entry.name}` `` rather than with `node:path`'s `join`. On macOS
-and Linux that produces a path that resolves to nothing: `listDir` returns `[]`
-and `stat` returns `null`, so `sumSourceBytes` totals 0 bytes and **every mine on
-those platforms is permanently bronze**.
+Found while auditing the tier walk. `src/main/tier/tierService.ts` joined paths
+with a hard-coded backslash rather than with `node:path`'s `join`. On macOS and
+Linux that produced a path that resolved to nothing: `listDir` returned `[]` and
+`stat` returned `null`, so `sumSourceBytes` totalled 0 bytes and **every mine on
+those platforms was permanently bronze**.
 
-This is not a performance defect and was deliberately not fixed inside a
-performance change, but the project ships macOS and Linux builds and it should
-be filed on its own.
+This was not a performance defect and was deliberately not fixed inside this
+performance change; it shipped separately as
+`fix(tier): stop weighing bundles, duplicates and Windows-only paths (#39)`.
+`sumSourceBytes` now joins with `node:path`'s `join`
+(`src/main/tier/tierService.ts:187`), with a doc comment at `:167-170` recording
+exactly this failure mode.
 
 ## What was not measured
 

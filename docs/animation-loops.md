@@ -63,6 +63,13 @@ Those nine poses drive four running loops plus two still ones (`presentation.ts`
 | Silent worker (#47)             | `idle`                          | —       | —      |         0 |
 | Silent foreman (#47)            | `foreman-idle`                  | —       | —      |         0 |
 
+**Since landed (issue #72, `9f4a4d9`):** the "Waiting, either rank" row in the table above no
+longer ships. `WAITING` in `presentation.ts` is now a single `rest-1` frame for both ranks — a
+one-frame state with the same "starts no timer" property as the two silent rows, 0 swaps/min
+rather than 43. The painted `rest-2` frame stays in the art table unplayed, and the CSS `z z z`
+overlay is the sole sleep indicator now — exactly the "resolve the double z" free action this
+document proposes under "Rest — commission nothing" below.
+
 Two structural facts about the renderer matter to everything below, and neither is a defect:
 
 - **`DwarfAnimation.frameMs` is one number for the whole loop.** `DwarfSprite` turns it into a
@@ -283,7 +290,13 @@ commission at this resolution.
 
 This row is arithmetic. The measurement machine reports DPR 1; no HiDPI display was available.
 
-### Reduced motion — nothing is done, and this is the finding
+### Reduced motion — nothing was done, and this was the finding (fixed by #71)
+
+**Resolved since this was written (issue #71, `286c3bc`):** `DwarfSprite`'s frame timer now
+reads `prefersReducedMotion()` and stops rather than swaps when it is set, reusing the "a loop
+of fewer than two frames starts no timer" machinery #47 already built. The paragraphs below
+describe the gap exactly as measured — they are why the fix exists — but the gap itself is
+closed.
 
 `prefers-reduced-motion: reduce` is handled in four places, and handled well:
 

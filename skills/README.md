@@ -107,8 +107,10 @@ Two further reasons this is a decision rather than laziness:
 - **Per-process rules are already better served elsewhere.** A rule that only matters in one file
   belongs in `.claude/rules/` with a `paths:` glob; a rule that only matters to one subsystem
   belongs in that subsystem's skill. A nested `AGENTS.md` would duplicate both.
-- **The tree is moving.** Issue #49 is regrouping `src/` right now. Directory-scoped instruction
-  files would hardcode exactly the paths that are being moved.
+- **A nested `AGENTS.md` would have hardcoded paths that moved.** Issue #49 regrouped the whole
+  of `src/` into subject directories in one pass (`ae9890c`); a directory-scoped instruction
+  file living through that reorg would have needed migrating right alongside every file it
+  named.
 
 Adding a level later is one line in `SCOPES` in `sync.mjs` plus the file itself. It is cheap on
 purpose, so that it can be earned rather than pre-built.
