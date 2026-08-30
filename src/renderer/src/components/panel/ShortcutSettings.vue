@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, useId } from 'vue'
 import { DEFAULT_TOGGLE_ACCELERATOR, formatAccelerator } from '../../../../shared/accelerator'
-import type { ShortcutState } from '../../../../shared/contracts'
+import type { ShortcutState } from '../../types'
 
 /**
  * The settings panel behind the titlebar gear (see #17). Today it holds one

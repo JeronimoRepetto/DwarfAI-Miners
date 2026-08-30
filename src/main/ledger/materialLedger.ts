@@ -1,4 +1,3 @@
-import type { MaterialTotals } from '../../shared/contracts'
 import {
   accrue,
   creditMaterial,
@@ -10,7 +9,7 @@ import {
   type ConfirmedTierLookup,
   type LedgerState
 } from '../domain/ledger'
-import type { Mine } from '../domain/types'
+import type { MaterialTotals, Mine } from '../domain/types'
 import type { LedgerStore } from './ledgerStore'
 
 /**

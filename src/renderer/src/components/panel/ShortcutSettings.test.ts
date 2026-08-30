@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
-import type { ShortcutState } from '../../../../shared/contracts'
+import type { ShortcutState } from '../../types'
 import ShortcutSettings from './ShortcutSettings.vue'
 
 function shortcutState(overrides: Partial<ShortcutState> = {}): ShortcutState {

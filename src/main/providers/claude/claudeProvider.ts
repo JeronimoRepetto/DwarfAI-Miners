@@ -1,13 +1,16 @@
 import { join } from 'node:path'
-import {
-  DWARF_SILENCE_WINDOW_MS,
-  WAITING_ON_HUMAN_REASON,
-  dwarfSilenceWindowKey
-} from '../../../shared/contracts'
 import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../platform/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
-import type { Dwarf, FeedMessage, ProviderSnapshot, WaitingReason } from '../../domain/types'
+import {
+  DWARF_SILENCE_WINDOW_MS,
+  WAITING_ON_HUMAN_REASON,
+  dwarfSilenceWindowKey,
+  type Dwarf,
+  type FeedMessage,
+  type ProviderSnapshot,
+  type WaitingReason
+} from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'

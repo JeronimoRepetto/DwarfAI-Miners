@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { MAX_DWARF_TEXT_CHARS } from '../../../../shared/contracts'
 import { buildActionBar, type ActionBarEntry } from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
-import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
+import {
+  MAX_DWARF_TEXT_CHARS,
+  type Dwarf,
+  type DwarfKickState,
+  type DwarfSendState
+} from '../../types'
 
 /**
  * The icon action bar that opens when a dwarf is clicked (see #27): a compact

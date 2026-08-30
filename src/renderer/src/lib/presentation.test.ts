@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { DwarfRole, DwarfStatus, MineTier } from '../types'
-import { MATERIALS } from '../types'
+import { DWARF_SILENCE_WINDOW_MS, MATERIALS } from '../types'
 import { emptyMaterialTotals } from './vault/vault'
 import type { DwarfAnimation } from './presentation'
 import {

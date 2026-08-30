@@ -1,4 +1,3 @@
-import { dwarfSilenceWindowMs } from '../../../shared/contracts'
 import type {
   DwarfAttendance,
   DwarfRole,
@@ -8,7 +7,7 @@ import type {
   MineTier,
   WaitingReason
 } from '../types'
-import { WAITING_ON_HUMAN_REASON } from '../types'
+import { WAITING_ON_HUMAN_REASON, dwarfSilenceWindowMs } from '../types'
 import { formatTokens } from './vault/economy'
 import { materialUnits, vaultRows } from './vault/vault'
 

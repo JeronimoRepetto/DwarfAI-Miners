@@ -4,7 +4,7 @@ import {
   validateAccelerator,
   type ShortcutPlatform
 } from '../../shared/accelerator'
-import type { ShortcutState } from '../../shared/contracts'
+import type { ShortcutState } from '../domain/types'
 
 /**
  * The global panel toggle, now user-configurable (see #17).

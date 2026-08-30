@@ -1,16 +1,10 @@
 import {
-  MATERIALS,
-  type Material,
-  type MaterialTotals,
-  type MineTier
-} from '../../shared/contracts'
-import {
   addMaterialTokens,
   emptyMaterialTotals,
   materialForTier,
   sumMaterialTotals
 } from './materials'
-import type { Mine } from './types'
+import { MATERIALS, type Material, type MaterialTotals, type Mine, type MineTier } from './types'
 
 /**
  * The cumulative per-material vault, as pure state (see #22).

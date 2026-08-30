@@ -19,20 +19,26 @@ export type {
   Mine,
   MinesSnapshot,
   MineTier,
+  ShortcutState,
   TextDeliveryChannel,
   WaitingReason
 } from '../../shared/contracts'
 
 /**
- * The vault constants and the waiting reason that means a human was asked are
- * re-exported as VALUES, not just types, so every renderer module keeps
- * `../types` as its single import root into the shared contract rather than
- * reaching across the process boundary itself.
+ * The wire constants and helpers the renderer reads as VALUES, not just types,
+ * so every renderer module keeps `../types` as its single import root into the
+ * shared contract rather than reaching across the process boundary itself.
+ * Anything the process needs that this list omits is a module reaching past the
+ * barrel, so add it here rather than letting one absent value drag a whole
+ * import statement across (#77).
  */
 export {
+  DWARF_SILENCE_WINDOW_MS,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
-  WAITING_ON_HUMAN_REASON
+  MAX_DWARF_TEXT_CHARS,
+  WAITING_ON_HUMAN_REASON,
+  dwarfSilenceWindowMs
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */

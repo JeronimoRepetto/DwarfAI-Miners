@@ -4,7 +4,7 @@ import {
   type Material,
   type MaterialTotals,
   type MineTier
-} from '../../shared/contracts'
+} from './types'
 
 /**
  * Pure arithmetic over material breakdowns (see #22).
