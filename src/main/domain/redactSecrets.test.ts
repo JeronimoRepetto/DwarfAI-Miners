@@ -63,7 +63,7 @@ describe('redactSecrets', () => {
       'Fixed the bug in src/main/providers/claude/claudeProvider.ts at line 32.',
       'See commit abc123def456 for details.',
       'https://github.com/JeronimoRepetto/DwarfAI-Miners/issues/23',
-      'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name\\src\\main\\runtime.ts',
+      'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name\\src\\main\\runtime.ts',
       // Long but digit-free identifiers are prose, not entropy.
       'renamed thisIsAVeryLongCamelCaseIdentifierUsedForNamingThings everywhere',
       // Short sk-/gh mentions below the length floor are ordinary words.

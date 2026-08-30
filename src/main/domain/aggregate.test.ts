@@ -21,7 +21,7 @@ describe('aggregateMines', () => {
         snapshot({
           provider: 'claude',
           sessionId: 's1',
-          cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools',
+          cwd: 'C:\\Users\\j\\Desktop\\Sample-Project',
           status: 'busy',
           dwarfs: [{ ...defaultDwarf(), id: 'claude:s1', sessionId: 's1' }],
           updatedAt: 100
@@ -29,14 +29,14 @@ describe('aggregateMines', () => {
         snapshot({
           provider: 'codex',
           sessionId: 's2',
-          cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools',
+          cwd: 'C:\\Users\\j\\Desktop\\Sample-Project',
           status: 'idle',
           updatedAt: 200
         }),
         snapshot({
           provider: 'claude',
           sessionId: 's3',
-          cwd: 'C:\\Users\\jeron\\Desktop\\Other',
+          cwd: 'C:\\Users\\j\\Desktop\\Other',
           status: 'idle',
           updatedAt: 50
         })
@@ -45,11 +45,11 @@ describe('aggregateMines', () => {
     )
 
     expect(mines).toHaveLength(2)
-    const aiTools = mines.find((m) => m.name === 'AI-Tools')!
-    expect(aiTools.path).toBe('C:\\Users\\jeron\\Desktop\\AI-Tools')
-    expect(aiTools.dwarfs.map((d) => d.id)).toEqual(['claude:s1'])
-    expect(aiTools.updatedAt).toBe(200)
-    expect(aiTools.tier).toBe('silver')
+    const sampleProject = mines.find((m) => m.name === 'Sample-Project')!
+    expect(sampleProject.path).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
+    expect(sampleProject.dwarfs.map((d) => d.id)).toEqual(['claude:s1'])
+    expect(sampleProject.updatedAt).toBe(200)
+    expect(sampleProject.tier).toBe('silver')
     const other = mines.find((m) => m.name === 'Other')!
     expect(other.dwarfs).toEqual([])
   })
@@ -57,14 +57,14 @@ describe('aggregateMines', () => {
   it('groups case-insensitively but keeps the first-seen path for display', () => {
     const mines = aggregateMines(
       [
-        snapshot({ sessionId: 's1', cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools' }),
-        snapshot({ sessionId: 's2', cwd: 'c:\\users\\jeron\\desktop\\ai-tools' })
+        snapshot({ sessionId: 's1', cwd: 'C:\\Users\\j\\Desktop\\Sample-Project' }),
+        snapshot({ sessionId: 's2', cwd: 'c:\\users\\j\\desktop\\sample-project' })
       ],
       tierOf,
       'win32'
     )
     expect(mines).toHaveLength(1)
-    expect(mines[0]!.path).toBe('C:\\Users\\jeron\\Desktop\\AI-Tools')
+    expect(mines[0]!.path).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
   })
 
   it('groups the two Windows separators as one project', () => {

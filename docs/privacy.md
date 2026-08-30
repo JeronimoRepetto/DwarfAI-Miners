@@ -8,8 +8,8 @@ checked rather than trusted.
 
 ## What it reads
 
-- **Claude Code session registries.** Every configured Claude root (default `~/.claude` and
-  `~/.claude-multitec`, overridable with `CLAUDE_CONFIG_DIRS`) is scanned for
+- **Claude Code session registries.** Every configured Claude root (default `~/.claude`, plus
+  any further roots configured via `CLAUDE_CONFIG_DIRS`) is scanned for
   `sessions/*.json` entries — small per-session files carrying the pid, session id, project
   directory, and status. An entry only counts as alive when its pid exists _and_ the
   process's real start time matches the entry, so a recycled pid is never trusted

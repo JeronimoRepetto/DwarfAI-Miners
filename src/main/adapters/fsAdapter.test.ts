@@ -8,26 +8,22 @@ import { NodeFs } from './fsLike'
 describe('FakeFs', () => {
   function makeFake(): FakeFs {
     const fake = new FakeFs()
-    fake.addFile('C:\\Users\\jeron\\.claude\\sessions\\100.json', '{"pid":100}', 1_000)
-    fake.addFile(
-      'C:\\Users\\jeron\\.claude\\projects\\enc\\s1.jsonl',
-      'line1\nline2\nline3\n',
-      2_000
-    )
+    fake.addFile('C:\\Users\\j\\.claude\\sessions\\100.json', '{"pid":100}', 1_000)
+    fake.addFile('C:\\Users\\j\\.claude\\projects\\enc\\s1.jsonl', 'line1\nline2\nline3\n', 2_000)
     return fake
   }
 
   it('exists() is true for files and their parent directories', async () => {
     const fake = makeFake()
-    expect(await fake.exists('C:\\Users\\jeron\\.claude\\sessions\\100.json')).toBe(true)
-    expect(await fake.exists('C:\\Users\\jeron\\.claude\\sessions')).toBe(true)
-    expect(await fake.exists('C:\\Users\\jeron\\.claude')).toBe(true)
-    expect(await fake.exists('C:\\Users\\jeron\\.claude-multitec')).toBe(false)
+    expect(await fake.exists('C:\\Users\\j\\.claude\\sessions\\100.json')).toBe(true)
+    expect(await fake.exists('C:\\Users\\j\\.claude\\sessions')).toBe(true)
+    expect(await fake.exists('C:\\Users\\j\\.claude')).toBe(true)
+    expect(await fake.exists('C:\\Users\\j\\.claude-work')).toBe(false)
   })
 
   it('normalizes forward and backward slashes to the same file', async () => {
     const fake = makeFake()
-    expect(await fake.exists('C:/Users/jeron/.claude/sessions/100.json')).toBe(true)
+    expect(await fake.exists('C:/Users/j/.claude/sessions/100.json')).toBe(true)
   })
 
   it('resolves a POSIX-registered tree through POSIX or Windows separators', async () => {
@@ -36,21 +32,19 @@ describe('FakeFs', () => {
     // host the suite runs on. That is what lets one set of fixtures prove
     // path portability without being rewritten per platform.
     const fake = new FakeFs()
-    fake.addFile('/home/jeron/.claude/sessions/100.json', '{"pid":100}')
-    expect(await fake.exists('/home/jeron/.claude/sessions/100.json')).toBe(true)
-    expect(await fake.exists('\\home\\jeron\\.claude\\sessions\\100.json')).toBe(true)
-    expect(await fake.listDir('/home/jeron/.claude')).toEqual([
-      { name: 'sessions', isDirectory: true }
-    ])
-    expect(await fake.readJson('\\home\\jeron\\.claude\\sessions\\100.json')).toEqual({ pid: 100 })
+    fake.addFile('/home/j/.claude/sessions/100.json', '{"pid":100}')
+    expect(await fake.exists('/home/j/.claude/sessions/100.json')).toBe(true)
+    expect(await fake.exists('\\home\\j\\.claude\\sessions\\100.json')).toBe(true)
+    expect(await fake.listDir('/home/j/.claude')).toEqual([{ name: 'sessions', isDirectory: true }])
+    expect(await fake.readJson('\\home\\j\\.claude\\sessions\\100.json')).toEqual({ pid: 100 })
   })
 
   it('listDir() returns files and directories with the isDirectory flag', async () => {
     const fake = makeFake()
-    const entries = await fake.listDir('C:\\Users\\jeron\\.claude')
+    const entries = await fake.listDir('C:\\Users\\j\\.claude')
     expect(entries).toContainEqual({ name: 'sessions', isDirectory: true })
     expect(entries).toContainEqual({ name: 'projects', isDirectory: true })
-    const files = await fake.listDir('C:\\Users\\jeron\\.claude\\sessions')
+    const files = await fake.listDir('C:\\Users\\j\\.claude\\sessions')
     expect(files).toEqual([{ name: '100.json', isDirectory: false }])
   })
 
@@ -60,7 +54,7 @@ describe('FakeFs', () => {
 
   it('readJson() parses file content', async () => {
     const fake = makeFake()
-    expect(await fake.readJson('C:\\Users\\jeron\\.claude\\sessions\\100.json')).toEqual({
+    expect(await fake.readJson('C:\\Users\\j\\.claude\\sessions\\100.json')).toEqual({
       pid: 100
     })
   })
@@ -71,28 +65,28 @@ describe('FakeFs', () => {
 
   it('readTextTail() returns the whole file when maxBytes is large enough', async () => {
     const fake = makeFake()
-    const text = await fake.readTextTail('C:\\Users\\jeron\\.claude\\projects\\enc\\s1.jsonl', 4096)
+    const text = await fake.readTextTail('C:\\Users\\j\\.claude\\projects\\enc\\s1.jsonl', 4096)
     expect(text).toBe('line1\nline2\nline3\n')
   })
 
   it('readTextTail() returns only the last maxBytes', async () => {
     const fake = makeFake()
-    const text = await fake.readTextTail('C:\\Users\\jeron\\.claude\\projects\\enc\\s1.jsonl', 8)
+    const text = await fake.readTextTail('C:\\Users\\j\\.claude\\projects\\enc\\s1.jsonl', 8)
     expect(text).toBe('2\nline3\n')
   })
 
   it('readTextHead() returns only the first maxBytes', async () => {
     const fake = makeFake()
-    const text = await fake.readTextHead('C:\\Users\\jeron\\.claude\\projects\\enc\\s1.jsonl', 6)
+    const text = await fake.readTextHead('C:\\Users\\j\\.claude\\projects\\enc\\s1.jsonl', 6)
     expect(text).toBe('line1\n')
   })
 
   it('stat() reports mtime and size, and null for missing paths', async () => {
     const fake = makeFake()
-    const stat = await fake.stat('C:\\Users\\jeron\\.claude\\sessions\\100.json')
+    const stat = await fake.stat('C:\\Users\\j\\.claude\\sessions\\100.json')
     expect(stat).toEqual({ mtimeMs: 1_000, size: 11, isDirectory: false })
     expect(await fake.stat('C:\\nope')).toBeNull()
-    const dirStat = await fake.stat('C:\\Users\\jeron\\.claude\\sessions')
+    const dirStat = await fake.stat('C:\\Users\\j\\.claude\\sessions')
     expect(dirStat?.isDirectory).toBe(true)
   })
 })

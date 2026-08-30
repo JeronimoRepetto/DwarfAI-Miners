@@ -11,14 +11,14 @@ describe('resolveClaudeBinaryPath', () => {
   it('points at the real native binary, not whatever PATH resolves first', () => {
     // An 'effort-autopilot' shim sits earlier on PATH on this machine and
     // breaks non-interactive spawns, so the relay never goes through PATH.
-    expect(resolveClaudeBinaryPath('C:\\Users\\jeron', 'win32')).toBe(
-      'C:\\Users\\jeron\\.local\\bin\\claude.exe'
+    expect(resolveClaudeBinaryPath('C:\\Users\\j', 'win32')).toBe(
+      'C:\\Users\\j\\.local\\bin\\claude.exe'
     )
   })
 
   it('drops the .exe and uses POSIX separators on macOS and Linux', () => {
-    expect(resolveClaudeBinaryPath('/Users/jeron', 'darwin')).toBe('/Users/jeron/.local/bin/claude')
-    expect(resolveClaudeBinaryPath('/home/jeron', 'linux')).toBe('/home/jeron/.local/bin/claude')
+    expect(resolveClaudeBinaryPath('/Users/j', 'darwin')).toBe('/Users/j/.local/bin/claude')
+    expect(resolveClaudeBinaryPath('/home/j', 'linux')).toBe('/home/j/.local/bin/claude')
   })
 })
 
@@ -26,10 +26,10 @@ describe('buildRelayEnv', () => {
   it('prepends the real binary directory so a child re-exec cannot hit the shim', () => {
     const env = buildRelayEnv(
       { Path: 'C:\\shim;C:\\Windows' },
-      'C:\\Users\\jeron\\.local\\bin\\claude.exe',
+      'C:\\Users\\j\\.local\\bin\\claude.exe',
       'win32'
     )
-    expect(env.Path).toBe('C:\\Users\\jeron\\.local\\bin;C:\\shim;C:\\Windows')
+    expect(env.Path).toBe('C:\\Users\\j\\.local\\bin;C:\\shim;C:\\Windows')
   })
 
   it('reuses the existing PATH key casing Windows handed us', () => {
@@ -74,10 +74,10 @@ describe('buildRelayEnv', () => {
 })
 
 describe('buildRelayInstruction', () => {
-  const instruction = buildRelayInstruction('ai-tools-70', 'please run the tests')
+  const instruction = buildRelayInstruction('sample-project-70', 'please run the tests')
 
   it('names the target session as the SendMessage recipient', () => {
-    expect(instruction).toContain('ai-tools-70')
+    expect(instruction).toContain('sample-project-70')
     expect(instruction).toContain('SendMessage')
   })
 

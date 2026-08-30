@@ -44,13 +44,13 @@ describe('resolveViewerScriptPath', () => {
       {
         isPackaged: false,
         resourcesPath: '',
-        appPath: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name'
+        appPath: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name'
       },
       'win32'
     )
     expect(result).toBe(
       win32.join(
-        'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+        'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
         'resources',
         'dwarf-feed-viewer.ps1'
       )
@@ -71,10 +71,10 @@ describe('resolveViewerScriptPath', () => {
 
     expect(
       resolveViewerScriptPath(
-        { isPackaged: false, resourcesPath: '', appPath: '/home/jeron/agent-name' },
+        { isPackaged: false, resourcesPath: '', appPath: '/home/j/agent-name' },
         'linux'
       )
-    ).toBe('/home/jeron/agent-name/resources/dwarf-feed-viewer.sh')
+    ).toBe('/home/j/agent-name/resources/dwarf-feed-viewer.sh')
   })
 })
 
@@ -132,14 +132,14 @@ describe('buildPosixViewerArgv', () => {
       buildPosixViewerArgv({
         title: 'Foreman',
         viewerScriptPath: '/app/resources/dwarf-feed-viewer.sh',
-        transcriptPath: '/home/jeron/.claude/projects/enc/s1.jsonl',
+        transcriptPath: '/home/j/.claude/projects/enc/s1.jsonl',
         nodePath: '/opt/DwarfAI-Miners/dwarfai-miners'
       })
     ).toEqual([
       'sh',
       '/app/resources/dwarf-feed-viewer.sh',
       '--path',
-      '/home/jeron/.claude/projects/enc/s1.jsonl',
+      '/home/j/.claude/projects/enc/s1.jsonl',
       '--title',
       'Foreman',
       // The viewer parses JSONL with the Node runtime the app already ships,
@@ -158,9 +158,9 @@ describe('quotePosixArgv', () => {
   })
 
   it('survives an argument containing a single quote', () => {
-    // A project directory called `jeron's stuff` must not end the literal and
+    // A project directory called `j's stuff` must not end the literal and
     // leave the rest of the path running as shell source.
-    expect(quotePosixArgv(["jeron's stuff"])).toBe("'jeron'\\''s stuff'")
+    expect(quotePosixArgv(["j's stuff"])).toBe("'j'\\''s stuff'")
   })
 })
 

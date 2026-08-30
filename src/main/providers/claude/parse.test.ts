@@ -18,15 +18,15 @@ const sessionEntryJson: unknown = JSON.parse(
 
 describe('encodeClaudeProjectDir', () => {
   it('replaces every non-alphanumeric character with a dash', () => {
-    expect(encodeClaudeProjectDir('C:\\Users\\jeron\\Desktop\\AI-Tools')).toBe(
-      'C--Users-jeron-Desktop-AI-Tools'
+    expect(encodeClaudeProjectDir('C:\\Users\\j\\Desktop\\Sample-Project')).toBe(
+      'C--Users-j-Desktop-Sample-Project'
     )
   })
 
   it('encodes dots as dashes too (worktree paths)', () => {
     expect(
-      encodeClaudeProjectDir('C:\\Users\\jeron\\Desktop\\Pokedex-RAG\\.claude-worktrees\\x-fce647')
-    ).toBe('C--Users-jeron-Desktop-Pokedex-RAG--claude-worktrees-x-fce647')
+      encodeClaudeProjectDir('C:\\Users\\j\\Desktop\\Sample-Project\\.claude-worktrees\\x-fce647')
+    ).toBe('C--Users-j-Desktop-Sample-Project--claude-worktrees-x-fce647')
   })
 })
 
@@ -35,11 +35,11 @@ describe('parseClaudeSessionEntry', () => {
     expect(parseClaudeSessionEntry(sessionEntryJson)).toEqual({
       pid: 32896,
       sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
-      cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools',
+      cwd: 'C:\\Users\\j\\Desktop\\Sample-Project',
       status: 'busy',
       procStart: '134324755721362761',
       kind: 'interactive',
-      name: 'ai-tools-70',
+      name: 'sample-project-70',
       startedAt: 1788001972417,
       updatedAt: 1788003794280
     })
@@ -110,8 +110,8 @@ describe('claudeSessionDeliveryTarget', () => {
     // the terminal target so the runtime can fall back to the relay when the
     // console cannot be focused, instead of losing the message (issue #24).
     expect(
-      claudeSessionDeliveryTarget({ pid: 4242, kind: 'interactive', name: 'ai-tools-70' })
-    ).toEqual({ kind: 'terminal', pid: 4242, sessionName: 'ai-tools-70' })
+      claudeSessionDeliveryTarget({ pid: 4242, kind: 'interactive', name: 'sample-project-70' })
+    ).toEqual({ kind: 'terminal', pid: 4242, sessionName: 'sample-project-70' })
   })
 
   it('offers a console-only target for an interactive session that never got a name', () => {
@@ -122,9 +122,11 @@ describe('claudeSessionDeliveryTarget', () => {
   })
 
   it('relays to a headless background job by its registry name', () => {
-    expect(claudeSessionDeliveryTarget({ pid: 4242, kind: 'bg', name: 'ai-tools-70' })).toEqual({
+    expect(
+      claudeSessionDeliveryTarget({ pid: 4242, kind: 'bg', name: 'sample-project-70' })
+    ).toEqual({
       kind: 'claude-relay',
-      sessionName: 'ai-tools-70'
+      sessionName: 'sample-project-70'
     })
   })
 
@@ -135,10 +137,10 @@ describe('claudeSessionDeliveryTarget', () => {
   it('assumes a console for an older entry that records no kind at all', () => {
     // A named legacy entry is just as relay-addressable as a named interactive
     // one, so its target carries the same fallback address.
-    expect(claudeSessionDeliveryTarget({ pid: 4242, name: 'ai-tools-70' })).toEqual({
+    expect(claudeSessionDeliveryTarget({ pid: 4242, name: 'sample-project-70' })).toEqual({
       kind: 'terminal',
       pid: 4242,
-      sessionName: 'ai-tools-70'
+      sessionName: 'sample-project-70'
     })
   })
 })

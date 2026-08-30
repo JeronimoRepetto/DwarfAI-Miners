@@ -20,7 +20,7 @@ describe('tierForCount', () => {
 
 describe('countSourceFiles', () => {
   let fake: FakeFs
-  const PROJECT = 'C:\\Users\\jeron\\Desktop\\Proj'
+  const PROJECT = 'C:\\Users\\j\\Desktop\\Proj'
 
   beforeEach(() => {
     fake = new FakeFs()
@@ -61,7 +61,7 @@ describe('countSourceFiles', () => {
 describe('TierService', () => {
   let fake: FakeFs
   let clock: { now: number }
-  const PROJECT = 'C:\\Users\\jeron\\Desktop\\Proj'
+  const PROJECT = 'C:\\Users\\j\\Desktop\\Proj'
 
   function makeService(): TierService {
     return new TierService({

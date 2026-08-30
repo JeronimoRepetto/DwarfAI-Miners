@@ -16,8 +16,8 @@ import {
   readCodexThreads
 } from './state'
 
-const STATE_DB = 'C:\\Users\\jeron\\.codex\\state_5.sqlite'
-const LOGS_DB = 'C:\\Users\\jeron\\.codex\\logs_2.sqlite'
+const STATE_DB = 'C:\\Users\\j\\.codex\\state_5.sqlite'
+const LOGS_DB = 'C:\\Users\\j\\.codex\\logs_2.sqlite'
 
 const NOW = new Date(2026, 7, 29, 12, 0, 0).getTime()
 
@@ -26,14 +26,14 @@ describe('normalizeCodexCwd', () => {
   // session_meta.cwd does not. Left as-is, the same project would show up as
   // two separate mines.
   it('strips the Windows extended-length prefix', () => {
-    expect(normalizeCodexCwd('\\\\?\\C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name')).toBe(
-      'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name'
+    expect(normalizeCodexCwd('\\\\?\\C:\\Users\\j\\Desktop\\Sample-Project\\agent-name')).toBe(
+      'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name'
     )
   })
 
   it('leaves an ordinary path untouched', () => {
-    expect(normalizeCodexCwd('C:\\Users\\jeron\\project')).toBe('C:\\Users\\jeron\\project')
-    expect(normalizeCodexCwd('/home/jeron/project')).toBe('/home/jeron/project')
+    expect(normalizeCodexCwd('C:\\Users\\j\\project')).toBe('C:\\Users\\j\\project')
+    expect(normalizeCodexCwd('/home/j/project')).toBe('/home/j/project')
   })
 
   it('keeps a real UNC network path intact', () => {
@@ -93,7 +93,7 @@ describe('readCodexThreads', () => {
       STATE_DB,
       threadInsert({
         id: 'thread-1',
-        cwd: '\\\\?\\C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+        cwd: '\\\\?\\C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
         rolloutPath: 'C:\\rollouts\\rollout-thread-1.jsonl',
         model: 'gpt-5.6-luna',
         effort: 'medium',
@@ -104,7 +104,7 @@ describe('readCodexThreads', () => {
     expect(await read(NOW - 60_000)).toEqual([
       {
         threadId: 'thread-1',
-        cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+        cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
         rolloutPath: 'C:\\rollouts\\rollout-thread-1.jsonl',
         model: 'gpt-5.6-luna',
         effort: 'medium',

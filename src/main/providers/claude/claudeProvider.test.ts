@@ -9,12 +9,12 @@ const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'),
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
 const sessionEntry = readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
 
-const ROOT1 = 'C:\\Users\\jeron\\.claude'
-const ROOT2 = 'C:\\Users\\jeron\\.claude-multitec'
-const MISSING_ROOT = 'C:\\Users\\jeron\\.claude-ghost'
+const ROOT1 = 'C:\\Users\\j\\.claude'
+const ROOT2 = 'C:\\Users\\j\\.claude-work'
+const MISSING_ROOT = 'C:\\Users\\j\\.claude-ghost'
 const SESSION_ID = '5efdffdd-53df-4509-b30d-c9e56552a22e'
-const CWD = 'C:\\Users\\jeron\\Desktop\\AI-Tools'
-const ENCODED = 'C--Users-jeron-Desktop-AI-Tools'
+const CWD = 'C:\\Users\\j\\Desktop\\Sample-Project'
+const ENCODED = 'C--Users-j-Desktop-Sample-Project'
 
 const parentLines = parentTranscript.split('\n').filter(Boolean)
 
@@ -96,7 +96,7 @@ describe('ClaudeProvider', () => {
       id: `claude:${SESSION_ID}`,
       provider: 'claude',
       role: 'foreman',
-      name: 'ai-tools-70',
+      name: 'sample-project-70',
       model: 'claude-fable-5',
       effort: 'xhigh',
       status: 'working',
@@ -517,7 +517,7 @@ describe('ClaudeProvider', () => {
       otherEntry(
         40000,
         'bbbbbbbb-0000-0000-0000-000000000000',
-        'C:\\Users\\jeron\\Desktop\\Other',
+        'C:\\Users\\j\\Desktop\\Other',
         'idle'
       )
     )
@@ -537,7 +537,7 @@ describe('ClaudeProvider', () => {
       otherEntry(
         40000,
         'bbbbbbbb-0000-0000-0000-000000000000',
-        'C:\\Users\\jeron\\Desktop\\Other',
+        'C:\\Users\\j\\Desktop\\Other',
         'busy'
       )
     )
@@ -861,7 +861,7 @@ describe('ClaudeProvider', () => {
       expect(provider.textDelivery(`claude:${SESSION_ID}`)).toEqual({
         kind: 'terminal',
         pid: 32896,
-        sessionName: 'ai-tools-70'
+        sessionName: 'sample-project-70'
       })
     })
 
@@ -874,7 +874,7 @@ describe('ClaudeProvider', () => {
           cwd: CWD,
           status: 'busy',
           kind: 'bg',
-          name: 'ai-tools-70'
+          name: 'sample-project-70'
         }),
         1_000
       )
@@ -882,7 +882,7 @@ describe('ClaudeProvider', () => {
       await provider.scan()
       expect(provider.textDelivery(`claude:${SESSION_ID}`)).toEqual({
         kind: 'claude-relay',
-        sessionName: 'ai-tools-70'
+        sessionName: 'sample-project-70'
       })
     })
 

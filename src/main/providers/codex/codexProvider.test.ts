@@ -11,7 +11,7 @@ const rolloutLines = rollout.split('\n').filter(Boolean)
 /** Same rollout with the final task_complete missing: the turn is still open. */
 const busyRollout = rolloutLines.slice(0, rolloutLines.length - 1).join('\n') + '\n'
 
-const ROOT = 'C:\\Users\\jeron\\.codex\\sessions'
+const ROOT = 'C:\\Users\\j\\.codex\\sessions'
 const SESSION_ID = '01a048b5-5f35-7312-ab78-38db464920de'
 const BUSY_SESSION_ID = '01a048b5-0000-7312-ab78-000000000000'
 
@@ -132,7 +132,7 @@ describe('CodexProvider', () => {
     const idle = snapshots.find((s) => s.sessionId === SESSION_ID)!
     expect(idle.status).toBe('idle')
     expect(idle.dwarfs).toEqual([])
-    expect(idle.cwd).toBe('C:\\Users\\jeron\\Desktop\\Sample-Project')
+    expect(idle.cwd).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
     expect(idle.updatedAt).toBe(NOW - 60_000)
   })
 
@@ -140,7 +140,7 @@ describe('CodexProvider', () => {
     const snapshots = await makeProvider().scan()
     const busy = snapshots.find((s) => s.sessionId === BUSY_SESSION_ID)!
     expect(busy.status).toBe('busy')
-    expect(busy.cwd).toBe('C:\\Users\\jeron\\Desktop\\Busy-Project')
+    expect(busy.cwd).toBe('C:\\Users\\j\\Desktop\\Busy-Project')
     expect(busy.dwarfs).toHaveLength(1)
     expect(busy.dwarfs[0]).toMatchObject({
       id: `codex:${BUSY_SESSION_ID}`,

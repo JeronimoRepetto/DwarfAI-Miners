@@ -125,7 +125,7 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
         payload: {
           session_id: '01a04d79-real-0000-0000-000000000000',
           id: '01a04d79-real-0000-0000-000000000000',
-          cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+          cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
           originator: 'codex-tui',
           cli_version: '0.150.1',
           source: 'cli',
@@ -137,7 +137,7 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
         type: 'turn_context',
         payload: {
           turn_id: 'still-open-turn',
-          cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+          cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
           model: 'gpt-5.6-sol',
           effort: 'high',
           summary: 'auto'
@@ -185,7 +185,7 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
 
       expect(snapshots).toHaveLength(1)
       expect(snapshots[0]).toMatchObject({
-        cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+        cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
         status: 'busy'
       })
       expect(snapshots[0]!.dwarfs).toHaveLength(1)

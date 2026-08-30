@@ -31,9 +31,9 @@ const rolloutLines = rolloutFixture.split('\n').filter(Boolean)
 const busyFixture = rolloutLines.slice(0, rolloutLines.length - 1).join('\n') + '\n'
 
 const FIXTURE_ID = '01a048b5-5f35-7312-ab78-38db464920de'
-const ROOT = 'C:\\Users\\jeron\\.codex\\sessions'
-const STATE_DB = 'C:\\Users\\jeron\\.codex\\state_5.sqlite'
-const LOGS_DB = 'C:\\Users\\jeron\\.codex\\logs_2.sqlite'
+const ROOT = 'C:\\Users\\j\\.codex\\sessions'
+const STATE_DB = 'C:\\Users\\j\\.codex\\state_5.sqlite'
+const LOGS_DB = 'C:\\Users\\j\\.codex\\logs_2.sqlite'
 
 const NOW = new Date(2026, 7, 29, 12, 0, 0).getTime()
 const WINDOW_S = 600
@@ -92,7 +92,7 @@ describe('CodexProvider with the Codex SQLite registry', () => {
       STATE_DB,
       threadInsert({
         id: LIVE_ID,
-        cwd: '\\\\?\\C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+        cwd: '\\\\?\\C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
         rolloutPath: LIVE_ROLLOUT,
         model: 'gpt-5.6-luna',
         effort: 'medium',
@@ -122,7 +122,7 @@ describe('CodexProvider with the Codex SQLite registry', () => {
     seedLiveThread()
     const [snapshot] = await makeProvider().scan()
     // Leaving the \\?\ prefix on would split one project into two mines.
-    expect(snapshot!.cwd).toBe('C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name')
+    expect(snapshot!.cwd).toBe('C:\\Users\\j\\Desktop\\Sample-Project\\agent-name')
   })
 
   it('exposes the registry model, effort and token count on the dwarf', async () => {

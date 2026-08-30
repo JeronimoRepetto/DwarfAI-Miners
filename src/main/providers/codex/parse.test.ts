@@ -19,7 +19,7 @@ describe('parseCodexRolloutHead', () => {
   it('reads session id and cwd from the session_meta first line', () => {
     expect(parseCodexRolloutHead(rollout)).toEqual({
       sessionId: '01a048b5-5f35-7312-ab78-38db464920de',
-      cwd: 'C:\\Users\\jeron\\Desktop\\Sample-Project'
+      cwd: 'C:\\Users\\j\\Desktop\\Sample-Project'
     })
   })
 

@@ -6,7 +6,7 @@ import { createAutostartPort, createPlatformAdapters, type Platform } from './pl
 function options(platform: Platform, overrides: Record<string, unknown> = {}) {
   return {
     platform,
-    home: platform === 'win32' ? 'C:\\Users\\jeron' : '/home/jeron',
+    home: platform === 'win32' ? 'C:\\Users\\j' : '/home/j',
     appPaths: {
       isPackaged: false,
       resourcesPath: '',
@@ -172,9 +172,9 @@ describe('createPlatformAdapters — text delivery', () => {
       ).resolves.toEqual({ delivered: true })
     }
     expect(runRelay.mock.calls.map((call) => call[0].command)).toEqual([
-      'C:\\Users\\jeron\\.local\\bin\\claude.exe',
-      '/home/jeron/.local/bin/claude',
-      '/home/jeron/.local/bin/claude'
+      'C:\\Users\\j\\.local\\bin\\claude.exe',
+      '/home/j/.local/bin/claude',
+      '/home/j/.local/bin/claude'
     ])
   })
 })
@@ -193,23 +193,23 @@ describe('createAutostartPort', () => {
 
     await createAutostartPort({
       platform: 'win32',
-      home: 'C:\\Users\\jeron',
+      home: 'C:\\Users\\j',
       env: {},
       regRun
     }).enable({ executable: 'C:\\App.exe', args: [] })
-    await createAutostartPort({ platform: 'darwin', home: '/Users/jeron', env: {}, fs }).enable({
+    await createAutostartPort({ platform: 'darwin', home: '/Users/j', env: {}, fs }).enable({
       executable: '/App',
       args: []
     })
-    await createAutostartPort({ platform: 'linux', home: '/home/jeron', env: {}, fs }).enable({
+    await createAutostartPort({ platform: 'linux', home: '/home/j', env: {}, fs }).enable({
       executable: '/App',
       args: []
     })
 
     expect(regRun).toHaveBeenCalledOnce()
     expect(written).toEqual([
-      '/Users/jeron/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist',
-      '/home/jeron/.config/autostart/dwarfai-miners.desktop'
+      '/Users/j/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist',
+      '/home/j/.config/autostart/dwarfai-miners.desktop'
     ])
   })
 })

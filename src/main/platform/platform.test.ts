@@ -36,17 +36,17 @@ describe('isCaseInsensitiveFs', () => {
 
 describe('normalizePathKey', () => {
   it('folds separators and case on Windows', () => {
-    expect(normalizePathKey('C:/Users/Jeron/Proj', 'win32')).toBe('c:\\users\\jeron\\proj')
-    expect(normalizePathKey('C:\\Users\\Jeron\\Proj', 'win32')).toBe('c:\\users\\jeron\\proj')
+    expect(normalizePathKey('C:/Users/J/Proj', 'win32')).toBe('c:\\users\\j\\proj')
+    expect(normalizePathKey('C:\\Users\\J\\Proj', 'win32')).toBe('c:\\users\\j\\proj')
   })
 
   it('folds only case on macOS, leaving POSIX separators alone', () => {
-    expect(normalizePathKey('/Users/Jeron/Proj', 'darwin')).toBe('/users/jeron/proj')
+    expect(normalizePathKey('/Users/J/Proj', 'darwin')).toBe('/users/j/proj')
   })
 
   it('changes nothing on Linux', () => {
-    expect(normalizePathKey('/home/jeron/Proj', 'linux')).toBe('/home/jeron/Proj')
-    expect(normalizePathKey('/home/jeron/proj', 'linux')).toBe('/home/jeron/proj')
+    expect(normalizePathKey('/home/j/Proj', 'linux')).toBe('/home/j/Proj')
+    expect(normalizePathKey('/home/j/proj', 'linux')).toBe('/home/j/proj')
   })
 
   it('keeps two Linux paths that differ only in case distinct', () => {

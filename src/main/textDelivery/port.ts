@@ -43,7 +43,7 @@ export interface ConsoleTextRequest {
 }
 
 export interface RelayTextRequest {
-  /** The addressable Claude session name, e.g. 'ai-tools-70'. */
+  /** The addressable Claude session name, e.g. 'sample-project-70'. */
   sessionName: string
   text: string
 }

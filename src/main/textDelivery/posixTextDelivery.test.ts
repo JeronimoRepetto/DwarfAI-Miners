@@ -4,7 +4,7 @@ import { PosixTextDelivery } from './posixTextDelivery'
 function delivery(overrides: Partial<ConstructorParameters<typeof PosixTextDelivery>[0]> = {}) {
   return new PosixTextDelivery({
     platform: 'darwin',
-    home: '/Users/jeron',
+    home: '/Users/j',
     relayModel: 'haiku',
     relayTimeoutMs: 60_000,
     env: { PATH: '/usr/bin' },
@@ -132,22 +132,22 @@ describe('PosixTextDelivery.relayToClaudeSession', () => {
     const port = delivery({ runRelay })
 
     await expect(
-      port.relayToClaudeSession({ sessionName: 'ai-tools-70', text: 'run the tests' })
+      port.relayToClaudeSession({ sessionName: 'sample-project-70', text: 'run the tests' })
     ).resolves.toEqual({ delivered: true })
 
     const invocation = runRelay.mock.calls[0]?.[0]
-    expect(invocation.command).toBe('/Users/jeron/.local/bin/claude')
-    expect(invocation.env.PATH).toBe('/Users/jeron/.local/bin:/usr/bin')
-    expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('ai-tools-70')
+    expect(invocation.command).toBe('/Users/j/.local/bin/claude')
+    expect(invocation.env.PATH).toBe('/Users/j/.local/bin:/usr/bin')
+    expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('sample-project-70')
   })
 
   it('keeps working on Linux, where it is the only tier there is', async () => {
     const runRelay = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
-    const port = delivery({ platform: 'linux', home: '/home/jeron', runRelay })
+    const port = delivery({ platform: 'linux', home: '/home/j', runRelay })
     await expect(port.relayToClaudeSession({ sessionName: 'x', text: 'hi' })).resolves.toEqual({
       delivered: true
     })
-    expect(runRelay.mock.calls[0]?.[0].command).toBe('/home/jeron/.local/bin/claude')
+    expect(runRelay.mock.calls[0]?.[0].command).toBe('/home/j/.local/bin/claude')
   })
 
   it('names the timeout when the relay ran out of time', async () => {

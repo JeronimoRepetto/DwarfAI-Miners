@@ -149,7 +149,7 @@ describe('HookChannel.enable', () => {
   })
 
   it('succeeds when one root works even though another is broken', async () => {
-    const second = 'C:/Users/j/.claude-multitec'
+    const second = 'C:/Users/j/.claude-work'
     const { fs, channel, warnings } = harness({
       roots: [ROOT, second],
       settings: '{ not json'

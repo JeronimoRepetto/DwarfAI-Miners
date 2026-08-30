@@ -3,7 +3,7 @@ import { WindowsTextDelivery } from './windowsTextDelivery'
 
 function delivery(overrides: Partial<ConstructorParameters<typeof WindowsTextDelivery>[0]> = {}) {
   return new WindowsTextDelivery({
-    home: 'C:\\Users\\jeron',
+    home: 'C:\\Users\\j',
     relayModel: 'haiku',
     relayTimeoutMs: 60_000,
     env: { PATH: 'C:\\Windows' },
@@ -82,16 +82,16 @@ describe('WindowsTextDelivery.relayToClaudeSession', () => {
     const port = delivery({ runRelay })
 
     await expect(
-      port.relayToClaudeSession({ sessionName: 'ai-tools-70', text: 'run the tests' })
+      port.relayToClaudeSession({ sessionName: 'sample-project-70', text: 'run the tests' })
     ).resolves.toEqual({ delivered: true })
 
     const invocation = runRelay.mock.calls[0]?.[0]
-    expect(invocation.command).toBe('C:\\Users\\jeron\\.local\\bin\\claude.exe')
+    expect(invocation.command).toBe('C:\\Users\\j\\.local\\bin\\claude.exe')
     expect(invocation.args[invocation.args.indexOf('--model') + 1]).toBe('haiku')
-    expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('ai-tools-70')
+    expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('sample-project-70')
     expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('run the tests')
     expect(invocation.timeoutMs).toBe(60_000)
-    expect(invocation.env.PATH).toBe('C:\\Users\\jeron\\.local\\bin;C:\\Windows')
+    expect(invocation.env.PATH).toBe('C:\\Users\\j\\.local\\bin;C:\\Windows')
   })
 
   it('treats a non-zero exit as an undelivered message', async () => {

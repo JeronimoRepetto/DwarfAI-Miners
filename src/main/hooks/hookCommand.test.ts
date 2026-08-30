@@ -88,7 +88,7 @@ describe('isOurHookCommand', () => {
   it.each([
     ['a foreign hook', 'rtk hook claude'],
     ['another tool that also relays hooks', 'agentpet.exe hook --agent claude'],
-    ['a user script', 'node C:/Users/jeron/.claude/hooks/codegraph-session-start.js'],
+    ['a user script', 'node C:/Users/j/.claude/hooks/user-script.js'],
     ['a similar-looking name', 'dwarfai-miners --version'],
     ['an empty command', '']
   ])('leaves %s alone', (_label, command) => {

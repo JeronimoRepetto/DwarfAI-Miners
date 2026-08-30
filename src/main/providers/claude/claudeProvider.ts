@@ -46,7 +46,7 @@ type ProcStartVerdict = 'match' | 'mismatch' | 'unknown'
 export interface ClaudeProviderOptions {
   fs: FsLike
   /**
-   * Claude config roots to scan (e.g. ~/.claude and ~/.claude-multitec —
+   * Claude config roots to scan (e.g. ~/.claude and ~/.claude-work —
    * multiple accounts keep separate sessions/ dirs). Missing roots are skipped.
    */
   roots: string[]

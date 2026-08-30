@@ -1,7 +1,7 @@
 {
   "pid": 32896,
   "sessionId": "5efdffdd-53df-4509-b30d-c9e56552a22e",
-  "cwd": "C:\\Users\\jeron\\Desktop\\AI-Tools",
+  "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
   "startedAt": 1788001972417,
   "procStart": "134324755721362761",
   "version": "2.1.251",
@@ -11,7 +11,7 @@
   "entrypoint": "cli",
   "pidDomain": "win32:placeholder-host",
   "messagingSocketPath": "\\\\.\\pipe\\LOCAL\\cc-msg-0000000000000000",
-  "name": "ai-tools-70",
+  "name": "sample-project-70",
   "nameSource": "derived",
   "nameSince": 1788001972417,
   "status": "busy",

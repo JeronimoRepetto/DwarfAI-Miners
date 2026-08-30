@@ -19,8 +19,8 @@ describe('autostartMenuLabel', () => {
 
 describe('launchAgentPlistPath', () => {
   it('lands in the per-user LaunchAgents directory under the bundle id', () => {
-    expect(launchAgentPlistPath('/Users/jeron')).toBe(
-      '/Users/jeron/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist'
+    expect(launchAgentPlistPath('/Users/j')).toBe(
+      '/Users/j/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist'
     )
     expect(AUTOSTART_LABEL).toBe('com.jeronimorepetto.dwarfaiminers')
   })
@@ -77,20 +77,18 @@ describe('buildLaunchAgentPlist', () => {
 
 describe('xdgAutostartPath', () => {
   it('defaults to ~/.config/autostart', () => {
-    expect(xdgAutostartPath('/home/jeron', {})).toBe(
-      '/home/jeron/.config/autostart/dwarfai-miners.desktop'
-    )
+    expect(xdgAutostartPath('/home/j', {})).toBe('/home/j/.config/autostart/dwarfai-miners.desktop')
   })
 
   it('honours XDG_CONFIG_HOME when the user set one', () => {
-    expect(xdgAutostartPath('/home/jeron', { XDG_CONFIG_HOME: '/home/jeron/cfg' })).toBe(
-      '/home/jeron/cfg/autostart/dwarfai-miners.desktop'
+    expect(xdgAutostartPath('/home/j', { XDG_CONFIG_HOME: '/home/j/cfg' })).toBe(
+      '/home/j/cfg/autostart/dwarfai-miners.desktop'
     )
   })
 
   it('ignores a relative XDG_CONFIG_HOME, which the spec says is invalid', () => {
-    expect(xdgAutostartPath('/home/jeron', { XDG_CONFIG_HOME: 'cfg' })).toBe(
-      '/home/jeron/.config/autostart/dwarfai-miners.desktop'
+    expect(xdgAutostartPath('/home/j', { XDG_CONFIG_HOME: 'cfg' })).toBe(
+      '/home/j/.config/autostart/dwarfai-miners.desktop'
     )
   })
 })
@@ -115,9 +113,9 @@ describe('buildDesktopEntry', () => {
   it('quotes an argument containing spaces, as the Desktop Entry spec requires', () => {
     const entry = buildDesktopEntry({
       executable: '/opt/My Apps/dwarfai-miners',
-      args: ['/home/jeron/agent name']
+      args: ['/home/j/agent name']
     })
-    expect(entry).toContain('Exec="/opt/My Apps/dwarfai-miners" "/home/jeron/agent name"')
+    expect(entry).toContain('Exec="/opt/My Apps/dwarfai-miners" "/home/j/agent name"')
   })
 
   it('escapes the characters the spec reserves inside a quoted argument', () => {

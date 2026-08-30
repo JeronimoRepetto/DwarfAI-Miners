@@ -13,7 +13,7 @@ describe('defaultConfig', () => {
       dwarfLeaveGraceS: 20,
       tierCacheTtlS: 600,
       tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
-      claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
+      claudeConfigDirs: ['~/.claude'],
       codexSessionsRoot: '~/.codex/sessions',
       codexStateDb: '~/.codex/state_5.sqlite',
       codexLogsDb: '~/.codex/logs_2.sqlite',

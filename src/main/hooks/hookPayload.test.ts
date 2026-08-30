@@ -8,8 +8,8 @@ import { CLAUDE_HOOK_EVENTS, parseClaudeHookPayload } from './hookPayload'
  */
 const sessionStart = JSON.stringify({
   session_id: '0198f2f0-9c1a-7b3e-8d21-6f4c2a1b9e77',
-  transcript_path: 'C:\\Users\\jeron\\.claude\\projects\\C--repo\\0198f2f0.jsonl',
-  cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name',
+  transcript_path: 'C:\\Users\\j\\.claude\\projects\\C--repo\\0198f2f0.jsonl',
+  cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
   permission_mode: 'default',
   hook_event_name: 'SessionStart',
   source: 'startup'
@@ -29,7 +29,7 @@ describe('parseClaudeHookPayload', () => {
       provider: 'claude',
       event: 'SessionStart',
       sessionId: '0198f2f0-9c1a-7b3e-8d21-6f4c2a1b9e77',
-      cwd: 'C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name'
+      cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name'
     })
   })
 

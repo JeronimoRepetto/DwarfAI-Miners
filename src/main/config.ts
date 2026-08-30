@@ -37,8 +37,10 @@ export interface AppConfig {
   /** Source-file counts at which a mine upgrades to the next tier. */
   tierThresholds: TierThresholds
   /**
-   * Claude config roots to scan (semicolon-separated in the env var). This PC
-   * runs two accounts with separate dirs; roots that do not exist are skipped.
+   * Claude config roots to scan. Defaults to the single standard root; set
+   * CLAUDE_CONFIG_DIRS (semicolon-separated) to scan more, which is what a
+   * machine running several Claude accounts with separate dirs needs. Roots
+   * that do not exist are skipped.
    */
   claudeConfigDirs: string[]
   /** The Codex sessions root. A leading ~ is expanded against the real home dir. */
@@ -77,7 +79,7 @@ export function defaultConfig(): AppConfig {
     dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
     tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
-    claudeConfigDirs: ['~/.claude', '~/.claude-multitec'],
+    claudeConfigDirs: ['~/.claude'],
     codexSessionsRoot: '~/.codex/sessions',
     codexStateDb: '~/.codex/state_5.sqlite',
     codexLogsDb: '~/.codex/logs_2.sqlite',

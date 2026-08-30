@@ -14,12 +14,12 @@ function datePath(date: Date): string {
 }
 
 describe('expandHomePath', () => {
-  const home = 'C:\\Users\\jeron'
+  const home = 'C:\\Users\\j'
 
   it.each([
     ['~', home],
-    ['~/.claude', 'C:\\Users\\jeron\\.claude'],
-    ['~\\.claude-multitec', 'C:\\Users\\jeron\\.claude-multitec'],
+    ['~/.claude', 'C:\\Users\\j\\.claude'],
+    ['~\\.claude-work', 'C:\\Users\\j\\.claude-work'],
     ['C:\\custom\\claude', 'C:\\custom\\claude']
   ])('expands %s', (input, expected) => {
     expect(expandHomePath(input, home)).toBe(expected)
@@ -393,14 +393,14 @@ describe('AgentRuntime.sendDwarfText', () => {
 
   it('relays the message to a headless session by name', async () => {
     const { runtime, port } = await runtimeWith({
-      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
     })
 
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'status?', pressEnter: true })
     ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: 'status?'
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
@@ -409,14 +409,14 @@ describe('AgentRuntime.sendDwarfText', () => {
   it("routes a worker's message to its foreman under an explicit prefix", async () => {
     const { runtime, port } = await runtimeWith({
       [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
-      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
     })
 
     await expect(
       runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'stop digging', pressEnter: true })
     ).resolves.toEqual({ delivered: true, via: 'foreman-relay' })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: '[for agent Explorer] stop digging'
     })
   })
@@ -496,7 +496,7 @@ describe('AgentRuntime.sendDwarfText', () => {
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -511,14 +511,14 @@ describe('AgentRuntime.sendDwarfText', () => {
       pressEnter: true
     })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: 'run the tests'
     })
   })
 
   it('never touches the relay while the console delivery succeeds', async () => {
     const { runtime, port } = await runtimeWith({
-      [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' }
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' }
     })
 
     await expect(
@@ -540,7 +540,7 @@ describe('AgentRuntime.sendDwarfText', () => {
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -582,7 +582,7 @@ describe('AgentRuntime.sendDwarfText', () => {
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -730,7 +730,7 @@ describe('AgentRuntime.sendDwarfText', () => {
     // enabled — advertised and delivered as the relay, not disabled (issue #24).
     const port = { ...fakePort(), supportsConsoleInput: false }
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -739,7 +739,7 @@ describe('AgentRuntime.sendDwarfText', () => {
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
     ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: 'hi'
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
@@ -750,7 +750,7 @@ describe('AgentRuntime.sendDwarfText', () => {
     // the tier that survives on every platform.
     const port = { ...fakePort(), supportsConsoleInput: false }
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' } },
       port
     )
 
@@ -841,7 +841,7 @@ describe('AgentRuntime.kickDwarf', () => {
 
   it('relays the exact fixed cancel instruction to a headless session by name', async () => {
     const { runtime, port } = await runtimeWith({
-      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
     })
 
     await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
@@ -849,7 +849,7 @@ describe('AgentRuntime.kickDwarf', () => {
       via: 'claude-relay'
     })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
     })
     expect(port.sendInterrupt).not.toHaveBeenCalled()
@@ -858,7 +858,7 @@ describe('AgentRuntime.kickDwarf', () => {
   it("routes a worker's kick to its foreman under the exact '[cancel agent X]' prefix", async () => {
     const { runtime, port } = await runtimeWith({
       [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
-      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
     })
 
     await expect(runtime.kickDwarf({ dwarfId: WORKER_ID })).resolves.toEqual({
@@ -866,7 +866,7 @@ describe('AgentRuntime.kickDwarf', () => {
       via: 'foreman-relay'
     })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: '[cancel agent Explorer] Stop that agent now. Interrupt its work, leave things in a safe state, and wait for further instructions.'
     })
   })
@@ -974,7 +974,7 @@ describe('AgentRuntime.kickDwarf', () => {
         .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -986,7 +986,7 @@ describe('AgentRuntime.kickDwarf', () => {
     // The fallback carries the exact instruction the relay tier already uses —
     // a kick has no user text, only this fixed message.
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
     })
   })
@@ -1000,7 +1000,7 @@ describe('AgentRuntime.kickDwarf', () => {
     const { runtime } = await runtimeWith(
       {
         [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
-        [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' }
+        [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' }
       },
       port
     )
@@ -1010,7 +1010,7 @@ describe('AgentRuntime.kickDwarf', () => {
       via: 'claude-relay'
     })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: '[cancel agent Explorer] Stop that agent now. Interrupt its work, leave things in a safe state, and wait for further instructions.'
     })
   })
@@ -1026,7 +1026,7 @@ describe('AgentRuntime.kickDwarf', () => {
         .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -1060,7 +1060,7 @@ describe('AgentRuntime.kickDwarf', () => {
     // with no console input keeps a working Kick through its relay address.
     const port = { ...fakePort(), supportsConsoleInput: false }
     const { runtime } = await runtimeWith(
-      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
     )
 
@@ -1069,7 +1069,7 @@ describe('AgentRuntime.kickDwarf', () => {
       via: 'claude-relay'
     })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'ai-tools-70',
+      sessionName: 'sample-project-70',
       text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
     })
     expect(port.sendInterrupt).not.toHaveBeenCalled()
@@ -1107,7 +1107,7 @@ describe('AgentRuntime provider wiring', () => {
   })
 
   it('builds the real CodexProvider from config.codexSessionsRoot (expanded) and config.codexScanDays', async () => {
-    const home = 'C:\\Users\\jeron'
+    const home = 'C:\\Users\\j'
     const fake = new FakeFs()
     // 5 days back: only visible if codexScanDays (default 7) actually reaches
     // that day directory, proving both codexSessionsRoot and codexScanDays
@@ -1118,7 +1118,7 @@ describe('AgentRuntime provider wiring', () => {
       `${home}\\.codex\\sessions\\${datePath(fiveDaysAgo)}\\rollout-wiring-check.jsonl`,
       JSON.stringify({
         type: 'session_meta',
-        payload: { id: 'wiring-session', cwd: 'C:\\Users\\jeron\\Desktop\\Wiring-Project' }
+        payload: { id: 'wiring-session', cwd: 'C:\\Users\\j\\Desktop\\Wiring-Project' }
       }) + '\n',
       Date.now() - 5_000
     )
@@ -1132,7 +1132,7 @@ describe('AgentRuntime provider wiring', () => {
     await runtime.refresh()
 
     expect(runtime.getMines().map((mine) => mine.path)).toContain(
-      'C:\\Users\\jeron\\Desktop\\Wiring-Project'
+      'C:\\Users\\j\\Desktop\\Wiring-Project'
     )
   })
 })

@@ -14,7 +14,7 @@ describe('resolveResourcePath', () => {
   })
 
   it('resolves under the project resources/ dir in dev', () => {
-    const appPath = join('home', 'jeron', 'agent-name')
+    const appPath = join('home', 'j', 'agent-name')
     const result = resolveResourcePath('tray-icon.png', {
       isPackaged: false,
       resourcesPath: '',
@@ -24,7 +24,7 @@ describe('resolveResourcePath', () => {
   })
 
   it('ignores resourcesPath entirely when not packaged', () => {
-    const appPath = join('home', 'jeron', 'agent-name')
+    const appPath = join('home', 'j', 'agent-name')
     const result = resolveResourcePath('app-icon.png', {
       isPackaged: false,
       resourcesPath: join('some', 'unrelated', 'path'),

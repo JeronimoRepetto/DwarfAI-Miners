@@ -305,27 +305,27 @@ Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast a
 <details>
 <summary><strong>All environment variables</strong> (defaults work out of the box)</summary>
 
-| Variable                   | Default                        | Meaning                                                                             |
-| -------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| `POLL_INTERVAL_MS`         | `2000`                         | Provider scan interval in milliseconds.                                             |
-| `LIVENESS_WINDOW_S`        | `90`                           | Reserved general activity window.                                                   |
-| `CODEX_LIVENESS_WINDOW_S`  | `300`                          | Maximum rollout mtime age considered live.                                          |
-| `CODEX_HEARTBEAT_WINDOW_S` | `300`                          | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.          |
-| `CODEX_SCAN_DAYS`          | `7`                            | How many day-directories (today back N-1 days) to scan for rollouts.                |
-| `CODEX_IDLE_RETENTION_S`   | `3600`                         | Extra time a quiet-but-open rollout stays visible while a codex process is running. |
-| `CODEX_SESSIONS_ROOT`      | `~/.codex/sessions`            | The Codex rollout directory to scan. A leading `~` is expanded.                     |
-| `CODEX_STATE_DB`           | `~/.codex/state_5.sqlite`      | Codex's thread registry, opened read-only. Missing file: rollout-only detection.    |
-| `CODEX_LOGS_DB`            | `~/.codex/logs_2.sqlite`       | Codex's structured log stream, used read-only as a liveness heartbeat.              |
-| `DWARF_LEAVE_GRACE_S`      | `20`                           | How long a dwarf whose agent finished/disappeared stays visible as "leaving".       |
-| `TIER_CACHE_TTL_S`         | `600`                          | Mine-tier cache lifetime.                                                           |
-| `TIER_COPPER_AT`           | `25`                           | Source-file threshold for copper.                                                   |
-| `TIER_SILVER_AT`           | `100`                          | Source-file threshold for silver.                                                   |
-| `TIER_GOLD_AT`             | `400`                          | Source-file threshold for gold.                                                     |
-| `TIER_URANIUM_AT`          | `1500`                         | Source-file threshold for uranium.                                                  |
-| `CLAUDE_CONFIG_DIRS`       | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.                                                   |
-| `SENDTEXT_RELAY_MODEL`     | `haiku`                        | Model the one-shot `claude -p` relay runs when delivering a message to a session.   |
-| `SENDTEXT_TIMEOUT_S`       | `60`                           | How long a message delivery may take before it is reported as timed out.            |
-| `HOOKS_PORT`               | `47821`                        | Loopback port for instant updates (see above). Nothing binds it until you opt in.   |
+| Variable                   | Default                   | Meaning                                                                                               |
+| -------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `POLL_INTERVAL_MS`         | `2000`                    | Provider scan interval in milliseconds.                                                               |
+| `LIVENESS_WINDOW_S`        | `90`                      | Reserved general activity window.                                                                     |
+| `CODEX_LIVENESS_WINDOW_S`  | `300`                     | Maximum rollout mtime age considered live.                                                            |
+| `CODEX_HEARTBEAT_WINDOW_S` | `300`                     | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                            |
+| `CODEX_SCAN_DAYS`          | `7`                       | How many day-directories (today back N-1 days) to scan for rollouts.                                  |
+| `CODEX_IDLE_RETENTION_S`   | `3600`                    | Extra time a quiet-but-open rollout stays visible while a codex process is running.                   |
+| `CODEX_SESSIONS_ROOT`      | `~/.codex/sessions`       | The Codex rollout directory to scan. A leading `~` is expanded.                                       |
+| `CODEX_STATE_DB`           | `~/.codex/state_5.sqlite` | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                      |
+| `CODEX_LOGS_DB`            | `~/.codex/logs_2.sqlite`  | Codex's structured log stream, used read-only as a liveness heartbeat.                                |
+| `DWARF_LEAVE_GRACE_S`      | `20`                      | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                         |
+| `TIER_CACHE_TTL_S`         | `600`                     | Mine-tier cache lifetime.                                                                             |
+| `TIER_COPPER_AT`           | `25`                      | Source-file threshold for copper.                                                                     |
+| `TIER_SILVER_AT`           | `100`                     | Source-file threshold for silver.                                                                     |
+| `TIER_GOLD_AT`             | `400`                     | Source-file threshold for gold.                                                                       |
+| `TIER_URANIUM_AT`          | `1500`                    | Source-file threshold for uranium.                                                                    |
+| `CLAUDE_CONFIG_DIRS`       | `~/.claude`               | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`. |
+| `SENDTEXT_RELAY_MODEL`     | `haiku`                   | Model the one-shot `claude -p` relay runs when delivering a message to a session.                     |
+| `SENDTEXT_TIMEOUT_S`       | `60`                      | How long a message delivery may take before it is reported as timed out.                              |
+| `HOOKS_PORT`               | `47821`                   | Loopback port for instant updates (see above). Nothing binds it until you opt in.                     |
 
 Tier thresholds must be strictly increasing.
 

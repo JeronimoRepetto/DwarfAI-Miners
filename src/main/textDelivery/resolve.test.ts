@@ -27,11 +27,11 @@ describe('resolveTextDelivery', () => {
   it('resolves a headless session to its relay endpoint with no prefix', () => {
     const resolved = resolveTextDelivery(
       'claude:s1',
-      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' } })
+      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' } })
     )
     expect(resolved).toEqual({
       channel: 'claude-relay',
-      endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
       prefix: ''
     })
   })
@@ -42,11 +42,11 @@ describe('resolveTextDelivery', () => {
     // fallback for every send.
     const resolved = resolveTextDelivery(
       'claude:s1',
-      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } })
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } })
     )
     expect(resolved).toEqual({
       channel: 'terminal',
-      endpoint: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' },
+      endpoint: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' },
       prefix: ''
     })
   })
@@ -60,12 +60,12 @@ describe('resolveTextDelivery', () => {
           foremanDwarfId: 'claude:s1',
           workerName: 'Explorer'
         },
-        'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+        'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' }
       })
     )
     expect(resolved).toEqual({
       channel: 'foreman-relay',
-      endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
       prefix: '[for agent Explorer] '
     })
   })
@@ -135,11 +135,11 @@ describe('resolveKickDelivery', () => {
   it('resolves a headless session to its relay endpoint with no prefix', () => {
     const resolved = resolveKickDelivery(
       'claude:s1',
-      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' } })
+      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' } })
     )
     expect(resolved).toEqual({
       channel: 'claude-relay',
-      endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
       prefix: ''
     })
   })
@@ -153,12 +153,12 @@ describe('resolveKickDelivery', () => {
           foremanDwarfId: 'claude:s1',
           workerName: 'Explorer'
         },
-        'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' }
+        'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' }
       })
     )
     expect(resolved).toEqual({
       channel: 'foreman-relay',
-      endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
       prefix: '[cancel agent Explorer] '
     })
   })
@@ -175,12 +175,12 @@ describe('resolveKickDelivery', () => {
           foremanDwarfId: 'claude:s1',
           workerName: 'Explorer'
         },
-        'claude:s1': { kind: 'terminal', pid: 7, sessionName: 'ai-tools-70' }
+        'claude:s1': { kind: 'terminal', pid: 7, sessionName: 'sample-project-70' }
       })
     )
     expect(resolved).toEqual({
       channel: 'foreman-relay',
-      endpoint: { kind: 'terminal', pid: 7, sessionName: 'ai-tools-70' },
+      endpoint: { kind: 'terminal', pid: 7, sessionName: 'sample-project-70' },
       prefix: '[cancel agent Explorer] '
     })
   })
@@ -300,7 +300,7 @@ describe('stampTextDelivery', () => {
   it('always reports adjustEffort as null: no provider exposes a channel for it yet', () => {
     const [stamped] = stampTextDelivery(
       [mine([dwarf()])],
-      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'ai-tools-70' } })
+      targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' } })
     )
     expect(stamped?.dwarfs[0]?.capabilities?.adjustEffort).toBeNull()
   })

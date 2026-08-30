@@ -13,7 +13,7 @@ import {
 
 const COMMAND = `curl.exe -s -d@- http://127.0.0.1:47821/${HOOK_MARKER}`
 const ROOT = 'C:/Users/j/.claude'
-const SECOND_ROOT = 'C:/Users/j/.claude-multitec'
+const SECOND_ROOT = 'C:/Users/j/.claude-work'
 const SETTINGS = `${ROOT}/${SETTINGS_FILE}`
 const BACKUP = `${SETTINGS}${BACKUP_SUFFIX}`
 

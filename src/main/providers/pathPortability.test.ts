@@ -34,7 +34,7 @@ function claudeSessionEntry(cwd: string): string {
     cwd,
     status: 'busy',
     kind: 'interactive',
-    name: 'ai-tools-70'
+    name: 'sample-project-70'
   })
 }
 
@@ -59,15 +59,15 @@ function claudeFixture(root: string, cwd: string, encoded: string, sep: string) 
 
 describe('ClaudeProvider path building', () => {
   const windows = claudeFixture(
-    'C:\\Users\\jeron\\.claude',
-    'C:\\Users\\jeron\\Desktop\\AI-Tools',
-    'C--Users-jeron-Desktop-AI-Tools',
+    'C:\\Users\\j\\.claude',
+    'C:\\Users\\j\\Desktop\\Sample-Project',
+    'C--Users-j-Desktop-Sample-Project',
     '\\'
   )
   const posix = claudeFixture(
-    '/home/jeron/.claude',
-    '/home/jeron/projects/ai-tools',
-    '-home-jeron-projects-ai-tools',
+    '/home/j/.claude',
+    '/home/j/projects/sample-project',
+    '-home-j-projects-sample-project',
     '/'
   )
 
@@ -83,12 +83,7 @@ describe('ClaudeProvider path building', () => {
   it('reaches the session transcript under a POSIX root', async () => {
     await posix.scan()
     expect(posix.transcriptPath(`claude:${SESSION_ID}`)).toBe(
-      join(
-        '/home/jeron/.claude',
-        'projects',
-        '-home-jeron-projects-ai-tools',
-        `${SESSION_ID}.jsonl`
-      )
+      join('/home/j/.claude', 'projects', '-home-j-projects-sample-project', `${SESSION_ID}.jsonl`)
     )
     expect(await posix.feed(`claude:${SESSION_ID}`, 5)).not.toEqual([])
   })
@@ -98,9 +93,9 @@ describe('ClaudeProvider path building', () => {
     const workerId = `claude:${SESSION_ID}:${AGENT_ID}`
     expect(posix.transcriptPath(workerId)).toBe(
       join(
-        '/home/jeron/.claude',
+        '/home/j/.claude',
         'projects',
-        '-home-jeron-projects-ai-tools',
+        '-home-j-projects-sample-project',
         SESSION_ID,
         'subagents',
         `agent-${AGENT_ID}.jsonl`
@@ -134,22 +129,22 @@ function codexFixture(root: string, sep: string): CodexProvider {
 
 describe('CodexProvider path building', () => {
   it('walks the YYYY/MM/DD day directories under a POSIX sessions root', async () => {
-    const posix = codexFixture('/home/jeron/.codex/sessions', '/')
+    const posix = codexFixture('/home/j/.codex/sessions', '/')
     const snapshots = await posix.scan()
     expect(snapshots.map((snapshot) => snapshot.sessionId)).toEqual([CODEX_SESSION_ID])
   })
 
   it('discovers the same session from a Windows sessions root', async () => {
-    const windows = codexFixture('C:\\Users\\jeron\\.codex\\sessions', '\\')
+    const windows = codexFixture('C:\\Users\\j\\.codex\\sessions', '\\')
     const snapshots = await windows.scan()
     expect(snapshots.map((snapshot) => snapshot.sessionId)).toEqual([CODEX_SESSION_ID])
   })
 
   it('resolves a rollout it discovered by walking, under a POSIX root', async () => {
-    const posix = codexFixture('/home/jeron/.codex/sessions', '/')
+    const posix = codexFixture('/home/j/.codex/sessions', '/')
     await posix.scan()
     expect(posix.transcriptPath(`codex:${CODEX_SESSION_ID}`)).toBe(
-      join('/home/jeron/.codex/sessions', '2026', '08', '28', 'rollout-2026-08-28T14-10-45.jsonl')
+      join('/home/j/.codex/sessions', '2026', '08', '28', 'rollout-2026-08-28T14-10-45.jsonl')
     )
   })
 })

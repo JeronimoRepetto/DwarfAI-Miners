@@ -23,11 +23,11 @@ function fakeFs(): AutostartFsLike & { files: Map<string, string> } {
 }
 
 describe('createMacAutostart', () => {
-  const PLIST = '/Users/jeron/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist'
+  const PLIST = '/Users/j/Library/LaunchAgents/com.jeronimorepetto.dwarfaiminers.plist'
 
   it('writes the LaunchAgent plist on enable', async () => {
     const fs = fakeFs()
-    const autostart = createMacAutostart({ home: '/Users/jeron', fs })
+    const autostart = createMacAutostart({ home: '/Users/j', fs })
     await autostart.enable({
       executable: '/Applications/DwarfAI-Miners.app/Contents/MacOS/DwarfAI-Miners',
       args: []
@@ -40,7 +40,7 @@ describe('createMacAutostart', () => {
 
   it('reports enabled exactly when the plist is present', async () => {
     const fs = fakeFs()
-    const autostart = createMacAutostart({ home: '/Users/jeron', fs })
+    const autostart = createMacAutostart({ home: '/Users/j', fs })
     expect(await autostart.isEnabled()).toBe(false)
     await autostart.enable(PACKAGED)
     expect(await autostart.isEnabled()).toBe(true)
@@ -53,7 +53,7 @@ describe('createMacAutostart', () => {
     // swallowing the error here would make a transient failure permanent.
     const fs = fakeFs()
     fs.writeFile = () => Promise.reject(new Error('read-only volume'))
-    const autostart = createMacAutostart({ home: '/Users/jeron', fs })
+    const autostart = createMacAutostart({ home: '/Users/j', fs })
     await expect(autostart.enable(PACKAGED)).rejects.toThrow('read-only volume')
   })
 
@@ -62,18 +62,18 @@ describe('createMacAutostart', () => {
     // registry: no macOS build shipped before it.
     const warn = vi.fn()
     const fs = fakeFs()
-    await createMacAutostart({ home: '/Users/jeron', fs }).migrateLegacy(warn)
+    await createMacAutostart({ home: '/Users/j', fs }).migrateLegacy(warn)
     expect(warn).not.toHaveBeenCalled()
     expect(fs.files.size).toBe(0)
   })
 })
 
 describe('createLinuxAutostart', () => {
-  const DESKTOP = '/home/jeron/.config/autostart/dwarfai-miners.desktop'
+  const DESKTOP = '/home/j/.config/autostart/dwarfai-miners.desktop'
 
   it('writes the XDG autostart entry on enable and removes it on disable', async () => {
     const fs = fakeFs()
-    const autostart = createLinuxAutostart({ home: '/home/jeron', env: {}, fs })
+    const autostart = createLinuxAutostart({ home: '/home/j', env: {}, fs })
     await autostart.enable(PACKAGED)
     expect(fs.files.get(DESKTOP)).toContain('Exec=/opt/DwarfAI-Miners/dwarfai-miners')
     expect(await autostart.isEnabled()).toBe(true)
@@ -84,18 +84,18 @@ describe('createLinuxAutostart', () => {
   it('follows XDG_CONFIG_HOME', async () => {
     const fs = fakeFs()
     const autostart = createLinuxAutostart({
-      home: '/home/jeron',
-      env: { XDG_CONFIG_HOME: '/home/jeron/cfg' },
+      home: '/home/j',
+      env: { XDG_CONFIG_HOME: '/home/j/cfg' },
       fs
     })
     await autostart.enable(PACKAGED)
-    expect([...fs.files.keys()]).toEqual(['/home/jeron/cfg/autostart/dwarfai-miners.desktop'])
+    expect([...fs.files.keys()]).toEqual(['/home/j/cfg/autostart/dwarfai-miners.desktop'])
   })
 
   it('treats a missing entry as already disabled', async () => {
     const fs = fakeFs()
     await expect(
-      createLinuxAutostart({ home: '/home/jeron', env: {}, fs }).disable()
+      createLinuxAutostart({ home: '/home/j', env: {}, fs }).disable()
     ).resolves.toBeUndefined()
   })
 })

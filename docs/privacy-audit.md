@@ -65,6 +65,12 @@ Edited files were re-formatted with the repo's Prettier so `format:check` stays 
 
 ## 4. Report-only items (owned by other zones — proposed changes)
 
+Status: 4.1, 4.2 and 4.3 were applied in the follow-up pass described under each
+heading. The one piece still outstanding is the `.env.example` line in 4.1 — that
+file is excluded from tooling by a local permission rule, so the maintainer must
+apply it by hand. **Until it is applied the 4.3 CI guard fails**, because
+`.env.example` still names the personal second root.
+
 ### 4.1 Machine-specific shipped default Claude root (MEDIUM — highest-priority report-only item)
 
 `defaultConfig()` in `src/main/config.ts:80` ships a second, machine-specific Claude
@@ -86,6 +92,15 @@ maintainer's employer) to every user. Proposed change, in one coherent pass:
 Multi-root support itself is a feature and stays; only the shipped default
 de-personalizes.
 
+**Applied.** `defaultConfig()` now ships `['~/.claude']`; the doc comment on
+`AppConfig.claudeConfigDirs` explains multi-root support generically instead of
+describing one machine. `config.test.ts`, the README table row, the
+`claudeProvider.ts` comment, and the `docs/privacy.md` sentence moved with it, and
+every test use of the personal second root is now `.claude-work`. **Not applied:**
+the `.env.example` line, which is outside tooling reach; it should read
+`CLAUDE_CONFIG_DIRS=~/.claude` with a comment showing the multi-root form
+`~/.claude;~/.claude-work`.
+
 ### 4.2 Machine username and layout in `src/**` tests and fixtures (LOW)
 
 The machine username appears as the test username in roughly 25 test files and all four
@@ -105,6 +120,18 @@ and fixtures together, because assertions match these strings exactly):
   `node C:/Users/j/.claude/hooks/user-script.js`.
 - Optional, same pass: the Codex fixture's real `timezone` value → `"UTC"`.
 
+**Applied** across 36 files under `src/main/` (tests, fixtures, and the two source
+doc comments that carried an example session name): machine username → `j`, private
+project names → `Sample-Project`, the derived fixture session name →
+`sample-project-70`, and the personal hook-script example in `hookCommand.test.ts` →
+`node C:/Users/j/.claude/hooks/user-script.js`. The hostname placeholder was already
+in place. The Codex fixture `timezone` was already a neutral value, so it was left
+alone. **Not applied:** three house-style comments in
+`src/renderer/src/composables/` (`useMines.ts`, `useView.ts`,
+`useDwarfMessaging.ts`) still say "the sibling AI-Tools Vue tools"; those files were
+being edited concurrently by another work stream and should become "a sibling Vue
+project" in that stream's pass.
+
 ### 4.3 CI privacy guard (recommendation — workflows are outside this audit's write surface)
 
 After 4.1/4.2 land, a one-line recurrence guard in `ci.yml` keeps the machine
@@ -119,6 +146,21 @@ identifiers from returning. Template — substitute the actual local username an
 
 The pattern must not match the intentional public identities listed in §3. If 4.1/4.2
 are not adopted first, this check cannot pass; adopt them first.
+
+**Applied** as the `Privacy guard (no machine-specific identifiers)` step in the
+`checks` job of `.github/workflows/ci.yml`, placed right after checkout so it fails
+before the install. Two deviations from the template above: the `/home/` alternative
+is anchored as `[Hh]ome[/\\-]+` so the backslash form used in the fake-filesystem
+tests is caught too, and the workflow file excludes itself from its own `git grep`,
+since it necessarily spells the patterns it searches for. Verified against every §3
+identity — `jeronimorepetto`, the GitHub and Ko-fi URLs, the
+`com.jeronimorepetto.dwarfaiminers` bundle id, the `LICENSE`/`package.json` name and
+the `docs/signing.md` publisher examples all fail to match, because each pattern
+requires a `Users`/`home` path separator immediately before the username.
+
+Note the tradeoff this step accepts: a guard that greps for the machine identifiers
+must spell them, so `ci.yml` itself becomes the one public file that names them. That
+is inherent to the recurrence-guard approach and was accepted deliberately.
 
 ### 4.4 Optional consideration
 
