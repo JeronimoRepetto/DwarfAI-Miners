@@ -9,6 +9,62 @@ export type { ShortcutPlatform }
 
 export type MineTier = 'bronze' | 'copper' | 'silver' | 'gold' | 'uranium'
 
+/**
+ * A raw material in the vault (see #22).
+ *
+ * The five tier materials are spelled exactly like the tiers that produce
+ * them, because a mine yields the raw material of the tier it is on right now.
+ * 'coal' is the one material no mine tier produces: it is the material of every
+ * token burned BEFORE this app was installed, credited once by the historical
+ * backfill and never accrued from live polling.
+ */
+export type Material = MineTier | 'coal'
+
+/** Every material, poorest first — also the order a breakdown should be shown in. */
+export const MATERIALS: readonly Material[] = [
+  'coal',
+  'bronze',
+  'copper',
+  'silver',
+  'gold',
+  'uranium'
+]
+
+/**
+ * Tokens one visible unit of each material stands for.
+ *
+ * This is an idle-game metaphor, NOT billing: the numbers exist so a richer
+ * mine's output reads as denser ore rather than simply more of it, and one
+ * gold unit is deliberately worth ten bronze ones. Tuning the whole economy
+ * means editing this table and nothing else.
+ *
+ * Calibration: bronze is pinned to the renderer's existing TOKENS_PER_ORE
+ * (10_000, src/renderer/src/lib/economy.ts), which is the single rate the app
+ * shipped with — so a fresh mine, which starts on the bronze tier, reads
+ * exactly as it did before the vault gained materials. Each tier above it is
+ * ~2-2.5x denser. Coal sits BELOW bronze because pre-install history is
+ * typically large and cheap: it should pile up visibly without ever rivalling
+ * a gold seam earned live.
+ */
+export const MATERIAL_TOKENS_PER_UNIT: Record<Material, number> = {
+  coal: 2_500,
+  bronze: 10_000,
+  copper: 25_000,
+  silver: 50_000,
+  gold: 100_000,
+  uranium: 250_000
+}
+
+/**
+ * Tokens accrued per material. Always carries every material (zeros included)
+ * so a consumer can render a breakdown without checking for absent keys.
+ *
+ * The unit is TOKENS, not display units: the raw count is what is cumulative
+ * and persistent, and the conversion to visible units happens at render time
+ * through MATERIAL_TOKENS_PER_UNIT.
+ */
+export type MaterialTotals = Record<Material, number>
+
 export type DwarfProvider = 'claude' | 'codex'
 
 export type DwarfRole = 'foreman' | 'worker'
@@ -104,6 +160,19 @@ export interface Mine {
   dwarfs: Dwarf[]
   /** Sum of every dwarf's tokensObserved currently in this mine — the ore this mine has produced. */
   tokensObserved: number
+  /**
+   * Cumulative tokens this mine has yielded, split by the material in force
+   * when each delta was observed (see #22).
+   *
+   * Unlike tokensObserved — a live gauge recomputed from the dwarfs visible
+   * this instant — these totals are read from the persisted ledger: they
+   * survive a dwarf leaving and an app restart, and a tier upgrade starts a
+   * NEW material bucket rather than reinterpreting the old ones.
+   *
+   * Optional only so that renderer code written before the vault UI landed
+   * still compiles; the main process always stamps it onto the wire.
+   */
+  materials?: MaterialTotals
   updatedAt: number
 }
 
@@ -188,6 +257,19 @@ export interface MinesSnapshot {
   mines: Mine[]
   /** Sum of every mine's tokensObserved — the vault total shown in the map-view chip. */
   tokensObserved: number
+  /**
+   * The whole vault, split by material — the global breakdown behind the
+   * map-view chip.
+   *
+   * Deliberately NOT the sum of `mines[].materials`: it is summed over the
+   * ENTIRE persisted ledger, including projects with no dwarf running right
+   * now. That is what makes coal visible, since the historical backfill
+   * credits projects whose sessions all ended long ago and which therefore
+   * appear in no mine today.
+   *
+   * Optional for the same compatibility reason as Mine.materials.
+   */
+  materials?: MaterialTotals
 }
 
 /**

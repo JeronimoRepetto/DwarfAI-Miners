@@ -9,11 +9,14 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
+  MaterialTotals,
   Mine,
   TextDeliveryChannel
 } from '../shared/contracts'
 import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
+import { nullLedgerStore } from './ledger/ledgerStore'
+import { MaterialLedger } from './ledger/materialLedger'
 import { createPlatformAdapters, type PlatformAdapters } from './platform/platformAdapters'
 import { Poller } from './poller'
 import { ClaudeProvider } from './providers/claude/claudeProvider'
@@ -88,7 +91,12 @@ export function expandHomePath(path: string, home: string = homedir()): string {
 
 export interface RuntimeOptions {
   config: AppConfig
-  onMinesUpdated: (mines: Mine[]) => void
+  /**
+   * Publishes one poll's result. `materials` is the WHOLE vault, not the sum
+   * of these mines: it includes projects with no crew right now, which is what
+   * makes backfilled coal visible in the global chip.
+   */
+  onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => void
   home?: string
   fs?: FsLike
   /** Read-only SQLite access for the Codex registry; injected for tests. */
@@ -105,6 +113,12 @@ export interface RuntimeOptions {
   platformAdapters?: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
   now?: () => number
+  /**
+   * The persistent material vault (see #22). Omitted means an in-memory vault
+   * that writes nothing: src/main/index.ts owns the userData path, so the
+   * runtime stays testable and disk-free without one.
+   */
+  ledger?: MaterialLedger
 }
 
 /**
@@ -119,6 +133,7 @@ export class AgentRuntime {
   private readonly textDelivery: TextDeliveryPort
   /** Shared by the lifecycle grace window and the delivery stage timings. */
   private readonly now: () => number
+  private readonly ledger: MaterialLedger
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -167,6 +182,7 @@ export class AgentRuntime {
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
     this.now = options.now ?? Date.now
+    this.ledger = options.ledger ?? new MaterialLedger({ store: nullLedgerStore() })
 
     const tiers = new TierService({
       fs,
@@ -182,14 +198,23 @@ export class AgentRuntime {
       intervalMs: options.config.pollIntervalMs,
       tierOf: (path) => tiers.tierOf(path),
       onUpdate: (mines) => {
+        const now = this.now()
+        // Accrual happens on the lifecycle's output, which is exactly what
+        // gets published: a dwarf held back by the grace window reports the
+        // counter it last had, so it contributes a zero delta rather than a
+        // phantom one, and every published mine carries a stamped breakdown.
+        const withMaterials = this.ledger.observe(lifecycle.apply(mines), now)
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
-        const published = stampTextDelivery(lifecycle.apply(mines), (dwarfId) =>
+        const published = stampTextDelivery(withMaterials, (dwarfId) =>
           this.deliveryTargetOf(dwarfId)
         )
         this.mines = published
-        options.onMinesUpdated(published)
+        options.onMinesUpdated(published, this.ledger.totals())
+        // Throttled inside the ledger, and deliberately not awaited: the panel
+        // must never wait on a disk write to see its dwarfs move.
+        void this.ledger.save(now)
       },
       logError: (message, error) => console.warn(message, error)
     })
@@ -207,6 +232,14 @@ export class AgentRuntime {
   stop(): void {
     this.poller.stop()
     this.textDelivery.dispose?.()
+    // Forced past the save throttle: whatever the last poll accrued would
+    // otherwise be lost, and quitting is exactly when that is most likely.
+    void this.ledger.save(this.now(), true)
+  }
+
+  /** The whole vault by material, including projects with no crew right now. */
+  materialTotals(): MaterialTotals {
+    return this.ledger.totals()
   }
 
   /** Execute a deterministic scan for IPC/tests without starting an interval. */

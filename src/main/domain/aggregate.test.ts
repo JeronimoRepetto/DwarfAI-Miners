@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateMines, sumTokensObserved } from './aggregate'
+import { aggregateMines, mineIdForPath, sumTokensObserved } from './aggregate'
 import {
   defaultDwarf,
   defaultMine,
@@ -192,6 +192,28 @@ describe('aggregateMines', () => {
   it('defaults tokensObserved to 0 for a mine with no dwarfs', () => {
     const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\X' })], tierOf)
     expect(mine!.tokensObserved).toBe(0)
+  })
+})
+
+describe('mineIdForPath', () => {
+  it('produces exactly the id aggregateMines gives the same project', () => {
+    // The coal backfill credits projects it found on disk, with no snapshot to
+    // group. If its ids drifted from these, historical coal would land on a
+    // mine that never appears next to the live one.
+    const [mine] = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\X\\Proj' })],
+      tierOf,
+      'win32'
+    )
+    expect(mineIdForPath('C:\\X\\Proj', 'win32')).toBe(mine!.id)
+  })
+
+  it('folds the spellings of one project onto one id', () => {
+    expect(mineIdForPath('c:/x/proj/', 'win32')).toBe(mineIdForPath('C:\\X\\Proj', 'win32'))
+  })
+
+  it('keeps two Linux projects that differ only in case apart', () => {
+    expect(mineIdForPath('/home/j/Proj', 'linux')).not.toBe(mineIdForPath('/home/j/proj', 'linux'))
   })
 })
 

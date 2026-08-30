@@ -23,7 +23,7 @@ export function aggregateMines(
     if (mine === undefined) {
       const displayPath = trimTrailingSlashes(snapshot.cwd)
       mine = {
-        id: `mine:${key}`,
+        id: mineIdForPath(snapshot.cwd, platform),
         path: displayPath,
         name: lastSegment(displayPath),
         tier: tierOf(displayPath),
@@ -41,6 +41,19 @@ export function aggregateMines(
   // Computed once the full crew is known, after every snapshot has been folded in.
   for (const mine of mines) mine.tokensObserved = sumDwarfTokens(mine.dwarfs)
   return mines.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/**
+ * The mine id for one project path, using the same platform-aware
+ * normalization aggregateMines groups by.
+ *
+ * Exported because the coal backfill has to name mines for projects it found
+ * on disk, with no provider snapshot to group. If the two derivations ever
+ * drifted, historical coal would be credited to a mine id that never appears
+ * beside the live one and would silently vanish from the per-mine view.
+ */
+export function mineIdForPath(path: string, platform: Platform = currentPlatform()): string {
+  return `mine:${normalizeKey(path, platform)}`
 }
 
 function sumDwarfTokens(dwarfs: Dwarf[]): number {

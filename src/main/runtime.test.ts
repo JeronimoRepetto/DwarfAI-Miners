@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FeedMessage } from '../shared/contracts'
 import { FakeFs } from './adapters/fakeFs'
 import { defaultConfig } from './config'
+import { emptyLedger, type LedgerState } from './domain/ledger'
+import { nullLedgerStore } from './ledger/ledgerStore'
+import { MaterialLedger } from './ledger/materialLedger'
 import type { Provider } from './providers/provider'
 import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
 import { AgentRuntime, expandHomePath } from './runtime'
@@ -1514,5 +1517,183 @@ describe('AgentRuntime kick escalation policy', () => {
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
 
     expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentRuntime material vault', () => {
+  /** A provider whose one session's counter reads whatever the caller last set. */
+  function countingProvider(): { provider: Provider; setTokens: (n: number) => void } {
+    let tokens = 0
+    const provider: Provider = {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\work\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: 'claude:session-1',
+              provider: 'claude',
+              role: 'worker',
+              name: 'worker',
+              status: 'working',
+              sessionId: 'session-1',
+              tokensObserved: tokens
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+    return { provider, setTokens: (n) => (tokens = n) }
+  }
+
+  /** A provider reporting an empty mine — the whole crew has gone home. */
+  function emptyProvider(): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\work\project',
+          status: 'idle',
+          updatedAt: 2,
+          dwarfs: []
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function vaultRuntime(providers: Provider[], ledger: MaterialLedger): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers,
+      ledger,
+      onMinesUpdated: vi.fn(),
+      now: () => 1_000
+    })
+  }
+
+  it('stamps every published mine with its persisted material breakdown', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = vaultRuntime([provider], ledger)
+
+    setTokens(1_000)
+    await runtime.refresh()
+    setTokens(4_000)
+    await runtime.refresh()
+
+    // The tier callback has not resolved yet, so the mine is still bronze.
+    expect(runtime.getMines()[0]!.materials?.bronze).toBe(3_000)
+  })
+
+  it('keeps the live tokensObserved gauge working alongside the breakdown', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = vaultRuntime([provider], ledger)
+
+    setTokens(2_500)
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.tokensObserved).toBe(2_500)
+  })
+
+  it('keeps a mine material after its whole crew leaves', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = vaultRuntime([provider], ledger)
+
+    setTokens(1_000)
+    await runtime.refresh()
+    setTokens(6_000)
+    await runtime.refresh()
+
+    const departed = vaultRuntime([emptyProvider()], ledger)
+    await departed.refresh()
+
+    expect(departed.getMines()[0]!.materials?.bronze).toBe(5_000)
+    expect(departed.getMines()[0]!.tokensObserved).toBe(0)
+  })
+
+  it('reports a global total that includes coal no mine produced', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal('mine:archived', 90_000)
+    const { provider, setTokens } = countingProvider()
+    const runtime = vaultRuntime([provider], ledger)
+
+    setTokens(100)
+    await runtime.refresh()
+    setTokens(700)
+    await runtime.refresh()
+
+    expect(runtime.materialTotals().coal).toBe(90_000)
+    expect(runtime.materialTotals().bronze).toBe(600)
+  })
+
+  it('hands the material totals to onMinesUpdated alongside the mines', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal('mine:archived', 500)
+    const onMinesUpdated = vi.fn()
+    const { provider } = countingProvider()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [provider],
+      ledger,
+      onMinesUpdated,
+      now: () => 1_000
+    })
+
+    await runtime.refresh()
+
+    expect(onMinesUpdated.mock.calls[0]![1].coal).toBe(500)
+  })
+
+  it('forces a final write on stop so the last poll is never lost', async () => {
+    const saves: LedgerState[] = []
+    const ledger = new MaterialLedger({
+      store: { load: async () => emptyLedger(), save: async (s) => void saves.push(s) }
+    })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = vaultRuntime([provider], ledger)
+
+    setTokens(1_000)
+    await runtime.refresh()
+    setTokens(9_000)
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+    runtime.stop()
+    // The poll loop never awaits a write, so let the queued ones drain.
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+
+    // Exactly one: the shutdown write must not race the throttled one onto
+    // the same temp path.
+    expect(saves).toHaveLength(1)
+    expect(saves[0]!.mines[mineId]?.bronze).toBe(8_000)
+  })
+
+  it('runs without a ledger wired in, persisting nothing', async () => {
+    // Every existing embedding (and every other test) constructs the runtime
+    // with no vault; that must stay a working, disk-free configuration.
+    const { provider, setTokens } = countingProvider()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [provider],
+      onMinesUpdated: vi.fn()
+    })
+    setTokens(1_000)
+    await expect(runtime.refresh()).resolves.toBeUndefined()
+    expect(runtime.materialTotals().bronze).toBe(0)
   })
 })

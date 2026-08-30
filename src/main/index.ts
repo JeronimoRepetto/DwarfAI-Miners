@@ -1,5 +1,6 @@
 import { config as loadDotenv } from 'dotenv'
 import { app, globalShortcut, ipcMain } from 'electron'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
@@ -7,6 +8,7 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
+  MaterialTotals,
   Mine,
   MinesSnapshot
 } from '../shared/contracts'
@@ -20,6 +22,10 @@ import { loadConfig } from './config'
 import { sumTokensObserved } from './domain/aggregate'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
+import { NodeFs } from './adapters/fsLike'
+import { runCoalBackfill } from './ledger/coalBackfill'
+import { createLedgerStore } from './ledger/ledgerStore'
+import { MaterialLedger } from './ledger/materialLedger'
 import { createPinPreferenceStore } from './pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime'
 import { createShortcutPreferenceStore } from './shortcutPreference'
@@ -85,9 +91,22 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   return { dwarfId: record.dwarfId }
 }
 
-/** Wraps a mines list with its vault total for both getMines() and the push. */
-function toMinesSnapshot(mines: Mine[]): MinesSnapshot {
-  return { mines, tokensObserved: sumTokensObserved(mines) }
+/**
+ * Wraps a mines list with its vault totals for both getMines() and the push.
+ *
+ * The two numbers answer different questions and both travel: tokensObserved
+ * is the LIVE gauge over the crews visible this instant, while `materials` is
+ * the cumulative, persisted vault — which is why it is passed in rather than
+ * derived from `mines`. Summing the mines would silently drop every project
+ * with no dwarf running right now, and that is exactly where backfilled coal
+ * lives.
+ */
+function toMinesSnapshot(mines: Mine[], materials: MaterialTotals | undefined): MinesSnapshot {
+  return {
+    mines,
+    tokensObserved: sumTokensObserved(mines),
+    ...(materials === undefined ? {} : { materials })
+  }
 }
 
 async function init(): Promise<void> {
@@ -132,20 +151,58 @@ async function init(): Promise<void> {
   })
   const storedAccelerator = await shortcutStore.load()
 
+  // The cumulative material vault (see #22), the fourth userData file. Loaded
+  // before the runtime exists so the very first published poll already carries
+  // real totals instead of briefly showing an empty vault.
+  const ledger = new MaterialLedger({
+    store: createLedgerStore({
+      filePath: join(app.getPath('userData'), 'material-ledger-v1.json')
+    }),
+    onError: (message, error) => console.warn(message, error)
+  })
+  await ledger.load()
+
   runtime = new AgentRuntime({
     config,
+    ledger,
     appPaths: {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath()
     },
-    onMinesUpdated: (mines: Mine[]) => {
+    onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => {
       if (!mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines))
+        mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials))
       }
     }
   })
   runtime.start()
+
+  // The historical coal pile, produced once and never again (see #22).
+  //
+  // Deliberately NOT awaited: it reads through transcript trees that can be
+  // very large, and startup must not wait on history. It is internally bounded
+  // and resumable, so a launch that runs out of budget simply continues on the
+  // next one, and its credits reach the panel through the next ordinary poll.
+  void runCoalBackfill({
+    fs: new NodeFs(),
+    markerFs: { readFile, writeFile, rename },
+    markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
+    claudeRoots: config.claudeConfigDirs.map((path) => expandHomePath(path)),
+    codexSessionsRoot: expandHomePath(config.codexSessionsRoot),
+    credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
+    now: Date.now,
+    warn: (message, error) => console.warn(message, error)
+  })
+    .then((result) => {
+      if (!result.ran) return
+      console.log(
+        `[coal] Backfilled ${result.tokensCredited} historical tokens across ` +
+          `${result.projectsCredited} project(s) from ${result.filesRead} file(s); ` +
+          `${result.done ? 'complete' : 'will continue on the next launch'}.`
+      )
+    })
+    .catch((error: unknown) => console.warn('[coal] Historical backfill failed:', error))
 
   // Optional push channel. Nothing binds a port and nothing is written to the
   // user's Claude configuration until they tick the tray item; restore() only
@@ -217,7 +274,9 @@ async function init(): Promise<void> {
     }
     return state
   })
-  ipcMain.handle(IPC_CHANNELS.getMines, () => toMinesSnapshot(runtime?.getMines() ?? []))
+  ipcMain.handle(IPC_CHANNELS.getMines, () =>
+    toMinesSnapshot(runtime?.getMines() ?? [], runtime?.materialTotals())
+  )
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noActivation
     return runtime?.activateDwarf(dwarfId) ?? noActivation
