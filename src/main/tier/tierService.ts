@@ -1,16 +1,32 @@
 import type { FsLike } from '../adapters/fsLike'
 import type { MineTier } from '../domain/types'
 
-/** File counts at which a mine upgrades to the next tier. */
+/** Byte-size thresholds, expressed in KB, at which a mine upgrades to the next tier. */
 export interface TierThresholds {
-  copperAt: number
-  silverAt: number
-  goldAt: number
-  uraniumAt: number
+  copperKb: number
+  silverKb: number
+  goldKb: number
+  uraniumKb: number
 }
 
-/** Directories that never count toward project complexity. */
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'out', '.venv', 'target'])
+/** One kibibyte, in bytes — the unit the env vars and README table are expressed in. */
+const BYTES_PER_KB = 1024
+
+/**
+ * Directories that never count toward project weight. `release` and `build`
+ * were added after measuring a packaged project: `release/` alone held 836 MB
+ * of a 1 536 MB checkout, none of it hand-written source (see #37).
+ */
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'out',
+  '.venv',
+  'target',
+  'release',
+  'build'
+])
 
 /** Extensions considered "source-ish" for the complexity heuristic. */
 const SOURCE_EXTENSIONS = new Set([
@@ -51,11 +67,12 @@ const SOURCE_EXTENSIONS = new Set([
 /** Default cap: stop walking once this many source files have been counted. */
 const DEFAULT_FILE_CAP = 3000
 
-export function tierForCount(count: number, thresholds: TierThresholds): MineTier {
-  if (count >= thresholds.uraniumAt) return 'uranium'
-  if (count >= thresholds.goldAt) return 'gold'
-  if (count >= thresholds.silverAt) return 'silver'
-  if (count >= thresholds.copperAt) return 'copper'
+/** Decides a tier from the total byte weight of a project's source files. */
+export function tierForBytes(totalBytes: number, thresholds: TierThresholds): MineTier {
+  if (totalBytes >= thresholds.uraniumKb * BYTES_PER_KB) return 'uranium'
+  if (totalBytes >= thresholds.goldKb * BYTES_PER_KB) return 'gold'
+  if (totalBytes >= thresholds.silverKb * BYTES_PER_KB) return 'silver'
+  if (totalBytes >= thresholds.copperKb * BYTES_PER_KB) return 'copper'
   return 'bronze'
 }
 
@@ -66,13 +83,17 @@ function isSourceFile(name: string): boolean {
 }
 
 /**
- * Bounded breadth-first walk counting source files under `path`, skipping
- * dependency/build directories and stopping at `cap` files.
+ * Bounded breadth-first walk summing the byte size of source files under
+ * `path`, skipping dependency/build directories and stopping once `cap`
+ * files have been visited. The cap bounds files visited (one `stat` each),
+ * not bytes accumulated — a project can still cross it well before its true
+ * total is reached, same as the old count-based walk.
  */
-export async function countSourceFiles(fs: FsLike, path: string, cap: number): Promise<number> {
-  let count = 0
+export async function sumSourceBytes(fs: FsLike, path: string, cap: number): Promise<number> {
+  let totalBytes = 0
+  let filesSeen = 0
   const queue: string[] = [path]
-  while (queue.length > 0 && count < cap) {
+  while (queue.length > 0 && filesSeen < cap) {
     const dir = queue.shift()!
     for (const entry of await fs.listDir(dir)) {
       if (entry.isDirectory) {
@@ -80,12 +101,14 @@ export async function countSourceFiles(fs: FsLike, path: string, cap: number): P
         continue
       }
       if (isSourceFile(entry.name)) {
-        count++
-        if (count >= cap) return count
+        filesSeen++
+        const stat = await fs.stat(`${dir}\\${entry.name}`)
+        totalBytes += stat?.size ?? 0
+        if (filesSeen >= cap) return totalBytes
       }
     }
   }
-  return count
+  return totalBytes
 }
 
 export interface TierServiceOptions {
@@ -148,7 +171,11 @@ export class TierService {
   }
 
   private async refresh(key: string, path: string): Promise<void> {
-    const count = await countSourceFiles(this.fs, path, this.fileCap)
-    this.cache.set(key, { tier: tierForCount(count, this.thresholds), computedAt: this.now() })
+    const totalBytes = await sumSourceBytes(this.fs, path, this.fileCap)
+    // No migration on upgrade: the vault seals each token delta with the
+    // tier in force when it was observed (#22), so material already mined
+    // keeps its old-tier identity. Recomputing the tier here only decides
+    // which tier newly observed mining from this point forward falls under.
+    this.cache.set(key, { tier: tierForBytes(totalBytes, this.thresholds), computedAt: this.now() })
   }
 }

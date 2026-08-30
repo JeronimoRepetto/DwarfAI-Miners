@@ -34,7 +34,7 @@ export interface AppConfig {
   dwarfLeaveGraceS: number
   /** How long a computed project tier stays cached, in seconds. */
   tierCacheTtlS: number
-  /** Source-file counts at which a mine upgrades to the next tier. */
+  /** Source-byte-weight (KB) thresholds at which a mine upgrades to the next tier. */
   tierThresholds: TierThresholds
   /**
    * Claude config roots to scan. Defaults to the single standard root; set
@@ -78,7 +78,7 @@ export function defaultConfig(): AppConfig {
     codexIdleRetentionS: 3600,
     dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
-    tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
+    tierThresholds: { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 },
     claudeConfigDirs: ['~/.claude'],
     codexSessionsRoot: '~/.codex/sessions',
     codexStateDb: '~/.codex/state_5.sqlite',
@@ -135,19 +135,19 @@ function readTrimmed(env: Env, key: string, fallback: string): string {
 
 function readTierThresholds(env: Env, fallback: TierThresholds): TierThresholds {
   const thresholds: TierThresholds = {
-    copperAt: readPositiveInt(env, 'TIER_COPPER_AT', fallback.copperAt),
-    silverAt: readPositiveInt(env, 'TIER_SILVER_AT', fallback.silverAt),
-    goldAt: readPositiveInt(env, 'TIER_GOLD_AT', fallback.goldAt),
-    uraniumAt: readPositiveInt(env, 'TIER_URANIUM_AT', fallback.uraniumAt)
+    copperKb: readPositiveInt(env, 'TIER_COPPER_KB', fallback.copperKb),
+    silverKb: readPositiveInt(env, 'TIER_SILVER_KB', fallback.silverKb),
+    goldKb: readPositiveInt(env, 'TIER_GOLD_KB', fallback.goldKb),
+    uraniumKb: readPositiveInt(env, 'TIER_URANIUM_KB', fallback.uraniumKb)
   }
   const ordered =
-    thresholds.copperAt < thresholds.silverAt &&
-    thresholds.silverAt < thresholds.goldAt &&
-    thresholds.goldAt < thresholds.uraniumAt
+    thresholds.copperKb < thresholds.silverKb &&
+    thresholds.silverKb < thresholds.goldKb &&
+    thresholds.goldKb < thresholds.uraniumKb
   if (!ordered) {
     throw new Error(
       '[config] tier thresholds must be strictly increasing ' +
-        '(TIER_COPPER_AT < TIER_SILVER_AT < TIER_GOLD_AT < TIER_URANIUM_AT)'
+        '(TIER_COPPER_KB < TIER_SILVER_KB < TIER_GOLD_KB < TIER_URANIUM_KB)'
     )
   }
   return thresholds

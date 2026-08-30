@@ -12,7 +12,7 @@ describe('defaultConfig', () => {
       codexIdleRetentionS: 3600,
       dwarfLeaveGraceS: 20,
       tierCacheTtlS: 600,
-      tierThresholds: { copperAt: 25, silverAt: 100, goldAt: 400, uraniumAt: 1500 },
+      tierThresholds: { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 },
       claudeConfigDirs: ['~/.claude'],
       codexSessionsRoot: '~/.codex/sessions',
       codexStateDb: '~/.codex/state_5.sqlite',
@@ -69,17 +69,17 @@ describe('loadConfig', () => {
   })
 
   it('parses tier thresholds per key', () => {
-    const config = loadConfig({ TIER_COPPER_AT: '10', TIER_URANIUM_AT: '2000' })
+    const config = loadConfig({ TIER_COPPER_KB: '50', TIER_URANIUM_KB: '16384' })
     expect(config.tierThresholds).toEqual({
-      copperAt: 10,
-      silverAt: 100,
-      goldAt: 400,
-      uraniumAt: 2000
+      copperKb: 50,
+      silverKb: 500,
+      goldKb: 2048,
+      uraniumKb: 16384
     })
   })
 
   it('fails fast when tier thresholds are not strictly increasing', () => {
-    expect(() => loadConfig({ TIER_COPPER_AT: '500' })).toThrowError(/threshold/i)
+    expect(() => loadConfig({ TIER_COPPER_KB: '5000' })).toThrowError(/threshold/i)
   })
 
   it('applies defaults per key independently', () => {
