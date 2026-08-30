@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useDwarfKicking } from '../composables/useDwarfKicking'
+import { useDwarfMessaging } from '../composables/useDwarfMessaging'
 import { BUBBLE_TTL_MS } from '../lib/bubbles'
 import { defaultDwarf, defaultMine } from '../testing/factories'
 import MineScene from './MineScene.vue'
@@ -52,5 +54,74 @@ describe('MineScene', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/**
+ * The scene is the one place that already receives a fresh snapshot of every
+ * dwarf on each poll, so it is what feeds reaction detection (issue #21). No
+ * new IPC and no new main-process field: the panel simply watches the stream it
+ * was already rendering.
+ */
+describe('MineScene reaction feed', () => {
+  const WORKING = defaultDwarf({ id: 'claude:s1', status: 'working', lastMessage: 'a' })
+
+  function stubApi(): void {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        kickDwarf: () => Promise.resolve({ delivered: true, via: 'claude-relay' }),
+        sendDwarfText: () => Promise.resolve({ delivered: true, via: 'claude-relay' })
+      }
+    })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    stubApi()
+    useDwarfKicking().clearAll()
+    useDwarfMessaging().clearAll()
+  })
+
+  afterEach(() => {
+    useDwarfKicking().clearAll()
+    useDwarfMessaging().clearAll()
+    vi.useRealTimers()
+  })
+
+  it('promotes a delivered kick when the next poll shows the session stopped', async () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [WORKING] }) } })
+    const { kick, stateFor } = useDwarfKicking()
+
+    await kick('claude:s1')
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+
+    await wrapper.setProps({
+      mine: defaultMine({ dwarfs: [{ ...WORKING, status: 'waiting' }] })
+    })
+    expect(stateFor('claude:s1')?.phase).toBe('reacted')
+  })
+
+  it('promotes a delivered message when the next poll shows new output', async () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [WORKING] }) } })
+    const { send, stateFor } = useDwarfMessaging()
+
+    await send('claude:s1', 'hi', true)
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+
+    await wrapper.setProps({
+      mine: defaultMine({ dwarfs: [{ ...WORKING, lastMessage: 'on it' }] })
+    })
+    expect(stateFor('claude:s1')?.phase).toBe('reacted')
+  })
+
+  it('leaves a delivery alone while nothing about the session changed', async () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [WORKING] }) } })
+    const { kick, stateFor } = useDwarfKicking()
+
+    await kick('claude:s1')
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [{ ...WORKING }] }) })
+
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
   })
 })

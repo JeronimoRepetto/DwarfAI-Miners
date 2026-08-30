@@ -14,6 +14,8 @@
  *   swaps in behind this interface without touching the runtime or the UI.
  */
 
+import type { StageTimings } from './timing'
+
 /**
  * Where one dwarf's text should physically go, as reported by its provider.
  *
@@ -58,6 +60,13 @@ export interface InterruptRequest {
 export interface TextDeliveryOutcome {
   delivered: boolean
   error?: string
+  /**
+   * How long this tier's own stages took, when it measured them (issue #21).
+   * Durations only — there is no way for a payload to travel in here. The
+   * runtime folds these into the one log line it writes per attempt, and adds
+   * the stages only it can see (the total, and the relay call it makes itself).
+   */
+  stages?: StageTimings
 }
 
 export interface TextDeliveryPort {
@@ -82,4 +91,11 @@ export interface TextDeliveryPort {
    * text to escape, only a keystroke to synthesize.
    */
   sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome>
+  /**
+   * Release anything this tier keeps alive between actions — today, the
+   * long-lived console shell (see consoleWorker.ts). Optional because most
+   * implementations hold nothing; the runtime calls it on stop() so a quit
+   * never leaves a stray process behind.
+   */
+  dispose?(): void
 }

@@ -1179,3 +1179,340 @@ describe('AgentRuntime.nudge', () => {
     }
   })
 })
+
+/**
+ * Issue #21: "it feels slow" was previously unfalsifiable — the log carried a
+ * verdict and nothing else. Each attempt now reports where its time went, with
+ * exactly the same privacy rule as before: channels, stages, durations and
+ * verdicts, never the message.
+ */
+describe('AgentRuntime delivery instrumentation', () => {
+  const FOREMAN_ID = 'claude:session-1'
+
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: FOREMAN_ID,
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1',
+            pid: 42
+          }
+        ]
+      }
+    ])
+  }
+
+  /** A runtime whose clock only moves when the delivery port says it did. */
+  async function instrumentedRuntime(
+    target: TextDeliveryTarget,
+    port: TextDeliveryPort,
+    clock: { value: number }
+  ) {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [
+        {
+          kind: 'claude',
+          scan: crewScan(),
+          feed: vi.fn().mockResolvedValue([]),
+          textDelivery: (dwarfId: string) => (dwarfId === FOREMAN_ID ? target : null)
+        }
+      ],
+      textDelivery: port,
+      onMinesUpdated: vi.fn(),
+      now: () => clock.value
+    })
+    await runtime.refresh()
+    return runtime
+  }
+
+  function captureLog() {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    return {
+      lines: () => log.mock.calls.map((call) => call.join(' ')),
+      restore: () => log.mockRestore()
+    }
+  }
+
+  it('logs the stages the console tier measured, alongside the verdict', async () => {
+    const clock = { value: 0 }
+    const port = {
+      sendToConsole: vi.fn().mockImplementation(async () => {
+        clock.value += 45
+        return { delivered: true, stages: { focusMs: 12, spawnMs: 30 } }
+      }),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
+    const logged = captureLog()
+
+    await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+
+    const line = logged.lines().find((entry) => entry.includes('Message to')) ?? ''
+    expect(line).toContain('focus=12ms')
+    expect(line).toContain('spawn=30ms')
+    expect(line).toContain('total=45ms')
+    expect(line).toContain('delivered')
+    logged.restore()
+  })
+
+  it('times the relay call itself — the tier that actually costs seconds', async () => {
+    const clock = { value: 0 }
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockImplementation(async () => {
+        clock.value += 5_210
+        return { delivered: true }
+      }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime(
+      { kind: 'claude-relay', sessionName: 'sample-project-70' },
+      port,
+      clock
+    )
+    const logged = captureLog()
+
+    await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+
+    const line = logged.lines().find((entry) => entry.includes('Message to')) ?? ''
+    expect(line).toContain('relay=5210ms')
+    expect(line).toContain('total=5210ms')
+    logged.restore()
+  })
+
+  it('instruments a kick exactly like a message', async () => {
+    const clock = { value: 0 }
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn().mockImplementation(async () => {
+        clock.value += 20
+        return { delivered: true, stages: { focusMs: 8, spawnMs: 12 } }
+      })
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
+    const logged = captureLog()
+
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+
+    const line = logged.lines().find((entry) => entry.includes('Kick for')) ?? ''
+    expect(line).toContain('focus=8ms')
+    expect(line).toContain('total=20ms')
+    logged.restore()
+  })
+
+  it('times a failed attempt too — the slow ones are the ones worth measuring', async () => {
+    const clock = { value: 0 }
+    const port = {
+      sendToConsole: vi.fn().mockImplementation(async () => {
+        clock.value += 90
+        return { delivered: false, error: 'nope', stages: { focusMs: 90 } }
+      }),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
+    const logged = captureLog()
+
+    await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+
+    const line = logged.lines().find((entry) => entry.includes('Message to')) ?? ''
+    expect(line).toContain('failed')
+    expect(line).toContain('focus=90ms')
+    logged.restore()
+  })
+
+  it('instruments the relay fallback as its own attempt', async () => {
+    const clock = { value: 0 }
+    const port = {
+      sendToConsole: vi.fn().mockImplementation(async () => {
+        clock.value += 40
+        return { delivered: false, error: 'nope', stages: { focusMs: 40 } }
+      }),
+      relayToClaudeSession: vi.fn().mockImplementation(async () => {
+        clock.value += 3_000
+        return { delivered: true }
+      }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime(
+      { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' },
+      port,
+      clock
+    )
+    const logged = captureLog()
+
+    await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+
+    const fallbackLine = logged.lines().find((entry) => entry.includes('Relay fallback')) ?? ''
+    expect(fallbackLine).toContain('relay=3000ms')
+    expect(fallbackLine).toContain('total=3000ms')
+    logged.restore()
+  })
+
+  it('never lets the message anywhere near the instrumentation line', async () => {
+    const clock = { value: 0 }
+    const port = {
+      sendToConsole: vi.fn().mockResolvedValue({
+        delivered: true,
+        stages: { focusMs: 1, spawnMs: 2 }
+      }),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
+    const logged = captureLog()
+
+    await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'my-secret-payload',
+      pressEnter: false
+    })
+
+    expect(logged.lines().join(' ')).not.toContain('my-secret-payload')
+    logged.restore()
+  })
+
+  it('shuts the delivery port down when the runtime stops', async () => {
+    const clock = { value: 0 }
+    const dispose = vi.fn()
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn(),
+      dispose
+    } satisfies TextDeliveryPort
+    const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
+
+    runtime.stop()
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops cleanly when the delivery port has nothing to shut down', async () => {
+    const clock = { value: 0 }
+    const port: TextDeliveryPort = {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+    }
+    const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
+
+    expect(() => runtime.stop()).not.toThrow()
+  })
+})
+
+/**
+ * Two-stage kick semantics (issue #21, from field research on a comparable
+ * agent monitor): the FIRST kick is always the polite interrupt, and nothing
+ * escalates to anything harder without a second explicit user request. A
+ * session killed mid-write can corrupt its own transcript, so this invariant is
+ * pinned here to stop a future change from quietly breaking it.
+ */
+describe('AgentRuntime kick escalation policy', () => {
+  const FOREMAN_ID = 'claude:session-1'
+  const HARSH = /kill|terminate|force|sigkill|taskkill|destroy/i
+
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: FOREMAN_ID,
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1',
+            pid: 42
+          }
+        ]
+      }
+    ])
+  }
+
+  async function kickRuntime(target: TextDeliveryTarget) {
+    const port = {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+    } satisfies TextDeliveryPort
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [
+        {
+          kind: 'claude',
+          scan: crewScan(),
+          feed: vi.fn().mockResolvedValue([]),
+          textDelivery: (dwarfId: string) => (dwarfId === FOREMAN_ID ? target : null)
+        }
+      ],
+      textDelivery: port,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, port }
+  }
+
+  it('carries nothing but the pid — there is no escalation dial to turn', async () => {
+    const { runtime, port } = await kickRuntime({ kind: 'terminal', pid: 42 })
+
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+
+    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
+    expect(Object.keys(port.sendInterrupt.mock.calls[0]?.[0] ?? {})).toEqual(['pid'])
+  })
+
+  it('repeats the identical polite interrupt on a second kick', async () => {
+    const { runtime, port } = await kickRuntime({ kind: 'terminal', pid: 42 })
+
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+
+    expect(port.sendInterrupt.mock.calls).toEqual([[{ pid: 42 }], [{ pid: 42 }], [{ pid: 42 }]])
+  })
+
+  it('asks a relayed session to stop and never orders it killed', async () => {
+    const { runtime, port } = await kickRuntime({
+      kind: 'claude-relay',
+      sessionName: 'sample-project-70'
+    })
+
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+
+    const texts = port.relayToClaudeSession.mock.calls.map((call) => call[0].text as string)
+    expect(texts).toHaveLength(2)
+    expect(texts[0]).toBe(texts[1])
+    for (const text of texts) {
+      expect(text).toMatch(/stop/i)
+      expect(text).not.toMatch(HARSH)
+    }
+  })
+
+  it('never reaches for the console typing path to cancel', async () => {
+    const { runtime, port } = await kickRuntime({ kind: 'terminal', pid: 42 })
+
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+    await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+})

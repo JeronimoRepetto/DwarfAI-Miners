@@ -33,13 +33,23 @@ export function defaultMinesState(): MinesState {
 /**
  * What the panel shows about one dwarf's most recent message: in flight, or
  * the verdict, kept just long enough to be read.
+ *
+ * 'delivered' and 'reacted' are two different facts, and the panel must never
+ * blur them (issue #21): delivered means the text reached the session's queue,
+ * reacted means the session was then SEEN acting on it. A delivery that is
+ * never observed reacting stays 'delivered' — it never promotes on a guess.
  */
 export interface DwarfSendState {
-  phase: 'sending' | 'delivered' | 'failed'
+  phase: 'sending' | 'delivered' | 'reacted' | 'failed'
   /** The channel the delivery used, once one was chosen. */
   via?: string
   /** Why it failed, shown on the marker. */
   error?: string
+  /**
+   * True while a delivered message is still watching its dwarf's snapshots for
+   * proof the session acted. False once that bounded window closed unobserved.
+   */
+  awaitingReaction?: boolean
 }
 
 /** Root state for the dwarf-messaging store, keyed by dwarf id. */
@@ -51,13 +61,19 @@ export function defaultDwarfMessagingState(): DwarfMessagingState {
   return { byDwarfId: {} }
 }
 
-/** What the panel shows about one dwarf's most recent kick: in flight, or the verdict. */
+/**
+ * What the panel shows about one dwarf's most recent kick: in flight, or the
+ * verdict. Same two-phase honesty as DwarfSendState — an interrupt handed to a
+ * session is not the same as a session that stopped.
+ */
 export interface DwarfKickState {
-  phase: 'kicking' | 'delivered' | 'failed'
+  phase: 'kicking' | 'delivered' | 'reacted' | 'failed'
   /** The channel the kick used, once one was chosen. */
   via?: string
   /** Why it failed, shown on the marker. */
   error?: string
+  /** True while a delivered kick is still watching for proof the session stopped. */
+  awaitingReaction?: boolean
 }
 
 /** Root state for the dwarf-kicking store, keyed by dwarf id. */

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DWARF_FRAME_SRC, preloadDwarfArt } from '../lib/art'
+import { kickMarker as kickMarkerFor, sendMarker as sendMarkerFor } from '../lib/deliveryVerdict'
 import {
   LEAVING_EXIT_MS,
   NEUTRAL_DWARF_FRAME,
@@ -243,35 +244,14 @@ const ariaLabel = computed(
     `Actions for ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
 )
 
-/** Marker shown on the sprite once a message has a verdict. */
-const sendMarker = computed(() => {
-  const phase = props.sendState?.phase
-  if (phase === 'delivered') return { cls: 'is-delivered', glyph: '✓', title: 'Message delivered' }
-  if (phase === 'failed') {
-    return {
-      cls: 'is-failed',
-      glyph: '✕',
-      title: props.sendState?.error ?? 'The message could not be delivered.'
-    }
-  }
-  if (phase === 'sending') return { cls: 'is-sending', glyph: '…', title: 'Sending...' }
-  return null
-})
-
-/** Same shape as sendMarker, for the kick verdict; positioned on the opposite corner so both can show at once. */
-const kickMarker = computed(() => {
-  const phase = props.kickState?.phase
-  if (phase === 'delivered') return { cls: 'is-delivered', glyph: '✓', title: 'Kick delivered' }
-  if (phase === 'failed') {
-    return {
-      cls: 'is-failed',
-      glyph: '✕',
-      title: props.kickState?.error ?? 'The kick could not be delivered.'
-    }
-  }
-  if (phase === 'kicking') return { cls: 'is-sending', glyph: '…', title: 'Kicking...' }
-  return null
-})
+/**
+ * The verdict markers. The wording lives in lib/deliveryVerdict.ts because the
+ * distinction it carries is load-bearing (issue #21): a ✓ says only that the
+ * message was handed to the session, a ✓✓ says the session was seen acting on
+ * it. The kick marker sits on the opposite corner so both can show at once.
+ */
+const sendMarker = computed(() => sendMarkerFor(props.sendState))
+const kickMarker = computed(() => kickMarkerFor(props.kickState))
 </script>
 
 <template>
@@ -547,6 +527,17 @@ const kickMarker = computed(() => {
 .send-result.is-delivered {
   background: #8fd07a;
 }
+/*
+ * The confirmed reaction reads as a stronger version of the same green, and its
+ * ✓✓ needs the extra room a single glyph does not.
+ */
+.send-result.is-reacted {
+  width: auto;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #4fa63a;
+  letter-spacing: -1px;
+}
 .send-result.is-failed {
   background: #e08466;
 }
@@ -575,6 +566,13 @@ const kickMarker = computed(() => {
 }
 .kick-result.is-delivered {
   background: #8fd07a;
+}
+.kick-result.is-reacted {
+  width: auto;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #4fa63a;
+  letter-spacing: -1px;
 }
 .kick-result.is-failed {
   background: #e08466;

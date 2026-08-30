@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useDwarfKicking } from '../composables/useDwarfKicking'
+import { useDwarfMessaging } from '../composables/useDwarfMessaging'
 import { INTERIOR_SRC } from '../lib/art'
 import { createBubbleBoard } from '../lib/bubbles'
 import { oreCount, orePileStep } from '../lib/economy'
@@ -33,9 +35,23 @@ const bubbles = ref<ReadonlyMap<string, string>>(new Map())
 const board = createBubbleBoard((visible) => {
   bubbles.value = visible
 })
+
+/**
+ * Every poll replaces this list, and it already carries each dwarf's status and
+ * last message — which is exactly what tells a delivered Send or Kick whether
+ * the session actually reacted (issue #21). Feeding the two delivery stores
+ * from here keeps that second verdict phase free of any new IPC.
+ */
+const { observe: observeSends } = useDwarfMessaging()
+const { observe: observeKicks } = useDwarfKicking()
+
 watch(
   () => props.mine.dwarfs,
-  (dwarfs) => board.sync(dwarfs),
+  (dwarfs) => {
+    board.sync(dwarfs)
+    observeSends(dwarfs)
+    observeKicks(dwarfs)
+  },
   { immediate: true }
 )
 onBeforeUnmount(() => board.dispose())

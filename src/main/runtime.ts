@@ -22,6 +22,7 @@ import type { Provider } from './providers/provider'
 import type { ViewerPathOptions } from './terminalLauncher'
 import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
 import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './textDelivery/resolve'
+import { createStageTimer, formatStageTimings, type StageTimings } from './textDelivery/timing'
 import { TierService } from './tier/tierService'
 
 const FEED_LIMIT = 12
@@ -60,6 +61,20 @@ function combineFallbackErrors(
     `Terminal: ${terminalError ?? NO_REASON_GIVEN}\n` +
     `Relay fallback: ${relayError ?? NO_REASON_GIVEN}`
   )
+}
+
+/**
+ * The stage breakdown appended to a delivery's log line, e.g.
+ * ` [focus=12ms spawn=30ms total=45ms]` (issue #21).
+ *
+ * A Kick or Send that "feels slow" used to be unfalsifiable: the log carried a
+ * verdict and nothing else, so every latency discussion started from a guess.
+ * These are durations only — the privacy rule is unchanged, and there is
+ * nothing in a StageTimings that could carry a payload even by accident.
+ */
+function stageSuffix(timings: StageTimings): string {
+  const formatted = formatStageTimings(timings)
+  return formatted === '' ? '' : ` [${formatted}]`
 }
 
 /** Expand only a leading home shorthand; other paths are passed through. */
@@ -102,6 +117,8 @@ export class AgentRuntime {
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly launchTerminal: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   private readonly textDelivery: TextDeliveryPort
+  /** Shared by the lifecycle grace window and the delivery stage timings. */
+  private readonly now: () => number
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -149,6 +166,7 @@ export class AgentRuntime {
       options.launchTerminal ??
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
+    this.now = options.now ?? Date.now
 
     const tiers = new TierService({
       fs,
@@ -181,8 +199,14 @@ export class AgentRuntime {
     this.poller.start()
   }
 
+  /**
+   * Also releases whatever the delivery tier keeps alive between actions — the
+   * long-lived console shell, today. index.ts already calls this on
+   * 'before-quit', so a quit never leaves a stray powershell.exe behind.
+   */
   stop(): void {
     this.poller.stop()
+    this.textDelivery.dispose?.()
   }
 
   /** Execute a deterministic scan for IPC/tests without starting an interval. */
@@ -255,13 +279,21 @@ export class AgentRuntime {
     text: string
     terminalError: string | undefined
   }): Promise<DwarfTextResult> {
-    const relay = await this.textDelivery.relayToClaudeSession({
-      sessionName: options.sessionName,
-      text: options.text
-    })
+    // A second attempt is a second attempt: it gets its own timings rather than
+    // being folded into the console attempt that failed before it.
+    const timer = createStageTimer(this.now)
+    const relay = await timer.measure('total', () =>
+      timer.measure('relay', () =>
+        this.textDelivery.relayToClaudeSession({
+          sessionName: options.sessionName,
+          text: options.text
+        })
+      )
+    )
+    timer.absorb(relay.stages)
     console.log(
       `[runtime] Relay fallback (${options.attempt}) for ${options.dwarfId}: ` +
-        `${relay.delivered ? 'delivered' : 'failed'}`
+        `${relay.delivered ? 'delivered' : 'failed'}${stageSuffix(timer.timings())}`
     )
     return relay.delivered
       ? { delivered: true, via: 'claude-relay' }
@@ -298,21 +330,31 @@ export class AgentRuntime {
     if (resolved === null) return { delivered: false, via: 'none', error: NO_CHANNEL }
 
     const payload = `${resolved.prefix}${text}`
+    const endpoint = resolved.endpoint
+    const timer = createStageTimer(this.now)
     try {
-      const outcome =
-        resolved.endpoint.kind === 'terminal'
-          ? await this.textDelivery.sendToConsole({
-              pid: resolved.endpoint.pid,
+      // 'total' is everything the caller waited for; the tier below reports the
+      // stages only it can see (focus, spawn), and the relay call is timed here
+      // because the runtime is what makes it.
+      const outcome = await timer.measure('total', () =>
+        endpoint.kind === 'terminal'
+          ? this.textDelivery.sendToConsole({
+              pid: endpoint.pid,
               text: payload,
               pressEnter: request.pressEnter
             })
-          : await this.textDelivery.relayToClaudeSession({
-              sessionName: resolved.endpoint.sessionName,
-              text: payload
-            })
+          : timer.measure('relay', () =>
+              this.textDelivery.relayToClaudeSession({
+                sessionName: endpoint.sessionName,
+                text: payload
+              })
+            )
+      )
+      timer.absorb(outcome.stages)
       console.log(
         `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
-          `${outcome.delivered ? 'delivered' : 'failed'} (${payload.length} chars)`
+          `${outcome.delivered ? 'delivered' : 'failed'} (${payload.length} chars)` +
+          stageSuffix(timer.timings())
       )
       if (outcome.delivered) return { delivered: true, via: resolved.channel }
       // The console attempt failed, but a session with a registry name is
@@ -359,20 +401,29 @@ export class AgentRuntime {
     const resolved = resolveKickDelivery(request.dwarfId, (id) => this.deliveryTargetOf(id))
     if (resolved === null) return { delivered: false, via: 'none', error: NO_KICK_CHANNEL }
 
+    const endpoint = resolved.endpoint
+    const timer = createStageTimer(this.now)
     try {
-      const outcome =
-        resolved.endpoint.kind === 'terminal'
-          ? await this.textDelivery.sendInterrupt({ pid: resolved.endpoint.pid })
-          : await this.textDelivery.relayToClaudeSession({
-              sessionName: resolved.endpoint.sessionName,
-              text:
-                resolved.prefix === ''
-                  ? CANCEL_INSTRUCTION
-                  : `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
-            })
+      // Note what this does NOT do: there is no harsher second tier here, and
+      // no escalation flag to raise. A repeated kick repeats this exact polite
+      // interrupt — see the kick escalation policy tests.
+      const outcome = await timer.measure('total', () =>
+        endpoint.kind === 'terminal'
+          ? this.textDelivery.sendInterrupt({ pid: endpoint.pid })
+          : timer.measure('relay', () =>
+              this.textDelivery.relayToClaudeSession({
+                sessionName: endpoint.sessionName,
+                text:
+                  resolved.prefix === ''
+                    ? CANCEL_INSTRUCTION
+                    : `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
+              })
+            )
+      )
+      timer.absorb(outcome.stages)
       console.log(
         `[runtime] Kick for ${request.dwarfId} via ${resolved.channel}: ` +
-          `${outcome.delivered ? 'delivered' : 'failed'}`
+          `${outcome.delivered ? 'delivered' : 'failed'}${stageSuffix(timer.timings())}`
       )
       if (outcome.delivered) return { delivered: true, via: resolved.channel }
       // Same fallback as sendDwarfText, carrying the exact instruction the

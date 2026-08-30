@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { dwarfAnimation } from '../lib/presentation'
 import { defaultDwarf } from '../testing/factories'
+import type { DwarfKickState, DwarfSendState } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
 
 /*
@@ -386,5 +387,75 @@ describe('DwarfSprite', () => {
       wrapper.unmount()
       expect(vi.getTimerCount()).toBe(0)
     })
+  })
+})
+
+/**
+ * The marker is where the two-phase verdict becomes visible (issue #21), so
+ * what it says has to stay pinned: a ✓ claims only that the message was handed
+ * over, and only a ✓✓ claims the session acted.
+ */
+function markerSprite(states: { sendState?: DwarfSendState; kickState?: DwarfKickState }) {
+  return mount(DwarfSprite, {
+    props: { dwarf: defaultDwarf(), ...states }
+  })
+}
+
+describe('DwarfSprite send marker', () => {
+  it('marks a handed-over message without claiming a reaction', () => {
+    const wrapper = markerSprite({
+      sendState: { phase: 'delivered', via: 'claude-relay', awaitingReaction: true }
+    })
+    const marker = wrapper.get('.send-result')
+
+    expect(marker.text()).toBe('✓')
+    expect(marker.attributes('title')).toMatch(/handed to the session/i)
+    expect(marker.attributes('title')).not.toMatch(/reacted/i)
+  })
+
+  it('upgrades the marker once the session was seen reacting', () => {
+    const wrapper = markerSprite({ sendState: { phase: 'reacted', via: 'claude-relay' } })
+    const marker = wrapper.get('.send-result')
+
+    expect(marker.text()).toBe('✓✓')
+    expect(marker.classes()).toContain('is-reacted')
+    expect(marker.attributes('title')).toMatch(/reacted/i)
+  })
+
+  it('admits when the watch closed without seeing anything', () => {
+    const wrapper = markerSprite({
+      sendState: { phase: 'delivered', via: 'terminal', awaitingReaction: false }
+    })
+    expect(wrapper.get('.send-result').attributes('title')).toMatch(/no reaction/i)
+  })
+})
+
+describe('DwarfSprite kick marker', () => {
+  it('marks a handed-over kick without claiming the session stopped', () => {
+    const wrapper = markerSprite({
+      kickState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+    })
+    const marker = wrapper.get('.kick-result')
+
+    expect(marker.text()).toBe('✓')
+    expect(marker.attributes('title')).toMatch(/handed to the session/i)
+  })
+
+  it('upgrades the marker once the session was seen stopping', () => {
+    const wrapper = markerSprite({ kickState: { phase: 'reacted', via: 'terminal' } })
+    const marker = wrapper.get('.kick-result')
+
+    expect(marker.text()).toBe('✓✓')
+    expect(marker.classes()).toContain('is-reacted')
+  })
+
+  it('shows both verdicts at once, on their own corners', () => {
+    const wrapper = markerSprite({
+      sendState: { phase: 'reacted', via: 'terminal' },
+      kickState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+    })
+
+    expect(wrapper.find('.send-result').exists()).toBe(true)
+    expect(wrapper.find('.kick-result').exists()).toBe(true)
   })
 })

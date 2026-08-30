@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DwarfKickResult } from '../types'
+import { REACTION_WINDOW_MS } from '../lib/reaction'
+import { defaultDwarf } from '../testing/factories'
+import type { Dwarf, DwarfKickResult } from '../types'
 import { RESULT_VISIBLE_MS, useDwarfKicking } from './useDwarfKicking'
 
 function stubApi(kickDwarf: (...args: never[]) => Promise<DwarfKickResult>): void {
@@ -39,7 +41,13 @@ describe('useDwarfKicking', () => {
 
     pending.release({ delivered: true, via: 'terminal' })
     await kicking
-    expect(stateFor('claude:s1')).toEqual({ phase: 'delivered', via: 'terminal' })
+    // Delivered means the interrupt was handed over — not that the session
+    // stopped. The store starts watching for the proof.
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'delivered',
+      via: 'terminal',
+      awaitingReaction: true
+    })
   })
 
   it('keeps the failure reason so the panel can explain itself', async () => {
@@ -69,12 +77,12 @@ describe('useDwarfKicking', () => {
     expect(stateFor('claude:s1')?.error).toBeTruthy()
   })
 
-  it('clears the verdict after it has been on screen long enough to read', async () => {
-    stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+  it('clears a failed verdict after it has been on screen long enough to read', async () => {
+    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
     const { kick, stateFor } = useDwarfKicking()
 
     await kick('claude:s1')
-    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+    expect(stateFor('claude:s1')?.phase).toBe('failed')
 
     vi.advanceTimersByTime(RESULT_VISIBLE_MS)
     expect(stateFor('claude:s1')).toBeUndefined()
@@ -110,5 +118,124 @@ describe('useDwarfKicking', () => {
 
     await kick('claude:s1')
     expect(api).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
+  })
+})
+
+/**
+ * A kick asks a session to stop; the proof is that it stopped. Everything here
+ * is driven by the snapshots the panel already polls — no new IPC.
+ */
+describe('useDwarfKicking reaction tracking', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfKicking().clearAll()
+    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function dwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+    return defaultDwarf({ id: 'claude:s1', ...overrides })
+  }
+
+  it('keeps the delivered marker on screen while it is still watching', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('claude:s1')).toMatchObject({ phase: 'delivered', awaitingReaction: true })
+  })
+
+  it('promotes to reacted when the session is seen stopping', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(stateFor('claude:s1')).toMatchObject({ phase: 'reacted', via: 'claude-relay' })
+  })
+
+  it('stays delivered while the session keeps working', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'working' })])
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+  })
+
+  it('never claims credit for a session that simply left', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'leaving' })])
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+  })
+
+  it('waits for the full round trip when the session was already idle', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'waiting' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+
+    observe([dwarf({ status: 'working' })])
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('reacted')
+  })
+
+  it('never reads another dwarf as this one reacting', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'working' }), defaultDwarf({ id: 'claude:s2', status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+  })
+
+  it('decays to a plain delivered verdict when no reaction is ever seen', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    vi.advanceTimersByTime(REACTION_WINDOW_MS)
+    expect(stateFor('claude:s1')).toMatchObject({ phase: 'delivered', awaitingReaction: false })
+
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('claude:s1')).toBeUndefined()
+  })
+
+  it('clears the reacted marker once it has been read', async () => {
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('reacted')
+
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('claude:s1')).toBeUndefined()
+  })
+
+  it('never promotes a kick that failed', async () => {
+    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    const { kick, observe, stateFor } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('failed')
+  })
+
+  it('survives a poll that arrives before anything was ever kicked', () => {
+    const { observe } = useDwarfKicking()
+    expect(() => observe([dwarf()])).not.toThrow()
   })
 })

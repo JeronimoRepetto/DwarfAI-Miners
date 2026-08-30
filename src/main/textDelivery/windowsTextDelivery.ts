@@ -9,6 +9,12 @@ import type {
   TextDeliveryPort
 } from './port'
 import {
+  createConsoleWorker,
+  createResilientShellRunner,
+  type ConsoleWorker,
+  type ConsoleWorkerProcess
+} from './consoleWorker'
+import {
   deliverViaRelay,
   runRelayProcess,
   type RelayInvocation,
@@ -16,6 +22,7 @@ import {
   type RelayRunner
 } from './relayRunner'
 import { buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
+import { createStageTimer } from './timing'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
 
@@ -42,10 +49,21 @@ export interface WindowsTextDeliveryOptions {
   env?: NodeJS.ProcessEnv
   /** Injected for tests; defaults to the real window-focus path. */
   focus?: (pid: number) => Promise<boolean>
-  /** Injected for tests; defaults to a real powershell.exe run. */
+  /**
+   * The per-action fallback shell runner.
+   *
+   * Left alone, console actions travel through one long-lived powershell.exe
+   * (see consoleWorker.ts) and only reach this runner when that shell cannot be
+   * started at all. Injecting it WITHOUT `spawnConsoleWorker` replaces the
+   * transport outright, which is the shape the unit tests want.
+   */
   runPowerShell?: ShellRunner
+  /** Injected for tests; defaults to a real long-lived powershell.exe. */
+  spawnConsoleWorker?: () => ConsoleWorkerProcess
   /** Injected for tests; defaults to a real claude.exe spawn. */
   runRelay?: RelayRunner
+  /** Injected for tests; defaults to Date.now. Only ever reads durations. */
+  now?: () => number
 }
 
 function runPowerShellCommand(command: string): Promise<{ stdout: string; exitCode: number }> {
@@ -76,6 +94,9 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly runPowerShell: ShellRunner
   private readonly runRelay: RelayRunner
+  private readonly now: () => number
+  /** Null when the transport was replaced outright and there is nothing to keep alive. */
+  private readonly consoleWorker: ConsoleWorker | null
 
   constructor(options: WindowsTextDeliveryOptions) {
     this.home = options.home ?? homedir()
@@ -83,8 +104,28 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.relayModel = options.relayModel
     this.relayTimeoutMs = options.relayTimeoutMs
     this.focus = options.focus ?? focusPid
-    this.runPowerShell = options.runPowerShell ?? runPowerShellCommand
     this.runRelay = options.runRelay ?? runRelayProcess
+    this.now = options.now ?? Date.now
+
+    // An injected runner with no worker spawn is a test replacing the whole
+    // transport; anything else keeps one shell alive and falls back to a
+    // per-action spawn only when that shell cannot be started (issue #21).
+    const perActionRun = options.runPowerShell ?? runPowerShellCommand
+    if (options.runPowerShell !== undefined && options.spawnConsoleWorker === undefined) {
+      this.consoleWorker = null
+      this.runPowerShell = options.runPowerShell
+    } else {
+      this.consoleWorker = createConsoleWorker({
+        spawn: options.spawnConsoleWorker,
+        commandTimeoutMs: CONSOLE_COMMAND_TIMEOUT_MS
+      })
+      this.runPowerShell = createResilientShellRunner(this.consoleWorker, perActionRun)
+    }
+  }
+
+  /** Ends the long-lived console shell; safe on a port that never started one. */
+  dispose(): void {
+    this.consoleWorker?.dispose()
   }
 
   /**
@@ -93,22 +134,32 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * forward, nothing is typed at all rather than typed into the wrong window.
    */
   async sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
     try {
-      if (!(await this.focus(request.pid))) {
+      if (!(await timer.measure('focus', () => this.focus(request.pid)))) {
         return {
           delivered: false,
-          error: 'The agent terminal could not be brought to the foreground.'
+          error: 'The agent terminal could not be brought to the foreground.',
+          stages: timer.timings()
         }
       }
-      const result = await this.runPowerShell(
-        buildSendKeysCommand(request.text, request.pressEnter)
+      const result = await timer.measure('spawn', () =>
+        this.runPowerShell(buildSendKeysCommand(request.text, request.pressEnter))
       )
       if (result.exitCode !== 0) {
-        return { delivered: false, error: 'The keystrokes could not be sent to the terminal.' }
+        return {
+          delivered: false,
+          error: 'The keystrokes could not be sent to the terminal.',
+          stages: timer.timings()
+        }
       }
-      return { delivered: true }
+      return { delivered: true, stages: timer.timings() }
     } catch {
-      return { delivered: false, error: 'The agent terminal could not be reached.' }
+      return {
+        delivered: false,
+        error: 'The agent terminal could not be reached.',
+        stages: timer.timings()
+      }
     }
   }
 
@@ -131,20 +182,32 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * a turn on — instead of typing anything.
    */
   async sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
     try {
-      if (!(await this.focus(request.pid))) {
+      if (!(await timer.measure('focus', () => this.focus(request.pid)))) {
         return {
           delivered: false,
-          error: 'The agent terminal could not be brought to the foreground.'
+          error: 'The agent terminal could not be brought to the foreground.',
+          stages: timer.timings()
         }
       }
-      const result = await this.runPowerShell(buildSendInterruptCommand())
+      const result = await timer.measure('spawn', () =>
+        this.runPowerShell(buildSendInterruptCommand())
+      )
       if (result.exitCode !== 0) {
-        return { delivered: false, error: 'The interrupt keystroke could not be sent.' }
+        return {
+          delivered: false,
+          error: 'The interrupt keystroke could not be sent.',
+          stages: timer.timings()
+        }
       }
-      return { delivered: true }
+      return { delivered: true, stages: timer.timings() }
     } catch {
-      return { delivered: false, error: 'The agent terminal could not be reached.' }
+      return {
+        delivered: false,
+        error: 'The agent terminal could not be reached.',
+        stages: timer.timings()
+      }
     }
   }
 }

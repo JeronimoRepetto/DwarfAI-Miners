@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { MAX_DWARF_TEXT_CHARS } from '../../../shared/contracts'
 import { buildActionBar, type ActionBarEntry } from '../lib/actionBar'
+import { kickStatusLine, sendStatusLine } from '../lib/deliveryVerdict'
 import type { Dwarf, DwarfKickState, DwarfSendState } from '../types'
 
 /**
@@ -38,6 +39,13 @@ const isSending = computed(() => props.sendState?.phase === 'sending')
 const canSend = computed(() => message.value.trim() !== '' && !isSending.value)
 const remaining = computed(() => MAX_DWARF_TEXT_CHARS - message.value.length)
 const isKicking = computed(() => props.kickState?.phase === 'kicking')
+/**
+ * The success lines say whether the action was merely handed over or actually
+ * reacted to (issue #21); failures keep their own alert rows just below, which
+ * carry the reason verbatim.
+ */
+const sendLine = computed(() => sendStatusLine(props.sendState))
+const kickLine = computed(() => kickStatusLine(props.kickState))
 
 const actions = computed(() =>
   buildActionBar(props.dwarf, { kicking: isKicking.value, kickArmed: kickArmed.value })
@@ -180,17 +188,13 @@ function onInputKeydown(event: KeyboardEvent): void {
       <p v-if="sendState?.phase === 'failed'" class="send-error" role="alert">
         {{ sendState.error ?? 'The message could not be delivered.' }}
       </p>
-      <p v-else-if="sendState?.phase === 'delivered'" class="send-ok" role="status">
-        Delivered via {{ sendState.via }}.
-      </p>
+      <p v-else-if="sendLine" class="send-ok" role="status">{{ sendLine }}</p>
     </div>
 
     <p v-if="kickState?.phase === 'failed'" class="kick-error" role="alert">
       {{ kickState.error ?? 'The kick could not be delivered.' }}
     </p>
-    <p v-else-if="kickState?.phase === 'delivered'" class="kick-ok" role="status">
-      Kicked via {{ kickState.via }}.
-    </p>
+    <p v-else-if="kickLine" class="kick-ok" role="status">{{ kickLine }}</p>
   </div>
 </template>
 
