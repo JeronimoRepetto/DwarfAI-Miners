@@ -11,6 +11,7 @@ import {
   extractClaudeFeed,
   parseClaudeSessionEntry,
   parseClaudeTranscriptTail,
+  type ClaudeInFlightAgent,
   type ClaudeSessionEntry,
   type ClaudeTranscriptInfo
 } from './parse'
@@ -18,6 +19,17 @@ import {
 /** Read at most this many bytes from the end of a transcript per scan. */
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024
 const SUBAGENT_TAIL_BYTES = 64 * 1024
+/**
+ * How far back the ONE deeper read on first sight of a session reaches
+ * (see rememberedLaunches). Poll-to-poll memory can only remember what some
+ * poll actually saw, so an app started mid-turn — after a launch record
+ * already scrolled past TRANSCRIPT_TAIL_BYTES — would never learn about the
+ * agent at all. 16x the regular bound covers even an extreme write burst for
+ * the cost of one bounded read per session per app run. Known limit: a launch
+ * further back than even this window stays invisible until the agent's next
+ * observable event (its terminal notification arriving in a later tail).
+ */
+const FIRST_SIGHT_TAIL_BYTES = 4 * 1024 * 1024
 
 /**
  * How far a probed process creation time may sit from the registry's procStart
@@ -114,6 +126,23 @@ export class ClaudeProvider implements Provider {
    */
   private readonly terminalAgents = new Set<string>()
   /**
+   * sessionId -> (agentId -> launch info captured while the `async_launched`
+   * record was still inside a tail read), the exact mirror of terminalAgents
+   * (issue #28).
+   *
+   * A single long turn can write more than TRANSCRIPT_TAIL_BYTES of tool
+   * output, pushing the launch record out of the window while the agent is
+   * still working — deriving in-flight agents from the tail alone made the
+   * worker dwarf silently leave mid-run. A launch stays remembered until a
+   * terminal notification for its agent id is seen (terminalAgents always
+   * wins), a turn ends with zero background agents pending while the launch
+   * is older than the whole tail (see snapshotSession), or the session itself
+   * leaves the registry (evicted in scan). Keyed per session — unlike the
+   * deliberately tiny flat terminal id set — so ended sessions cannot leak
+   * launch records for the life of the process.
+   */
+  private readonly rememberedLaunches = new Map<string, Map<string, ClaudeInFlightAgent>>()
+  /**
    * dwarfId -> highest tokensObserved reading seen for it so far, remembered
    * for the life of the process.
    *
@@ -165,6 +194,14 @@ export class ClaudeProvider implements Provider {
         seenSessions.add(session.sessionId)
         snapshots.push(await this.snapshotSession(root, session, feedSources, deliveryTargets))
       }
+    }
+    // A session that left the registry takes its launch memory with it: the
+    // agents died with their parent process, and a future session that happens
+    // to reuse the id must start from what its transcript says, never from
+    // stale memory. Only on success, like the swap below — a throwing scan
+    // must not evict sessions it never got to look at.
+    for (const sessionId of [...this.rememberedLaunches.keys()]) {
+      if (!seenSessions.has(sessionId)) this.rememberedLaunches.delete(sessionId)
     }
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
@@ -252,17 +289,51 @@ export class ClaudeProvider implements Provider {
     const projectDir = join(root, 'projects', encodeClaudeProjectDir(session.cwd))
     const transcriptPath = join(projectDir, `${session.sessionId}.jsonl`)
     const transcriptStat = await this.fs.stat(transcriptPath)
+    // First sight of a session (fresh app start, or a session that just
+    // appeared): one deeper read, so a launch that scrolled past the regular
+    // window BEFORE this process could ever remember it is still recovered.
+    // Whatever it finds lives on in rememberedLaunches, so every later poll
+    // goes back to the cheap bound.
+    const firstSight = !this.rememberedLaunches.has(session.sessionId)
     const info =
       transcriptStat === null
         ? parseClaudeTranscriptTail('')
         : parseClaudeTranscriptTail(
-            await this.fs.readTextTail(transcriptPath, TRANSCRIPT_TAIL_BYTES)
+            await this.fs.readTextTail(
+              transcriptPath,
+              firstSight ? FIRST_SIGHT_TAIL_BYTES : TRANSCRIPT_TAIL_BYTES
+            )
           )
 
     for (const agentId of info.terminalAgentIds) this.terminalAgents.add(agentId)
-    const inFlightAgents = info.inFlightAgents.filter(
-      (agent) => !this.terminalAgents.has(agent.agentId)
-    )
+    // Merge this tail's launches into the session's launch memory, then let
+    // the two evictions prune it. Map.set keeps first-seen insertion order, so
+    // the dwarf list stays stable across polls instead of reshuffling with
+    // whatever the current window happens to contain.
+    const remembered =
+      this.rememberedLaunches.get(session.sessionId) ?? new Map<string, ClaudeInFlightAgent>()
+    this.rememberedLaunches.set(session.sessionId, remembered)
+    for (const agent of info.inFlightAgents) remembered.set(agent.agentId, agent)
+    // Terminal memory always wins: a remembered launch whose termination was
+    // also remembered stays gone, even when neither record is in the tail.
+    for (const agentId of [...remembered.keys()]) {
+      if (this.terminalAgents.has(agentId)) remembered.delete(agentId)
+    }
+    // Cross-check against the transcript's own bookkeeping: turn_duration
+    // lines carry the count of background agents still running at end of
+    // turn. Zero pending proves every launch OLDER than this whole tail has
+    // finished — its notification just scrolled out unseen (a sleep/wake gap)
+    // — so those remembered launches are evicted here instead of mining
+    // forever. Launches still inside the tail are exempt: they may postdate
+    // the turn the count was written for, and contradictory evidence must
+    // resolve toward keeping (a false departure is the bug this memory fixes).
+    if (info.pendingBackgroundAgentCount === 0) {
+      const launchedInTail = new Set(info.inFlightAgents.map((agent) => agent.agentId))
+      for (const agentId of [...remembered.keys()]) {
+        if (!launchedInTail.has(agentId)) remembered.delete(agentId)
+      }
+    }
+    const inFlightAgents = [...remembered.values()]
 
     const mainDwarfId = `claude:${session.sessionId}`
     feedSources.set(mainDwarfId, transcriptPath)

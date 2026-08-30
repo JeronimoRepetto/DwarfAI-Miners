@@ -261,6 +261,175 @@ describe('ClaudeProvider', () => {
     })
   })
 
+  /**
+   * Regression (issue #28): the mirror image of the "finished agents" memory
+   * above. A single long turn can write more than the 256KiB tail bound of
+   * tool output, pushing the `async_launched` record out of the window while
+   * the real agent is still working — deriving in-flight agents from the tail
+   * alone made the worker dwarf silently leave mid-run: a false departure.
+   */
+  describe('launch memory', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    const WORKER_ID = `claude:${SESSION_ID}:${LIVE_AGENT}`
+
+    /**
+     * What a bounded tail read returns mid-turn once heavy tool output pushed
+     * every agent record out of the window: the opening prompt and a text
+     * reply, no launches, no notifications, no turn_duration. This is exactly
+     * the shape issue #28 was observed with — the agent is still running.
+     */
+    const quietTail = parentLines.slice(0, 2).join('\n') + '\n'
+
+    /** A `system`/`turn_duration` line as Claude writes it at end of turn. */
+    function turnDuration(pendingBackgroundAgentCount: number): string {
+      return (
+        JSON.stringify({
+          type: 'system',
+          subtype: 'turn_duration',
+          durationMs: 1_000,
+          messageCount: 1,
+          pendingBackgroundAgentCount
+        }) + '\n'
+      )
+    }
+
+    /** ~1KiB that parses as no JSONL record at all — bulk without meaning. */
+    const fillerLine = '#'.repeat(1024) + '\n'
+    /** Enough filler to push everything before it past the 256KiB tail bound. */
+    const pastRegularTail = fillerLine.repeat(300)
+
+    it('keeps a worker whose launch record scrolled out of the transcript tail', async () => {
+      const provider = makeProvider()
+      // Poll one still sees the launch in the window.
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+
+      // Poll two: the turn kept writing and the launch record scrolled out.
+      // The agent is still working, so its dwarf must not leave the scene.
+      fake.addFile(TRANSCRIPT, quietTail, 43_000)
+      const second = await provider.scan()
+      expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+
+      // The remembered worker is a full citizen, not a placeholder: launch-time
+      // identity, its own subagent tail, and a routable delivery target.
+      const worker = second[0]!.dwarfs[1]!
+      expect(worker).toMatchObject({
+        role: 'worker',
+        name: 'Placeholder agent task',
+        model: 'claude-fable-5',
+        status: 'working',
+        lastMessage: 'Subagent latest reply placeholder.'
+      })
+      expect(provider.textDelivery(WORKER_ID)).toEqual({
+        kind: 'foreman-relay',
+        foremanDwarfId: MAIN_ID,
+        workerName: 'Placeholder agent task'
+      })
+    })
+
+    it('drops a remembered worker on its terminal notification and never resurrects it', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+
+      // The launch scrolled out (remembered), then the agent finished.
+      fake.addFile(TRANSCRIPT, quietTail + notification(LIVE_AGENT, 'completed'), 43_000)
+      const second = await provider.scan()
+      expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+
+      // Later the notification scrolls out too. If launch memory outranked
+      // terminal memory here, the finished agent would come back — the exact
+      // ghost this provider's terminal memory exists to prevent.
+      fake.addFile(TRANSCRIPT, quietTail, 44_000)
+      const third = await provider.scan()
+      expect(third[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+
+    it("forgets a session's launches when its registry entry disappears", async () => {
+      const provider = makeProvider()
+      await provider.scan()
+
+      // The session ends: its registry file is gone, and with it the reason
+      // to keep any launch memory alive.
+      fake.removeFile(`${ROOT1}\\sessions\\32896.json`)
+      expect(await provider.scan()).toEqual([])
+
+      // A new registry entry for the same session id must start from what the
+      // transcript says, not from stale memory: the quiet tail carries no
+      // launch, so no worker may reappear.
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, sessionEntry, 2_000)
+      fake.addFile(TRANSCRIPT, quietTail, 45_000)
+      const third = await provider.scan()
+      expect(third[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+
+    it("forgets a session's launches when its pid dies", async () => {
+      const provider = makeProvider()
+      await provider.scan()
+
+      alivePids.clear()
+      expect(await provider.scan()).toEqual([])
+
+      alivePids.add(32896)
+      fake.addFile(TRANSCRIPT, quietTail, 45_000)
+      const third = await provider.scan()
+      expect(third[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+
+    it('drops a remembered worker when a turn ends with zero pending background agents', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+
+      // Both the launch AND its terminal notification scrolled past the tail
+      // between polls (a sleep/wake gap, or one extreme write burst). The
+      // transcript's own bookkeeping is the tie-breaker: a turn ended with
+      // zero background agents pending, so every launch older than this whole
+      // tail must have finished — without this cross-check the remembered
+      // worker would mine forever.
+      fake.addFile(TRANSCRIPT, quietTail + turnDuration(0), 43_000)
+      const second = await provider.scan()
+      expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+
+    it('keeps a worker whose launch is still in the tail even when the pending count is zero', async () => {
+      // The launch record sits INSIDE the tail, after the turn_duration line's
+      // turn ended: the count predates the launch, so it proves nothing about
+      // it. Evicting here would re-open the false-departure bug this memory
+      // exists to fix — contradictory evidence must resolve toward keeping.
+      fake.addFile(TRANSCRIPT, turnDuration(0) + parentLines.slice(6, 9).join('\n') + '\n', 42_000)
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+    })
+
+    it('recovers a launch beyond the regular tail on first sight of a session', async () => {
+      // App restart while a long turn is mid-flight: the launch record is
+      // already outside the regular window, so poll-to-poll memory alone can
+      // never have seen it. First sight of a session reads one deeper tail to
+      // recover exactly this — and the finished agent whose notification sits
+      // in the same deep window must stay gone.
+      fake.addFile(TRANSCRIPT, parentTranscript + pastRegularTail, 42_000)
+      const provider = makeProvider()
+      const first = await provider.scan()
+      expect(first[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+
+      // What the deep read found lives on as ordinary launch memory: later
+      // polls go back to the cheap bound without losing the worker.
+      const second = await provider.scan()
+      expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+    })
+
+    it('leaves a launch beyond even the first-sight window invisible (known restart limit)', async () => {
+      // The deep read is bounded too: a launch further back than its window
+      // stays invisible until the agent's next observable event. Pinned so
+      // the bound is a documented decision, not an accident.
+      fake.addFile(TRANSCRIPT, parentTranscript + fillerLine.repeat(4_200), 42_000)
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+  })
+
   it('maps an idle session to a snapshot with no dwarfs', async () => {
     fake.addFile(
       `${ROOT2}\\sessions\\40000.json`,
