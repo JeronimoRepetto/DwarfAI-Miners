@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { MATERIALS, MATERIAL_TOKENS_PER_UNIT, type Material } from '../../shared/contracts'
 import {
   emptyMaterialTotals,
   addMaterialTokens,
@@ -9,6 +8,7 @@ import {
   sumMaterialTotals,
   totalMaterialTokens
 } from './materials'
+import { MATERIALS, MATERIAL_TOKENS_PER_UNIT, type Material } from './types'
 
 describe('MATERIAL_TOKENS_PER_UNIT', () => {
   it('names a rate for every material', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MaterialTotals, Mine } from '../../shared/contracts'
+import type { MaterialTotals, Mine } from '../domain/types'
 import { PublishGate } from './publishGate'
 
 const NO_MATERIALS: MaterialTotals = {

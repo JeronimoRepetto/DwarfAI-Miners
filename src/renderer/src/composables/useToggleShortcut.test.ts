@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
-import type { ShortcutState } from '../../../shared/contracts'
+import type { ShortcutState } from '../types'
 import { useToggleShortcut } from './useToggleShortcut'
 
 function state(overrides: Partial<ShortcutState> = {}): ShortcutState {

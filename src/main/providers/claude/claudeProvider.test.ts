@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Dwarf } from '../../../shared/contracts'
 import { FakeFs } from '../../adapters/fakeFs'
+import type { Dwarf } from '../../domain/types'
 import { ClaudeProvider } from './claudeProvider'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')

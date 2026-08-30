@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { MAX_DWARF_TEXT_CHARS } from '../../../../shared/contracts'
 import { defaultDwarf } from '../../testing/factories'
+import { MAX_DWARF_TEXT_CHARS } from '../../types'
 import DwarfActionBar from './DwarfActionBar.vue'
 
 function bar(props: Record<string, unknown> = {}) {

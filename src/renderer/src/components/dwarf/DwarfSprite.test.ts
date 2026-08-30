@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DWARF_SILENCE_WINDOW_MS } from '../../../../shared/contracts'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { sceneDwarfAnimation } from '../../lib/presentation'
 import { defaultDwarf } from '../../testing/factories'
-import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
+import {
+  DWARF_SILENCE_WINDOW_MS,
+  type Dwarf,
+  type DwarfKickState,
+  type DwarfSendState
+} from '../../types'
 import DwarfSprite from './DwarfSprite.vue'
 import spriteSource from './DwarfSprite.vue?raw'
 

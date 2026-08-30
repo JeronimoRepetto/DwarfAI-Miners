@@ -1,4 +1,4 @@
-import type { MaterialTotals, Mine } from '../../shared/contracts'
+import type { MaterialTotals, Mine } from '../domain/types'
 
 /**
  * Decides whether one poll's result is worth pushing to the renderer (#25).

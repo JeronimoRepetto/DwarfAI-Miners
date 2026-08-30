@@ -4,7 +4,7 @@ import {
   buildAccelerator,
   isModifierKey
 } from '../../../shared/accelerator'
-import type { ShortcutState } from '../../../shared/contracts'
+import type { ShortcutState } from '../types'
 
 /**
  * State for the panel-toggle shortcut recorder (see #17).

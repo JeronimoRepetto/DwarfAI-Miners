@@ -3,19 +3,19 @@ import { join } from 'node:path'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import type { AppConfig, ConfigEnv } from '../config/config'
-import type {
-  DwarfActivation,
-  DwarfKickRequest,
-  DwarfKickResult,
-  DwarfTextRequest,
-  DwarfTextResult,
-  MaterialTotals,
-  Mine,
-  MineTier,
-  TextDeliveryChannel
-} from '../../shared/contracts'
-import { MAX_DWARF_TEXT_CHARS } from '../../shared/contracts'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
+import {
+  MAX_DWARF_TEXT_CHARS,
+  type DwarfActivation,
+  type DwarfKickRequest,
+  type DwarfKickResult,
+  type DwarfTextRequest,
+  type DwarfTextResult,
+  type MaterialTotals,
+  type Mine,
+  type MineTier,
+  type TextDeliveryChannel
+} from '../domain/types'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'

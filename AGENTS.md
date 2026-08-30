@@ -102,11 +102,12 @@ and Node imports. Two things deliberately live outside it: the API method signat
 (`DwarfAiMinersApi` in the preload entry point, surfaced through its `.d.ts`) and
 `ShortcutPlatform` in `accelerator.ts`, re-exported through contracts.
 
-Neither side imports contracts directly in most files. Each process reads it through a barrel —
-`types.ts` in the main domain and in the renderer — which re-exports contracts and adds that
-process's own local state types. So: **add a wire type to `contracts.ts`, then re-export it from
-the barrel.** Do not let a renderer-only type into contracts, and never copy a shape across the
-boundary.
+Every file but the two IPC endpoints reads it through a barrel — `types.ts` in the main domain and
+in the renderer — which re-exports contracts and adds that process's own local state types. So:
+**add a wire symbol to `contracts.ts`, then re-export it from the barrel**, values as well as
+types; one the barrel omits sends the whole import statement past it, not just itself (#77).
+`main/index.ts` and `preload/index.ts` read it directly because they _are_ the endpoints. Do not
+let a renderer-only type into contracts, and never copy a shape across the boundary.
 
 ## Domain invariants that are easy to break by accident
 
