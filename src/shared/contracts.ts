@@ -136,26 +136,99 @@ export type WaitingReason = 'user-input' | 'approval' | 'unknown'
 export const WAITING_ON_HUMAN_REASON: WaitingReason = 'user-input'
 
 /**
- * How long a dwarf of each role has to have produced nothing before its silence
- * is worth showing (issue #47).
+ * Whether a human could be sitting at this session, as its provider observed
+ * it — never as anything downstream inferred (issue #68).
+ *
+ * Three values for the reason WaitingReason has three. 'attended' and
+ * 'unattended' are both positive findings, read from a provider's own
+ * structured record of how the session was started: Claude Code writes `kind`
+ * on its registry entry, Codex writes `thread_source` on its thread. 'unknown'
+ * is the honest middle — the provider was asked and proved nothing, or was
+ * never taught to answer — and it is the third statement of a rule this
+ * codebase has settled twice before: an absent pendingBackgroundAgentCount is
+ * not a count of zero, and tierOf's placeholder may not seal a ledger delta.
+ *
+ * It must therefore never behave like a proven value in EITHER direction. The
+ * window it draws (see dwarfSilenceWindowMs) is the generous one, but that is
+ * a deliberate choice about which error costs more, not an equivalence: nothing
+ * that RECORDS a decision may resolve 'unknown' into 'attended'.
+ *
+ * Deliberately not a boolean, and deliberately not derived from rank: role
+ * comes from topology, so every root session is a foreman whether or not there
+ * is a keyboard in front of it.
+ */
+export type DwarfAttendance = 'attended' | 'unattended' | 'unknown'
+
+/**
+ * How long a dwarf has to have produced nothing before its silence is worth
+ * showing (issue #47).
  *
  * These are the SAME windows the Claude provider's staleness rule judges a
  * remembered launch by (issue #40), which is the whole point of them living
  * here: the panel must never say "still working" about a dwarf the provider has
- * already started counting out. Read them, do not re-invent them.
+ * already started counting out. Read them through dwarfSilenceWindowMs, do not
+ * re-invent them and do not pick between them by hand.
  *
  * They differ because the two silences are not equally telling, and collapsing
- * them into one number would lose the distinction. A FOREMAN legitimately sits
- * idle for as long as it takes a human to type the next prompt, so its silence
- * is weak evidence and gets the longer hour. A WORKER cannot wait on anyone:
- * once launched it runs to completion, so silence from its own transcript is
- * strong evidence and half an hour of it says enough.
+ * them into one number would lose the distinction. A session A HUMAN CAN TYPE
+ * INTO legitimately sits idle for as long as it takes them to write the next
+ * prompt, so its silence is weak evidence and gets the longer hour. A session
+ * NOBODY IS AT cannot wait on anyone: once launched it runs to completion, so
+ * silence from its own transcript is strong evidence and half an hour says
+ * enough.
+ *
+ * Keyed on the keyboard rather than on the rank since issue #68. It used to say
+ * `foreman` and `worker`, which read as the same distinction and is not: role
+ * is topology, so a headless `claude -p` run is a root, is therefore a foreman,
+ * and was drawing the hour that exists for a human who was never there.
  *
  * A dwarf past its window is NOT in a different state — see Dwarf.silentForMs.
  */
-export const DWARF_SILENCE_WINDOW_MS: Record<DwarfRole, number> = {
-  foreman: 60 * 60 * 1000,
-  worker: 30 * 60 * 1000
+export const DWARF_SILENCE_WINDOW_MS: Record<'attended' | 'unattended', number> = {
+  attended: 60 * 60 * 1000,
+  unattended: 30 * 60 * 1000
+}
+
+/**
+ * The window this dwarf's silence is judged against — the single entry point
+ * to the two numbers above, so the provider's staleness rule and the panel can
+ * never disagree about which one a dwarf gets (issue #68).
+ *
+ * Role is still consulted, in one direction only: a WORKER is a spawned
+ * subagent with no channel of its own, so topology there does not stand in for
+ * the fact, it proves it — no human can be typing into something nothing
+ * outside its parent can even address. Rank may therefore shorten the window
+ * and may never lengthen it, which is why a provider claiming 'attended' about
+ * a worker changes nothing.
+ *
+ * Everything else rests on attendance, and both unproven readings — 'unknown'
+ * and the field being absent — keep the hour. The two errors are not
+ * symmetric: shortening the window on a session someone is typing into makes
+ * the panel call a live dwarf silent, which is the false departure #28 and #40
+ * exist to prevent, while leaving the hour on a headless run only makes the
+ * panel slow to notice. Generous is the side this repository has always taken
+ * when the evidence runs out.
+ */
+export function dwarfSilenceWindowMs(role: DwarfRole, attendance?: DwarfAttendance): number {
+  return DWARF_SILENCE_WINDOW_MS[dwarfSilenceWindowKey(role, attendance)]
+}
+
+/**
+ * WHICH of the two windows this dwarf gets, without saying how long it is.
+ *
+ * The rule above lives here, and dwarfSilenceWindowMs is a lookup on top of it,
+ * so there is still exactly one place that decides. The separate name exists
+ * for the one caller that does not want the product's numbers: the Claude
+ * provider's staleness rule takes both windows as injected options, so its
+ * tests can cross an hour without waiting one, and it must make the SAME choice
+ * against its own pair. Without this it would have to restate the rule, which
+ * is how a provider and a panel start disagreeing about the same dwarf.
+ */
+export function dwarfSilenceWindowKey(
+  role: DwarfRole,
+  attendance?: DwarfAttendance
+): 'attended' | 'unattended' {
+  return role === 'worker' || attendance === 'unattended' ? 'unattended' : 'attended'
 }
 
 /**
@@ -216,6 +289,17 @@ export interface Dwarf {
    * negative.
    */
   silentForMs?: number
+  /**
+   * Whether anyone could be typing into this dwarf's session (issue #68), which
+   * is what decides how long its silence above is given the benefit of the
+   * doubt — see dwarfSilenceWindowMs.
+   *
+   * Read from the provider's own record of how the session was started, never
+   * from rank: `role` answers a question about the spawn tree, and a headless
+   * run is still the root of its own. Absent from a provider that has not been
+   * taught to report it, which reads as 'unknown' rather than as either proof.
+   */
+  attendance?: DwarfAttendance
   /**
    * Why this dwarf is blocked, when its provider proved it (issue #60).
    *

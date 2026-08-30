@@ -277,21 +277,23 @@ describe('vaultLabel', () => {
  * off.
  */
 describe('isDwarfSilent', () => {
-  const { foreman, worker } = DWARF_SILENCE_WINDOW_MS
+  const { attended, unattended } = DWARF_SILENCE_WINDOW_MS
 
-  it('scales the window to the role, matching the provider staleness rule', () => {
-    // A foreman legitimately idles for as long as a human takes to type; a
-    // worker cannot wait on anyone, so its silence is judged twice as soon.
-    expect(foreman).toBe(60 * 60_000)
-    expect(worker).toBe(30 * 60_000)
+  it('scales the window to whether anyone can answer, matching the provider staleness rule', () => {
+    // A session a human sits at legitimately idles for as long as they take to
+    // type; one nobody can type into cannot wait on anyone, so its silence is
+    // judged twice as soon. Named for the keyboard rather than the rank since
+    // issue #68 — the numbers are the same two.
+    expect(attended).toBe(60 * 60_000)
+    expect(unattended).toBe(30 * 60_000)
   })
 
   it('calls a dwarf silent the moment its own window has exactly elapsed', () => {
     // Same side of the boundary the provider picks for the same numbers.
-    expect(isDwarfSilent('worker', worker)).toBe(true)
-    expect(isDwarfSilent('worker', worker - 1)).toBe(false)
-    expect(isDwarfSilent('foreman', foreman)).toBe(true)
-    expect(isDwarfSilent('foreman', foreman - 1)).toBe(false)
+    expect(isDwarfSilent('worker', unattended)).toBe(true)
+    expect(isDwarfSilent('worker', unattended - 1)).toBe(false)
+    expect(isDwarfSilent('foreman', attended)).toBe(true)
+    expect(isDwarfSilent('foreman', attended - 1)).toBe(false)
   })
 
   it('judges each role against its own window rather than one shared number', () => {
@@ -305,6 +307,41 @@ describe('isDwarfSilent', () => {
     // and the field is absent. Absence of evidence is not evidence of silence.
     expect(isDwarfSilent('worker', undefined)).toBe(false)
     expect(isDwarfSilent('foreman', undefined)).toBe(false)
+  })
+
+  /*
+   * Issue #68. Rank is topology: every root session is a foreman, and a
+   * headless `claude -p` run is a root. So the hour that exists because a
+   * human might be typing was being spent on sessions with nobody there.
+   */
+  it('judges a headless foreman on the half hour, since nobody can be typing into it', () => {
+    const betweenTheTwo = 45 * 60_000
+    expect(isDwarfSilent('foreman', betweenTheTwo, 'unattended')).toBe(true)
+    expect(isDwarfSilent('foreman', unattended, 'unattended')).toBe(true)
+    expect(isDwarfSilent('foreman', unattended - 1, 'unattended')).toBe(false)
+  })
+
+  it('keeps the hour for a foreman a human is proven to be sitting at', () => {
+    const betweenTheTwo = 45 * 60_000
+    expect(isDwarfSilent('foreman', betweenTheTwo, 'attended')).toBe(false)
+  })
+
+  it('keeps the hour for a foreman whose provider proved nothing about attendance', () => {
+    // Unproven must behave like neither of the other two by accident: it may
+    // not shorten the window (that would call a live session silent), and the
+    // value itself stays distinguishable so nothing can seal a decision on it.
+    const betweenTheTwo = 45 * 60_000
+    expect(isDwarfSilent('foreman', betweenTheTwo, 'unknown')).toBe(false)
+    expect(isDwarfSilent('foreman', betweenTheTwo, undefined)).toBe(false)
+    expect(isDwarfSilent('foreman', betweenTheTwo)).toBe(false)
+  })
+
+  it('never lengthens a worker window on a provider claim about attendance', () => {
+    // A spawned subagent has no channel of its own, so no human can be typing
+    // into it whatever a provider stamps.
+    const betweenTheTwo = 45 * 60_000
+    expect(isDwarfSilent('worker', betweenTheTwo, 'attended')).toBe(true)
+    expect(isDwarfSilent('worker', betweenTheTwo, 'unknown')).toBe(true)
   })
 })
 

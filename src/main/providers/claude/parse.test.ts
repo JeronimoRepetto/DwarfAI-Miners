@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  claudeSessionAttendance,
   claudeSessionDeliveryTarget,
   claudeWaitingReason,
   encodeClaudeProjectDir,
@@ -148,6 +149,43 @@ describe('claudeSessionDeliveryTarget', () => {
       pid: 4242,
       sessionName: 'sample-project-70'
     })
+  })
+})
+
+/*
+ * Issue #68. The same `kind` the delivery target above switches on is also the
+ * only evidence Claude Code gives about whether anyone can answer the session,
+ * and the silence window needs exactly that. The four values below are the
+ * closed set the shipped binary validates against — `kind:E.enum(["interactive",
+ * "bg","daemon","daemon-worker"])` in 2.1.251 — and three of the four were live
+ * in this machine's registry while the table was written.
+ */
+describe('claudeSessionAttendance', () => {
+  it('calls a TUI session attended, which is the one kind a human sits at', () => {
+    expect(claudeSessionAttendance({ kind: 'interactive' })).toBe('attended')
+  })
+
+  it('calls every headless kind unattended, naming each rather than negating one', () => {
+    // Claude Code's own rule is `kind !== 'interactive'`, but a table that
+    // negates cannot tell a headless kind apart from a kind it has never seen,
+    // and those two must not fall the same way — see the unknown cases below.
+    expect(claudeSessionAttendance({ kind: 'bg' })).toBe('unattended')
+    expect(claudeSessionAttendance({ kind: 'daemon' })).toBe('unattended')
+    expect(claudeSessionAttendance({ kind: 'daemon-worker' })).toBe('unattended')
+  })
+
+  it('proves nothing about an entry that records no kind at all', () => {
+    // Older entries carry no kind. The delivery target assumes a console for
+    // one because guessing wrong there only costs a fallback; guessing wrong
+    // here would shorten the window on a session a human is typing into.
+    expect(claudeSessionAttendance({})).toBe('unknown')
+  })
+
+  it('proves nothing about a kind this table has never been taught', () => {
+    // The vocabulary has grown before. A fifth kind must not be read as
+    // headless just because it is not the word 'interactive'.
+    expect(claudeSessionAttendance({ kind: 'interactive-remote' })).toBe('unknown')
+    expect(claudeSessionAttendance({ kind: '' })).toBe('unknown')
   })
 })
 

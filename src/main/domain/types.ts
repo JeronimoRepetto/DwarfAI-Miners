@@ -6,6 +6,7 @@
 
 export type {
   Dwarf,
+  DwarfAttendance,
   DwarfCapabilities,
   DwarfKickRequest,
   DwarfKickResult,
