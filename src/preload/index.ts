@@ -40,6 +40,12 @@ export interface DwarfAiMinersApi {
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
+  /**
+   * Report that a kicked agent was SEEN stopping, so main retires the dwarf
+   * (see #46). One-way by design: there is no verdict to wait for, because the
+   * departure arrives on the next minesUpdated like every other change.
+   */
+  retireDwarf: (dwarfId: string) => void
 }
 
 const api: DwarfAiMinersApi = {
@@ -66,7 +72,11 @@ const api: DwarfAiMinersApi = {
   },
   activateDwarf: (dwarfId) => ipcRenderer.invoke(IPC_CHANNELS.activateDwarf, dwarfId),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
-  kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request)
+  kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
+  // Same discipline as setToggleShortcut: collapse anything that is not a
+  // string BEFORE it crosses, so main's boundary check only reasons about one.
+  retireDwarf: (dwarfId) =>
+    ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : '')
 }
 
 contextBridge.exposeInMainWorld('api', api)

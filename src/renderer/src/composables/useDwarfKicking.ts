@@ -131,6 +131,12 @@ export function useDwarfKicking() {
         phase: 'reacted',
         ...(current.via === undefined ? {} : { via: current.via })
       }
+      // The same fact that earns the ✓✓ is the only one that earns a removal
+      // (issue #46): this agent has been SEEN stopping. Reported rather than
+      // acted on, because main owns which dwarfs exist — the dwarf walks out
+      // when the next poll's snapshot says so. The watch is already closed
+      // above, so this fires once however many polls follow.
+      window.api.retireDwarf(dwarf.id)
       scheduleClear(dwarf.id)
     }
   }

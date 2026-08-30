@@ -66,6 +66,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
+  ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
 }
 
 /**
@@ -315,6 +316,14 @@ async function init(): Promise<void> {
     const request = parseKickRequest(payload)
     if (request === null) return notKicked
     return runtime?.kickDwarf(request) ?? notKicked
+  })
+
+  // The panel watched a kicked agent stop (#46). One-way: main decides what
+  // that costs the dwarf, and the answer travels back on the next poll.
+  ipcMain.on(IPC_CHANNELS.retireDwarf, (_event, dwarfId: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing.
+    if (typeof dwarfId !== 'string' || dwarfId === '') return
+    runtime?.retireDwarf(dwarfId)
   })
 }
 

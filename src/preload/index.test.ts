@@ -45,6 +45,7 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.activateDwarf).toBe('function')
     expect(typeof api.sendDwarfText).toBe('function')
     expect(typeof api.kickDwarf).toBe('function')
+    expect(typeof api.retireDwarf).toBe('function')
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')
   })
@@ -110,5 +111,24 @@ describe('preload panel-toggle shortcut contract', () => {
     })
     await (api.setToggleShortcut as unknown as (value: unknown) => Promise<unknown>)(42)
     expect(invoke).toHaveBeenLastCalledWith('shortcut:set', '')
+  })
+})
+
+/**
+ * Retirement (#46) is one-way on purpose: the renderer reports an observation
+ * and main decides. The departure comes back through the ordinary poll, so
+ * there is no verdict here to wait for.
+ */
+describe('preload dwarf retirement contract', () => {
+  it('reports a retirement on the dwarf:retire channel without asking for an answer', () => {
+    expect(api.retireDwarf('claude:s1')).toBeUndefined()
+    expect(send).toHaveBeenLastCalledWith('dwarf:retire', 'claude:s1')
+  })
+
+  it('collapses a non-string id to an empty string before it crosses the bridge', () => {
+    // Same discipline as setToggleShortcut: main's boundary check should only
+    // ever have to reason about a clean string.
+    ;(api.retireDwarf as unknown as (value: unknown) => void)(42)
+    expect(send).toHaveBeenLastCalledWith('dwarf:retire', '')
   })
 })

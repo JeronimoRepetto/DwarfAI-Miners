@@ -5,10 +5,13 @@ import { defaultDwarf } from '../testing/factories'
 import type { Dwarf, DwarfKickResult } from '../types'
 import { RESULT_VISIBLE_MS, useDwarfKicking } from './useDwarfKicking'
 
+/** Main's record of "this agent was seen stopping" (#46); asserted on below. */
+const retireDwarf = vi.fn()
+
 function stubApi(kickDwarf: (...args: never[]) => Promise<DwarfKickResult>): void {
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { kickDwarf }
+    value: { kickDwarf, retireDwarf }
   })
 }
 
@@ -129,6 +132,7 @@ describe('useDwarfKicking reaction tracking', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     useDwarfKicking().clearAll()
+    retireDwarf.mockClear()
     stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
   })
 
@@ -237,5 +241,87 @@ describe('useDwarfKicking reaction tracking', () => {
   it('survives a poll that arrives before anything was ever kicked', () => {
     const { observe } = useDwarfKicking()
     expect(() => observe([dwarf()])).not.toThrow()
+  })
+})
+
+/**
+ * Retiring the dwarf (issue #46). The trigger is the SAME observation that
+ * earns the ✓✓ and nothing weaker: main is told only once an agent has been
+ * seen stopping, never when the interrupt was merely handed over.
+ */
+describe('useDwarfKicking retirement', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfKicking().clearAll()
+    retireDwarf.mockClear()
+    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function dwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+    return defaultDwarf({ id: 'claude:s1', ...overrides })
+  }
+
+  it('asks main to retire the dwarf once its agent is seen stopping', async () => {
+    const { kick, observe } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(retireDwarf).toHaveBeenCalledWith('claude:s1')
+  })
+
+  it('never retires a kick that was only ever handed over', async () => {
+    const { kick, observe } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    // Still working when the window closes: better a ghost than a lie.
+    observe([dwarf({ status: 'working' })])
+    vi.advanceTimersByTime(REACTION_WINDOW_MS)
+    expect(retireDwarf).not.toHaveBeenCalled()
+  })
+
+  it('never retires a dwarf that merely left', async () => {
+    const { kick, observe } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    // A vanished agent is as consistent with a crash as with the kick landing.
+    observe([dwarf({ status: 'leaving' })])
+    expect(retireDwarf).not.toHaveBeenCalled()
+  })
+
+  it('never retires when the kick itself failed', async () => {
+    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    const { kick, observe } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    expect(retireDwarf).not.toHaveBeenCalled()
+  })
+
+  it('never reads another dwarf stopping as this one being retired', async () => {
+    const { kick, observe } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'working' }), defaultDwarf({ id: 'claude:s2', status: 'waiting' })])
+    expect(retireDwarf).not.toHaveBeenCalled()
+  })
+
+  it('retires the dwarf exactly once however many polls follow', async () => {
+    const { kick, observe } = useDwarfKicking()
+    observe([dwarf({ status: 'working' })])
+    await kick('claude:s1')
+
+    observe([dwarf({ status: 'waiting' })])
+    observe([dwarf({ status: 'waiting' })])
+    observe([dwarf({ status: 'waiting' })])
+    expect(retireDwarf).toHaveBeenCalledTimes(1)
   })
 })

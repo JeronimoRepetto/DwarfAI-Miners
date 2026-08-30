@@ -31,10 +31,35 @@ export class DwarfLifecycleTracker {
   private readonly now: () => number
   private lastReal = new Map<string, RealDwarfContext>()
   private leaving = new Map<string, LeavingEntry>()
+  /**
+   * Dwarfs retired by an observed kick (issue #46), against the moment the
+   * provider itself stopped reporting them — undefined while it still is.
+   */
+  private retired = new Map<string, number | undefined>()
 
   constructor(options: DwarfLifecycleOptions) {
     this.graceMs = options.graceMs
     this.now = options.now ?? Date.now
+  }
+
+  /**
+   * Take a dwarf off the board because its agent was OBSERVED to have stopped
+   * after a kick (issue #46) — never because one was merely delivered.
+   *
+   * The provider did not make that observation and goes on reporting the
+   * session until its own rules notice, so the decision has to be held here:
+   * without it the very next poll would re-adopt the dwarf and it would
+   * flicker back onto the rock. It departs rather than vanishes, because
+   * 'leaving' and the grace clock below are already exactly that.
+   */
+  retire(dwarfId: string): void {
+    this.retired.set(dwarfId, undefined)
+    const context = this.lastReal.get(dwarfId)
+    // No context means it was never real here (an unknown id, or one already
+    // walking out) — the record still stands, there is just no walk to start.
+    if (context !== undefined && !this.leaving.has(dwarfId)) {
+      this.leaving.set(dwarfId, { ...context, missingSince: this.now() })
+    }
   }
 
   /** Merge grace-period 'leaving' dwarfs into a fresh set of real mines. */
@@ -42,8 +67,15 @@ export class DwarfLifecycleTracker {
     const nowMs = this.now()
     const incomingIds = new Set<string>()
     const nextReal = new Map<string, RealDwarfContext>()
+    /** Retired dwarfs this poll still carried, i.e. the ones being suppressed. */
+    const suppressed = new Set<string>()
     for (const item of mines) {
       for (const dwarf of item.dwarfs) {
+        // A retired dwarf is not real any more, whatever the provider says.
+        if (this.retired.has(dwarf.id)) {
+          suppressed.add(dwarf.id)
+          continue
+        }
         incomingIds.add(dwarf.id)
         nextReal.set(dwarf.id, {
           dwarf,
@@ -53,6 +85,18 @@ export class DwarfLifecycleTracker {
           mineTier: item.tier
         })
       }
+    }
+
+    // A retirement only has to outlast the provider's own belief. Once the
+    // provider has agreed the session is gone for a full grace window, the
+    // record has nothing left to suppress and is dropped — so a session that
+    // genuinely comes back under the same id is visible again, which matters
+    // more than the record: an agent hidden while it runs is the very lie
+    // this feature exists to prevent.
+    for (const [id, absentSince] of this.retired) {
+      if (suppressed.has(id)) this.retired.set(id, undefined)
+      else if (absentSince === undefined) this.retired.set(id, nowMs)
+      else if (nowMs - absentSince >= this.graceMs) this.retired.delete(id)
     }
 
     // Newly missing: real last tick, absent now. missingSince is set once and
@@ -74,9 +118,12 @@ export class DwarfLifecycleTracker {
     }
 
     this.lastReal = nextReal
-    if (this.leaving.size === 0) return mines
+    if (this.leaving.size === 0 && suppressed.size === 0) return mines
 
-    const output = mines.map((item) => ({ ...item, dwarfs: [...item.dwarfs] }))
+    const output = mines.map((item) => ({
+      ...item,
+      dwarfs: item.dwarfs.filter((dwarf) => !suppressed.has(dwarf.id))
+    }))
     const byMineId = new Map(output.map((item) => [item.id, item]))
     for (const entry of this.leaving.values()) {
       const leavingDwarf: Dwarf = { ...entry.dwarf, status: 'leaving' }

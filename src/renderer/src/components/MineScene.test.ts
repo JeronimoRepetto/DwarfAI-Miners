@@ -167,7 +167,11 @@ describe('MineScene reaction feed', () => {
       configurable: true,
       value: {
         kickDwarf: () => Promise.resolve({ delivered: true, via: 'claude-relay' }),
-        sendDwarfText: () => Promise.resolve({ delivered: true, via: 'claude-relay' })
+        sendDwarfText: () => Promise.resolve({ delivered: true, via: 'claude-relay' }),
+        // A promoted kick retires its dwarf through this (issue #46). Stubbed
+        // rather than made optional in the composable: a missing member should
+        // fail a test loudly here, not be swallowed at every call site.
+        retireDwarf: () => undefined
       }
     })
   }

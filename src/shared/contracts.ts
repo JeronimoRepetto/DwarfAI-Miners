@@ -374,5 +374,12 @@ export const IPC_CHANNELS = {
   minesUpdated: 'mines:update',
   activateDwarf: 'dwarf:activate',
   sendDwarfText: 'dwarf:sendText',
-  kickDwarf: 'dwarf:kick'
+  kickDwarf: 'dwarf:kick',
+  /**
+   * The panel reporting that it WATCHED a kicked agent stop (see #46), so main
+   * can take the dwarf off the board. One-way: the renderer contributes the
+   * observation it alone makes, main owns which dwarfs exist, and the
+   * departure comes back on minesUpdated like every other change.
+   */
+  retireDwarf: 'dwarf:retire'
 } as const

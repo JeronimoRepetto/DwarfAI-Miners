@@ -156,6 +156,8 @@ export class AgentRuntime {
   private readonly ledger: MaterialLedger
   /** Keeps an unchanged poll from waking the renderer (see PublishGate). */
   private readonly publishGate = new PublishGate()
+  /** Owns both the 'leaving' grace window and the retirement record (#46). */
+  private readonly lifecycle: DwarfLifecycleTracker
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -265,6 +267,7 @@ export class AgentRuntime {
       graceMs: options.config.dwarfLeaveGraceS * 1_000,
       now: options.now
     })
+    this.lifecycle = lifecycle
     this.poller = new Poller({
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
@@ -576,6 +579,24 @@ export class AgentRuntime {
         error: 'The kick could not be delivered.'
       }
     }
+  }
+
+  /**
+   * Retire a dwarf whose agent the panel WATCHED stop after a kick (issue #46).
+   *
+   * The trigger is deliberately the observed reaction and never the delivered
+   * verdict: `delivered` only means the interrupt reached the session's queue,
+   * and a dwarf removed on that would show an agent as gone while it is still
+   * burning tokens. A kick nobody saw land removes nothing — the dwarf stays
+   * until a provider rule ends it, because a ghost beats a lie.
+   *
+   * Fire-and-forget on purpose. The departure reaches the panel through the
+   * next ordinary poll, so the renderer renders what main decided rather than
+   * a removal it performed on its own authority.
+   */
+  retireDwarf(dwarfId: string): void {
+    console.log(`[runtime] Retiring ${dwarfId}: its agent was seen stopping after a kick.`)
+    this.lifecycle.retire(dwarfId)
   }
 
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {

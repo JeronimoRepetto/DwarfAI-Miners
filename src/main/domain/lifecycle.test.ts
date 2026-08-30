@@ -124,3 +124,95 @@ describe('DwarfLifecycleTracker', () => {
     expect(onlyA[0]!.dwarfs.map((d) => d.id)).toEqual(['codex:a'])
   })
 })
+
+/**
+ * Retirement (issue #46). A kick that was OBSERVED to stop its agent takes the
+ * dwarf off the board. The provider knows nothing about that observation and
+ * goes on reporting the session for as long as its own rules say it is there,
+ * so the decision has to be held here or every poll would re-adopt the dwarf.
+ */
+describe('DwarfLifecycleTracker retirement', () => {
+  const dwarf = { ...defaultDwarf(), id: 'claude:a', name: 'Digger', status: 'working' as const }
+
+  it('walks a retired dwarf out instead of blinking it away', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const reported = [mine({ dwarfs: [dwarf] })]
+    tracker.apply(reported)
+
+    now += 1_000
+    tracker.retire('claude:a')
+    // The provider still reports it working: the retirement is the panel's
+    // observation, not the provider's.
+    const result = tracker.apply(reported)
+    expect(result[0]!.dwarfs).toHaveLength(1)
+    expect(result[0]!.dwarfs[0]).toMatchObject({
+      id: 'claude:a',
+      name: 'Digger',
+      status: 'leaving'
+    })
+  })
+
+  it('keeps a retired dwarf gone while the provider goes on reporting it', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const reported = [mine({ dwarfs: [dwarf] })]
+    tracker.apply(reported)
+
+    now += 1_000
+    tracker.retire('claude:a')
+    tracker.apply(reported)
+
+    now += GRACE_MS
+    expect(tracker.apply(reported)[0]!.dwarfs).toEqual([])
+    // The whole point of the record: a later poll carrying the same session
+    // must not put the dwarf back on the rock.
+    now += 60_000
+    expect(tracker.apply(reported)[0]!.dwarfs).toEqual([])
+  })
+
+  it('leaves every dwarf that was not retired exactly where it was', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const other = { ...defaultDwarf(), id: 'claude:b', status: 'working' as const }
+    tracker.apply([mine({ dwarfs: [dwarf, other] })])
+
+    now += 1_000
+    tracker.retire('claude:a')
+    const result = tracker.apply([mine({ dwarfs: [dwarf, other] })])
+    expect(result[0]!.dwarfs).toContainEqual(other)
+  })
+
+  it('forgets the retirement once the provider itself stops reporting the dwarf', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const reported = [mine({ dwarfs: [dwarf] })]
+    tracker.apply(reported)
+
+    now += 1_000
+    tracker.retire('claude:a')
+    tracker.apply(reported)
+    now += GRACE_MS
+    expect(tracker.apply(reported)[0]!.dwarfs).toEqual([])
+
+    // The provider now agrees the session ended, so the record has nothing
+    // left to suppress.
+    now += 1_000
+    tracker.apply([mine({ dwarfs: [] })])
+    now += GRACE_MS
+    tracker.apply([mine({ dwarfs: [] })])
+
+    // A session that genuinely comes back under this id is real again: an
+    // agent hidden while it is running is the lie #46 exists to prevent.
+    now += 1_000
+    const resumed = { ...defaultDwarf(), id: 'claude:a', status: 'working' as const }
+    expect(tracker.apply([mine({ dwarfs: [resumed] })])[0]!.dwarfs).toEqual([resumed])
+  })
+
+  it('ignores a retirement for a dwarf it has never seen', () => {
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => 0 })
+    tracker.retire('claude:ghost')
+    const input = [mine({ dwarfs: [dwarf] })]
+    expect(tracker.apply(input)).toEqual(input)
+  })
+})

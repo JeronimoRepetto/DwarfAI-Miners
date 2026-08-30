@@ -206,6 +206,95 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
     await runtime.refresh()
     expect(runtime.getMines()[0]!.dwarfs).toEqual([])
   })
+
+  /**
+   * Issue #46: a kick the panel WATCHED stop its agent retires the dwarf. The
+   * provider is not the one that noticed, so it keeps reporting the session —
+   * which is exactly why the decision has to survive the next poll.
+   */
+  it('walks a retired dwarf out even while the provider still reports it working', async () => {
+    let now = 0
+    const workingDwarf = {
+      id: 'claude:session-1',
+      provider: 'claude' as const,
+      role: 'worker' as const,
+      name: 'worker',
+      status: 'working' as const,
+      sessionId: 'session-1'
+    }
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [workingDwarf]
+      }
+    ])
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs).toEqual([workingDwarf])
+
+    now = 1_000
+    runtime.retireDwarf('claude:session-1')
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs).toMatchObject([
+      { id: 'claude:session-1', status: 'leaving' }
+    ])
+
+    now = 21_000
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs).toEqual([])
+
+    // Sticky: the provider still has not noticed, and the dwarf must not
+    // flicker back onto the rock.
+    now = 41_000
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs).toEqual([])
+  })
+
+  it('leaves the other dwarfs of a retired dwarf-s mine alone', async () => {
+    let now = 0
+    const kicked = {
+      id: 'claude:session-1',
+      provider: 'claude' as const,
+      role: 'worker' as const,
+      name: 'worker',
+      status: 'working' as const,
+      sessionId: 'session-1'
+    }
+    const spared = { ...kicked, id: 'claude:session-1:2', name: 'mate' }
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [kicked, spared]
+      }
+    ])
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    now = 1_000
+    runtime.retireDwarf('claude:session-1')
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs).toContainEqual(spared)
+  })
 })
 
 /**
