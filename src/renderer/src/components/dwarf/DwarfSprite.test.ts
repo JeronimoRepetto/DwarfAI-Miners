@@ -902,7 +902,7 @@ describe('DwarfSprite with reduced motion', () => {
     stubReducedMotion(true)
     const poses = [
       defaultDwarf({ status: 'working' }),
-      defaultDwarf({ status: 'working', silentForMs: DWARF_SILENCE_WINDOW_MS.worker }),
+      defaultDwarf({ status: 'working', silentForMs: DWARF_SILENCE_WINDOW_MS.unattended }),
       defaultDwarf({ status: 'waiting' }),
       defaultDwarf({ status: 'leaving' })
     ].map((dwarf) => poseOf(mount(DwarfSprite, { props: { dwarf } })))
@@ -919,7 +919,7 @@ describe('DwarfSprite with reduced motion', () => {
         dwarf: defaultDwarf({
           role: 'foreman',
           status: 'working',
-          silentForMs: DWARF_SILENCE_WINDOW_MS.foreman
+          silentForMs: DWARF_SILENCE_WINDOW_MS.attended
         })
       }
     })
