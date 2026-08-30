@@ -48,6 +48,47 @@ function notification(agentId: string, status: string): string {
 }
 
 /**
+ * The same notification in the envelope Claude Code actually writes most of
+ * them into: a `queue-operation` record, which carries no `message` key at all
+ * (issue #64). See `__fixtures__/claude/notification-envelopes.jsonl`.
+ */
+function queuedNotification(agentId: string, status: string): string {
+  return (
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp: '2026-08-29T11:40:22.000Z',
+      sessionId: SESSION_ID,
+      content:
+        `<task-notification>\n<task-id>${agentId}</task-id>\n` +
+        `<status>${status}</status>\n</task-notification>`
+    }) + '\n'
+  )
+}
+
+/**
+ * A Bash result that printed a transcript containing a notification. The blob
+ * is identical; only the envelope says it is tool output rather than an ending.
+ */
+function quotedNotification(agentId: string, status: string): string {
+  const blob =
+    `<task-notification>\n<task-id>${agentId}</task-id>\n` +
+    `<status>${status}</status>\n</task-notification>`
+  return (
+    JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { tool_use_id: 'toolu_0000000000000000000001', type: 'tool_result', content: blob }
+        ]
+      },
+      toolUseResult: { stdout: blob, stderr: '', interrupted: false, isImage: false }
+    }) + '\n'
+  )
+}
+
+/**
  * An `async_launched` line as Claude writes it when a background agent starts,
  * reduced to the fields the parser actually reads. The fixture carries a full
  * real record; this builder exists to place a SECOND launch at a chosen depth
@@ -361,6 +402,43 @@ describe('ClaudeProvider', () => {
       fake.addFile(`${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`, parentTranscript, 43_000)
       const second = await provider.scan()
       expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([`claude:${SESSION_ID}`])
+    })
+
+    /**
+     * Regression (issue #64). Measured against a real 2.4 MB session: ten
+     * subagents launched, all ten notified, and the provider retired two. The
+     * eight it missed had notified through `queue-operation` and `attachment`
+     * records, which carry no `message.content` for the scan to be rooted at,
+     * so the ending signal never fired and the foreman accumulated ghosts.
+     */
+    it('drops an agent whose notification only ever arrived as a queue-operation', async () => {
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript + queuedNotification(LIVE_AGENT, 'completed'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([`claude:${SESSION_ID}`])
+    })
+
+    /**
+     * The other half of that fix, and the one that must never regress: reading
+     * the envelope wider is not the same as reading every string. A live agent
+     * whose notification a tool merely printed is #60's waiting agent, and
+     * `terminalAgentIds` is remembered for the life of the process, so retiring
+     * it here would keep it retired everywhere.
+     */
+    it('keeps an agent mining when a tool result merely printed its notification', async () => {
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript + quotedNotification(LIVE_AGENT, 'completed'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        `claude:${SESSION_ID}`,
+        `claude:${SESSION_ID}:${LIVE_AGENT}`
+      ])
     })
   })
 

@@ -118,10 +118,31 @@ Completion — a `queue-operation` line (`operation:"enqueue"`) and later a `use
 
 In that transcript each of the 6 agents was launched exactly once and notified exactly once, and every notification came **after** its launch record. **[V]**
 
+**Which record carries the notification, and which only quotes one.** Re-measured on 2026-08-30 across every transcript on this machine — 366 files, ~373 MB, 191 launched agents. The blob is byte-identical in all of them, so **the envelope is the only thing that separates an ending from a quotation of one**, and getting that wrong costs a dwarf in one direction or the other. **[V]**
+
+Claude Code writes the notification into exactly three envelopes:
+
+| Record                                                                                                           | Field carrying the blob           | Note                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{type:"queue-operation", operation:"enqueue"\|"remove", timestamp, sessionId, content}`                         | `content`                         | **No `message` key at all.** The commonest by far (382 enqueue + 205 remove records); `remove` carries `reason:"absorbed_mid_turn"` and repeats the whole blob when the running turn swallows the queued message |
+| `{type:"attachment", attachment:{type:"queued_command", prompt, commandMode:"task-notification", timestamp}, …}` | `attachment.prompt`               | The queued message materialised into a turn (138 records). Again no `message` key                                                                                                                                |
+| `{type:"user", message:{content}, origin:{kind:"task-notification"}, promptSource:"system"}`                     | `message.content`, a plain string | The shape a naive reader expects, and the rarest of the three (167 records)                                                                                                                                      |
+
+Everything else that contains the blob is a **quotation**, and counting one as an ending retires an agent that is still mining:
+
+| Record                                                                                       | Why it is not an ending                                                               |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `type:"user"` with `toolUseResult` (`message.content[].tool_result`, `toolUseResult.stdout`) | A tool response — a Bash command that printed a transcript (199)                      |
+| `type:"assistant"` (`text`, or a `tool_use` input)                                           | Model output: prose discussing one, or a command being written that contains one (71) |
+| `type:"attachment"`, `attachment.type:"hook_success"`                                        | A hook's captured stdout echoing the prompt it was handed (84)                        |
+| `type:"system"`, `subtype:"informational"`                                                   | A hook-blocked prompt quoted back in a warning (11)                                   |
+
+The sharpest case sits inside the launch record itself: an `async_launched` result whose `toolUseResult.prompt` pasted a notification would start one agent and retire another on the same line. Across that corpus a scan over every string on the line would have retired **32 further ids on nothing but a quotation**, while finding no ending the three envelopes above miss. Since `terminalAgentIds` is remembered for the life of the process across every session, one quoted id evicts a live dwarf somewhere else — see the #64 note below.
+
 **Agent-in-flight algorithm** (verified against the live session, which had 2 agents running):
 
 1. Scan parent `.jsonl` for `toolUseResult.status == "async_launched"` → collect `agentId`, `description`, `resolvedModel`, `toolUseId`.
-2. Agent is **done** iff a line contains `<task-id>AGENTID</task-id>` with `<status>` of `completed`, `failed` **or `killed`**. No such line → **in flight**. **[V]**
+2. Agent is **done** iff one of the three delivery envelopes above carries `<task-id>AGENTID</task-id>` with `<status>` of `completed`, `failed` **or `killed`**. No such record → **in flight**. **[V]**
 3. Cross-checks: `subagents\agent-<agentId>.jsonl` mtime still advancing (mine was, live) **[V]**; last `system` line's `pendingBackgroundAgentCount > 0` **[V]** (live file showed `pending=2`).
 
 #### Ghost dwarfs — bug found and fixed (2026-08-29)
@@ -137,6 +158,21 @@ Fixed in two layers (`parse.ts`, `claudeProvider.ts`):
 2. `parseClaudeTranscriptTail` now also returns `terminalAgentIds` — every id seen reaching a terminal status in this tail, **whether or not its launch record is still in the window**. `ClaudeProvider` accumulates those into a process-lifetime `Set` and filters in-flight agents through it, so an agent that has ever been seen finishing can never re-enter the crew. Agent ids are globally unique 17-hex-char strings, so one flat set covers all sessions and grows by one short string per agent actually launched.
 
 Since the sidecar files carry no completion state (§1.4), the task-notification plus that memory **is** the authority. Known trade-off: the `<note>` above says a killed agent can be resumed and would notify again; a resumed agent stays hidden until the app restarts. A ghost that never leaves is the worse failure, so this is the deliberate choice.
+
+#### Ghost dwarfs again — the envelope, not the verdict (2026-08-30, issue #64)
+
+A foreman running continuously still accumulated ghosts, and the cause was the same class as the `killed` bug above with the other half missing. The status list was right; **the parser was reading the wrong field**. `parseClaudeTranscriptTail` ran the regex over `message.content`, so the two envelopes that carry most notifications — which have no `message` key whatsoever — were never scanned at all. Measured against one real 2.4 MB session: ten subagents launched, ten notified, **two retired**. Across the ~373 MB corpus: 188 real endings, **117 seen**. The eight and the seventy-one that got away were the ghosts.
+
+Note what made this survivable for so long. Both structural safety nets are unreachable for exactly this session shape: `enforcePendingCeiling` needs a `pendingBackgroundAgentCount`, which only rides a `turn_duration` line and does not appear in the last 256 KiB of a multi-megabyte transcript; and `pruneStaleLaunches` needs an idle registry status **plus** 60 minutes of foreman silence, which a foreman making back-to-back tool calls never has. They were carrying a load the primary signal should have carried, so the primary signal's failure showed up as a slow leak rather than a broken feature.
+
+Fixed in `parse.ts` alone — the gates are untouched, because they are the nets and not the fix:
+
+1. The scan runs on **every** line rather than inside the `user` branch, and reads the three delivery envelopes tabulated above instead of `message.content`.
+2. Text nested inside a content **object** is reached rather than dropped by a `typeof item === 'string'` filter.
+3. `TASK_NOTIFICATION_RE`'s status list is **unchanged**. The gap was the envelope, never the verdict.
+4. Nothing outside those three envelopes counts, so a transcript quoting a notification never retires anybody. That direction is #60's failure and it is the worse one: an agent waiting on a human writes nothing at all, and the only thing keeping it on screen is that nobody claimed it ended.
+
+Verified by replaying the shipped parser over all 366 real transcripts through the same 256 KiB windows the poller uses: **188 of 188 endings, zero missed, zero retired without evidence.** `__fixtures__/claude/notification-envelopes.jsonl` carries one scrubbed record of each envelope and each quotation — the bug survived earlier fixtures because every one of them had been written from the parser's assumptions rather than from a real record.
 
 ### 1.5 Liveness — RUNNING session detection
 
@@ -278,6 +314,7 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 | `sessions/<pid>.json` busy/idle + PID mapping                           | Verified live (cleanup-on-crash not tested)                                             |
 | Agent async launch / task-notification completion / `subagents\` layout | Verified live + on completed session                                                    |
 | `<status>` is one of completed/failed/killed; all terminal              | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                        |
+| Three delivery envelopes carry the notification; the rest quote it      | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)       |
 | `agent-*.meta.json` and `tasks\*.output` carry no completion state      | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                |
 | Codex rollout layout & record types                                     | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred |
 | Codex liveness = mtime + task_started/complete + process                | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap) |
