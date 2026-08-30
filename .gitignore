@@ -1,10 +1,16 @@
 node_modules/
-dist/
-release/
-out/
+
+# Build output. Anchored with a leading slash: an unanchored `release/` also
+# matches at any depth, which silently swallowed skills/release/ — the pattern
+# had no way to say it meant the packaging directory rather than any directory
+# that happens to be named that.
+/dist/
+/release/
+/out/
+/coverage/
+
 .env
 *.local
-coverage/
 .codegraph/
 .atl/
 .DS_Store
