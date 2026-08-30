@@ -14,6 +14,8 @@
 [![Latest release](https://img.shields.io/github/v/release/JeronimoRepetto/DwarfAI-Miners?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/JeronimoRepetto/DwarfAI-Miners/total?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4a5568?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4a5568?style=flat-square)](LICENSE)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20project-FF5E5B?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/jeronimorepetto)
 
 ![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)
 ![Vue 3](https://img.shields.io/badge/Vue%203-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)
@@ -34,8 +36,11 @@ have not been run end to end yet — see the support matrix below.
 
 ## What it looks like
 
-<!-- TODO: drop real captures in docs/assets/ -->
+Real captures are pending. Until they land, [What the panel shows](#what-the-panel-shows)
+below describes both views: the moonlit map with one painted mound per project, and the mine
+interior with one animated dwarf per agent.
 
+<!-- TODO: drop real captures in docs/assets/ and restore this table:
 <table>
   <tr>
     <td align="center">
@@ -50,6 +55,7 @@ have not been run end to end yet — see the support matrix below.
     <td align="center"><em>Mine interior — one dwarf per agent</em></td>
   </tr>
 </table>
+-->
 
 ## Highlights
 
@@ -299,22 +305,27 @@ Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast a
 <details>
 <summary><strong>All environment variables</strong> (defaults work out of the box)</summary>
 
-| Variable                  | Default                        | Meaning                                                                             |
-| ------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| `POLL_INTERVAL_MS`        | `2000`                         | Provider scan interval in milliseconds.                                             |
-| `LIVENESS_WINDOW_S`       | `90`                           | Reserved general activity window.                                                   |
-| `CODEX_LIVENESS_WINDOW_S` | `300`                          | Maximum rollout mtime age considered live.                                          |
-| `CODEX_SCAN_DAYS`         | `7`                            | How many day-directories (today back N-1 days) to scan for rollouts.                |
-| `CODEX_IDLE_RETENTION_S`  | `3600`                         | Extra time a quiet-but-open rollout stays visible while a codex process is running. |
-| `CODEX_SESSIONS_ROOT`     | `~/.codex/sessions`            | The Codex rollout directory to scan. A leading `~` is expanded.                     |
-| `DWARF_LEAVE_GRACE_S`     | `20`                           | How long a dwarf whose agent finished/disappeared stays visible as "leaving".       |
-| `TIER_CACHE_TTL_S`        | `600`                          | Mine-tier cache lifetime.                                                           |
-| `TIER_COPPER_AT`          | `25`                           | Source-file threshold for copper.                                                   |
-| `TIER_SILVER_AT`          | `100`                          | Source-file threshold for silver.                                                   |
-| `TIER_GOLD_AT`            | `400`                          | Source-file threshold for gold.                                                     |
-| `TIER_URANIUM_AT`         | `1500`                         | Source-file threshold for uranium.                                                  |
-| `CLAUDE_CONFIG_DIRS`      | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.                                                   |
-| `HOOKS_PORT`              | `47821`                        | Loopback port for instant updates (see above). Nothing binds it until you opt in.   |
+| Variable                   | Default                        | Meaning                                                                             |
+| -------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| `POLL_INTERVAL_MS`         | `2000`                         | Provider scan interval in milliseconds.                                             |
+| `LIVENESS_WINDOW_S`        | `90`                           | Reserved general activity window.                                                   |
+| `CODEX_LIVENESS_WINDOW_S`  | `300`                          | Maximum rollout mtime age considered live.                                          |
+| `CODEX_HEARTBEAT_WINDOW_S` | `300`                          | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.          |
+| `CODEX_SCAN_DAYS`          | `7`                            | How many day-directories (today back N-1 days) to scan for rollouts.                |
+| `CODEX_IDLE_RETENTION_S`   | `3600`                         | Extra time a quiet-but-open rollout stays visible while a codex process is running. |
+| `CODEX_SESSIONS_ROOT`      | `~/.codex/sessions`            | The Codex rollout directory to scan. A leading `~` is expanded.                     |
+| `CODEX_STATE_DB`           | `~/.codex/state_5.sqlite`      | Codex's thread registry, opened read-only. Missing file: rollout-only detection.    |
+| `CODEX_LOGS_DB`            | `~/.codex/logs_2.sqlite`       | Codex's structured log stream, used read-only as a liveness heartbeat.              |
+| `DWARF_LEAVE_GRACE_S`      | `20`                           | How long a dwarf whose agent finished/disappeared stays visible as "leaving".       |
+| `TIER_CACHE_TTL_S`         | `600`                          | Mine-tier cache lifetime.                                                           |
+| `TIER_COPPER_AT`           | `25`                           | Source-file threshold for copper.                                                   |
+| `TIER_SILVER_AT`           | `100`                          | Source-file threshold for silver.                                                   |
+| `TIER_GOLD_AT`             | `400`                          | Source-file threshold for gold.                                                     |
+| `TIER_URANIUM_AT`          | `1500`                         | Source-file threshold for uranium.                                                  |
+| `CLAUDE_CONFIG_DIRS`       | `~/.claude;~/.claude-multitec` | Semicolon-separated Claude roots.                                                   |
+| `SENDTEXT_RELAY_MODEL`     | `haiku`                        | Model the one-shot `claude -p` relay runs when delivering a message to a session.   |
+| `SENDTEXT_TIMEOUT_S`       | `60`                           | How long a message delivery may take before it is reported as timed out.            |
+| `HOOKS_PORT`               | `47821`                        | Loopback port for instant updates (see above). Nothing binds it until you opt in.   |
 
 Tier thresholds must be strictly increasing.
 
@@ -378,3 +389,37 @@ what makes platforms that cannot be executed here still testable here.
 The renderer runs with context isolation enabled and Node integration disabled. The preload
 exposes only the typed DwarfAI-Miners API. External navigation is denied in the panel and opened in
 the system browser instead.
+
+The app makes no outbound network requests of its own — no telemetry, no auto-updater.
+[`docs/privacy.md`](docs/privacy.md) documents the full data boundary (what is read, what is
+stored, what is transmitted, with the source file behind each claim), and
+[`SECURITY.md`](SECURITY.md) covers supported versions and how to report a vulnerability
+privately.
+
+## Documentation
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup, verification commands, testing
+  philosophy, commit conventions, and where help is wanted.
+- [`SECURITY.md`](SECURITY.md) — supported versions, private vulnerability reporting, scope.
+- [`docs/privacy.md`](docs/privacy.md) — the data boundary: what the app reads, stores, and
+  transmits.
+- [`docs/signing.md`](docs/signing.md) — why builds are unsigned and what fixing that takes.
+- [`docs/provider-formats.md`](docs/provider-formats.md) — on-disk session-format research
+  for Claude Code and Codex.
+- [`docs/codex-v2-format.md`](docs/codex-v2-format.md) — the Codex SQLite and rollout
+  storage investigation.
+- [`docs/hook-detection-evaluation.md`](docs/hook-detection-evaluation.md) — the evaluation
+  behind the instant-updates hooks channel.
+- [`docs/ecosystem-research.md`](docs/ecosystem-research.md) — the prior-art survey that
+  shaped the design.
+- [`LICENSE`](LICENSE) — MIT.
+
+## Support the project
+
+DwarfAI-Miners is free and MIT-licensed. If it has earned a spot on your desktop, you can
+support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
+nothing in the app is, or will be, gated on it.
+
+## License
+
+[MIT](LICENSE) © 2026 Jeronimo Repetto.
