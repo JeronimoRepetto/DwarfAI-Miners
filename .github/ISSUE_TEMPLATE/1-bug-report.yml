@@ -41,7 +41,7 @@ body:
     id: version
     attributes:
       label: App version
-      description: From the installer filename, or `version` in package.json when running from source.
+      description: Beside the title in the panel titlebar. A `-dev` suffix there means a build run from a checkout rather than an installer; copy it in as shown.
       placeholder: 0.2.1
     validations:
       required: true

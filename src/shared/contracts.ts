@@ -500,6 +500,36 @@ export interface ShortcutState {
   platform: ShortcutPlatform
 }
 
+/**
+ * Which build of the app is running (see #79) — the number, and which of the
+ * two builds that can be on one machine is speaking.
+ *
+ * Both fields are produced in main and travel; neither is derived here or in
+ * the renderer. Main is the only process that can ask Electron, and with
+ * context isolation on there is no package.json to read and no process.env to
+ * consult on the far side of the bridge.
+ *
+ * `version` is `app.getVersion()`, which is the version ACTUALLY RUNNING and
+ * not a copy of one. Measured on both sides: packaged, it reads the
+ * package.json that shipped inside the app — the same file that stamps the
+ * executable's ProductVersion and the installer's filename, so the panel and
+ * the .exe cannot disagree; unpackaged, it reads the checkout's package.json,
+ * which is what the bug-report template already asks a reporter for. A
+ * constant compiled in at build time was the alternative and is the wrong one:
+ * it is a copy taken at some other moment, and a number that looks right and
+ * is stale is precisely the failure this exists to prevent.
+ *
+ * `packaged` is `app.isPackaged` — the distinction main already turns three
+ * startup decisions on, rather than a second mechanism invented for a label.
+ * It is the half the incident actually needed: an installed build and a dev
+ * build of the same checkout carry the SAME version, so the number alone
+ * cannot tell them apart, and the wrong one got diagnosed.
+ */
+export interface AppBuild {
+  version: string
+  packaged: boolean
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -528,5 +558,11 @@ export const IPC_CHANNELS = {
    * observation it alone makes, main owns which dwarfs exist, and the
    * departure comes back on minesUpdated like every other change.
    */
-  retireDwarf: 'dwarf:retire'
+  retireDwarf: 'dwarf:retire',
+  /**
+   * The running build (see #79). Pull-only and answered from Electron: a
+   * version cannot change while the process lives, so there is nothing to
+   * push and nothing to keep in step.
+   */
+  getAppBuild: 'app:build'
 } as const

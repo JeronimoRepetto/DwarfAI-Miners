@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AppBuild,
   DwarfActivation,
   DwarfKickRequest,
   DwarfKickResult,
@@ -46,6 +47,14 @@ export interface DwarfAiMinersApi {
    * departure arrives on the next minesUpdated like every other change.
    */
   retireDwarf: (dwarfId: string) => void
+  /**
+   * Which build is running (see #79) — the version and whether it was
+   * installed or started from a checkout. This bridge is the ONLY route: with
+   * context isolation on and node integration off the renderer has no
+   * package.json to read and no environment to inspect, which is what keeps
+   * the panel's version the one Electron reports for the running process.
+   */
+  getAppBuild: () => Promise<AppBuild>
 }
 
 const api: DwarfAiMinersApi = {
@@ -76,7 +85,8 @@ const api: DwarfAiMinersApi = {
   // Same discipline as setToggleShortcut: collapse anything that is not a
   // string BEFORE it crosses, so main's boundary check only reasons about one.
   retireDwarf: (dwarfId) =>
-    ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : '')
+    ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : ''),
+  getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild)
 }
 
 contextBridge.exposeInMainWorld('api', api)

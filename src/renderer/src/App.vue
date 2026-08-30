@@ -10,8 +10,9 @@ import { useMines } from './composables/useMines'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
+import { versionLabel, versionTitle } from './lib/appBuild'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
-import type { Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
+import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, showMap, syncWithMines } = useView()
@@ -70,6 +71,21 @@ function closeSettings(): void {
   stopShortcutRecording()
 }
 
+/**
+ * Which build is running (see #79). Read from main once on mount, because a
+ * version cannot change under a live process — there is nothing to keep in
+ * step and nothing to subscribe to.
+ *
+ * Null until it arrives, and null forever if the read fails, in which case the
+ * titlebar prints nothing at all. That is deliberate: a placeholder like
+ * "unknown" would be furniture for a case that means the bridge itself is
+ * down, and inventing a version where the real one belongs is the one failure
+ * this whole feature exists to prevent.
+ */
+const build = ref<AppBuild | null>(null)
+const versionText = computed(() => (build.value === null ? null : versionLabel(build.value)))
+const versionHint = computed(() => (build.value === null ? '' : versionTitle(build.value)))
+
 const loading = ref(true)
 const error = ref<string | null>(null)
 const activating = ref<string | null>(null)
@@ -107,6 +123,15 @@ async function load(): Promise<void> {
     error.value =
       'DwarfAI-Miners could not load active mines. It will keep trying as activity changes.'
     loading.value = false
+  }
+}
+
+async function loadBuild(): Promise<void> {
+  try {
+    build.value = await window.api.getAppBuild()
+  } catch {
+    // Main is the only source there is, so there is nothing to fall back on
+    // and nothing worth guessing: the titlebar stays as it was.
   }
 }
 
@@ -175,6 +200,7 @@ onMounted(() => {
   // Reads the accelerator AND whether it actually registered, so a startup
   // failure can be flagged on the gear before anyone opens settings.
   void syncShortcut()
+  void loadBuild()
   unsubscribe = window.api.onMinesUpdated(update)
 })
 onBeforeUnmount(() => unsubscribe?.())
@@ -183,7 +209,15 @@ onBeforeUnmount(() => unsubscribe?.())
 <template>
   <div class="panel">
     <header class="titlebar">
-      <span class="title"><i aria-hidden="true"></i>DwarfAI-Miners</span>
+      <span class="title">
+        <i aria-hidden="true"></i>DwarfAI-Miners
+        <!--
+          The running version (see #79). A label, not a control: it stays out
+          of .window-controls so nothing about it invites a click, and out of
+          the no-drag region so the whole name still drags the panel.
+        -->
+        <span v-if="versionText" class="version" :title="versionHint">{{ versionText }}</span>
+      </span>
       <div class="window-controls">
         <!--
           Settings (see #17). aria-expanded ties the gear to the panel it
@@ -322,6 +356,16 @@ onBeforeUnmount(() => unsubscribe?.())
   font-weight: 700;
   font-size: 14px;
   letter-spacing: 0.04em;
+}
+/* Quiet by construction: the faintest ink in the palette, normal weight
+   against the title's bold, and small enough to read as a footnote to the name
+   rather than a second heading. This is a monitor — the version is there for
+   the moment somebody asks, and must not draw the eye for the rest of it. */
+.version {
+  color: var(--ink-faint);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: normal;
 }
 .title i {
   width: 10px;
