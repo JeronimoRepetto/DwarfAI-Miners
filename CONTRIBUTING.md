@@ -24,13 +24,23 @@ Every key is optional and invalid values fail fast at startup (`src/main/config/
 
 ## Verification
 
-Before opening a pull request, run the same checks CI runs
-(`.github/workflows/ci.yml` runs all five on every push to `main` and every PR):
+Before opening a pull request, run the same checks CI runs, in the same order
+(`.github/workflows/ci.yml` runs all seven on every push to `main` and every PR):
+
+1. **The privacy guard**, which runs **first** — every check below it can pass on a change
+   that still goes red. It is a `git grep` over tracked files for machine-specific
+   identifiers. Run it the way CI does by reading the step out of the workflow
+   (`sed -n '/Privacy guard/,/^$/p' .github/workflows/ci.yml`) rather than retyping the
+   patterns: quoting them in any other tracked file is itself what trips the guard. See
+   [`skills/privacy-guard/SKILL.md`](skills/privacy-guard/SKILL.md) for what it does not
+   cover — screenshots above all.
+2. Then, in CI's order:
 
 ```bash
 pnpm typecheck
 pnpm lint
 pnpm format:check
+node skills/skill-sync/assets/sync.mjs --check   # AGENTS.md tables vs skill frontmatter
 pnpm test
 pnpm build
 ```
@@ -93,18 +103,18 @@ desktops. That run is the single most useful contribution a Mac or Linux user ca
 
 ## Artwork
 
-All in-app art is painted, then processed. The shipped, processed art is committed under
+The in-app art is AI-generated, then processed. The shipped, processed art is committed under
 `src/renderer/src/assets/art/` so a clone builds without the originals; `pnpm art:build`
-regenerates it from source paintings kept outside the repository (default
+regenerates it from source images kept outside the repository (default
 `<home>/Downloads/DwarfAI-Miners`, overridable with `--src <dir>` or
-`DWARFAI_MINERS_ART_SRC`). The pipeline chroma-keys each painting off its flat backdrop —
+`DWARFAI_MINERS_ART_SRC`). The pipeline chroma-keys each image off its flat backdrop —
 sampling the key color from the image's own four corners — and crops all dwarf poses to one
 shared canvas so animation frames never jitter (`scripts/build-art.mjs`).
 
-That means contributed art must be paintings on a **flat, uniform backdrop** (any color that
-appears in all four corners), and dwarf animations come as pose pairs (two working swings,
-two resting poses, two walking poses). Open an issue with a sample before painting a full
-set, so style fit gets settled cheaply.
+That means contributed art must sit on a **flat, uniform backdrop** (any color that appears
+in all four corners), and dwarf animations come as pose pairs (two working swings, two
+resting poses, two walking poses). Open an issue with a sample before producing a full set,
+so style fit gets settled cheaply.
 
 **Inbound terms.** Contributed art ships under the same license as the code. By opening a pull
 request with artwork you confirm it is yours to give — your own work, not derived from someone
