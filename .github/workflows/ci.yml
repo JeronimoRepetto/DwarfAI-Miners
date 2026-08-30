@@ -41,8 +41,34 @@ jobs:
       # never trips them: `jeronimorepetto` (GitHub handle, Ko-fi link, the
       # `com.jeronimorepetto.dwarfaiminers` bundle id) and the name in LICENSE
       # only match after a `Users`/`home` path separator, which none of them
-      # have. This file is excluded because it necessarily spells the patterns
-      # it searches for; every other tracked file is covered.
+      # have.
+      #
+      # What this step does NOT cover (issue #54). Each gap is a decision, not
+      # a pending fix, and a green run proves only that four strings are absent
+      # from the text of tracked files:
+      #
+      # 1. Private project names are not searched for. The sibling directories
+      #    on the maintainer's machine run from unmistakable to words that turn
+      #    up in ordinary prose, and a list wide enough to catch the second
+      #    kind fails the build on sentences that leak nothing. Whether a
+      #    narrow list of the unmistakable ones earns its keep is open in #54;
+      #    until it is decided, treat project names as unchecked and remove
+      #    them by reading. One reached HEAD this way (docs/performance.md).
+      # 2. This file is excluded, because a grep for a string has to contain
+      #    the string. The exclusion is forced, but its consequence is not
+      #    obvious and is not an oversight: the one file that names every
+      #    identifier is the one file never scanned. Building the patterns from
+      #    fragments, or from an encoded blob, was considered for #54 and
+      #    turned down — it obscures rather than removes, a failing run prints
+      #    the matching line into a public build log regardless, and every
+      #    revision of this file since the guard landed already carries them in
+      #    the history. That history is issue #51's subject; if a rewrite there
+      #    ever makes the plaintext here the last copy, revisit this then.
+      # 3. Images are invisible to it. `-I` skips binary files, so an
+      #    identifier legible in a committed screenshot passes green. Issue #18
+      #    was a screenshot leak and a human caught it, not CI. Screenshots
+      #    need eyes before they need a build; skills/privacy-guard/SKILL.md
+      #    lists what to read in one before it is staged.
       - name: Privacy guard (no machine-specific identifiers)
         shell: bash
         run: |
