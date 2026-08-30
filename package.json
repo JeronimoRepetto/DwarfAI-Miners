@@ -1,7 +1,7 @@
 {
   "name": "dwarfai-miners",
   "productName": "DwarfAI-Miners",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Floating panel that visualizes AI coding agents running on this PC as dwarfs working in mines.",
   "license": "MIT",
   "private": true,
