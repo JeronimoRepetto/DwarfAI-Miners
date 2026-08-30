@@ -1,4 +1,5 @@
 import type { DwarfRole, DwarfStatus, MineTier } from '../types'
+import { formatTokens, oreCount } from './economy'
 
 /** CSS modifier class driving each dwarf animation state. */
 export type DwarfAnimationClass = 'is-working' | 'is-waiting' | 'is-leaving'
@@ -68,13 +69,59 @@ const WAITING: Record<DwarfRole, DwarfAnimation> = {
   foreman: { frames: ['rest-1', 'rest-2'], frameMs: 1400 }
 }
 
-/** Leaving is a walk regardless of rank — the foreman uses the same door. */
-const LEAVING: DwarfAnimation = { frames: ['walk-1', 'walk-2'], frameMs: 350 }
+/**
+ * The walk cycle. Leaving is a walk regardless of rank — the foreman uses the
+ * same door — and since issue #19 every dwarf also walks *to* the painted
+ * feature its status calls for, so the same two frames cover both journeys and
+ * the scene needs no new art to move anyone around.
+ */
+export const WALK_ANIMATION: DwarfAnimation = { frames: ['walk-1', 'walk-2'], frameMs: 350 }
 
 /** Which poses to cycle for a dwarf in this state, and how fast. */
 export function dwarfAnimation(status: DwarfStatus, role: DwarfRole): DwarfAnimation {
-  if (status === 'leaving') return LEAVING
+  if (status === 'leaving') return WALK_ANIMATION
   return status === 'working' ? WORKING[role] : WAITING[role]
+}
+
+/**
+ * The same choice, but aware that the dwarf may still be on its way there.
+ *
+ * A miner crossing the floor toward a vein must not be swinging a pick at thin
+ * air, and a dwarf heading for the rest boulders must not already be asleep on
+ * its feet: while travelling, everyone walks.
+ */
+export function sceneDwarfAnimation(
+  status: DwarfStatus,
+  role: DwarfRole,
+  walking: boolean
+): DwarfAnimation {
+  return walking ? WALK_ANIMATION : dwarfAnimation(status, role)
+}
+
+/**
+ * Whether this pose is the moment the pick actually bites the rock.
+ *
+ * The swing is two frames and only the down-stroke is a hit, so sparks fire on
+ * this one alone — otherwise the debris reads as a permanent glow around the
+ * dwarf rather than as impacts.
+ */
+export function isPickImpact(frame: DwarfFrame): boolean {
+  return frame === 'pick-2'
+}
+
+/**
+ * What the ore pile says when the pointer rests on it.
+ *
+ * The pile is built from layered CSS shapes, and the owner's verdict on them
+ * was that they read as grey balls nobody recognises. Painted per-material art
+ * is coming, but a heap that cannot say what it is or how much it holds earns
+ * nothing in the meantime — so the affordance is the words, and the words are
+ * here rather than in the template precisely so they survive the art swap.
+ */
+export function orePileLabel(tier: MineTier, tokensObserved: number): string {
+  const ore = oreCount(tokensObserved)
+  if (ore === 0) return `${tierLabel(tier)} ore — none mined yet`
+  return `${tierLabel(tier)} ore — ${ore} mined (${formatTokens(tokensObserved)} tokens)`
 }
 
 /**

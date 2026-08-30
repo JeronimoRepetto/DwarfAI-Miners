@@ -5,8 +5,9 @@ import { kickMarker as kickMarkerFor, sendMarker as sendMarkerFor } from '../lib
 import {
   LEAVING_EXIT_MS,
   NEUTRAL_DWARF_FRAME,
-  dwarfAnimation,
+  isPickImpact,
   isSpriteFlipped,
+  sceneDwarfAnimation,
   statusAnimationClass
 } from '../lib/presentation'
 import { computeTooltipPlacement } from '../lib/tooltip'
@@ -21,6 +22,23 @@ const props = defineProps<{
   activating?: boolean
   sendState?: DwarfSendState
   kickState?: DwarfKickState
+  /*
+   * The scene props (issue #19). All optional, and all falling back to the
+   * behaviour the sprite had before the cave became walkable, so a sprite
+   * mounted on its own still animates and faces exactly as it used to.
+   */
+  /** True while the dwarf is crossing the floor toward its anchor. */
+  walking?: boolean
+  /** Scene-driven facing: travel direction mid-walk, the anchor's once parked. */
+  facesLeft?: boolean
+  /** Perspective scale for the depth this dwarf is standing at. */
+  depthScale?: number
+  /**
+   * True when MineScene owns this sprite's position. The scene walks a leaving
+   * dwarf to the painted exit itself, so the old fixed `walk-out` slide — which
+   * drifts left regardless of where the door is — has to stand down.
+   */
+  anchored?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -195,7 +213,9 @@ function hideTooltip(): void {
 // Cheap after the first sprite: every later call is a no-op.
 preloadDwarfArt()
 
-const animation = computed(() => dwarfAnimation(props.dwarf.status, props.dwarf.role))
+const animation = computed(() =>
+  sceneDwarfAnimation(props.dwarf.status, props.dwarf.role, props.walking === true)
+)
 const frameIndex = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
 
@@ -234,11 +254,41 @@ const rootClasses = computed(() => [
   {
     'is-foreman': isForeman.value,
     'is-activating': props.activating,
-    'is-flipped': isSpriteFlipped(props.dwarf.status)
+    /*
+     * The scene knows which rock this dwarf is facing; on its own, the sprite
+     * falls back to the old rule that only a leaving dwarf is mirrored.
+     *
+     * Keyed off `anchored` rather than off `facesLeft` being undefined,
+     * because Vue casts an absent boolean prop to `false` — so `facesLeft`
+     * alone cannot tell "the scene says face right" from "no scene here".
+     */
+    'is-flipped':
+      props.anchored === true ? props.facesLeft === true : isSpriteFlipped(props.dwarf.status),
+    'is-anchored': props.anchored === true
   }
 ])
 // The walk-out lasts exactly as long as the runtime keeps a leaving dwarf.
-const exitStyle = computed(() => ({ '--exit-ms': `${LEAVING_EXIT_MS}ms` }))
+const exitStyle = computed(() => ({
+  '--exit-ms': `${LEAVING_EXIT_MS}ms`,
+  '--depth-scale': String(props.depthScale ?? 1)
+}))
+
+/**
+ * Sparks off the rock. The counter is what the burst is keyed on, so every hit
+ * mounts a fresh element and replays the animation instead of the CSS running
+ * once and never again. Only a dwarf actually stood at the vein throws them —
+ * not one still walking there, and not one resting.
+ */
+const SPARKS_PER_HIT = 5
+const impactCount = ref(0)
+watch(
+  () => frame.value,
+  (pose) => {
+    if (props.dwarf.status !== 'working') return
+    if (props.walking === true) return
+    if (isPickImpact(pose)) impactCount.value++
+  }
+)
 const ariaLabel = computed(
   () =>
     `Actions for ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
@@ -290,6 +340,10 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       @blur="hideTooltip"
     >
       <img class="dwarf-frame" :src="frameSrc" alt="" aria-hidden="true" draggable="false" />
+      <!-- Debris off the rock face, one burst per pick hit (see impactCount). -->
+      <span v-if="impactCount > 0" :key="impactCount" class="spark-burst" aria-hidden="true">
+        <i v-for="n in SPARKS_PER_HIT" :key="n" class="spark" :style="{ '--spark': n }"></i>
+      </span>
       <span
         class="provider-dot"
         :class="`provider-${dwarf.provider}`"
@@ -361,8 +415,14 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 .dwarf-frame {
   display: block;
   width: auto;
-  /* All nine poses share one canvas, so a fixed height fixes the width too. */
-  height: 100px;
+  /*
+   * All nine poses share one canvas, so a fixed height fixes the width too.
+   * The depth scale shrinks the drawing rather than transforming the sprite:
+   * a transform here would become the containing block for the `position:
+   * fixed` tooltip, bar and expanded bubble below, and they must stay clamped
+   * to the viewport (see computeTooltipPlacement).
+   */
+  height: calc(100px * var(--depth-scale, 1));
   filter: drop-shadow(0 4px 5px #000a);
   user-select: none;
 }
@@ -423,6 +483,43 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   animation: walk-out var(--exit-ms, 16000ms) linear forwards;
   pointer-events: none;
 }
+/*
+ * Inside the scene the dwarf is already being walked to the painted exit by
+ * MineScene, so the blind leftward slide would double the movement and drag it
+ * through the rock wall. Only the fade survives, on the same timing.
+ */
+.is-anchored.is-leaving {
+  animation: exit-fade var(--exit-ms, 16000ms) linear forwards;
+}
+
+/*
+ * working: debris thrown off the rock on the down-stroke of the swing. Sized
+ * and coloured off the tier so gold sparks gold, and thrown from the pick head
+ * — up and forward of the dwarf, mirrored with it when it faces left.
+ */
+.spark-burst {
+  position: absolute;
+  top: 26%;
+  left: 68%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.is-flipped .spark-burst {
+  left: 32%;
+}
+.spark {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--tier-glow, #ffe29c);
+  box-shadow: 0 0 4px var(--tier-accent, #ffb347);
+  /* Fanned by index: each spark leaves on its own angle and its own beat. */
+  animation: spark-fly 620ms ease-out forwards;
+  animation-delay: calc(var(--spark, 1) * 18ms);
+  rotate: calc(var(--spark, 1) * 38deg - 76deg);
+}
 
 @keyframes zzz-float {
   0% {
@@ -451,6 +548,46 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   100% {
     opacity: 0;
     translate: -480px 0;
+  }
+}
+/* The same grace window as walk-out, minus the slide the scene now owns. */
+@keyframes exit-fade {
+  0%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes spark-fly {
+  0% {
+    opacity: 1;
+    translate: 0 0;
+  }
+  100% {
+    opacity: 0;
+    translate: 14px -10px;
+  }
+}
+
+/*
+ * A viewer who asked for less movement still gets the whole scene — every
+ * dwarf stands at its painted feature — but nothing twitches, sparks or
+ * drifts to get there.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .spark-burst {
+    display: none;
+  }
+  .zzz {
+    animation: none;
+    opacity: 0.9;
+  }
+  .is-leaving,
+  .is-anchored.is-leaving {
+    animation: none;
+    opacity: 0.55;
   }
 }
 

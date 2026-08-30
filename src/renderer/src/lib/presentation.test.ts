@@ -4,8 +4,12 @@ import {
   BUBBLE_MAX_CHARS,
   LEAVING_EXIT_MS,
   NEUTRAL_DWARF_FRAME,
+  WALK_ANIMATION,
   dwarfAnimation,
+  isPickImpact,
   isSpriteFlipped,
+  orePileLabel,
+  sceneDwarfAnimation,
   statusAnimationClass,
   tierLabel
 } from './presentation'
@@ -123,5 +127,67 @@ describe('isSpriteFlipped', () => {
 describe('LEAVING_EXIT_MS', () => {
   it('matches the runtime grace window a leaving dwarf has to walk out', () => {
     expect(LEAVING_EXIT_MS).toBe(16_000)
+  })
+})
+
+/*
+ * Issue #19 — the cave stopped being a backdrop. A dwarf now walks to the
+ * painted feature its status calls for, so the frame loops have to cover the
+ * journey as well as the destination.
+ */
+describe('WALK_ANIMATION', () => {
+  it('reuses the painted walk cycle, so crossing the floor needs no new art', () => {
+    expect(WALK_ANIMATION).toEqual({ frames: ['walk-1', 'walk-2'], frameMs: 350 })
+    expect(WALK_ANIMATION).toEqual(dwarfAnimation('leaving', 'worker'))
+  })
+})
+
+describe('sceneDwarfAnimation', () => {
+  it('walks any dwarf that is mid-crossing, whatever it is on its way to do', () => {
+    const statuses: DwarfStatus[] = ['working', 'waiting', 'leaving']
+    const roles: DwarfRole[] = ['worker', 'foreman']
+    for (const status of statuses) {
+      for (const role of roles) {
+        expect(sceneDwarfAnimation(status, role, true), `${status}/${role}`).toEqual(WALK_ANIMATION)
+      }
+    }
+  })
+
+  it('hands back to the status loop the moment the dwarf arrives', () => {
+    expect(sceneDwarfAnimation('working', 'worker', false)).toEqual(
+      dwarfAnimation('working', 'worker')
+    )
+    expect(sceneDwarfAnimation('waiting', 'foreman', false)).toEqual(
+      dwarfAnimation('waiting', 'foreman')
+    )
+  })
+})
+
+describe('isPickImpact', () => {
+  it('marks the down-stroke of the swing — the frame whose hit throws sparks', () => {
+    expect(isPickImpact('pick-2')).toBe(true)
+  })
+
+  it('marks no other pose, so nothing sparks while resting or walking past', () => {
+    for (const frame of ['idle', 'pick-1', 'walk-1', 'walk-2', 'rest-1', 'rest-2'] as const) {
+      expect(isPickImpact(frame), frame).toBe(false)
+    }
+  })
+})
+
+/*
+ * The CSS nuggets read as anonymous grey balls, so the pile has to say what it
+ * is. Painted per-material art is coming later; the wording is what has to
+ * survive that swap, which is why it lives here and not in the template.
+ */
+describe('orePileLabel', () => {
+  it('names the material and the amount rather than leaving a nameless heap', () => {
+    expect(orePileLabel('gold', 125_000)).toBe('Gold ore — 12 mined (125K tokens)')
+    expect(orePileLabel('uranium', 10_000)).toBe('Uranium ore — 1 mined (10K tokens)')
+  })
+
+  it('says plainly that nothing has been mined instead of implying a pile', () => {
+    expect(orePileLabel('bronze', 0)).toBe('Bronze ore — none mined yet')
+    expect(orePileLabel('bronze', 9_999)).toBe('Bronze ore — none mined yet')
   })
 })

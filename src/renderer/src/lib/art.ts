@@ -55,6 +55,18 @@ export const MOUND_SRC: Record<MineTier, string> = {
   uranium: moundUranium
 }
 
+/**
+ * The pixel size every interior painting is produced at (see
+ * scripts/build-art.mjs). Tall portrait art shown in a squarer, resizable
+ * panel, which is exactly why `sceneGeometry.ts` has to know the ratio: it is
+ * what decides how much of the painting survives the `object-fit: cover` crop,
+ * and therefore where an authored anchor actually lands in the box.
+ *
+ * All five interiors share these dimensions; `sceneLayout.test.ts` leans on
+ * that when it checks the authored anchors against the crop.
+ */
+export const INTERIOR_ART_SIZE = { width: 1289, height: 1600 } as const
+
 /** Inside of a mine, one painting per tier. Each has a walkable floor at the bottom. */
 export const INTERIOR_SRC: Record<MineTier, string> = {
   bronze: interiorBronze,

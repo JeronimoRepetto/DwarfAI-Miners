@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { dwarfAnimation } from '../lib/presentation'
+import { sceneDwarfAnimation } from '../lib/presentation'
 import { defaultDwarf } from '../testing/factories'
 import type { DwarfKickState, DwarfSendState } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
@@ -16,11 +16,11 @@ import DwarfSprite from './DwarfSprite.vue'
  */
 vi.mock('../lib/presentation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/presentation')>()
-  return { ...actual, dwarfAnimation: vi.fn(actual.dwarfAnimation) }
+  return { ...actual, sceneDwarfAnimation: vi.fn(actual.sceneDwarfAnimation) }
 })
 
 /** The real loop table, so the one test that substitutes it can put it back. */
-const realDwarfAnimation = vi.mocked(dwarfAnimation).getMockImplementation()!
+const realSceneDwarfAnimation = vi.mocked(sceneDwarfAnimation).getMockImplementation()!
 
 /** The pose file a sprite is currently showing, e.g. "dwarf-pick-1". */
 function poseOf(wrapper: ReturnType<typeof mount>): string {
@@ -359,14 +359,14 @@ describe('DwarfSprite', () => {
     })
 
     it('holds a single-frame animation still', async () => {
-      vi.mocked(dwarfAnimation).mockReturnValue({ frames: ['foreman-idle'], frameMs: 1400 })
+      vi.mocked(sceneDwarfAnimation).mockReturnValue({ frames: ['foreman-idle'], frameMs: 1400 })
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
       })
       vi.advanceTimersByTime(10_000)
       await wrapper.vm.$nextTick()
       expect(poseOf(wrapper)).toBe('dwarf-foreman-idle')
-      vi.mocked(dwarfAnimation).mockImplementation(realDwarfAnimation)
+      vi.mocked(sceneDwarfAnimation).mockImplementation(realSceneDwarfAnimation)
     })
 
     it('restarts the cycle from the first frame when the status changes', async () => {
@@ -457,5 +457,106 @@ describe('DwarfSprite kick marker', () => {
 
     expect(wrapper.find('.send-result').exists()).toBe(true)
     expect(wrapper.find('.kick-result').exists()).toBe(true)
+  })
+})
+
+/*
+ * Issue #19 — the sprite is now placed in the cave by MineScene rather than
+ * standing in a row. Every scene prop is optional and every one of them falls
+ * back to the behaviour above, which is why the tests before this point mount
+ * a bare sprite and still pass.
+ */
+describe('DwarfSprite in the scene', () => {
+  it('plays the walk cycle while crossing the floor, whatever it is going to do', () => {
+    for (const status of ['working', 'waiting'] as const) {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status }), anchored: true, walking: true }
+      })
+      expect(poseOf(wrapper), status).toBe('dwarf-walk-1')
+    }
+  })
+
+  it('drops back into its own loop the moment it arrives', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: false }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+  })
+
+  it('faces the rock the scene put it at, not the direction the old rule assumed', () => {
+    const facingLeft = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, facesLeft: true }
+    })
+    expect(facingLeft.classes()).toContain('is-flipped')
+
+    // A leaving dwarf used to be mirrored unconditionally; the exit is painted
+    // at the centre of the gallery, so the scene decides instead.
+    const leavingRight = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'leaving' }), anchored: true, facesLeft: false }
+    })
+    expect(leavingRight.classes()).not.toContain('is-flipped')
+  })
+
+  it('stands down its own walk-out slide once the scene owns its position', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'leaving' }), anchored: true }
+    })
+    expect(wrapper.classes()).toContain('is-anchored')
+    expect(wrapper.classes()).toContain('is-leaving')
+  })
+
+  it('shrinks a dwarf standing further back into the gallery', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf(), anchored: true, depthScale: 0.8 }
+    })
+    expect(wrapper.attributes('style')).toContain('--depth-scale: 0.8')
+  })
+
+  it('draws a lone sprite at full size, as it did before the cave had depth', () => {
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+    expect(wrapper.attributes('style')).toContain('--depth-scale: 1')
+  })
+})
+
+/*
+ * The cave reacting to the crew, not just holding it: a hit on the rock throws
+ * debris. Fired off the down-stroke frame so the sparks read as impacts rather
+ * than as a permanent glow around the dwarf.
+ */
+describe('DwarfSprite pick sparks', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('throws sparks when the pick comes down on the rock', async () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    expect(wrapper.find('.spark-burst').exists()).toBe(false)
+
+    vi.advanceTimersByTime(550)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+    expect(wrapper.find('.spark-burst').exists()).toBe(true)
+    expect(wrapper.findAll('.spark').length).toBeGreaterThan(0)
+  })
+
+  it('throws none while the dwarf is still walking to the vein', async () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
+    })
+    vi.advanceTimersByTime(5000)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.spark-burst').exists()).toBe(false)
+  })
+
+  it('throws none off a dwarf that is resting or walking out', async () => {
+    for (const status of ['waiting', 'leaving'] as const) {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status }), anchored: true }
+      })
+      vi.advanceTimersByTime(5000)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.spark-burst').exists(), status).toBe(false)
+    }
   })
 })
