@@ -161,7 +161,7 @@ and dwarf count; clicking enters the mine.
 floor along the bottom. Each agent is a dwarf animated by swapping poses:
 
 - **working** alternates two pickaxe swings,
-- **waiting** alternates two resting poses with a drifting "z z z",
+- **waiting** sits still on one resting pose beneath a drifting "z z z",
 - **leaving** alternates two walking poses, mirrored toward the exit, fading during the
   runtime grace window,
 - the **foreman** stands apart and looks up from his log book now and then.

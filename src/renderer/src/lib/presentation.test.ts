@@ -3,6 +3,7 @@ import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { DwarfRole, DwarfStatus, MineTier } from '../types'
 import { MATERIALS } from '../types'
 import { emptyMaterialTotals } from './vault/vault'
+import type { DwarfAnimation } from './presentation'
 import {
   AWAITING_ANSWER_ANIMATION,
   BUBBLE_MAX_CHARS,
@@ -18,6 +19,7 @@ import {
   orePileLabel,
   sceneDwarfAnimation,
   statusAnimationClass,
+  stillDwarfAnimation,
   tierLabel,
   vaultLabel
 } from './presentation'
@@ -64,9 +66,12 @@ describe('dwarfAnimation', () => {
     })
   })
 
-  it('rests a waiting worker on a much slower cycle', () => {
+  it('sits a waiting worker down on one resting pose and leaves it there', () => {
+    // Was the two-frame ['rest-1', 'rest-2'] pair until issue #72 retired the
+    // painted z: the second frame differed from the first by that glyph alone,
+    // and the CSS z z z was already saying the same thing over the top of it.
     expect(dwarfAnimation('waiting', 'worker')).toEqual({
-      frames: ['rest-1', 'rest-2'],
+      frames: ['rest-1'],
       frameMs: 1400
     })
   })
@@ -83,7 +88,7 @@ describe('dwarfAnimation', () => {
     // blocked foreman temporarily reuses the worker sleeping/rest animation —
     // it must read as paused, not as a foreman still checking the log book.
     expect(dwarfAnimation('waiting', 'foreman')).toEqual({
-      frames: ['rest-1', 'rest-2'],
+      frames: ['rest-1'],
       frameMs: 1400
     })
     expect(dwarfAnimation('waiting', 'foreman')).toEqual(dwarfAnimation('waiting', 'worker'))
@@ -459,11 +464,18 @@ describe('dwarfAnimation while awaiting an answer', () => {
     }
   })
 
-  it('is not asleep: the loop keeps two frames, never a single frozen pose', () => {
-    // The issue asks for attentive, not asleep — a single frame reads as the
-    // silence pose (#47), which says the opposite thing about the dwarf.
+  it('is never the silence pose, whatever the loop it borrows is made of', () => {
+    // #60 asks for attentive, not asleep, and pinned that as "keeps two
+    // frames" back when every active loop was a pair — a single frame would
+    // then have read as the silence pose (#47), which says the opposite thing
+    // about the dwarf. Issue #72 retired the painted z, so the rest loop this
+    // placeholder borrows is a single pose now and a frame count stands in for
+    // nothing. What it was standing in for is pinned directly instead.
     for (const role of ['worker', 'foreman'] as const) {
-      expect(AWAITING_ANSWER_ANIMATION[role].frames, role).toHaveLength(2)
+      expect(AWAITING_ANSWER_ANIMATION[role], role).not.toEqual(
+        dwarfAnimation('working', role, true)
+      )
+      expect(AWAITING_ANSWER_ANIMATION[role].frames, role).not.toContain(NEUTRAL_DWARF_FRAME)
     }
   })
 })
@@ -487,5 +499,130 @@ describe('sceneDwarfAnimation while awaiting an answer', () => {
         sceneDwarfAnimation('waiting', 'foreman', walking, false, undefined)
       )
     }
+  })
+})
+
+/*
+ * Issue #72 — a resting dwarf carried two sleep indicators at once: the `z`
+ * painted into `rest-2`, and the CSS `z z z` DwarfSprite floats over the same
+ * image. The CSS one is the one that stays, so no loop plays the painted frame
+ * any more and rest is a single pose rather than a two-frame cycle whose whole
+ * content was one glyph (silhouette IoU 0.994 — see docs/animation-loops.md).
+ */
+describe('the rest loop, with the painted z retired', () => {
+  /** Every loop the panel can actually select, whatever the dwarf is doing. */
+  function everyLoop(): { where: string; animation: ReturnType<typeof dwarfAnimation> }[] {
+    const found: { where: string; animation: ReturnType<typeof dwarfAnimation> }[] = []
+    for (const status of ['working', 'waiting', 'leaving'] as const) {
+      for (const role of ['worker', 'foreman'] as const) {
+        for (const silent of [false, true]) {
+          for (const reason of [undefined, 'approval', 'unknown', 'user-input'] as const) {
+            found.push({
+              where: `${status}/${role}/silent=${silent}/${reason}`,
+              animation: dwarfAnimation(status, role, silent, reason)
+            })
+          }
+        }
+      }
+    }
+    found.push({ where: 'walking', animation: WALK_ANIMATION })
+    return found
+  }
+
+  it('rests on one pose, because the painted z was the whole of the animation', () => {
+    for (const role of ['worker', 'foreman'] as const) {
+      expect(dwarfAnimation('waiting', role).frames, role).toEqual(['rest-1'])
+    }
+  })
+
+  it('plays the painted-z frame in no loop at all, so one indicator is left', () => {
+    for (const { where, animation } of everyLoop()) {
+      expect(animation.frames, where).not.toContain('rest-2')
+    }
+  })
+
+  it('keeps the tempo it always rested at, so nothing else has to move', () => {
+    expect(dwarfAnimation('waiting', 'worker').frameMs).toBe(1400)
+  })
+})
+
+/*
+ * Issue #71 — every other animation in the panel already stood down for a
+ * viewer who asked their operating system for less movement; the frame timer,
+ * the largest moving thing on screen, did not. This is what it stands down TO:
+ * one held pose per loop, which is the same single-frame shape the silence
+ * poses (#47) already use to start no timer at all.
+ */
+describe('stillDwarfAnimation', () => {
+  /** Every loop the panel can select, with a name to fail under. */
+  function everyLoop(): { where: string; animation: DwarfAnimation }[] {
+    const found: { where: string; animation: DwarfAnimation }[] = []
+    for (const status of ['working', 'waiting', 'leaving'] as const) {
+      for (const role of ['worker', 'foreman'] as const) {
+        for (const silent of [false, true]) {
+          found.push({
+            where: `${status}/${role}/silent=${silent}`,
+            animation: dwarfAnimation(status, role, silent)
+          })
+        }
+      }
+    }
+    found.push({ where: 'walking', animation: WALK_ANIMATION })
+    return found
+  }
+
+  it('holds exactly one pose, whatever loop it was handed', () => {
+    for (const { where, animation } of everyLoop()) {
+      expect(stillDwarfAnimation(animation).frames, where).toHaveLength(1)
+    }
+  })
+
+  it('holds a pose the loop actually paints, never one it invents', () => {
+    for (const { where, animation } of everyLoop()) {
+      expect(animation.frames, where).toContain(stillDwarfAnimation(animation).frames[0])
+    }
+  })
+
+  it('keeps the cadence, so restoring motion resumes the tempo it left', () => {
+    for (const { where, animation } of everyLoop()) {
+      expect(stillDwarfAnimation(animation).frameMs, where).toBe(animation.frameMs)
+    }
+  })
+
+  it('leaves a loop that is already one pose exactly as it was', () => {
+    const silent = dwarfAnimation('working', 'worker', true)
+    expect(stillDwarfAnimation(silent)).toEqual(silent)
+  })
+
+  /*
+   * The constraint the whole change hangs on. Reduced motion asks for less
+   * MOVEMENT, not less information: a panel where every dwarf holds the same
+   * pose has answered the preference by going blank, which is a worse failure
+   * than the one it set out to fix.
+   */
+  it('leaves every state tellable apart for a worker', () => {
+    const poses = [
+      dwarfAnimation('working', 'worker'),
+      dwarfAnimation('working', 'worker', true),
+      dwarfAnimation('waiting', 'worker'),
+      WALK_ANIMATION
+    ].map((animation) => stillDwarfAnimation(animation).frames[0])
+    expect(new Set(poses).size).toBe(poses.length)
+  })
+
+  it('leaves every state tellable apart for a foreman', () => {
+    // The one that needs saying out loud: the foreman's working loop OPENS on
+    // the same pose his silence loop holds, so a still frame taken off the
+    // front of it would make a foreman at his log book and a foreman nobody
+    // has heard from in an hour the same picture.
+    const working = stillDwarfAnimation(dwarfAnimation('working', 'foreman')).frames[0]
+    const silent = stillDwarfAnimation(dwarfAnimation('working', 'foreman', true)).frames[0]
+    const waiting = stillDwarfAnimation(dwarfAnimation('waiting', 'foreman')).frames[0]
+    expect(new Set([working, silent, waiting]).size).toBe(3)
+    expect(working).toBe('foreman-check')
+  })
+
+  it('holds a working worker on a pose that still reads as work', () => {
+    expect(stillDwarfAnimation(dwarfAnimation('working', 'worker')).frames[0]).toBe('pick-2')
   })
 })

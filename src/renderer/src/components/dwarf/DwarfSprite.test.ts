@@ -767,3 +767,169 @@ describe('DwarfSprite sizing', () => {
     expect(styleRule('.dwarf-sprite')).not.toMatch(/transform\s*:/)
   })
 })
+
+/*
+ * Issue #72 — a resting dwarf used to carry two sleep indicators at once: the
+ * `z` painted into `rest-2`, and this CSS overlay drawn over the same image.
+ * The overlay is the one that stayed, which leaves rest a single pose the
+ * sprite never has to run a timer for.
+ */
+describe('DwarfSprite sleep indicator', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('says a dwarf is asleep exactly once, and it is the drifting overlay', async () => {
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
+    expect(wrapper.find('.zzz').exists()).toBe(true)
+
+    // The painted z lived on the second rest frame, so a cycle long enough to
+    // have reached it is what proves nothing is drawing a second one.
+    vi.advanceTimersByTime(10_000)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+  })
+
+  it('starts no timer at all, because resting is one pose rather than a loop', () => {
+    mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+/*
+ * Issue #71 — `prefers-reduced-motion` was honoured in four places and skipped
+ * the one thing on screen that is unmistakably animation. A viewer who asked
+ * their operating system for less movement still got a dwarf changing pose 109
+ * times a minute at the vein, and 171 for anyone leaving.
+ */
+describe('DwarfSprite with reduced motion', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  /**
+   * jsdom leaves `window.matchMedia` undefined, so the preference has to be
+   * stubbed in — and the stub answers change events, because the sprite has to
+   * follow the setting being turned on under a panel that is already open.
+   */
+  function stubReducedMotion(matches: boolean) {
+    const listeners = new Set<() => void>()
+    const query = {
+      matches,
+      addEventListener: (_type: 'change', listener: () => void) => void listeners.add(listener),
+      removeEventListener: (_type: 'change', listener: () => void) =>
+        void listeners.delete(listener)
+    }
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => query })
+    return {
+      flip(next: boolean): void {
+        query.matches = next
+        for (const listener of [...listeners]) listener()
+      },
+      get listenerCount(): number {
+        return listeners.size
+      }
+    }
+  }
+
+  it('holds one pose and starts no timer for a viewer who asked for less', async () => {
+    stubReducedMotion(true)
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }) }
+    })
+    expect(vi.getTimerCount()).toBe(0)
+
+    const held = poseOf(wrapper)
+    vi.advanceTimersByTime(10_000)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe(held)
+  })
+
+  /*
+   * The constraint the change hangs on: reduced motion asks for less MOVEMENT,
+   * not for less information. A panel that answered it by drawing every dwarf
+   * the same has failed even with every timer stopped.
+   */
+  it('still tells a working dwarf from a silent one, a resting one and a leaver', () => {
+    stubReducedMotion(true)
+    const poses = [
+      defaultDwarf({ status: 'working' }),
+      defaultDwarf({ status: 'working', silentForMs: DWARF_SILENCE_WINDOW_MS.worker }),
+      defaultDwarf({ status: 'waiting' }),
+      defaultDwarf({ status: 'leaving' })
+    ].map((dwarf) => poseOf(mount(DwarfSprite, { props: { dwarf } })))
+    expect(new Set(poses).size).toBe(poses.length)
+  })
+
+  it('keeps the foreman at his log book apart from the foreman nobody has heard from', () => {
+    stubReducedMotion(true)
+    const working = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
+    })
+    const silent = mount(DwarfSprite, {
+      props: {
+        dwarf: defaultDwarf({
+          role: 'foreman',
+          status: 'working',
+          silentForMs: DWARF_SILENCE_WINDOW_MS.foreman
+        })
+      }
+    })
+    expect(poseOf(working)).toBe('dwarf-foreman-check')
+    expect(poseOf(silent)).toBe('dwarf-foreman-idle')
+  })
+
+  it('swings exactly as it always did where the platform cannot be asked at all', async () => {
+    // jsdom has no matchMedia, and neither does the very first render. Asking
+    // must not throw, and no answer means motion is welcome.
+    expect(window.matchMedia).toBeUndefined()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+    vi.advanceTimersByTime(550)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+  })
+
+  it('follows the preference being turned on under a panel already open', async () => {
+    const media = stubReducedMotion(false)
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }) }
+    })
+    expect(vi.getTimerCount()).toBe(1)
+
+    media.flip(true)
+    await wrapper.vm.$nextTick()
+    expect(vi.getTimerCount()).toBe(0)
+
+    const held = poseOf(wrapper)
+    vi.advanceTimersByTime(10_000)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe(held)
+  })
+
+  it('swings again the moment the preference is turned back off', async () => {
+    const media = stubReducedMotion(true)
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }) }
+    })
+    media.flip(false)
+    await wrapper.vm.$nextTick()
+
+    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+    vi.advanceTimersByTime(550)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+  })
+
+  it('stops listening to the preference when the sprite goes', () => {
+    const media = stubReducedMotion(false)
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+    expect(media.listenerCount).toBe(1)
+
+    wrapper.unmount()
+    expect(media.listenerCount).toBe(0)
+  })
+})

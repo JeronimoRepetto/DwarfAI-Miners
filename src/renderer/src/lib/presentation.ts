@@ -89,13 +89,35 @@ const WORKING: Record<DwarfRole, DwarfAnimation> = {
   foreman: { frames: ['foreman-idle', 'foreman-check'], frameMs: 1000 }
 }
 
+/**
+ * Sleep is said ONCE, and the CSS `z z z` DwarfSprite floats over the sprite is
+ * what says it (issue #72). `rest-2` differs from `rest-1` only by a painted
+ * `z` — silhouette IoU 0.994, see docs/animation-loops.md — so the pair was
+ * two indicators for one fact, and the "loop" was a single pose wearing a
+ * loop's clothes.
+ *
+ * The overlay is the half that survives because it is the half that lets the
+ * dwarf be still, which is what a sleeping dwarf is supposed to be: a one-frame
+ * loop starts no timer at all (see DwarfSprite's watcher). The painted `z`
+ * could only ever be shown by swapping images 43 times a minute to blink one
+ * glyph, and it was dark for half of every cycle. `rest-2` stays in the art
+ * table unplayed; the source painting lives outside this repository, so it
+ * cannot be redrawn.
+ *
+ * This is a decision, not layering. Do not put a second sleep indicator back —
+ * if the overlay ever has to go, its replacement is the painted frame, alone.
+ *
+ * `frameMs` is inert while the loop holds one frame, and is kept at the tempo
+ * rest has always used so that a second frame landing later changes no cadence
+ * by surprise (the same reason SILENT below keeps its own).
+ */
 const WAITING: Record<DwarfRole, DwarfAnimation> = {
-  worker: { frames: ['rest-1', 'rest-2'], frameMs: 1400 },
-  // Temporary (issue #34): a blocked foreman reuses the worker rest loop so a
+  worker: { frames: ['rest-1'], frameMs: 1400 },
+  // Temporary (issue #34): a blocked foreman reuses the worker rest pose so a
   // waiting session reads as visibly paused instead of a foreman still on
   // duty. Dedicated foreman-waiting art is deferred and must not block —
   // swap these frames when it lands.
-  foreman: { frames: ['rest-1', 'rest-2'], frameMs: 1400 }
+  foreman: { frames: ['rest-1'], frameMs: 1400 }
 }
 
 /**
@@ -216,6 +238,38 @@ export function sceneDwarfAnimation(
   waitingReason?: WaitingReason
 ): DwarfAnimation {
   return walking ? WALK_ANIMATION : dwarfAnimation(status, role, silent, waitingReason)
+}
+
+/**
+ * The same loop, held on a single pose, for a viewer who asked their operating
+ * system for less movement (issue #71).
+ *
+ * Every other animation in the panel already stands down for that viewer —
+ * theme.css neutralises the CSS wholesale, MineScene places the crew instead of
+ * walking them, DwarfSprite hides the sparks and stills the `z z z`, MineMound
+ * and VaultChip stop their pulses. The sprite's frame timer was the one that
+ * did not, and it is the largest moving thing on screen.
+ *
+ * It is answered here rather than by a fifth mechanism, because the machinery
+ * for a still dwarf already exists: a loop of fewer than two frames starts no
+ * timer at all (see DwarfSprite's watcher), so collapsing the loop IS switching
+ * the timer off, down the same path the silence poses (#47) take.
+ *
+ * The pose held is the loop's LAST — where its gesture ends rather than where
+ * it winds up: the log book raised to reading height, the pick buried in the
+ * rock, the boot planted. That is load-bearing and not taste. The foreman's
+ * working loop OPENS on `foreman-idle`, which is exactly the pose his silence
+ * loop holds, so holding first frames would draw a foreman at his book and a
+ * foreman nobody has heard from in an hour identically. Reduced motion asks for
+ * less movement, never for less information.
+ *
+ * `frameMs` rides through untouched although nothing reads it while one frame
+ * is held, so a viewer who turns the preference back off resumes the tempo they
+ * left rather than a default.
+ */
+export function stillDwarfAnimation(animation: DwarfAnimation): DwarfAnimation {
+  const held = animation.frames[animation.frames.length - 1] ?? NEUTRAL_DWARF_FRAME
+  return { frames: [held], frameMs: animation.frameMs }
 }
 
 /**
