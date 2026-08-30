@@ -18,10 +18,20 @@ supported: fixes ship as a new release and are not backported to older versions.
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting on this repository:
+**Please do not open a public issue or pull request for anything exploitable** — a public
+report is public before a fix exists.
+
+The channel to reach for first is GitHub's private vulnerability reporting:
 [open a draft security advisory](https://github.com/JeronimoRepetto/DwarfAI-Miners/security/advisories/new)
-(repository **Security** tab → **Report a vulnerability**). Please do not open a public issue
-or pull request for anything exploitable — a public report is public before a fix exists.
+(repository **Security** tab → **Report a vulnerability**). GitHub offers that form only on
+public repositories whose maintainer has switched the feature on, so open the link and check
+that the form is actually there before you count on it.
+
+If it is not, there is no private form to use, and the way through is to ask for one: open a
+public issue saying only that you have a security report and would like a private channel. No
+reproduction, no proof of concept, no affected file, no hint at the class of bug — an issue
+with that much and no more discloses nothing an attacker can act on, and it gets a private
+channel opened for the details.
 
 A useful report includes the app version, your OS, reproduction steps, and what an attacker
 gains. A proof of concept helps; a fix suggestion is welcome but not expected.
@@ -45,10 +55,12 @@ In scope — the app's own attack surface:
 - **The message relay** (`src/main/textDelivery/`): making the one-shot `claude -p` turn do
   anything beyond delivering the message to the named session.
 - **The renderer/preload boundary** (`src/main/shell/window.ts`, `src/preload/`): escaping the
-  typed API or the deny-and-open-externally navigation rule.
+  typed API, or navigating the panel's own frame somewhere it has no business being — the
+  `setWindowOpenHandler` rule below covers new windows only.
 - **Transcript redaction** (`src/main/domain/redactSecrets.ts`): a class of secrets that
-  predictably escapes the redaction pass. Note that redaction is display hardening and
-  deliberately lossy — it is not, and does not claim to be, a guarantee.
+  predictably escapes the redaction pass, or a path by which text the pass never sees reaches
+  the panel. Note that redaction is display hardening and deliberately lossy — it is not, and
+  does not claim to be, a guarantee.
 
 Out of scope:
 
@@ -65,15 +77,21 @@ Out of scope:
 
 Verified in source, not aspirational:
 
-- The renderer runs with context isolation enabled and Node integration disabled, and the
-  panel denies all external navigation, handing URLs to the system browser
-  (`src/main/shell/window.ts`). Electron's Chromium sandbox is currently disabled
-  (`sandbox: false`), so the preload/context-isolation line is the boundary that matters.
+- The renderer runs with context isolation enabled and Node integration disabled, and a link
+  asking for a new window is refused, its URL handed to the system browser instead
+  (`setWindowOpenHandler` in `src/main/shell/window.ts`). That handler is the only navigation
+  guard there is: no `will-navigate` handler exists, so the panel's own frame is not held to
+  it. Electron's Chromium sandbox is also disabled (`sandbox: false`), which leaves the
+  preload/context-isolation line as the boundary that matters.
 - The hooks listener binds `127.0.0.1` only, drops unauthenticated requests before reading
   their body (constant-time token comparison), and caps bodies at 4 KB
   (`src/main/hooks/hookServer.ts`, `src/main/hooks/hookToken.ts`).
 - The relay turn is restricted to the `ListAgents` and `SendMessage` tools and fences the
   message payload so its content cannot become instructions that execute commands
   (`src/main/textDelivery/relay.ts`).
-- Transcript text is redacted at the provider boundary, before it ever crosses into the
-  renderer (`src/main/providers/`, `src/main/domain/redactSecrets.ts`).
+- Transcript **message text** is redacted at the provider boundary, before it ever crosses
+  into the renderer (`src/main/providers/`, `src/main/domain/redactSecrets.ts`). Message text
+  is the whole of what the pass covers: a Claude subagent's task `description` becomes the
+  worker's name and its tooltip line without passing through it, as do project paths and
+  session names. See
+  [what is shown on screen](docs/privacy.md#what-is-shown-on-screen).
