@@ -1959,4 +1959,190 @@ describe('ClaudeProvider', () => {
       expect(dwarfs[0]!.silentForMs).toBe(70 * MINUTE)
     })
   })
+
+  /**
+   * Issue #60. An agent waiting for a human answer produces no transcript
+   * output at all, so age-based cleanup is exactly the thing that can remove it
+   * while it is doing the right thing. #34 and #40 already protect a Claude
+   * main session that reports `waiting`; what was missing is that the panel
+   * could not tell "a human has been asked a question" apart from "a dialog is
+   * up" or "a command wants approval".
+   *
+   * The normalized reason comes from the registry's `waitingFor` vocabulary and
+   * nowhere else (see claudeWaitingReason). Only `user-input` suspends
+   * eviction, and it does so on the CONDITION rather than on the status string,
+   * because `parseClaudeSessionEntry` folds any status it does not recognize
+   * into `idle` — which is the one gate #40's rule stands on.
+   */
+  describe('normalized waiting reason (issue #60)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    const WORKER_ID = `${MAIN_ID}:${LIVE_AGENT}`
+    /** Stand-ins for the product's hour and half hour, as #40's tests use. */
+    const FOREMAN_WINDOW = 60_000
+    const WORKER_WINDOW = 30_000
+    const LAST_WRITE = 42_000
+
+    let clock = LAST_WRITE
+
+    /** The fixture registry entry blocked on one condition. */
+    function blockedOn(waitingFor: string | undefined, status = 'waiting'): string {
+      return JSON.stringify({
+        ...JSON.parse(sessionEntry),
+        status,
+        ...(waitingFor !== undefined ? { waitingFor } : {})
+      })
+    }
+
+    function registry(json: string): void {
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, json, 1_000)
+    }
+
+    /** The provider with this block's clock and windows small enough to cross. */
+    function providerHere(): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => clock,
+        foremanSilenceMs: FOREMAN_WINDOW,
+        workerSilenceMs: WORKER_WINDOW
+      })
+    }
+
+    beforeEach(() => {
+      clock = LAST_WRITE
+      fake.addFile(TRANSCRIPT, parentTranscript, LAST_WRITE)
+      fake.addFile(SUBAGENT, subagentTranscript, LAST_WRITE)
+    })
+
+    it('stamps user-input on a foreman whose registry says a human was asked', async () => {
+      registry(blockedOn('input needed'))
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman).toMatchObject({ role: 'foreman', status: 'waiting' })
+      expect(foreman!.waitingReason).toBe('user-input')
+    })
+
+    it('stamps approval on a foreman blocked on something to allow or refuse', async () => {
+      registry(blockedOn('sandbox request'))
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman!.waitingReason).toBe('approval')
+    })
+
+    it('stamps unknown on a bare open dialog rather than claiming a question', async () => {
+      // The value observed live in this machine's registry, and the one the
+      // issue is explicit about: a dialog is not proof a human was asked.
+      registry(blockedOn('dialog open'))
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman!.waitingReason).toBe('unknown')
+    })
+
+    it('leaves a foreman that is not blocked carrying no reason at all', async () => {
+      // Absent, not 'unknown': the session is working, so there is nothing to
+      // be unsure about.
+      registry(sessionEntry)
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+      const [foreman] = (await providerHere().scan())[0]!.dwarfs
+      expect(foreman).toMatchObject({ status: 'working' })
+      expect(foreman!.waitingReason).toBeUndefined()
+      expect('waitingReason' in foreman!).toBe(false)
+    })
+
+    it('never stamps a reason on a worker, which has no such evidence anywhere', async () => {
+      // A subagent's sidecar records agentType, description, toolUseId,
+      // spawnDepth and model — no status, no blocked condition, nothing. Its
+      // parent's registry describes the main session alone, so inheriting the
+      // foreman's reason would be a claim about a dwarf nobody measured.
+      registry(blockedOn('input needed'))
+      const dwarfs = (await providerHere().scan())[0]!.dwarfs
+      const worker = dwarfs.find((dwarf) => dwarf.role === 'worker')!
+      expect(worker.id).toBe(WORKER_ID)
+      expect(worker.waitingReason).toBeUndefined()
+      expect('waitingReason' in worker).toBe(false)
+    })
+
+    it('drops the reason the moment the provider transition closes the condition', async () => {
+      const provider = providerHere()
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+
+      registry(blockedOn('input needed'))
+      expect((await provider.scan())[0]!.dwarfs[0]!.waitingReason).toBe('user-input')
+
+      // The human answers: the registry flips back on the next poll, and so
+      // does the reason. Normal working/staleness rules resume with it.
+      registry(sessionEntry)
+      const resumed = (await provider.scan())[0]!.dwarfs[0]!
+      expect(resumed.status).toBe('working')
+      expect(resumed.waitingReason).toBeUndefined()
+    })
+
+    /**
+     * The behavioural half. `pruneStaleLaunches` stands on one gate — the
+     * registry status being exactly `idle` — and `parseClaudeSessionEntry`
+     * normalizes every status it does not recognize into `idle`. Claude Code's
+     * waiting vocabulary has grown before, so a future spelling of "blocked"
+     * would silently turn a live blocked session into an evictable idle one
+     * while `waitingFor` sat there naming the condition. Keying the exemption
+     * on the condition rather than on the status is what closes that.
+     */
+    describe('eviction while blocked on a human', () => {
+      /** Both transcripts long past both windows, and no notification coming. */
+      function ageEverythingPastBothWindows(): void {
+        clock = LAST_WRITE + FOREMAN_WINDOW * 100
+      }
+
+      it('evicts a remembered worker of an idle session, as #40 established', async () => {
+        // The control. Without it the two tests below prove nothing, because a
+        // rule that never evicts anything passes them both.
+        registry(blockedOn(undefined, 'idle'))
+        const provider = providerHere()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        ageEverythingPastBothWindows()
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+      })
+
+      it('never evicts while user-input evidence is active, whatever the window says', async () => {
+        // A status this version of Claude Code does not write, so the entry
+        // normalizes to `idle` and #40's gate stands aside — but the condition
+        // still names a human who has been asked a question.
+        registry(blockedOn('input needed', 'blocked-on-something-new'))
+        const provider = providerHere()
+        expect((await provider.scan())[0]!.status).toBe('idle')
+
+        ageEverythingPastBothWindows()
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('does not let unknown evidence buy the same exemption', async () => {
+        // THE guard on the whole feature. An open dialog is blocked without
+        // being blocked on an answer, so it must behave exactly as it did
+        // before this existed. If 'unknown' ever slid into the exempt set, this
+        // is the test that catches it.
+        registry(blockedOn('dialog open', 'blocked-on-something-new'))
+        const provider = providerHere()
+        await provider.scan()
+
+        ageEverythingPastBothWindows()
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+      })
+
+      it('resumes normal staleness once the human has answered', async () => {
+        // The exemption is a suspension, never a permanent pass: the moment the
+        // condition closes, the same silence that was ignored counts again.
+        registry(blockedOn('input needed', 'blocked-on-something-new'))
+        const provider = providerHere()
+        ageEverythingPastBothWindows()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        registry(blockedOn(undefined, 'idle'))
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+      })
+    })
+  })
 })

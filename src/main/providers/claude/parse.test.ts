@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   claudeSessionDeliveryTarget,
+  claudeWaitingReason,
   encodeClaudeProjectDir,
   extractClaudeFeed,
   parseClaudeSessionEntry,
@@ -15,6 +16,10 @@ const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.json
 const notificationEnvelopes = readFileSync(join(FIXTURES, 'notification-envelopes.jsonl'), 'utf8')
 const sessionEntryJson: unknown = JSON.parse(
   readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
+)
+/** One registry entry per waitingFor string Claude Code can write; see the fixture. */
+const waitingRegistryJson: unknown[] = JSON.parse(
+  readFileSync(join(FIXTURES, 'waiting-registry.json'), 'utf8')
 )
 
 describe('encodeClaudeProjectDir', () => {
@@ -456,5 +461,88 @@ describe('parseClaudeTranscriptTail on subagent transcripts', () => {
   it('reads tokensObserved from the subagent transcript too', () => {
     // input:2, output:1152, cache_creation:7879, cache_read:117478 -> 126511.
     expect(parseClaudeTranscriptTail(subagentTranscript).tokensObserved).toBe(126_511)
+  })
+})
+
+/**
+ * Issue #60. The normalized reason is derived from the registry's own
+ * `waitingFor` vocabulary and from nothing else — never from a question mark
+ * or from assistant prose, which is the whole risk the issue names.
+ *
+ * The fixture carries one entry per string Claude Code v2.1.251 can write,
+ * read out of the shipped binary's own derivation rather than guessed:
+ * `input needed`, `permission prompt`, `sandbox request`, `goal proposal`,
+ * `worker request`, `dialog open`, plus `waiting` with no condition at all.
+ */
+describe('claudeWaitingReason (issue #60)', () => {
+  /** The fixture entry whose registry `waitingFor` is this string. */
+  function entryFor(waitingFor: string | undefined): ReturnType<typeof parseClaudeSessionEntry> {
+    const json = waitingRegistryJson.find(
+      (candidate) => (candidate as { waitingFor?: string }).waitingFor === waitingFor
+    )
+    expect(json, `no fixture entry for ${String(waitingFor)}`).toBeDefined()
+    return parseClaudeSessionEntry(json)
+  }
+
+  it('reads user-input from the one condition that proves a human must answer', () => {
+    // `input needed` is what an elicitation prompt and the ask-the-user
+    // dialogs write. Nothing else in the vocabulary names a pending answer.
+    expect(claudeWaitingReason(entryFor('input needed')!)).toBe('user-input')
+  })
+
+  it('reads approval from the conditions that name something to allow or refuse', () => {
+    expect(claudeWaitingReason(entryFor('permission prompt')!)).toBe('approval')
+    expect(claudeWaitingReason(entryFor('sandbox request')!)).toBe('approval')
+    expect(claudeWaitingReason(entryFor('goal proposal')!)).toBe('approval')
+  })
+
+  it('leaves a bare open dialog unknown rather than claiming it wants an answer', () => {
+    // The commonest value in the whole vocabulary, and it names only that a
+    // modal is up: the same string covers a startup model switch and a
+    // managed-settings review. Blocked is proven; blocked ON THE HUMAN is not.
+    expect(claudeWaitingReason(entryFor('dialog open')!)).toBe('unknown')
+    expect(claudeWaitingReason(entryFor('worker request')!)).toBe('unknown')
+  })
+
+  it('reports unknown when the registry proves waiting but names no condition', () => {
+    expect(claudeWaitingReason(entryFor(undefined)!)).toBe('unknown')
+  })
+
+  it('reports unknown for a condition this version of Claude Code did not have', () => {
+    // The vocabulary is version-specific and has grown before. A string nobody
+    // has read is the absence of evidence, so it lands on unknown — never on
+    // the one value that suspends eviction.
+    const entry = parseClaudeSessionEntry({
+      pid: 1,
+      sessionId: 's',
+      cwd: 'c',
+      status: 'waiting',
+      waitingFor: 'something invented later'
+    })
+    expect(claudeWaitingReason(entry!)).toBe('unknown')
+  })
+
+  it('carries no reason at all for a session that is not blocked', () => {
+    // Absent is not `unknown`: one says the session is not waiting, the other
+    // says it is waiting for a reason nothing proved.
+    expect(claudeWaitingReason(parseClaudeSessionEntry(sessionEntryJson)!)).toBeUndefined()
+    const idle = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', status: 'idle' })
+    expect(claudeWaitingReason(idle!)).toBeUndefined()
+  })
+
+  it('reads the condition even when an unknown status normalized away the waiting', () => {
+    // parseClaudeSessionEntry folds every status it does not recognize into
+    // `idle`, so a future spelling of "blocked" would erase the session's only
+    // proof of life. The condition itself survives that fold, which is what
+    // keeps the eviction gate from depending on one status string.
+    const entry = parseClaudeSessionEntry({
+      pid: 1,
+      sessionId: 's',
+      cwd: 'c',
+      status: 'blocked-on-something-new',
+      waitingFor: 'input needed'
+    })
+    expect(entry?.status).toBe('idle')
+    expect(claudeWaitingReason(entry!)).toBe('user-input')
   })
 })

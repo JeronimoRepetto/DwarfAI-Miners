@@ -198,7 +198,7 @@ Verified by replaying the shipped parser over all 366 real transcripts through t
 }
 ```
 
-- Maps **sessionId → PID → cwd → status** directly. `status` observed values: `"busy"`, `"idle"` **[V]**. The current registry also reports `"waiting"` **[V]**; AgentName's two-state domain deliberately normalizes `waiting` (and unknown values) to `idle`. A parent that is idle but still has in-flight subagents stays visible, waiting, with its workers around it.
+- Maps **sessionId → PID → cwd → status** directly. `status` observed values: `"busy"`, `"idle"`, `"waiting"` **[V]**. All three are preserved since issue #34 (`SessionStatus` in `contracts.ts`); only a value none of the three matches normalizes to `idle`, the conservative reading. A parent that is idle but still has in-flight subagents stays visible, waiting, with its workers around it.
 - **Rank is identity, not headcount.** The main session dwarf is always a `foreman`: it is the orchestrator whether or not it currently has agents out. Deriving the role from the in-flight count (the original behaviour) made the same dwarf change appearance mid-session, which read as a different dwarf arriving every time an agent started or finished. Only its `status` tracks the registry (busy → working, idle → waiting). Subagents are always workers. Codex is unaffected — its foreman promotion comes from a real `thread_spawn` parent link (§2.2), not from a count.
 - All 3 files present corresponded to 3 alive `claude.exe` PIDs (verified with `Get-Process`) — stale files appear to be cleaned, but guard against PID reuse anyway: `procStart` is the Windows FILETIME of process start; compare with the process's real start time. **[V]**
 - `updatedAt` is **not** a per-second heartbeat (was ~550s old on a busy session) — treat as "last state change", not liveness. **[V]**
@@ -210,6 +210,32 @@ Other candidates checked:
 - `~/.claude/shell-snapshots/` — `snapshot-bash-<epochms>-<rand>.sh` written at session start; not reliably cleaned → weak signal, only tells you a session started around that time **[V]**.
 - `~/.claude/tasks/<uuid>/` — contains `.lock`/`.highwatermark`; **stale** dirs from weeks ago persist → not a liveness signal **[V]**.
 - `~/.claude/statsig` — does **not exist** in this version **[V]**.
+
+#### `waitingFor` — the whole vocabulary, and what each value proves (issue #60)
+
+A `waiting` session carries an optional `waitingFor` string naming what it is blocked on. It is the **only** structured "blocked on a human" evidence any provider on this machine writes, so #60's normalized waiting reason is derived from it and from nothing else.
+
+The strings are not free text: Claude Code picks each from a fixed derivation. Read out of the shipped v2.1.251 binary on 2026-08-30 (the status/`waitingFor` producer and the dialog-kind table it consults), the closed set is **seven** values — the six below plus the absent case **[V]**:
+
+| `waitingFor`        | Written when                                                                                         | Normalized to |
+| ------------------- | ---------------------------------------------------------------------------------------------------- | ------------- |
+| `input needed`      | an elicitation prompt is up, or the open dialog is an ask-the-user / teammate-setup / MCP-server one | `user-input`  |
+| `permission prompt` | the open dialog's kind is not in Claude Code's own table — the fallback branch                       | `approval`    |
+| `sandbox request`   | a sandboxed command is asking for network access                                                     | `approval`    |
+| `goal proposal`     | Claude proposed a session goal and is waiting on accept/reject                                       | `approval`    |
+| `worker request`    | a worker request is pending                                                                          | `unknown`     |
+| `dialog open`       | any other dialog kind, or a slash-command view showing over an idle turn                             | `unknown`     |
+| _(absent)_          | `waiting` with no condition recorded                                                                 | `unknown`     |
+
+`dialog open` was the value observed live in this machine's registry while this was being read **[V]**, and it is by far the commonest — which is exactly why it is **not** `user-input`. It says a modal is up, never what the modal wants: the same string covers a startup model switch, a managed-settings review and an offline-file-sync notice. That the session is blocked is already carried by `status: "waiting"`; the normalized reason exists to say what it is blocked ON, and only `input needed` names a question a person has to answer.
+
+Two things follow, and both are the point of the issue:
+
+- **`unknown` is not `user-input`.** Only `user-input` suspends age-based eviction; every other value keeps the behaviour #34 and #40 already established. A vocabulary that has grown before will grow again, so an unrecognized string lands on `unknown` rather than being pattern-matched into meaning.
+- **The condition outranks the status.** `parseClaudeSessionEntry` folds any status it does not recognize into `idle`, and `idle` is the single gate #40's staleness rule stands on. A future spelling of "blocked" would therefore turn a live session whose human has been asked a question into an evictable one. The eviction exemption keys on the recorded condition, which survives that fold.
+
+**Subagents have none of this.** Checked across every `agent-*.meta.json` on this machine on 2026-08-30 — 256 files — the only keys that ever appear are `agentType`, `description`, `toolUseId`, `spawnDepth`, `model`, `parentAgentId` and `isFork` **[V]**. No status, no blocked condition, no completion. A worker therefore never carries a waiting reason, and inferring one from its foreman's registry entry would be a claim about a dwarf nobody measured.
+
 - Transcript `.jsonl` mtime — good _activity_ fallback (the live file's mtime advanced during observation) and the only signal for `claude -p`/SDK runs that may not register in `sessions/` **[V mtime / I about -p]**.
 
 ### 1.6 Speech bubbles & thinking metadata
@@ -266,6 +292,7 @@ Minimal example (trimmed) **[V]**:
   1. **Turn in flight**: tail of the rollout — the last `event_msg` is `task_started` (or work records) with **no** subsequent `task_complete` for that turn. Both sampled finished files end exactly with `event_msg/task_complete`. **[V for completed; V for in-flight, see below]**
   2. **Session alive**: rollout mtime recent **and** a `codex.exe` process exists (see §4). mtime alone can't distinguish "open but idle" from "closed" — Codex appends nothing while idle. **[V — see below]**
 - `process_manager\chat_processes.json` records Desktop-spawned commands with `osPid` but retains stale entries → not trustworthy for liveness **[V]**.
+- **No blocked-on-a-human record of any kind** (issue #60). Every rollout on this machine was enumerated on 2026-08-30 — 140 files, ~393 MB — and the complete `event_msg` payload vocabulary is `item_completed`, `token_count`, `agent_message`, `agent_reasoning`, `task_started`, `task_complete`, `user_message`, `patch_apply_end`, `mcp_tool_call_end`, `thread_settings_applied`, `web_search_end`, `sub_agent_activity`, `context_compacted`, `turn_aborted`, `image_generation_end`, `thread_rolled_back`. Not one record or payload type in that corpus matches approval, elicitation, permission, awaiting or user-input **[V]**. `turn_context.payload.approval_policy` is a policy setting, not a pending request. So Codex writes no waiting reason at all and stays exactly as conservative as before: a Codex session at an approval prompt is indistinguishable on disk from one sitting quietly, and inventing the difference is the failure #60 exists to prevent.
 
 **2026-08-29 re-verification against a real, actively-running Codex session on this machine** (this project, PID 32864 `codex.exe` alive since 14:23, confirmed via `Get-CimInstance Win32_Process`):
 
@@ -316,6 +343,9 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 | `<status>` is one of completed/failed/killed; all terminal              | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                        |
 | Three delivery envelopes carry the notification; the rest quote it      | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)       |
 | `agent-*.meta.json` and `tasks\*.output` carry no completion state      | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                |
+| `waitingFor` is the six values of §1.5, plus absent                     | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)   |
+| Subagents expose no status or blocked condition anywhere                | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)  |
+| Codex writes no approval / user-input record at all                     | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)    |
 | Codex rollout layout & record types                                     | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred |
 | Codex liveness = mtime + task_started/complete + process                | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap) |
 | Gemini CLI: nothing on disk here                                        | Verified absence                                                                        |

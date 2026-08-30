@@ -18,15 +18,21 @@ export type {
   Mine,
   MinesSnapshot,
   MineTier,
-  TextDeliveryChannel
+  TextDeliveryChannel,
+  WaitingReason
 } from '../../shared/contracts'
 
 /**
- * The two vault constants are re-exported as VALUES, not just types, so every
- * renderer module keeps `../types` as its single import root into the shared
- * contract rather than reaching across the process boundary itself.
+ * The vault constants and the waiting reason that means a human was asked are
+ * re-exported as VALUES, not just types, so every renderer module keeps
+ * `../types` as its single import root into the shared contract rather than
+ * reaching across the process boundary itself.
  */
-export { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../../shared/contracts'
+export {
+  MATERIALS,
+  MATERIAL_TOKENS_PER_UNIT,
+  WAITING_ON_HUMAN_REASON
+} from '../../shared/contracts'
 
 /** Root state for the mines store. */
 export interface MinesState {

@@ -20,7 +20,8 @@ export type {
   MineTier,
   ProviderSnapshot,
   SessionStatus,
-  TextDeliveryChannel
+  TextDeliveryChannel,
+  WaitingReason
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

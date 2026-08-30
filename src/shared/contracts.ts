@@ -88,6 +88,54 @@ export type DwarfRole = 'foreman' | 'worker'
 export type DwarfStatus = 'working' | 'waiting' | 'leaving'
 
 /**
+ * What a blocked agent is blocked ON, normalized across providers (issue #60).
+ *
+ * Derived ONLY from a provider's own structured lifecycle evidence. A question
+ * mark in a speech bubble, a sentence that reads like a request, an agent that
+ * has simply gone quiet — none of them may ever produce a value here. An agent
+ * waiting on a human writes nothing at all, so prose is exactly the signal that
+ * is absent when it matters, and reading it would make the panel claim a thing
+ * it cannot know.
+ *
+ * 'user-input' is the only value that carries a behavioural promise: while it
+ * is active the agent is exempt from age-based eviction whatever its role's
+ * silence window says (see DWARF_SILENCE_WINDOW_MS). It therefore means one
+ * narrow thing — a human has been asked a question and the session cannot move
+ * until it is answered — and never "probably blocked on someone".
+ *
+ * 'unknown' is the honest middle: the provider proved the session is blocked
+ * but named no condition this table recognizes. It must never be treated as
+ * 'user-input'. The same shape has been decided twice already in this codebase
+ * — absence of a `pendingBackgroundAgentCount` is not a count of zero, and
+ * `tierOf`'s placeholder must never seal a ledger delta — and this is the
+ * third: absence of proof is not proof, in either direction.
+ *
+ * Deliberately three values, not four. The issue also suggested a 'tool'
+ * reason for a long tool call, and nothing on this machine writes evidence of
+ * one: Claude's registry vocabulary has no such condition and Codex writes no
+ * blocked record at all. A member no provider can produce is a claim with
+ * nothing behind it, and adding one later is purely additive.
+ *
+ * Absent (no value at all) is a fourth reading and a different one: the agent
+ * is not blocked, or its provider proves nothing either way.
+ */
+export type WaitingReason = 'user-input' | 'approval' | 'unknown'
+
+/**
+ * The one waiting reason that means a human has actually been asked something
+ * and the session cannot move until they answer.
+ *
+ * Two rules key off exactly this value and no other, and it is named once here
+ * rather than restated in each: the provider suspends age-based eviction while
+ * it is active (see DWARF_SILENCE_WINDOW_MS), and the panel puts the dwarf on
+ * its awaiting-answer loop. Both live on the wire contract for the reason the
+ * silence windows do — a provider and a panel that each decided this for
+ * themselves could disagree, and the panel would then say one thing about a
+ * dwarf while the provider acted on another.
+ */
+export const WAITING_ON_HUMAN_REASON: WaitingReason = 'user-input'
+
+/**
  * How long a dwarf of each role has to have produced nothing before its silence
  * is worth showing (issue #47).
  *
@@ -168,6 +216,21 @@ export interface Dwarf {
    * negative.
    */
   silentForMs?: number
+  /**
+   * Why this dwarf is blocked, when its provider proved it (issue #60).
+   *
+   * Only a dwarf whose provider writes a structured blocked condition ever
+   * carries one — today that is a Claude main session and nothing else. A
+   * Claude subagent never does: its sidecar records no status at all, so a
+   * worker's absence of a reason is absence of evidence rather than proof it
+   * is unblocked. Codex writes no blocked record of any kind.
+   *
+   * Sits beside `status` rather than inside it, exactly as `silentForMs` does:
+   * a blocked dwarf is already `waiting`, and a fourth DwarfStatus would change
+   * what the ledger, the delivery channels and the capability matrix believe
+   * about it rather than only what the panel shows.
+   */
+  waitingReason?: WaitingReason
   /**
    * The channel a typed message would travel through right now, resolved by
    * the runtime on every poll. Absent means the panel must offer no send
