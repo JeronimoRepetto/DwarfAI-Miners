@@ -42,17 +42,12 @@ jobs:
       # `com.jeronimorepetto.dwarfaiminers` bundle id) and the name in LICENSE
       # only match after a `Users`/`home` path separator, which none of them
       # have. This file is excluded because it necessarily spells the patterns
-      # it searches for.
-      #
-      # .env.example is excluded only because its CLAUDE_CONFIG_DIRS line still
-      # names the personal second root, and tooling here cannot edit `.env*`
-      # files. Replace that line with the single-root default and delete this
-      # exclusion — until then the guard does not cover it (issue #32).
+      # it searches for; every other tracked file is covered.
       - name: Privacy guard (no machine-specific identifiers)
         shell: bash
         run: |
           ! git grep -n -I -E '[Uu]sers[/\\-]+jeron|[Hh]ome[/\\-]+jeron|m435tr0|claude-multitec' \
-            -- . ':(exclude).github/workflows/ci.yml' ':(exclude).env.example'
+            -- . ':(exclude).github/workflows/ci.yml'
 
       # pnpm/action-setup does not support pnpm v11 (this repo pins pnpm 11
       # via `allowBuilds` conventions and the committed lockfile) — its own
