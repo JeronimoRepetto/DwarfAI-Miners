@@ -63,6 +63,31 @@ describe('buildSendKeysCommand', () => {
     expect(buildSendKeysCommand("don't", false)).toContain("SendWait('don''t')")
   })
 
+  /*
+    PowerShell's tokenizer accepts four codepoints as a single-quote delimiter,
+    not one: it normalises the three typographic variants to U+0027 while
+    parsing. Doubling only the straight apostrophe therefore left the other
+    three able to close the literal, and everything after them parsed as code.
+    Verified against a real powershell.exe before this test was written:
+    `hi<U+2019>);Write-Output 'X';(<U+2019>` executed the injected command.
+
+    A curly apostrophe is not exotic — every word processor and phone keyboard
+    emits one, so this fired on ordinary pasted prose as readily as on a
+    hostile payload.
+  */
+  it.each([
+    ['U+2018 left single quote', '‘'],
+    ['U+2019 right single quote', '’'],
+    ['U+201A single low-9 quote', '‚'],
+    ['U+201B single high-reversed-9 quote', '‛']
+  ])('doubles %s, which PowerShell also treats as a delimiter', (_label, quote) => {
+    const command = buildSendKeysCommand(`hi${quote});Write-Output 'x';(${quote}`, false)
+    expect(command).toContain(`${quote}${quote}`)
+    // Every quote inside the literal is doubled, so the argument still closes
+    // exactly where we put it: one SendWait call, not two statements.
+    expect(command.match(/SendWait\(/g)).toHaveLength(1)
+  })
+
   it('escapes SendKeys control characters before embedding them', () => {
     expect(buildSendKeysCommand('a+b', false)).toContain("SendWait('a{+}b')")
   })

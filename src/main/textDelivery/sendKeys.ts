@@ -31,9 +31,21 @@ export function toConsoleLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-/** Escape for a PowerShell single-quoted literal, where only `'` is special. */
+/**
+ * Every codepoint PowerShell's tokenizer will accept as a single-quote
+ * delimiter. It normalises the three typographic variants to U+0027 while
+ * parsing, so all four close a literal and all four must be doubled.
+ *
+ * Escaping only U+0027 was an arbitrary-execution hole: a curly apostrophe
+ * closed the string and everything after it parsed as code. It needed no
+ * hostile intent either — word processors and phone keyboards emit U+2019 by
+ * default, so ordinary pasted prose reached it.
+ */
+const POWERSHELL_QUOTES = ["'", '‘', '’', '‚', '‛']
+
+/** Escape for a PowerShell single-quoted literal by doubling every delimiter. */
 function powerShellLiteral(text: string): string {
-  return text.replaceAll("'", "''")
+  return [...text].map((char) => (POWERSHELL_QUOTES.includes(char) ? char + char : char)).join('')
 }
 
 /**
