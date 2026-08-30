@@ -174,14 +174,6 @@ const CAVE_ANCHORS: readonly [SceneAnchor, ...SceneAnchor[]] = [
     feature: 'the open gallery floor under the lantern hung from the crossbeam'
   },
   {
-    id: 'deposit-left-ground',
-    kind: 'deposit',
-    x: 16,
-    y: 83,
-    facesLeft: false,
-    feature: 'the flat ground at the foot of the left ore shelf'
-  },
-  {
     id: 'rest-left-boulder',
     kind: 'rest',
     x: 28,
@@ -196,6 +188,27 @@ const CAVE_ANCHORS: readonly [SceneAnchor, ...SceneAnchor[]] = [
     y: 85,
     facesLeft: true,
     feature: 'the foreground boulder on the right, beside the fallen timber'
+  },
+  {
+    /*
+     * Deliberately past nearY, on the foreground rock rather than on the floor.
+     * A deposit is the one anchor kind no dwarf stands on, so the walkable band
+     * does not bind it — and keeping it on the floor put the heap among the
+     * crew, where it buried a miner from the knees up. Down here it reads as
+     * ore stacked at the mine's near lip, and being the nearest thing in the
+     * scene it paints in front of everyone, which is where it belongs.
+     *
+     * It cannot go further into the corner: a narrow panel's cover crop eats
+     * the sides, and past roughly x 13 the heap would be clipped off screen on
+     * the tallest shapes the app is used at. Last anchor in the list because
+     * the array is ordered far to near.
+     */
+    id: 'deposit-near-left-rock',
+    kind: 'deposit',
+    x: 14,
+    y: 93,
+    facesLeft: false,
+    feature: 'the foreground rock in the near left corner, below the boulder lip'
   }
 ]
 

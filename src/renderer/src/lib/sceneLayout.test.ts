@@ -50,9 +50,38 @@ describe('CAVE_LAYOUT anchors', () => {
     }
   })
 
-  it('stands every anchor on the walkable floor rather than in the air or in a wall', () => {
+  it('stands every anchor a dwarf uses on the walkable floor rather than in the air or in a wall', () => {
     for (const anchor of CAVE_LAYOUT.anchors) {
+      if (anchor.kind === 'deposit') continue
       expect(isWalkable(CAVE_LAYOUT.band, anchor), anchor.id).toBe(true)
+    }
+  })
+
+  /*
+    The same exemption the sharing-clearance test below already makes, for the
+    same reason: a deposit is where ore is stacked, not where anyone stands, so
+    the floor's edges do not bind it. It sits past the near lip on purpose —
+    on the floor it buried a miner.
+  */
+  it('puts the ore deposit off the floor, in the near foreground', () => {
+    const deposits = anchorsOfKind(CAVE_LAYOUT, 'deposit')
+    expect(deposits.length).toBeGreaterThanOrEqual(1)
+    for (const deposit of deposits) {
+      expect(isWalkable(CAVE_LAYOUT.band, deposit), deposit.id).toBe(false)
+      expect(deposit.y, deposit.id).toBeGreaterThan(CAVE_LAYOUT.band.nearY)
+    }
+  })
+
+  it('keeps the deposit clear of every spot a dwarf can occupy', () => {
+    const deposits = anchorsOfKind(CAVE_LAYOUT, 'deposit')
+    const occupied = CAVE_LAYOUT.anchors.filter((anchor) => anchor.kind !== 'deposit')
+    for (const deposit of deposits) {
+      for (const anchor of occupied) {
+        const distance = Math.hypot(deposit.x - anchor.x, deposit.y - anchor.y)
+        expect(distance, `${deposit.id} vs ${anchor.id}`).toBeGreaterThanOrEqual(
+          MIN_WORK_SPOT_DISTANCE
+        )
+      }
     }
   })
 
