@@ -108,8 +108,12 @@ Sample row (trimmed), the session referenced in the task background:
   sub-agent threads spawned during a turn (Codex's own "Task tool" equivalent). This
   is a parent→child thread graph, mirrored in **`thread_spawn_edges`**
   (`parent_thread_id`, `child_thread_id`, `status`).
-- `thread_source` distinct values seen: `user`, `subagent`, `automation`, `vscode`
-  (via `source`), `voice_chat`, `realtime_voice`, null.
+- `thread_source` distinct values seen: `user`, `subagent`, `automation`, `voice_chat`,
+  `realtime_voice`, null. `vscode` is a value of the separate `source` column, not
+  `thread_source` — the committed fixture's first row carries a `source` of `vscode`
+  alongside a `thread_source` of `automation`
+  (`__fixtures__/codex/rollout.jsonl:1`), and no registry row or rollout head was
+  found with a `thread_source` of `vscode`.
 - **`history_mode`** is either `legacy` (76 rows) or `paginated` (60 rows) — see §5,
   this is the key to the whole question.
 - `rollout_path` is populated (and the file **still exists on disk**) for _both_

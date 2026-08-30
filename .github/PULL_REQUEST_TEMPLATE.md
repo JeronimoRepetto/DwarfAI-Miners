@@ -19,9 +19,10 @@ CONTRIBUTING.md's testing philosophy, and it is not repeated here.
 - [ ] Any test removed or rewritten in a file you did not create is named below, with why
 
 <!--
-None of the last three is in CONTRIBUTING.md's five commands. The first two are CI steps that
-fail the build — and the privacy guard runs before any of the five, so all five can pass
-locally on a pull request that still goes red.
+Only the second is not one of CONTRIBUTING.md's six commands — the skill-sync check joined
+them, so the third item above restates one. The first two are CI steps that fail the build —
+and the privacy guard runs before any of the six, so all six can pass locally on a pull request
+that still goes red.
 
 The third is not a gate; nothing enforces it. The census reports per file what a passing suite
 cannot, because a rising total hides a loss:

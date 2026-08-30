@@ -66,7 +66,9 @@ once.
 - **Branching on the OS deep in a call chain.** It makes the behaviour unreachable from a test on
   any other host. Push the decision up to composition, or express it as a capability.
 - **Adding a fourth read of the running OS** because it was convenient. Take the parameter.
-- **Hardcoding a path to these modules.** The tree is being regrouped; find them by basename.
+- **Hardcoding a path to these modules.** Issue #49 already regrouped the tree once
+  (`ae9890c`); find current locations from `src/README.md`'s map rather than assuming a path is
+  still where it was.
 
 ## References
 

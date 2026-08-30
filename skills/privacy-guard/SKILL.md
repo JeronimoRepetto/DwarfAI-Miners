@@ -139,9 +139,9 @@ Describe the patterns; never reproduce them. That is why this page names none of
 - **Reading only the last line of a red build.** The guard runs as the **first** step of the checks
   job, before typecheck, lint, format and test. If it fails, nothing else runs, and the release job
   is skipped entirely because it depends on that job — see [`release`](../release/SKILL.md).
-- **Trusting the five local checks.** `CONTRIBUTING.md` lists five commands to run before a PR. The
-  guard is a sixth thing CI does that is not in that list, so all five can pass locally on a change
-  that goes red.
+- **Trusting the six local commands.** `CONTRIBUTING.md` lists six commands to run before a PR
+  (`skill-sync --check` joined them). The guard is a seventh thing CI does that is not in that
+  list, so all six can pass locally on a change that goes red.
 
 ## References
 
