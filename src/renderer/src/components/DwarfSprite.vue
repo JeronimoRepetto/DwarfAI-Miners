@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DWARF_FRAME_SRC, preloadDwarfArt } from '../lib/art'
+import { bubbleRowOffsetPx } from '../lib/bubbleLayout'
 import { kickMarker as kickMarkerFor, sendMarker as sendMarkerFor } from '../lib/deliveryVerdict'
 import {
   LEAVING_EXIT_MS,
@@ -19,6 +20,13 @@ import SpeechBubble from './SpeechBubble.vue'
 const props = defineProps<{
   dwarf: Dwarf
   bubbleText?: string
+  /**
+   * Which stacked row this bubble draws in when it shares a scene anchor with
+   * other dwarfs (issue #43) — `ScenePlacement.shareIndex` from the caller.
+   * Omitted or 0 (a dwarf with no anchor to share, or the sole occupant of
+   * one) leaves the bubble exactly where it has always been drawn.
+   */
+  bubbleRow?: number
   activating?: boolean
   sendState?: DwarfSendState
   kickState?: DwarfKickState
@@ -178,6 +186,17 @@ watch(
 
 const bubbleLabel = computed(() => `Read the full message from ${props.dwarf.name}`)
 
+/**
+ * Row 0 (no prop, or the sole occupant of an anchor) renders no style at all,
+ * so the DOM for a lone bubble is byte-for-byte what it was before #43 —
+ * only a dwarf actually sharing a rock gets the extra custom property that
+ * lifts its bubble clear of its neighbours' (see lib/bubbleLayout.ts).
+ */
+const bubbleLiftStyle = computed<{ '--bubble-lift': string } | undefined>(() => {
+  const offset = bubbleRowOffsetPx(props.bubbleRow ?? 0)
+  return offset > 0 ? { '--bubble-lift': `${offset}px` } : undefined
+})
+
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeBar)
   document.removeEventListener('click', collapseBubble)
@@ -309,6 +328,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
     <SpeechBubble
       v-if="bubbleText"
       class="bubble-holder"
+      :style="bubbleLiftStyle"
       :text="bubbleText"
       :expand-label="bubbleLabel"
       :expanded="bubbleExpanded"
@@ -594,7 +614,12 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 .bubble-holder {
   position: absolute;
   z-index: 20;
-  bottom: calc(100% + 2px);
+  /*
+   * `--bubble-lift` (issue #43) is only ever set when this dwarf shares its
+   * scene anchor with another (see bubbleLiftStyle above); the var() fallback
+   * keeps every other bubble at exactly the spot it has always drawn at.
+   */
+  bottom: calc(100% + 2px + var(--bubble-lift, 0px));
   left: 46%;
 }
 /*

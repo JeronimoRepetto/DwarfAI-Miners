@@ -5,6 +5,8 @@ import { useDwarfKicking } from '../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../composables/useDwarfMessaging'
 import { BUBBLE_TTL_MS } from '../lib/bubbles'
 import { MAX_PILE_NUGGETS } from '../lib/nuggetPile'
+import { assignScene, type SceneOccupant } from '../lib/sceneAssignment'
+import { sceneLayout } from '../lib/sceneLayout'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
 import type { Dwarf } from '../types'
 import MineScene from './MineScene.vue'
@@ -65,6 +67,82 @@ describe('MineScene', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/*
+ * Issue #43 — a crowded crew used to draw every bubble at the same spot above
+ * its own sprite, with no idea another one was doing the same thing on the
+ * rock next door: readable at one or two dwarfs, an unreadable smear at
+ * seven. MineScene now hands each sprite the shareIndex sceneAssignment
+ * already computed for it (issue #19), which DwarfSprite turns into a
+ * vertical row (see lib/bubbleLayout.ts) so bubbles that land on the same
+ * anchor stack into distinct lines instead of one smear.
+ */
+describe('MineScene bubble stacking', () => {
+  /**
+   * Finds an id group that `assignScene` puts on the very same anchor for a
+   * synthetic all-working crew, without hardcoding which ids collide — that
+   * depends on assignSlots' internal hashing, which this test has no business
+   * knowing about. `count` workers over the layout's fixed vein-anchor pool
+   * guarantees a collision by pigeonhole once `count` exceeds the pool size.
+   */
+  function idsSharingAnAnchor(count: number): string[] {
+    const occupants: SceneOccupant[] = Array.from({ length: count }, (_, index) => ({
+      id: `w${index}`,
+      status: 'working',
+      role: 'worker'
+    }))
+    const placements = assignScene(occupants, sceneLayout('bronze'))
+    const byAnchor = new Map<string, string[]>()
+    for (const [id, placement] of placements) {
+      byAnchor.set(placement.anchor.id, [...(byAnchor.get(placement.anchor.id) ?? []), id])
+    }
+    const shared = [...byAnchor.values()].find((group) => group.length > 1)
+    if (!shared) throw new Error('test setup expected at least one shared anchor')
+    return shared
+  }
+
+  /** The dwarf whose rendered `.dwarf-name` label reads `id` (see below). */
+  function bubbleStyleOf(wrapper: ReturnType<typeof mount>, id: string): string | undefined {
+    const slot = wrapper
+      .findAll('.scene-slot')
+      .find((candidate) => candidate.get('.dwarf-name').text() === id)
+    if (!slot) throw new Error(`no rendered slot for ${id}`)
+    return slot.find('.bubble-holder').attributes('style')
+  }
+
+  it('gives bubbles sharing an anchor distinct positions instead of stacking on each other', async () => {
+    const CREW_SIZE = 7 // more workers than the layout has vein anchors (4)
+    const sharedIds = idsSharingAnAnchor(CREW_SIZE)
+    // `name` doubles as the id here purely so the test can find a dwarf's own
+    // rendered slot back afterwards — production always sets a real name.
+    const dwarfs = Array.from({ length: CREW_SIZE }, (_, index) =>
+      defaultDwarf({
+        id: `w${index}`,
+        name: `w${index}`,
+        status: 'working',
+        lastMessage: `busy on task ${index}`
+      })
+    )
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs }) } })
+    await wrapper.vm.$nextTick()
+
+    const styles = sharedIds.map((id) => bubbleStyleOf(wrapper, id))
+    expect(new Set(styles).size).toBe(sharedIds.length)
+  })
+
+  it('leaves a lone dwarf bubble exactly where it sits today', async () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({
+          dwarfs: [defaultDwarf({ id: 'solo', name: 'solo', lastMessage: 'digging alone' })]
+        })
+      }
+    })
+    await wrapper.vm.$nextTick()
+    // No sharer means no lift: the same unstyled `.bubble-holder` as before #43.
+    expect(bubbleStyleOf(wrapper, 'solo')).toBeUndefined()
   })
 })
 

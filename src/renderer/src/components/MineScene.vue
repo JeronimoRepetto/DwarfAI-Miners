@@ -159,6 +159,8 @@ interface SceneSlot {
   facesLeft: boolean
   walking: boolean
   walkMs: number
+  /** This dwarf's index among sharers of its anchor — see lib/bubbleLayout.ts (#43). */
+  shareIndex: number
 }
 
 /** Every dwarf, resolved to the box coordinates and depth it should be drawn at. */
@@ -187,7 +189,8 @@ const slots = computed<SceneSlot[]>(() => {
         ? (travelFacesLeft.value.get(dwarf.id) ?? placement.facesLeft)
         : placement.facesLeft,
       walking,
-      walkMs: reducedMotion.value ? 0 : (walkMs.value.get(dwarf.id) ?? 0)
+      walkMs: reducedMotion.value ? 0 : (walkMs.value.get(dwarf.id) ?? 0),
+      shareIndex: placement.shareIndex
     })
   }
   /*
@@ -327,6 +330,7 @@ onBeforeUnmount(() => {
           <DwarfSprite
             :dwarf="slot.dwarf"
             :bubble-text="bubbles.get(slot.dwarf.id)"
+            :bubble-row="slot.shareIndex"
             :activating="activatingId === slot.dwarf.id"
             :send-state="sendStates?.[slot.dwarf.id]"
             :kick-state="kickStates?.[slot.dwarf.id]"

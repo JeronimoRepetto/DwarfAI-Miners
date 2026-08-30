@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BUBBLE_ROW_HEIGHT_PX } from '../lib/bubbleLayout'
 import { sceneDwarfAnimation } from '../lib/presentation'
 import { defaultDwarf } from '../testing/factories'
 import type { DwarfKickState, DwarfSendState } from '../types'
@@ -207,6 +208,51 @@ describe('DwarfSprite', () => {
       props: { dwarf: defaultDwarf(), bubbleText: 'Refactoring the parser' }
     })
     expect(talking.find('.speech-bubble').text()).toContain('Refactoring the parser')
+  })
+
+  /*
+   * Issue #43 — a bubble drawn directly above its own sprite smeared into its
+   * neighbours' once several dwarfs shared one painted anchor. `bubbleRow`
+   * (MineScene's `ScenePlacement.shareIndex`) lifts a sharer's bubble clear;
+   * a dwarf with no anchor to share must render exactly as it always has.
+   */
+  describe('bubble stacking', () => {
+    it('places a bubble with no bubbleRow prop exactly where it sits today', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), bubbleText: 'Digging the API layer' }
+      })
+      // No lift means no extra style at all: the DOM is unchanged from before #43.
+      expect(wrapper.find('.bubble-holder').attributes('style')).toBeUndefined()
+    })
+
+    it('leaves row 0 (the sole occupant of an anchor) unlifted too', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), bubbleText: 'Digging the API layer', bubbleRow: 0 }
+      })
+      expect(wrapper.find('.bubble-holder').attributes('style')).toBeUndefined()
+    })
+
+    it('lifts a bubble sharing an anchor by its stack row', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), bubbleText: 'Digging the API layer', bubbleRow: 2 }
+      })
+      const holder = wrapper.get('.bubble-holder').element as HTMLElement
+      expect(holder.style.getPropertyValue('--bubble-lift')).toBe(`${2 * BUBBLE_ROW_HEIGHT_PX}px`)
+    })
+
+    it('gives two different stack rows two different lifts', () => {
+      const rowOne = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), bubbleText: 'first', bubbleRow: 1 }
+      })
+      const rowTwo = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), bubbleText: 'second', bubbleRow: 2 }
+      })
+      const liftOf = (wrapper: ReturnType<typeof mount>): string =>
+        (wrapper.get('.bubble-holder').element as HTMLElement).style.getPropertyValue(
+          '--bubble-lift'
+        )
+      expect(liftOf(rowOne)).not.toBe(liftOf(rowTwo))
+    })
   })
 
   describe('speech bubble expansion', () => {
