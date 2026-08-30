@@ -6,5 +6,6 @@ out/
 *.local
 coverage/
 .codegraph/
+.atl/
 .DS_Store
 Thumbs.db

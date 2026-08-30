@@ -10,7 +10,7 @@ Two genuinely different Codex products are installed and were running simultaneo
 | PID   | Image                      | Path                                                                                                                                     | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ----- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 32864 | `codex.exe`                | `...\pnpm\store\v11\links\@openai\codex\0.150.1-win32-x64\...\vendor\x86_64-pc-windows-msvc\bin\codex.exe`                               | **Classic CLI** (`codex-cli 0.150.1`, installed via pnpm/npm). `CommandLine` was empty — invoked bare, i.e. the interactive TUI, no `--working-dir` flag.                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 36612 | `codex.exe`                | `C:\Users\jeron\AppData\Local\OpenAI\Codex\bin\6ca77c4a9caa4eed\codex.exe`                                                               | **OpenAI Codex desktop app** (Windows Store package `OpenAI.Codex_26.825.5331.0_x64`). Command line: `-c features.code_mode_host=true app-server --analytics-default-enabled -c "mcp_servers.codex_app=..."`. This is the app's **RPC/JSON server backend** (`app-server` subcommand), not the TUI event loop. `config.toml` also has `CODEX_CLI_PATH = 'C:\...\OpenAI\Codex\bin\6ca77c4a9caa4eed\codex.exe'` and a notify handler pointing at `WindowsApps\OpenAI.Codex_...\app\ChatGPT.exe` — confirming this binary belongs to the GUI app, not the CLI package. |
+| 36612 | `codex.exe`                | `C:\Users\j\AppData\Local\OpenAI\Codex\bin\6ca77c4a9caa4eed\codex.exe`                                                                   | **OpenAI Codex desktop app** (Windows Store package `OpenAI.Codex_26.825.5331.0_x64`). Command line: `-c features.code_mode_host=true app-server --analytics-default-enabled -c "mcp_servers.codex_app=..."`. This is the app's **RPC/JSON server backend** (`app-server` subcommand), not the TUI event loop. `config.toml` also has `CODEX_CLI_PATH = 'C:\...\OpenAI\Codex\bin\6ca77c4a9caa4eed\codex.exe'` and a notify handler pointing at `WindowsApps\OpenAI.Codex_...\app\ChatGPT.exe` — confirming this binary belongs to the GUI app, not the CLI package. |
 | 25880 | `codex-code-mode-host.exe` | same pnpm vendor dir as 32864                                                                                                            | Helper process for the `code_mode_host` feature flag enabled on the app-server's command line — a sandboxed code-execution host spawned by/for the app.                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 38248 | `codex-computer-use.exe`   | `...\OpenAI\Codex\runtimes\cua_node\426e88130fe66c7e\bin\node_modules\@oai\sky\bin\windows\codex-computer-use.exe`, `--parent-pid 34776` | Computer-use plugin child process. Parent PID 34776 is **not** any of the 4 given PIDs — it belongs to the Electron/host process of the desktop app (not captured in the given PID list).                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -32,7 +32,7 @@ Sample (first line):
 {
   "session_id": "01a0332c-e52e-7e82-93ad-5db880c842b4",
   "ts": 1787565001,
-  "text": "Hola puedes decirme q hace este proyecto? y para q sirve?"
+  "text": "Placeholder user prompt."
 }
 ```
 
@@ -42,7 +42,7 @@ Sample (last line):
 {
   "session_id": "01a04d79-5c87-7a31-9b1a-4aacc350d6fd",
   "ts": 1788023343,
-  "text": "Que puedes decirme del proyecto?"
+  "text": "Placeholder follow-up user prompt."
 }
 ```
 
@@ -82,8 +82,8 @@ Sample row (trimmed), the session referenced in the task background:
 ```json
 {
   "id": "01a04d79-5c87-7a31-9b1a-4aacc350d6fd",
-  "rollout_path": "C:\\Users\\jeron\\.codex\\sessions\\2026\\08\\29\\rollout-2026-08-29T14-23-14-01a04d79-5c87-7a31-9b1a-4aacc350d6fd.jsonl",
-  "cwd": "\\\\?\\C:\\Users\\jeron\\Desktop\\AI-Tools\\agent-name",
+  "rollout_path": "C:\\Users\\j\\.codex\\sessions\\2026\\08\\29\\rollout-2026-08-29T14-23-14-01a04d79-5c87-7a31-9b1a-4aacc350d6fd.jsonl",
+  "cwd": "\\\\?\\C:\\Users\\j\\Desktop\\Sample-Project",
   "source": "cli",
   "thread_source": "user",
   "model": "gpt-5.6-luna",
@@ -93,7 +93,7 @@ Sample row (trimmed), the session referenced in the task background:
   "tokens_used": "19290398",
   "git_sha": "dd4f96c...",
   "git_branch": "main",
-  "preview": "Quiero primero q uses gentle-ia para trabajar ...",
+  "preview": "Placeholder first user message ...",
   "recency_at_ms": "1788023343261",
   "updated_at_ms": "1788023349176"
 }
@@ -138,7 +138,7 @@ created_at_ms, item_json, item_type, updated_at_ordinal`. `item_type` distinct
   `contextCompaction` (12), `plan` (1).
   - **`agentMessage`** rows are the assistant's chat replies (`item_json.text`) — use
     these for the "speech bubble" text. Sample:
-    `{"type":"agentMessage","id":"msg_...","text":"No puedo ver un contador exacto de tokens..."}`.
+    `{"type":"agentMessage","id":"msg_...","text":"Placeholder assistant reply..."}`.
   - `userMessage` rows: `{"type":"userMessage","id":...,"content":[{"type":"text","text":"..."}]}`.
 - **`thread_turns`** (169 rows): `thread_id, turn_id, rollout_ordinal, status,
 error_json, started_at, completed_at, duration_ms, first_user_item_id,
@@ -299,7 +299,7 @@ mode).
   (`_1`, `_2`, `_5`) look like internal schema/shard version tags rather than
   anything OS-specific.
 - `config.toml` does contain many Windows-specific absolute paths for this machine's
-  plugin/runtime locations (`\\?\C:\Users\jeron\...`, `WindowsApps\OpenAI.Codex_...`)
+  plugin/runtime locations (`\\?\C:\Users\j\...`, `WindowsApps\OpenAI.Codex_...`)
   — these are install-time resolved values, not something a cross-platform provider
   needs to special-case beyond "the paths look like whatever native path format the
   OS uses."

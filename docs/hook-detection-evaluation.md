@@ -170,8 +170,8 @@ default** (`src/main/config.ts:57`) — calls `provider.scan()` on
 failing never kills the loop), aggregates into `Mine[]`, and pushes over the
 `mines:update` IPC channel.
 
-- `ClaudeProvider.scan()` walks `~/.claude/sessions/*.json` (+ a second
-  `~/.claude-multitec` root — this machine runs two accounts) for
+- `ClaudeProvider.scan()` walks `~/.claude/sessions/*.json` (+ any additional
+  configured Claude roots — multiple accounts are supported) for
   `pid`/`status`, probes liveness with `process.kill(pid, 0)`, then tails up to
   256 KB of each session's transcript for model/effort/last-assistant-text/
   in-flight subagents (`parseClaudeTranscriptTail`). This already extracts
@@ -273,8 +273,8 @@ silently" directly.
 ### 3.2 What we'd write
 
 - **Claude Code** → `~/.claude/settings.json`, nested-hooks shape, for each of
-  `config.claudeConfigDirs` (plural — this machine has two accounts;
-  `src/main/config.ts:43`). Event set: mirror agentpet's minimal list minus
+  `config.claudeConfigDirs` (plural — multiple Claude roots/accounts are
+  supported; `src/main/config.ts:43`). Event set: mirror agentpet's minimal list minus
   the two we don't need per-tool-call granularity for — **`SessionStart`,
   `Notification`, `Stop`, `SubagentStop`, `SessionEnd`** for v1. Skip
   `PreToolUse`/`UserPromptSubmit` initially: they fire on every tool call, and
@@ -326,8 +326,8 @@ silently" directly.
   - **(b) A tiny compiled relay helper**, self-contained, whose only job is
     stdin → one HTTP POST → exit. This workspace already has precedent for
     exactly this kind of single-file native helper compiled with the
-    machine's built-in `csc.exe` (see the `mic-toggle` project's WinForms
-    binary) — no new dependency, and it removes the curl.exe assumption
+    machine's built-in `csc.exe` (a pattern proven in a sibling project's
+    WinForms helper) — no new dependency, and it removes the curl.exe assumption
     entirely.
     Recommendation: (b) as the primary path (self-contained, no environment
     assumption), with (a) as a fast spike to validate the architecture before

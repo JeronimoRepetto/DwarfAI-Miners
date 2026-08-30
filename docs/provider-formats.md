@@ -11,21 +11,21 @@ Legend: **[V]** = verified against real files on this PC; **[I]** = inferred, no
 
 | What                          | Path                                                                                                                           |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Transcript (main session)     | `C:\Users\jeron\.claude\projects\<encoded-cwd>\<session-uuid>.jsonl` **[V]**                                                   |
+| Transcript (main session)     | `C:\Users\j\.claude\projects\<encoded-cwd>\<session-uuid>.jsonl` **[V]**                                                       |
 | Subagent transcripts          | `...\projects\<encoded-cwd>\<session-uuid>\subagents\agent-<agentId>.jsonl` + `agent-<agentId>.meta.json` **[V]**              |
 | Big tool results (hooks etc.) | `...\projects\<encoded-cwd>\<session-uuid>\tool-results\*.txt` **[V]**                                                         |
-| Live-session registry         | `C:\Users\jeron\.claude\sessions\<pid>.json` (+ `<pid>.<hash>.key`) **[V]** — the single best liveness source                  |
-| Prompt history (global)       | `C:\Users\jeron\.claude\history.jsonl` — `{display, pastedContents, timestamp, project, sessionId}` **[V]**                    |
+| Live-session registry         | `C:\Users\j\.claude\sessions\<pid>.json` (+ `<pid>.<hash>.key`) **[V]** — the single best liveness source                      |
+| Prompt history (global)       | `C:\Users\j\.claude\history.jsonl` — `{display, pastedContents, timestamp, project, sessionId}` **[V]**                        |
 | Agent completion payloads     | `%LOCALAPPDATA%\Temp\claude\<encoded-cwd>\<session-uuid>\tasks\<agentId>.output` **[V]** (path seen inside task-notifications) |
 
 ### 1.2 Directory-name encoding of cwd
 
 Every non-alphanumeric character of the absolute path (`\`, `:`, `.`, …) is replaced with `-`:
 
-- `C:\Users\jeron\Desktop\AI-Tools` → `C--Users-jeron-Desktop-AI-Tools` **[V]**
-- `C:\Users\jeron\Desktop\Pokedex-RAG\.claude-worktrees\x-fce647` → `C--Users-jeron-Desktop-Pokedex-RAG--claude-worktrees-x-fce647` **[V]** (note `\.` → `--`)
+- `C:\Users\j\Desktop\Sample-Project` → `C--Users-j-Desktop-Sample-Project` **[V]**
+- `C:\Users\j\Desktop\Sample-Project\.claude-worktrees\x-fce647` → `C--Users-j-Desktop-Sample-Project--claude-worktrees-x-fce647` **[V]** (note `\.` → `--`)
 
-The encoding is **lossy** — do not decode it. Every transcript line carries the real path in a top-level `cwd` field (e.g. `"cwd":"C:\\Users\\jeron\\Desktop\\AI-Tools"`) **[V]**.
+The encoding is **lossy** — do not decode it. Every transcript line carries the real path in a top-level `cwd` field (e.g. `"cwd":"C:\\Users\\j\\Desktop\\Sample-Project"`) **[V]**.
 
 ### 1.3 Per-line schema (JSONL)
 
@@ -51,14 +51,14 @@ Minimal example (assistant, trimmed) **[V]**:
   "timestamp": "2026-08-29T11:22:50.389Z",
   "effort": "xhigh",
   "requestId": "req_011CeW...",
-  "cwd": "C:\\Users\\jeron\\Desktop\\AI-Tools",
+  "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
   "sessionId": "5efdffdd-53df-4509-b30d-c9e56552a22e",
   "version": "2.1.251",
   "gitBranch": "HEAD",
   "message": {
     "model": "claude-fable-5",
     "role": "assistant",
-    "content": [{ "type": "text", "text": "Listo, ya está en marcha..." }],
+    "content": [{ "type": "text", "text": "Placeholder reply text..." }],
     "usage": { "output_tokens": 2586, "output_tokens_details": { "thinking_tokens": 2250 } }
   }
 }
@@ -102,7 +102,7 @@ Sidecar metadata — `subagents\agent-<agentId>.meta.json` **[V]**:
 }
 ```
 
-**It carries no status, no completion flag, and no end timestamp.** Re-checked on 2026-08-29 against every `agent-*.meta.json` in four live `AI-Tools` sessions (12 files, 136–157 bytes each): the only keys ever present are `agentType`, `description`, `toolUseId`, `spawnDepth` and an optional `model` (`"opus"`, `"sonnet"` — the requested alias, not the resolved id). Files for long-finished agents are byte-identical in shape to files for agents still running, and the file is not rewritten when the agent stops. **[V]** So the sidecar is useful for naming a worker, and useless as a completion authority — AgentName keys completion on the task-notification instead (below).
+**It carries no status, no completion flag, and no end timestamp.** Re-checked on 2026-08-29 against every `agent-*.meta.json` in four live `Sample-Project` sessions (12 files, 136–157 bytes each): the only keys ever present are `agentType`, `description`, `toolUseId`, `spawnDepth` and an optional `model` (`"opus"`, `"sonnet"` — the requested alias, not the resolved id). Files for long-finished agents are byte-identical in shape to files for agents still running, and the file is not rewritten when the agent stops. **[V]** So the sidecar is useful for naming a worker, and useless as a completion authority — AgentName keys completion on the task-notification instead (below).
 
 The `.output` sidecar is no better: `%LOCALAPPDATA%\Temp\claude\<encoded-cwd>\<session-uuid>\tasks\<agentId>.output` existed for six agents in one session but was **0 bytes for five of them**, including agents that had completed successfully. Presence and size carry no completion signal. **[V]**
 
@@ -146,15 +146,15 @@ Since the sidecar files carry no completion state (§1.4), the task-notification
 {
   "pid": 32896,
   "sessionId": "5efdffdd-53df-4509-b30d-c9e56552a22e",
-  "cwd": "C:\\Users\\jeron\\Desktop\\AI-Tools",
+  "cwd": "C:\\Users\\j\\Desktop\\Sample-Project",
   "startedAt": 1788001972417,
   "procStart": "134324755721362761",
   "version": "2.1.251",
   "kind": "interactive",
   "entrypoint": "cli",
-  "pidDomain": "win32:m435tr0-turc0",
+  "pidDomain": "win32:placeholder-host",
   "messagingSocketPath": "\\\\.\\pipe\\LOCAL\\cc-msg-952f...",
-  "name": "ai-tools-70",
+  "name": "sample-project-70",
   "nameSource": "derived",
   "status": "busy",
   "updatedAt": 1788002904281,
@@ -180,7 +180,7 @@ Other candidates checked:
 
 - Latest human-readable assistant text = last `type:"assistant"` line whose `message.content[]` contains a `{"type":"text"}` block (skip thinking-only and tool_use-only lines). **[V]**
 - Thinking: `{"type":"thinking","thinking":"..."}` blocks; effort level in top-level `effort` on every assistant line; thinking token counts in `usage.output_tokens_details.thinking_tokens`. **[V]**
-- Session title: `{"type":"ai-title","aiTitle":...,"sessionId":...}` lines; friendly name also in `sessions/<pid>.json` `.name` (e.g. `ai-tools-70`). **[V keys]**
+- Session title: `{"type":"ai-title","aiTitle":...,"sessionId":...}` lines; friendly name also in `sessions/<pid>.json` `.name` (e.g. `sample-project-70`). **[V keys]**
 
 ---
 
@@ -188,9 +188,9 @@ Other candidates checked:
 
 ### 2.1 Paths & layout
 
-- Transcripts ("rollouts"): `C:\Users\jeron\.codex\sessions\<YYYY>\<MM>\<DD>\rollout-<YYYY-MM-DD>T<hh-mm-ss>-<uuid-v7>.jsonl` **[V]**
-- `C:\Users\jeron\.codex\history.jsonl` — user prompts: `{"session_id":"01a0...","ts":1787578797,"text":"..."}` **[V]**
-- `C:\Users\jeron\.codex\session_index.jsonl` — `{"id":"<uuid>","thread_name":"...","updated_at":"..."}`; on this machine only Desktop/automation threads appeared → treat as partial index **[V content / I coverage]**
+- Transcripts ("rollouts"): `C:\Users\j\.codex\sessions\<YYYY>\<MM>\<DD>\rollout-<YYYY-MM-DD>T<hh-mm-ss>-<uuid-v7>.jsonl` **[V]**
+- `C:\Users\j\.codex\history.jsonl` — user prompts: `{"session_id":"01a0...","ts":1787578797,"text":"..."}` **[V]**
+- `C:\Users\j\.codex\session_index.jsonl` — `{"id":"<uuid>","thread_name":"...","updated_at":"..."}`; on this machine only Desktop/automation threads appeared → treat as partial index **[V content / I coverage]**
 - `archived_sessions\`, `.codex-global-state.json` (Codex Desktop app state, ~1.1MB), `process_manager\chat_processes.json` (Desktop-spawned shell commands with `osPid`, `cwd`, `conversationId`, `turnId` — stale entries persist) **[V]**
 
 ### 2.2 Record schema
@@ -216,7 +216,7 @@ Minimal example (trimmed) **[V]**:
   "type": "session_meta",
   "payload": {
     "id": "01a048b5-5f35-7312-ab78-38db464920de",
-    "cwd": "C:\\Users\\jeron\\Documents\\Codex\\...",
+    "cwd": "C:\\Users\\j\\Documents\\Codex\\...",
     "originator": "Codex Desktop",
     "cli_version": "0.150.0-alpha.8",
     "model_provider": "openai"
@@ -231,7 +231,7 @@ Minimal example (trimmed) **[V]**:
   2. **Session alive**: rollout mtime recent **and** a `codex.exe` process exists (see §4). mtime alone can't distinguish "open but idle" from "closed" — Codex appends nothing while idle. **[V — see below]**
 - `process_manager\chat_processes.json` records Desktop-spawned commands with `osPid` but retains stale entries → not trustworthy for liveness **[V]**.
 
-**2026-08-29 re-verification against a real, actively-running Codex session on this machine** (this project, `agent-name`, PID 32864 `codex.exe` alive since 14:23, confirmed via `Get-CimInstance Win32_Process`):
+**2026-08-29 re-verification against a real, actively-running Codex session on this machine** (this project, PID 32864 `codex.exe` alive since 14:23, confirmed via `Get-CimInstance Win32_Process`):
 
 - **Bug found and fixed — tail-window busy detection**: a real rollout from this session showed a `task_started`→`task_complete` gap of **347,167 bytes** (one turn's tool output/reasoning). AgentName originally read only the last 256KiB (`TAIL_BYTES`) of the rollout to detect an open turn, so a genuinely in-progress turn whose `task_started` had already scrolled past that window looked idle — the main symptom reported ("no dwarfs appear with a live session"). Fixed by reading a larger, still-bounded tail (4 MiB, `BUSY_TAIL_BYTES` in `codexProvider.ts`) for busy detection specifically, keeping the smaller 256KiB read for the click-to-focus feed. Reproduced and verified against a synthetic rollout built from this session's real `session_meta`/`turn_context` lines plus an oversized body (`src/main/providers/codex/codexProvider.integration.test.ts`).
 - **Bug found and fixed — date-directory scan gap**: a rollout lives in its **START-date** directory for its whole lifetime, but the provider only scanned `today` and `yesterday`. A session opened more than a day ago and still active would never be found even with a fresh mtime. Fixed with a configurable `CODEX_SCAN_DAYS` (default 7) scanning today back N-1 days; mtime filtering keeps this cheap.
@@ -243,11 +243,11 @@ Minimal example (trimmed) **[V]**:
 
 ## 3. Gemini CLI
 
-**Plain answer: on this machine, `C:\Users\jeron\.gemini` contains no Gemini CLI session data at all, and no live-session signal.** **[V]**
+**Plain answer: on this machine, `C:\Users\j\.gemini` contains no Gemini CLI session data at all, and no live-session signal.** **[V]**
 
 What's actually there:
 
-- The directory is owned by **Google Antigravity** (IDE/agent product): `antigravity\`, `antigravity-cli\`, `antigravity-ide\`, `config\` (plugins + `projects\<uuid>.json` registry entries like `{"id":..., "name":"ToryLib", "projectResources":{resources:[{gitFolder:{folderUri:"file:///c%3A/Users/jeron/Desktop/ToryLib"}}]}}`), `GEMINI.md`, `settings.json` (MCP config). **[V]**
+- The directory is owned by **Google Antigravity** (IDE/agent product): `antigravity\`, `antigravity-cli\`, `antigravity-ide\`, `config\` (plugins + `projects\<uuid>.json` registry entries like `{"id":..., "name":"Sample-Project", "projectResources":{resources:[{gitFolder:{folderUri:"file:///c%3A/Users/j/Desktop/Sample-Project"}}]}}`), `GEMINI.md`, `settings.json` (MCP config). **[V]**
 - Antigravity conversations exist as **binary protobuf** blobs: `antigravity\conversations\<uuid>.pb` (up to 22MB, last touched 2026-05-21). Messages/models are not recoverable without Antigravity's proto schema — impractical. **[V binary / I schema]**
 - Gemini CLI's usual artifacts are absent: no `tmp\` (which would hold `tmp\<project-hash>\logs.json` + `chats\` session files **[I — standard Gemini CLI layout]**), no `history\`, no `oauth_creds.json`, no `google_accounts.json`. → Gemini CLI has effectively never been used here. **[V absence]**
 - Recommendation for the monitoring app: implement a Gemini watcher that checks `~/.gemini/tmp/<hash>/` for `logs.json`/`chats/*.json` mtime **if it ever appears**, plus a `gemini` process check; ship it disabled/optional. There is nothing to verify against today.
@@ -258,11 +258,11 @@ What's actually there:
 
 Verified with `Get-CimInstance Win32_Process`:
 
-- **Claude Code**: each interactive session is one native **`claude.exe`** process from `C:\Users\jeron\.local\bin\claude.exe` (NOT node). Beware: the Claude **Desktop** app is also `claude.exe` but lives under `C:\Program Files\WindowsApps\Claude_...` — filter by `ExecutablePath`. **[V]**
+- **Claude Code**: each interactive session is one native **`claude.exe`** process from `C:\Users\j\.local\bin\claude.exe` (NOT node). Beware: the Claude **Desktop** app is also `claude.exe` but lives under `C:\Program Files\WindowsApps\Claude_...` — filter by `ExecutablePath`. **[V]**
   - PID↔session mapping is **free**: `~/.claude/sessions/<pid>.json` gives `{pid, sessionId, cwd, status}`; all 3 registry PIDs matched live processes. Validate with `procStart` (FILETIME) vs `Get-Process .StartTime` to survive PID reuse. **[V]**
-  - Focus: `claude.exe` has an empty `MainWindowTitle` (console app). Walk the PPID chain (`Win32_Process.ParentProcessId`) up to the hosting terminal. On this machine the only titled terminal window was `WindowsTerminal` ("M435TR0-TURC0: topanga-monorepo"). Realistic plan: ancestor-walk → find `WindowsTerminal.exe`/`conhost.exe`/VS Code → `SetForegroundWindow` on that window's HWND (EnumWindows by PID). Caveat: Windows Terminal hosts many tabs in ONE process/window — you can focus the window, but selecting the right **tab** needs UI Automation and is best-effort. **[V processes / I focus mechanics]**
-  - Note: on this PC sessions are wrapped by an `effort-autopilot` broker (`node.exe internal-interactive-broker.js` → `claude.exe --settings ... --effort xhigh`), so the ancestor chain can pass through node/cmd/powershell before reaching a terminal. **[V]**
-- **Codex**: **[V, 2026-08-29]** a live `codex.exe` process was observed (`C:\Users\jeron\AppData\Local\pnpm\store\...\@openai\codex\...\bin\codex.exe`), plus its supporting `node.exe` processes carry a directly useful `--working-dir <path>` argument in `CommandLine` — a much stronger correlation signal than `session_meta.payload.cwd` matching, and worth using for a future PID-based click-to-focus (rollouts still carry no PID of their own). `Win32_Process.CommandLine` does not expose the codex.exe TUI's own live working directory, so `session_meta.cwd` remains the only per-rollout signal; the `--working-dir` node helper processes are the closest thing to a verifiable PID↔project link found so far. Matching "any process with 'codex' in name or command line" (used for the idle-retention liveness check, §2.3) is intentionally broad and can false-positive on the Codex Desktop app (`ChatGPT.exe`, whose install path contains `OpenAI.Codex`) — acceptable here since it only extends a bounded retention window, never grants indefinite visibility.
+  - Focus: `claude.exe` has an empty `MainWindowTitle` (console app). Walk the PPID chain (`Win32_Process.ParentProcessId`) up to the hosting terminal. On this machine the only titled terminal window was `WindowsTerminal` ("PLACEHOLDER-HOST: some-project"). Realistic plan: ancestor-walk → find `WindowsTerminal.exe`/`conhost.exe`/VS Code → `SetForegroundWindow` on that window's HWND (EnumWindows by PID). Caveat: Windows Terminal hosts many tabs in ONE process/window — you can focus the window, but selecting the right **tab** needs UI Automation and is best-effort. **[V processes / I focus mechanics]**
+  - Note: sessions can be wrapped by a local broker/wrapper (`node.exe <broker>.js` → `claude.exe --settings ... --effort xhigh`), so the ancestor chain can pass through node/cmd/powershell before reaching a terminal. **[V]**
+- **Codex**: **[V, 2026-08-29]** a live `codex.exe` process was observed (`C:\Users\j\AppData\Local\pnpm\store\...\@openai\codex\...\bin\codex.exe`), plus its supporting `node.exe` processes carry a directly useful `--working-dir <path>` argument in `CommandLine` — a much stronger correlation signal than `session_meta.payload.cwd` matching, and worth using for a future PID-based click-to-focus (rollouts still carry no PID of their own). `Win32_Process.CommandLine` does not expose the codex.exe TUI's own live working directory, so `session_meta.cwd` remains the only per-rollout signal; the `--working-dir` node helper processes are the closest thing to a verifiable PID↔project link found so far. Matching "any process with 'codex' in name or command line" (used for the idle-retention liveness check, §2.3) is intentionally broad and can false-positive on the Codex Desktop app (`ChatGPT.exe`, whose install path contains `OpenAI.Codex`) — acceptable here since it only extends a bounded retention window, never grants indefinite visibility.
 - **Gemini**: would run as `node.exe` with `gemini` in `CommandLine` (`...\gemini.cmd` → node). Detectable via `WHERE CommandLine LIKE '%gemini%'`, but with no session files there is nothing to correlate. **[I]**
 
 Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + verify PIDs; every 2–5 s stat the newest `*.jsonl` per provider and tail-parse only appended bytes (files are append-only JSONL — keep a byte offset per file). Lines can exceed 10KB; always read incrementally, never whole-file.
