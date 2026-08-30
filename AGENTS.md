@@ -12,9 +12,8 @@ does not — mostly things that have already gone wrong at least once.
 
 - **This file is the single source of truth.** `CLAUDE.md` is three lines that import it; every
   other tool reads this file directly. Nothing here is duplicated anywhere else.
-- **Read it at runtime; do not memorise paths.** The `src/` tree is being regrouped under issue
-  #49, so modules are named by basename here rather than by path wherever that is enough to find
-  them.
+- **It is budgeted under 200 lines**, because adherence drops as it grows. Adding a section means
+  taking one out, and prose another file already carries in full goes first.
 - **The two tables below are generated** from the skills' own frontmatter by
   `node skills/skill-sync/assets/sync.mjs`. Never hand-edit anything between a
   `BEGIN GENERATED` marker and its `END GENERATED` marker.
@@ -77,10 +76,6 @@ This table is the imperative form, and it is the one that binds.
 files. It is a rule rather than a skill on purpose: you cannot add a point to either file without
 reading it first, so a read-triggered rule reaches the failure in time.
 
-Be aware of the limit of that mechanism. **A path-scoped rule fires when a matching file is read,
-never before a write.** Anything that must survive a blind `Write` to a file you never opened has
-to be a skill instead — which is exactly why test preservation is one.
-
 ## Rules with a scar behind them
 
 **One writer per zone.** Several agents work this repository at once with disjoint file surfaces
@@ -94,14 +89,10 @@ commit. When a build is red, read the name of the failing step before diagnosing
 
 ## Before you report done
 
-`CONTRIBUTING.md` lists the local checks to run; run those. Two things it does not tell you:
-
-- **CI runs one more gate than that list, and it runs first.** A privacy guard fails the build
-  before typecheck, lint, format or test get a chance. All the local checks can pass on a change
-  that goes red — see [`privacy-guard`](skills/privacy-guard/SKILL.md).
-- **Report the per-file test census** for every test file you touched, using the script in
-  [`test-safety`](skills/test-safety/SKILL.md). A passing suite cannot tell you what is no longer
-  in it.
+`CONTRIBUTING.md` lists the seven checks CI runs, in CI's order; run those. One thing it does not
+ask for: **the per-file test census** for every test file you touched, using the script in
+[`test-safety`](skills/test-safety/SKILL.md). A passing suite cannot tell you what is no longer in
+it.
 
 ## Boundaries that must survive
 
@@ -116,9 +107,6 @@ Neither side imports contracts directly in most files. Each process reads it thr
 process's own local state types. So: **add a wire type to `contracts.ts`, then re-export it from
 the barrel.** Do not let a renderer-only type into contracts, and never copy a shape across the
 boundary.
-
-Per-OS behaviour and the pure-builder/thin-runner pattern have their own skill; see
-[`platform-ports`](skills/platform-ports/SKILL.md).
 
 ## Domain invariants that are easy to break by accident
 
@@ -180,22 +168,31 @@ usually right — `git log --format='%B' -n 20` before trusting a claim you cann
 
 ## The tree
 
-_Still to be written._ The issue #49 regrouping landed in `ae9890c` while this file was being
-drafted, so the map belongs here next: one line per group saying what the group is _for_, plus the
-rule that decides where the next new file goes. Keep it short — this file is budgeted under 200
-lines because adherence drops as it grows, and a directory listing is the first thing worth cutting
-when a reader can always run `git ls-files`.
+[`src/README.md`](src/README.md) has the path map and the filing rule in full; read it before
+adding a file. This is the index — one line per group, so you can tell what a thing is _for_.
+
+- **`shared/`** — the wire boundary: `contracts.ts`, `accelerator.ts`, `truncate.ts`. No Electron
+  and no Node imports anywhere in it.
+- **`preload/`** — the one typed API surface handed to the renderer.
+- **`main/`** — `index.ts` is the composition root, and the only file that owns Electron's
+  `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
+  seams with their fakes), `config`, `domain` (pure rules and the type barrel), `hooks` (the opt-in
+  Claude push channel), `ledger` (what has been mined, persisted), `platform` (everything that
+  knows an OS, composed once in `platformAdapters.ts`), `providers` (one per agent CLI plus the
+  simulated one), `runtime` (the poll loop), `shell` (window, tray, autostart, shortcuts),
+  `textDelivery`, `tier`.
+- **`renderer/src/`** — `components/` is thin and decides nothing, `lib/` is the framework-agnostic
+  logic, and the two share the family names `map`, `scene` and `vault` on purpose. `composables/`
+  is the Vue-bound state; `types.ts` is this process's barrel onto `contracts.ts`.
+
+**Where the next file goes:** name a directory for the subject it is about, never for the kind of
+module it holds — `utils/`, `helpers/`, `types/` are refused on sight. An existing subject wins
+however few files it has, and a module about the panel as a whole stays flat rather than being
+pushed into the nearest group. `src/README.md` has the four consequences that follow.
 
 ## Verified versus assumed
 
-Everything above was checked against the code, in the spirit of the README's support matrix. Three
-notes on confidence:
-
-- The rules in "a scar behind them" are history, not theory — each one names the incident or the
-  enforcement that produced it.
-- The domain invariants are enforced by comments and regression tests, not by types. `tierOf` vs
-  `knownTierOf` in particular type-checks either way. Treat them as rules you must hold, not rails
-  that will catch you.
-- Claims here have been wrong before. Writing this harness found a rule file that had inherited an
-  inaccurate claim from a source comment, and several remembered details off by more than a little.
-  Verify before you restate, and prefer "three call sites (four occurrences)" to "about three".
+Everything above was checked against the code, in the spirit of the README's support matrix — and
+claims here have still been wrong. Writing this harness found a rule file that had inherited an
+inaccurate claim from a source comment, and several remembered details off by more than a little.
+Verify before you restate, and prefer "three call sites (four occurrences)" to "about three".
