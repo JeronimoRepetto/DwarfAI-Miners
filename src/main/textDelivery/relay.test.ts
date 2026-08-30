@@ -9,8 +9,8 @@ import {
 
 describe('resolveClaudeBinaryPath', () => {
   it('points at the real native binary, not whatever PATH resolves first', () => {
-    // An 'effort-autopilot' shim sits earlier on PATH on this machine and
-    // breaks non-interactive spawns, so the relay never goes through PATH.
+    // A third-party wrapper shim can sit earlier on PATH and break
+    // non-interactive spawns, so the relay never goes through PATH.
     expect(resolveClaudeBinaryPath('C:\\Users\\j', 'win32')).toBe(
       'C:\\Users\\j\\.local\\bin\\claude.exe'
     )

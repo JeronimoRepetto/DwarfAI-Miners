@@ -32,7 +32,7 @@ import {
 export const RESULT_VISIBLE_MS = 4_000
 
 // Singleton store: module-scope state shared by every useDwarfMessaging()
-// caller (house style shared with the sibling AI-Tools Vue tools).
+// caller (house style shared with a sibling Vue project).
 const state = reactive(defaultDwarfMessagingState())
 const clearTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Open reaction watches, keyed by dwarf id — at most one per dwarf. */

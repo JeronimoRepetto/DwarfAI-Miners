@@ -126,11 +126,18 @@ project names → `Sample-Project`, the derived fixture session name →
 `sample-project-70`, and the personal hook-script example in `hookCommand.test.ts` →
 `node C:/Users/j/.claude/hooks/user-script.js`. The hostname placeholder was already
 in place. The Codex fixture `timezone` was already a neutral value, so it was left
-alone. **Not applied:** three house-style comments in
+alone. **Deferred, then applied:** three house-style comments in
 `src/renderer/src/composables/` (`useMines.ts`, `useView.ts`,
-`useDwarfMessaging.ts`) still say "the sibling AI-Tools Vue tools"; those files were
-being edited concurrently by another work stream and should become "a sibling Vue
-project" in that stream's pass.
+`useDwarfMessaging.ts`) named a private sibling project; those files were being
+edited concurrently by another work stream, so the rename to "a sibling Vue
+project" was left to that stream's pass. It reached `useMines.ts` and
+`useView.ts` but missed `useDwarfMessaging.ts`, which kept the private name until
+the issue #54 re-sweep generalized it to match its two siblings. That same sweep
+also caught a private local project name in two `src/main/textDelivery/relay`
+comments and the maintainer's local tooling directory named as the measured
+subject in `src/main/tier/tierService.test.ts` — all prose, no assertion moved.
+The lesson for the next deferral: a report-only item handed to another stream is
+not closed until someone re-reads the file.
 
 ### 4.3 CI privacy guard (recommendation — workflows are outside this audit's write surface)
 

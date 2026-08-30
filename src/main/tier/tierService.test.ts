@@ -210,12 +210,12 @@ describe('TierService', () => {
   })
 })
 
-// #39: bundled and duplicated files inflated a mine's tier. AI-Tools measured
-// 15 976 KB across 362 files, of which 14 MB was six byte-identical copies of
-// one 2.3 MB bundled player-script.js — 87% of the mine's weight, from a file
-// nobody typed. These three exclusions (size ceiling, generated-name pattern,
-// duplicate content) strip that before the byte sum, the same way #37 first
-// stripped release/build output.
+// #39: bundled and duplicated files inflated a mine's tier. One real project
+// measured 15 976 KB across 362 files, of which 14 MB was six byte-identical
+// copies of one 2.3 MB bundled player-script.js — 87% of the mine's weight,
+// from a file nobody typed. These three exclusions (size ceiling,
+// generated-name pattern, duplicate content) strip that before the byte sum,
+// the same way #37 first stripped release/build output.
 describe('sumSourceBytes: bundle and duplicate exclusion (#39)', () => {
   let fake: FakeFs
   const PROJECT = 'C:\\Users\\j\\Desktop\\Bundled'

@@ -26,12 +26,13 @@ function pathDelimiter(platform: Platform): string {
 /**
  * The real native binary, always addressed directly rather than through PATH.
  *
- * On Windows `claude` on PATH resolves to an 'effort-autopilot' shim on this
- * machine, and that shim breaks non-interactive spawns. On macOS and Linux the
- * same directory is where the native installer puts the executable, so the one
- * rule holds everywhere — only the file extension differs. A Claude installed
- * somewhere else (npm global, Homebrew) is not found: the relay then reports
- * "could not be started" rather than silently doing nothing.
+ * On Windows `claude` on PATH can resolve to a third-party wrapper shim rather
+ * than the installed binary, and such a shim breaks non-interactive spawns. On
+ * macOS and Linux the same directory is where the native installer puts the
+ * executable, so the one rule holds everywhere — only the file extension
+ * differs. A Claude installed somewhere else (npm global, Homebrew) is not
+ * found: the relay then reports "could not be started" rather than silently
+ * doing nothing.
  */
 export function resolveClaudeBinaryPath(
   home: string,
