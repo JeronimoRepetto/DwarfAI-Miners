@@ -1,36 +1,17 @@
 /**
- * Deterministic placement of mines on the isometric map.
+ * Deterministic placement of mines onto the authored dig sites of the map.
  *
- * A mine's slot is derived from a hash of its id, so positions stay stable
+ * A mine's site is derived from a hash of its id, so positions stay stable
  * across data refreshes and app restarts without persisting anything.
  * Collisions are resolved by deterministic linear probing over the ids in
- * sorted order, which guarantees unique slots while mines fit on the map.
+ * sorted order, which guarantees unique sites while mines fit on the map.
+ *
+ * This module owns only the *which mine goes where* question; the sites
+ * themselves — and why their coordinates are what they are — live in
+ * `mapSites.ts`, so the assignment logic never needs to know about the
+ * painting it is placing mines on.
  */
-
-/** A named point on the isometric landscape, in percent of the scene box. */
-export interface MapSlot {
-  x: number
-  y: number
-}
-
-/**
- * Hand-placed slots forming a loose diamond, ordered top (far) to bottom
- * (near) so painting in slot order keeps isometric depth correct.
- */
-export const MAP_SLOTS: readonly MapSlot[] = [
-  { x: 50, y: 16 },
-  { x: 31, y: 24 },
-  { x: 69, y: 24 },
-  { x: 16, y: 36 },
-  { x: 50, y: 34 },
-  { x: 84, y: 36 },
-  { x: 33, y: 47 },
-  { x: 67, y: 47 },
-  { x: 18, y: 60 },
-  { x: 50, y: 58 },
-  { x: 82, y: 60 },
-  { x: 50, y: 74 }
-]
+import { MINE_SITES } from './mapSites'
 
 /** FNV-1a 32-bit hash: tiny, deterministic, well spread for path-like ids. */
 export function hashString(value: string): number {
@@ -43,16 +24,16 @@ export function hashString(value: string): number {
 }
 
 /**
- * Assign each mine id a slot index, in two passes so positions stay put:
- * a mine whose hash-preferred slot nobody else wants always keeps it (new
+ * Assign each mine id an authored-site index, in two passes so positions stay
+ * put: a mine whose hash-preferred site nobody else wants always keeps it (new
  * mines never displace it), then the contested rest probe forward from their
- * preferred slot in sorted-id order (input order carries no meaning across
- * IPC refreshes). With more mines than slots, the overflow lands on its
- * preferred slot and simply shares it.
+ * preferred site in sorted-id order (input order carries no meaning across
+ * IPC refreshes). With more mines than sites, the overflow lands on its
+ * preferred site and simply shares it.
  */
 export function assignSlots(
   mineIds: readonly string[],
-  slotCount: number = MAP_SLOTS.length
+  slotCount: number = MINE_SITES.length
 ): Map<string, number> {
   const assigned = new Map<string, number>()
   if (slotCount <= 0) return assigned

@@ -45,6 +45,34 @@ const mineOre = computed(() => oreCount(props.mine.tokensObserved))
   position: absolute;
   width: 116px;
   translate: -50% -60%;
+  /*
+    Depth, set per site by MapView (see MineSite.scale): the valley is painted
+    in perspective, so a far mound must read smaller than a near one. Pivoting
+    on the same 50%/60% point the translate anchors to keeps the mound's foot
+    nailed to its site while it scales.
+  */
+  scale: var(--site-scale, 1);
+  transform-origin: 50% 60%;
+  transition:
+    opacity 0.22s ease-out,
+    filter 0.22s ease-out;
+}
+/*
+  Hover/focus linking: one chain lit at a time. The hot mound lifts out of the
+  scene and the rest recede — the dim state is deliberately gentle, since those
+  mines are still live work the user should be able to read at a glance.
+*/
+.mine-mound.is-hot {
+  z-index: 90;
+  filter: brightness(1.12);
+}
+.mine-mound.is-dim {
+  opacity: 0.42;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mine-mound {
+    transition: none;
+  }
 }
 .mound-hit {
   display: flex;

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { MAP_BG_SRC } from '../lib/art'
-import { MAP_SLOTS, assignSlots } from '../lib/placement'
+import type { MineSite } from '../lib/mapSites'
+import { MAP_TRAILS, MINE_SITES, moundLinkClass, trailPoints } from '../lib/mapSites'
+import { assignSlots } from '../lib/placement'
 import type { Mine } from '../types'
 import MineMound from './MineMound.vue'
 import VaultChip from './VaultChip.vue'
@@ -14,9 +16,29 @@ const emit = defineEmits<{ open: [mineId: string] }>()
 
 const slotByMine = computed(() => assignSlots(props.mines.map((mine) => mine.id)))
 
+/**
+ * The mine the pointer or keyboard focus is currently on, or null when the map
+ * is at rest. Hover and focus feed the same value on purpose: the highlight is
+ * information, so it must be reachable without a mouse.
+ */
+const hotMineId = ref<string | null>(null)
+
+function siteOf(mineId: string): MineSite {
+  /* Falls back to the first site rather than a bare centre point, so a mine
+     that somehow missed assignment still lands on real painted ground. */
+  return MINE_SITES[slotByMine.value.get(mineId) ?? 0] ?? MINE_SITES[0]
+}
+
 function positionStyle(mineId: string): Record<string, string> {
-  const slot = MAP_SLOTS[slotByMine.value.get(mineId) ?? 0] ?? { x: 50, y: 50 }
-  return { left: `${slot.x}%`, top: `${slot.y}%`, zIndex: `${Math.round(slot.y)}` }
+  const site = siteOf(mineId)
+  return {
+    left: `${site.x}%`,
+    top: `${site.y}%`,
+    /* Farther sites sit behind nearer ones; y is already the depth order. */
+    zIndex: `${Math.round(site.y)}`,
+    /* Consumed by MineMound's `scale`, which pivots on the site anchor. */
+    '--site-scale': `${site.scale}`
+  }
 }
 </script>
 
@@ -25,6 +47,28 @@ function positionStyle(mineId: string): Record<string, string> {
     <img class="map-art" :src="MAP_BG_SRC" alt="" aria-hidden="true" draggable="false" />
     <!-- Darkens the edges and the valley floor so the lit mounds carry the eye. -->
     <div class="map-vignette" aria-hidden="true"></div>
+    <!--
+      The trails belong to the landscape, not to the mines: they are drawn
+      whether or not anyone is digging, under the mounds and never interactive.
+      preserveAspectRatio="none" makes the viewBox the same 0-100 percent space
+      the mounds are positioned in, so a trail point and a site coordinate mean
+      exactly the same thing.
+    -->
+    <svg
+      class="map-trails"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <polyline
+        v-for="(trail, index) in MAP_TRAILS"
+        :key="index"
+        class="map-trail"
+        :points="trailPoints(trail)"
+        vector-effect="non-scaling-stroke"
+      />
+    </svg>
     <VaultChip :tokens-observed="tokensObserved" />
     <p v-if="mines.length === 0" class="map-empty">
       The hills are quiet.<br />
@@ -34,8 +78,13 @@ function positionStyle(mineId: string): Record<string, string> {
       v-for="mine in mines"
       :key="mine.id"
       :mine="mine"
+      :class="moundLinkClass(mine.id, hotMineId)"
       :style="positionStyle(mine.id)"
       @open="emit('open', $event)"
+      @mouseenter="hotMineId = mine.id"
+      @mouseleave="hotMineId = null"
+      @focusin="hotMineId = mine.id"
+      @focusout="hotMineId = null"
     />
   </div>
 </template>
@@ -64,6 +113,29 @@ function positionStyle(mineId: string): Record<string, string> {
   background:
     radial-gradient(120% 80% at 50% 45%, transparent 40%, #07050380 78%, #070503d9 100%),
     linear-gradient(#0b0906a6, transparent 22%, transparent 62%, #0b0906b3);
+}
+.map-trails {
+  position: absolute;
+  /* Above the painting and its vignette, below every mound (z-index 24-76). */
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Scenery, never a click target — the mounds own every hit area on the map. */
+  pointer-events: none;
+}
+.map-trail {
+  /* Pale dirt worn into the rock, kept faint so it guides without competing
+     with the lit mounds. The drop-shadow is the trail's own dark bed, which is
+     cheaper and softer than painting a second, wider polyline underneath. */
+  stroke: #c9a06859;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Long dashes read as a footpath crossing loose ground rather than a drawn line. */
+  stroke-dasharray: 7 5;
+  fill: none;
+  filter: drop-shadow(0 1px 1px #0b090699);
 }
 .map-empty {
   position: absolute;

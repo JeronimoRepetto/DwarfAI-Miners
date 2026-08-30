@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { MAP_SLOTS, assignSlots, hashString } from './placement'
+import { MINE_SITES } from './mapSites'
+import { assignSlots, hashString } from './placement'
 
 const IDS = [
   'C:/dev/alpha',
@@ -35,35 +36,19 @@ describe('hashString', () => {
   })
 })
 
-describe('MAP_SLOTS', () => {
-  it('provides at least 12 slots with percentage coordinates', () => {
-    expect(MAP_SLOTS.length).toBeGreaterThanOrEqual(12)
-    for (const slot of MAP_SLOTS) {
-      expect(slot.x).toBeGreaterThanOrEqual(0)
-      expect(slot.x).toBeLessThanOrEqual(100)
-      expect(slot.y).toBeGreaterThanOrEqual(0)
-      expect(slot.y).toBeLessThanOrEqual(100)
-    }
-  })
-
-  it('never stacks two slots on the same point', () => {
-    const keys = MAP_SLOTS.map((slot) => `${slot.x},${slot.y}`)
-    expect(new Set(keys).size).toBe(MAP_SLOTS.length)
-  })
-})
-
 describe('assignSlots', () => {
-  it('assigns every mine a slot index within range', () => {
+  it('assigns every mine an authored-site index within range', () => {
     const slots = assignSlots(IDS)
     expect(slots.size).toBe(IDS.length)
     for (const index of slots.values()) {
       expect(index).toBeGreaterThanOrEqual(0)
-      expect(index).toBeLessThan(MAP_SLOTS.length)
+      expect(index).toBeLessThan(MINE_SITES.length)
     }
   })
 
-  it('produces no collisions for up to 12 mines', () => {
-    for (let count = 1; count <= 12; count++) {
+  it('produces no collisions while mines fit on the authored sites', () => {
+    const limit = Math.min(IDS.length, MINE_SITES.length)
+    for (let count = 1; count <= limit; count++) {
       const slots = assignSlots(IDS.slice(0, count))
       expect(new Set(slots.values()).size).toBe(count)
     }
@@ -78,9 +63,9 @@ describe('assignSlots', () => {
     expect(assignSlots(shuffled)).toEqual(assignSlots(IDS))
   })
 
-  it('keeps a mine on its hash-preferred slot when nothing contests it', () => {
+  it('keeps a mine on its hash-preferred site when nothing contests it', () => {
     const slots = assignSlots(IDS)
-    const preferred = new Map(IDS.map((id) => [id, hashString(id) % MAP_SLOTS.length]))
+    const preferred = new Map(IDS.map((id) => [id, hashString(id) % MINE_SITES.length]))
     const contested = new Set<number>()
     const seen = new Set<number>()
     for (const index of preferred.values()) {
@@ -93,13 +78,13 @@ describe('assignSlots', () => {
     }
   })
 
-  it('still returns a slot for every mine when there are more mines than slots', () => {
+  it('still returns a site for every mine when there are more mines than sites', () => {
     const many = [...IDS, ...IDS.map((id) => `${id}/overflow`)]
     const slots = assignSlots(many)
     expect(slots.size).toBe(many.length)
     for (const index of slots.values()) {
       expect(index).toBeGreaterThanOrEqual(0)
-      expect(index).toBeLessThan(MAP_SLOTS.length)
+      expect(index).toBeLessThan(MINE_SITES.length)
     }
   })
 
