@@ -2,7 +2,7 @@ import { reactive } from 'vue'
 import { defaultViewState } from '../types'
 
 // Singleton store: module-scope state shared by every useView() caller
-// (house style shared with useMines and the sibling AI-Tools Vue tools).
+// (house style shared with useMines and a sibling Vue project).
 const state = reactive(defaultViewState())
 
 export function useView() {

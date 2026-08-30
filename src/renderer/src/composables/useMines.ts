@@ -2,7 +2,7 @@ import { reactive } from 'vue'
 import { defaultMinesState, type MinesSnapshot } from '../types'
 
 // Singleton store: module-scope state shared by every useMines() caller
-// (house style shared with the sibling AI-Tools Vue tools).
+// (house style shared with a sibling Vue project).
 const state = reactive(defaultMinesState())
 
 export function useMines() {
