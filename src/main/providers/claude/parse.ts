@@ -190,15 +190,75 @@ function assistantText(line: Rec): string | undefined {
   return texts.length > 0 ? texts.join('\n') : undefined
 }
 
-/** All strings on a user line that may carry a task-notification blob. */
-function userContentStrings(line: Rec): string[] {
-  if (!isRecord(line.message)) return []
-  const content = line.message.content
+/**
+ * Every string a message's content can hold, whether it is the content itself,
+ * a bare string in a block array, or text nested one level down inside a block
+ * object. `{type:'text', text}` and `{type:'tool_result', content}` both hide
+ * the blob from a `typeof item === 'string'` filter, which is how a
+ * notification could sit in the window and never be seen (issue #64).
+ */
+function messageStrings(content: unknown): string[] {
   if (typeof content === 'string') return [content]
-  if (Array.isArray(content)) {
-    return content.filter((item): item is string => typeof item === 'string')
+  if (!Array.isArray(content)) return []
+  const strings: string[] = []
+  for (const item of content) {
+    if (typeof item === 'string') strings.push(item)
+    else if (isRecord(item))
+      strings.push(...messageStrings(item.text), ...messageStrings(item.content))
   }
-  return []
+  return strings
+}
+
+/**
+ * The strings on one line that Claude Code itself wrote a `<task-notification>`
+ * into, and so the only ones an ending may be read from.
+ *
+ * Two things are going on here, and both were measured against real transcripts
+ * rather than reasoned about (366 files, ~373 MB, 191 launched agents, on
+ * 2026-08-30; the tabulated shapes are in docs/provider-formats.md §1.4).
+ *
+ * **Where the notification is.** Most of them never touch `message.content`:
+ * `queue-operation` and `attachment` records have no `message` key at all, and
+ * they carry the great majority of endings. Rooting the search at
+ * `message.content` found 117 of 188 real endings in that corpus, and 2 of 10
+ * in the session issue #64 was reported from. Reading these three envelopes
+ * finds all 188.
+ *
+ * **Where it merely appears.** A transcript quotes notifications constantly — a
+ * Bash result that printed one, an assistant discussing one, a hook echoing the
+ * prompt it was handed, an `async_launched` record whose own prompt pasted one.
+ * Scanning every string on the line would have retired 32 more ids in that
+ * corpus on nothing but a quotation, and `terminalAgentIds` is remembered for
+ * the life of the process across every session — so a quote in one session
+ * evicts a live dwarf in another. That is #60's failure, and it is worse than
+ * the ghost it would fix: an agent waiting on a human writes nothing, and the
+ * only thing keeping it visible is that nobody claimed it ended.
+ *
+ * So the test is *who wrote the string*, never what the string looks like: the
+ * harness delivering a message to the session counts, a model or a tool
+ * reproducing one does not. Nothing is lost by it — no ending in that corpus
+ * reaches a quote envelope without also reaching a delivery one.
+ */
+function notificationStrings(line: Rec): string[] {
+  // The harness's own message queue. `enqueue` writes the blob when the agent
+  // stops; the `remove` that follows once the turn absorbs it repeats it.
+  if (line.type === 'queue-operation') {
+    const content = asString(line.content)
+    return content === undefined ? [] : [content]
+  }
+  // A queued message materialised into a turn. `hook_success` attachments are a
+  // hook's captured stdout, so their content and stdout are deliberately unread.
+  if (line.type === 'attachment') {
+    const attachment = line.attachment
+    if (!isRecord(attachment) || attachment.type !== 'queued_command') return []
+    const prompt = asString(attachment.prompt)
+    return prompt === undefined ? [] : [prompt]
+  }
+  if (line.type !== 'user') return []
+  // A user line carrying toolUseResult is a tool response, not a message: its
+  // content is whatever the tool printed, including a whole transcript.
+  if (line.toolUseResult !== undefined || !isRecord(line.message)) return []
+  return messageStrings(line.message.content)
 }
 
 /**
@@ -226,6 +286,14 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   const finished = new Set<string>()
 
   for (const line of jsonlObjects(tailText)) {
+    // Runs for every line, not inside the `user` branch: the envelopes that
+    // carry most endings are not user lines at all (issue #64).
+    for (const text of notificationStrings(line)) {
+      for (const match of text.matchAll(TASK_NOTIFICATION_RE)) {
+        const taskId = match[1]
+        if (taskId !== undefined) finished.add(taskId)
+      }
+    }
     if (line.type === 'assistant') {
       if (isRecord(line.message)) model = asString(line.message.model) ?? model
       effort = asString(line.effort) ?? effort
@@ -243,12 +311,6 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
             description: asString(result.description),
             resolvedModel: asString(result.resolvedModel)
           })
-        }
-      }
-      for (const text of userContentStrings(line)) {
-        for (const match of text.matchAll(TASK_NOTIFICATION_RE)) {
-          const taskId = match[1]
-          if (taskId !== undefined) finished.add(taskId)
         }
       }
       continue

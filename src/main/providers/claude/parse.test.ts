@@ -12,6 +12,7 @@ import {
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')
 const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'), 'utf8')
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
+const notificationEnvelopes = readFileSync(join(FIXTURES, 'notification-envelopes.jsonl'), 'utf8')
 const sessionEntryJson: unknown = JSON.parse(
   readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
 )
@@ -280,6 +281,140 @@ describe('parseClaudeTranscriptTail', () => {
         message: { model: 'm', role: 'assistant', content: [{ type: 'text', text: 'b' }] }
       }) + '\n'
     expect(parseClaudeTranscriptTail(withUsage + withoutUsage).tokensObserved).toBe(30)
+  })
+})
+
+/**
+ * The envelopes Claude Code really writes a `<task-notification>` into, and the
+ * places a transcript merely quotes one (issue #64). Shapes and key names come
+ * from `notification-envelopes.jsonl`, which was built from records observed in
+ * live transcripts rather than from what the parser expected to find.
+ *
+ * The agent ids are the fixture's, one per envelope, so a failure names the
+ * envelope that broke.
+ */
+const ENVELOPE_AGENTS = {
+  enqueue: 'a0000000000000001',
+  remove: 'a0000000000000002',
+  queuedCommand: 'a0000000000000003',
+  userString: 'a0000000000000004',
+  inFlight: 'a0000000000000005',
+  quotedByToolResult: 'a0000000000000006',
+  quotedByAssistant: 'a0000000000000007',
+  quotedByHook: 'a0000000000000008',
+  quotedByLaunchPrompt: 'a0000000000000009',
+  launchedByThatPrompt: 'a000000000000000a'
+}
+
+describe('parseClaudeTranscriptTail notification envelopes (issue #64)', () => {
+  const info = parseClaudeTranscriptTail(notificationEnvelopes)
+
+  it('retires an agent whose notification arrived as a queue-operation record', () => {
+    // The commonest envelope by far, and the one with no `message` key at all:
+    // {type, operation, timestamp, sessionId, content}. Rooting the search at
+    // message.content is what made this ending invisible.
+    expect(info.terminalAgentIds).toContain(ENVELOPE_AGENTS.enqueue)
+  })
+
+  it('retires an agent from the queue-operation remove that follows the enqueue', () => {
+    // Claude writes the whole blob a second time when the running turn absorbs
+    // the queued message (operation: remove, reason: absorbed_mid_turn).
+    expect(info.terminalAgentIds).toContain(ENVELOPE_AGENTS.remove)
+  })
+
+  it('retires an agent whose notification arrived as a queued_command attachment', () => {
+    // {type: 'attachment', attachment: {type: 'queued_command', prompt}} — again
+    // no message.content anywhere on the line.
+    expect(info.terminalAgentIds).toContain(ENVELOPE_AGENTS.queuedCommand)
+  })
+
+  it('still retires an agent from the plain string user line it always understood', () => {
+    expect(info.terminalAgentIds).toContain(ENVELOPE_AGENTS.userString)
+  })
+
+  it('leaves every agent the fixture never delivered a notification for still mining', () => {
+    expect([...info.inFlightAgents.map((a) => a.agentId)].sort()).toEqual([
+      ENVELOPE_AGENTS.inFlight,
+      ENVELOPE_AGENTS.quotedByToolResult,
+      ENVELOPE_AGENTS.quotedByAssistant,
+      ENVELOPE_AGENTS.quotedByHook,
+      ENVELOPE_AGENTS.quotedByLaunchPrompt,
+      ENVELOPE_AGENTS.launchedByThatPrompt
+    ])
+  })
+
+  it('counts exactly the four delivered endings and nothing else', () => {
+    expect([...info.terminalAgentIds].sort()).toEqual([
+      ENVELOPE_AGENTS.enqueue,
+      ENVELOPE_AGENTS.remove,
+      ENVELOPE_AGENTS.queuedCommand,
+      ENVELOPE_AGENTS.userString
+    ])
+  })
+})
+
+/**
+ * Where the line is drawn between a notification and a quotation of one.
+ *
+ * A transcript reproduces notifications constantly — a Bash result that printed
+ * a transcript, an assistant discussing one, a hook echoing the prompt it saw,
+ * an Agent launch whose own prompt pasted one. Counting any of those as an
+ * ending retires an agent that is still mining, which is the failure #60 exists
+ * to prevent, and `terminalAgentIds` is remembered for the life of the process
+ * across every session — so one quoted id evicts a live dwarf somewhere else.
+ *
+ * The rule is about *who wrote the string*, not what the string looks like:
+ * only the harness delivering a message to the session counts.
+ */
+describe('parseClaudeTranscriptTail quoted notifications (issues #60, #64)', () => {
+  const info = parseClaudeTranscriptTail(notificationEnvelopes)
+
+  it('keeps an agent mining when a Bash tool result merely printed its notification', () => {
+    expect(info.terminalAgentIds).not.toContain(ENVELOPE_AGENTS.quotedByToolResult)
+  })
+
+  it('keeps an agent mining when an assistant message merely discusses its notification', () => {
+    expect(info.terminalAgentIds).not.toContain(ENVELOPE_AGENTS.quotedByAssistant)
+  })
+
+  it('keeps an agent mining when a hook echoed the notification it was handed', () => {
+    // hook_success attachments carry the hook's own stdout. Real endings do
+    // arrive this way, but always alongside the queue-operation that delivered
+    // them, so reading a hook's output buys no recall and costs the guarantee.
+    expect(info.terminalAgentIds).not.toContain(ENVELOPE_AGENTS.quotedByHook)
+  })
+
+  it('keeps an agent mining when another launch prompt pasted its notification', () => {
+    // The sharpest case: the record is itself an `async_launched` result, so a
+    // scan over every string on the line would start one agent and retire
+    // another in the same line.
+    expect(info.terminalAgentIds).not.toContain(ENVELOPE_AGENTS.quotedByLaunchPrompt)
+    expect(info.inFlightAgents.map((a) => a.agentId)).toContain(
+      ENVELOPE_AGENTS.launchedByThatPrompt
+    )
+  })
+})
+
+describe('parseClaudeTranscriptTail notification nested in a content block', () => {
+  it('reaches a notification inside a content object, not just a bare string', () => {
+    // message.content is an array of blocks rather than a string, so the old
+    // `typeof item === 'string'` filter dropped the whole line.
+    const line =
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                '<task-notification>\n<task-id>a0000000000000001</task-id>\n' +
+                '<status>completed</status>\n</task-notification>'
+            }
+          ]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(line).terminalAgentIds).toEqual(['a0000000000000001'])
   })
 })
 
