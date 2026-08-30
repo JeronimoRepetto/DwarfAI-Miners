@@ -36,26 +36,23 @@ have not been run end to end yet — see the support matrix below.
 
 ## What it looks like
 
-Real captures are pending. Until they land, [What the panel shows](#what-the-panel-shows)
-below describes both views: the moonlit map with one painted mound per project, and the mine
-interior with one animated dwarf per agent.
-
-<!-- TODO: drop real captures in docs/assets/ and restore this table:
 <table>
   <tr>
     <td align="center">
-      <img src="docs/assets/screenshot-map.png" width="420" alt="Map view — a moonlit valley where every project appears as a painted mine mound">
+      <img src="docs/assets/screenshot-map.png" width="420" alt="Map view — a moonlit valley where each project is a painted mine mound, joined by trails, with a per-material vault total in the corner">
     </td>
     <td align="center">
-      <img src="docs/assets/screenshot-mine.png" width="420" alt="Mine interior — the crew of animated dwarfs on the walkable floor">
+      <img src="docs/assets/screenshot-mine.png" width="420" alt="Mine interior — dwarfs swinging pickaxes at the ore veins while the foreman reads his log book, with the mined ore piled by the entrance">
     </td>
   </tr>
   <tr>
-    <td align="center"><em>Map view — one mound per project</em></td>
-    <td align="center"><em>Mine interior — one dwarf per agent</em></td>
+    <td align="center"><em>Map view — one mound per project, tiered by the weight of its code</em></td>
+    <td align="center"><em>Mine interior — one dwarf per agent, working the veins</em></td>
   </tr>
 </table>
--->
+
+Both are real captures of a working machine: the mounds are actual projects, and every dwarf is
+an agent that was running when the shutter fell.
 
 ## Highlights
 
