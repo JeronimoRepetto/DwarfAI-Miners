@@ -60,6 +60,18 @@ const OUT_DIR = join(REPO_ROOT, 'src', 'renderer', 'src', 'assets', 'art')
 const TIERS = ['bronze', 'copper', 'silver', 'gold', 'uranium']
 
 /**
+ * The raw materials a vault can hold, named for what they actually are rather
+ * than for the mine tier that yields them. The two vocabularies are not the
+ * same list on purpose: coal has no tier at all (it is the backfill material
+ * for tokens burned before the app was installed), and the base tier's ore is
+ * iron. src/renderer maps tier to material explicitly; see issue #22.
+ *
+ * Sources are named `<material>_nugget.jpg` as delivered; the output follows
+ * the repo's own `<group>-<variant>` convention.
+ */
+const NUGGET_MATERIALS = ['iron', 'copper', 'silver', 'gold', 'uranium', 'coal']
+
+/**
  * Every dwarf pose, in the order the union canvas is computed. The names match
  * the frame ids in src/renderer/src/lib/art.ts one for one.
  */
@@ -96,6 +108,14 @@ const DWARF_MARGIN = 8
 /** Mounds end up this wide, height follows their own trimmed aspect ratio. */
 const MOUND_WIDTH = 512
 const MOUND_MARGIN = 12
+
+/**
+ * Nuggets end up this wide. They render around 24px in a pile, so 96 leaves
+ * room for HiDPI and for showing one larger in a breakdown without going back
+ * to the source. Any bigger is pure download weight for pixels nobody sees.
+ */
+const NUGGET_WIDTH = 96
+const NUGGET_MARGIN = 6
 
 /** Backgrounds: long side and JPEG quality. */
 const SCENE_LONG_EDGE = 1600
@@ -194,6 +214,37 @@ async function buildMounds(sourceDir, rows) {
   }
 }
 
+/**
+ * One ore nugget per material, keyed off the same magenta backdrop as the
+ * dwarf poses. Each is trimmed to its own content box: piles stack these
+ * shoulder to shoulder, so shared canvas padding would space them apart with
+ * invisible margins instead of letting them touch.
+ *
+ * A material whose painting has not been delivered yet is skipped with a note
+ * rather than failing the run, so the pipeline stays usable while art arrives.
+ */
+async function buildNuggets(sourceDir, rows) {
+  for (const material of NUGGET_MATERIALS) {
+    const source = join(sourceDir, `${material}_nugget.jpg`)
+    let image
+    try {
+      image = await Jimp.read(source)
+    } catch {
+      rows.push({ file: `nugget-${material}.png`, size: '-', kb: '-', note: 'source missing' })
+      continue
+    }
+    const key = chromaKey(image)
+    const { width, height } = image.bitmap
+    const box = padBox(contentBox(image.bitmap), NUGGET_MARGIN, width, height)
+    if (box === null) throw new Error(`${material}_nugget.jpg keyed to fully transparent — check KEY`)
+    image.crop({ x: box.x, y: box.y, w: box.width, h: box.height })
+    resizeTo(image, { width: NUGGET_WIDTH })
+    const buffer = await image.getBuffer('image/png')
+    await writeFile(join(OUT_DIR, `nugget-${material}.png`), buffer)
+    report(rows, `nugget-${material}.png`, image, buffer.length, `key rgb(${key.map(Math.round).join(',')})`)
+  }
+}
+
 async function buildScene(sourceDir, rows, name) {
   const image = await Jimp.read(join(sourceDir, `${name}.jpg`))
   const { width, height } = image.bitmap
@@ -221,6 +272,7 @@ async function main() {
   const rows = []
   const union = await buildDwarfPoses(sourceDir, rows)
   await buildMounds(sourceDir, rows)
+  await buildNuggets(sourceDir, rows)
   for (const tier of TIERS) await buildScene(sourceDir, rows, `interior-${tier}`)
   await buildScene(sourceDir, rows, 'map-bg')
 
@@ -229,8 +281,15 @@ async function main() {
       `cropped at (${union.x}, ${union.y})`
   )
   console.table(rows)
-  const total = rows.reduce((sum, row) => sum + Number(row.kb), 0)
-  console.log(`\n${rows.length} files written to ${OUT_DIR} (${(total / 1024).toFixed(2)} MB)`)
+  // Skipped rows carry '-' rather than a size, so they are counted out of both
+  // the file count and the total instead of poisoning it with NaN.
+  const written = rows.filter((row) => Number.isFinite(Number(row.kb)))
+  const total = written.reduce((sum, row) => sum + Number(row.kb), 0)
+  const skipped = rows.length - written.length
+  console.log(
+    `\n${written.length} files written to ${OUT_DIR} (${(total / 1024).toFixed(2)} MB)` +
+      (skipped > 0 ? `, ${skipped} skipped for missing sources` : '')
+  )
 }
 
 await main()
