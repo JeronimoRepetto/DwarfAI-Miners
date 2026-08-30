@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { MAP_TRAILS, MINE_SITES } from '../lib/mapSites'
-import { defaultMine } from '../testing/factories'
+import { defaultMaterials, defaultMine } from '../testing/factories'
 import MapView from './MapView.vue'
 
 const MINES = [
@@ -34,15 +34,21 @@ describe('MapView', () => {
     expect(wrapper.emitted('open')).toEqual([['C:/dev/beta']])
   })
 
+  /*
+   * The chip's single `N ore` figure — every token divided by one flat rate —
+   * is gone with #22: it only meant anything if every material converted into
+   * every other, which is exactly what the vault refuses. What replaced it is
+   * one entry per material, so these two now check the token gauge and the
+   * empty state instead.
+   */
   it('shows the vault chip with the given token total', () => {
     const wrapper = mount(MapView, { props: { mines: MINES, tokensObserved: 25_000 } })
     expect(wrapper.get('.vault-tokens').text()).toBe('25K')
-    expect(wrapper.get('.vault-ore').text()).toBe('2 ore')
   })
 
   it('defaults the vault chip to zero when no total is given', () => {
     const wrapper = mount(MapView, { props: { mines: MINES } })
-    expect(wrapper.get('.vault-ore').text()).toBe('0 ore')
+    expect(wrapper.get('.vault-tokens').text()).toBe('0')
   })
 
   it('anchors every mound to an authored site of the painting', () => {
@@ -132,5 +138,31 @@ describe('MapView', () => {
     for (const name of ['alpha', 'beta', 'gamma']) {
       expect(styleOf(first, name)).toBe(styleOf(second, name))
     }
+  })
+})
+
+/*
+ * The map chip shows the WHOLE vault (see #22), which main sums over the entire
+ * persisted ledger rather than over the mines on screen. That is deliberate and
+ * it is the only reason coal is ever visible: the historical backfill credits
+ * projects whose sessions all ended long ago and which have no mound today.
+ */
+describe('MapView global vault', () => {
+  it('breaks the vault down by material, including ore no mine on screen produces', () => {
+    const wrapper = mount(MapView, {
+      props: {
+        mines: MINES,
+        tokensObserved: 25_000,
+        materials: defaultMaterials({ coal: 500_000, bronze: 25_000 })
+      }
+    })
+    const entries = wrapper.findAll('.vault-material')
+    expect(entries.map((entry) => entry.attributes('data-material'))).toEqual(['coal', 'bronze'])
+    expect(entries.map((entry) => entry.get('.vault-units').text())).toEqual(['200', '2'])
+  })
+
+  it('shows an empty vault rather than nothing when no breakdown has arrived', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    expect(wrapper.get('.vault-empty').text()).toBe('no ore yet')
   })
 })

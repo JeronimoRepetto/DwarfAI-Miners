@@ -286,6 +286,7 @@ onBeforeUnmount(() => unsubscribe?.())
         v-else
         :mines="state.mines"
         :tokens-observed="state.tokensObserved"
+        :materials="state.materials"
         @open="enterMine"
       />
       <p v-if="error" class="notice" role="alert">{{ error }}</p>

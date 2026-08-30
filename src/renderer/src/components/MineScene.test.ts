@@ -4,14 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDwarfKicking } from '../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../composables/useDwarfMessaging'
 import { BUBBLE_TTL_MS } from '../lib/bubbles'
-import { defaultDwarf, defaultMine } from '../testing/factories'
+import { MAX_PILE_NUGGETS } from '../lib/nuggetPile'
+import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
 import type { Dwarf } from '../types'
 import MineScene from './MineScene.vue'
 
 describe('MineScene', () => {
   it('shows the vault chip with the mine tokensObserved in the header', () => {
     const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 25_000 }) } })
-    expect(wrapper.get('.vault-ore').text()).toBe('2 ore')
+    // `.vault-ore` — every token at one flat rate — went with #22; the chip now
+    // breaks the vault down per material and keeps this compact token gauge.
     expect(wrapper.get('.vault-tokens').text()).toBe('25K')
   })
 
@@ -20,14 +22,22 @@ describe('MineScene', () => {
     expect(wrapper.find('.ore-pile').exists()).toBe(false)
   })
 
-  it('grows the ore pile in discrete steps as ore increases', () => {
-    // 5 ore -> orePileStep(5) = 2 nuggets.
-    const small = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 50_000 }) } })
-    expect(small.findAll('.ore-pile .nugget')).toHaveLength(2)
+  /*
+   * The pile used to thicken through five hand-picked CSS steps driven by the
+   * LIVE token gauge. It is now one painted nugget per whole unit of the mine's
+   * persisted per-material vault, capped at the mound's own capacity — so this
+   * checks real growth and the cap instead of the retired step ladder.
+   */
+  it('grows the ore pile nugget by nugget as ore increases, up to the cap', () => {
+    const small = mount(MineScene, {
+      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 50_000 }) }) }
+    })
+    expect(small.findAll('.ore-pile .nugget')).toHaveLength(5)
 
-    // 150 ore -> orePileStep(150) = 5 (max) nuggets.
-    const big = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 1_500_000 }) } })
-    expect(big.findAll('.ore-pile .nugget')).toHaveLength(5)
+    const big = mount(MineScene, {
+      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 90_000_000 }) }) }
+    })
+    expect(big.findAll('.ore-pile .nugget')).toHaveLength(MAX_PILE_NUGGETS)
   })
 
   it('pauses the bubble auto-hide while expanded and resumes it on close', async () => {
@@ -221,27 +231,106 @@ describe('MineScene as a place', () => {
 
 /*
  * The owner's verdict on the CSS nuggets was that they read as grey balls
- * nobody recognises. Painted per-material art is coming; until it does, the
- * pile has to at least be able to say what it is.
+ * nobody recognises. The painted nuggets have landed, but a picture of a stone
+ * still does not say how much has been mined — so the pile carries the words
+ * too, and the label now names ONE material because a pile is a pile of one.
  */
 describe('MineScene ore pile', () => {
   it('names the material and the amount on hover', () => {
     const wrapper = mount(MineScene, {
-      props: { mine: defaultMine({ tier: 'gold', tokensObserved: 125_000 }) }
+      props: {
+        mine: defaultMine({ tier: 'gold', materials: defaultMaterials({ gold: 1_200_000 }) })
+      }
     })
-    const pile = wrapper.get('.ore-pile')
-    expect(pile.attributes('title')).toBe('Gold ore — 12 mined (125K tokens)')
-    expect(pile.attributes('aria-label')).toBe('Gold ore — 12 mined (125K tokens)')
+    const mound = wrapper.get('.ore-mound')
+    expect(mound.attributes('title')).toBe('Gold ore — 12 mined (1.2M tokens)')
+    expect(mound.attributes('aria-label')).toBe('Gold ore — 12 mined (1.2M tokens)')
   })
 
   it('stands the pile on its authored patch of floor, depth-sorted with the crew', () => {
     const wrapper = mount(MineScene, {
-      props: { mine: defaultMine({ tokensObserved: 50_000 }) }
+      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 50_000 }) }) }
     })
     const style = wrapper.get('.ore-pile').attributes('style') ?? ''
     expect(style).toMatch(/left:\s*[\d.]+%/)
     expect(style).toMatch(/bottom:\s*[\d.]+%/)
     expect(style).toMatch(/z-index:\s*\d+/)
+  })
+})
+
+/*
+ * The deposit is one mound PER MATERIAL, standing side by side. That is the
+ * shape the non-conversion rule takes on screen (see #22): a mine that grew out
+ * of copper keeps its copper heap where it was, beside its new silver, and no
+ * pixel anywhere shows one material restated as another.
+ */
+describe('MineScene per-material deposit', () => {
+  it('gives every material this mine has produced its own mound, poorest first', () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({
+          tier: 'silver',
+          materials: defaultMaterials({ coal: 25_000, copper: 75_000, silver: 100_000 })
+        })
+      }
+    })
+    expect(wrapper.findAll('.ore-mound').map((mound) => mound.attributes('data-material'))).toEqual(
+      ['coal', 'copper', 'silver']
+    )
+  })
+
+  it('keeps what an upgraded mine already dug, in the material it was dug as', () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({
+          // Grown from copper into silver: the copper is history, not a debt to
+          // be re-valued, so its four nuggets stay four copper nuggets forever.
+          tier: 'silver',
+          materials: defaultMaterials({ copper: 100_000, silver: 100_000 })
+        })
+      }
+    })
+    const [copper, silver] = wrapper.findAll('.ore-mound')
+    expect(copper?.attributes('aria-label')).toBe('Copper ore — 4 mined (100K tokens)')
+    expect(silver?.attributes('aria-label')).toBe('Silver ore — 2 mined (100K tokens)')
+    expect(copper?.findAll('.nugget')).toHaveLength(4)
+    expect(silver?.findAll('.nugget')).toHaveLength(2)
+  })
+
+  /*
+   * Coal belongs to no tier: it is every token burned before the app existed,
+   * credited once by the historical backfill. A bronze mine can therefore be
+   * standing on a coal heap it will never add to.
+   */
+  it('stands a coal heap in a mine no tier could ever have mined coal in', () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({ tier: 'bronze', materials: defaultMaterials({ coal: 50_000 }) })
+      }
+    })
+    expect(wrapper.get('.ore-mound').attributes('aria-label')).toBe(
+      'Coal ore — 20 mined (50K tokens)'
+    )
+  })
+
+  it('leaves out a material that has not reached one whole nugget', () => {
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 9_999 }) }) }
+    })
+    expect(wrapper.find('.ore-pile').exists()).toBe(false)
+  })
+
+  /*
+   * The reason the offsets are hashed rather than random: the scene re-renders
+   * on every 2-second poll, and a deposit nobody touched must not twitch.
+   */
+  it('puts the deposit back exactly where it was on the next poll', () => {
+    const mine = defaultMine({ materials: defaultMaterials({ gold: 900_000 }) })
+    const first = mount(MineScene, { props: { mine } })
+    const second = mount(MineScene, { props: { mine: { ...mine } } })
+    expect(second.findAll('.nugget').map((n) => n.attributes('style'))).toEqual(
+      first.findAll('.nugget').map((n) => n.attributes('style'))
+    )
   })
 })
 

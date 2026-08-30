@@ -4,13 +4,23 @@ import { MAP_BG_SRC } from '../lib/art'
 import type { MineSite } from '../lib/mapSites'
 import { MAP_TRAILS, MINE_SITES, moundLinkClass, trailPoints } from '../lib/mapSites'
 import { assignSlots } from '../lib/placement'
-import type { Mine } from '../types'
+import type { MaterialTotals, Mine } from '../types'
 import MineMound from './MineMound.vue'
 import VaultChip from './VaultChip.vue'
 
-const props = withDefaults(defineProps<{ mines: Mine[]; tokensObserved?: number }>(), {
-  tokensObserved: 0
-})
+const props = withDefaults(
+  defineProps<{
+    mines: Mine[]
+    tokensObserved?: number
+    /**
+     * The WHOLE vault by material, not the sum of the mines on screen: main
+     * sums it over the entire persisted ledger, so it includes projects with no
+     * crew today — which is the only place backfilled coal can appear (see #22).
+     */
+    materials?: MaterialTotals
+  }>(),
+  { tokensObserved: 0, materials: undefined }
+)
 
 const emit = defineEmits<{ open: [mineId: string] }>()
 
@@ -69,7 +79,7 @@ function positionStyle(mineId: string): Record<string, string> {
         vector-effect="non-scaling-stroke"
       />
     </svg>
-    <VaultChip :tokens-observed="tokensObserved" />
+    <VaultChip :tokens-observed="tokensObserved" :materials="materials" />
     <p v-if="mines.length === 0" class="map-empty">
       The hills are quiet.<br />
       No agents are mining right now — start a coding session and a mine will appear.

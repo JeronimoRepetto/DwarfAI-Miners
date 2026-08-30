@@ -1,4 +1,4 @@
-import type { Mine } from '../../shared/contracts'
+import type { MaterialTotals, Mine } from '../../shared/contracts'
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
@@ -13,17 +13,35 @@ export type {
   DwarfTextRequest,
   DwarfTextResult,
   FeedMessage,
+  Material,
+  MaterialTotals,
   Mine,
   MinesSnapshot,
   MineTier,
   TextDeliveryChannel
 } from '../../shared/contracts'
 
+/**
+ * The two vault constants are re-exported as VALUES, not just types, so every
+ * renderer module keeps `../types` as its single import root into the shared
+ * contract rather than reaching across the process boundary itself.
+ */
+export { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../../shared/contracts'
+
 /** Root state for the mines store. */
 export interface MinesState {
   mines: Mine[]
   /** Sum of every mine's tokensObserved — the vault total for the map-view chip. */
   tokensObserved: number
+  /**
+   * The whole vault by material, for the map-view breakdown (see #22).
+   *
+   * Deliberately NOT the sum of `mines[].materials`: main sums it over the
+   * entire persisted ledger, so it includes projects with no crew today — which
+   * is the only place backfilled coal can appear. Undefined until the first
+   * snapshot that carries one, since the wire field is optional.
+   */
+  materials?: MaterialTotals
 }
 
 export function defaultMinesState(): MinesState {

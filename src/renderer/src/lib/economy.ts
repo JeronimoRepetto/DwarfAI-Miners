@@ -31,25 +31,11 @@ function trimTrailingZero(text: string): string {
   return text.endsWith('.0') ? text.slice(0, -2) : text
 }
 
-/**
- * Ore counts at which the pile visibly thickens by one more layer. Coarse and
- * hand-picked (idle-game growth, not a precise gauge) — see orePileStep.
+/*
+ * orePileStep()/MAX_PILE_STEP used to live here: five hand-picked ore counts
+ * (1/5/20/50/150) at which the cave's layered CSS heap thickened by one more
+ * circle. Both are gone with the heap itself (see #22) — the cave now draws one
+ * painted nugget per whole unit, laid out by lib/nuggetPile.ts, so growth is
+ * the real count up to the mound's capacity and a scale factor past it rather
+ * than five coarse steps standing in for it.
  */
-const PILE_STEP_THRESHOLDS = [1, 5, 20, 50, 150] as const
-
-/** How many stacked ore-pile layers a mine's ore count should render (0..MAX_PILE_STEP). */
-export const MAX_PILE_STEP = PILE_STEP_THRESHOLDS.length
-
-/**
- * How many stacked ore-pile layers to show for an ore count. The pile grows
- * in a small number of discrete visible steps rather than tracking every
- * nugget one-for-one, so a mound near the mine entrance visibly thickens as
- * its crew burns through more tokens, built entirely from layered CSS shapes.
- */
-export function orePileStep(ore: number): number {
-  let step = 0
-  for (const threshold of PILE_STEP_THRESHOLDS) {
-    if (ore >= threshold) step++
-  }
-  return step
-}

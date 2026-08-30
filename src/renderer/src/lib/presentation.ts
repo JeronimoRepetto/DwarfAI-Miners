@@ -1,5 +1,6 @@
-import type { DwarfRole, DwarfStatus, MineTier } from '../types'
-import { formatTokens, oreCount } from './economy'
+import type { DwarfRole, DwarfStatus, Material, MaterialTotals, MineTier } from '../types'
+import { formatTokens } from './economy'
+import { materialUnits, vaultRows } from './vault'
 
 /** CSS modifier class driving each dwarf animation state. */
 export type DwarfAnimationClass = 'is-working' | 'is-waiting' | 'is-leaving'
@@ -14,8 +15,21 @@ export function statusAnimationClass(status: DwarfStatus): DwarfAnimationClass {
   return STATUS_CLASS[status]
 }
 
+/**
+ * A material's name as the panel writes it: "Coal", "Uranium".
+ *
+ * Kept separate from tierLabel even though the five tier materials are spelled
+ * exactly like the tiers that produce them, because they are different things
+ * the panel says differently — a "Gold mine" is a tier, "Gold ore" is a
+ * material — and because two of the materials (coal today, iron eventually)
+ * belong to no tier at all.
+ */
+export function materialLabel(material: Material): string {
+  return material.slice(0, 1).toUpperCase() + material.slice(1)
+}
+
 export function tierLabel(tier: MineTier): string {
-  return tier.slice(0, 1).toUpperCase() + tier.slice(1)
+  return materialLabel(tier)
 }
 
 /** Character budget for speech bubbles (truncated with an ellipsis). */
@@ -110,18 +124,40 @@ export function isPickImpact(frame: DwarfFrame): boolean {
 }
 
 /**
- * What the ore pile says when the pointer rests on it.
+ * What one ore pile says when the pointer rests on it, and what a screen reader
+ * is told it is.
  *
- * The pile is built from layered CSS shapes, and the owner's verdict on them
- * was that they read as grey balls nobody recognises. Painted per-material art
- * is coming, but a heap that cannot say what it is or how much it holds earns
- * nothing in the meantime — so the affordance is the words, and the words are
- * here rather than in the template precisely so they survive the art swap.
+ * The owner's verdict on the old CSS heap was that it read as grey balls nobody
+ * recognises, and painted nuggets alone would not have fixed that: a picture of
+ * a stone still does not say how much has been mined. So the affordance is the
+ * words, and the words live here rather than in the template — which is exactly
+ * why they survived the art swap unchanged.
+ *
+ * It takes a MATERIAL, not a tier: a pile is a pile of one material, counted at
+ * that material's own grain size. Coal has no tier and never will.
  */
-export function orePileLabel(tier: MineTier, tokensObserved: number): string {
-  const ore = oreCount(tokensObserved)
-  if (ore === 0) return `${tierLabel(tier)} ore — none mined yet`
-  return `${tierLabel(tier)} ore — ${ore} mined (${formatTokens(tokensObserved)} tokens)`
+export function orePileLabel(material: Material, tokens: number): string {
+  const units = materialUnits(tokens, material)
+  if (units === 0) return `${materialLabel(material)} ore — none mined yet`
+  return `${materialLabel(material)} ore — ${units} mined (${formatTokens(tokens)} tokens)`
+}
+
+/**
+ * The vault chip's accessible name: every material the vault holds, one by one.
+ *
+ * It lists and never sums. Adding the units up would produce a single figure
+ * that only means anything if a coal nugget can be traded for a gold one, and
+ * the whole point of the material vault is that it cannot (see vault.ts). The
+ * token count is a separate sentence for the same reason — tokens are the raw
+ * substance underneath every pile, not a currency the piles convert into.
+ */
+export function vaultLabel(totals: MaterialTotals | undefined, tokensObserved: number): string {
+  const rows = vaultRows(totals)
+  const mined =
+    rows.length === 0
+      ? 'nothing mined yet'
+      : rows.map((row) => `${row.units} ${row.material}`).join(', ')
+  return `Vault: ${mined}. ${formatTokens(tokensObserved)} tokens observed.`
 }
 
 /**

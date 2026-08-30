@@ -6,7 +6,7 @@
  * rather than an `import.meta.glob`, so a missing or renamed asset fails at
  * build time instead of rendering as a broken image.
  */
-import type { MineTier } from '../types'
+import type { Material, MineTier } from '../types'
 import type { DwarfFrame } from './presentation'
 
 import dwarfForemanCheck from '../assets/art/dwarf-foreman-check.png'
@@ -30,6 +30,14 @@ import moundCopper from '../assets/art/mound-copper.png'
 import moundGold from '../assets/art/mound-gold.png'
 import moundSilver from '../assets/art/mound-silver.png'
 import moundUranium from '../assets/art/mound-uranium.png'
+
+import nuggetBronze from '../assets/art/nugget-bronze.png'
+import nuggetCoal from '../assets/art/nugget-coal.png'
+import nuggetCopper from '../assets/art/nugget-copper.png'
+import nuggetGold from '../assets/art/nugget-gold.png'
+import nuggetIron from '../assets/art/nugget-iron.png'
+import nuggetSilver from '../assets/art/nugget-silver.png'
+import nuggetUranium from '../assets/art/nugget-uranium.png'
 
 import mapBg from '../assets/art/map-bg.jpg'
 
@@ -74,6 +82,34 @@ export const INTERIOR_SRC: Record<MineTier, string> = {
   silver: interiorSilver,
   gold: interiorGold,
   uranium: interiorUranium
+}
+
+/**
+ * Every material with a painted nugget.
+ *
+ * Materials and tiers are NOT the same list, which is why this is keyed by
+ * Material and not by MineTier: coal belongs to no tier at all (it is the
+ * material of every token burned before the app existed), and iron belongs to
+ * no tier YET. Iron was painted before bronze arrived and is already keyed and
+ * committed, so keeping it here means a future tier below bronze costs no new
+ * art — carrying one unused 19 KB painting is cheaper than pretending an asset
+ * in the tree does not exist, and far cheaper than repainting it later.
+ */
+export type NuggetMaterial = Material | 'iron'
+
+/**
+ * Ore nuggets, one painting per material, 96px wide and trimmed to its own
+ * content box rather than to a shared canvas: a pile stacks them shoulder to
+ * shoulder, and shared padding would hold them apart with invisible margins.
+ */
+export const NUGGET_SRC: Record<NuggetMaterial, string> = {
+  coal: nuggetCoal,
+  iron: nuggetIron,
+  bronze: nuggetBronze,
+  copper: nuggetCopper,
+  silver: nuggetSilver,
+  gold: nuggetGold,
+  uranium: nuggetUranium
 }
 
 /** The moonlit valley the mounds stand on. */

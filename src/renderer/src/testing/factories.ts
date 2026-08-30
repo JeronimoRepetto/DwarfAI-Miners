@@ -1,4 +1,13 @@
-import type { Dwarf, Mine } from '../types'
+import { emptyMaterialTotals } from '../lib/vault'
+import type { Dwarf, MaterialTotals, Mine } from '../types'
+
+/**
+ * Deterministic material breakdown for renderer tests: every material at zero
+ * unless the test names one, exactly as the wire always carries it.
+ */
+export function defaultMaterials(overrides: Partial<MaterialTotals> = {}): MaterialTotals {
+  return { ...emptyMaterialTotals(), ...overrides }
+}
 
 /** Deterministic dwarf fixture for renderer tests. */
 export function defaultDwarf(overrides: Partial<Dwarf> = {}): Dwarf {
@@ -24,6 +33,9 @@ export function defaultMine(overrides: Partial<Mine> = {}): Mine {
     tier: 'bronze',
     dwarfs: [],
     tokensObserved: 0,
+    // Stamped by default because main always stamps it: a Mine reaching the
+    // panel without a breakdown is not a state the renderer has to handle.
+    materials: defaultMaterials(),
     updatedAt: 0,
     ...overrides
   }

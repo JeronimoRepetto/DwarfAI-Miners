@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus, MineTier } from '../types'
+import { MATERIALS } from '../types'
+import { emptyMaterialTotals } from './vault'
 import {
   BUBBLE_MAX_CHARS,
   LEAVING_EXIT_MS,
@@ -8,10 +10,12 @@ import {
   dwarfAnimation,
   isPickImpact,
   isSpriteFlipped,
+  materialLabel,
   orePileLabel,
   sceneDwarfAnimation,
   statusAnimationClass,
-  tierLabel
+  tierLabel,
+  vaultLabel
 } from './presentation'
 
 describe('statusAnimationClass', () => {
@@ -177,17 +181,67 @@ describe('isPickImpact', () => {
 
 /*
  * The CSS nuggets read as anonymous grey balls, so the pile has to say what it
- * is. Painted per-material art is coming later; the wording is what has to
- * survive that swap, which is why it lives here and not in the template.
+ * is. The painted art has since landed and the wording survived the swap
+ * unchanged, which is exactly why it lives here and not in the template.
+ *
+ * What DID change is the arithmetic behind the count: the pile is now a pile of
+ * ONE material, so the amount is that material's own tokens divided by its own
+ * grain size (MATERIAL_TOKENS_PER_UNIT) instead of everything divided by the
+ * single flat TOKENS_PER_ORE the app shipped with. Coarse ore therefore reads
+ * as fewer, bigger nuggets for the same tokens — see the gold/uranium cases.
  */
 describe('orePileLabel', () => {
   it('names the material and the amount rather than leaving a nameless heap', () => {
-    expect(orePileLabel('gold', 125_000)).toBe('Gold ore — 12 mined (125K tokens)')
-    expect(orePileLabel('uranium', 10_000)).toBe('Uranium ore — 1 mined (10K tokens)')
+    expect(orePileLabel('gold', 1_200_000)).toBe('Gold ore — 12 mined (1.2M tokens)')
+    expect(orePileLabel('uranium', 250_000)).toBe('Uranium ore — 1 mined (250K tokens)')
   })
 
   it('says plainly that nothing has been mined instead of implying a pile', () => {
     expect(orePileLabel('bronze', 0)).toBe('Bronze ore — none mined yet')
     expect(orePileLabel('bronze', 9_999)).toBe('Bronze ore — none mined yet')
+  })
+
+  /*
+   * Coal belongs to no tier at all — it is the material of every token burned
+   * before the app existed — so the label has to work for a material that no
+   * mine will ever be "on".
+   */
+  it('labels coal, which no tier produces, exactly like any other ore', () => {
+    expect(orePileLabel('coal', 25_000)).toBe('Coal ore — 10 mined (25K tokens)')
+  })
+})
+
+describe('materialLabel', () => {
+  it('names every material the vault can hold', () => {
+    expect(MATERIALS.map((material) => materialLabel(material))).toEqual([
+      'Coal',
+      'Bronze',
+      'Copper',
+      'Silver',
+      'Gold',
+      'Uranium'
+    ])
+  })
+})
+
+/*
+ * The vault chip's accessible name. Materials never convert into one another,
+ * so this lists them one by one and deliberately never adds their units up: a
+ * single combined figure would imply exactly the exchange rate #22 refuses.
+ */
+describe('vaultLabel', () => {
+  it('names each material separately, poorest first, and never sums them', () => {
+    const totals = { ...emptyMaterialTotals(), coal: 25_000, gold: 300_000 }
+    expect(vaultLabel(totals, 125_000)).toBe('Vault: 10 coal, 3 gold. 125K tokens observed.')
+  })
+
+  it('says the vault is empty rather than showing a bare zero', () => {
+    expect(vaultLabel(emptyMaterialTotals(), 0)).toBe(
+      'Vault: nothing mined yet. 0 tokens observed.'
+    )
+  })
+
+  it('treats a snapshot that carries no breakdown as an empty vault', () => {
+    expect(vaultLabel(undefined, 500)).toBe('Vault: nothing mined yet. 500 tokens observed.')
   })
 })

@@ -4,8 +4,7 @@ import { useDwarfKicking } from '../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../composables/useDwarfMessaging'
 import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../lib/art'
 import { createBubbleBoard } from '../lib/bubbles'
-import { oreCount, orePileStep } from '../lib/economy'
-import { orePileLabel, tierLabel } from '../lib/presentation'
+import { tierLabel } from '../lib/presentation'
 import { assignScene } from '../lib/sceneAssignment'
 import { clampToBox, projectToBox } from '../lib/sceneGeometry'
 import {
@@ -21,8 +20,10 @@ import {
   walkDurationMs,
   walkFacesLeft
 } from '../lib/sceneMotion'
+import { vaultRows } from '../lib/vault'
 import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
+import NuggetPile from './NuggetPile.vue'
 import VaultChip from './VaultChip.vue'
 
 const props = defineProps<{
@@ -42,7 +43,6 @@ const emit = defineEmits<{
 }>()
 
 const interiorSrc = computed(() => INTERIOR_SRC[props.mine.tier])
-const pileStep = computed(() => orePileStep(oreCount(props.mine.tokensObserved)))
 
 /*
  * ── The cave as a place, not a backdrop (issue #19) ────────────────────────
@@ -203,13 +203,26 @@ const slots = computed<SceneSlot[]>(() => {
   return result.sort((a, b) => b.bottom - a.bottom || a.dwarf.id.localeCompare(b.dwarf.id))
 })
 
-/* The ore pile stands on its own authored spot, and is depth-sorted with the crew. */
+/* The ore piles stand on their own authored spot, and are depth-sorted with the crew. */
 const depositAnchor = computed(() => anchorPool(layout.value, 'deposit')[0])
 const pilePoint = computed(() =>
   clampToBox(projectToBox(depositAnchor.value, boxSize.value, INTERIOR_ART_SIZE), 8, 5)
 )
 const pileZIndex = computed(() => depthOrder(layout.value.band, depositAnchor.value.y))
-const pileLabel = computed(() => orePileLabel(props.mine.tier, props.mine.tokensObserved))
+
+/**
+ * One mound per material this mine has actually produced, poorest first.
+ *
+ * Read from `mine.materials` — the persisted ledger — rather than from the live
+ * `tokensObserved` gauge the header chip shows: the deposit survives a dwarf
+ * leaving and an app restart, and a mine that grew from copper into silver
+ * keeps its copper standing beside its silver instead of having it silently
+ * reinterpreted (see #22).
+ *
+ * A material below one whole nugget is left out by vaultRows, so a fresh mine
+ * simply has no deposit yet rather than an empty labelled patch of floor.
+ */
+const materialPiles = computed(() => vaultRows(props.mine.materials))
 
 const bubbles = ref<ReadonlyMap<string, string>>(new Map())
 const board = createBubbleBoard((visible) => {
@@ -250,7 +263,13 @@ onBeforeUnmount(() => {
         <h1 id="mine-title">{{ mine.name }}</h1>
         <p class="scene-path">{{ mine.path }}</p>
       </div>
-      <VaultChip class="scene-vault" variant="inline" :tokens-observed="mine.tokensObserved" />
+      <!-- This mine's own vault: what it has mined, split by material. -->
+      <VaultChip
+        class="scene-vault"
+        variant="inline"
+        :tokens-observed="mine.tokensObserved"
+        :materials="mine.materials"
+      />
       <span class="tier-badge">{{ tierLabel(mine.tier) }}</span>
     </header>
 
@@ -259,26 +278,32 @@ onBeforeUnmount(() => {
       <!-- Keeps the crew readable against a busy painting. -->
       <div class="cave-vignette" aria-hidden="true"></div>
       <!--
-        Ore mined so far, stacked on its authored patch of floor. Still layered
-        CSS nuggets and no new art — but now it says what it is on hover, since
-        the shapes alone read as anonymous grey balls. When painted per-material
-        art lands, the swap is these `.nugget` spans and nothing else: the
-        position, the depth sorting and the wording all live outside this block.
+        The deposit: what this mine has mined, on its authored patch of floor.
+
+        One labelled mound PER MATERIAL, side by side — deliberately not one
+        blended heap. Materials never convert into one another (see #22), so a
+        single pile would draw a conversion the vault refuses; here the coal
+        stands beside the gold exactly as it does in the ledger, and each mound
+        says its own name and its own count on hover.
       -->
       <div
-        v-if="pileStep > 0"
+        v-if="materialPiles.length > 0"
         class="ore-pile"
-        :data-step="pileStep"
+        role="group"
+        aria-label="Ore mined in this mine"
         :style="{
           left: `${pilePoint.x}%`,
           bottom: `${100 - pilePoint.y}%`,
           zIndex: pileZIndex
         }"
-        role="img"
-        :title="pileLabel"
-        :aria-label="pileLabel"
       >
-        <span v-for="n in pileStep" :key="n" class="nugget"></span>
+        <NuggetPile
+          v-for="row in materialPiles"
+          :key="row.material"
+          :material="row.material"
+          :tokens="row.tokens"
+          :seed="mine.id"
+        />
       </div>
 
       <!-- idle mine: nobody on the floor -->
@@ -420,58 +445,26 @@ onBeforeUnmount(() => {
 /*
  * Sits on the authored deposit anchor (left/bottom come from the projected
  * point) and is depth-sorted with the crew, so a dwarf working farther back is
- * drawn behind the pile and one resting in front of it is drawn over it.
+ * drawn behind the deposit and one resting in front of it is drawn over it.
  * `pointer-events` are deliberately on: the hover label is the affordance.
+ *
+ * The mounds are laid out in a row along the floor and aligned to their feet,
+ * so a tall heap and a short one still stand on the same ground.
+ *
+ * The row grows RIGHTWARD from the anchor rather than centring on it, and the
+ * half-mound margin is what puts the first heap on the authored spot. Centring
+ * would be wrong here: the deposit anchor is the ground at the foot of the LEFT
+ * ore shelf (see sceneLayout), so a row wide enough for all six materials would
+ * hang off the left edge of the cave instead of piling up along the floor.
  */
 .ore-pile {
   position: absolute;
-  width: 70px;
-  height: 46px;
-  margin-left: -35px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  /* Half of NuggetPile's own 48px box. */
+  margin-left: -24px;
   cursor: help;
-}
-.nugget {
-  position: absolute;
-  bottom: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 35% 30%,
-    var(--tier-glow),
-    var(--tier-accent) 55%,
-    var(--tier-deep) 100%
-  );
-  box-shadow: 0 2px 4px #0008;
-}
-.nugget:nth-child(1) {
-  left: 22px;
-  width: 24px;
-  height: 24px;
-}
-.nugget:nth-child(2) {
-  bottom: 2px;
-  left: 4px;
-  width: 18px;
-  height: 18px;
-}
-.nugget:nth-child(3) {
-  bottom: 3px;
-  left: 40px;
-  width: 16px;
-  height: 16px;
-}
-.nugget:nth-child(4) {
-  bottom: 16px;
-  left: 14px;
-  width: 15px;
-  height: 15px;
-}
-.nugget:nth-child(5) {
-  bottom: 17px;
-  left: 32px;
-  width: 14px;
-  height: 14px;
 }
 .mine-idle {
   position: absolute;
