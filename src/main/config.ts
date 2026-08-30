@@ -1,8 +1,16 @@
 import type { TierThresholds } from './tier/tierService'
 
 /**
- * Typed app configuration loaded from environment variables.
+ * Typed app configuration, parsed from a flat map of string settings.
  * Invalid values fail fast at startup instead of being silently corrected.
+ *
+ * This module deliberately knows nothing about where those strings came from.
+ * A development checkout gets them from a repo `.env` that dotenv has already
+ * merged into `process.env`; an installed app gets them from the userData
+ * config file, which `src/main/configFile.ts` layers underneath the real
+ * environment before calling in here (see #38). Keeping one string-map parser
+ * means both transports share this file's validation and error messages
+ * instead of growing a second, divergent set for a second format.
  */
 export interface AppConfig {
   /** How often the provider scanner polls for agent activity, in milliseconds. */
@@ -89,9 +97,14 @@ export function defaultConfig(): AppConfig {
   }
 }
 
-type Env = Record<string, string | undefined>
+/**
+ * One layer of settings: keys are the documented variable names, values are
+ * their raw unparsed text. Exported so a non-environment source (the userData
+ * config file) can be layered into the same shape rather than parsed twice.
+ */
+export type ConfigEnv = Record<string, string | undefined>
 
-function readPositiveInt(env: Env, key: string, fallback: number): number {
+function readPositiveInt(env: ConfigEnv, key: string, fallback: number): number {
   const raw = env[key]
   if (raw === undefined || raw.trim() === '') {
     return fallback
@@ -103,7 +116,7 @@ function readPositiveInt(env: Env, key: string, fallback: number): number {
   return value
 }
 
-function readDirList(env: Env, key: string, fallback: string[]): string[] {
+function readDirList(env: ConfigEnv, key: string, fallback: string[]): string[] {
   const raw = env[key]
   if (raw === undefined || raw.trim() === '') {
     return [...fallback]
@@ -119,7 +132,7 @@ function readDirList(env: Env, key: string, fallback: string[]): string[] {
 }
 
 /** A TCP port number; anything outside 1-65535 is a startup error, not a silent clamp. */
-function readPort(env: Env, key: string, fallback: number): number {
+function readPort(env: ConfigEnv, key: string, fallback: number): number {
   const port = readPositiveInt(env, key, fallback)
   if (port > 65535) {
     throw new Error(`[config] ${key} must be a port between 1 and 65535, got "${env[key]}"`)
@@ -128,12 +141,12 @@ function readPort(env: Env, key: string, fallback: number): number {
 }
 
 /** A trimmed free-form string (a path, a model name); blank counts as unset. */
-function readTrimmed(env: Env, key: string, fallback: string): string {
+function readTrimmed(env: ConfigEnv, key: string, fallback: string): string {
   const raw = env[key]
   return raw === undefined || raw.trim() === '' ? fallback : raw.trim()
 }
 
-function readTierThresholds(env: Env, fallback: TierThresholds): TierThresholds {
+function readTierThresholds(env: ConfigEnv, fallback: TierThresholds): TierThresholds {
   const thresholds: TierThresholds = {
     copperKb: readPositiveInt(env, 'TIER_COPPER_KB', fallback.copperKb),
     silverKb: readPositiveInt(env, 'TIER_SILVER_KB', fallback.silverKb),
@@ -153,7 +166,7 @@ function readTierThresholds(env: Env, fallback: TierThresholds): TierThresholds 
   return thresholds
 }
 
-export function loadConfig(env: Env = process.env): AppConfig {
+export function loadConfig(env: ConfigEnv = process.env): AppConfig {
   const defaults = defaultConfig()
   return {
     pollIntervalMs: readPositiveInt(env, 'POLL_INTERVAL_MS', defaults.pollIntervalMs),

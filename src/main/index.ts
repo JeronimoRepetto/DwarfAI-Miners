@@ -19,6 +19,7 @@ import {
   migrateLegacyAutostart
 } from './autostart'
 import { loadConfig } from './config'
+import { CONFIG_FILE_NAME, createConfigFileStore, withConfigFileFallback } from './configFile'
 import { sumTokensObserved } from './domain/aggregate'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
@@ -118,16 +119,28 @@ async function init(): Promise<void> {
   app.dock?.hide()
 
   // Typed config, fails fast on invalid values before any window exists.
+  //
+  // Two transports feed one parser (see #38). dotenv reads a repo `.env`
+  // relative to process.cwd(), which only ever resolves in a development
+  // checkout; an installed app is configured through the userData file below.
+  // Environment beats file beats defaults, so a dev checkout keeps behaving
+  // exactly as it did before this file existed.
   loadDotenv({ quiet: true })
-  const config = loadConfig()
+  // The store also writes, so a settings surface can eventually persist
+  // changes through this same path instead of inventing a second mechanism.
+  const configFile = createConfigFileStore({
+    filePath: join(app.getPath('userData'), CONFIG_FILE_NAME),
+    onWarn: (message) => console.warn(message)
+  })
+  const config = loadConfig(withConfigFileFallback(process.env, await configFile.load()))
   console.log('[main] Config loaded:', config)
 
   // One-time rename migration, before the marker-gated first-run default below.
   await migrateLegacyAutostart(app.isPackaged)
 
   // userData follows productName (AgentName -> DwarfAI-Miners), so this path
-  // moved with the rename. The only thing ever written under it is this
-  // first-run marker; config is env-based, so no data migration is needed.
+  // moved with the rename. Nothing had been written under the old name beyond
+  // this first-run marker, so the rename needed no data migration.
   await ensureDefaultAutostart({
     isPackaged: app.isPackaged,
     markerPath: join(app.getPath('userData'), 'autostart-default-v1.marker'),

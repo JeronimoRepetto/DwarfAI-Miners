@@ -301,10 +301,51 @@ harmless (Claude Code treats a failed hook command as a non-blocking error) but 
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Every key is optional; invalid values fail fast at startup.
+Everything below is optional — the defaults work out of the box. **Which mechanism you use
+depends on how you are running DwarfAI-Miners**, because `dotenv` resolves `.env` relative to the
+working directory, and an installed app never runs from this repository.
+
+| How you run it                    | Where settings go                                                     |
+| --------------------------------- | --------------------------------------------------------------------- |
+| Development checkout (`pnpm dev`) | Copy `.env.example` to `.env` in the repo root.                       |
+| Installed app                     | A `config-v1.json` file in the app's user-data directory (see below). |
+
+Settings are resolved most specific first: **real environment variables → the user-data config
+file → built-in defaults.** A real environment variable therefore always wins, on either setup,
+and a development checkout with a `.env` behaves exactly as it always has.
+
+### Configuring an installed app
+
+Create `config-v1.json` next to the app's other preference files, in the user-data directory:
+
+| Platform | Path                                                          |
+| -------- | ------------------------------------------------------------- |
+| Windows  | `%APPDATA%\DwarfAI-Miners\config-v1.json`                     |
+| macOS    | `~/Library/Application Support/DwarfAI-Miners/config-v1.json` |
+| Linux    | `~/.config/DwarfAI-Miners/config-v1.json`                     |
+
+It is a flat JSON object whose keys are the variable names from the table below. Values may be
+strings or numbers, so both spellings below work:
+
+```json
+{
+  "CLAUDE_CONFIG_DIRS": "~/.claude;~/.claude-work",
+  "TIER_COPPER_KB": 200
+}
+```
+
+Restart the app to pick up changes. A missing or corrupt file is ignored and the app starts on
+defaults, so it is safe to delete if you want to start over. An invalid _value_ — a port of
+`70000`, tier thresholds out of order — fails fast at startup with the same message it would
+produce as an environment variable, rather than being silently ignored; setting the same key as a
+real environment variable overrides the file if you ever need to start the app without editing it
+first.
 
 <details>
-<summary><strong>All environment variables</strong> (defaults work out of the box)</summary>
+<summary><strong>All settings</strong> (defaults work out of the box)</summary>
+
+Use these names as `.env` keys in a development checkout, and as JSON keys in the config file
+above for an installed app.
 
 | Variable                   | Default                   | Meaning                                                                                               |
 | -------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------- |
