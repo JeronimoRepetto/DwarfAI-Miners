@@ -4,6 +4,7 @@ import type { DwarfRole, DwarfStatus, MineTier } from '../types'
 import { MATERIALS } from '../types'
 import { emptyMaterialTotals } from './vault/vault'
 import {
+  AWAITING_ANSWER_ANIMATION,
   BUBBLE_MAX_CHARS,
   LEAVING_EXIT_MS,
   NEUTRAL_DWARF_FRAME,
@@ -406,5 +407,85 @@ describe('describeSilence', () => {
   it('says less than a minute rather than counting seconds nobody reads', () => {
     expect(describeSilence(0)).toBe('no output for less than a minute')
     expect(describeSilence(59_999)).toBe('no output for less than a minute')
+  })
+})
+
+/**
+ * Issue #60. A dwarf whose provider proved a human has been asked a question
+ * gets its own loop, so "I need you" is distinguishable from generic rest.
+ *
+ * The paintings for it do not exist yet, and the issue is explicit that they
+ * must not be faked: the loop is wired now and points at the rest frames until
+ * the two "awaiting answer" foreman poses are commissioned. These tests pin the
+ * WIRING, not the frames, so the art can drop in without a second refactor.
+ */
+describe('dwarfAnimation while awaiting an answer', () => {
+  it('selects the awaiting-answer loop only on proof a human was asked', () => {
+    // Reference identity, not frame equality: the loop currently HOLDS the rest
+    // frames, so an equality check here would pass even with the branch gone.
+    expect(dwarfAnimation('waiting', 'foreman', false, 'user-input')).toBe(
+      AWAITING_ANSWER_ANIMATION.foreman
+    )
+    expect(dwarfAnimation('waiting', 'worker', false, 'user-input')).toBe(
+      AWAITING_ANSWER_ANIMATION.worker
+    )
+    expect(dwarfAnimation('waiting', 'foreman')).not.toBe(AWAITING_ANSWER_ANIMATION.foreman)
+  })
+
+  it('leaves every unproven reason on the ordinary rest loop', () => {
+    // 'unknown' is the reason that must never behave like 'user-input', here as
+    // much as in the eviction rule: an open dialog is not a question.
+    for (const reason of ['approval', 'unknown', undefined] as const) {
+      expect(dwarfAnimation('waiting', 'foreman', false, reason), String(reason)).toEqual(
+        dwarfAnimation('waiting', 'foreman')
+      )
+    }
+  })
+
+  it('holds the rest frames until the awaiting-answer poses are painted', () => {
+    // Deliberate and temporary. The moment two foreman poses exist this
+    // expectation is the one that changes, and nothing else has to.
+    expect(AWAITING_ANSWER_ANIMATION.foreman).toEqual(dwarfAnimation('waiting', 'foreman'))
+    expect(AWAITING_ANSWER_ANIMATION.worker).toEqual(dwarfAnimation('waiting', 'worker'))
+  })
+
+  it('never shows an awaiting-answer pose to a dwarf that is working or leaving', () => {
+    // The reason rides on a blocked dwarf. A working one is producing and a
+    // leaving one is already on its way out; neither is waiting on anybody.
+    for (const status of ['working', 'leaving'] as const) {
+      expect(dwarfAnimation(status, 'foreman', false, 'user-input'), status).toEqual(
+        dwarfAnimation(status, 'foreman')
+      )
+    }
+  })
+
+  it('is not asleep: the loop keeps two frames, never a single frozen pose', () => {
+    // The issue asks for attentive, not asleep — a single frame reads as the
+    // silence pose (#47), which says the opposite thing about the dwarf.
+    for (const role of ['worker', 'foreman'] as const) {
+      expect(AWAITING_ANSWER_ANIMATION[role].frames, role).toHaveLength(2)
+    }
+  })
+})
+
+describe('sceneDwarfAnimation while awaiting an answer', () => {
+  it('keeps a dwarf walking until it reaches its spot, as every other loop does', () => {
+    expect(sceneDwarfAnimation('waiting', 'foreman', true, false, 'user-input')).toEqual(
+      WALK_ANIMATION
+    )
+  })
+
+  it('drops onto the awaiting-answer loop once it has arrived', () => {
+    expect(sceneDwarfAnimation('waiting', 'foreman', false, false, 'user-input')).toEqual(
+      dwarfAnimation('waiting', 'foreman', false, 'user-input')
+    )
+  })
+
+  it('animates a dwarf with no reason exactly as it did before', () => {
+    for (const walking of [true, false]) {
+      expect(sceneDwarfAnimation('waiting', 'foreman', walking), String(walking)).toEqual(
+        sceneDwarfAnimation('waiting', 'foreman', walking, false, undefined)
+      )
+    }
   })
 })

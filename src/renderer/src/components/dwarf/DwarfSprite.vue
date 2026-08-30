@@ -247,8 +247,17 @@ preloadDwarfArt()
  */
 const silent = computed(() => isDwarfSilent(props.dwarf.role, props.dwarf.silentForMs))
 
+// The waiting reason is passed straight through, never re-derived here: only
+// the provider knows whether a human was actually asked something (issue #60),
+// and a sprite that guessed would be the fabricated status the issue forbids.
 const animation = computed(() =>
-  sceneDwarfAnimation(props.dwarf.status, props.dwarf.role, props.walking === true, silent.value)
+  sceneDwarfAnimation(
+    props.dwarf.status,
+    props.dwarf.role,
+    props.walking === true,
+    silent.value,
+    props.dwarf.waitingReason
+  )
 )
 const frameIndex = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined

@@ -1,4 +1,4 @@
-import type { FeedMessage, SessionStatus } from '../../domain/types'
+import type { FeedMessage, SessionStatus, WaitingReason } from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 
 /**
@@ -15,7 +15,9 @@ export interface ClaudeSessionEntry {
   /**
    * What the session is blocked on while status is 'waiting' (e.g. "dialog
    * open"), copied verbatim from the registry. Structured evidence only —
-   * never derived from assistant text (issue #34).
+   * never derived from assistant text (issue #34). Claude Code's own
+   * vocabulary, kept unnormalized here; claudeWaitingReason below turns it
+   * into the value that crosses the wire.
    */
   waitingFor?: string
   /**
@@ -113,6 +115,66 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     startedAt: asNumber(json.startedAt),
     updatedAt: asNumber(json.updatedAt)
   }
+}
+
+/**
+ * Claude Code's own `waitingFor` vocabulary, normalized (issue #60).
+ *
+ * The registry does not invent this string per session: Claude Code derives it
+ * from a fixed set of conditions, and the whole closed set was read out of the
+ * shipped binary (v2.1.251) rather than guessed from what a parser hoped for —
+ * an elicitation prompt yields `input needed`; the open dialog's own table
+ * yields `input needed`, `sandbox request`, `goal proposal` or `dialog open`,
+ * falling back to `permission prompt` for a dialog kind that table does not
+ * name; a pending worker request yields `worker request`; a pending sandbox
+ * request yields `sandbox request`; and a slash-command view showing over an
+ * idle turn yields `dialog open`.
+ *
+ * Only `input needed` is mapped to 'user-input', because it is the only one of
+ * the seven that names a question a human has to answer before the session can
+ * move. That narrowness is the point: 'user-input' is the value that suspends
+ * eviction, so it may only ever be set on proof.
+ *
+ * `dialog open` is deliberately NOT 'user-input', though it is by far the
+ * commonest value. It says a modal is up, never what the modal wants: the same
+ * string covers a startup model switch, a managed-settings review and an
+ * offline-file-sync notice. That the session is blocked is already carried by
+ * `status: 'waiting'` (issue #34); this table exists to say what it is blocked
+ * on, and here the honest answer is that nothing proved it.
+ *
+ * The vocabulary is version-specific and has grown before, so anything absent
+ * from this table lands on 'unknown' rather than being pattern-matched.
+ */
+const CLAUDE_WAITING_REASONS: Readonly<Record<string, WaitingReason>> = {
+  'input needed': 'user-input',
+  'permission prompt': 'approval',
+  'sandbox request': 'approval',
+  'goal proposal': 'approval',
+  'worker request': 'unknown',
+  'dialog open': 'unknown'
+}
+
+/**
+ * What this session is blocked on, or undefined when it is not blocked.
+ *
+ * Reads the registry's `waitingFor` and nothing else — never the transcript,
+ * never assistant text. A session that is blocked with no condition recorded,
+ * or with one this version does not know, is 'unknown': proof that it is
+ * waiting, no proof of what for.
+ *
+ * The condition, not the status, is what decides. `parseClaudeSessionEntry`
+ * folds every status it does not recognize into `idle`, so a future spelling of
+ * "blocked" would erase a live session's only proof of life; a recorded
+ * condition survives that fold and is therefore the sounder thing to key on.
+ */
+export function claudeWaitingReason(session: {
+  status: SessionStatus
+  waitingFor?: string
+}): WaitingReason | undefined {
+  if (session.waitingFor !== undefined) {
+    return CLAUDE_WAITING_REASONS[session.waitingFor] ?? 'unknown'
+  }
+  return session.status === 'waiting' ? 'unknown' : undefined
 }
 
 /**

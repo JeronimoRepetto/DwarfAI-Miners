@@ -1,14 +1,15 @@
 import { join } from 'node:path'
-import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
+import { DWARF_SILENCE_WINDOW_MS, WAITING_ON_HUMAN_REASON } from '../../../shared/contracts'
 import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../adapters/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
-import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
+import type { Dwarf, FeedMessage, ProviderSnapshot, WaitingReason } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'
 import {
   claudeSessionDeliveryTarget,
+  claudeWaitingReason,
   encodeClaudeProjectDir,
   extractClaudeFeed,
   parseClaudeSessionEntry,
@@ -129,6 +130,21 @@ function defaultIsPidAlive(pid: number): boolean {
  */
 function subagentTranscriptPath(projectDir: string, sessionId: string, agentId: string): string {
   return join(projectDir, sessionId, 'subagents', `agent-${agentId}.jsonl`)
+}
+
+/**
+ * The foreman's normalized waiting reason, as a spreadable field (issue #60).
+ *
+ * NO KEY rather than a value when the registry recorded no blocked condition,
+ * the same shape silenceField uses and for the same reason: absent means "this
+ * session is not blocked, or nothing here proves it either way", which is a
+ * different statement from 'unknown' — "blocked, and the condition is not one
+ * this app can read". Only a main session ever gets one; a subagent has no
+ * registry entry and its sidecar records no status at all.
+ */
+function waitingReasonField(session: ClaudeSessionEntry): { waitingReason?: WaitingReason } {
+  const reason = claudeWaitingReason(session)
+  return reason === undefined ? {} : { waitingReason: reason }
 }
 
 /**
@@ -538,6 +554,10 @@ export class ClaudeProvider implements Provider {
         // resting foreman. The registry is re-read every poll, so transitions
         // are prompt in both directions (issue #34).
         status: session.status === 'busy' ? 'working' : 'waiting',
+        // WHAT it is blocked on, when the registry named a condition (issue
+        // #60). Structured evidence only: the registry's own waitingFor
+        // vocabulary, never the transcript and never assistant prose.
+        ...waitingReasonField(session),
         // Redacted BEFORE the renderer's 70-char bubble truncation can ever
         // slice it: a truncated prefix can still contain a whole key.
         lastMessage: redactSecrets(info.lastAssistantText),
@@ -644,8 +664,18 @@ export class ClaudeProvider implements Provider {
    * `pendingBackgroundAgentCount` #36 reads agrees with it: the observed session
    * had been idle since 22:33 the previous evening and still reported 1 pending.
    *
-   * Two conditions, and both are load-bearing:
+   * Three conditions, and all are load-bearing:
    *
+   * - The session must not be blocked on a human answer. That is judged on the
+   *   registry's recorded CONDITION, not on its status string (issue #60): the
+   *   status gate below folds every value it does not recognize into `idle`,
+   *   and Claude Code's waiting vocabulary has grown before, so a future
+   *   spelling of "blocked" would turn a live session — one whose human has
+   *   been asked a question and has not answered yet — into an evictable idle
+   *   one. An agent waiting on a person writes nothing at all, which is exactly
+   *   why age cannot be the judge of it. Only 'user-input' buys this: an open
+   *   dialog or a pending approval keeps today's behaviour, because neither
+   *   proves a question is outstanding (see WaitingReason).
    * - The registry must report `idle`. `busy` is #28's case verbatim — a long
    *   turn writing megabytes of tool output pushed the launch record out of the
    *   window while the agent worked — and `waiting` is still mid-turn (blocked
@@ -672,6 +702,7 @@ export class ClaudeProvider implements Provider {
   }): Promise<void> {
     const { session, remembered } = options
     if (remembered.size === 0) return
+    if (claudeWaitingReason(session) === WAITING_ON_HUMAN_REASON) return
     if (session.status !== 'idle') return
     const now = this.now()
     if (this.writtenWithinWindow(options.parentMtimeMs, now, this.foremanSilenceMs)) return

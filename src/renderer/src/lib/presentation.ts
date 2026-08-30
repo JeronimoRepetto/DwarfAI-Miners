@@ -1,5 +1,13 @@
 import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
-import type { DwarfRole, DwarfStatus, Material, MaterialTotals, MineTier } from '../types'
+import type {
+  DwarfRole,
+  DwarfStatus,
+  Material,
+  MaterialTotals,
+  MineTier,
+  WaitingReason
+} from '../types'
+import { WAITING_ON_HUMAN_REASON } from '../types'
 import { formatTokens } from './vault/economy'
 import { materialUnits, vaultRows } from './vault/vault'
 
@@ -111,6 +119,34 @@ const SILENT: Record<DwarfRole, DwarfAnimation> = {
 }
 
 /**
+ * The pose of a dwarf whose provider proved a human has been asked a question
+ * and has not answered (issue #60): the dwarf holding an open parchment or one
+ * hand raised toward the viewer, then glancing back at the page.
+ *
+ * ATTENTIVE, NOT ASLEEP, and that is the whole reason it is a loop of its own.
+ * A blocked session already rests (issue #34) and a silent one already stands
+ * still (issue #47); neither says "I need you", and a sleep overlay would say
+ * the opposite. Two frames, because every current active loop is a two-frame
+ * pair and a single frozen pose reads as the silence pose.
+ *
+ * THE PAINTINGS DO NOT EXIST YET. Until they do this points at the rest loop,
+ * exactly as #34's foreman-waiting art does, so the panel promises nothing it
+ * cannot draw — swap these frames when the poses land and nothing else moves.
+ * Only the FOREMAN pose is worth commissioning: a worker has no evidence that
+ * could ever select this loop, since a Claude subagent's sidecar records no
+ * status at all and Codex writes no blocked record, so the worker entry here is
+ * structural rather than something anybody will see.
+ */
+export const AWAITING_ANSWER_ANIMATION: Record<DwarfRole, DwarfAnimation> = {
+  // Copies of the rest loops rather than aliases of them, so that "this loop
+  // was selected" and "this loop currently looks like resting" stay two
+  // separate facts — one is the wiring, the other is the placeholder, and the
+  // tests can hold each without the other.
+  worker: { ...WAITING.worker },
+  foreman: { ...WAITING.foreman }
+}
+
+/**
  * The walk cycle. Leaving is a walk regardless of rank — the foreman uses the
  * same door — and since issue #19 every dwarf also walks *to* the painted
  * feature its status calls for, so the same two frames cover both journeys and
@@ -143,14 +179,25 @@ export function isDwarfSilent(role: DwarfRole, silentForMs: number | undefined):
  * the same fact — and keeping silence out of DwarfStatus is what stops it
  * leaking into the ledger, the delivery channels and the capability matrix,
  * every one of which keys off status (see Dwarf.silentForMs).
+ *
+ * `waitingReason` layers over a blocked dwarf the same way, and only its one
+ * proven value picks a different loop (see WAITING_ON_HUMAN_REASON). An
+ * approval and an open dialog rest exactly as they always have: the panel may
+ * single a dwarf out for attention only where a provider proved a person was
+ * asked, never on a reason that merely might mean one.
  */
 export function dwarfAnimation(
   status: DwarfStatus,
   role: DwarfRole,
-  silent = false
+  silent = false,
+  waitingReason?: WaitingReason
 ): DwarfAnimation {
   if (status === 'leaving') return WALK_ANIMATION
-  if (status !== 'working') return WAITING[role]
+  if (status !== 'working') {
+    return waitingReason === WAITING_ON_HUMAN_REASON
+      ? AWAITING_ANSWER_ANIMATION[role]
+      : WAITING[role]
+  }
   return silent ? SILENT[role] : WORKING[role]
 }
 
@@ -165,9 +212,10 @@ export function sceneDwarfAnimation(
   status: DwarfStatus,
   role: DwarfRole,
   walking: boolean,
-  silent = false
+  silent = false,
+  waitingReason?: WaitingReason
 ): DwarfAnimation {
-  return walking ? WALK_ANIMATION : dwarfAnimation(status, role, silent)
+  return walking ? WALK_ANIMATION : dwarfAnimation(status, role, silent, waitingReason)
 }
 
 /**
