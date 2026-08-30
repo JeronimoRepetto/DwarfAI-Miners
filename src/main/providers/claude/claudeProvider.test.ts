@@ -46,6 +46,27 @@ function notification(agentId: string, status: string): string {
   )
 }
 
+/**
+ * An `async_launched` line as Claude writes it when a background agent starts,
+ * reduced to the fields the parser actually reads. The fixture carries a full
+ * real record; this builder exists to place a SECOND launch at a chosen depth
+ * in a synthetic transcript, which no single fixture line can do.
+ */
+function launch(agentId: string, description: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      toolUseResult: {
+        isAsync: true,
+        status: 'async_launched',
+        agentId,
+        description,
+        resolvedModel: 'claude-fable-5'
+      }
+    }) + '\n'
+  )
+}
+
 function otherEntry(pid: number, sessionId: string, cwd: string, status: string): string {
   return JSON.stringify({ pid, sessionId, cwd, status, name: 'other-1', updatedAt: 5_000 })
 }
@@ -508,6 +529,235 @@ describe('ClaudeProvider', () => {
       fake.addFile(TRANSCRIPT, parentTranscript + fillerLine.repeat(4_200), 42_000)
       const snapshots = await makeProvider().scan()
       expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+
+    /**
+     * Regression (issue #36): the under-count direction of the very signal the
+     * zero-pending eviction above already trusts. Measured live — a 4,093,313
+     * byte transcript whose missing agent's launch sat at byte 3,668,176, some
+     * 163KiB before the 256KiB window, while a `turn_duration` line well inside
+     * that window reported 2 pending. The panel showed one worker; two were
+     * really mining. Both cheap reads had already lost: poll-to-poll memory
+     * never saw the record, and the session had outgrown the first-sight
+     * window. The count is the only evidence left that a launch is missing.
+     */
+    describe('missing launch recovery', () => {
+      const MISSING_AGENT = 'a9f1c2d3e4b5a6c70'
+      const MISSING_WORKER_ID = `claude:${SESSION_ID}:${MISSING_AGENT}`
+
+      /** The fixture's real launch record for the agent that stays visible. */
+      const liveLaunch = parentLines[7]! + '\n'
+      const missingLaunch = launch(MISSING_AGENT, 'Recovered agent task')
+
+      /**
+       * Two agents really in flight, but a burst of tool output pushed the
+       * older launch past the regular window between polls: the routine tail
+       * carries only the newer launch and a count of 2. This is the live shape.
+       */
+      const oneLaunchOutOfWindow = missingLaunch + pastRegularTail + liveLaunch + turnDuration(2)
+
+      /**
+       * The same reported shortfall with nothing to find at any depth — the
+       * count names an agent whose launch is in no part of this transcript.
+       */
+      const nothingToRecover = pastRegularTail + liveLaunch + turnDuration(2)
+
+      /**
+       * Counts transcript reads that reached past the first-sight window.
+       * Poll one of every test here is the session's first sight, so its bound
+       * is the deepest routine read that exists — any larger read can only be
+       * a recovery escalation. Derived from the calls themselves rather than
+       * copying the provider's byte constants, so this stays a statement about
+       * escalation instead of a duplicate of the tiers.
+       */
+      function watchRecoveryReads(): () => number {
+        const reads = vi.spyOn(fake, 'readTextTail')
+        return () => {
+          const bounds = reads.mock.calls
+            .filter(([path]) => path === TRANSCRIPT)
+            .map(([, maxBytes]) => maxBytes)
+          return bounds.filter((bound) => bound > (bounds[0] ?? 0)).length
+        }
+      }
+
+      it('recovers a launch the tail never saw when the pending count reports one more', async () => {
+        const provider = makeProvider()
+        const recoveryReads = watchRecoveryReads()
+        // Poll one: a quiet session with nothing out and no count to compare.
+        fake.addFile(TRANSCRIPT, quietTail, 42_000)
+        expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+        expect(recoveryReads()).toBe(0)
+
+        // Poll two: the routine tail knows one agent, the transcript's own
+        // bookkeeping says two are pending. The missing worker was mining the
+        // whole time and must appear, recovered from the deeper window.
+        fake.addFile(TRANSCRIPT, oneLaunchOutOfWindow, 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+          MAIN_ID,
+          WORKER_ID,
+          MISSING_WORKER_ID
+        ])
+        expect(recoveryReads()).toBe(1)
+
+        // Recovered as a full citizen with its launch-time identity, not as a
+        // placeholder standing in for a headcount.
+        expect(second[0]!.dwarfs[2]).toMatchObject({
+          role: 'worker',
+          name: 'Recovered agent task',
+          model: 'claude-fable-5',
+          status: 'working'
+        })
+        expect(provider.textDelivery(MISSING_WORKER_ID)).toEqual({
+          kind: 'foreman-relay',
+          foremanDwarfId: MAIN_ID,
+          workerName: 'Recovered agent task'
+        })
+
+        // What the deep read found lives on as ordinary launch memory: the
+        // next poll keeps the worker without escalating again.
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+          MAIN_ID,
+          WORKER_ID,
+          MISSING_WORKER_ID
+        ])
+        expect(recoveryReads()).toBe(1)
+      })
+
+      it('escalates once, not every poll, while the same shortfall persists', async () => {
+        const provider = makeProvider()
+        const recoveryReads = watchRecoveryReads()
+        fake.addFile(TRANSCRIPT, quietTail, 42_000)
+        await provider.scan()
+
+        // A shortfall the deeper window cannot explain. The poller runs every
+        // 2s against files that reach megabytes, so re-reading on each tick is
+        // the unbounded scan this rate limit exists to prevent.
+        fake.addFile(TRANSCRIPT, nothingToRecover, 43_000)
+        await provider.scan()
+        await provider.scan()
+        await provider.scan()
+        expect(recoveryReads()).toBe(1)
+      })
+
+      it('settles an unexplainable shortfall without inventing a dwarf', async () => {
+        const provider = makeProvider()
+        fake.addFile(TRANSCRIPT, quietTail, 42_000)
+        await provider.scan()
+
+        // The count may describe background work this provider has no launch
+        // record for at any depth. A headcount is not an identity: the crew
+        // stays exactly what the transcript can prove, poll after poll.
+        fake.addFile(TRANSCRIPT, nothingToRecover, 43_000)
+        for (const poll of [1, 2, 3]) {
+          const snapshots = await provider.scan()
+          expect(
+            snapshots[0]!.dwarfs.map((dwarf) => dwarf.id),
+            `poll ${poll}`
+          ).toEqual([MAIN_ID, WORKER_ID])
+        }
+      })
+
+      it('drops a recovered worker on its terminal notification and never resurrects it', async () => {
+        const provider = makeProvider()
+        fake.addFile(TRANSCRIPT, quietTail, 42_000)
+        await provider.scan()
+        fake.addFile(TRANSCRIPT, oneLaunchOutOfWindow, 43_000)
+        expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+          MAIN_ID,
+          WORKER_ID,
+          MISSING_WORKER_ID
+        ])
+
+        // The recovered agent finishes. Its notification arrives in the
+        // routine tail while the count line ahead of it still says 2 — a stale
+        // count must never re-adopt an agent whose end has been seen, or the
+        // deep read becomes a resurrection machine.
+        fake.addFile(
+          TRANSCRIPT,
+          oneLaunchOutOfWindow + notification(MISSING_AGENT, 'completed'),
+          44_000
+        )
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        const fourth = await provider.scan()
+        expect(fourth[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('leaves the zero-pending eviction path untouched and never escalates for it', async () => {
+        const provider = makeProvider()
+        const recoveryReads = watchRecoveryReads()
+        await provider.scan()
+
+        // Zero pending can never be a shortfall, so the two readings of the
+        // same count cannot collide: eviction still fires, and no deep read is
+        // provoked on the way.
+        fake.addFile(TRANSCRIPT, quietTail + turnDuration(0), 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+        expect(recoveryReads()).toBe(0)
+      })
+
+      it('escalates again when the reported count climbs past the settled shortfall', async () => {
+        const provider = makeProvider()
+        const recoveryReads = watchRecoveryReads()
+        fake.addFile(TRANSCRIPT, quietTail, 42_000)
+        await provider.scan()
+
+        // One unexplainable shortfall, attempted once and settled at 2.
+        fake.addFile(TRANSCRIPT, nothingToRecover, 43_000)
+        await provider.scan()
+        await provider.scan()
+        expect(recoveryReads()).toBe(1)
+
+        // A THIRD agent is now reported. Keying the one-shot on a per-session
+        // "already tried" flag would spend the session's single recovery on
+        // the first discrepancy and go blind to every later one — this newer,
+        // larger count is fresh evidence and must be chased.
+        fake.addFile(
+          TRANSCRIPT,
+          missingLaunch + pastRegularTail + liveLaunch + turnDuration(3),
+          44_000
+        )
+        const fourth = await provider.scan()
+        expect(fourth[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+          MAIN_ID,
+          WORKER_ID,
+          MISSING_WORKER_ID
+        ])
+        expect(recoveryReads()).toBe(2)
+      })
+
+      it('escalates again for an identical count once the shortfall has cleared', async () => {
+        const provider = makeProvider()
+        const recoveryReads = watchRecoveryReads()
+        fake.addFile(TRANSCRIPT, quietTail, 42_000)
+        await provider.scan()
+
+        // Shortfall of 2, unexplainable, settled after one attempt.
+        fake.addFile(TRANSCRIPT, nothingToRecover, 43_000)
+        await provider.scan()
+        expect(recoveryReads()).toBe(1)
+
+        // The count comes back down: nothing is missing any more, so the
+        // settled shortfall is over and must be forgotten.
+        fake.addFile(TRANSCRIPT, quietTail + turnDuration(1), 44_000)
+        await provider.scan()
+
+        // A LATER discrepancy that happens to report the same number is a new
+        // shortfall, not the old one still pending. Remembering the count
+        // forever would make this recoverable worker permanently invisible.
+        fake.addFile(TRANSCRIPT, oneLaunchOutOfWindow, 45_000)
+        const fifth = await provider.scan()
+        expect(fifth[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+          MAIN_ID,
+          WORKER_ID,
+          MISSING_WORKER_ID
+        ])
+        expect(recoveryReads()).toBe(2)
+      })
     })
   })
 

@@ -30,6 +30,19 @@ const SUBAGENT_TAIL_BYTES = 64 * 1024
  * observable event (its terminal notification arriving in a later tail).
  */
 const FIRST_SIGHT_TAIL_BYTES = 4 * 1024 * 1024
+/**
+ * How far back the ONE escalated read reaches when a session's own pending
+ * count proves launches are missing (see unexplainedShortfalls, issue #36).
+ *
+ * Deliberately larger than FIRST_SIGHT_TAIL_BYTES, because the case this
+ * exists for is exactly the one both cheaper reads already lost: a transcript
+ * that outgrew the first-sight window — the reported occurrence reached 4MB in
+ * a single night — where every launch older than that boundary is otherwise
+ * unrecoverable for the life of the session. Cost is bounded by the shortfall
+ * key, not by this number: one read per distinct unexplained count per
+ * session, never one per 2s poll.
+ */
+const RECOVERY_TAIL_BYTES = 16 * 1024 * 1024
 
 /**
  * How far a probed process creation time may sit from the registry's procStart
@@ -143,6 +156,23 @@ export class ClaudeProvider implements Provider {
    */
   private readonly rememberedLaunches = new Map<string, Map<string, ClaudeInFlightAgent>>()
   /**
+   * sessionId -> the pendingBackgroundAgentCount whose shortfall one escalated
+   * read already failed to explain (issue #36).
+   *
+   * This is the rate limit on RECOVERY_TAIL_BYTES, and it is keyed on the
+   * REPORTED COUNT rather than on a per-session "already escalated" flag on
+   * purpose. A flag would spend a session's single recovery on its first
+   * discrepancy and stay blind to every later one for the life of the process;
+   * no key at all would put a 16MB read on a 2s poll for as long as the
+   * discrepancy lasts. Keyed on the count: an identical unexplained count
+   * settles after one attempt, a count that climbs is fresh evidence of an
+   * agent this provider has never heard of and escalates again, and the entry
+   * is dropped the moment a poll sees no shortfall — so a later discrepancy
+   * that happens to report the same number is judged new, not dismissed as the
+   * settled one. Evicted with the session in scan(), like rememberedLaunches.
+   */
+  private readonly unexplainedShortfalls = new Map<string, number>()
+  /**
    * dwarfId -> highest tokensObserved reading seen for it so far, remembered
    * for the life of the process.
    *
@@ -202,6 +232,12 @@ export class ClaudeProvider implements Provider {
     // must not evict sessions it never got to look at.
     for (const sessionId of [...this.rememberedLaunches.keys()]) {
       if (!seenSessions.has(sessionId)) this.rememberedLaunches.delete(sessionId)
+    }
+    // Same reasoning for the shortfall rate limit: a returning session id must
+    // be free to escalate again rather than inherit a settled verdict about a
+    // transcript that is no longer the one it was measured against.
+    for (const sessionId of [...this.unexplainedShortfalls.keys()]) {
+      if (!seenSessions.has(sessionId)) this.unexplainedShortfalls.delete(sessionId)
     }
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
@@ -295,15 +331,11 @@ export class ClaudeProvider implements Provider {
     // Whatever it finds lives on in rememberedLaunches, so every later poll
     // goes back to the cheap bound.
     const firstSight = !this.rememberedLaunches.has(session.sessionId)
+    const tailBytes = firstSight ? FIRST_SIGHT_TAIL_BYTES : TRANSCRIPT_TAIL_BYTES
     const info =
       transcriptStat === null
         ? parseClaudeTranscriptTail('')
-        : parseClaudeTranscriptTail(
-            await this.fs.readTextTail(
-              transcriptPath,
-              firstSight ? FIRST_SIGHT_TAIL_BYTES : TRANSCRIPT_TAIL_BYTES
-            )
-          )
+        : parseClaudeTranscriptTail(await this.fs.readTextTail(transcriptPath, tailBytes))
 
     for (const agentId of info.terminalAgentIds) this.terminalAgents.add(agentId)
     // Merge this tail's launches into the session's launch memory, then let
@@ -316,9 +348,7 @@ export class ClaudeProvider implements Provider {
     for (const agent of info.inFlightAgents) remembered.set(agent.agentId, agent)
     // Terminal memory always wins: a remembered launch whose termination was
     // also remembered stays gone, even when neither record is in the tail.
-    for (const agentId of [...remembered.keys()]) {
-      if (this.terminalAgents.has(agentId)) remembered.delete(agentId)
-    }
+    this.forgetTerminal(remembered)
     // Cross-check against the transcript's own bookkeeping: turn_duration
     // lines carry the count of background agents still running at end of
     // turn. Zero pending proves every launch OLDER than this whole tail has
@@ -333,6 +363,18 @@ export class ClaudeProvider implements Provider {
         if (!launchedInTail.has(agentId)) remembered.delete(agentId)
       }
     }
+    // The same count read the other way (issue #36). Zero pending proves
+    // launches ENDED; a count HIGHER than everything known proves launches
+    // were MISSED — their `async_launched` records were never in any window
+    // this run read, so no amount of poll-to-poll memory can hold them.
+    await this.recoverMissingLaunches({
+      sessionId: session.sessionId,
+      transcriptPath,
+      transcriptBytes: transcriptStat?.size ?? 0,
+      alreadyReadBytes: tailBytes,
+      reportedPending: info.pendingBackgroundAgentCount,
+      remembered
+    })
     const inFlightAgents = [...remembered.values()]
 
     const mainDwarfId = `claude:${session.sessionId}`
@@ -425,6 +467,70 @@ export class ClaudeProvider implements Provider {
       status: session.status,
       dwarfs,
       updatedAt: transcriptStat?.mtimeMs ?? session.updatedAt ?? this.now()
+    }
+  }
+
+  /** Terminal memory outranks launch memory everywhere; both paths prune with this. */
+  private forgetTerminal(remembered: Map<string, ClaudeInFlightAgent>): void {
+    for (const agentId of [...remembered.keys()]) {
+      if (this.terminalAgents.has(agentId)) remembered.delete(agentId)
+    }
+  }
+
+  /**
+   * Close the gap between what the transcript says is pending and what this
+   * provider actually knows, by looking further back exactly once per distinct
+   * unexplained count (issue #36). Mutates `remembered` in place with whatever
+   * the deeper window recovers.
+   */
+  private async recoverMissingLaunches(options: {
+    sessionId: string
+    transcriptPath: string
+    transcriptBytes: number
+    alreadyReadBytes: number
+    reportedPending: number | undefined
+    remembered: Map<string, ClaudeInFlightAgent>
+  }): Promise<void> {
+    const { sessionId, reportedPending, remembered } = options
+    // No count to compare, or every reported agent already accounted for.
+    // Either way this session has no shortfall right now, so any settled one
+    // is over: forget it, or a later discrepancy reporting the same number
+    // would be dismissed as this one and never chased.
+    if (reportedPending === undefined || reportedPending <= remembered.size) {
+      this.unexplainedShortfalls.delete(sessionId)
+      return
+    }
+    // This exact count already cost one deep read that explained nothing.
+    // Repeating it every 2s tick is the unbounded scan this key exists to
+    // prevent, so the shortfall settles here until the count itself moves.
+    if (this.unexplainedShortfalls.get(sessionId) === reportedPending) return
+    // Reading further only helps when there IS more file behind what this poll
+    // already read. When the read covered the whole transcript, the missing
+    // launch is in no part of it and the same bytes cannot yield it twice.
+    if (options.transcriptBytes > options.alreadyReadBytes) {
+      const deep = parseClaudeTranscriptTail(
+        await this.fs.readTextTail(options.transcriptPath, RECOVERY_TAIL_BYTES)
+      )
+      // Terminations first, then adoption: a count line can be older than the
+      // notification that answered it, so a stale count must never re-adopt an
+      // agent already known to have finished. Without this ordering the deep
+      // read becomes a resurrection machine for the ghost dwarf that
+      // terminalAgents exists to bury.
+      for (const agentId of deep.terminalAgentIds) this.terminalAgents.add(agentId)
+      for (const agent of deep.inFlightAgents) {
+        if (!this.terminalAgents.has(agent.agentId)) remembered.set(agent.agentId, agent)
+      }
+      this.forgetTerminal(remembered)
+    }
+    // Still short after the one deep look. The count can legitimately describe
+    // background work with no `async_launched` record of its own, so this is
+    // not an error and nothing is fabricated to match it — a headcount is not
+    // an identity. Record it so the next poll recognizes the attempt; leave it
+    // absent when explained, so a future shortfall escalates immediately.
+    if (remembered.size < reportedPending) {
+      this.unexplainedShortfalls.set(sessionId, reportedPending)
+    } else {
+      this.unexplainedShortfalls.delete(sessionId)
     }
   }
 
