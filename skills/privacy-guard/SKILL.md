@@ -50,12 +50,16 @@ Be precise about this; it is narrower than it sounds.
   GitHub handle, the Ko-fi link, the bundle id, the name in `LICENSE` — never trips it. The other
   two match anywhere.
 - It covers **tracked files only**. An untracked or ignored file is invisible to it.
-- It does **not look for private project names**, and that was deliberate rather than forgotten.
-  The sibling directories on this machine run from unmistakable to words that occur in ordinary
-  prose, and a list wide enough to catch the second kind fails the build on sentences that leak
-  nothing. Whether a narrow list of the unmistakable ones is worth the false positives is the
-  maintainer's open call, in issue #54. **Until it is decided, assume project names are
-  unchecked**: one reached `main` in a measurement table and came out by reading, not by CI.
+- It does **not look for private project names**, and that is now a closed decision rather than a
+  gap waiting on one. The sibling directories on this machine run from unmistakable to words that
+  occur in ordinary prose, and a list wide enough to catch the second kind fails the build on
+  sentences that leak nothing. A narrow list of the unmistakable ones was worth it only alongside a
+  history rewrite, because every name added to `ci.yml` is a name `ci.yml` publishes, and that file
+  is already a plaintext index. Issue #51 chose to publish the history as is, so adding the names
+  would publish them a second time and buy nothing. **Project names are unchecked on purpose: they
+  come out by reading, never by CI.** Treat that as routine rather than rare — one reached HEAD in
+  a measurement table (`docs/performance.md`) and four more in `src/**` comments, fixed in
+  `3a8b0e3`.
 - It skips **binary files**. A path baked into PNG metadata, or a project name legible in a
   committed screenshot, cannot be caught — see the next section.
 - It excludes exactly one file: the workflow itself, because that file necessarily spells the
@@ -72,11 +76,19 @@ Nothing in CI will ever fail for an identifier that is in pixels rather than in 
 commit an image, the review is a pair of eyes, and there is no second line of defence behind them.
 
 This is the incident the rule comes from. `docs/assets/screenshot-map.png` was committed in
-`c47d2f5` with **two private project names legible in the panel** — two and a half hours after
-`1244510` added the guard, and after the text audit had already removed those same names from the
-source. A human reading the picture caught it, and `1fe418c` replaced the file seven minutes later.
-The guard was green across both commits, and the pre-scrub blob is still in history: that is why
-issue #51 exists, and why replacing the file is not the same as removing what was in it.
+`c47d2f5` with **four mine labels legible in the panel** — three of them private projects, the
+fourth this repository — two and a half hours after `1244510` added the guard, and after the text
+audit had already removed the private ones from the source. A human reading the picture caught it,
+and `1fe418c` replaced the file seven minutes later. The guard was green across both commits, and
+the pre-scrub blob is still in history: that is why issue #51 exists, and why replacing the file is
+not the same as removing what was in it.
+
+**This page said "two" until someone opened the blob.** The number was inherited from a written
+report — issue #51 carried the same two — and nobody had run the one check this page exists to
+demand, in a skill whose entire subject is that an image cannot be verified by grep. Four is what
+the blob shows; #51's decision comment records the reading. The lesson is not the number. It is
+that a count about an image, taken from a document, is not a measurement, and restating it makes it
+look like one.
 
 Before staging any capture, open it at full size and read it — do not skim the thumbnail:
 
@@ -92,6 +104,12 @@ Before staging any capture, open it at full size and read it — do not skim the
 
 Crop or repaint what you find; assume the reader zooms in. And say in the commit body that you
 looked — an image nobody claims to have read is the state that produced the incident above.
+
+That last part has already been skipped once. `fc98771` refreshed the mine capture with an **empty
+commit body**, so nothing recorded that anyone had looked. The blob (`b83c7d3`) was finally read
+during #51 and is clean — its labels are this repository's own issue numbers. A clean outcome from
+a check nobody ran is luck, and the near miss is the part worth keeping: the commit body is the
+only evidence the look ever happened.
 
 The same applies to a captured terminal transcript pasted as text: the guard will catch the four
 strings it knows and nothing else in the prompt line.

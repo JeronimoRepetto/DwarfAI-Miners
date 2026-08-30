@@ -47,13 +47,20 @@ jobs:
       # a pending fix, and a green run proves only that four strings are absent
       # from the text of tracked files:
       #
-      # 1. Private project names are not searched for. The sibling directories
-      #    on the maintainer's machine run from unmistakable to words that turn
-      #    up in ordinary prose, and a list wide enough to catch the second
-      #    kind fails the build on sentences that leak nothing. Whether a
-      #    narrow list of the unmistakable ones earns its keep is open in #54;
-      #    until it is decided, treat project names as unchecked and remove
-      #    them by reading. One reached HEAD this way (docs/performance.md).
+      # 1. Private project names are not searched for, and that is settled
+      #    rather than pending. The sibling directories on the maintainer's
+      #    machine run from unmistakable to words that turn up in ordinary
+      #    prose, and a list wide enough to catch the second kind fails the
+      #    build on sentences that leak nothing. A narrow list of the
+      #    unmistakable ones was worth it only alongside a history rewrite,
+      #    because every name added here is a name this file publishes and
+      #    this file is already a plaintext index. #51 has since chosen to
+      #    publish as is, so there is no rewrite: adding the names would
+      #    publish them a second time and buy nothing the standing instruction
+      #    does not. Project names are unchecked on purpose: they come out by
+      #    reading, never by CI. That is routine, not exceptional — one reached
+      #    HEAD in docs/performance.md, and four more in src/** comments, fixed
+      #    in 3a8b0e3.
       # 2. This file is excluded, because a grep for a string has to contain
       #    the string. The exclusion is forced, but its consequence is not
       #    obvious and is not an oversight: the one file that names every
@@ -62,8 +69,12 @@ jobs:
       #    turned down — it obscures rather than removes, a failing run prints
       #    the matching line into a public build log regardless, and every
       #    revision of this file since the guard landed already carries them in
-      #    the history. That history is issue #51's subject; if a rewrite there
-      #    ever makes the plaintext here the last copy, revisit this then.
+      #    the history. That history is issue #51's subject, and it is now
+      #    decided: the history goes public unchanged, so those copies stay
+      #    and the plaintext here is never the last one. Anyone who reopens the
+      #    decision must read its comment first — a blind --replace-text over
+      #    these patterns rewrites the line below into a grep for the
+      #    placeholder, and the build stays green on anything.
       # 3. Images are invisible to it. `-I` skips binary files, so an
       #    identifier legible in a committed screenshot passes green. Issue #18
       #    was a screenshot leak and a human caught it, not CI. Screenshots
