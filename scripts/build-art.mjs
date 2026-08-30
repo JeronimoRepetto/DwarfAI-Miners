@@ -4,14 +4,14 @@
  * ships. Run it with `pnpm art:build`.
  *
  * The originals are never modified and never enter the repository: they are
- * 20 opaque 2048x2048 JPGs delivered by the product owner and kept outside the
+ * opaque 2048x2048 JPGs delivered by the product owner and kept outside the
  * tree (see DEFAULT_SOURCE_DIR below). Only the processed output under
  * src/renderer/src/assets/art/ is committed, so a clone builds and runs without
  * the source art present — you only need it to re-run this script.
  *
  * Point it somewhere else with `--src <dir>` or DWARFAI_MINERS_ART_SRC.
  *
- * Three groups, three treatments:
+ * Four groups, four treatments:
  *
  *   dwarf-*   9 poses of one character on a flat magenta backdrop. Chroma-keyed
  *             to transparency, then cropped to the UNION of all nine content
@@ -19,6 +19,10 @@
  *             what stops the sprite jittering as frames swap. 512px tall PNG.
  *   mound-*   One mine entrance per tier on a flat dark-purple backdrop. Keyed,
  *             trimmed per image with a small margin, 512px wide PNG.
+ *   nugget-*  One ore nugget per raw material, same magenta backdrop. Keyed and
+ *             trimmed to its OWN content box rather than a shared canvas: piles
+ *             stack these shoulder to shoulder, and shared padding would space
+ *             them apart with invisible margins. 96px wide PNG.
  *   interior-*, map-bg
  *             Opaque painted scenes, nothing to key. Downscaled to 1600px on
  *             the long side and re-encoded as JPEG.
@@ -61,15 +65,17 @@ const TIERS = ['bronze', 'copper', 'silver', 'gold', 'uranium']
 
 /**
  * The raw materials a vault can hold, named for what they actually are rather
- * than for the mine tier that yields them. The two vocabularies are not the
- * same list on purpose: coal has no tier at all (it is the backfill material
- * for tokens burned before the app was installed), and the base tier's ore is
- * iron. src/renderer maps tier to material explicitly; see issue #22.
+ * than for the mine tier that yields them. The two vocabularies are close but
+ * deliberately not identical: coal belongs to no tier (it is the backfill
+ * material for tokens burned before the app was installed), and iron is
+ * painted and shipped but currently maps to no tier at all — it is here so a
+ * future tier between coal and bronze costs art nobody has to commission.
+ * src/renderer owns the tier-to-material table; see issue #22.
  *
  * Sources are named `<material>_nugget.jpg` as delivered; the output follows
  * the repo's own `<group>-<variant>` convention.
  */
-const NUGGET_MATERIALS = ['iron', 'copper', 'silver', 'gold', 'uranium', 'coal']
+const NUGGET_MATERIALS = ['coal', 'iron', 'bronze', 'copper', 'silver', 'gold', 'uranium']
 
 /**
  * Every dwarf pose, in the order the union canvas is computed. The names match
@@ -236,12 +242,19 @@ async function buildNuggets(sourceDir, rows) {
     const key = chromaKey(image)
     const { width, height } = image.bitmap
     const box = padBox(contentBox(image.bitmap), NUGGET_MARGIN, width, height)
-    if (box === null) throw new Error(`${material}_nugget.jpg keyed to fully transparent — check KEY`)
+    if (box === null)
+      throw new Error(`${material}_nugget.jpg keyed to fully transparent — check KEY`)
     image.crop({ x: box.x, y: box.y, w: box.width, h: box.height })
     resizeTo(image, { width: NUGGET_WIDTH })
     const buffer = await image.getBuffer('image/png')
     await writeFile(join(OUT_DIR, `nugget-${material}.png`), buffer)
-    report(rows, `nugget-${material}.png`, image, buffer.length, `key rgb(${key.map(Math.round).join(',')})`)
+    report(
+      rows,
+      `nugget-${material}.png`,
+      image,
+      buffer.length,
+      `key rgb(${key.map(Math.round).join(',')})`
+    )
   }
 }
 
