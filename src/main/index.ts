@@ -1,6 +1,7 @@
 import { config as loadDotenv } from 'dotenv'
-import { app, ipcMain } from 'electron'
+import { app, globalShortcut, ipcMain } from 'electron'
 import { join } from 'node:path'
+import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   DwarfKickRequest,
   DwarfKickResult,
@@ -21,7 +22,8 @@ import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { createPinPreferenceStore } from './pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime'
-import { registerShortcuts, unregisterShortcuts } from './shortcuts'
+import { createShortcutPreferenceStore } from './shortcutPreference'
+import { createToggleShortcut, type ToggleShortcutController } from './shortcuts'
 import { createTray } from './tray'
 import {
   applyAlwaysOnTop,
@@ -34,11 +36,25 @@ import {
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
+/** Held at module scope so the will-quit handler can release the OS claim. */
+let toggleShortcut: ToggleShortcutController | null = null
+
+/**
+ * Only the distinctions that change a modifier's printed NAME matter to the
+ * settings panel (Cmd/Option vs Ctrl/Alt vs Win); everything else is 'other'.
+ */
+function shortcutPlatform(): ShortcutPlatform {
+  if (process.platform === 'darwin') return 'darwin'
+  if (process.platform === 'win32') return 'win32'
+  return 'other'
+}
 
 function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
   ipcMain.removeHandler(IPC_CHANNELS.getAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
+  ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
+  ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
@@ -108,6 +124,14 @@ async function init(): Promise<void> {
   })
   const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
+  // The panel-toggle shortcut is the third userData preference (see #17), read
+  // here so the accelerator is in hand before anything is claimed from the OS.
+  // A missing or unusable file yields the documented Ctrl+Alt+Shift+P default.
+  const shortcutStore = createShortcutPreferenceStore({
+    filePath: join(app.getPath('userData'), 'shortcut-preference-v1.json')
+  })
+  const storedAccelerator = await shortcutStore.load()
+
   runtime = new AgentRuntime({
     config,
     appPaths: {
@@ -142,7 +166,19 @@ async function init(): Promise<void> {
   await hooks.restore()
 
   await createTray({ hooks })
-  registerShortcuts(togglePanel)
+
+  // Claim the shortcut. A refusal is no longer just a console warning: the
+  // failure lives in the state the settings panel reads, so the user can see
+  // which combination is unavailable and record a different one.
+  const toggle = createToggleShortcut({
+    initial: storedAccelerator,
+    onToggle: togglePanel,
+    globalShortcut,
+    platform: shortcutPlatform()
+  })
+  toggleShortcut = toggle
+  const startupState = toggle.start()
+  if (startupState.error !== undefined) console.warn(`[shortcuts] ${startupState.error}`)
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
@@ -162,6 +198,24 @@ async function init(): Promise<void> {
       console.warn('[pin] Failed to persist the always-on-top preference:', error)
     }
     return real
+  })
+  ipcMain.handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
+  ipcMain.handle(IPC_CHANNELS.setToggleShortcut, async (_event, payload: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing
+    // and the caller still gets the real state back.
+    if (typeof payload !== 'string') return toggle.state()
+    const state = toggle.apply(payload)
+    try {
+      // Persist the VERDICT, not the request: a combination another
+      // application owns was reverted, and must not resurrect itself on the
+      // next launch as a shortcut that never worked.
+      await shortcutStore.save(state.accelerator)
+    } catch (error) {
+      // The re-binding itself already happened; a persistence hiccup only
+      // means the next launch falls back to whatever the file still says.
+      console.warn('[shortcuts] Failed to persist the panel-toggle shortcut:', error)
+    }
+    return state
   })
   ipcMain.handle(IPC_CHANNELS.getMines, () => toMinesSnapshot(runtime?.getMines() ?? []))
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
@@ -218,7 +272,10 @@ if (!app.requestSingleInstanceLock()) {
     removeIpcHandlers()
     markQuitting()
   })
-  app.on('will-quit', () => unregisterShortcuts())
+  app.on('will-quit', () => {
+    toggleShortcut?.dispose()
+    toggleShortcut = null
+  })
 
   // Keep running in the tray even with every window hidden.
   app.on('window-all-closed', () => {

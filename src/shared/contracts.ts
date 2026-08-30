@@ -3,6 +3,10 @@
  * Electron and Node imports so it can be shared by main, preload and renderer.
  */
 
+import type { ShortcutPlatform } from './accelerator'
+
+export type { ShortcutPlatform }
+
 export type MineTier = 'bronze' | 'copper' | 'silver' | 'gold' | 'uranium'
 
 export type DwarfProvider = 'claude' | 'codex'
@@ -186,6 +190,34 @@ export interface MinesSnapshot {
   tokensObserved: number
 }
 
+/**
+ * What the global panel-toggle shortcut actually IS right now (see #17) — the
+ * verdict, never the wish. `registered` is read back from the outcome of
+ * `globalShortcut.register`, so the settings panel can never paint a shortcut
+ * as active when the OS refused it.
+ */
+export interface ShortcutState {
+  /**
+   * The accelerator in force. After a failed change this is the combination
+   * that was KEPT, not the one that was rejected; after a failed startup
+   * registration it is the stored one, so the panel can name what is broken.
+   */
+  accelerator: string
+  /** Whether the OS actually granted the combination. False means no shortcut works. */
+  registered: boolean
+  /**
+   * Why the last attempt (at startup or on a change) did not work, ready to
+   * show. Absent exactly when the current accelerator registered cleanly.
+   */
+  error?: string
+  /**
+   * Which platform's key names to print (Cmd vs Ctrl vs Win). Main is the only
+   * process that knows `process.platform`, so it travels with the state rather
+   * than being guessed from the user agent in the renderer.
+   */
+  platform: ShortcutPlatform
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -195,6 +227,14 @@ export const IPC_CHANNELS = {
    */
   getAlwaysOnTop: 'panel:getAlwaysOnTop',
   setAlwaysOnTop: 'panel:setAlwaysOnTop',
+  /**
+   * User-configurable panel toggle, see #17. Both channels answer with the
+   * REAL ShortcutState after the registration attempt — never the requested
+   * accelerator — so a combination another application owns can never be
+   * rendered as the working shortcut.
+   */
+  getToggleShortcut: 'shortcut:get',
+  setToggleShortcut: 'shortcut:set',
   getMines: 'mines:get',
   minesUpdated: 'mines:update',
   activateDwarf: 'dwarf:activate',

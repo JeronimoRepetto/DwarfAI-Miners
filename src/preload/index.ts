@@ -5,7 +5,8 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
-  MinesSnapshot
+  MinesSnapshot,
+  ShortcutState
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 
@@ -21,6 +22,14 @@ export interface DwarfAiMinersApi {
    * renderer must render this verdict, never the wish.
    */
   setAlwaysOnTop: (pinned: boolean) => Promise<boolean>
+  /** The panel toggle's REAL state, including a startup registration failure (see #17). */
+  getToggleShortcut: () => Promise<ShortcutState>
+  /**
+   * Re-bind the global panel toggle live. Resolves with the REAL resulting
+   * state: when the combination is owned by another application this is the
+   * PREVIOUS accelerator plus the reason, never the one that was requested.
+   */
+  setToggleShortcut: (accelerator: string) => Promise<ShortcutState>
   /** Snapshot used by the renderer when it initializes after a poll update. */
   getMines: () => Promise<MinesSnapshot>
   /** Subscribe to push updates. Returns an unsubscribe function. */
@@ -39,6 +48,15 @@ const api: DwarfAiMinersApi = {
   // `pinned === true` collapses any non-boolean to false BEFORE it crosses the
   // bridge, so main's boundary validation only ever sees a clean boolean.
   setAlwaysOnTop: (pinned) => ipcRenderer.invoke(IPC_CHANNELS.setAlwaysOnTop, pinned === true),
+  getToggleShortcut: () => ipcRenderer.invoke(IPC_CHANNELS.getToggleShortcut),
+  // Same discipline as setAlwaysOnTop: collapse anything that is not a string
+  // BEFORE it crosses, so main's boundary check only reasons about a string.
+  // An empty one is refused there with a reason the panel can show.
+  setToggleShortcut: (accelerator) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.setToggleShortcut,
+      typeof accelerator === 'string' ? accelerator : ''
+    ),
   getMines: () => ipcRenderer.invoke(IPC_CHANNELS.getMines),
   onMinesUpdated: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: MinesSnapshot) =>

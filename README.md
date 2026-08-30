@@ -101,9 +101,10 @@ pnpm install
 pnpm dev
 ```
 
-The panel starts hidden. Press **Ctrl+Alt+Shift+P** (configurable soon —
-[#17](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues/17)) or click the tray icon to
-show it.
+The panel starts hidden. Press **Ctrl+Alt+Shift+P** or click the tray icon to show it. The
+combination is configurable: open the gear in the panel titlebar and record a new one. If
+another application already owns a combination, registration fails, the previous shortcut is
+re-claimed, and the settings panel says so rather than showing a shortcut that does nothing.
 
 > pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
 > Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.

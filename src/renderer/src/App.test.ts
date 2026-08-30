@@ -3,10 +3,17 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 
+const DEFAULT_SHORTCUT = {
+  accelerator: 'Control+Alt+Shift+P',
+  registered: true,
+  platform: 'win32'
+}
+
 /**
  * Full window.api stub: App touches the mines surface on mount (load + push
- * subscription) and the pin surface for the titlebar control, so every member
- * must exist even in tests that only look at the titlebar.
+ * subscription), the pin surface for the titlebar control and the shortcut
+ * surface for the settings panel, so every member must exist even in tests
+ * that only look at the titlebar.
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
@@ -18,6 +25,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     kickDwarf: vi.fn(),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
+    getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
+    setToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -36,6 +45,7 @@ describe('App titlebar pin control', () => {
     const { wrapper } = await mountApp()
     const buttons = wrapper.findAll('.titlebar button')
     expect(buttons.map((button) => button.classes())).toEqual([
+      expect.arrayContaining(['settings']),
       expect.arrayContaining(['pin']),
       expect.arrayContaining(['close'])
     ])
@@ -89,5 +99,157 @@ describe('App titlebar pin control', () => {
     const { wrapper, api } = await mountApp()
     await wrapper.find('.titlebar .close').trigger('click')
     expect(api.hidePanel).toHaveBeenCalledOnce()
+  })
+})
+
+describe('App settings entry point', () => {
+  it('is a real keyboard-reachable button drawn as pixel art, not text or emoji', async () => {
+    const { wrapper } = await mountApp()
+    const gear = wrapper.find('.titlebar .settings')
+    expect(gear.attributes('type')).toBe('button')
+    expect(gear.attributes('aria-label')).toBe('Settings')
+    expect(gear.attributes('title')).toBeTruthy()
+    expect(gear.find('svg').exists()).toBe(true)
+    expect(gear.text()).toBe('')
+  })
+
+  it('opens and closes the settings panel, reporting the state on the gear', async () => {
+    const { wrapper } = await mountApp()
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.titlebar .settings').attributes('aria-expanded')).toBe('false')
+
+    await wrapper.find('.titlebar .settings').trigger('click')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    expect(wrapper.find('.titlebar .settings').attributes('aria-expanded')).toBe('true')
+
+    await wrapper.find('.titlebar .settings').trigger('click')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  })
+
+  it('closes the panel from its own close button', async () => {
+    const { wrapper } = await mountApp()
+    await wrapper.find('.titlebar .settings').trigger('click')
+    await wrapper.find('.close-settings').trigger('click')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  })
+
+  it('flags a shortcut that failed to register, without the panel being open', async () => {
+    // The whole point of #17: a startup failure used to reach only the console.
+    const { wrapper } = await mountApp({
+      getToggleShortcut: vi.fn().mockResolvedValue({
+        accelerator: 'Control+Alt+Shift+P',
+        registered: false,
+        platform: 'win32',
+        error: 'Ctrl + Alt + Shift + P is already in use by another application.'
+      })
+    })
+    const gear = wrapper.find('.titlebar .settings')
+    expect(gear.classes()).toContain('is-broken')
+    expect(gear.attributes('title')).toMatch(/unavailable/i)
+  })
+
+  it('does not flag the gear when the shortcut is working', async () => {
+    const { wrapper } = await mountApp()
+    expect(wrapper.find('.titlebar .settings').classes()).not.toContain('is-broken')
+  })
+})
+
+describe('App shortcut settings', () => {
+  async function openSettings(overrides: Record<string, unknown> = {}) {
+    const mounted = await mountApp(overrides)
+    await mounted.wrapper.find('.titlebar .settings').trigger('click')
+    return mounted
+  }
+
+  it('shows the real shortcut read from main on mount', async () => {
+    const { wrapper } = await openSettings({
+      getToggleShortcut: vi
+        .fn()
+        .mockResolvedValue({ accelerator: 'Control+Alt+M', registered: true, platform: 'win32' })
+    })
+    expect(wrapper.find('.recorder').text()).toBe('Ctrl + Alt + M')
+  })
+
+  it('records a combination and renders the accelerator main confirmed', async () => {
+    const setToggleShortcut = vi
+      .fn()
+      .mockResolvedValue({ accelerator: 'Control+Alt+M', registered: true, platform: 'win32' })
+    const { wrapper } = await openSettings({ setToggleShortcut })
+
+    await wrapper.find('.recorder').trigger('click')
+    expect(wrapper.find('.recorder').attributes('aria-pressed')).toBe('true')
+    await wrapper.find('.recorder').trigger('keydown', {
+      key: 'm',
+      code: 'KeyM',
+      ctrlKey: true,
+      altKey: true
+    })
+    await flushPromises()
+
+    expect(setToggleShortcut).toHaveBeenCalledWith('Control+Alt+M')
+    expect(wrapper.find('.recorder').text()).toBe('Ctrl + Alt + M')
+    expect(wrapper.find('.recorder').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('renders the combination that was KEPT after a refusal, plus the reason', async () => {
+    // Main reverted to the previous accelerator; showing the requested one
+    // would claim a shortcut that is bound to nothing.
+    const setToggleShortcut = vi.fn().mockResolvedValue({
+      accelerator: 'Control+Alt+Shift+P',
+      registered: true,
+      platform: 'win32',
+      error:
+        'Ctrl + Alt + M is already in use by another application. Still using Ctrl + Alt + Shift + P.'
+    })
+    const { wrapper } = await openSettings({ setToggleShortcut })
+
+    await wrapper.find('.recorder').trigger('click')
+    await wrapper.find('.recorder').trigger('keydown', {
+      key: 'm',
+      code: 'KeyM',
+      ctrlKey: true,
+      altKey: true
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.recorder').text()).toBe('Ctrl + Alt + Shift + P')
+    expect(wrapper.find('[role="alert"]').text()).toMatch(/already in use/i)
+  })
+
+  it('refuses a combination with no modifier without bothering main', async () => {
+    const setToggleShortcut = vi.fn()
+    const { wrapper } = await openSettings({ setToggleShortcut })
+    await wrapper.find('.recorder').trigger('click')
+    await wrapper.find('.recorder').trigger('keydown', { key: 'p', code: 'KeyP' })
+    await flushPromises()
+    expect(setToggleShortcut).not.toHaveBeenCalled()
+    expect(wrapper.find('[role="alert"]').text()).toMatch(/modifier/i)
+  })
+
+  it('asks main for the documented default when reset', async () => {
+    const setToggleShortcut = vi.fn().mockResolvedValue({
+      accelerator: 'Control+Alt+Shift+P',
+      registered: true,
+      platform: 'win32'
+    })
+    const { wrapper } = await openSettings({
+      getToggleShortcut: vi
+        .fn()
+        .mockResolvedValue({ accelerator: 'Control+Alt+M', registered: true, platform: 'win32' }),
+      setToggleShortcut
+    })
+    await wrapper.find('.reset').trigger('click')
+    await flushPromises()
+    expect(setToggleShortcut).toHaveBeenCalledWith('Control+Alt+Shift+P')
+    expect(wrapper.find('.recorder').text()).toBe('Ctrl + Alt + Shift + P')
+  })
+
+  it('stops listening when the panel is closed mid-recording', async () => {
+    // Otherwise the next open would silently be capturing keystrokes.
+    const { wrapper } = await openSettings()
+    await wrapper.find('.recorder').trigger('click')
+    await wrapper.find('.titlebar .settings').trigger('click')
+    await wrapper.find('.titlebar .settings').trigger('click')
+    expect(wrapper.find('.recorder').attributes('aria-pressed')).toBe('false')
   })
 })

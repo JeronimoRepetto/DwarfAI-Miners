@@ -45,6 +45,8 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.activateDwarf).toBe('function')
     expect(typeof api.sendDwarfText).toBe('function')
     expect(typeof api.kickDwarf).toBe('function')
+    expect(typeof api.getToggleShortcut).toBe('function')
+    expect(typeof api.setToggleShortcut).toBe('function')
   })
 
   it('asks for the current state on the panel:getAlwaysOnTop channel with no payload', async () => {
@@ -64,5 +66,49 @@ describe('preload always-on-top contract', () => {
     // that real state so it never renders an always-on-top it does not have.
     invoke.mockResolvedValueOnce(true)
     await expect(api.setAlwaysOnTop(false)).resolves.toBe(true)
+  })
+})
+
+describe('preload panel-toggle shortcut contract', () => {
+  it('asks for the current shortcut on the shortcut:get channel with no payload', async () => {
+    const state = { accelerator: 'Control+Alt+Shift+P', registered: true, platform: 'win32' }
+    invoke.mockResolvedValueOnce(state)
+    await expect(api.getToggleShortcut()).resolves.toEqual(state)
+    expect(invoke).toHaveBeenLastCalledWith('shortcut:get')
+  })
+
+  it('requests a change on shortcut:set with exactly the recorded accelerator', async () => {
+    invoke.mockResolvedValueOnce({
+      accelerator: 'Control+Alt+M',
+      registered: true,
+      platform: 'win32'
+    })
+    await api.setToggleShortcut('Control+Alt+M')
+    expect(invoke).toHaveBeenLastCalledWith('shortcut:set', 'Control+Alt+M')
+  })
+
+  it('hands back the main-process verdict, not the requested combination', async () => {
+    // The combination was taken, so main kept the old one: the renderer must
+    // receive THAT, or the settings panel would show a dead shortcut as live.
+    const reverted = {
+      accelerator: 'Control+Alt+Shift+P',
+      registered: true,
+      error: 'Ctrl + Alt + M is already in use by another application.',
+      platform: 'win32'
+    }
+    invoke.mockResolvedValueOnce(reverted)
+    await expect(api.setToggleShortcut('Control+Alt+M')).resolves.toEqual(reverted)
+  })
+
+  it('collapses a non-string payload to a string before it crosses the bridge', async () => {
+    // Same discipline as setAlwaysOnTop: main's boundary check should only ever
+    // have to reason about a clean string.
+    invoke.mockResolvedValueOnce({
+      accelerator: 'Control+Alt+Shift+P',
+      registered: true,
+      platform: 'win32'
+    })
+    await (api.setToggleShortcut as unknown as (value: unknown) => Promise<unknown>)(42)
+    expect(invoke).toHaveBeenLastCalledWith('shortcut:set', '')
   })
 })

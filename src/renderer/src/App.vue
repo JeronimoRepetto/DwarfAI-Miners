@@ -3,10 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FeedModal from './components/FeedModal.vue'
 import MapView from './components/MapView.vue'
 import MineScene from './components/MineScene.vue'
+import ShortcutSettings from './components/ShortcutSettings.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useMines } from './composables/useMines'
 import { usePinnedWindow } from './composables/usePinnedWindow'
+import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { shouldHidePanelAfterActivation } from './lib/activation'
 import type { Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
@@ -24,6 +26,49 @@ const pinTooltip = computed(() =>
     ? 'Pinned: the panel stays above other windows'
     : 'Unpinned: other windows can cover the panel'
 )
+
+/**
+ * Settings surface (see #17). App owns the composable — and therefore the IPC —
+ * so ShortcutSettings can stay presentational and the "render only what main
+ * verified" rule lives in exactly one place.
+ */
+const {
+  state: shortcutState,
+  error: shortcutError,
+  recording: shortcutRecording,
+  applying: shortcutApplying,
+  sync: syncShortcut,
+  startRecording: startShortcutRecording,
+  stopRecording: stopShortcutRecording,
+  record: recordShortcut,
+  reset: resetShortcut
+} = useToggleShortcut()
+
+const settingsOpen = ref(false)
+
+/**
+ * A shortcut the OS refused is flagged on the CLOSED gear too: a failure the
+ * user only meets after opening settings is a failure they never look for.
+ */
+const shortcutBroken = computed(
+  () => shortcutState.value !== null && !shortcutState.value.registered
+)
+
+const settingsTooltip = computed(() =>
+  shortcutBroken.value ? 'Shortcut unavailable - click to change it' : 'Settings'
+)
+
+function toggleSettings(): void {
+  settingsOpen.value = !settingsOpen.value
+  // Closing while the recorder is listening would leave it capturing
+  // keystrokes the next time the panel opens.
+  if (!settingsOpen.value) stopShortcutRecording()
+}
+
+function closeSettings(): void {
+  settingsOpen.value = false
+  stopShortcutRecording()
+}
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -127,6 +172,9 @@ onMounted(() => {
   // The button's initial "pinned" guess matches main's default; this adopts
   // the real BrowserWindow state (the user may have unpinned on a past run).
   void syncPinned()
+  // Reads the accelerator AND whether it actually registered, so a startup
+  // failure can be flagged on the gear before anyone opens settings.
+  void syncShortcut()
   unsubscribe = window.api.onMinesUpdated(update)
 })
 onBeforeUnmount(() => unsubscribe?.())
@@ -137,6 +185,36 @@ onBeforeUnmount(() => unsubscribe?.())
     <header class="titlebar">
       <span class="title"><i aria-hidden="true"></i>DwarfAI-Miners</span>
       <div class="window-controls">
+        <!--
+          Settings (see #17). aria-expanded ties the gear to the panel it
+          opens, and `is-broken` mirrors a shortcut the OS refused so the
+          failure is visible without opening anything.
+        -->
+        <button
+          class="settings"
+          :class="{ 'is-broken': shortcutBroken }"
+          type="button"
+          aria-label="Settings"
+          :aria-expanded="settingsOpen ? 'true' : 'false'"
+          :title="settingsTooltip"
+          @click="toggleSettings"
+        >
+          <!-- Pixel-art cog on the same 16x16 rect grid as the other icons. -->
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="6" y="1" width="4" height="2" fill="#a8703a" />
+            <rect x="6" y="13" width="4" height="2" fill="#a8703a" />
+            <rect x="1" y="6" width="2" height="4" fill="#a8703a" />
+            <rect x="13" y="6" width="2" height="4" fill="#a8703a" />
+            <rect x="3" y="3" width="2" height="2" fill="#a8703a" />
+            <rect x="11" y="3" width="2" height="2" fill="#a8703a" />
+            <rect x="3" y="11" width="2" height="2" fill="#a8703a" />
+            <rect x="11" y="11" width="2" height="2" fill="#a8703a" />
+            <rect x="4" y="4" width="8" height="8" fill="#f4c76a" />
+            <rect x="6" y="6" width="4" height="4" fill="#3f2a14" />
+            <!-- Warning pip: the same red the error notices use. -->
+            <rect v-if="shortcutBroken" x="12" y="0" width="4" height="3" fill="#e07a5f" />
+          </svg>
+        </button>
         <!--
           Pin toggle (see #35): stable accessible name + aria-pressed for the
           state, tooltip explaining what the current state does. `pinned` only
@@ -176,6 +254,18 @@ onBeforeUnmount(() => unsubscribe?.())
         </button>
       </div>
     </header>
+    <ShortcutSettings
+      v-if="settingsOpen"
+      :state="shortcutState"
+      :error="shortcutError"
+      :recording="shortcutRecording"
+      :applying="shortcutApplying"
+      @start-recording="startShortcutRecording"
+      @stop-recording="stopShortcutRecording"
+      @record="recordShortcut"
+      @reset="resetShortcut"
+      @close="closeSettings"
+    />
     <main class="content">
       <div v-if="loading" class="loading" role="status">
         <span class="spinner" aria-hidden="true"></span>
@@ -245,8 +335,9 @@ onBeforeUnmount(() => unsubscribe?.())
   gap: 2px;
   align-items: center;
 }
-/* Both titlebar buttons opt out of the frameless drag surface, or their
+/* Every titlebar button opts out of the frameless drag surface, or its
    clicks would start a window drag instead of reaching the handler. */
+.settings,
 .pin,
 .close {
   -webkit-app-region: no-drag;
@@ -261,6 +352,7 @@ onBeforeUnmount(() => unsubscribe?.())
   padding: 2px 8px;
   font-size: 22px;
 }
+.settings,
 .pin {
   display: flex;
   align-items: center;
@@ -268,6 +360,7 @@ onBeforeUnmount(() => unsubscribe?.())
   padding: 5px 7px;
   line-height: 0;
 }
+.settings svg,
 .pin svg {
   width: 16px;
   height: 16px;
@@ -275,16 +368,27 @@ onBeforeUnmount(() => unsubscribe?.())
      between the rect "pixels". */
   shape-rendering: crispEdges;
 }
+/* The gear dims until it has something to say, so a broken shortcut is the
+   thing that catches the eye rather than the settings entry point itself. */
+.settings svg {
+  opacity: 0.75;
+}
+.settings.is-broken svg,
+.settings:hover svg {
+  opacity: 1;
+}
 /* The unpinned glyph dims like a disabled action-bar icon: still clickable,
    but visually "off" next to the lit pinned pin. */
 .pin[aria-pressed='false'] svg {
   opacity: 0.6;
 }
+.settings:hover,
 .pin:hover,
 .close:hover {
   color: #fff;
   background: #4b3c28;
 }
+.settings:focus-visible,
 .pin:focus-visible,
 .close:focus-visible {
   outline: 2px solid #ffe29c;
