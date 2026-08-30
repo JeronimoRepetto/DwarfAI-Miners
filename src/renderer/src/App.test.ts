@@ -10,10 +10,18 @@ const DEFAULT_SHORTCUT = {
 }
 
 /**
+ * Deliberately not this repo's real version (#79): the titlebar must print
+ * what main reported, so a stub that happened to match package.json could not
+ * tell a working read from a value baked in somewhere else.
+ */
+const DEFAULT_BUILD = { version: '1.2.3', packaged: true }
+
+/**
  * Full window.api stub: App touches the mines surface on mount (load + push
- * subscription), the pin surface for the titlebar control and the shortcut
- * surface for the settings panel, so every member must exist even in tests
- * that only look at the titlebar.
+ * subscription), the pin surface for the titlebar control, the shortcut
+ * surface for the settings panel and the build surface for the version beside
+ * the title, so every member must exist even in tests that only look at the
+ * titlebar.
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
@@ -27,6 +35,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
     getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
     setToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
+    getAppBuild: vi.fn().mockResolvedValue(DEFAULT_BUILD),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -251,5 +260,65 @@ describe('App shortcut settings', () => {
     await wrapper.find('.titlebar .settings').trigger('click')
     await wrapper.find('.titlebar .settings').trigger('click')
     expect(wrapper.find('.recorder').attributes('aria-pressed')).toBe('false')
+  })
+})
+
+/**
+ * Which build is running (#79). The panel could not say, so a maintainer with
+ * an installed 0.3.0 and a dev build of the same checkout diagnosed the wrong
+ * one and had to read ProductVersion off the .exe from a shell.
+ */
+describe('App titlebar version', () => {
+  it('prints the version main reported, beside the title', async () => {
+    const { wrapper } = await mountApp({
+      getAppBuild: vi.fn().mockResolvedValue({ version: '0.4.1', packaged: true })
+    })
+    expect(wrapper.find('.titlebar .title .version').text()).toBe('0.4.1')
+  })
+
+  it('asks main once on mount rather than deriving it in the renderer', async () => {
+    // Context isolation is on and node integration is off: there is no
+    // package.json to read here and no process.env to consult, so a version
+    // that did NOT come over the bridge came from somewhere it cannot be
+    // trusted from.
+    const getAppBuild = vi.fn().mockResolvedValue(DEFAULT_BUILD)
+    await mountApp({ getAppBuild })
+    expect(getAppBuild).toHaveBeenCalledOnce()
+    expect(getAppBuild).toHaveBeenCalledWith()
+  })
+
+  it('marks a development build so it cannot be read as the installed one', async () => {
+    const { wrapper } = await mountApp({
+      getAppBuild: vi.fn().mockResolvedValue({ version: '0.3.0', packaged: false })
+    })
+    expect(wrapper.find('.titlebar .version').text()).toBe('0.3.0-dev')
+  })
+
+  it('says which of the two builds it is in the hover line', async () => {
+    const { wrapper } = await mountApp({
+      getAppBuild: vi.fn().mockResolvedValue({ version: '0.3.0', packaged: false })
+    })
+    expect(wrapper.find('.titlebar .version').attributes('title')).toMatch(/checkout/i)
+  })
+
+  it('stays out of the window controls, which are all still buttons', async () => {
+    // The version is a label, not an affordance: putting it among the pin,
+    // gear and close controls would make a monitor look clickable and would
+    // put it inside the no-drag region for no reason.
+    const { wrapper } = await mountApp()
+    expect(wrapper.find('.window-controls .version').exists()).toBe(false)
+    expect(wrapper.findAll('.titlebar button')).toHaveLength(3)
+  })
+
+  it('prints nothing at all when main cannot be asked', async () => {
+    // An honest blank beats "unknown" furniture: a failed read means the
+    // bridge is down, and inventing a placeholder version is the one thing
+    // this feature exists to stop.
+    const { wrapper } = await mountApp({
+      getAppBuild: vi.fn().mockRejectedValue(new Error('bridge unavailable'))
+    })
+    expect(wrapper.find('.titlebar .version').exists()).toBe(false)
+    // The rest of the titlebar is untouched by the failure.
+    expect(wrapper.find('.titlebar .title').text()).toContain('DwarfAI-Miners')
   })
 })

@@ -4,6 +4,7 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
+  AppBuild,
   DwarfKickRequest,
   DwarfKickResult,
   DwarfTextRequest,
@@ -71,6 +72,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
+  ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
 }
 
 /**
@@ -254,6 +256,17 @@ async function init(): Promise<void> {
   toggleShortcut = toggle
   const startupState = toggle.start()
   if (startupState.error !== undefined) console.warn(`[shortcuts] ${startupState.error}`)
+
+  // Which build is running (#79). Asked of Electron rather than answered from
+  // anything this repo compiles in, so the panel's number is the executable's
+  // number by construction instead of by coincidence.
+  //
+  // One trap, measured rather than assumed: getVersion() falls back to
+  // ELECTRON's own version, silently, when the app's package.json carries no
+  // `version` field. Never let that field go missing — the fallback is a
+  // plausible-looking number that answers a different question.
+  const appBuild: AppBuild = { version: app.getVersion(), packaged: app.isPackaged }
+  ipcMain.handle(IPC_CHANNELS.getAppBuild, () => appBuild)
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())

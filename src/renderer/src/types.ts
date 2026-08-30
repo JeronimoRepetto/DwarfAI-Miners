@@ -2,6 +2,7 @@ import type { MaterialTotals, Mine } from '../../shared/contracts'
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
+  AppBuild,
   Dwarf,
   DwarfActivation,
   DwarfAttendance,

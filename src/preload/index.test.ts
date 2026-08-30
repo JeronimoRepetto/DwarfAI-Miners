@@ -48,6 +48,7 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.retireDwarf).toBe('function')
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')
+    expect(typeof api.getAppBuild).toBe('function')
   })
 
   it('asks for the current state on the panel:getAlwaysOnTop channel with no payload', async () => {
@@ -130,5 +131,28 @@ describe('preload dwarf retirement contract', () => {
     // ever have to reason about a clean string.
     ;(api.retireDwarf as unknown as (value: unknown) => void)(42)
     expect(send).toHaveBeenLastCalledWith('dwarf:retire', '')
+  })
+})
+
+/**
+ * Which build is running (#79). Read-only and payload-free: main is the only
+ * process that can answer, because only it can ask Electron, and the renderer
+ * has no second route to the answer with context isolation on.
+ */
+describe('preload app build contract', () => {
+  it('asks for the running build on the app:build channel with no payload', async () => {
+    const build = { version: '0.3.0', packaged: true }
+    invoke.mockResolvedValueOnce(build)
+    await expect(api.getAppBuild()).resolves.toEqual(build)
+    expect(invoke).toHaveBeenLastCalledWith('app:build')
+  })
+
+  it('hands back main’s answer untouched, including that it is unpackaged', async () => {
+    // The dev flag is the half of the answer the incident turned on; a bridge
+    // that dropped or defaulted it would leave the panel unable to tell the
+    // two builds apart, which is the whole defect.
+    const build = { version: '0.3.0', packaged: false }
+    invoke.mockResolvedValueOnce(build)
+    await expect(api.getAppBuild()).resolves.toEqual(build)
   })
 })
