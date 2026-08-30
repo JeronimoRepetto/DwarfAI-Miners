@@ -241,6 +241,38 @@ export function sceneDwarfAnimation(
 }
 
 /**
+ * The same loop, held on a single pose, for a viewer who asked their operating
+ * system for less movement (issue #71).
+ *
+ * Every other animation in the panel already stands down for that viewer —
+ * theme.css neutralises the CSS wholesale, MineScene places the crew instead of
+ * walking them, DwarfSprite hides the sparks and stills the `z z z`, MineMound
+ * and VaultChip stop their pulses. The sprite's frame timer was the one that
+ * did not, and it is the largest moving thing on screen.
+ *
+ * It is answered here rather than by a fifth mechanism, because the machinery
+ * for a still dwarf already exists: a loop of fewer than two frames starts no
+ * timer at all (see DwarfSprite's watcher), so collapsing the loop IS switching
+ * the timer off, down the same path the silence poses (#47) take.
+ *
+ * The pose held is the loop's LAST — where its gesture ends rather than where
+ * it winds up: the log book raised to reading height, the pick buried in the
+ * rock, the boot planted. That is load-bearing and not taste. The foreman's
+ * working loop OPENS on `foreman-idle`, which is exactly the pose his silence
+ * loop holds, so holding first frames would draw a foreman at his book and a
+ * foreman nobody has heard from in an hour identically. Reduced motion asks for
+ * less movement, never for less information.
+ *
+ * `frameMs` rides through untouched although nothing reads it while one frame
+ * is held, so a viewer who turns the preference back off resumes the tempo they
+ * left rather than a default.
+ */
+export function stillDwarfAnimation(animation: DwarfAnimation): DwarfAnimation {
+  const held = animation.frames[animation.frames.length - 1] ?? NEUTRAL_DWARF_FRAME
+  return { frames: [held], frameMs: animation.frameMs }
+}
+
+/**
  * How long this dwarf has produced nothing, as the tooltip says it out loud:
  * "no output for 25 minutes".
  *

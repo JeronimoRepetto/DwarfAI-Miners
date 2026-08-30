@@ -60,9 +60,24 @@ export function walkFacesLeft(from: ScenePoint, to: ScenePoint, parkedFacesLeft:
   return dx < 0
 }
 
+/** The one query every reduced-motion site in the app asks. */
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+
+/**
+ * The narrow slice of a media query list this module uses. Listening is
+ * optional because answering is the part every platform manages: one that can
+ * report the preference but not its changing still gives a correct first
+ * answer, which is all the app had before it started watching.
+ */
+export interface ReducedMotionQuery {
+  matches: boolean
+  addEventListener?: (type: 'change', listener: () => void) => void
+  removeEventListener?: (type: 'change', listener: () => void) => void
+}
+
 /** The narrow slice of `window` the reduced-motion query needs. */
 export interface MediaQueryView {
-  matchMedia?: (query: string) => { matches: boolean }
+  matchMedia?: (query: string) => ReducedMotionQuery
 }
 
 /**
@@ -77,7 +92,35 @@ export function prefersReducedMotion(
   view: MediaQueryView | undefined = globalThis.window
 ): boolean {
   if (!view || typeof view.matchMedia !== 'function') return false
-  return view.matchMedia('(prefers-reduced-motion: reduce)').matches === true
+  return view.matchMedia(REDUCED_MOTION_QUERY).matches === true
+}
+
+/**
+ * The same preference, watched rather than sampled: `onChange` fires whenever
+ * the viewer's answer changes, and the returned function stops it.
+ *
+ * Sampling once is enough for anything settled before the first paint, which is
+ * what MineScene does with it. It is not enough for the sprite's frame timer
+ * (issue #71): a viewer who turns the setting on with the panel already open
+ * would otherwise keep a dwarf changing pose 109 times a minute until they
+ * relaunched the app.
+ *
+ * Tolerates every absence `prefersReducedMotion` does and one more — a query
+ * carrying no change event — by reporting nothing rather than throwing, which
+ * leaves the startup answer standing.
+ */
+export function watchReducedMotion(
+  onChange: (reduced: boolean) => void,
+  view: MediaQueryView | undefined = globalThis.window
+): () => void {
+  const unwatched = (): void => {}
+  if (!view || typeof view.matchMedia !== 'function') return unwatched
+  const query = view.matchMedia(REDUCED_MOTION_QUERY)
+  if (typeof query.addEventListener !== 'function') return unwatched
+
+  const listener = (): void => onChange(query.matches === true)
+  query.addEventListener('change', listener)
+  return () => query.removeEventListener?.('change', listener)
 }
 
 export interface WalkBoard {

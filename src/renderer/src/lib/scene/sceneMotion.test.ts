@@ -7,6 +7,7 @@ import {
   createWalkBoard,
   prefersReducedMotion,
   walkDurationMs,
+  watchReducedMotion,
   walkFacesLeft
 } from './sceneMotion'
 
@@ -154,5 +155,76 @@ describe('createWalkBoard', () => {
     vi.advanceTimersByTime(MAX_WALK_MS * 2)
     board.sync(targets({ a: { x: 21, y: 79 } }))
     expect(emissions).toBe(afterWalkStarted)
+  })
+})
+
+/*
+ * Issue #71 — the preference is not only read at startup any more. A viewer
+ * who turns it on while the panel is open must not have to relaunch to be
+ * listened to, which means subscribing rather than sampling.
+ */
+describe('watchReducedMotion', () => {
+  /** A media query that can actually change its mind, as a real one can. */
+  function listenable(initial: boolean) {
+    const listeners = new Set<() => void>()
+    const query = {
+      matches: initial,
+      addEventListener: (_type: 'change', listener: () => void) => void listeners.add(listener),
+      removeEventListener: (_type: 'change', listener: () => void) =>
+        void listeners.delete(listener)
+    }
+    return {
+      view: { matchMedia: () => query },
+      flip(next: boolean): void {
+        query.matches = next
+        for (const listener of [...listeners]) listener()
+      },
+      get listenerCount(): number {
+        return listeners.size
+      }
+    }
+  }
+
+  it('reports the preference changing under a panel that is already open', () => {
+    const media = listenable(false)
+    const seen: boolean[] = []
+    watchReducedMotion((reduced) => seen.push(reduced), media.view)
+
+    media.flip(true)
+    media.flip(false)
+    expect(seen).toEqual([true, false])
+  })
+
+  it('hands back a way to stop listening, and stops', () => {
+    const media = listenable(false)
+    const seen: boolean[] = []
+    const stop = watchReducedMotion((reduced) => seen.push(reduced), media.view)
+    expect(media.listenerCount).toBe(1)
+
+    stop()
+    expect(media.listenerCount).toBe(0)
+    media.flip(true)
+    expect(seen).toEqual([])
+  })
+
+  it('stays silent rather than throwing where the query cannot be asked at all', () => {
+    // jsdom leaves window.matchMedia undefined, and so does the very first
+    // render — neither is a reason to refuse to draw a dwarf.
+    const seen: boolean[] = []
+    for (const view of [undefined, {}]) {
+      expect(() => watchReducedMotion((reduced) => seen.push(reduced), view)()).not.toThrow()
+    }
+    expect(seen).toEqual([])
+  })
+
+  it('stays silent rather than throwing where the query cannot be listened to', () => {
+    // An older platform answers the query but has no change event on it. The
+    // answer it gave at startup still stands; nothing else is promised.
+    const seen: boolean[] = []
+    const stop = watchReducedMotion((reduced) => seen.push(reduced), {
+      matchMedia: () => ({ matches: true })
+    })
+    expect(() => stop()).not.toThrow()
+    expect(seen).toEqual([])
   })
 })

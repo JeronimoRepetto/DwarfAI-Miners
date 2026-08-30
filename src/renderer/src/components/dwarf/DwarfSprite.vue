@@ -13,8 +13,10 @@ import {
   isPickImpact,
   isSpriteFlipped,
   sceneDwarfAnimation,
-  statusAnimationClass
+  statusAnimationClass,
+  stillDwarfAnimation
 } from '../../lib/presentation'
+import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { computeTooltipPlacement } from '../../lib/overlay/tooltip'
 import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
 import DwarfActionBar from './DwarfActionBar.vue'
@@ -247,18 +249,38 @@ preloadDwarfArt()
  */
 const silent = computed(() => isDwarfSilent(props.dwarf.role, props.dwarf.silentForMs))
 
+/**
+ * Whether this viewer asked their operating system for less movement (issue
+ * #71). Read the way every other site in the app reads it — the shared
+ * prefersReducedMotion query, not a fifth mechanism — and then WATCHED, which
+ * is the part MineScene does not need: the scene decides before its first paint
+ * and never again, whereas a frame timer left running is exactly the thing the
+ * viewer asked to stop, and they must not have to relaunch to stop it.
+ */
+const reducedMotion = ref(prefersReducedMotion())
+const stopWatchingMotion = watchReducedMotion((reduced) => {
+  reducedMotion.value = reduced
+})
+onBeforeUnmount(stopWatchingMotion)
+
 // The waiting reason is passed straight through, never re-derived here: only
 // the provider knows whether a human was actually asked something (issue #60),
 // and a sprite that guessed would be the fabricated status the issue forbids.
-const animation = computed(() =>
-  sceneDwarfAnimation(
+//
+// Reduced motion collapses whatever loop that picks onto one held pose, which
+// the watcher below then draws without starting a timer at all. Each state
+// still holds a DIFFERENT pose, so the panel loses movement and no information
+// (see stillDwarfAnimation).
+const animation = computed(() => {
+  const loop = sceneDwarfAnimation(
     props.dwarf.status,
     props.dwarf.role,
     props.walking === true,
     silent.value,
     props.dwarf.waitingReason
   )
-)
+  return reducedMotion.value ? stillDwarfAnimation(loop) : loop
+})
 const frameIndex = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
 
@@ -638,6 +660,11 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
  * A viewer who asked for less movement still gets the whole scene — every
  * dwarf stands at its painted feature — but nothing twitches, sparks or
  * drifts to get there.
+ *
+ * The frame timer is answered in script rather than here (issue #71): CSS
+ * cannot reach a setInterval, so the same preference is read through
+ * prefersReducedMotion and collapses each loop to one held pose. This block is
+ * only the part CSS owns.
  */
 @media (prefers-reduced-motion: reduce) {
   .spark-burst {
