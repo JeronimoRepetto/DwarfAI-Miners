@@ -121,8 +121,8 @@ expensive — cost 1.66 ms combined.** The 256 KiB tail bound is doing its job.
 is not. Measured in isolation on the same machine, against the same directories:
 
 ```
-C:\Users\jeron\.claude\sessions:           exists 0.05ms avg, listDir 0.09ms avg (8 entries)
-C:\Users\jeron\.claude-multitec\sessions:  exists 0.04ms avg, listDir 0.05ms avg (0 entries)
+<primary Claude root>\sessions:    exists 0.05ms avg, listDir 0.09ms avg (8 entries)
+<secondary Claude root>\sessions:  exists 0.04ms avg, listDir 0.05ms avg (0 entries)
 ```
 
 The syscall costs **0.09 ms**. The other ~5.6 ms is the Claude scan _waiting for
