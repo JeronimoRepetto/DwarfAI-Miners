@@ -459,6 +459,8 @@ privately.
   for Claude Code and Codex.
 - [`docs/codex-v2-format.md`](docs/codex-v2-format.md) — the Codex SQLite and rollout
   storage investigation.
+- [`docs/session-topology-and-roles.md`](docs/session-topology-and-roles.md) — what foreman
+  and worker mean, and the contract a new backend inherits.
 - [`docs/hook-detection-evaluation.md`](docs/hook-detection-evaluation.md) — the evaluation
   behind the instant-updates hooks channel.
 - [`docs/ecosystem-research.md`](docs/ecosystem-research.md) — the prior-art survey that
