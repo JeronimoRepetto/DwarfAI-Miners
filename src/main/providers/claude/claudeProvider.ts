@@ -46,6 +46,24 @@ const FIRST_SIGHT_TAIL_BYTES = 4 * 1024 * 1024
 const RECOVERY_TAIL_BYTES = 16 * 1024 * 1024
 
 /**
+ * How long a session must produce NOTHING before its remembered launches are
+ * read as over (see pruneStaleLaunches, issue #40).
+ *
+ * Not a liveness timer: it only ever applies to a session the registry reports
+ * `idle`, so it is the second half of a proof rather than an expiry. A turn
+ * interrupted mid-flight takes its background agents with it without ever
+ * writing their terminal `<task-notification>`, and #28's launch memory has no
+ * other exit — the reported ghost had been mining for 13 hours.
+ *
+ * Generous on purpose, because the opposite error is the false departure #28
+ * exists to prevent: a live subagent grinding through one long tool call
+ * appends nothing at all until that call returns, so a tight window would evict
+ * a worker that is merely quiet. Half an hour of total silence from an idle
+ * session is evidence; five minutes of it is just a slow build.
+ */
+const STALE_LAUNCH_MS = 30 * 60 * 1000
+
+/**
  * How far a probed process creation time may sit from the registry's procStart
  * before the pid is declared recycled. The POSIX probes answer in whole
  * seconds (ps lstart) or 10ms ticks (/proc starttime), and the FILETIME
@@ -74,6 +92,12 @@ export interface ClaudeProviderOptions {
    */
   processStartTimeMs?: (pid: number) => Promise<number | null>
   now?: () => number
+  /**
+   * How long an idle session must produce nothing before its remembered
+   * launches are dropped (see STALE_LAUNCH_MS). Injected so tests cross the
+   * boundary with an injected clock instead of a real half-hour timer.
+   */
+  staleLaunchMs?: number
 }
 
 function defaultIsPidAlive(pid: number): boolean {
@@ -83,6 +107,15 @@ function defaultIsPidAlive(pid: number): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Where one subagent's own transcript lives. Shared by the worker dwarf's feed
+ * source and by the staleness check, which reads that file's mtime as the
+ * worker's own proof of life — one path shape, one place to change it.
+ */
+function subagentTranscriptPath(projectDir: string, sessionId: string, agentId: string): string {
+  return join(projectDir, sessionId, 'subagents', `agent-${agentId}.jsonl`)
 }
 
 /**
@@ -98,6 +131,7 @@ export class ClaudeProvider implements Provider {
   private readonly isPidAlive: (pid: number) => boolean
   private readonly processStartTimeMs?: (pid: number) => Promise<number | null>
   private readonly now: () => number
+  private readonly staleLaunchMs: number
   /**
    * "pid|procStart" -> what probing that exact pair concluded.
    *
@@ -140,6 +174,21 @@ export class ClaudeProvider implements Provider {
    */
   private readonly terminalAgents = new Set<string>()
   /**
+   * Every agent id concluded to be over WITHOUT a terminal notification: its
+   * idle parent produced nothing, anywhere, for a whole staleness window
+   * (issue #40).
+   *
+   * Flat and process-lifetime for the same reason terminalAgents is — agent ids
+   * are globally unique and an agent that has ended never un-ends, so the whole
+   * cost is one short string per abandoned agent. It has to be remembered at all
+   * because this eviction is not self-sustaining: the dead agent's
+   * `async_launched` record usually sits in the tail untouched (nothing is
+   * writing, so nothing scrolls it out), and the first poll that finds the
+   * session busy again would merge it straight back — the reported ghost would
+   * return the moment its session picked up a new turn.
+   */
+  private readonly abandonedAgents = new Set<string>()
+  /**
    * sessionId -> (agentId -> launch info captured while the `async_launched`
    * record was still inside a tail read), the exact mirror of terminalAgents
    * (issue #28).
@@ -150,9 +199,10 @@ export class ClaudeProvider implements Provider {
    * worker dwarf silently leave mid-run. A launch stays remembered until a
    * terminal notification for its agent id is seen (terminalAgents always
    * wins), a turn ends with zero background agents pending while the launch
-   * is older than the whole tail (see snapshotSession), or the session itself
-   * leaves the registry (evicted in scan). Keyed per session — unlike the
-   * deliberately tiny flat terminal id set — so ended sessions cannot leak
+   * is older than the whole tail (see snapshotSession), its idle parent goes a
+   * whole window producing nothing anywhere (see pruneStaleLaunches), or the
+   * session itself leaves the registry (evicted in scan). Keyed per session —
+   * unlike the deliberately tiny flat terminal id set — so ended sessions cannot leak
    * launch records for the life of the process.
    */
   private readonly rememberedLaunches = new Map<string, Map<string, ClaudeInFlightAgent>>()
@@ -194,6 +244,7 @@ export class ClaudeProvider implements Provider {
       this.processStartTimeMs = options.processStartTimeMs
     }
     this.now = options.now ?? Date.now
+    this.staleLaunchMs = options.staleLaunchMs ?? STALE_LAUNCH_MS
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -360,9 +411,9 @@ export class ClaudeProvider implements Provider {
       this.rememberedLaunches.get(session.sessionId) ?? new Map<string, ClaudeInFlightAgent>()
     this.rememberedLaunches.set(session.sessionId, remembered)
     for (const agent of info.inFlightAgents) remembered.set(agent.agentId, agent)
-    // Terminal memory always wins: a remembered launch whose termination was
-    // also remembered stays gone, even when neither record is in the tail.
-    this.forgetTerminal(remembered)
+    // Ended memory always wins: a remembered launch whose end was already
+    // established stays gone, even when no record of it is in the tail.
+    this.forgetEnded(remembered)
     // Cross-check against the transcript's own bookkeeping: turn_duration
     // lines carry the count of background agents still running at end of
     // turn. Zero pending proves every launch OLDER than this whole tail has
@@ -387,6 +438,17 @@ export class ClaudeProvider implements Provider {
       transcriptBytes: transcriptStat?.size ?? 0,
       alreadyReadBytes: tailBytes,
       reportedPending: info.pendingBackgroundAgentCount,
+      remembered
+    })
+    // Last, so it judges everything the reads above could add (issue #40).
+    // Both directions of the count answer "how many are running"; neither can
+    // answer "the parent is not running a turn at all", which is the only
+    // evidence that closes an agent killed WITH its turn — no notification was
+    // ever written for it, and the count that outlived it still says 1.
+    await this.pruneStaleLaunches({
+      session,
+      projectDir,
+      parentMtimeMs: transcriptStat?.mtimeMs,
       remembered
     })
     const inFlightAgents = [...remembered.values()]
@@ -432,12 +494,7 @@ export class ClaudeProvider implements Provider {
     }
     for (const agent of inFlightAgents) {
       const workerId = `${mainDwarfId}:${agent.agentId}`
-      const subagentPath = join(
-        projectDir,
-        session.sessionId,
-        'subagents',
-        `agent-${agent.agentId}.jsonl`
-      )
+      const subagentPath = subagentTranscriptPath(projectDir, session.sessionId, agent.agentId)
       feedSources.set(workerId, subagentPath)
       const workerName = agent.description ?? `agent-${agent.agentId.slice(0, 7)}`
       // A running subagent has no channel of its own: nothing outside its
@@ -484,11 +541,83 @@ export class ClaudeProvider implements Provider {
     }
   }
 
-  /** Terminal memory outranks launch memory everywhere; both paths prune with this. */
-  private forgetTerminal(remembered: Map<string, ClaudeInFlightAgent>): void {
+  /**
+   * Is this agent over? Either a terminal notification said so outright, or an
+   * idle parent proved it by silence (issue #40). The two memories are kept
+   * apart because only the first is a record Claude wrote, but every path that
+   * could adopt a launch has to honour both — otherwise the deeper read that
+   * finds an old `async_launched` record becomes a resurrection machine.
+   */
+  private hasEnded(agentId: string): boolean {
+    return this.terminalAgents.has(agentId) || this.abandonedAgents.has(agentId)
+  }
+
+  /** Ended memory outranks launch memory everywhere; every path prunes with this. */
+  private forgetEnded(remembered: Map<string, ClaudeInFlightAgent>): void {
     for (const agentId of [...remembered.keys()]) {
-      if (this.terminalAgents.has(agentId)) remembered.delete(agentId)
+      if (this.hasEnded(agentId)) remembered.delete(agentId)
     }
+  }
+
+  /**
+   * Drop the remembered launches of a session that proves nothing is running —
+   * the exit #28 and #36 between them never had (issue #40).
+   *
+   * An agent killed WITH its parent's turn never writes a terminal
+   * `<task-notification>`, so the launch memory that #28 added to survive a
+   * scrolled tail keeps it mining forever, and the stale
+   * `pendingBackgroundAgentCount` #36 reads agrees with it: the observed session
+   * had been idle since 22:33 the previous evening and still reported 1 pending.
+   *
+   * Two conditions, and both are load-bearing:
+   *
+   * - The registry must report `idle`. `busy` is #28's case verbatim — a long
+   *   turn writing megabytes of tool output pushed the launch record out of the
+   *   window while the agent worked — and `waiting` is still mid-turn (blocked
+   *   on input, a dialog, or a long tool, see #34). In both a subagent can be
+   *   computing, so the launch memory must hold no matter how quiet things are.
+   * - Nothing may have been written for a whole window, by the parent OR by the
+   *   worker itself. An idle parent alone is NOT proof: a turn can legitimately
+   *   end with background agents still pending — that is exactly what
+   *   `pendingBackgroundAgentCount` records — and such an agent keeps appending
+   *   to its own subagent transcript the entire time it works.
+   *
+   * Together they separate "I cannot see the launch record", where the worker
+   * must stay, from "the parent proves nothing is running", where it must go.
+   * The per-worker stat costs nothing on the hot path: it is only reached for a
+   * session that is idle AND has itself been silent for the whole window.
+   */
+  private async pruneStaleLaunches(options: {
+    session: ClaudeSessionEntry
+    projectDir: string
+    /** undefined when no transcript exists — no evidence, not fresh evidence. */
+    parentMtimeMs: number | undefined
+    remembered: Map<string, ClaudeInFlightAgent>
+  }): Promise<void> {
+    const { session, remembered } = options
+    if (remembered.size === 0) return
+    if (session.status !== 'idle') return
+    const now = this.now()
+    if (this.writtenWithinWindow(options.parentMtimeMs, now)) return
+    for (const agentId of [...remembered.keys()]) {
+      const stat = await this.fs.stat(
+        subagentTranscriptPath(options.projectDir, session.sessionId, agentId)
+      )
+      if (this.writtenWithinWindow(stat?.mtimeMs, now)) continue
+      remembered.delete(agentId)
+      this.abandonedAgents.add(agentId)
+    }
+  }
+
+  /**
+   * Has this file been written recently enough to count as something still
+   * producing? A window that has exactly elapsed reads as stale — an arbitrary
+   * side to pick, pinned by tests so it stays a decision. A missing file (no
+   * mtime) is the absence of evidence, never evidence of production; a clock
+   * that runs behind an mtime yields a negative age, which is trivially fresh.
+   */
+  private writtenWithinWindow(mtimeMs: number | undefined, now: number): boolean {
+    return mtimeMs !== undefined && now - mtimeMs < this.staleLaunchMs
   }
 
   /**
@@ -529,12 +658,13 @@ export class ClaudeProvider implements Provider {
       // notification that answered it, so a stale count must never re-adopt an
       // agent already known to have finished. Without this ordering the deep
       // read becomes a resurrection machine for the ghost dwarf that
-      // terminalAgents exists to bury.
+      // terminalAgents exists to bury — and for the one abandoned by silence
+      // (issue #40), whose launch record is exactly what this window reaches.
       for (const agentId of deep.terminalAgentIds) this.terminalAgents.add(agentId)
       for (const agent of deep.inFlightAgents) {
-        if (!this.terminalAgents.has(agent.agentId)) remembered.set(agent.agentId, agent)
+        if (!this.hasEnded(agent.agentId)) remembered.set(agent.agentId, agent)
       }
-      this.forgetTerminal(remembered)
+      this.forgetEnded(remembered)
     }
     // Still short after the one deep look. The count can legitimately describe
     // background work with no `async_launched` record of its own, so this is

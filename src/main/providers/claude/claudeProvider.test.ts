@@ -759,6 +759,219 @@ describe('ClaudeProvider', () => {
         expect(recoveryReads()).toBe(2)
       })
     })
+
+    /**
+     * Regression (issue #40): the exit neither #28 nor #36 has. An agent that
+     * dies WITH its parent's turn — the session was interrupted mid-turn —
+     * never writes a terminal `<task-notification>`, so its launch stays
+     * remembered forever and its dwarf mines for an agent that stopped hours
+     * ago. Observed live: a background session idle since 22:33 the previous
+     * evening whose transcript ends at `"pendingBackgroundAgentCount":1`.
+     *
+     * The rule has to separate "I cannot see the launch record" — keep the
+     * worker, which is the whole point of #28 — from "the parent proves nothing
+     * is running". Only an IDLE session (neither `busy` nor `waiting`: both are
+     * mid-turn) that has produced nothing for a whole window, in its own
+     * transcript AND in the worker's, is that proof.
+     */
+    describe('stale launch memory (issue #40)', () => {
+      const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+      /** Short enough to read at a glance; the product default is minutes. */
+      const WINDOW = 10_000
+      /** When both transcripts were last written, before each test moves on. */
+      const LAST_WRITE = 42_000
+
+      let clock = LAST_WRITE
+
+      /**
+       * The provider with the clock this describe drives and a window small
+       * enough to cross inside a test. `staleLaunchMs` omitted entirely — see
+       * the last test — is what exercises the product default.
+       */
+      function staleAwareProvider(staleLaunchMs = WINDOW): ClaudeProvider {
+        return new ClaudeProvider({
+          fs: fake,
+          roots: [ROOT1],
+          isPidAlive: (pid) => alivePids.has(pid),
+          now: () => clock,
+          staleLaunchMs
+        })
+      }
+
+      /** The fixture registry entry with its status replaced. */
+      function entryWithStatus(status: string): string {
+        return JSON.stringify({ ...JSON.parse(sessionEntry), status })
+      }
+
+      /** Nothing in this session written since `mtimeMs` — parent or worker. */
+      function freezeTranscripts(mtimeMs: number): void {
+        fake.addFile(TRANSCRIPT, parentTranscript, mtimeMs)
+        fake.addFile(SUBAGENT, subagentTranscript, mtimeMs)
+      }
+
+      beforeEach(() => {
+        clock = LAST_WRITE
+        fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('idle'), 1_000)
+        freezeTranscripts(LAST_WRITE)
+      })
+
+      it('drops a remembered worker once its idle parent has been silent for the window', async () => {
+        const provider = staleAwareProvider()
+        // While the evidence is fresh the worker is a full citizen: an idle
+        // parent with agents out renders a resting foreman beside it.
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        // The session was kicked mid-turn, so no terminal notification will
+        // ever arrive and neither transcript is written again. A whole window
+        // of that is the parent proving nothing is running.
+        clock = LAST_WRITE + WINDOW
+        const second = await provider.scan()
+        expect(second[0]!.status).toBe('idle')
+        expect(second[0]!.dwarfs).toEqual([])
+      })
+
+      it('keeps the worker one millisecond before the window has elapsed', async () => {
+        clock = LAST_WRITE + WINDOW - 1
+        const snapshots = await staleAwareProvider().scan()
+        expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('drops the worker the moment the window has exactly elapsed', async () => {
+        clock = LAST_WRITE + WINDOW
+        const snapshots = await staleAwareProvider().scan()
+        expect(snapshots[0]!.dwarfs).toEqual([])
+      })
+
+      it('keeps a worker whose busy parent has written nothing this rule can see', async () => {
+        // THE regression guard for #28. A long turn writing megabytes of tool
+        // output pushes the launch record out of the window, so the routine
+        // tail shows no launch at all — the exact false-departure shape. The
+        // parent is BUSY: no amount of elapsed time turns "I cannot see the
+        // launch record" into "nothing is running".
+        fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('busy'), 1_000)
+        const provider = staleAwareProvider()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        fake.addFile(TRANSCRIPT, quietTail, LAST_WRITE)
+        clock = LAST_WRITE + WINDOW * 100
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('keeps a worker while its parent waits, which is still mid-turn', async () => {
+        // #34's `waiting` means alive but blocked — on user input, a dialog, or
+        // a LONG TOOL. A turn is still in flight there, so a subagent launched
+        // inside it can be computing: only `idle` proves no turn is running.
+        fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('waiting'), 1_000)
+        const provider = staleAwareProvider()
+        await provider.scan()
+
+        clock = LAST_WRITE + WINDOW * 100
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('keeps a worker that is still writing its own transcript under an idle parent', async () => {
+        // A turn CAN end with background agents pending — that is precisely
+        // what pendingBackgroundAgentCount records — so an idle parent is not
+        // proof by itself. While the worker's own transcript keeps growing it
+        // is producing, and dropping it would be the false departure again.
+        const provider = staleAwareProvider()
+        await provider.scan()
+
+        // The parent has been quiet for three windows; the worker wrote a
+        // moment ago.
+        clock = LAST_WRITE + WINDOW * 3
+        fake.addFile(SUBAGENT, subagentTranscript, clock - 1)
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        // ...and is still writing when the session picks up a turn again.
+        clock += WINDOW * 3
+        fake.addFile(SUBAGENT, subagentTranscript, clock)
+        fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('busy'), 2_000)
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('still drops a worker on its terminal notification without waiting for the window', async () => {
+        const provider = staleAwareProvider()
+        await provider.scan()
+
+        // Proof outranks silence: the notification lands while every transcript
+        // is fresh, and the worker leaves on that poll, not one window later.
+        fake.addFile(TRANSCRIPT, parentTranscript + notification(LIVE_AGENT, 'completed'), clock)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs).toEqual([])
+      })
+
+      it('never brings a stale worker back when its session goes busy again', async () => {
+        const provider = staleAwareProvider()
+        await provider.scan()
+        clock = LAST_WRITE + WINDOW
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+
+        // Next morning the user types a new prompt. The dead agent's launch
+        // record is STILL in the tail — nothing has scrolled it out — so a rule
+        // that only re-derived staleness each poll would re-adopt it and the
+        // ghost would be back the moment the session resumed.
+        fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('busy'), 2_000)
+        clock += WINDOW
+        fake.addFile(TRANSCRIPT, parentTranscript, clock)
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
+      })
+
+      it('never lets the under-count recovery re-adopt a stale worker', async () => {
+        // #36 escalates one deep read whenever the pending count exceeds what
+        // the provider knows, and that read reaches back far enough to find the
+        // dead agent's launch record. Staleness has to outrank it exactly the
+        // way terminal memory does, or the deep read becomes a resurrection
+        // machine for the very ghost this rule buries.
+        const GHOST = 'aa11bb22cc33dd440'
+        const reads = vi.spyOn(fake, 'readTextTail')
+        const deepReads = (): number => {
+          const bounds = reads.mock.calls
+            .filter(([path]) => path === TRANSCRIPT)
+            .map(([, maxBytes]) => maxBytes)
+          return bounds.filter((bound) => bound > (bounds[0] ?? 0)).length
+        }
+        fake.addFile(TRANSCRIPT, launch(GHOST, 'Ghost agent') + turnDuration(1), LAST_WRITE)
+        const provider = staleAwareProvider()
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([
+          MAIN_ID,
+          `claude:${SESSION_ID}:${GHOST}`
+        ])
+
+        clock = LAST_WRITE + WINDOW
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+
+        // The launch record scrolls out of the routine tail while the count
+        // line stays inside it: a textbook #36 shortfall, chased exactly once.
+        fake.addFile(
+          TRANSCRIPT,
+          launch(GHOST, 'Ghost agent') + pastRegularTail + turnDuration(1),
+          clock
+        )
+        const third = await provider.scan()
+        expect(deepReads()).toBe(1)
+        expect(third[0]!.dwarfs).toEqual([])
+      })
+
+      it('uses a generous default window when none is injected', async () => {
+        // Ten minutes of silence is not proof: a subagent grinding through one
+        // long tool call writes nothing at all until that call returns. The
+        // default has to be long enough that only a truly dead agent trips it,
+        // so this is the one provider here with no window injected at all.
+        const provider = new ClaudeProvider({
+          fs: fake,
+          roots: [ROOT1],
+          isPidAlive: (pid) => alivePids.has(pid),
+          now: () => clock
+        })
+        clock = LAST_WRITE + 10 * 60_000
+        const snapshots = await provider.scan()
+        expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+    })
   })
 
   it('maps an idle session to a snapshot with no dwarfs', async () => {
