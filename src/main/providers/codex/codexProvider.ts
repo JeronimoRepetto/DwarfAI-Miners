@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
-import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../adapters/processProbe'
+import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../platform/processProbe'
 import type { SqliteLike } from '../../adapters/sqliteLike'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'

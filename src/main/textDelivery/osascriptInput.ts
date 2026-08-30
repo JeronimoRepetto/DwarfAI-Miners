@@ -1,4 +1,4 @@
-import type { ProbeCommand } from '../adapters/processProbe'
+import type { ProbeCommand } from '../platform/processProbe'
 import type { CommandRunner } from '../platform/unixFocus'
 import { toConsoleLine } from './sendKeys'
 

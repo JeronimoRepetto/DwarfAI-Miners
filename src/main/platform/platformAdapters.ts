@@ -1,9 +1,5 @@
 import { homedir } from 'node:os'
-import {
-  createProcessProbe,
-  type ProbeRunner,
-  type ProcessProbePort
-} from '../adapters/processProbe'
+import { createProcessProbe, type ProbeRunner, type ProcessProbePort } from './processProbe'
 import { focusPid as windowsFocusPid, type ShellRunner } from './focus'
 import {
   launchTranscriptViewer,

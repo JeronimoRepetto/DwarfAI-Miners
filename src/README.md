@@ -50,7 +50,7 @@ src/
 ├── preload/         the API surface exposed to the renderer
 ├── main/
 │   ├── index.ts     composition root — the only file that owns Electron's app/ipcMain/globalShortcut
-│   ├── adapters/    injectable seams for fs, sqlite and process probing, with their fakes
+│   ├── adapters/    injectable seams for fs and sqlite, with their fakes
 │   ├── config/      typed settings, and the userData document layered under the environment
 │   ├── domain/      this process's type barrel, and the pure domain rules (materials, ledger, lifecycle)
 │   ├── hooks/       the opt-in Claude hooks push channel

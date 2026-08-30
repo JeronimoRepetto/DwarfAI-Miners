@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import type { Platform } from '../platform/platform'
-import { currentPlatform } from '../platform/platform'
+import type { Platform } from './platform'
+import { currentPlatform } from './platform'
 
 /**
  * Questions only the operating system's process list can answer.

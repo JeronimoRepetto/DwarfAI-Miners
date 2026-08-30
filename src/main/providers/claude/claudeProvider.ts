@@ -5,7 +5,7 @@ import {
   dwarfSilenceWindowKey
 } from '../../../shared/contracts'
 import type { FsLike } from '../../adapters/fsLike'
-import { filetimeToEpochMs } from '../../adapters/processProbe'
+import { filetimeToEpochMs } from '../../platform/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot, WaitingReason } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'

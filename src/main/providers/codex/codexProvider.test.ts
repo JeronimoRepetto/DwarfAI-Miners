@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
-import { CODEX_PROBE_SCRIPT } from '../../adapters/processProbe'
+import { CODEX_PROBE_SCRIPT } from '../../platform/processProbe'
 import { CodexProvider, type CodexProviderOptions } from './codexProvider'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'codex')
