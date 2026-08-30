@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyLedger, serializeLedger, type LedgerState } from '../domain/ledger'
+import { emptyMaterialTotals } from '../domain/materials'
 import { defaultDwarf, defaultMine, type Mine } from '../domain/types'
 import { MaterialLedger, SAVE_INTERVAL_MS } from './materialLedger'
 import type { LedgerStore } from './ledgerStore'
@@ -16,6 +17,13 @@ function crewedMine(id: string, tier: Mine['tier'], sessionId: string, tokens: n
     dwarfs: [{ ...defaultDwarf(), id: sessionId, tokensObserved: tokens }]
   })
 }
+
+/**
+ * The tier walk has already measured every mine in these cases, and found
+ * exactly the tier the mine is drawn as. A tier still being computed is its
+ * own story, at the bottom of this file (#41).
+ */
+const confirmed = (target: Mine) => target.tier
 
 /** Deterministic store fake recording every save, newest last. */
 function fakeStore(initial: LedgerState = emptyLedger()): LedgerStore & { saves: LedgerState[] } {
@@ -36,8 +44,12 @@ describe('MaterialLedger.observe', () => {
     const ledger = new MaterialLedger({ store: fakeStore() })
     await ledger.load()
 
-    ledger.observe([crewedMine('mine:a', 'silver', 'claude:s1', 1_000)], 1)
-    const stamped = ledger.observe([crewedMine('mine:a', 'silver', 'claude:s1', 3_500)], 2)
+    ledger.observe([crewedMine('mine:a', 'silver', 'claude:s1', 1_000)], 1, confirmed)
+    const stamped = ledger.observe(
+      [crewedMine('mine:a', 'silver', 'claude:s1', 3_500)],
+      2,
+      confirmed
+    )
 
     expect(stamped[0]!.materials?.silver).toBe(2_500)
   })
@@ -47,25 +59,25 @@ describe('MaterialLedger.observe', () => {
     const ledger = new MaterialLedger({ store: fakeStore() })
     await ledger.load()
     const input = mine({ id: 'mine:a', tokensObserved: 77 })
-    expect(ledger.observe([input], 1)[0]!.tokensObserved).toBe(77)
+    expect(ledger.observe([input], 1, confirmed)[0]!.tokensObserved).toBe(77)
   })
 
   it('does not mutate the mines it was handed', async () => {
     const ledger = new MaterialLedger({ store: fakeStore() })
     await ledger.load()
     const input = crewedMine('mine:a', 'gold', 'claude:s1', 10)
-    ledger.observe([input], 1)
+    ledger.observe([input], 1, confirmed)
     expect(input.materials).toBeUndefined()
   })
 
   it('keeps a mines material after its whole crew leaves', async () => {
     const ledger = new MaterialLedger({ store: fakeStore() })
     await ledger.load()
-    ledger.observe([crewedMine('mine:a', 'copper', 'claude:s1', 1_000)], 1)
-    ledger.observe([crewedMine('mine:a', 'copper', 'claude:s1', 6_000)], 2)
+    ledger.observe([crewedMine('mine:a', 'copper', 'claude:s1', 1_000)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'copper', 'claude:s1', 6_000)], 2, confirmed)
 
     // The mine is still there but empty; the vault must not forget.
-    const stamped = ledger.observe([mine({ id: 'mine:a', tier: 'copper' })], 3)
+    const stamped = ledger.observe([mine({ id: 'mine:a', tier: 'copper' })], 3, confirmed)
     expect(stamped[0]!.materials?.copper).toBe(5_000)
   })
 
@@ -73,8 +85,8 @@ describe('MaterialLedger.observe', () => {
     const ledger = new MaterialLedger({ store: fakeStore() })
     await ledger.load()
     ledger.creditCoal('mine:archived', 40_000)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 700)], 2)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 700)], 2, confirmed)
 
     expect(ledger.totals().coal).toBe(40_000)
     expect(ledger.totals().gold).toBe(600)
@@ -85,15 +97,19 @@ describe('MaterialLedger.load', () => {
   it('resumes from the stored ledger without re-crediting the stored counter', async () => {
     const before = new MaterialLedger({ store: fakeStore() })
     await before.load()
-    before.observe([crewedMine('mine:a', 'copper', 'claude:s1', 1_000)], 1)
-    before.observe([crewedMine('mine:a', 'copper', 'claude:s1', 5_000)], 2)
+    before.observe([crewedMine('mine:a', 'copper', 'claude:s1', 1_000)], 1, confirmed)
+    before.observe([crewedMine('mine:a', 'copper', 'claude:s1', 5_000)], 2, confirmed)
     await before.save(2, true)
 
     // Restart: a new ledger over the bytes the old one wrote.
     const persisted = before.state()
     const after = new MaterialLedger({ store: fakeStore(persisted) })
     await after.load()
-    const stamped = after.observe([crewedMine('mine:a', 'copper', 'claude:s1', 5_000)], 3)
+    const stamped = after.observe(
+      [crewedMine('mine:a', 'copper', 'claude:s1', 5_000)],
+      3,
+      confirmed
+    )
 
     expect(stamped[0]!.materials?.copper).toBe(4_000)
   })
@@ -123,12 +139,12 @@ describe('MaterialLedger.save', () => {
     const ledger = new MaterialLedger({ store })
     await ledger.load()
 
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 200)], 2)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 200)], 2, confirmed)
     await ledger.save(2)
     expect(store.saves).toHaveLength(1)
 
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 300)], 3)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 300)], 3, confirmed)
     await ledger.save(3)
     expect(store.saves).toHaveLength(1)
 
@@ -140,11 +156,11 @@ describe('MaterialLedger.save', () => {
     const store = fakeStore()
     const ledger = new MaterialLedger({ store })
     await ledger.load()
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2, confirmed)
 
     await ledger.save(2)
-    await ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 1_900)], 3)
+    await ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 1_900)], 3, confirmed)
     await ledger.save(3, true)
 
     expect(store.saves).toHaveLength(2)
@@ -160,8 +176,8 @@ describe('MaterialLedger.save', () => {
     const errors: unknown[] = []
     const ledger = new MaterialLedger({ store, onError: (_m, error) => errors.push(error) })
     await ledger.load()
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2, confirmed)
 
     await expect(ledger.save(2, true)).resolves.toBeUndefined()
     expect(errors).toHaveLength(1)
@@ -176,8 +192,8 @@ describe('MaterialLedger.save', () => {
     }
     const ledger = new MaterialLedger({ store, onError: () => undefined })
     await ledger.load()
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2, confirmed)
 
     await ledger.save(2, true)
     fail = false
@@ -191,8 +207,8 @@ describe('MaterialLedger.save', () => {
     const store = fakeStore()
     const ledger = new MaterialLedger({ store })
     await ledger.load()
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1)
-    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2, confirmed)
 
     await ledger.save(2 + SAVE_INTERVAL_MS * 100_000, true)
     const saved = store.saves.at(-1)!
@@ -222,7 +238,7 @@ describe('MaterialLedger.creditCoal', () => {
     const ledger = new MaterialLedger({ store: fakeStore() })
     await ledger.load()
     ledger.creditCoal('mine:a', 9_000)
-    const stamped = ledger.observe([mine({ id: 'mine:a', tier: 'bronze' })], 1)
+    const stamped = ledger.observe([mine({ id: 'mine:a', tier: 'bronze' })], 1, confirmed)
     expect(stamped[0]!.materials?.coal).toBe(9_000)
   })
 })
@@ -233,5 +249,80 @@ describe('MaterialLedger.state', () => {
     await ledger.load()
     ledger.creditCoal('mine:a', 10)
     expect(() => serializeLedger(ledger.state())).not.toThrow()
+  })
+})
+
+/**
+ * #41: the vault credited phantom bronze for the first seconds after every
+ * start, because tierOf() serves a provisional 'bronze' until the first walk
+ * finishes and the ledger sealed deltas with it. A provisional tier is for
+ * drawing only; the vault waits.
+ */
+describe('MaterialLedger.observe: a tier that is still being computed (#41)', () => {
+  /** The walk has not finished for any mine yet. */
+  const pending = () => undefined
+
+  it('accrues nothing for a mine whose tier has not been computed yet', async () => {
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+
+    ledger.observe([crewedMine('mine:a', 'bronze', 'claude:s1', 1_000)], 1, pending)
+    const stamped = ledger.observe(
+      [crewedMine('mine:a', 'bronze', 'claude:s1', 13_094)],
+      2,
+      pending
+    )
+
+    expect(stamped[0]!.materials?.bronze).toBe(0)
+    expect(ledger.totals()).toEqual(emptyMaterialTotals())
+  })
+
+  it('credits the tokens burned during the wait in full, to the tier the walk found', async () => {
+    // The provider counter is cumulative, so the whole 1 000 -> 6 000 span
+    // lands as silver on the first poll that knows the tier — nothing is
+    // dropped, and none of it is bronze.
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+
+    ledger.observe([crewedMine('mine:a', 'bronze', 'claude:s1', 1_000)], 1, pending)
+    ledger.observe([crewedMine('mine:a', 'bronze', 'claude:s1', 4_000)], 2, pending)
+    const stamped = ledger.observe(
+      [crewedMine('mine:a', 'silver', 'claude:s1', 6_000)],
+      3,
+      confirmed
+    )
+
+    expect(stamped[0]!.materials?.silver).toBe(5_000)
+    expect(stamped[0]!.materials?.bronze).toBe(0)
+  })
+
+  it('accrues immediately for a mine whose tier is already known', async () => {
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+
+    ledger.observe([crewedMine('mine:a', 'silver', 'claude:s1', 1_000)], 1, confirmed)
+    const stamped = ledger.observe(
+      [crewedMine('mine:a', 'silver', 'claude:s1', 3_500)],
+      2,
+      confirmed
+    )
+
+    expect(stamped[0]!.materials?.silver).toBe(2_500)
+  })
+
+  it('never double-counts the wait, however many polls it spans', async () => {
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+
+    for (const tokens of [1_000, 4_000, 8_000]) {
+      ledger.observe([crewedMine('mine:a', 'bronze', 'claude:s1', tokens)], 1, pending)
+    }
+    ledger.observe([crewedMine('mine:a', 'silver', 'claude:s1', 10_000)], 2, confirmed)
+    ledger.observe([crewedMine('mine:a', 'silver', 'claude:s1', 12_000)], 3, confirmed)
+
+    // Exactly the growth since the first counter the vault ever saw, credited
+    // once: 12 000 - 1 000, with nothing left in bronze.
+    expect(ledger.totals().silver).toBe(11_000)
+    expect(ledger.totals().bronze).toBe(0)
   })
 })

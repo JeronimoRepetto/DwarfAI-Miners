@@ -1,4 +1,9 @@
-import { MATERIALS, type Material, type MaterialTotals } from '../../shared/contracts'
+import {
+  MATERIALS,
+  type Material,
+  type MaterialTotals,
+  type MineTier
+} from '../../shared/contracts'
 import {
   addMaterialTokens,
   emptyMaterialTotals,
@@ -53,7 +58,7 @@ export interface LedgerState {
   sessions: Record<string, SessionMark>
 }
 
-/** One session's counter as of this poll, already sealed with its mine's material. */
+/** One session's counter as of this poll, sealed with its mine's material. */
 export interface TokenObservation {
   mineId: string
   /**
@@ -62,11 +67,25 @@ export interface TokenObservation {
    * two providers can never collide on one key.
    */
   sessionKey: string
-  /** The material this mine is yielding right now. */
-  material: Material
+  /**
+   * The material this mine is yielding right now, or undefined while its tier
+   * is still being computed (#41). Undefined is NOT a material: it means this
+   * sighting may be remembered but must never be credited.
+   */
+  material: Material | undefined
   /** The provider's running counter, NOT a delta. */
   tokensObserved: number
 }
+
+/**
+ * The tier a walk has actually measured for this mine, or undefined while it
+ * is still running.
+ *
+ * Deliberately not `mine.tier`: that field is what the mine is DRAWN as, and
+ * it reads bronze for every mine on the first frames after a start. Asking a
+ * lookup for it forces every accrual path to name where its tier came from.
+ */
+export type ConfirmedTierLookup = (mine: Mine) => MineTier | undefined
 
 export function emptyLedger(): LedgerState {
   return { version: LEDGER_VERSION, mines: {}, sessions: {} }
@@ -90,17 +109,29 @@ export function ledgerTotals(state: LedgerState): MaterialTotals {
 
 /**
  * Turn one poll's mines into observations, sealing each dwarf with the tier
- * its mine is on RIGHT NOW. Sealing at observation time is what makes
- * "no retroactive conversion" fall out for free instead of needing a migration.
+ * `confirmedTierOf` reports for its mine RIGHT NOW. Sealing at observation
+ * time is what makes "no retroactive conversion" fall out for free instead of
+ * needing a migration.
+ *
+ * The tier comes from the lookup and never from `mine.tier`, because the
+ * stamped tier is a rendering value: the tier service serves a provisional
+ * bronze until the first walk finishes, and sealing deltas with it credited
+ * phantom bronze to mines that were never bronze (#41). A mine whose walk has
+ * not finished yields observations with NO material — remembered by accrue,
+ * credited by nothing.
  *
  * A dwarf whose provider reports no counter is skipped entirely rather than
  * read as zero: absent is not the same as zero, and treating it as zero would
  * look exactly like a counter reset and throw away a perfectly good baseline.
  */
-export function observationsFrom(mines: readonly Mine[]): TokenObservation[] {
+export function observationsFrom(
+  mines: readonly Mine[],
+  confirmedTierOf: ConfirmedTierLookup
+): TokenObservation[] {
   const observations: TokenObservation[] = []
   for (const mine of mines) {
-    const material = materialForTier(mine.tier)
+    const confirmed = confirmedTierOf(mine)
+    const material = confirmed === undefined ? undefined : materialForTier(confirmed)
     for (const dwarf of mine.dwarfs) {
       if (dwarf.tokensObserved === undefined) continue
       observations.push({
@@ -117,7 +148,7 @@ export function observationsFrom(mines: readonly Mine[]): TokenObservation[] {
 /**
  * Fold one poll's observations into the ledger.
  *
- * Three rules, each of which exists because the alternative credits garbage:
+ * Four rules, each of which exists because the alternative credits garbage:
  *
  * 1. A session seen for the FIRST time credits nothing and only records a
  *    baseline. Its counter is a lifetime total, so crediting it whole would
@@ -129,6 +160,18 @@ export function observationsFrom(mines: readonly Mine[]): TokenObservation[] {
  *    transcript tail that rolled past the last usage block), never of negative
  *    work. It credits nothing and rebaselines, so the tokens counted once
  *    before the reset are not counted a second time as it climbs back.
+ * 4. An observation with NO material — its mine's tier is still being computed
+ *    (#41) — credits nothing and leaves any existing baseline exactly where it
+ *    was. No material is ever credited from a guess.
+ *
+ * Rule 4 waits rather than dropping the sighting, and that costs no extra
+ * state: #41 offered a choice between discarding provisional observations and
+ * holding them until the tier resolves, and the session mark IS the held
+ * observation. Freezing it means the delta spanning the wait is credited once,
+ * whole, to the tier the walk really found — while a session first seen during
+ * the wait still gets its baseline here, so its tokens become creditable the
+ * moment the walk lands instead of being forfeited. Discarding outright would
+ * have turned phantom bronze into silently missing silver.
  *
  * Coal is refused outright. observationsFrom() cannot produce it, but the
  * invariant "coal is pre-install history and nothing else" is only worth
@@ -153,6 +196,16 @@ export function accrue(
     if (!Number.isFinite(tokensObserved) || tokensObserved < 0) continue
 
     const previous = sessions[sessionKey]
+    if (material === undefined) {
+      // Rule 4. seenAt still moves so a session waiting on its mine's first
+      // walk cannot be pruned out from under its own frozen baseline.
+      sessions[sessionKey] =
+        previous === undefined
+          ? { tokens: tokensObserved, seenAt: now }
+          : { tokens: previous.tokens, seenAt: now }
+      continue
+    }
+
     sessions[sessionKey] = { tokens: tokensObserved, seenAt: now }
     if (previous === undefined) continue
 

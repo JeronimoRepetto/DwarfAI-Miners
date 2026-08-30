@@ -7,6 +7,7 @@ import {
   mineTotals,
   observationsFrom,
   pruneSessions,
+  type ConfirmedTierLookup,
   type LedgerState
 } from '../domain/ledger'
 import type { Mine } from '../domain/types'
@@ -76,12 +77,18 @@ export class MaterialLedger {
    * Fold one poll into the vault and return the same mines stamped with their
    * persisted breakdown.
    *
+   * `confirmedTierOf` says which tier a walk has actually measured for each
+   * mine; a mine it has no answer for yet accrues nothing this poll (#41).
+   * It has no default on purpose — the caller must say where its tiers come
+   * from, because the one thing that looks like a tier and is not one is the
+   * placeholder the tier service serves until its first walk finishes.
+   *
    * The input mines are never mutated: they belong to the caller's pipeline,
    * and a stamped copy is what goes on the wire.
    */
-  observe(mines: readonly Mine[], now: number): Mine[] {
+  observe(mines: readonly Mine[], now: number, confirmedTierOf: ConfirmedTierLookup): Mine[] {
     const before = this.ledger
-    this.ledger = accrue(this.ledger, observationsFrom(mines), now)
+    this.ledger = accrue(this.ledger, observationsFrom(mines, confirmedTierOf), now)
     // Session marks move on every poll, but a write is only earned by a real
     // change to the totals — otherwise an idle machine would rewrite the file
     // forever for nothing.

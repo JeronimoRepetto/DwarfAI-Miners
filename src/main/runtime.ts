@@ -121,6 +121,12 @@ export interface RuntimeOptions {
    * runtime stays testable and disk-free without one.
    */
   ledger?: MaterialLedger
+  /**
+   * Complexity-tier authority. Injected so tests can decide exactly when the
+   * first walk finishes, which is the whole subject of #41; the default builds
+   * one over the configured thresholds.
+   */
+  tiers?: TierService
 }
 
 /**
@@ -188,11 +194,13 @@ export class AgentRuntime {
     this.now = options.now ?? Date.now
     this.ledger = options.ledger ?? new MaterialLedger({ store: nullLedgerStore() })
 
-    const tiers = new TierService({
-      fs,
-      thresholds: options.config.tierThresholds,
-      ttlS: options.config.tierCacheTtlS
-    })
+    const tiers =
+      options.tiers ??
+      new TierService({
+        fs,
+        thresholds: options.config.tierThresholds,
+        ttlS: options.config.tierCacheTtlS
+      })
     const lifecycle = new DwarfLifecycleTracker({
       graceMs: options.config.dwarfLeaveGraceS * 1_000,
       now: options.now
@@ -207,8 +215,14 @@ export class AgentRuntime {
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
         // phantom one, and every published mine carries a stamped breakdown.
+        //
+        // knownTierOf, NOT the mine.tier the poller stamped: that one is what
+        // the mound is drawn as, and it is a provisional bronze until the
+        // project's first walk finishes. The vault waits for a measured tier
+        // (#41) — mine.path is the very string aggregateMines handed to
+        // tierOf, so this asks about exactly the mine in hand.
         const withMaterials = pollProfiler.measureSync('ledger', () =>
-          this.ledger.observe(lifecycle.apply(mines), now)
+          this.ledger.observe(lifecycle.apply(mines), now, (mine) => tiers.knownTierOf(mine.path))
         )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an

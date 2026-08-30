@@ -173,6 +173,41 @@ describe('TierService', () => {
     await service.settle()
     expect(service.tierOf('C:\\nope')).toBe('bronze')
   })
+
+  it('reports no known tier while the first walk is pending, then the computed one', async () => {
+    // The vault may only seal a token delta with a tier a walk actually
+    // produced (#41). settle() resolving into a real answer here is also what
+    // proves knownTierOf SCHEDULES that walk: an accrual-only caller must not
+    // be left waiting for a computation nobody ever asked for.
+    const service = makeService()
+    expect(service.knownTierOf(PROJECT)).toBeUndefined()
+    await service.settle()
+    expect(service.knownTierOf(PROJECT)).toBe('copper')
+  })
+
+  it('tells a computed bronze apart from a pending one', async () => {
+    // Exactly the ambiguity that credited phantom bronze: tierOf answers
+    // 'bronze' for both, so accrual could not tell a measurement from a guess.
+    const service = makeService()
+    expect(service.tierOf('C:\\nope')).toBe('bronze')
+    expect(service.knownTierOf('C:\\nope')).toBeUndefined()
+    await service.settle()
+    expect(service.tierOf('C:\\nope')).toBe('bronze')
+    expect(service.knownTierOf('C:\\nope')).toBe('bronze')
+  })
+
+  it('treats a stale cached tier as known while it refreshes in the background', async () => {
+    // Stale is still a measurement. Only a value no walk has ever produced is
+    // a guess, so a mine mid-refresh keeps accruing instead of stalling.
+    const service = makeService()
+    service.tierOf(PROJECT)
+    await service.settle()
+    fake.addFile(`${PROJECT}\\src\\b.ts`, 'b'.repeat(3200))
+    clock.now += 601_000
+    expect(service.knownTierOf(PROJECT)).toBe('copper')
+    await service.settle()
+    expect(service.knownTierOf(PROJECT)).toBe('silver')
+  })
 })
 
 // #39: bundled and duplicated files inflated a mine's tier. AI-Tools measured

@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FeedMessage } from '../shared/contracts'
 import { FakeFs } from './adapters/fakeFs'
+import type { FsLike } from './adapters/fsLike'
 import { defaultConfig } from './config'
 import { emptyLedger, type LedgerState } from './domain/ledger'
+import { emptyMaterialTotals } from './domain/materials'
 import { nullLedgerStore } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
 import type { Provider } from './providers/provider'
 import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
+import { TierService, type TierThresholds } from './tier/tierService'
 import { AgentRuntime, expandHomePath } from './runtime'
 
 function datePath(date: Date): string {
@@ -1639,11 +1642,45 @@ describe('AgentRuntime material vault', () => {
     }
   }
 
-  function vaultRuntime(providers: Provider[], ledger: MaterialLedger): AgentRuntime {
+  /**
+   * The project path the aggregator keys these mines on. countingProvider
+   * reports its cwd as 'C:\work\project', and JavaScript drops both
+   * backslashes there (neither \w nor \p is an escape sequence), so the mine's
+   * path — and therefore the tier cache key — is exactly this string.
+   */
+  const VAULT_PROJECT = 'C:workproject'
+
+  /** Tiny thresholds so a few KB of fixture crosses a real tier boundary. */
+  const VAULT_THRESHOLDS: TierThresholds = {
+    copperKb: 1,
+    silverKb: 5,
+    goldKb: 20,
+    uraniumKb: 100
+  }
+
+  /**
+   * A runtime whose tier walk has ALREADY finished, so accrual is not held
+   * back by the provisional-tier rule (#41). The fake project holds no source
+   * at all, which lands on a *computed* bronze — the same value tierOf used to
+   * serve as a placeholder, except this one was actually measured.
+   */
+  async function vaultRuntime(
+    providers: Provider[],
+    ledger: MaterialLedger
+  ): Promise<AgentRuntime> {
+    const tiers = new TierService({
+      fs: new FakeFs(),
+      thresholds: VAULT_THRESHOLDS,
+      ttlS: 600,
+      now: () => 1_000
+    })
+    tiers.tierOf(VAULT_PROJECT)
+    await tiers.settle()
     return new AgentRuntime({
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers,
       ledger,
+      tiers,
       onMinesUpdated: vi.fn(),
       now: () => 1_000
     })
@@ -1653,7 +1690,7 @@ describe('AgentRuntime material vault', () => {
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
     const { provider, setTokens } = countingProvider()
-    const runtime = vaultRuntime([provider], ledger)
+    const runtime = await vaultRuntime([provider], ledger)
 
     setTokens(1_000)
     await runtime.refresh()
@@ -1668,7 +1705,7 @@ describe('AgentRuntime material vault', () => {
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
     const { provider, setTokens } = countingProvider()
-    const runtime = vaultRuntime([provider], ledger)
+    const runtime = await vaultRuntime([provider], ledger)
 
     setTokens(2_500)
     await runtime.refresh()
@@ -1680,14 +1717,14 @@ describe('AgentRuntime material vault', () => {
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
     const { provider, setTokens } = countingProvider()
-    const runtime = vaultRuntime([provider], ledger)
+    const runtime = await vaultRuntime([provider], ledger)
 
     setTokens(1_000)
     await runtime.refresh()
     setTokens(6_000)
     await runtime.refresh()
 
-    const departed = vaultRuntime([emptyProvider()], ledger)
+    const departed = await vaultRuntime([emptyProvider()], ledger)
     await departed.refresh()
 
     expect(departed.getMines()[0]!.materials?.bronze).toBe(5_000)
@@ -1699,7 +1736,7 @@ describe('AgentRuntime material vault', () => {
     await ledger.load()
     ledger.creditCoal('mine:archived', 90_000)
     const { provider, setTokens } = countingProvider()
-    const runtime = vaultRuntime([provider], ledger)
+    const runtime = await vaultRuntime([provider], ledger)
 
     setTokens(100)
     await runtime.refresh()
@@ -1736,7 +1773,7 @@ describe('AgentRuntime material vault', () => {
     })
     await ledger.load()
     const { provider, setTokens } = countingProvider()
-    const runtime = vaultRuntime([provider], ledger)
+    const runtime = await vaultRuntime([provider], ledger)
 
     setTokens(1_000)
     await runtime.refresh()
@@ -1764,6 +1801,77 @@ describe('AgentRuntime material vault', () => {
     })
     setTokens(1_000)
     await expect(runtime.refresh()).resolves.toBeUndefined()
+    expect(runtime.materialTotals().bronze).toBe(0)
+  })
+
+  /**
+   * A filesystem whose directory walk hangs until release() is called, so a
+   * test can hold the tier walk mid-flight and watch what the vault does while
+   * the tier is still nothing but a placeholder.
+   */
+  function gatedFs(inner: FakeFs): FsLike & { release: () => void } {
+    let open = (): void => undefined
+    const gate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    return {
+      readTextTail: (path, maxBytes) => inner.readTextTail(path, maxBytes),
+      readTextHead: (path, maxBytes) => inner.readTextHead(path, maxBytes),
+      readJson: (path) => inner.readJson(path),
+      listDir: async (path) => {
+        await gate
+        return inner.listDir(path)
+      },
+      stat: (path) => inner.stat(path),
+      exists: (path) => inner.exists(path),
+      release: () => open()
+    }
+  }
+
+  it('credits no phantom bronze while the mine tier is still being computed (#41)', async () => {
+    // The live ledger carried 12 094 bronze on a project that has always been
+    // silver: every poll between app start and the first completed walk was
+    // sealed with the placeholder tierOf serves until then.
+    const project = new FakeFs()
+    project.addFile(`${VAULT_PROJECT}\\src\\app.ts`, 'a'.repeat(6 * 1024))
+    const fs = gatedFs(project)
+    const tiers = new TierService({
+      fs,
+      thresholds: VAULT_THRESHOLDS,
+      ttlS: 600,
+      now: () => 1_000
+    })
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [provider],
+      ledger,
+      tiers,
+      onMinesUpdated: vi.fn(),
+      now: () => 1_000
+    })
+
+    setTokens(1_000)
+    await runtime.refresh()
+    setTokens(50_000)
+    await runtime.refresh()
+
+    // The mound still draws bronze — that half was never the bug — but the
+    // vault has credited nothing at all.
+    expect(runtime.getMines()[0]!.tier).toBe('bronze')
+    expect(runtime.materialTotals()).toEqual(emptyMaterialTotals())
+
+    fs.release()
+    await tiers.settle()
+    setTokens(60_000)
+    await runtime.refresh()
+
+    // Every token since the first counter the vault ever saw, as silver, in
+    // one credit — the wait costs nothing and duplicates nothing.
+    expect(runtime.getMines()[0]!.tier).toBe('silver')
+    expect(runtime.materialTotals().silver).toBe(59_000)
     expect(runtime.materialTotals().bronze).toBe(0)
   })
 })

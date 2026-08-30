@@ -178,17 +178,75 @@ describe('accrue', () => {
     )
     expect(state.sessions['claude:s1']?.seenAt).toBe(2)
   })
+
+  it('credits nothing for an observation whose tier is still being computed', () => {
+    // No material is ever credited from a guess (#41).
+    const state = twoPolls(
+      [observation({ tokensObserved: 1_000 })],
+      [observation({ tokensObserved: 9_000, material: undefined })]
+    )
+    expect(mineTotals(state, 'mine:proj')).toEqual(emptyMaterialTotals())
+  })
+
+  it('keeps the baseline frozen while the tier is pending, then credits the whole wait', () => {
+    // Nothing is lost by waiting: the counter is cumulative, so leaving the
+    // mark where it was makes the delta spanning the wait land whole on the
+    // material the walk actually found.
+    const waited = accrue(
+      twoPolls(
+        [observation({ tokensObserved: 1_000 })],
+        [observation({ tokensObserved: 9_000, material: undefined })]
+      ),
+      [observation({ tokensObserved: 12_000, material: 'silver' })],
+      3
+    )
+    expect(mineTotals(waited, 'mine:proj').silver).toBe(11_000)
+    expect(mineTotals(waited, 'mine:proj').bronze).toBe(0)
+  })
+
+  it('takes a baseline for a session first seen while its tier is pending', () => {
+    // Nothing is credited from it, but remembering the counter is exactly what
+    // makes those tokens creditable — to the right material — once the walk
+    // lands. Dropping the sighting entirely would forfeit them instead.
+    const state = accrue(
+      emptyLedger(),
+      [observation({ tokensObserved: 4_000, material: undefined })],
+      1
+    )
+    expect(state.sessions['claude:s1']).toEqual({ tokens: 4_000, seenAt: 1 })
+    expect(mineTotals(state, 'mine:proj')).toEqual(emptyMaterialTotals())
+  })
+
+  it('refreshes seenAt while the tier is pending so a waiting session is never pruned', () => {
+    const state = twoPolls(
+      [observation({ tokensObserved: 10 })],
+      [observation({ tokensObserved: 20, material: undefined })]
+    )
+    expect(state.sessions['claude:s1']).toEqual({ tokens: 10, seenAt: 2 })
+  })
+
+  it('keeps the same mines object while a tier is pending', () => {
+    const base = accrue(emptyLedger(), [observation({ tokensObserved: 1_000 })], 1)
+    const pending = accrue(base, [observation({ tokensObserved: 5_000, material: undefined })], 2)
+    expect(pending.mines).toBe(base.mines)
+  })
 })
 
 describe('observationsFrom', () => {
+  /** Every mine in these cases carries a tier a walk already computed (#41). */
+  const confirmed = (target: Mine) => target.tier
+
   it('seals each dwarf delta with the tier its mine is on right now', () => {
-    const observations = observationsFrom([
-      mine({
-        id: 'mine:a',
-        tier: 'gold',
-        dwarfs: [{ ...defaultDwarf(), id: 'claude:s1', tokensObserved: 42 }]
-      })
-    ])
+    const observations = observationsFrom(
+      [
+        mine({
+          id: 'mine:a',
+          tier: 'gold',
+          dwarfs: [{ ...defaultDwarf(), id: 'claude:s1', tokensObserved: 42 }]
+        })
+      ],
+      confirmed
+    )
     expect(observations).toEqual([
       { mineId: 'mine:a', sessionKey: 'claude:s1', material: 'gold', tokensObserved: 42 }
     ])
@@ -198,12 +256,50 @@ describe('observationsFrom', () => {
     // Absent is not zero: treating it as zero would look like a reset and
     // throw away a real baseline.
     expect(
-      observationsFrom([mine({ id: 'mine:a', dwarfs: [{ ...defaultDwarf(), id: 'claude:s1' }] })])
+      observationsFrom(
+        [mine({ id: 'mine:a', dwarfs: [{ ...defaultDwarf(), id: 'claude:s1' }] })],
+        confirmed
+      )
     ).toEqual([])
   })
 
   it('returns nothing for a mine with no crew', () => {
-    expect(observationsFrom([mine({ id: 'mine:a' })])).toEqual([])
+    expect(observationsFrom([mine({ id: 'mine:a' })], confirmed)).toEqual([])
+  })
+
+  it('leaves an observation unsealed while its mine tier is still being computed', () => {
+    // The mine is drawn bronze on the first frames; that placeholder must not
+    // reach the vault as a material (#41).
+    expect(
+      observationsFrom(
+        [
+          mine({
+            id: 'mine:a',
+            tier: 'bronze',
+            dwarfs: [{ ...defaultDwarf(), id: 'claude:s1', tokensObserved: 42 }]
+          })
+        ],
+        () => undefined
+      )
+    ).toEqual([
+      { mineId: 'mine:a', sessionKey: 'claude:s1', material: undefined, tokensObserved: 42 }
+    ])
+  })
+
+  it('seals with the confirmed tier, never with the one the mine is drawn as', () => {
+    // The stamped tier is whatever the renderer draws right now. Only the
+    // walk's own answer may decide which material a delta becomes.
+    const observations = observationsFrom(
+      [
+        mine({
+          id: 'mine:a',
+          tier: 'bronze',
+          dwarfs: [{ ...defaultDwarf(), id: 'claude:s1', tokensObserved: 42 }]
+        })
+      ],
+      () => 'silver'
+    )
+    expect(observations[0]?.material).toBe('silver')
   })
 })
 

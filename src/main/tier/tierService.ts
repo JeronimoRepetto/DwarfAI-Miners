@@ -274,10 +274,26 @@ interface CacheEntry {
 }
 
 /**
+ * One cache read: the tier to use, and whether a walk actually produced it.
+ *
+ * A stale entry still counts as computed — it is a real measurement, just an
+ * older one. Only a path no walk has ever finished is unknown.
+ */
+interface TierReading {
+  tier: MineTier
+  computed: boolean
+}
+
+/**
  * Complexity tier per project path. tierOf() never blocks: it serves the
  * cached tier (or bronze while the first walk is pending) and refreshes the
  * cache in the background when stale. Paths are compared case-insensitively
  * (win32 semantics).
+ *
+ * Two accessors, because "bronze" alone cannot say whether it was measured
+ * (#41): tierOf() is for DRAWING, where something has to be on screen for the
+ * first frame; knownTierOf() is for anything that seals a value with a tier,
+ * where a placeholder would become a permanent lie.
  */
 export class TierService {
   private readonly fs: FsLike
@@ -300,8 +316,38 @@ export class TierService {
     this.log = options.log ?? ((line) => console.log(line))
   }
 
-  /** Current tier for a project path; bronze while the first walk is pending. */
+  /**
+   * Current tier for a project path; bronze while the first walk is pending.
+   *
+   * That bronze is a placeholder, indistinguishable from a measured one. Use
+   * it to draw, never to decide what something IS (see knownTierOf).
+   */
   tierOf(path: string): MineTier {
+    return this.read(path).tier
+  }
+
+  /**
+   * The tier only once a walk has actually produced it — undefined while the
+   * first one is still running (#41).
+   *
+   * The vault seals every token delta with the tier in force when it was
+   * observed and never revisits it (#22), so a delta sealed with the
+   * placeholder is wrong forever. Callers that accrue ask this one and skip
+   * the mine until it answers; the tokens are not lost, because the provider
+   * counters are cumulative and the delta spanning the wait is credited whole
+   * on the first poll that knows the tier.
+   */
+  knownTierOf(path: string): MineTier | undefined {
+    const reading = this.read(path)
+    return reading.computed ? reading.tier : undefined
+  }
+
+  /**
+   * The one cache read behind both accessors, so knownTierOf schedules the
+   * same background walk tierOf does. A passive read would let a mine nobody
+   * happens to be drawing stay unknown — and therefore unaccrued — forever.
+   */
+  private read(path: string): TierReading {
     const key = path.toLowerCase()
     const cached = this.cache.get(key)
     const stale = cached === undefined || this.now() - cached.computedAt >= this.ttlMs
@@ -312,7 +358,7 @@ export class TierService {
         refresh.finally(() => this.inFlight.delete(key))
       )
     }
-    return cached?.tier ?? 'bronze'
+    return { tier: cached?.tier ?? 'bronze', computed: cached !== undefined }
   }
 
   /** Resolves when every in-flight walk has finished (poller drain + tests). */
