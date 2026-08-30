@@ -19,16 +19,26 @@ import { loadConfig } from './config'
 import { sumTokensObserved } from './domain/aggregate'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
+import { createPinPreferenceStore } from './pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts'
 import { createTray } from './tray'
-import { createMainWindow, hidePanel, markQuitting, showPanel, togglePanel } from './window'
+import {
+  applyAlwaysOnTop,
+  createMainWindow,
+  hidePanel,
+  markQuitting,
+  showPanel,
+  togglePanel
+} from './window'
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
 
 function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
+  ipcMain.removeHandler(IPC_CHANNELS.getAlwaysOnTop)
+  ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
@@ -90,7 +100,13 @@ async function init(): Promise<void> {
     warn: (message, error) => console.warn(message, error)
   })
 
-  const mainWindow = createMainWindow() // starts hidden
+  // The pin ("always on top") preference lives next to the autostart marker
+  // in userData (see #35). It is loaded before the window exists so the very
+  // first frame already has the right stacking, with pinned as the default.
+  const pinStore = createPinPreferenceStore({
+    filePath: join(app.getPath('userData'), 'pin-preference-v1.json')
+  })
+  const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
   runtime = new AgentRuntime({
     config,
@@ -130,6 +146,23 @@ async function init(): Promise<void> {
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
+  ipcMain.handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
+  ipcMain.handle(IPC_CHANNELS.setAlwaysOnTop, async (_event, payload: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing
+    // and the caller still gets the real state back.
+    if (typeof payload !== 'boolean') return mainWindow.isAlwaysOnTop()
+    const real = applyAlwaysOnTop(mainWindow, payload)
+    try {
+      // Persist what the window actually is, not the request — a declined
+      // change must not resurrect itself as a stored preference.
+      await pinStore.save(real)
+    } catch (error) {
+      // The toggle itself already happened; a persistence hiccup only means
+      // the next launch falls back to whatever the file still says.
+      console.warn('[pin] Failed to persist the always-on-top preference:', error)
+    }
+    return real
+  })
   ipcMain.handle(IPC_CHANNELS.getMines, () => toMinesSnapshot(runtime?.getMines() ?? []))
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noActivation

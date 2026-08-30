@@ -6,6 +6,7 @@ import MineScene from './components/MineScene.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useMines } from './composables/useMines'
+import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useView } from './composables/useView'
 import { shouldHidePanelAfterActivation } from './lib/activation'
 import type { Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
@@ -14,6 +15,15 @@ const { state, setMines } = useMines()
 const { state: viewState, openMine, showMap, syncWithMines } = useView()
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 const { state: kickingState, kick } = useDwarfKicking()
+const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
+
+// The hover line explains what the CURRENT state does; the accessible name
+// stays stable and aria-pressed carries the state (see the pin button below).
+const pinTooltip = computed(() =>
+  pinned.value
+    ? 'Pinned: the panel stays above other windows'
+    : 'Unpinned: other windows can cover the panel'
+)
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -114,6 +124,9 @@ function kickDwarf(dwarf: Dwarf): void {
 
 onMounted(() => {
   void load()
+  // The button's initial "pinned" guess matches main's default; this adopts
+  // the real BrowserWindow state (the user may have unpinned on a past run).
+  void syncPinned()
   unsubscribe = window.api.onMinesUpdated(update)
 })
 onBeforeUnmount(() => unsubscribe?.())
@@ -123,9 +136,45 @@ onBeforeUnmount(() => unsubscribe?.())
   <div class="panel">
     <header class="titlebar">
       <span class="title"><i aria-hidden="true"></i>DwarfAI-Miners</span>
-      <button class="close" type="button" aria-label="Hide panel" @click="hidePanel">
-        &times;
-      </button>
+      <div class="window-controls">
+        <!--
+          Pin toggle (see #35): stable accessible name + aria-pressed for the
+          state, tooltip explaining what the current state does. `pinned` only
+          ever reflects the real BrowserWindow state handed back over IPC (see
+          usePinnedWindow), so a declined or failed toggle can never paint an
+          always-on-top the window does not have.
+        -->
+        <button
+          class="pin"
+          type="button"
+          aria-label="Keep panel on top"
+          :aria-pressed="pinned ? 'true' : 'false'"
+          :title="pinTooltip"
+          @click="togglePinned"
+        >
+          <!-- Pixel-art pushpins on the same 16x16 rect grid as the dwarf
+               action bar icons (see DwarfActionBar.vue), crispEdges via CSS. -->
+          <svg v-if="pinned" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="6" y="1" width="4" height="2" fill="#ffe29c" />
+            <rect x="5" y="3" width="6" height="4" fill="#f4c76a" />
+            <rect x="4" y="7" width="8" height="2" fill="#a8703a" />
+            <rect x="7" y="9" width="2" height="4" fill="#6b5a44" />
+            <rect x="7" y="13" width="2" height="2" fill="#3f2a14" />
+          </svg>
+          <svg v-else viewBox="0 0 16 16" aria-hidden="true">
+            <!-- Tilted pin, needle free of the ground: nothing is held down. -->
+            <rect x="10" y="1" width="4" height="2" fill="#8a7a5e" />
+            <rect x="9" y="3" width="5" height="3" fill="#6b5a44" />
+            <rect x="8" y="6" width="3" height="2" fill="#4b3c28" />
+            <rect x="6" y="8" width="2" height="2" fill="#4b3c28" />
+            <rect x="4" y="10" width="2" height="2" fill="#4b3c28" />
+            <rect x="2" y="12" width="2" height="2" fill="#3f2a14" />
+          </svg>
+        </button>
+        <button class="close" type="button" aria-label="Hide panel" @click="hidePanel">
+          &times;
+        </button>
+      </div>
     </header>
     <main class="content">
       <div v-if="loading" class="loading" role="status">
@@ -191,21 +240,52 @@ onBeforeUnmount(() => unsubscribe?.())
   transform: rotate(45deg);
   box-shadow: 0 0 10px var(--lantern);
 }
+.window-controls {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+/* Both titlebar buttons opt out of the frameless drag surface, or their
+   clicks would start a window drag instead of reaching the handler. */
+.pin,
 .close {
   -webkit-app-region: no-drag;
-  padding: 2px 8px;
   border: 0;
   border-radius: 7px;
   color: var(--ink-dim);
   cursor: pointer;
   background: transparent;
   font: inherit;
+}
+.close {
+  padding: 2px 8px;
   font-size: 22px;
 }
+.pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+  line-height: 0;
+}
+.pin svg {
+  width: 16px;
+  height: 16px;
+  /* Blocky pixel look, matching the action-bar icons: no anti-aliasing
+     between the rect "pixels". */
+  shape-rendering: crispEdges;
+}
+/* The unpinned glyph dims like a disabled action-bar icon: still clickable,
+   but visually "off" next to the lit pinned pin. */
+.pin[aria-pressed='false'] svg {
+  opacity: 0.6;
+}
+.pin:hover,
 .close:hover {
   color: #fff;
   background: #4b3c28;
 }
+.pin:focus-visible,
 .close:focus-visible {
   outline: 2px solid #ffe29c;
   outline-offset: 2px;

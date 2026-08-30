@@ -13,6 +13,14 @@ import { IPC_CHANNELS } from '../shared/contracts'
 export interface DwarfAiMinersApi {
   /** Hide the floating panel (the app keeps running in the tray). */
   hidePanel: () => void
+  /** The window's REAL always-on-top state, read back from the BrowserWindow. */
+  getAlwaysOnTop: () => Promise<boolean>
+  /**
+   * Request pin/unpin (see #35). Resolves with the resulting REAL state, which
+   * can differ from the request when the platform declines the change — the
+   * renderer must render this verdict, never the wish.
+   */
+  setAlwaysOnTop: (pinned: boolean) => Promise<boolean>
   /** Snapshot used by the renderer when it initializes after a poll update. */
   getMines: () => Promise<MinesSnapshot>
   /** Subscribe to push updates. Returns an unsubscribe function. */
@@ -27,6 +35,10 @@ export interface DwarfAiMinersApi {
 
 const api: DwarfAiMinersApi = {
   hidePanel: () => ipcRenderer.send(IPC_CHANNELS.hidePanel),
+  getAlwaysOnTop: () => ipcRenderer.invoke(IPC_CHANNELS.getAlwaysOnTop),
+  // `pinned === true` collapses any non-boolean to false BEFORE it crosses the
+  // bridge, so main's boundary validation only ever sees a clean boolean.
+  setAlwaysOnTop: (pinned) => ipcRenderer.invoke(IPC_CHANNELS.setAlwaysOnTop, pinned === true),
   getMines: () => ipcRenderer.invoke(IPC_CHANNELS.getMines),
   onMinesUpdated: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: MinesSnapshot) =>
