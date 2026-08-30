@@ -461,6 +461,13 @@ export class CodexProvider implements Provider {
       name: thread?.agentName ?? rollout?.head.agentName ?? `codex-${sessionId.slice(0, 8)}`,
       model: thread?.model ?? rollout?.info.model,
       effort: thread?.effort ?? rollout?.info.effort,
+      // Codex exposes no structured "alive but blocked mid-turn" evidence: its
+      // rollout event vocabulary carries no approval/input-request record and
+      // logs_2.sqlite is a plain tracing log (both verified against real data,
+      // 2026-08-30). So a possibly-blocked in-turn agent deliberately stays
+      // 'working' — issue #34's conservative rule — and turn_aborted (see
+      // parse.ts) is the one structured signal that ends a turn without a
+      // task_complete.
       status: busy ? 'working' : 'waiting',
       // Redacted BEFORE the renderer's bubble truncation can ever slice it: a
       // truncated prefix can still contain a whole key. The rolloutCache keeps

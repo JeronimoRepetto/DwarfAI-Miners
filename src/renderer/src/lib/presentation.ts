@@ -61,8 +61,11 @@ const WORKING: Record<DwarfRole, DwarfAnimation> = {
 
 const WAITING: Record<DwarfRole, DwarfAnimation> = {
   worker: { frames: ['rest-1', 'rest-2'], frameMs: 1400 },
-  // One frame: the foreman just stands there, and only the zzz overlay moves.
-  foreman: { frames: ['foreman-idle'], frameMs: 1400 }
+  // Temporary (issue #34): a blocked foreman reuses the worker rest loop so a
+  // waiting session reads as visibly paused instead of a foreman still on
+  // duty. Dedicated foreman-waiting art is deferred and must not block —
+  // swap these frames when it lands.
+  foreman: { frames: ['rest-1', 'rest-2'], frameMs: 1400 }
 }
 
 /** Leaving is a walk regardless of rank — the foreman uses the same door. */

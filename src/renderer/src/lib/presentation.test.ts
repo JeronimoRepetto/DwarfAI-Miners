@@ -66,11 +66,15 @@ describe('dwarfAnimation', () => {
     })
   })
 
-  it('leaves a waiting foreman standing still, so only the zzz moves', () => {
+  it('rests a waiting foreman on the worker rest frames until foreman art exists', () => {
+    // Issue #34: dedicated foreman-waiting artwork is explicitly deferred, so a
+    // blocked foreman temporarily reuses the worker sleeping/rest animation —
+    // it must read as paused, not as a foreman still checking the log book.
     expect(dwarfAnimation('waiting', 'foreman')).toEqual({
-      frames: ['foreman-idle'],
+      frames: ['rest-1', 'rest-2'],
       frameMs: 1400
     })
+    expect(dwarfAnimation('waiting', 'foreman')).toEqual(dwarfAnimation('waiting', 'worker'))
   })
 
   it('walks anyone who is leaving, foreman included', () => {

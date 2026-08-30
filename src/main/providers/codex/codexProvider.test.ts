@@ -154,6 +154,33 @@ describe('CodexProvider', () => {
     })
   })
 
+  it('maps a user-aborted turn to an idle snapshot with no dwarfs (issue #34)', async () => {
+    // Esc mid-turn: task_started stays unmatched by any task_complete, but the
+    // structured turn_aborted record proves the turn is over. Without it the
+    // dwarf keeps mining forever even though the agent sits at the prompt.
+    const abortedLines =
+      busyLines() +
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'turn_aborted',
+          turn_id: '01a048b5-71aa-7900-88b5-d3842c3c2697',
+          reason: 'interrupted'
+        }
+      }) +
+      '\n'
+    fake.addFile(
+      `${ROOT}\\2026\\08\\28\\rollout-2026-08-28T23-59-00-${BUSY_SESSION_ID}.jsonl`,
+      abortedLines,
+      NOW - 120_000
+    )
+
+    const snapshots = await makeProvider().scan()
+    const aborted = snapshots.find((snapshot) => snapshot.sessionId === BUSY_SESSION_ID)!
+    expect(aborted.status).toBe('idle')
+    expect(aborted.dwarfs).toEqual([])
+  })
+
   it('falls back to head context when a large turn pushes it outside the tail read', async () => {
     const largeSessionId = '01a048b5-large-7312-ab78-000000000000'
     fake.addFile(

@@ -19,7 +19,7 @@ export interface CodexRolloutHead {
 export interface CodexRolloutInfo {
   model?: string
   effort?: string
-  /** True when the last task_started has no matching task_complete. */
+  /** True when the last task_started has no matching task_complete or turn_aborted. */
   busy: boolean
   lastMessage?: string
 }
@@ -138,6 +138,18 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
           openTurnId = undefined
         }
         lastMessage = asString(record.payload.last_agent_message) ?? lastMessage
+        break
+      }
+      case 'turn_aborted': {
+        // The user interrupted the turn (verified real payload shape:
+        // {"type":"turn_aborted","turn_id":"…","reason":"interrupted",…}).
+        // Structurally this ends the turn exactly like task_complete: without
+        // it the unmatched task_started keeps the dwarf mining forever after
+        // an Esc, even though the agent sits at the prompt (issue #34).
+        const turnId = asString(record.payload.turn_id)
+        if (openTurnId === null || turnId === undefined || turnId === openTurnId) {
+          openTurnId = undefined
+        }
         break
       }
       case 'agent_message':

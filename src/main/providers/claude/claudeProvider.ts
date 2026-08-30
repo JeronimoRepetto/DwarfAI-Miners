@@ -344,7 +344,12 @@ export class ClaudeProvider implements Provider {
     const mainTokens = this.trackTokens(mainDwarfId, info.tokensObserved)
 
     const dwarfs: Dwarf[] = []
-    if (inFlightAgents.length > 0 || session.status === 'busy') {
+    // The foreman is on scene while its session is busy, has agents out, or is
+    // provably blocked — registry status 'waiting', written when the session is
+    // alive but stopped on user input, an open dialog, or a long tool, with
+    // waitingFor naming the condition (issue #34). Only a truly idle session
+    // with no agents lists no dwarfs, so leaving behavior is unchanged.
+    if (inFlightAgents.length > 0 || session.status !== 'idle') {
       dwarfs.push({
         id: mainDwarfId,
         provider: 'claude',
@@ -355,6 +360,10 @@ export class ClaudeProvider implements Provider {
         name: session.name ?? session.sessionId.slice(0, 8),
         model: info.model,
         effort: info.effort,
+        // 'busy' is the only registry state that proves active work; both
+        // 'waiting' (blocked mid-flow) and idle-with-agents-out render a
+        // resting foreman. The registry is re-read every poll, so transitions
+        // are prompt in both directions (issue #34).
         status: session.status === 'busy' ? 'working' : 'waiting',
         // Redacted BEFORE the renderer's 70-char bubble truncation can ever
         // slice it: a truncated prefix can still contain a whole key.
@@ -396,6 +405,10 @@ export class ClaudeProvider implements Provider {
         name: workerName,
         model: agent.resolvedModel,
         effort: info.effort,
+        // Deliberately conservative (issue #34): transcript tails carry no
+        // structured per-subagent blocked signal — the registry status above
+        // describes only the main session — so an in-flight worker is never
+        // guessed into waiting. It works until its terminal notification.
         status: 'working',
         description: agent.description,
         lastMessage: redactSecrets(workerInfo.lastAssistantText),

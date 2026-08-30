@@ -103,7 +103,14 @@ export interface Mine {
   updatedAt: number
 }
 
-export type SessionStatus = 'busy' | 'idle'
+/**
+ * busy: a turn is actively running. waiting: the session is alive but provably
+ * blocked on a known external condition — user input, an open dialog, an
+ * approval — reported only from structured provider lifecycle evidence, never
+ * inferred from assistant text (issue #34). idle: between turns. A provider
+ * that cannot prove blockage simply never reports waiting.
+ */
+export type SessionStatus = 'busy' | 'waiting' | 'idle'
 
 export interface ProviderSnapshot {
   provider: DwarfProvider
@@ -181,6 +188,13 @@ export interface MinesSnapshot {
 
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
+  /**
+   * Always-on-top ("pin") surface, see #35. Both channels answer with the REAL
+   * state read back from the BrowserWindow — never the requested one — so the
+   * renderer can only ever render what the window manager actually did.
+   */
+  getAlwaysOnTop: 'panel:getAlwaysOnTop',
+  setAlwaysOnTop: 'panel:setAlwaysOnTop',
   getMines: 'mines:get',
   minesUpdated: 'mines:update',
   activateDwarf: 'dwarf:activate',

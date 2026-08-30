@@ -78,6 +78,38 @@ describe('parseCodexRolloutTail', () => {
     expect(parseCodexRolloutTail(started + '\n' + completedOther + '\n').busy).toBe(true)
   })
 
+  /**
+   * Issue #34: `turn_aborted` is the structured record Codex writes when the
+   * user interrupts a turn (real observed payload: {"type":"turn_aborted",
+   * "turn_id":"…","reason":"interrupted",…}). Without it an aborted turn keeps
+   * its unmatched task_started and the dwarf mines forever after an Esc.
+   */
+  describe('turn_aborted (issue #34)', () => {
+    function event(payload: Record<string, unknown>): string {
+      return JSON.stringify({ type: 'event_msg', payload }) + '\n'
+    }
+
+    it('closes the open turn on a matching turn_aborted (user interrupt = turn over)', () => {
+      const tail =
+        event({ type: 'task_started', turn_id: 'turn-3' }) +
+        event({ type: 'turn_aborted', turn_id: 'turn-3', reason: 'interrupted' })
+      expect(parseCodexRolloutTail(tail).busy).toBe(false)
+    })
+
+    it('keeps the turn open when turn_aborted names a different turn', () => {
+      const tail =
+        event({ type: 'task_started', turn_id: 'turn-2' }) +
+        event({ type: 'turn_aborted', turn_id: 'turn-1', reason: 'interrupted' })
+      expect(parseCodexRolloutTail(tail).busy).toBe(true)
+    })
+
+    it('closes any open turn when turn_aborted carries no turn id', () => {
+      const tail =
+        event({ type: 'task_started', turn_id: 'turn-2' }) + event({ type: 'turn_aborted' })
+      expect(parseCodexRolloutTail(tail).busy).toBe(false)
+    })
+  })
+
   it('reads the latest assistant message text', () => {
     expect(parseCodexRolloutTail(rollout).lastMessage).toBe('Latest codex reply placeholder.')
   })

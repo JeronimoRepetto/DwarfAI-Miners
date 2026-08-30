@@ -1,8 +1,25 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { dwarfAnimation } from '../lib/presentation'
 import { defaultDwarf } from '../testing/factories'
 import DwarfSprite from './DwarfSprite.vue'
+
+/*
+ * Every animation the app currently ships cycles at least two poses, so the
+ * sprite's "do not start a timer for a single frame" branch has no real dwarf
+ * to reach it. It is still a live guarantee — a one-pose loop is exactly what
+ * the deferred foreman-waiting art may turn out to be — so that one test
+ * substitutes the loop rather than asserting through a status that happens to
+ * be single-framed today.
+ */
+vi.mock('../lib/presentation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/presentation')>()
+  return { ...actual, dwarfAnimation: vi.fn(actual.dwarfAnimation) }
+})
+
+/** The real loop table, so the one test that substitutes it can put it back. */
+const realDwarfAnimation = vi.mocked(dwarfAnimation).getMockImplementation()!
 
 /** The pose file a sprite is currently showing, e.g. "dwarf-pick-1". */
 function poseOf(wrapper: ReturnType<typeof mount>): string {
@@ -341,12 +358,14 @@ describe('DwarfSprite', () => {
     })
 
     it('holds a single-frame animation still', async () => {
+      vi.mocked(dwarfAnimation).mockReturnValue({ frames: ['foreman-idle'], frameMs: 1400 })
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
       })
       vi.advanceTimersByTime(10_000)
       await wrapper.vm.$nextTick()
       expect(poseOf(wrapper)).toBe('dwarf-foreman-idle')
+      vi.mocked(dwarfAnimation).mockImplementation(realDwarfAnimation)
     })
 
     it('restarts the cycle from the first frame when the status changes', async () => {

@@ -13,6 +13,12 @@ export interface ClaudeSessionEntry {
   cwd: string
   status: SessionStatus
   /**
+   * What the session is blocked on while status is 'waiting' (e.g. "dialog
+   * open"), copied verbatim from the registry. Structured evidence only —
+   * never derived from assistant text (issue #34).
+   */
+  waitingFor?: string
+  /**
    * Windows FILETIME process start value. The pid-reuse guard compares it
    * against the pid's real creation time (see ClaudeProvider.procStartVerdict)
    * so a registry file that outlived its process cannot make the recycled
@@ -94,10 +100,13 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     pid,
     sessionId,
     cwd,
-    // The registry can report `waiting`. The domain only has busy/idle, so it
-    // intentionally normalizes waiting (and unknown values) to idle. The main
-    // session dwarf is a foreman either way — status changes, rank does not.
-    status: json.status === 'busy' ? 'busy' : 'idle',
+    // The registry reports busy, idle or waiting — waiting means "alive but
+    // blocked" (on user input, a dialog, a long tool), with waitingFor naming
+    // the condition. That structured lifecycle signal is preserved (issue #34);
+    // only unknown values normalize to idle, the conservative reading. The
+    // main session dwarf is a foreman either way — status changes, rank does not.
+    status: json.status === 'busy' ? 'busy' : json.status === 'waiting' ? 'waiting' : 'idle',
+    waitingFor: asString(json.waitingFor),
     procStart: asString(json.procStart),
     kind: asString(json.kind),
     name: asString(json.name),

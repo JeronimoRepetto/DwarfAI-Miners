@@ -207,6 +207,87 @@ describe('ClaudeProvider', () => {
     expect(snapshots[0]!.dwarfs[0]).toMatchObject({ role: 'foreman', status: 'waiting' })
   })
 
+  /**
+   * Issue #34: the registry reports `waiting` (with an optional `waitingFor`
+   * naming the condition, e.g. "dialog open") while a session is alive but
+   * blocked on user input, a dialog, or a long tool. That structured signal —
+   * never assistant text — is what turns the foreman's pickaxe off.
+   */
+  describe('blocked sessions (issue #34)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+
+    /** The fixture registry entry with its status (and optional waitingFor) replaced. */
+    function entryWithStatus(status: string, waitingFor?: string): string {
+      return JSON.stringify({
+        ...JSON.parse(sessionEntry),
+        status,
+        ...(waitingFor !== undefined ? { waitingFor } : {})
+      })
+    }
+
+    it('shows a waiting foreman when the registry reports a blocked session', async () => {
+      // Real observed shape: {"status":"waiting","waitingFor":"dialog open"}.
+      fake.addFile(
+        `${ROOT1}\\sessions\\32896.json`,
+        entryWithStatus('waiting', 'dialog open'),
+        1_000
+      )
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.status).toBe('waiting')
+      expect(snapshots[0]!.dwarfs).toHaveLength(1)
+      expect(snapshots[0]!.dwarfs[0]).toMatchObject({ role: 'foreman', status: 'waiting' })
+    })
+
+    it('shows the waiting foreman even when the registry names no waitingFor condition', async () => {
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('waiting'), 1_000)
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]).toMatchObject({ role: 'foreman', status: 'waiting' })
+    })
+
+    it('transitions working -> waiting -> working promptly as the registry flips', async () => {
+      const provider = makeProvider()
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
+      expect((await provider.scan())[0]!.dwarfs[0]!.status).toBe('working')
+
+      // The blocking condition begins: the very next poll must show it.
+      fake.addFile(
+        `${ROOT1}\\sessions\\32896.json`,
+        entryWithStatus('waiting', 'dialog open'),
+        2_000
+      )
+      expect((await provider.scan())[0]!.dwarfs[0]!.status).toBe('waiting')
+
+      // Input arrives, the session resumes: back to working on the next poll.
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, sessionEntry, 3_000)
+      expect((await provider.scan())[0]!.dwarfs[0]!.status).toBe('working')
+    })
+
+    it('keeps in-flight workers conservatively working while their session waits', async () => {
+      // Transcript tails carry no structured per-subagent blocked signal, so a
+      // worker never guesses from its parent's registry state: it stays working
+      // until its own terminal notification (the issue's conservative rule).
+      fake.addFile(
+        `${ROOT1}\\sessions\\32896.json`,
+        entryWithStatus('waiting', 'dialog open'),
+        1_000
+      )
+      const snapshots = await makeProvider().scan()
+      const [foreman, worker] = snapshots[0]!.dwarfs
+      expect(foreman).toMatchObject({ role: 'foreman', status: 'waiting' })
+      expect(worker).toMatchObject({ role: 'worker', status: 'working' })
+    })
+
+    it('keeps an idle session dwarfless — leaving behavior is unchanged', async () => {
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('idle'), 1_000)
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.status).toBe('idle')
+      expect(snapshots[0]!.dwarfs).toEqual([])
+    })
+  })
+
   describe('finished agents', () => {
     it('drops an agent killed by an accidental stop', async () => {
       fake.addFile(

@@ -67,16 +67,40 @@ describe('parseClaudeSessionEntry', () => {
     expect(entry?.status).toBe('idle')
   })
 
-  it('normalizes waiting to idle while preserving procStart for a future PID-reuse probe', () => {
+  it('preserves waiting — the structured blocked-session signal (issue #34)', () => {
+    // Real observed registry shape: {"status":"waiting","waitingFor":"dialog open"}.
     expect(
       parseClaudeSessionEntry({
         pid: 1,
         sessionId: 's',
         cwd: 'c',
         status: 'waiting',
+        waitingFor: 'dialog open',
         procStart: '134324755721362761'
       })
-    ).toMatchObject({ status: 'idle', procStart: '134324755721362761' })
+    ).toMatchObject({
+      status: 'waiting',
+      waitingFor: 'dialog open',
+      procStart: '134324755721362761'
+    })
+  })
+
+  it('keeps waiting even when the registry names no waitingFor condition', () => {
+    const entry = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', status: 'waiting' })
+    expect(entry?.status).toBe('waiting')
+    expect(entry?.waitingFor).toBeUndefined()
+  })
+
+  it('ignores a non-string waitingFor value', () => {
+    const entry = parseClaudeSessionEntry({
+      pid: 1,
+      sessionId: 's',
+      cwd: 'c',
+      status: 'waiting',
+      waitingFor: 7
+    })
+    expect(entry?.status).toBe('waiting')
+    expect(entry?.waitingFor).toBeUndefined()
   })
 })
 
