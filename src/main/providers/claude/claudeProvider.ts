@@ -554,7 +554,18 @@ export class ClaudeProvider implements Provider {
       const workerId = `${mainDwarfId}:${agent.agentId}`
       const subagentPath = subagentTranscriptPath(projectDir, session.sessionId, agent.agentId)
       feedSources.set(workerId, subagentPath)
-      const workerName = agent.description ?? `agent-${agent.agentId.slice(0, 7)}`
+      // A task description is free text the orchestrating session typed, and it
+      // reaches the panel twice — as this dwarf's name and as its tooltip — so
+      // it crosses the same boundary lastMessage does and gets the same pass
+      // (issue #59). The relay target below is given the SAME redacted string
+      // deliberately: workerName becomes the '[for agent <name>] ' prefix the
+      // foreman reads, and a human addresses a dwarf by the name they can see.
+      // A routing key the panel cannot show is a route nobody can ask for.
+      const description = redactSecrets(agent.description)
+      // Built from the agent id, never from user text, so redaction cannot
+      // reach it — and an absent description stays absent rather than
+      // inheriting this fallback.
+      const workerName = description ?? `agent-${agent.agentId.slice(0, 7)}`
       // A running subagent has no channel of its own: nothing outside its
       // parent session can address it. Its foreman reads the message and
       // routes it, which is exactly how a real crew works.
@@ -586,7 +597,7 @@ export class ClaudeProvider implements Provider {
         // describes only the main session — so an in-flight worker is never
         // guessed into waiting. It works until its terminal notification.
         status: 'working',
-        description: agent.description,
+        description,
         lastMessage: redactSecrets(workerInfo.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,

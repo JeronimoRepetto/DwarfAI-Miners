@@ -1537,6 +1537,82 @@ describe('ClaudeProvider', () => {
       expect(feed!.map((m) => m.text)).toContain('Done, [redacted] is configured.')
       expect(JSON.stringify(feed)).not.toContain(FAKE_PAT)
     })
+
+    /**
+     * The fixture transcript with the live agent's launch line swapped for
+     * `record`, so a description can be chosen without disturbing the session
+     * entry, the agent id, or the subagent tail the rest of the suite relies on.
+     */
+    function withLaunchRecord(record: string): string {
+      return (
+        parentLines.slice(0, 7).join('\n') + '\n' + record + parentLines.slice(8).join('\n') + '\n'
+      )
+    }
+
+    it('redacts a subagent task description before it becomes a name and a tooltip', async () => {
+      // Free text the orchestrating session typed, reaching the panel twice —
+      // as the worker's name and as its tooltip line (issue #59).
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        withLaunchRecord(launch(LIVE_AGENT, `rotate the ${FAKE_PAT} we leaked`)),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      const worker = snapshots[0]!.dwarfs[1]!
+      expect(worker.name).toBe('rotate the [redacted] we leaked')
+      expect(worker.description).toBe('rotate the [redacted] we leaked')
+      expect(JSON.stringify(snapshots)).not.toContain(FAKE_PAT)
+    })
+
+    it('gives the relay the same redacted name the panel shows', async () => {
+      // workerName becomes the '[for agent <name>] ' prefix a foreman reads,
+      // and a human addresses a dwarf by the name they can SEE. Leaving the raw
+      // description here would route messages under a name the panel never
+      // shows — routing intact for the code, broken for the person.
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        withLaunchRecord(launch(LIVE_AGENT, `rotate the ${FAKE_PAT} we leaked`)),
+        42_000
+      )
+      const provider = makeProvider()
+      const snapshots = await provider.scan()
+      const worker = snapshots[0]!.dwarfs[1]!
+      expect(provider.textDelivery(worker.id)).toEqual({
+        kind: 'foreman-relay',
+        foremanDwarfId: `claude:${SESSION_ID}`,
+        workerName: 'rotate the [redacted] we leaked'
+      })
+      expect(provider.textDelivery(worker.id)).toMatchObject({ workerName: worker.name })
+    })
+
+    it('leaves the agent-id fallback name alone when a launch carries no description', async () => {
+      // The fallback is built from the agent id, never from user text, so the
+      // pass must not reach it — and an absent description must stay absent
+      // rather than inheriting the fallback.
+      const undescribed =
+        JSON.stringify({
+          type: 'user',
+          toolUseResult: {
+            isAsync: true,
+            status: 'async_launched',
+            agentId: LIVE_AGENT,
+            resolvedModel: 'claude-fable-5'
+          }
+        }) + '\n'
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        withLaunchRecord(undescribed),
+        42_000
+      )
+      const provider = makeProvider()
+      const snapshots = await provider.scan()
+      const worker = snapshots[0]!.dwarfs[1]!
+      expect(worker.name).toBe(`agent-${LIVE_AGENT.slice(0, 7)}`)
+      expect(worker.description).toBeUndefined()
+      expect(provider.textDelivery(worker.id)).toMatchObject({
+        workerName: `agent-${LIVE_AGENT.slice(0, 7)}`
+      })
+    })
   })
 
   describe('pid-reuse guard', () => {
