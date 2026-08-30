@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { REACTION_WINDOW_MS } from '../lib/reaction'
+import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
 import { defaultDwarf } from '../testing/factories'
 import type { Dwarf, DwarfKickResult } from '../types'
 import { RESULT_VISIBLE_MS, useDwarfKicking } from './useDwarfKicking'

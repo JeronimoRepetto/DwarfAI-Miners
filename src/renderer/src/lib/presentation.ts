@@ -1,7 +1,7 @@
 import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { DwarfRole, DwarfStatus, Material, MaterialTotals, MineTier } from '../types'
-import { formatTokens } from './economy'
-import { materialUnits, vaultRows } from './vault'
+import { formatTokens } from './vault/economy'
+import { materialUnits, vaultRows } from './vault/vault'
 
 /** CSS modifier class driving each dwarf animation state. */
 export type DwarfAnimationClass = 'is-working' | 'is-waiting' | 'is-leaving'

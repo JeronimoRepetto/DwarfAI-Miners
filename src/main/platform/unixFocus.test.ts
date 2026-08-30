@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { selectFocusTargetPid } from '../focus'
+import { selectFocusTargetPid } from './focus'
 import {
   DARWIN_TERMINAL_HOSTS,
   LINUX_TERMINAL_HOSTS,

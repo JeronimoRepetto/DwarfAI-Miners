@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import FeedModal from './components/FeedModal.vue'
-import MapView from './components/MapView.vue'
-import MineScene from './components/MineScene.vue'
-import ShortcutSettings from './components/ShortcutSettings.vue'
+import FeedModal from './components/panel/FeedModal.vue'
+import MapView from './components/map/MapView.vue'
+import MineScene from './components/scene/MineScene.vue'
+import ShortcutSettings from './components/panel/ShortcutSettings.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useMines } from './composables/useMines'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
-import { shouldHidePanelAfterActivation } from './lib/activation'
+import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import type { Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
 
 const { state, setMines } = useMines()

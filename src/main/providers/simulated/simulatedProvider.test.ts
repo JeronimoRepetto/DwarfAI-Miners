@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSimulationConfig, type SimulationConfig } from '../../config'
+import { defaultSimulationConfig, type SimulationConfig } from '../../config/config'
 import { SimulatedProvider } from './simulatedProvider'
 import { simulatedMines, simulatedSnapshots } from './world'
 

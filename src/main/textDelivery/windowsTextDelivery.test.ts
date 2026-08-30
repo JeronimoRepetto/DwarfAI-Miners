@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ShellRunner } from '../focus'
+import type { ShellRunner } from '../platform/focus'
 import { workerSentinel, type ConsoleWorkerProcess } from './consoleWorker'
 import { WindowsTextDelivery } from './windowsTextDelivery'
 

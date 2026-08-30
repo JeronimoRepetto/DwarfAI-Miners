@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProbeCommand } from '../adapters/processProbe'
-import type { SpawnFn, SpawnedProcess } from '../terminalLauncher'
+import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
 import { createAutostartPort, createPlatformAdapters, type Platform } from './platformAdapters'
 
 function options(platform: Platform, overrides: Record<string, unknown> = {}) {

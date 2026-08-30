@@ -1,4 +1,4 @@
-import { loadSimulationConfig, SIMULATION_ENV_VAR, type ConfigEnv } from '../../config'
+import { loadSimulationConfig, SIMULATION_ENV_VAR, type ConfigEnv } from '../../config/config'
 import type { MineTier } from '../../domain/types'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import type { Provider } from '../provider'

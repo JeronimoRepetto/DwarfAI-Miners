@@ -4,7 +4,7 @@ import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../ada
 import type { SqliteLike } from '../../adapters/sqliteLike'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
-import { pollProfiler } from '../../perf'
+import { pollProfiler } from '../../runtime/perf'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import type { Provider } from '../provider'
 import {

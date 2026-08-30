@@ -1,4 +1,4 @@
-import type { SimulationConfig } from '../../config'
+import type { SimulationConfig } from '../../config/config'
 import type {
   Dwarf,
   DwarfProvider,

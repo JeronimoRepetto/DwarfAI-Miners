@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
-import { focusPid, type ShellRunner } from '../focus'
+import { focusPid, type ShellRunner } from '../platform/focus'
 import type {
   ConsoleTextRequest,
   InterruptRequest,

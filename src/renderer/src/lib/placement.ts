@@ -11,7 +11,7 @@
  * `mapSites.ts`, so the assignment logic never needs to know about the
  * painting it is placing mines on.
  */
-import { MINE_SITES } from './mapSites'
+import { MINE_SITES } from './map/mapSites'
 
 /** FNV-1a 32-bit hash: tiny, deterministic, well spread for path-like ids. */
 export function hashString(value: string): number {

@@ -1,4 +1,4 @@
-import type { SimulationConfig } from '../../config'
+import type { SimulationConfig } from '../../config/config'
 import type { FeedMessage, ProviderSnapshot } from '../../domain/types'
 import type { Provider } from '../provider'
 import { hashInt, hashPick } from './rng'

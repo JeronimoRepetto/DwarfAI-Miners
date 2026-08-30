@@ -4,7 +4,7 @@ import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../adapters/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
-import { pollProfiler } from '../../perf'
+import { pollProfiler } from '../../runtime/perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'
 import {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Dwarf, ProviderSnapshot } from '../../domain/types'
-import { defaultSimulationConfig, type SimulationConfig } from '../../config'
+import { defaultSimulationConfig, type SimulationConfig } from '../../config/config'
 import { SHOWCASE_MINE_INDEX, simulatedMines, simulatedSnapshots } from './world'
 
 /*

@@ -17,9 +17,13 @@ import {
   enable as enableAutostart,
   ensureDefaultAutostart,
   migrateLegacyAutostart
-} from './autostart'
-import { loadConfig } from './config'
-import { CONFIG_FILE_NAME, createConfigFileStore, withConfigFileFallback } from './configFile'
+} from './shell/autostart'
+import { loadConfig } from './config/config'
+import {
+  CONFIG_FILE_NAME,
+  createConfigFileStore,
+  withConfigFileFallback
+} from './config/configFile'
 import { sumTokensObserved } from './domain/aggregate'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
@@ -27,11 +31,11 @@ import { NodeFs } from './adapters/fsLike'
 import { runCoalBackfill } from './ledger/coalBackfill'
 import { createLedgerStore } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
-import { createPinPreferenceStore } from './pinPreference'
-import { AgentRuntime, expandHomePath } from './runtime'
-import { createShortcutPreferenceStore } from './shortcutPreference'
-import { createToggleShortcut, type ToggleShortcutController } from './shortcuts'
-import { createTray } from './tray'
+import { createPinPreferenceStore } from './shell/pinPreference'
+import { AgentRuntime, expandHomePath } from './runtime/runtime'
+import { createShortcutPreferenceStore } from './shell/shortcutPreference'
+import { createToggleShortcut, type ToggleShortcutController } from './shell/shortcuts'
+import { createTray } from './shell/tray'
 import {
   applyAlwaysOnTop,
   createMainWindow,
@@ -39,7 +43,7 @@ import {
   markQuitting,
   showPanel,
   togglePanel
-} from './window'
+} from './shell/window'
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { DwarfRole, DwarfStatus, MineTier } from '../types'
 import { MATERIALS } from '../types'
-import { emptyMaterialTotals } from './vault'
+import { emptyMaterialTotals } from './vault/vault'
 import {
   BUBBLE_MAX_CHARS,
   LEAVING_EXIT_MS,

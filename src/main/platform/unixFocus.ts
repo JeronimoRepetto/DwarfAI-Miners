@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import type { ProbeCommand } from '../adapters/processProbe'
-import { selectFocusTargetPid, type ProcessRow } from '../focus'
+import { selectFocusTargetPid, type ProcessRow } from './focus'
 
 /**
  * Click-to-focus on POSIX systems.

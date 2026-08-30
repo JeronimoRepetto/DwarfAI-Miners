@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MINE_SITES } from './mapSites'
+import { MINE_SITES } from './map/mapSites'
 import { assignSlots, hashString } from './placement'
 
 const IDS = [

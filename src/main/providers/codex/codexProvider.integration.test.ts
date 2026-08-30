@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { NodeFs } from '../../adapters/fsLike'
 import { isCodexProcessRunning } from '../../adapters/processProbe'
 import { NodeSqlite } from '../../adapters/sqliteLike'
-import { defaultConfig } from '../../config'
+import { defaultConfig } from '../../config/config'
 import { CodexProvider } from './codexProvider'
 
 /**

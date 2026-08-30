@@ -4,13 +4,13 @@ import {
   type ProbeRunner,
   type ProcessProbePort
 } from '../adapters/processProbe'
-import { focusPid as windowsFocusPid, type ShellRunner } from '../focus'
+import { focusPid as windowsFocusPid, type ShellRunner } from './focus'
 import {
   launchTranscriptViewer,
   resolveViewerScriptPath,
   type SpawnFn,
   type ViewerPathOptions
-} from '../terminalLauncher'
+} from './terminalLauncher'
 import {
   createOsascriptConsoleInput,
   type ConsoleInputAdapter

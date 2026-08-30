@@ -1,5 +1,5 @@
 import { spawn as spawnChild } from 'node:child_process'
-import type { ShellResult, ShellRunner } from '../focus'
+import type { ShellResult, ShellRunner } from '../platform/focus'
 
 /**
  * A long-lived, stdin-driven powershell.exe for console delivery (issue #21).

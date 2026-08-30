@@ -1,4 +1,4 @@
-import { emptyMaterialTotals } from '../lib/vault'
+import { emptyMaterialTotals } from '../lib/vault/vault'
 import type { Dwarf, MaterialTotals, Mine } from '../types'
 
 /**

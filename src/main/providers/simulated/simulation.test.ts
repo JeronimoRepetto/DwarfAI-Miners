@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { SIMULATION_ENV_VAR } from '../../config'
+import { SIMULATION_ENV_VAR } from '../../config/config'
 import { createSimulation } from './simulation'
 
 const ON = { [SIMULATION_ENV_VAR]: '1' }

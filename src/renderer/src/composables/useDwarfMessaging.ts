@@ -5,7 +5,7 @@ import {
   openReactionWatch,
   type ReactionSnapshot,
   type ReactionWatch
-} from '../lib/reaction'
+} from '../lib/delivery/reaction'
 import {
   defaultDwarfMessagingState,
   type Dwarf,
