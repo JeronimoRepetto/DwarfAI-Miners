@@ -1,0 +1,80 @@
+name: Bug report
+description: The panel does something it should not, or does not do something it promises.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. If you are on macOS or Linux, check the
+        [support matrix](https://github.com/JeronimoRepetto/DwarfAI-Miners#platform-support)
+        before filing — an unsupported or integration-pending row is often the whole explanation.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happens, in a sentence or two. Lead with the behaviour, not with a guess at its cause.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The shortest path from a fresh start to seeing it.
+      placeholder: |
+        1. pnpm dev, show the panel with Ctrl+Alt+Shift+P
+        2. Start a Claude Code session in any project
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected instead. A README or docs line that promises it is the strongest form of this.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: From the installer filename, or `version` in package.json when running from source.
+      placeholder: 0.2.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and desktop
+      description: On Linux, say X11 or Wayland — several behaviours turn on it.
+      placeholder: Windows 11 / macOS 15.3 arm64 / Ubuntu 24.04 Wayland
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sessions
+    attributes:
+      label: What was running
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - Nothing — the panel itself misbehaved
+        - The simulated valley (development provider)
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant evidence
+      description: |
+        Logs, a screenshot, the file or function you suspect. Scrub anything machine-specific
+        before attaching it — screenshots especially, since a project name is readable in pixels
+        and no automated check in this repository can see it.
+    validations:
+      required: false

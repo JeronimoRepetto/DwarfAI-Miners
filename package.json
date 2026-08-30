@@ -73,7 +73,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
-    "package:mac": "pnpm build && electron-builder --mac dmg zip --publish never",
+    "package:mac": "pnpm build && electron-builder --mac --publish never",
     "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

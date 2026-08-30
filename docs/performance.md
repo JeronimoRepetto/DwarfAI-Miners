@@ -298,7 +298,7 @@ is what stands between the app and that, so it should be treated as load-bearing
 
 | Target                                      | Time         | Directories listed | Files stat'd    | Counted   |
 | ------------------------------------------- | ------------ | ------------------ | --------------- | --------- |
-| `topanga-monorepo`                          | 4 ms         | 45                 | 32              | 0.1 MiB   |
+| A small sibling repo                        | 4 ms         | 45                 | 32              | 0.1 MiB   |
 | This repo                                   | 8 ms         | 36                 | 215             | 1.3 MiB   |
 | Whole `Desktop` tree (stress)               | **147 ms**   | 865                | **3 000** (cap) | 63.6 MiB  |
 | Whole `Desktop` tree, cap raised to 100 000 | **3 011 ms** | 20 173             | 60 835          | 576.5 MiB |

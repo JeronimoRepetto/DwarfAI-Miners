@@ -50,14 +50,51 @@ Be precise about this; it is narrower than it sounds.
   GitHub handle, the Ko-fi link, the bundle id, the name in `LICENSE` — never trips it. The other
   two match anywhere.
 - It covers **tracked files only**. An untracked or ignored file is invisible to it.
+- It does **not look for private project names**, and that was deliberate rather than forgotten.
+  The sibling directories on this machine run from unmistakable to words that occur in ordinary
+  prose, and a list wide enough to catch the second kind fails the build on sentences that leak
+  nothing. Whether a narrow list of the unmistakable ones is worth the false positives is the
+  maintainer's open call, in issue #54. **Until it is decided, assume project names are
+  unchecked**: one reached `main` in a measurement table and came out by reading, not by CI.
 - It skips **binary files**. A path baked into PNG metadata, or a project name legible in a
-  committed screenshot, cannot be caught — issue #18 was a screenshot leak, and human review caught
-  it, not CI.
+  committed screenshot, cannot be caught — see the next section.
 - It excludes exactly one file: the workflow itself, because that file necessarily spells the
-  patterns it searches for.
+  patterns it searches for. Unavoidable, and stated in the step's own comment so it is not read as
+  an oversight — but the consequence is that the single most identifier-dense file in the
+  repository is the one file never scanned.
 
 So a green build is not proof of privacy. It is proof that four specific strings are absent from
 the text of tracked files.
+
+## Screenshots: the guard is blind, and you are the check
+
+Nothing in CI will ever fail for an identifier that is in pixels rather than in text. When you
+commit an image, the review is a pair of eyes, and there is no second line of defence behind them.
+
+This is the incident the rule comes from. `docs/assets/screenshot-map.png` was committed in
+`c47d2f5` with **two private project names legible in the panel** — two and a half hours after
+`1244510` added the guard, and after the text audit had already removed those same names from the
+source. A human reading the picture caught it, and `1fe418c` replaced the file seven minutes later.
+The guard was green across both commits, and the pre-scrub blob is still in history: that is why
+issue #51 exists, and why replacing the file is not the same as removing what was in it.
+
+Before staging any capture, open it at full size and read it — do not skim the thumbnail:
+
+- **Title bars, tab strips and breadcrumbs.** An editor or terminal title is usually a full
+  absolute path. This is the most common leak by a distance.
+- **File trees, project pickers and recent-project lists.** Sibling project names sit one panel
+  away from whatever you meant to show.
+- **Shell prompts**, which tend to carry account, host and working directory on one line.
+- **Anything behind the app** — notifications, tray tooltips, browser tabs.
+- **In a capture of this app, a mine's label _is_ a project folder name** — `aggregate.ts` takes
+  the last segment of the session's path — and a dwarf carries whatever its session was last
+  saying. That is precisely what leaked above, and the panel cannot show less and still be useful.
+
+Crop or repaint what you find; assume the reader zooms in. And say in the commit body that you
+looked — an image nobody claims to have read is the state that produced the incident above.
+
+The same applies to a captured terminal transcript pasted as text: the guard will catch the four
+strings it knows and nothing else in the prompt line.
 
 ## The trap that has actually bitten
 
