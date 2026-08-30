@@ -46,22 +46,28 @@ const FIRST_SIGHT_TAIL_BYTES = 4 * 1024 * 1024
 const RECOVERY_TAIL_BYTES = 16 * 1024 * 1024
 
 /**
- * How long a session must produce NOTHING before its remembered launches are
- * read as over (see pruneStaleLaunches, issue #40).
+ * How long each transcript must go unwritten before its silence counts toward
+ * a remembered launch being over (see pruneStaleLaunches, issue #40). BOTH
+ * must elapse, on top of an `idle` registry status, before anything is dropped.
  *
- * Not a liveness timer: it only ever applies to a session the registry reports
- * `idle`, so it is the second half of a proof rather than an expiry. A turn
+ * Not liveness timers: they only ever apply to a session the registry reports
+ * `idle`, so they are the second half of a proof rather than an expiry. A turn
  * interrupted mid-flight takes its background agents with it without ever
  * writing their terminal `<task-notification>`, and #28's launch memory has no
  * other exit — the reported ghost had been mining for 13 hours.
  *
- * Generous on purpose, because the opposite error is the false departure #28
- * exists to prevent: a live subagent grinding through one long tool call
- * appends nothing at all until that call returns, so a tight window would evict
- * a worker that is merely quiet. Half an hour of total silence from an idle
- * session is evidence; five minutes of it is just a slow build.
+ * They differ because the two silences are not equally telling, and that
+ * asymmetry is the point — do not collapse them back into one number. A
+ * FOREMAN legitimately sits idle for as long as it takes a human to type the
+ * next prompt, so its silence is weak evidence and gets the longer hour. A
+ * WORKER cannot wait on anyone: once launched it runs to completion, so
+ * silence from its own transcript is strong evidence and half an hour of it
+ * says enough. Both stay generous anyway, because the opposite error is the
+ * false departure #28 exists to prevent: a live subagent grinding through one
+ * long tool call appends nothing at all until that call returns.
  */
-const STALE_LAUNCH_MS = 30 * 60 * 1000
+const STALE_FOREMAN_SILENCE_MS = 60 * 60 * 1000
+const STALE_WORKER_SILENCE_MS = 30 * 60 * 1000
 
 /**
  * How far a probed process creation time may sit from the registry's procStart
@@ -93,11 +99,18 @@ export interface ClaudeProviderOptions {
   processStartTimeMs?: (pid: number) => Promise<number | null>
   now?: () => number
   /**
-   * How long an idle session must produce nothing before its remembered
-   * launches are dropped (see STALE_LAUNCH_MS). Injected so tests cross the
-   * boundary with an injected clock instead of a real half-hour timer.
+   * How long the SESSION's own transcript must go unwritten before that
+   * silence counts toward dropping its remembered launches (see
+   * STALE_FOREMAN_SILENCE_MS). Injected so tests cross the boundary with an
+   * injected clock instead of a real hour-long timer.
    */
-  staleLaunchMs?: number
+  foremanSilenceMs?: number
+  /**
+   * The same for a WORKER's own subagent transcript (see
+   * STALE_WORKER_SILENCE_MS). Deliberately separate from the foreman's: the
+   * two silences carry different weight, so they are crossed independently.
+   */
+  workerSilenceMs?: number
 }
 
 function defaultIsPidAlive(pid: number): boolean {
@@ -131,7 +144,8 @@ export class ClaudeProvider implements Provider {
   private readonly isPidAlive: (pid: number) => boolean
   private readonly processStartTimeMs?: (pid: number) => Promise<number | null>
   private readonly now: () => number
-  private readonly staleLaunchMs: number
+  private readonly foremanSilenceMs: number
+  private readonly workerSilenceMs: number
   /**
    * "pid|procStart" -> what probing that exact pair concluded.
    *
@@ -199,8 +213,8 @@ export class ClaudeProvider implements Provider {
    * worker dwarf silently leave mid-run. A launch stays remembered until a
    * terminal notification for its agent id is seen (terminalAgents always
    * wins), a turn ends with zero background agents pending while the launch
-   * is older than the whole tail (see snapshotSession), its idle parent goes a
-   * whole window producing nothing anywhere (see pruneStaleLaunches), or the
+   * is older than the whole tail (see snapshotSession), an idle session goes
+   * both silence windows producing nothing (see pruneStaleLaunches), or the
    * session itself leaves the registry (evicted in scan). Keyed per session —
    * unlike the deliberately tiny flat terminal id set — so ended sessions cannot leak
    * launch records for the life of the process.
@@ -244,7 +258,8 @@ export class ClaudeProvider implements Provider {
       this.processStartTimeMs = options.processStartTimeMs
     }
     this.now = options.now ?? Date.now
-    this.staleLaunchMs = options.staleLaunchMs ?? STALE_LAUNCH_MS
+    this.foremanSilenceMs = options.foremanSilenceMs ?? STALE_FOREMAN_SILENCE_MS
+    this.workerSilenceMs = options.workerSilenceMs ?? STALE_WORKER_SILENCE_MS
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -576,11 +591,12 @@ export class ClaudeProvider implements Provider {
    *   window while the agent worked — and `waiting` is still mid-turn (blocked
    *   on input, a dialog, or a long tool, see #34). In both a subagent can be
    *   computing, so the launch memory must hold no matter how quiet things are.
-   * - Nothing may have been written for a whole window, by the parent OR by the
-   *   worker itself. An idle parent alone is NOT proof: a turn can legitimately
-   *   end with background agents still pending — that is exactly what
-   *   `pendingBackgroundAgentCount` records — and such an agent keeps appending
-   *   to its own subagent transcript the entire time it works.
+   * - Nothing may have been written for a whole window, by the parent AND by
+   *   the worker itself, each measured against its own role's window (see
+   *   STALE_FOREMAN_SILENCE_MS). An idle parent alone is NOT proof: a turn can
+   *   legitimately end with background agents still pending — that is exactly
+   *   what `pendingBackgroundAgentCount` records — and such an agent keeps
+   *   appending to its own subagent transcript the entire time it works.
    *
    * Together they separate "I cannot see the launch record", where the worker
    * must stay, from "the parent proves nothing is running", where it must go.
@@ -598,26 +614,33 @@ export class ClaudeProvider implements Provider {
     if (remembered.size === 0) return
     if (session.status !== 'idle') return
     const now = this.now()
-    if (this.writtenWithinWindow(options.parentMtimeMs, now)) return
+    if (this.writtenWithinWindow(options.parentMtimeMs, now, this.foremanSilenceMs)) return
     for (const agentId of [...remembered.keys()]) {
       const stat = await this.fs.stat(
         subagentTranscriptPath(options.projectDir, session.sessionId, agentId)
       )
-      if (this.writtenWithinWindow(stat?.mtimeMs, now)) continue
+      // The worker's own, shorter window: a subagent cannot be waiting on a
+      // human the way its foreman can, so its silence is judged sooner.
+      if (this.writtenWithinWindow(stat?.mtimeMs, now, this.workerSilenceMs)) continue
       remembered.delete(agentId)
       this.abandonedAgents.add(agentId)
     }
   }
 
   /**
-   * Has this file been written recently enough to count as something still
-   * producing? A window that has exactly elapsed reads as stale — an arbitrary
-   * side to pick, pinned by tests so it stays a decision. A missing file (no
-   * mtime) is the absence of evidence, never evidence of production; a clock
-   * that runs behind an mtime yields a negative age, which is trivially fresh.
+   * Has this file been written recently enough, for ITS role's window, to count
+   * as something still producing? A window that has exactly elapsed reads as
+   * stale — an arbitrary side to pick, pinned by tests so it stays a decision.
+   * A missing file (no mtime) is the absence of evidence, never evidence of
+   * production; a clock that runs behind an mtime yields a negative age, which
+   * is trivially fresh.
    */
-  private writtenWithinWindow(mtimeMs: number | undefined, now: number): boolean {
-    return mtimeMs !== undefined && now - mtimeMs < this.staleLaunchMs
+  private writtenWithinWindow(
+    mtimeMs: number | undefined,
+    now: number,
+    windowMs: number
+  ): boolean {
+    return mtimeMs !== undefined && now - mtimeMs < windowMs
   }
 
   /**

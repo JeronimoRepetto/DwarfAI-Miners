@@ -773,28 +773,54 @@ describe('ClaudeProvider', () => {
      * is running". Only an IDLE session (neither `busy` nor `waiting`: both are
      * mid-turn) that has produced nothing for a whole window, in its own
      * transcript AND in the worker's, is that proof.
+     *
+     * The two silences are weighed differently, because they are not equally
+     * telling: a foreman legitimately sits idle waiting for a human to type, so
+     * its silence is weak evidence, while a launched subagent runs to
+     * completion and cannot wait on anyone — so its silence is strong. Each
+     * transcript is therefore measured against its own window, and both must
+     * elapse. These tests drive scaled stand-ins for the product's hour and
+     * half-hour, keeping the same 2:1 shape.
      */
     describe('stale launch memory (issue #40)', () => {
       const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
-      /** Short enough to read at a glance; the product default is minutes. */
-      const WINDOW = 10_000
+      const MINUTE = 60_000
+      const HOUR = 60 * MINUTE
+      /** Stand-in for the product's hour of foreman silence. */
+      const FOREMAN_WINDOW = 60_000
+      /** Stand-in for the product's half hour of worker silence. */
+      const WORKER_WINDOW = 30_000
       /** When both transcripts were last written, before each test moves on. */
       const LAST_WRITE = 42_000
 
       let clock = LAST_WRITE
 
       /**
-       * The provider with the clock this describe drives and a window small
-       * enough to cross inside a test. `staleLaunchMs` omitted entirely — see
-       * the last test — is what exercises the product default.
+       * The provider with the clock this describe drives and windows small
+       * enough to cross inside a test. Both omitted entirely — see the default
+       * tests at the end — is what exercises the product's own windows.
        */
-      function staleAwareProvider(staleLaunchMs = WINDOW): ClaudeProvider {
+      function staleAwareProvider(
+        foremanSilenceMs = FOREMAN_WINDOW,
+        workerSilenceMs = WORKER_WINDOW
+      ): ClaudeProvider {
         return new ClaudeProvider({
           fs: fake,
           roots: [ROOT1],
           isPidAlive: (pid) => alivePids.has(pid),
           now: () => clock,
-          staleLaunchMs
+          foremanSilenceMs,
+          workerSilenceMs
+        })
+      }
+
+      /** The provider with the product's own windows; only the clock is fake. */
+      function providerWithProductWindows(): ClaudeProvider {
+        return new ClaudeProvider({
+          fs: fake,
+          roots: [ROOT1],
+          isPidAlive: (pid) => alivePids.has(pid),
+          now: () => clock
         })
       }
 
@@ -807,6 +833,16 @@ describe('ClaudeProvider', () => {
       function freezeTranscripts(mtimeMs: number): void {
         fake.addFile(TRANSCRIPT, parentTranscript, mtimeMs)
         fake.addFile(SUBAGENT, subagentTranscript, mtimeMs)
+      }
+
+      /**
+       * Age each transcript independently as of the current `clock`, which is
+       * what lets one window be crossed while the other is not. Call it after
+       * setting `clock`.
+       */
+      function silentFor(ages: { foremanMs: number; workerMs: number }): void {
+        fake.addFile(TRANSCRIPT, parentTranscript, clock - ages.foremanMs)
+        fake.addFile(SUBAGENT, subagentTranscript, clock - ages.workerMs)
       }
 
       beforeEach(() => {
@@ -822,22 +858,54 @@ describe('ClaudeProvider', () => {
         expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
 
         // The session was kicked mid-turn, so no terminal notification will
-        // ever arrive and neither transcript is written again. A whole window
-        // of that is the parent proving nothing is running.
-        clock = LAST_WRITE + WINDOW
+        // ever arrive and neither transcript is written again. Both transcripts
+        // froze together, so the longer of the two windows is the binding one:
+        // once it passes, the parent has proved nothing is running.
+        clock = LAST_WRITE + FOREMAN_WINDOW
         const second = await provider.scan()
         expect(second[0]!.status).toBe('idle')
         expect(second[0]!.dwarfs).toEqual([])
       })
 
-      it('keeps the worker one millisecond before the window has elapsed', async () => {
-        clock = LAST_WRITE + WINDOW - 1
+      it('keeps the worker one millisecond before both windows have elapsed', async () => {
+        clock = LAST_WRITE + FOREMAN_WINDOW - 1
         const snapshots = await staleAwareProvider().scan()
         expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
       })
 
-      it('drops the worker the moment the window has exactly elapsed', async () => {
-        clock = LAST_WRITE + WINDOW
+      it('drops the worker the moment both windows have exactly elapsed', async () => {
+        clock = LAST_WRITE + FOREMAN_WINDOW
+        const snapshots = await staleAwareProvider().scan()
+        expect(snapshots[0]!.dwarfs).toEqual([])
+      })
+
+      it('keeps a worker still inside its own window though its foreman passed one', async () => {
+        // The foreman has said nothing for its whole hour — on its own that is
+        // the weak half of the evidence, because an orchestrator waiting for a
+        // human to type looks exactly like this. The worker wrote one
+        // millisecond inside its own window, so it is still producing.
+        clock = LAST_WRITE + FOREMAN_WINDOW * 2
+        silentFor({ foremanMs: FOREMAN_WINDOW, workerMs: WORKER_WINDOW - 1 })
+        const snapshots = await staleAwareProvider().scan()
+        expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('keeps a worker past its own window while its foreman is still inside one', async () => {
+        // The mirror case: the worker has been silent past its half hour, but
+        // the foreman wrote a moment ago, so a turn produced something in this
+        // session recently and the launch memory holds.
+        clock = LAST_WRITE + FOREMAN_WINDOW * 2
+        silentFor({ foremanMs: FOREMAN_WINDOW - 1, workerMs: WORKER_WINDOW })
+        const snapshots = await staleAwareProvider().scan()
+        expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('drops the worker only once each transcript has passed its own window', async () => {
+        // Both silences are past their own thresholds at the same poll — the
+        // only shape the ANDed rule accepts. Note the worker crossed its window
+        // long before this: the foreman's longer one is what held it here.
+        clock = LAST_WRITE + FOREMAN_WINDOW * 2
+        silentFor({ foremanMs: FOREMAN_WINDOW, workerMs: WORKER_WINDOW })
         const snapshots = await staleAwareProvider().scan()
         expect(snapshots[0]!.dwarfs).toEqual([])
       })
@@ -853,7 +921,7 @@ describe('ClaudeProvider', () => {
         expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
 
         fake.addFile(TRANSCRIPT, quietTail, LAST_WRITE)
-        clock = LAST_WRITE + WINDOW * 100
+        clock = LAST_WRITE + FOREMAN_WINDOW * 100
         const second = await provider.scan()
         expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
       })
@@ -866,7 +934,7 @@ describe('ClaudeProvider', () => {
         const provider = staleAwareProvider()
         await provider.scan()
 
-        clock = LAST_WRITE + WINDOW * 100
+        clock = LAST_WRITE + FOREMAN_WINDOW * 100
         const second = await provider.scan()
         expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
       })
@@ -879,14 +947,14 @@ describe('ClaudeProvider', () => {
         const provider = staleAwareProvider()
         await provider.scan()
 
-        // The parent has been quiet for three windows; the worker wrote a
-        // moment ago.
-        clock = LAST_WRITE + WINDOW * 3
+        // The parent has been quiet for three foreman windows; the worker wrote
+        // a moment ago.
+        clock = LAST_WRITE + FOREMAN_WINDOW * 3
         fake.addFile(SUBAGENT, subagentTranscript, clock - 1)
         expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
 
         // ...and is still writing when the session picks up a turn again.
-        clock += WINDOW * 3
+        clock += FOREMAN_WINDOW * 3
         fake.addFile(SUBAGENT, subagentTranscript, clock)
         fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('busy'), 2_000)
         expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
@@ -906,7 +974,7 @@ describe('ClaudeProvider', () => {
       it('never brings a stale worker back when its session goes busy again', async () => {
         const provider = staleAwareProvider()
         await provider.scan()
-        clock = LAST_WRITE + WINDOW
+        clock = LAST_WRITE + FOREMAN_WINDOW
         expect((await provider.scan())[0]!.dwarfs).toEqual([])
 
         // Next morning the user types a new prompt. The dead agent's launch
@@ -914,7 +982,7 @@ describe('ClaudeProvider', () => {
         // that only re-derived staleness each poll would re-adopt it and the
         // ghost would be back the moment the session resumed.
         fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('busy'), 2_000)
-        clock += WINDOW
+        clock += FOREMAN_WINDOW
         fake.addFile(TRANSCRIPT, parentTranscript, clock)
         const third = await provider.scan()
         expect(third[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
@@ -941,7 +1009,7 @@ describe('ClaudeProvider', () => {
           `claude:${SESSION_ID}:${GHOST}`
         ])
 
-        clock = LAST_WRITE + WINDOW
+        clock = LAST_WRITE + FOREMAN_WINDOW
         expect((await provider.scan())[0]!.dwarfs).toEqual([])
 
         // The launch record scrolls out of the routine tail while the count
@@ -956,20 +1024,45 @@ describe('ClaudeProvider', () => {
         expect(third[0]!.dwarfs).toEqual([])
       })
 
-      it('uses a generous default window when none is injected', async () => {
+      it('uses generous default windows when none are injected', async () => {
         // Ten minutes of silence is not proof: a subagent grinding through one
-        // long tool call writes nothing at all until that call returns. The
-        // default has to be long enough that only a truly dead agent trips it,
-        // so this is the one provider here with no window injected at all.
-        const provider = new ClaudeProvider({
-          fs: fake,
-          roots: [ROOT1],
-          isPidAlive: (pid) => alivePids.has(pid),
-          now: () => clock
-        })
-        clock = LAST_WRITE + 10 * 60_000
-        const snapshots = await provider.scan()
+        // long tool call writes nothing at all until that call returns. Both
+        // defaults have to be long enough that only a truly dead agent trips
+        // them, so these last tests inject no window at all.
+        clock = LAST_WRITE + 10 * MINUTE
+        const snapshots = await providerWithProductWindows().scan()
         expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      /**
+       * The next three pin the product's own two windows against each other,
+       * from both sides, so the asymmetry cannot be quietly "simplified" back
+       * into a single number: collapsing them to one value fails at least one
+       * of these, whichever value is chosen.
+       */
+      it('keeps a worker whose foreman has been silent 59 minutes', async () => {
+        // Inside the foreman's hour, though well past the worker's half hour.
+        clock = LAST_WRITE + 4 * HOUR
+        silentFor({ foremanMs: 59 * MINUTE, workerMs: 31 * MINUTE })
+        const snapshots = await providerWithProductWindows().scan()
+        expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('keeps a worker that wrote 29 minutes ago even past the foreman hour', async () => {
+        // The mirror: the foreman's hour has passed, the worker's half hour
+        // has not, and a launched subagent that recently produced output is the
+        // strong evidence here — it cannot be waiting on a human.
+        clock = LAST_WRITE + 4 * HOUR
+        silentFor({ foremanMs: 61 * MINUTE, workerMs: 29 * MINUTE })
+        const snapshots = await providerWithProductWindows().scan()
+        expect(snapshots[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+      })
+
+      it('drops the worker once an hour of foreman and half of one of worker have passed', async () => {
+        clock = LAST_WRITE + 4 * HOUR
+        silentFor({ foremanMs: 61 * MINUTE, workerMs: 31 * MINUTE })
+        const snapshots = await providerWithProductWindows().scan()
+        expect(snapshots[0]!.dwarfs).toEqual([])
       })
     })
   })
