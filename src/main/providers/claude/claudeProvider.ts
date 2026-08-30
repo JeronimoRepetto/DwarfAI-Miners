@@ -3,6 +3,7 @@ import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../adapters/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
+import { pollProfiler } from '../../perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import type { Provider } from '../provider'
 import {
@@ -205,10 +206,17 @@ export class ClaudeProvider implements Provider {
 
     for (const root of this.roots) {
       const sessionsDir = join(root, 'sessions')
-      if (!(await this.fs.exists(sessionsDir))) continue
-      for (const entry of await this.fs.listDir(sessionsDir)) {
+      // No exists() pre-check: listDir already answers [] for a missing
+      // directory (see FsLike's error contract), so probing first only bought
+      // a second filesystem round trip per configured root on every 2s poll —
+      // measured at ~1.4ms each on this machine (#25).
+      for (const entry of await pollProfiler.measure('cl.list', () =>
+        this.fs.listDir(sessionsDir)
+      )) {
         if (entry.isDirectory || !entry.name.endsWith('.json')) continue
-        const session = await this.readSessionEntry(join(sessionsDir, entry.name))
+        const session = await pollProfiler.measure('cl.entry', () =>
+          this.readSessionEntry(join(sessionsDir, entry.name))
+        )
         if (session === null) continue
         if (seenSessions.has(session.sessionId)) continue
         if (!this.isPidAlive(session.pid)) {
@@ -324,7 +332,7 @@ export class ClaudeProvider implements Provider {
   ): Promise<ProviderSnapshot> {
     const projectDir = join(root, 'projects', encodeClaudeProjectDir(session.cwd))
     const transcriptPath = join(projectDir, `${session.sessionId}.jsonl`)
-    const transcriptStat = await this.fs.stat(transcriptPath)
+    const transcriptStat = await pollProfiler.measure('cl.stat', () => this.fs.stat(transcriptPath))
     // First sight of a session (fresh app start, or a session that just
     // appeared): one deeper read, so a launch that scrolled past the regular
     // window BEFORE this process could ever remember it is still recovered.
@@ -332,10 +340,16 @@ export class ClaudeProvider implements Provider {
     // goes back to the cheap bound.
     const firstSight = !this.rememberedLaunches.has(session.sessionId)
     const tailBytes = firstSight ? FIRST_SIGHT_TAIL_BYTES : TRANSCRIPT_TAIL_BYTES
-    const info =
-      transcriptStat === null
-        ? parseClaudeTranscriptTail('')
-        : parseClaudeTranscriptTail(await this.fs.readTextTail(transcriptPath, tailBytes))
+    let info: ClaudeTranscriptInfo
+    if (transcriptStat === null) {
+      info = parseClaudeTranscriptTail('')
+    } else {
+      const tail = await pollProfiler.measure('cl.read', () =>
+        this.fs.readTextTail(transcriptPath, tailBytes)
+      )
+      pollProfiler.count('cl.bytes', tail.length)
+      info = pollProfiler.measureSync('cl.parse', () => parseClaudeTranscriptTail(tail))
+    }
 
     for (const agentId of info.terminalAgentIds) this.terminalAgents.add(agentId)
     // Merge this tail's launches into the session's launch memory, then let

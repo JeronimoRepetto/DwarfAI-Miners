@@ -1153,11 +1153,81 @@ describe('AgentRuntime.nudge', () => {
     try {
       runtime.start()
       await vi.advanceTimersByTimeAsync(0)
+      expect(scan).toHaveBeenCalledTimes(1)
       expect(onMinesUpdated).toHaveBeenCalledTimes(1)
 
       runtime.nudge()
       await vi.advanceTimersByTimeAsync(0)
+      // The scan is what nudge() promises. This provider reports the same
+      // empty world both times, so the publish gate (#25) holds the identical
+      // second snapshot back rather than waking the panel to repaint nothing;
+      // the test below covers a nudge that does find a change.
+      expect(scan).toHaveBeenCalledTimes(2)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(1)
+    } finally {
+      runtime.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('publishes as soon as an out-of-band scan finds something new', async () => {
+    vi.useFakeTimers()
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
+    const onMinesUpdated = vi.fn()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), pollIntervalMs: 60_000 },
+      providers: [{ kind: 'claude', scan, feed: async () => null }],
+      onMinesUpdated
+    })
+    try {
+      runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(1)
+
+      scan.mockResolvedValue([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\Users\\j\\Desktop\\Fresh-Project',
+          status: 'busy',
+          dwarfs: [
+            {
+              id: 'claude:session-1',
+              provider: 'claude',
+              role: 'foreman',
+              name: 'fresh',
+              status: 'working',
+              sessionId: 'session-1'
+            }
+          ],
+          updatedAt: 5_000
+        }
+      ])
+      runtime.nudge()
+      await vi.advanceTimersByTimeAsync(0)
       expect(onMinesUpdated).toHaveBeenCalledTimes(2)
+      expect(onMinesUpdated.mock.calls[1]?.[0]).toHaveLength(1)
+    } finally {
+      runtime.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops republishing a world that has stopped changing', async () => {
+    vi.useFakeTimers()
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
+    const onMinesUpdated = vi.fn()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), pollIntervalMs: 2_000 },
+      providers: [{ kind: 'claude', scan, feed: async () => null }],
+      onMinesUpdated
+    })
+    try {
+      runtime.start()
+      await vi.advanceTimersByTimeAsync(10_000)
+      // Six polls of an unchanged world cost exactly one push.
+      expect(scan.mock.calls.length).toBeGreaterThanOrEqual(5)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(1)
     } finally {
       runtime.stop()
       vi.useRealTimers()

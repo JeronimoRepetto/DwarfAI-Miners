@@ -1,5 +1,6 @@
 import { aggregateMines } from './domain/aggregate'
 import type { Mine, MineTier, ProviderSnapshot } from './domain/types'
+import { pollProfiler } from './perf'
 import type { Provider } from './providers/provider'
 
 /** Default coalescing window for out-of-band nudges, in milliseconds. */
@@ -80,9 +81,16 @@ export class Poller {
   async tick(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
+    // Off unless DWARFAI_PERF is set. Providers are scanned concurrently, so
+    // their stage timings OVERLAP: each is that provider's own wall time, and
+    // they can add up to more than the poll total. The total is the honest
+    // number; the per-provider ones say which scan is the long pole.
+    pollProfiler.begin()
     try {
       const results = await Promise.allSettled(
-        this.options.providers.map((provider) => provider.scan())
+        this.options.providers.map((provider) =>
+          pollProfiler.measure(provider.kind, () => provider.scan())
+        )
       )
       const snapshots: ProviderSnapshot[] = []
       results.forEach((result, index) => {
@@ -95,9 +103,14 @@ export class Poller {
           )
         }
       })
-      this.options.onUpdate(aggregateMines(snapshots, this.options.tierOf))
+      pollProfiler.count('sessions', snapshots.length)
+      const mines = pollProfiler.measureSync('aggregate', () =>
+        aggregateMines(snapshots, this.options.tierOf)
+      )
+      pollProfiler.measureSync('publish', () => this.options.onUpdate(mines))
     } finally {
       this.ticking = false
+      pollProfiler.end()
     }
   }
 

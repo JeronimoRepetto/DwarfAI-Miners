@@ -17,8 +17,10 @@ import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
 import { nullLedgerStore } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
+import { pollProfiler } from './perf'
 import { createPlatformAdapters, type PlatformAdapters } from './platform/platformAdapters'
 import { Poller } from './poller'
+import { PublishGate } from './publishGate'
 import { ClaudeProvider } from './providers/claude/claudeProvider'
 import { CodexProvider } from './providers/codex/codexProvider'
 import type { Provider } from './providers/provider'
@@ -134,6 +136,8 @@ export class AgentRuntime {
   /** Shared by the lifecycle grace window and the delivery stage timings. */
   private readonly now: () => number
   private readonly ledger: MaterialLedger
+  /** Keeps an unchanged poll from waking the renderer (see PublishGate). */
+  private readonly publishGate = new PublishGate()
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -203,15 +207,30 @@ export class AgentRuntime {
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
         // phantom one, and every published mine carries a stamped breakdown.
-        const withMaterials = this.ledger.observe(lifecycle.apply(mines), now)
+        const withMaterials = pollProfiler.measureSync('ledger', () =>
+          this.ledger.observe(lifecycle.apply(mines), now)
+        )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
-        const published = stampTextDelivery(withMaterials, (dwarfId) =>
-          this.deliveryTargetOf(dwarfId)
+        const published = pollProfiler.measureSync('stamp', () =>
+          stampTextDelivery(withMaterials, (dwarfId) => this.deliveryTargetOf(dwarfId))
         )
         this.mines = published
-        options.onMinesUpdated(published, this.ledger.totals())
+        pollProfiler.count(
+          'dwarfs',
+          published.reduce((total, mine) => total + mine.dwarfs.length, 0)
+        )
+        // A poll that re-observed an unchanged world does not wake the panel
+        // (#25). getMines() still answers from this.mines, so a renderer that
+        // starts or reloads mid-quiet-spell gets the current state regardless.
+        const totals = this.ledger.totals()
+        if (this.publishGate.shouldPublish(published, totals)) {
+          pollProfiler.count('push')
+          pollProfiler.measureSync('ipc', () => options.onMinesUpdated(published, totals))
+        } else {
+          pollProfiler.count('skip')
+        }
         // Throttled inside the ledger, and deliberately not awaited: the panel
         // must never wait on a disk write to see its dwarfs move.
         void this.ledger.save(now)

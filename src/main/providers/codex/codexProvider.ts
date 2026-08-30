@@ -4,6 +4,7 @@ import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../ada
 import type { SqliteLike } from '../../adapters/sqliteLike'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
+import { pollProfiler } from '../../perf'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import type { Provider } from '../provider'
 import {
@@ -236,16 +237,30 @@ export class CodexProvider implements Provider {
     // extended window — most ticks never touch the process list at all.
     let codexProcessRunning: boolean | undefined
 
-    const registry = await this.readRegistry(nowMs, retainAfter)
-    const candidates = await this.collectCandidates(nowMs, registry)
+    const registry = await pollProfiler.measure('cx.registry', () =>
+      this.readRegistry(nowMs, retainAfter)
+    )
+    const candidates = await pollProfiler.measure('cx.candidates', () =>
+      this.collectCandidates(nowMs, registry)
+    )
+    pollProfiler.count('cx.candidates.n', candidates.length)
 
     const discovered: DiscoveredCodexSnapshot[] = []
     const seenSessions = new Set<string>()
     // Sizes are only useful for rollouts still in the scan window; anything
     // else is pruned below so a long-running tray session cannot leak entries.
     const sizesThisScan = new Map<string, number>()
-    for (const { path, thread } of candidates) {
-      const stat = await this.fs.stat(path)
+    // Every candidate's stat is fetched in one batch rather than one await at
+    // a time (#25). stat() has no side effects and nothing below depends on
+    // the previous candidate's result, so the order of the loop — and every
+    // decision it makes — is unchanged; only the waiting is shared. Measured
+    // on a 7-day window of 84 rollouts, this is the difference between 5.1ms
+    // and 0.4ms of the 2s poll (see docs/performance.md).
+    const stats = await pollProfiler.measure('cx.stat', () =>
+      Promise.all(candidates.map((candidate) => this.fs.stat(candidate.path)))
+    )
+    for (const [index, { path, thread }] of candidates.entries()) {
+      const stat = stats[index] ?? null
       const size = stat?.size
       const previousSize = this.lastSeenSizes.get(path)
       if (size !== undefined) sizesThisScan.set(path, size)
@@ -329,10 +344,12 @@ export class CodexProvider implements Provider {
       const db = await this.sqlite.openReadOnly(this.stateDbPath)
       if (db !== null) {
         try {
-          for (const thread of readCodexThreads(db, retainAfter)) {
-            threads.set(thread.threadId, thread)
-          }
-          edges = readCodexSpawnEdges(db)
+          pollProfiler.measureSync('cx.q.threads', () => {
+            for (const thread of readCodexThreads(db, retainAfter)) {
+              threads.set(thread.threadId, thread)
+            }
+          })
+          edges = pollProfiler.measureSync('cx.q.edges', () => readCodexSpawnEdges(db))
         } finally {
           db.close()
         }
@@ -342,7 +359,13 @@ export class CodexProvider implements Provider {
       const db = await this.sqlite.openReadOnly(this.logsDbPath)
       if (db !== null) {
         try {
-          heartbeats = readCodexHeartbeats(db, nowMs - this.heartbeatWindowS * 1_000)
+          // Measured as its own stage because it is the most expensive thing
+          // one poll does (#25): the plan is a covering-index walk grouped by
+          // thread_id, so its cost tracks the SIZE of the Codex log store
+          // rather than the length of the heartbeat window.
+          pollProfiler.measureSync('cx.q.beats', () => {
+            heartbeats = readCodexHeartbeats(db, nowMs - this.heartbeatWindowS * 1_000)
+          })
         } finally {
           db.close()
         }
