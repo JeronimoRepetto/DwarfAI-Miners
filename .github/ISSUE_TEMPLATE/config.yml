@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/JeronimoRepetto/DwarfAI-Miners/blob/main/SECURITY.md
+    about: Never in a public issue. SECURITY.md names the private channel, what is in scope, and what to expect.
+  - name: Check the platform support matrix
+    url: https://github.com/JeronimoRepetto/DwarfAI-Miners#platform-support
+    about: Windows is verified end to end; macOS and Linux are built but integration-pending. Your row may already be a known gap.
+  - name: What the app reads and stores
+    url: https://github.com/JeronimoRepetto/DwarfAI-Miners/blob/main/docs/privacy.md
+    about: The data boundary, for questions about which files are read and what leaves the machine.

@@ -1,0 +1,50 @@
+name: Platform validation report
+description: You ran it on macOS or Linux. Say what happened — including when everything worked.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful report the project can receive right now. Windows is the only
+        platform run end to end; macOS and Linux build and pass the suite, but nobody has walked
+        them on a real desktop. **"It all worked" is worth filing** — it is what moves a row from
+        integration-pending to verified.
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS, version and desktop
+      description: On Linux, name X11 or Wayland — several rows in the matrix turn on it.
+      placeholder: macOS 15.3 arm64 / Fedora 41 GNOME Wayland
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: What you ran
+      placeholder: pnpm dev at v0.2.1 / DwarfAI-Miners-0.2.1-arm64.dmg
+    validations:
+      required: true
+
+  - type: textarea
+    id: rows
+    attributes:
+      label: Matrix rows walked
+      description: Mark each worked, broke, or not tried. A row you skipped is useful information — say so rather than dropping the line.
+      value: |
+        - Session detection (Claude Code / Codex):
+        - Click-to-focus a terminal:
+        - Live transcript viewer:
+        - Relay a message to a named session:
+        - Start at login:
+        - Packaging and install:
+    validations:
+      required: true
+
+  - type: textarea
+    id: broke
+    attributes:
+      label: What broke
+      description: For each row that failed — what you expected, and what actually happened. Leave empty if nothing did.
+    validations:
+      required: false

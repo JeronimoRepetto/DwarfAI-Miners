@@ -1,0 +1,50 @@
+name: Feature or change request
+description: Something the panel should do that it does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read
+        [Scope and non-goals](https://github.com/JeronimoRepetto/DwarfAI-Miners/blob/main/CONTRIBUTING.md#scope-and-non-goals)
+        first. A game-engine port, the deferred cosmetics economy, and a provider whose session
+        files nobody can verify are already decided against. An issue is the right place to argue
+        one of those decisions is wrong — but argue it, rather than proposing it as though it were
+        still open.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: The situation that is worse than it should be today. Describe it without naming the fix.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you want instead
+      description: The behaviour you are asking for, and how you would know it was working.
+    validations:
+      required: true
+
+  - type: textarea
+    id: fit
+    attributes:
+      label: Why it belongs here
+      description: |
+        The panel's job is telling you the truth about your sessions at a glance, and it is a
+        monitor first and a game second. Say how this serves that — or what it costs it in
+        weight, in noise, or in a claim the app cannot back up.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant evidence
+      description: |
+        Prior art, the files it would touch, a sketch. For artwork, attach one sample painting on
+        a flat backdrop and settle the style fit before painting a full set.
+    validations:
+      required: false
