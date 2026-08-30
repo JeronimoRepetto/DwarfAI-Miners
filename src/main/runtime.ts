@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFs, type FsLike } from './adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from './adapters/sqliteLike'
-import type { AppConfig } from './config'
+import type { AppConfig, ConfigEnv } from './config'
 import type {
   DwarfActivation,
   DwarfKickRequest,
@@ -11,6 +11,7 @@ import type {
   DwarfTextResult,
   MaterialTotals,
   Mine,
+  MineTier,
   TextDeliveryChannel
 } from '../shared/contracts'
 import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
@@ -24,6 +25,7 @@ import { PublishGate } from './publishGate'
 import { ClaudeProvider } from './providers/claude/claudeProvider'
 import { CodexProvider } from './providers/codex/codexProvider'
 import type { Provider } from './providers/provider'
+import { createSimulation } from './providers/simulated/simulation'
 import type { ViewerPathOptions } from './terminalLauncher'
 import type { TextDeliveryPort, TextDeliveryTarget } from './textDelivery/port'
 import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './textDelivery/resolve'
@@ -127,6 +129,16 @@ export interface RuntimeOptions {
    * one over the configured thresholds.
    */
   tiers?: TierService
+  /**
+   * The REAL process environment, consulted for the development-only simulated
+   * provider (#42) and for nothing else.
+   *
+   * Deliberately NOT `config`: AppConfig is fed by the userData config file a
+   * packaged app reads (#38), and a switch that invents mines must not be
+   * expressible there. Injected so tests can drive the gate without touching
+   * the ambient environment; defaults to `process.env`.
+   */
+  simulationEnv?: ConfigEnv
 }
 
 /**
@@ -165,7 +177,22 @@ export class AgentRuntime {
         relayTimeoutMs: options.config.sendTextTimeoutS * 1_000
       })
 
-    this.providers = options.providers ?? [
+    this.now = options.now ?? Date.now
+
+    // The development-only simulated valley (#42). Null in every ordinary run,
+    // and null in EVERY packaged run whatever the environment says — the two
+    // locks live in createSimulation, which is the only place a simulation can
+    // come into existence. Built here because everything below branches on it.
+    const simulation = createSimulation({
+      env: options.simulationEnv,
+      isPackaged: appPaths.isPackaged,
+      // Shares the runtime's clock, so simulated ticks and the lifecycle grace
+      // window are measured against the same time in tests and in the app.
+      now: this.now,
+      warn: (message) => console.warn(message)
+    })
+
+    const realProviders = (): Provider[] => [
       new ClaudeProvider({
         fs,
         roots: options.config.claudeConfigDirs.map((path) => expandHomePath(path, home)),
@@ -186,13 +213,31 @@ export class AgentRuntime {
         logsDbPath: expandHomePath(options.config.codexLogsDb, home)
       })
     ]
+
+    // A simulated valley REPLACES the real detectors rather than joining them:
+    // a demo that also reported the developer's own live sessions would be
+    // neither an honest demo nor an honest reading of their machine, and the
+    // two crews would end up sharing one map.
+    this.providers = options.providers ?? (simulation ? [simulation.provider] : realProviders())
     this.focus = options.focus ?? ((pid) => platform.focusPid(pid))
     this.launchTerminal =
       options.launchTerminal ??
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
-    this.now = options.now ?? Date.now
-    this.ledger = options.ledger ?? new MaterialLedger({ store: nullLedgerStore() })
+    /*
+     * A demo must never put phantom ore in a real vault (#42).
+     *
+     * While simulating, the persisted ledger index.ts handed in is dropped on
+     * the floor: never observed, never saved, never even opened. What takes its
+     * place is a full MaterialLedger over a store that writes nothing, so the
+     * panel gets a live vault that fills fast enough to overflow the 21-nugget
+     * pile cap (#22) — the real accrual code, running on real deltas, with the
+     * one wire to disk cut. Bypassing accrual altogether would have been the
+     * simpler fix and would have left #22 exactly as unobserved as it was.
+     */
+    this.ledger = simulation
+      ? new MaterialLedger({ store: nullLedgerStore() })
+      : (options.ledger ?? new MaterialLedger({ store: nullLedgerStore() }))
 
     const tiers =
       options.tiers ??
@@ -201,6 +246,21 @@ export class AgentRuntime {
         thresholds: options.config.tierThresholds,
         ttlS: options.config.tierCacheTtlS
       })
+    /*
+     * Who decides what a mine is made of.
+     *
+     * Normally TierService, which weighs the project's source on disk. A
+     * simulated mine has no disk: TierService would walk `/simulated-valley/...`,
+     * find nothing, and call all twenty of them bronze — flattening the tier
+     * spread the demo exists to show and leaving the vault with a single
+     * material. So the simulation answers for its own geology, and reports
+     * every tier as already measured because there is no walk to wait for
+     * (#41's confirmed-tier rule would otherwise mean a permanently empty vault).
+     */
+    const tierOf = simulation ? simulation.tierOf : (path: string): MineTier => tiers.tierOf(path)
+    const confirmedTierOf = simulation
+      ? (mine: Mine): MineTier | undefined => simulation.knownTierOf(mine.path)
+      : (mine: Mine): MineTier | undefined => tiers.knownTierOf(mine.path)
     const lifecycle = new DwarfLifecycleTracker({
       graceMs: options.config.dwarfLeaveGraceS * 1_000,
       now: options.now
@@ -208,7 +268,7 @@ export class AgentRuntime {
     this.poller = new Poller({
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
-      tierOf: (path) => tiers.tierOf(path),
+      tierOf,
       onUpdate: (mines) => {
         const now = this.now()
         // Accrual happens on the lifecycle's output, which is exactly what
@@ -222,7 +282,7 @@ export class AgentRuntime {
         // (#41) — mine.path is the very string aggregateMines handed to
         // tierOf, so this asks about exactly the mine in hand.
         const withMaterials = pollProfiler.measureSync('ledger', () =>
-          this.ledger.observe(lifecycle.apply(mines), now, (mine) => tiers.knownTierOf(mine.path))
+          this.ledger.observe(lifecycle.apply(mines), now, confirmedTierOf)
         )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an

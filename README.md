@@ -451,6 +451,8 @@ privately.
   behind the instant-updates hooks channel.
 - [`docs/ecosystem-research.md`](docs/ecosystem-research.md) — the prior-art survey that
   shaped the design.
+- [`docs/simulated-provider.md`](docs/simulated-provider.md) — the development-only simulated
+  valley: seeing the panel under load without launching real agents (`DWARFAI_SIMULATE=1`).
 - [`LICENSE`](LICENSE) — MIT.
 
 ## Support the project

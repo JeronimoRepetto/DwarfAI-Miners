@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { defaultConfig, loadConfig } from './config'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  SIMULATION_ENV_VAR,
+  defaultConfig,
+  defaultSimulationConfig,
+  loadConfig,
+  loadSimulationConfig
+} from './config'
 
 describe('defaultConfig', () => {
   it('returns the documented defaults', () => {
@@ -166,5 +172,121 @@ describe('loadConfig', () => {
         expect(() => loadConfig({ HOOKS_PORT: value })).toThrowError(/HOOKS_PORT/)
       }
     )
+  })
+})
+
+describe('loadSimulationConfig', () => {
+  const ON = { [SIMULATION_ENV_VAR]: '1' }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('never leaks into AppConfig, so the userData config file cannot carry it', () => {
+    // #38 landed a real config path a PACKAGED app reads. Simulation therefore
+    // deliberately does not live on AppConfig at all: loadConfig is the only
+    // thing withConfigFileFallback feeds, and it must stay unable to switch a
+    // demo on. This assertion is the tripwire for that.
+    expect(loadConfig({ ...ON, DWARFAI_SIMULATE_MINES: '30' })).toEqual(defaultConfig())
+    expect('simulation' in loadConfig(ON)).toBe(false)
+  })
+
+  it('is off for an empty environment', () => {
+    expect(loadSimulationConfig({})).toBeNull()
+  })
+
+  it.each(['1', 'true', 'TRUE', ' true '])('is on for the affirmative value %j', (value) => {
+    expect(loadSimulationConfig({ [SIMULATION_ENV_VAR]: value })).not.toBeNull()
+  })
+
+  it.each(['0', 'false', 'off', 'no', 'yes', '', '   '])('stays off for the value %j', (value) => {
+    expect(loadSimulationConfig({ [SIMULATION_ENV_VAR]: value })).toBeNull()
+  })
+
+  it('returns the documented defaults when switched on with nothing else set', () => {
+    expect(loadSimulationConfig(ON)).toEqual(defaultSimulationConfig())
+  })
+
+  it('crowds the valley by default: more mines than sites, more crew than anchors', () => {
+    const defaults = defaultSimulationConfig()
+    // 13 authored map sites (#20) and 4 veins in the cave (#19).
+    expect(defaults.mines).toBeGreaterThan(13)
+    expect(defaults.maxCrew).toBeGreaterThan(4)
+  })
+
+  it('parses every tuning key', () => {
+    expect(
+      loadSimulationConfig({
+        ...ON,
+        DWARFAI_SIMULATE_SEED: 'repro-42',
+        DWARFAI_SIMULATE_MINES: '30',
+        DWARFAI_SIMULATE_CREW: '9',
+        DWARFAI_SIMULATE_TIERS: 'gold, uranium',
+        DWARFAI_SIMULATE_STEP_MS: '1500',
+        DWARFAI_SIMULATE_ANIMATE: 'false',
+        DWARFAI_SIMULATE_TOKENS: '1234'
+      })
+    ).toEqual({
+      seed: 'repro-42',
+      mines: 30,
+      maxCrew: 9,
+      tiers: ['gold', 'uranium'],
+      stepMs: 1500,
+      animate: false,
+      tokensPerStep: 1234
+    })
+  })
+
+  it('ignores tuning keys when the master switch is off', () => {
+    expect(loadSimulationConfig({ DWARFAI_SIMULATE_MINES: '30' })).toBeNull()
+  })
+
+  it.each(['0', '-1', 'abc', '2.5'])('fails fast on the unusable mine count %j', (value) => {
+    expect(() => loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_MINES: value })).toThrowError(
+      /DWARFAI_SIMULATE_MINES/
+    )
+  })
+
+  it('refuses a mine count that would freeze the panel instead of demonstrating it', () => {
+    expect(() => loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_MINES: '100000' })).toThrowError(
+      /DWARFAI_SIMULATE_MINES/
+    )
+  })
+
+  it('refuses a crew size past its cap', () => {
+    expect(() => loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_CREW: '5000' })).toThrowError(
+      /DWARFAI_SIMULATE_CREW/
+    )
+  })
+
+  it.each(['platinum', 'gold,rubbish', ','])('fails fast on the tier spread %j', (value) => {
+    expect(() => loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_TIERS: value })).toThrowError(
+      /DWARFAI_SIMULATE_TIERS/
+    )
+  })
+
+  it('treats a blank tier spread as unset, like every other setting in this file', () => {
+    expect(loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_TIERS: '  ' })?.tiers).toEqual(
+      defaultSimulationConfig().tiers
+    )
+  })
+
+  it('refuses a step so short the panel would never finish a poll', () => {
+    expect(() => loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_STEP_MS: '1' })).toThrowError(
+      /DWARFAI_SIMULATE_STEP_MS/
+    )
+  })
+
+  it('accepts a zero token rate, which is a valley that mines nothing', () => {
+    expect(loadSimulationConfig({ ...ON, DWARFAI_SIMULATE_TOKENS: '0' })?.tokensPerStep).toBe(0)
+  })
+
+  it('reads process.env when no environment is passed', () => {
+    // The default argument matters: the runtime relies on it to read the REAL
+    // environment rather than anything layered in from the config file.
+    vi.stubEnv(SIMULATION_ENV_VAR, '1')
+    expect(loadSimulationConfig()).toEqual(defaultSimulationConfig())
+    vi.stubEnv(SIMULATION_ENV_VAR, '')
+    expect(loadSimulationConfig()).toBeNull()
   })
 })

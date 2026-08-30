@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FeedMessage } from '../shared/contracts'
 import { FakeFs } from './adapters/fakeFs'
 import type { FsLike } from './adapters/fsLike'
-import { defaultConfig } from './config'
+import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from './config'
+import type { PlatformAdapters } from './platform/platformAdapters'
 import { emptyLedger, type LedgerState } from './domain/ledger'
 import { emptyMaterialTotals } from './domain/materials'
 import { nullLedgerStore } from './ledger/ledgerStore'
@@ -1873,5 +1874,139 @@ describe('AgentRuntime material vault', () => {
     expect(runtime.getMines()[0]!.tier).toBe('silver')
     expect(runtime.materialTotals().silver).toBe(59_000)
     expect(runtime.materialTotals().bronze).toBe(0)
+  })
+})
+
+describe('AgentRuntime simulated provider wiring (#42)', () => {
+  const ON = { [SIMULATION_ENV_VAR]: '1' }
+
+  function fakeAdapters(): PlatformAdapters {
+    return {
+      platform: 'win32',
+      focusPid: vi.fn().mockResolvedValue(false),
+      launchTranscriptViewer: vi.fn().mockResolvedValue(false),
+      viewerScriptPath: 'C:\viewer.mjs',
+      textDelivery: {
+        sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+        relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+        sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+      },
+      processProbe: {
+        isCodexProcessRunning: vi.fn().mockResolvedValue(false),
+        processStartTimeMs: vi.fn().mockResolvedValue(null)
+      }
+    }
+  }
+
+  /**
+   * A runtime built the way index.ts builds one — its OWN providers, not
+   * injected ones — because the gate under test lives exactly there. The real
+   * detectors are pointed at an empty FakeFs, so "no simulation" means "no
+   * mines at all" and the assertions stay unambiguous.
+   */
+  function simulatedRuntime(options: {
+    env?: Record<string, string>
+    isPackaged: boolean
+    ledger?: MaterialLedger
+    now?: () => number
+  }) {
+    return new AgentRuntime({
+      config: defaultConfig(),
+      home: 'C:\Users\test',
+      fs: new FakeFs(),
+      sqlite: { openReadOnly: async () => null },
+      platformAdapters: fakeAdapters(),
+      appPaths: { isPackaged: options.isPackaged, resourcesPath: '', appPath: 'C:\app' },
+      simulationEnv: options.env ?? {},
+      ledger: options.ledger,
+      now: options.now,
+      onMinesUpdated: vi.fn()
+    })
+  }
+
+  it('invents no mines when nothing asks for a simulation', async () => {
+    const runtime = simulatedRuntime({ isPackaged: false })
+    await runtime.refresh()
+    expect(runtime.getMines()).toEqual([])
+  })
+
+  it('fills the valley when an unpackaged build explicitly asks for it', async () => {
+    const runtime = simulatedRuntime({ env: ON, isPackaged: false })
+    await runtime.refresh()
+
+    const mines = runtime.getMines()
+    expect(mines.length).toBe(defaultSimulationConfig().mines)
+    expect(mines.every((mine) => mine.path.toLowerCase().includes('simulated'))).toBe(true)
+    expect(mines.some((mine) => mine.dwarfs.length > 0)).toBe(true)
+  })
+
+  it('refuses to invent mines in a packaged build, however the environment is arranged', async () => {
+    // The guarantee a user depends on: #38 gave a packaged app a real config
+    // path, so the switch cannot be a config value. app.isPackaged is decided
+    // by Electron from the running executable and no packaged build can lie.
+    const runtime = simulatedRuntime({ env: ON, isPackaged: true })
+    await runtime.refresh()
+    expect(runtime.getMines()).toEqual([])
+  })
+
+  it('publishes a spread of tiers rather than a valley of identical bronze mounds', async () => {
+    const runtime = simulatedRuntime({ env: ON, isPackaged: false })
+    await runtime.refresh()
+    // A real TierService would walk these paths, find nothing and call them all
+    // bronze; the simulation has to own its own tier answers or the spread the
+    // demo exists to show would be invisible.
+    expect(new Set(runtime.getMines().map((mine) => mine.tier)).size).toBeGreaterThan(1)
+  })
+
+  it('shows every dwarf status in the published crew, foremen included', async () => {
+    const runtime = simulatedRuntime({ env: ON, isPackaged: false })
+    await runtime.refresh()
+    const dwarfs = runtime.getMines().flatMap((mine) => mine.dwarfs)
+    expect(new Set(dwarfs.map((dwarf) => dwarf.status))).toEqual(
+      new Set(['working', 'waiting', 'leaving'])
+    )
+    expect(dwarfs.some((dwarf) => dwarf.role === 'foreman')).toBe(true)
+  })
+
+  it('keeps phantom ore out of the real vault while still accruing a visible one', async () => {
+    // "A demo must never put phantom ore in a real vault." The persisted vault
+    // index.ts hands in is dropped on the floor for the whole simulated run:
+    // never observed, never saved. The panel still gets a live, growing vault
+    // from an in-memory twin, so the pile caps of #22 are genuinely exercised.
+    const save = vi.fn().mockResolvedValue(undefined)
+    const persisted = new MaterialLedger({
+      store: { load: async () => emptyLedger(), save }
+    })
+    let now = 1_000_000
+    const runtime = simulatedRuntime({
+      env: ON,
+      isPackaged: false,
+      ledger: persisted,
+      now: () => now
+    })
+
+    for (let step = 0; step < 6; step++) {
+      await runtime.refresh()
+      now += defaultSimulationConfig().stepMs
+    }
+    runtime.stop()
+    await Promise.resolve()
+
+    expect(save).not.toHaveBeenCalled()
+    expect(persisted.totals()).toEqual(emptyMaterialTotals())
+    // ...and the vault the panel sees really did fill up.
+    const totals = runtime.materialTotals()
+    expect(Object.values(totals).reduce((sum, value) => sum + value, 0)).toBeGreaterThan(0)
+  })
+
+  it('leaves the real providers and the real vault alone once the switch is off', async () => {
+    const save = vi.fn().mockResolvedValue(undefined)
+    const persisted = new MaterialLedger({
+      store: { load: async () => emptyLedger(), save }
+    })
+    const runtime = simulatedRuntime({ isPackaged: false, ledger: persisted })
+    await runtime.refresh()
+    expect(runtime.getMines()).toEqual([])
+    expect(persisted.totals()).toEqual(emptyMaterialTotals())
   })
 })
