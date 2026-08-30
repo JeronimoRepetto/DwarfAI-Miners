@@ -31,20 +31,25 @@ export const MATERIALS: readonly Material[] = [
 ]
 
 /**
- * Tokens one visible unit of each material stands for.
+ * How many tokens ONE drawn nugget of each material stands for.
  *
- * This is an idle-game metaphor, NOT billing: the numbers exist so a richer
- * mine's output reads as denser ore rather than simply more of it, and one
- * gold unit is deliberately worth ten bronze ones. Tuning the whole economy
- * means editing this table and nothing else.
+ * This is a per-material grain size, NOT an exchange rate. Materials never
+ * convert into one another: coal stays coal and silver stays silver for the
+ * life of the vault, a mine that changes tier keeps every unit it already
+ * produced, and nothing anywhere trades a cheap pile for an expensive one.
+ * Each material owns an independent counter (see MaterialTotals) and this
+ * table only decides how coarsely that one counter is drawn.
+ *
+ * So the numbers say how common an ore is, not what it is worth against
+ * another: coal is cheap and plentiful, so a modest burn already shows a
+ * visible heap, while a single uranium nugget stands for a hundred times the
+ * work of a coal one. It is an idle-game metaphor, never billing.
  *
  * Calibration: bronze is pinned to the renderer's existing TOKENS_PER_ORE
- * (10_000, src/renderer/src/lib/economy.ts), which is the single rate the app
- * shipped with — so a fresh mine, which starts on the bronze tier, reads
- * exactly as it did before the vault gained materials. Each tier above it is
- * ~2-2.5x denser. Coal sits BELOW bronze because pre-install history is
- * typically large and cheap: it should pile up visibly without ever rivalling
- * a gold seam earned live.
+ * (10_000, src/renderer/src/lib/economy.ts), the single rate the app shipped
+ * with — so a fresh mine, which starts on the bronze tier, reads exactly as it
+ * did before the vault gained materials. Tuning the whole economy means
+ * editing this table and nothing else.
  */
 export const MATERIAL_TOKENS_PER_UNIT: Record<Material, number> = {
   coal: 2_500,
@@ -59,9 +64,15 @@ export const MATERIAL_TOKENS_PER_UNIT: Record<Material, number> = {
  * Tokens accrued per material. Always carries every material (zeros included)
  * so a consumer can render a breakdown without checking for absent keys.
  *
- * The unit is TOKENS, not display units: the raw count is what is cumulative
- * and persistent, and the conversion to visible units happens at render time
- * through MATERIAL_TOKENS_PER_UNIT.
+ * One independent counter each, and they are never combined: every operation
+ * in domain/materials.ts touches a single material's slot, and merging two
+ * breakdowns adds coal to coal and gold to gold. There is deliberately no
+ * function anywhere that turns one material into another — a vault only ever
+ * grows in the materials it actually mined.
+ *
+ * The unit is TOKENS, not drawn nuggets: the raw count is what is cumulative
+ * and persistent, and MATERIAL_TOKENS_PER_UNIT decides only how many nuggets
+ * that one count is drawn as.
  */
 export type MaterialTotals = Record<Material, number>
 
