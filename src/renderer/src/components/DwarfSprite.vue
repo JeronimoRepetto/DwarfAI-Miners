@@ -10,7 +10,7 @@ import {
 } from '../lib/presentation'
 import { computeTooltipPlacement } from '../lib/tooltip'
 import type { Dwarf, DwarfKickState, DwarfSendState } from '../types'
-import DwarfActionMenu from './DwarfActionMenu.vue'
+import DwarfActionBar from './DwarfActionBar.vue'
 import DwarfTooltip from './DwarfTooltip.vue'
 import SpeechBubble from './SpeechBubble.vue'
 
@@ -38,69 +38,69 @@ const tooltipVisible = ref(false)
 const tooltipStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 
 /**
- * Clicking a dwarf opens this note rather than acting immediately: the old
- * behaviour (focus the console) is now its first entry, and sending a message
- * is the second. Positioned like the tooltip — `fixed`, clamped inside the
- * panel — because the mine's cave clips anything drawn inside it.
+ * Clicking a dwarf opens the icon action bar (see #27) rather than acting
+ * immediately: kick, boost, chat, and the old click behaviour (focus the
+ * console) each get an icon. Positioned like the tooltip — `fixed`, clamped
+ * inside the panel — because the mine's cave clips anything drawn inside it.
  */
-const menuRef = ref<InstanceType<typeof DwarfActionMenu> | null>(null)
-const menuOpen = ref(false)
-const menuStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
+const barRef = ref<InstanceType<typeof DwarfActionBar> | null>(null)
+const barOpen = ref(false)
+const barStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 
-async function openMenu(): Promise<void> {
-  menuOpen.value = true
+async function openBar(): Promise<void> {
+  barOpen.value = true
   hideTooltip()
-  // One popover at a time: the menu replaces an expanded bubble, mirroring
+  // One popover at a time: the bar replaces an expanded bubble, mirroring
   // how it replaces the hover tooltip just above.
   collapseBubble()
   await nextTick()
   const anchorEl = hitRef.value
-  const menuEl = menuRef.value?.$el as HTMLElement | undefined
-  if (anchorEl && menuEl) {
+  const barEl = barRef.value?.$el as HTMLElement | undefined
+  if (anchorEl && barEl) {
     const placement = computeTooltipPlacement(
       anchorEl.getBoundingClientRect(),
-      menuEl.getBoundingClientRect(),
+      barEl.getBoundingClientRect(),
       { width: window.innerWidth, height: window.innerHeight }
     )
-    menuStyle.value = { left: `${placement.left}px`, top: `${placement.top}px` }
+    barStyle.value = { left: `${placement.left}px`, top: `${placement.top}px` }
   }
-  document.addEventListener('click', closeMenu)
+  document.addEventListener('click', closeBar)
 }
 
-function closeMenu(): void {
-  menuOpen.value = false
-  document.removeEventListener('click', closeMenu)
+function closeBar(): void {
+  barOpen.value = false
+  document.removeEventListener('click', closeBar)
 }
 
-function toggleMenu(): void {
-  if (menuOpen.value) {
-    closeMenu()
+function toggleBar(): void {
+  if (barOpen.value) {
+    closeBar()
     return
   }
-  void openMenu()
+  void openBar()
 }
 
 function openConsole(): void {
-  closeMenu()
+  closeBar()
   emit('activate')
 }
 
 function sendText(payload: { text: string; pressEnter: boolean }): void {
-  // The menu stays open so the delivery verdict has somewhere to land.
+  // The bar stays open so the delivery verdict has somewhere to land.
   emit('send-text', payload)
 }
 
 function kick(): void {
-  // Same reasoning as sendText: the menu stays open so the verdict has somewhere to land.
+  // Same reasoning as sendText: the bar stays open so the verdict has somewhere to land.
   emit('kick')
 }
 
 /**
  * Clicking the bubble swaps it for a fixed panel carrying the whole
- * `lastMessage` (see #26) — positioned like the tooltip and menu, because the
+ * `lastMessage` (see #26) — positioned like the tooltip and bar, because the
  * cave clips anything absolute inside it. Expanding holds the bubble on the
  * board so the TTL cannot hide it mid-read; every way out of the panel
- * (outside click, Escape, second click, opening the menu, the dwarf leaving)
+ * (outside click, Escape, second click, opening the bar, the dwarf leaving)
  * funnels through collapseBubble so the hold is always released.
  */
 const expandedRef = ref<HTMLElement | null>(null)
@@ -108,7 +108,7 @@ const bubbleExpanded = ref(false)
 const expandedStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 
 async function expandBubble(): Promise<void> {
-  closeMenu()
+  closeBar()
   bubbleExpanded.value = true
   emit('bubble-hold')
   await nextTick()
@@ -160,7 +160,7 @@ watch(
 const bubbleLabel = computed(() => `Read the full message from ${props.dwarf.name}`)
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', closeMenu)
+  document.removeEventListener('click', closeBar)
   document.removeEventListener('click', collapseBubble)
   document.removeEventListener('keydown', onExpandedKeydown)
 })
@@ -302,8 +302,8 @@ const kickMarker = computed(() => {
       class="dwarf-hit"
       type="button"
       :aria-label="ariaLabel"
-      :aria-expanded="menuOpen"
-      @click.stop="toggleMenu"
+      :aria-expanded="barOpen"
+      @click.stop="toggleBar"
       @mouseenter="showTooltip"
       @mouseleave="hideTooltip"
       @focus="showTooltip"
@@ -340,18 +340,18 @@ const kickMarker = computed(() => {
       :style="tooltipStyle"
       :dwarf="dwarf"
     />
-    <DwarfActionMenu
-      v-if="menuOpen"
-      ref="menuRef"
-      class="menu-holder"
-      :style="menuStyle"
+    <DwarfActionBar
+      v-if="barOpen"
+      ref="barRef"
+      class="bar-holder"
+      :style="barStyle"
       :dwarf="dwarf"
       :send-state="sendState"
       :kick-state="kickState"
       @open-console="openConsole"
       @send="sendText"
       @kick="kick"
-      @close="closeMenu"
+      @close="closeBar"
     />
   </div>
 </template>
@@ -497,12 +497,12 @@ const kickMarker = computed(() => {
   opacity: 1;
 }
 /* Same fixed/clamped placement as the tooltip, above every other sprite. */
-.menu-holder {
+.bar-holder {
   position: fixed;
   z-index: 40;
 }
 /*
- * The expanded bubble: fixed and clamped like the tooltip/menu (the cave
+ * The expanded bubble: fixed and clamped like the tooltip/bar (the cave
  * clips absolute children). Scrolls when an agent wrote an essay; pre-wrap
  * keeps the message's own line breaks — the truncated bubble flattens them,
  * the full view must not.

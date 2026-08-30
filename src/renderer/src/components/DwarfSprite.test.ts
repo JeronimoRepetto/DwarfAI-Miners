@@ -76,43 +76,43 @@ describe('DwarfSprite', () => {
     expect(wrapper.find('.provider-dot').classes()).toContain('provider-codex')
   })
 
-  describe('action menu', () => {
-    it('opens the action menu on click instead of activating straight away', async () => {
+  describe('action bar', () => {
+    it('opens the action bar on click instead of activating straight away', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-      expect(wrapper.find('.action-menu').exists()).toBe(false)
+      expect(wrapper.find('.action-bar').exists()).toBe(false)
 
       await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.action-menu').exists()).toBe(true)
+      expect(wrapper.find('.action-bar').exists()).toBe(true)
       expect(wrapper.emitted('activate')).toBeUndefined()
     })
 
-    it('closes the menu on a second click', async () => {
+    it('closes the bar on a second click', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
       await wrapper.find('.dwarf-hit').trigger('click')
       await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.action-menu').exists()).toBe(false)
+      expect(wrapper.find('.action-bar').exists()).toBe(false)
     })
 
-    it('emits activate and closes when the console action is chosen', async () => {
+    it('emits activate and closes when the console icon is chosen', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
       await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.find('.action-open').trigger('click')
+      await wrapper.find('.icon-console').trigger('click')
 
       expect(wrapper.emitted('activate')).toHaveLength(1)
-      expect(wrapper.find('.action-menu').exists()).toBe(false)
+      expect(wrapper.find('.action-bar').exists()).toBe(false)
     })
 
-    it('forwards a composed message and keeps the menu open for the verdict', async () => {
+    it('forwards a composed message and keeps the bar open for the verdict', async () => {
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }) }
       })
       await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.find('.action-send').trigger('click')
+      await wrapper.find('.icon-chat').trigger('click')
       await wrapper.find('.message-input').setValue('run the tests')
       await wrapper.find('.send-button').trigger('click')
 
       expect(wrapper.emitted('send-text')).toEqual([[{ text: 'run the tests', pressEnter: true }]])
-      expect(wrapper.find('.action-menu').exists()).toBe(true)
+      expect(wrapper.find('.action-bar').exists()).toBe(true)
     })
 
     it('marks a delivered message on the dwarf', () => {
@@ -147,14 +147,14 @@ describe('DwarfSprite', () => {
       })
     }
 
-    it('forwards a confirmed kick and keeps the menu open for the verdict', async () => {
+    it('forwards a confirmed kick and keeps the bar open for the verdict', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: kickableDwarf() } })
       await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.find('.action-kick').trigger('click')
-      await wrapper.find('.action-kick').trigger('click')
+      await wrapper.find('.icon-kick').trigger('click')
+      await wrapper.find('.icon-kick').trigger('click')
 
       expect(wrapper.emitted('kick')).toHaveLength(1)
-      expect(wrapper.find('.action-menu').exists()).toBe(true)
+      expect(wrapper.find('.action-bar').exists()).toBe(true)
     })
 
     it('marks a delivered kick on the dwarf', () => {
@@ -221,10 +221,10 @@ describe('DwarfSprite', () => {
       expect(wrapper.emitted('bubble-hold')).toHaveLength(1)
     })
 
-    it('does not toggle the dwarf action menu when the bubble is clicked', async () => {
+    it('does not toggle the dwarf action bar when the bubble is clicked', async () => {
       const wrapper = mountTalking()
       await wrapper.find('.bubble-hit').trigger('click')
-      expect(wrapper.find('.action-menu').exists()).toBe(false)
+      expect(wrapper.find('.action-bar').exists()).toBe(false)
       expect(wrapper.emitted('activate')).toBeUndefined()
     })
 
@@ -273,12 +273,12 @@ describe('DwarfSprite', () => {
       expect(wrapper.emitted('bubble-release')).toHaveLength(1)
     })
 
-    it('opening the action menu collapses the expanded bubble', async () => {
+    it('opening the action bar collapses the expanded bubble', async () => {
       const wrapper = mountTalking()
       await wrapper.find('.bubble-hit').trigger('click')
 
       await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.action-menu').exists()).toBe(true)
+      expect(wrapper.find('.action-bar').exists()).toBe(true)
       expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
       expect(wrapper.emitted('bubble-release')).toHaveLength(1)
     })
