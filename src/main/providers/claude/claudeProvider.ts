@@ -188,18 +188,22 @@ export class ClaudeProvider implements Provider {
    */
   private readonly terminalAgents = new Set<string>()
   /**
-   * Every agent id concluded to be over WITHOUT a terminal notification: its
-   * idle parent produced nothing, anywhere, for a whole staleness window
-   * (issue #40).
+   * Every agent id concluded to be over WITHOUT a terminal notification, by
+   * either of the two proofs that do not need one: an idle parent that produced
+   * nothing anywhere for a whole staleness window (issue #40), or the session's
+   * own pending count coming in below what this provider believed (issue #45).
    *
    * Flat and process-lifetime for the same reason terminalAgents is — agent ids
    * are globally unique and an agent that has ended never un-ends, so the whole
    * cost is one short string per abandoned agent. It has to be remembered at all
-   * because this eviction is not self-sustaining: the dead agent's
+   * because neither eviction is self-sustaining: the dead agent's
    * `async_launched` record usually sits in the tail untouched (nothing is
    * writing, so nothing scrolls it out), and the first poll that finds the
    * session busy again would merge it straight back — the reported ghost would
-   * return the moment its session picked up a new turn.
+   * return the moment its session picked up a new turn. For the count ceiling
+   * the same stickiness is what stops the panel oscillating between the two
+   * headcounts every 2s, as the tail merge and #36's recovery take turns
+   * re-adopting exactly what the ceiling just shed.
    */
   private readonly abandonedAgents = new Set<string>()
   /**
@@ -237,6 +241,22 @@ export class ClaudeProvider implements Provider {
    * settled one. Evicted with the session in scan(), like rememberedLaunches.
    */
   private readonly unexplainedShortfalls = new Map<string, number>()
+  /**
+   * sessionId -> the pendingBackgroundAgentCount whose SURPLUS has already had
+   * one escalated read spent on it (issue #45).
+   *
+   * The mirror of unexplainedShortfalls, keyed on the reported count for the
+   * same reasons, and deliberately a second map rather than a shared one: the
+   * two directions clear on opposite conditions — a shortfall is over once the
+   * count stops exceeding what is known, a surplus once it stops falling short
+   * of it — so a single entry would be wiped by whichever direction polled
+   * last and the 16MB read would be back on every 2s tick.
+   *
+   * What it rations is only the READ. The ceiling itself is free and applies on
+   * every poll (see enforcePendingCeiling): rate-limiting the pruning would be
+   * rate-limiting the truth. Evicted with the session in scan().
+   */
+  private readonly escalatedSurpluses = new Map<string, number>()
   /**
    * dwarfId -> highest tokensObserved reading seen for it so far, remembered
    * for the life of the process.
@@ -307,11 +327,13 @@ export class ClaudeProvider implements Provider {
     for (const sessionId of [...this.rememberedLaunches.keys()]) {
       if (!seenSessions.has(sessionId)) this.rememberedLaunches.delete(sessionId)
     }
-    // Same reasoning for the shortfall rate limit: a returning session id must
-    // be free to escalate again rather than inherit a settled verdict about a
+    // Same reasoning for both count rate limits: a returning session id must be
+    // free to escalate again rather than inherit a settled verdict about a
     // transcript that is no longer the one it was measured against.
-    for (const sessionId of [...this.unexplainedShortfalls.keys()]) {
-      if (!seenSessions.has(sessionId)) this.unexplainedShortfalls.delete(sessionId)
+    for (const settled of [this.unexplainedShortfalls, this.escalatedSurpluses]) {
+      for (const sessionId of [...settled.keys()]) {
+        if (!seenSessions.has(sessionId)) settled.delete(sessionId)
+      }
     }
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
@@ -437,8 +459,12 @@ export class ClaudeProvider implements Provider {
     // forever. Launches still inside the tail are exempt: they may postdate
     // the turn the count was written for, and contradictory evidence must
     // resolve toward keeping (a false departure is the bug this memory fixes).
+    // Which launches this tail can still see for itself. Shared by both rules
+    // that read the count below, because both need the same boundary: a count
+    // line is written at the END of a turn, so it can only ever speak for
+    // launches older than the window it was found in.
+    const launchedInTail = new Set(info.inFlightAgents.map((agent) => agent.agentId))
     if (info.pendingBackgroundAgentCount === 0) {
-      const launchedInTail = new Set(info.inFlightAgents.map((agent) => agent.agentId))
       for (const agentId of [...remembered.keys()]) {
         if (!launchedInTail.has(agentId)) remembered.delete(agentId)
       }
@@ -453,6 +479,17 @@ export class ClaudeProvider implements Provider {
       transcriptBytes: transcriptStat?.size ?? 0,
       alreadyReadBytes: tailBytes,
       reportedPending: info.pendingBackgroundAgentCount,
+      remembered
+    })
+    // ...and the third reading of it (issue #45). A count BELOW what is
+    // believed is a ceiling, and it binds here rather than at the next poll.
+    await this.enforcePendingCeiling({
+      sessionId: session.sessionId,
+      transcriptPath,
+      transcriptBytes: transcriptStat?.size ?? 0,
+      alreadyReadBytes: tailBytes,
+      reportedPending: info.pendingBackgroundAgentCount,
+      launchedInTail,
       remembered
     })
     // Last, so it judges everything the reads above could add (issue #40).
@@ -635,11 +672,7 @@ export class ClaudeProvider implements Provider {
    * production; a clock that runs behind an mtime yields a negative age, which
    * is trivially fresh.
    */
-  private writtenWithinWindow(
-    mtimeMs: number | undefined,
-    now: number,
-    windowMs: number
-  ): boolean {
+  private writtenWithinWindow(mtimeMs: number | undefined, now: number, windowMs: number): boolean {
     return mtimeMs !== undefined && now - mtimeMs < windowMs
   }
 
@@ -699,6 +732,122 @@ export class ClaudeProvider implements Provider {
     } else {
       this.unexplainedShortfalls.delete(sessionId)
     }
+  }
+
+  /**
+   * Hold the session's own pending count as a CEILING on how many agents this
+   * provider may believe in (issue #45). Mutates `remembered` in place.
+   *
+   * The fourth reading of one number. #28 trusts it at exactly zero, #36 trusts
+   * it when it runs HIGH, #40 covers the case it cannot answer at all — and a
+   * count running LOW, the same authoritative evidence pointing the other way,
+   * was simply ignored. The panel showed 8 workers for a session reporting 3.
+   *
+   * `pendingBackgroundAgentCount` is Claude Code stating how many background
+   * agents it currently has. That makes it the answer, not a lead to follow, so
+   * it binds on the poll that reads it: the ceiling below is unconditional and
+   * never gated on the escalated read succeeding, being affordable, or running
+   * at all. Every tick spent corroborating a headcount already known to be
+   * wrong is a tick the panel spends lying, and #40 cannot end it — that rule
+   * needs an `idle` parent, while ghosts accumulate exactly while a session is
+   * busy, which is when someone is watching.
+   *
+   * WHICH agents to drop is the real question, and the count never answers it:
+   * it says how many, never which. Two routes, and this takes both, in the
+   * order their certainty deserves:
+   *
+   * - The deep read is the honest one. It recovers the terminal notifications
+   *   that scrolled out of the routine window and turns the count into
+   *   knowledge of SPECIFIC finished ids, so the agents dropped are the ones
+   *   that really ended. It runs first, within this same poll, and it is
+   *   rationed exactly the way #36's is — one read per distinct reported count.
+   * - Whatever it cannot explain falls to a deterministic order. The count is
+   *   still authoritative that N beliefs are stale, so refusing to act would
+   *   leave proven-false workers mining forever, which is the reported bug.
+   *   Oldest belief first: it is stable across polls, so the surviving crew
+   *   does not reshuffle between ticks, and it is defensible twice over —
+   *   agents broadly finish in the order they start, and the longer this
+   *   provider has carried a belief the more polls its notification had in
+   *   which to scroll past unseen, which is the very failure being cleaned up.
+   *
+   * Deliberately only ENDINGS are taken from the deep window, never adoptions:
+   * this direction exists to shed beliefs, and #36 owns the other one.
+   *
+   * The one thing that may never happen is pruning something the count cannot
+   * speak for. A launch still visible in the tail is exempt, exactly as #28
+   * exempts it from the zero reading: the count line was written at the end of
+   * a turn, so agents launched after it are not in its number, and treating a
+   * stale count as a ceiling over them would kill the agents a busy turn had
+   * just started — the false departure the launch memory exists to prevent.
+   * That exemption is also why a count of zero never reaches the escalation
+   * here: #28 has already emptied everything older than the tail by then, so
+   * nothing countable remains and no read is provoked.
+   */
+  private async enforcePendingCeiling(options: {
+    sessionId: string
+    transcriptPath: string
+    transcriptBytes: number
+    alreadyReadBytes: number
+    reportedPending: number | undefined
+    /** Launches this tail still carries; the count cannot speak for them. */
+    launchedInTail: ReadonlySet<string>
+    remembered: Map<string, ClaudeInFlightAgent>
+  }): Promise<void> {
+    const { sessionId, reportedPending, launchedInTail, remembered } = options
+    // No reading at all. Absence of a count is not a count of zero, and it is
+    // not evidence that a surplus an earlier count paid for is over either —
+    // so unlike #36 this leaves the settled entry alone rather than re-arming
+    // the escalation every time a tail happens to carry no turn_duration line.
+    if (reportedPending === undefined) return
+    if (this.countableLaunches(remembered, launchedInTail).length <= reportedPending) {
+      // The count agrees with the crew (or asks for more, which is #36's
+      // business). Any settled surplus is over: forget it, so a later one that
+      // happens to report the same number is judged fresh rather than dismissed.
+      this.escalatedSurpluses.delete(sessionId)
+      return
+    }
+    // One escalation per distinct count, spent before the ceiling falls so that
+    // it can name the finished ids instead of the ceiling having to guess them.
+    // Recorded whether or not it ran: when the poll already read the whole
+    // transcript there is no deeper window to reach, and the same bytes cannot
+    // yield the missing notification twice.
+    if (this.escalatedSurpluses.get(sessionId) !== reportedPending) {
+      this.escalatedSurpluses.set(sessionId, reportedPending)
+      if (options.transcriptBytes > options.alreadyReadBytes) {
+        const deep = parseClaudeTranscriptTail(
+          await this.fs.readTextTail(options.transcriptPath, RECOVERY_TAIL_BYTES)
+        )
+        for (const agentId of deep.terminalAgentIds) this.terminalAgents.add(agentId)
+        this.forgetEnded(remembered)
+      }
+    }
+    // Recomputed: the read above may have answered part of the discrepancy, or
+    // all of it. Whatever is left over is still the count's word against this
+    // provider's memory, and the count wins on this poll.
+    const countable = this.countableLaunches(remembered, launchedInTail)
+    const surplus = countable.length - reportedPending
+    if (surplus <= 0) return
+    for (const agentId of countable.slice(0, surplus)) {
+      remembered.delete(agentId)
+      // Sticky, or the next tail merge and the next #36 recovery simply put it
+      // back: see abandonedAgents. An agent dropped here has ended as surely as
+      // one whose notification was read, it just never got to say so.
+      this.abandonedAgents.add(agentId)
+    }
+  }
+
+  /**
+   * The remembered launches this session's count is entitled to judge, oldest
+   * belief first — everything whose launch record has left the tail the count
+   * line was read from. Insertion order is the order the provider first came to
+   * believe in each agent (Map.set keeps a re-set key in place), which is what
+   * makes the surviving crew identical from one poll to the next.
+   */
+  private countableLaunches(
+    remembered: Map<string, ClaudeInFlightAgent>,
+    launchedInTail: ReadonlySet<string>
+  ): string[] {
+    return [...remembered.keys()].filter((agentId) => !launchedInTail.has(agentId))
   }
 
   private async subagentTranscriptInfo(path: string): Promise<ClaudeTranscriptInfo> {

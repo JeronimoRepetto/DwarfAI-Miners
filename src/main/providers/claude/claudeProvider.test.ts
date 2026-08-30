@@ -1065,6 +1065,253 @@ describe('ClaudeProvider', () => {
         expect(snapshots[0]!.dwarfs).toEqual([])
       })
     })
+
+    /**
+     * Regression (issue #45): the fourth quadrant of the same number. #28 reads
+     * the count at exactly zero, #36 reads it too HIGH, #40 answers the case no
+     * count can — and nobody read it too LOW. Measured live: a panel showing 8
+     * workers for a session whose own `turn_duration` line reported 3 pending,
+     * on a 15.7MB transcript whose 256KiB tail carried 0 launch records and 1
+     * notification. Five dwarfs were swinging pickaxes at nothing.
+     *
+     * `pendingBackgroundAgentCount` is Claude Code stating how many background
+     * agents it has, so it is a CEILING and it binds on the poll that reads it:
+     * a headcount known to be false must never survive a tick while the
+     * provider goes looking for corroboration. #40 cannot reach this case at
+     * all — it requires an `idle` parent, and ghosts accumulate precisely while
+     * a session is busy, which is exactly when the panel is being watched.
+     */
+    describe('pending count as a ceiling (issue #45)', () => {
+      /** Eight background agents in launch order — the reported panel's crew. */
+      const GHOSTS = Array.from({ length: 8 }, (_, index) => `a${index + 1}0000000000000f`)
+      /** An agent launched later than any of them, for the under-count tests. */
+      const FRESH_AGENT = 'b7c1d2e3f4a5b6c70'
+
+      function ghostLaunch(index: number): string {
+        return launch(GHOSTS[index]!, `Ghost task ${index + 1}`)
+      }
+
+      /** Every launch record in order, small enough to sit inside any window. */
+      const eightLaunches = GHOSTS.map((_, index) => ghostLaunch(index)).join('')
+
+      /** The panel's dwarf ids for a crew of `agentIds`, foreman first. */
+      function crew(...agentIds: string[]): string[] {
+        return [MAIN_ID, ...agentIds.map((agentId) => `claude:${SESSION_ID}:${agentId}`)]
+      }
+
+      /**
+       * Counts transcript reads deeper than this session's first-sight bound.
+       * Poll one of every test here is the session's first sight, so its bound
+       * is the deepest routine read that exists and anything larger can only be
+       * an escalation. Derived from the calls themselves rather than by copying
+       * the provider's byte constants, so it stays a statement about
+       * escalation instead of a duplicate of the tiers.
+       */
+      function watchDeepReads(): () => number {
+        const reads = vi.spyOn(fake, 'readTextTail')
+        return () => {
+          const bounds = reads.mock.calls
+            .filter(([path]) => path === TRANSCRIPT)
+            .map(([, maxBytes]) => maxBytes)
+          return bounds.filter((bound) => bound > (bounds[0] ?? 0)).length
+        }
+      }
+
+      /** Poll one: every launch record is in the window, so all eight are believed. */
+      async function rememberEightGhosts(provider: ClaudeProvider): Promise<void> {
+        fake.addFile(TRANSCRIPT, eightLaunches, 42_000)
+        const first = await provider.scan()
+        expect(first[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS))
+      }
+
+      /** Poll two: the count binds, and the five oldest beliefs go. */
+      async function pruneToThree(provider: ClaudeProvider): Promise<void> {
+        await rememberEightGhosts(provider)
+        fake.addFile(TRANSCRIPT, quietTail + turnDuration(3), 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5)))
+      }
+
+      it('prunes eight remembered agents down to a reported count of three', async () => {
+        const provider = makeProvider()
+        const deepReads = watchDeepReads()
+        await rememberEightGhosts(provider)
+
+        // The measured shape: a busy session whose window no longer carries a
+        // single launch record, and whose own bookkeeping says three. The
+        // ceiling binds on THIS poll — there is no deeper read to be had here,
+        // the whole transcript already sat inside the window this poll read,
+        // and a number known to be false must not outlive the tick that saw it.
+        fake.addFile(TRANSCRIPT, quietTail + turnDuration(3), 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5)))
+        expect(deepReads()).toBe(0)
+
+        // The SAME three next poll. The order is a property of the remembered
+        // crew rather than a fresh guess each tick, so dwarfs cannot flicker.
+        fake.addFile(TRANSCRIPT, quietTail + turnDuration(3), 44_000)
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5)))
+      })
+
+      it('changes nothing when the count matches what is already known', async () => {
+        const provider = makeProvider()
+        const deepReads = watchDeepReads()
+        await rememberEightGhosts(provider)
+
+        // Agreement is not a discrepancy: nothing is pruned, and no read is
+        // escalated even though this transcript is long enough to afford one.
+        fake.addFile(TRANSCRIPT, pastRegularTail + turnDuration(8), 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS))
+        expect(deepReads()).toBe(0)
+      })
+
+      it('never prunes a launch still visible in the tail, however low the count', async () => {
+        const provider = makeProvider()
+        await rememberEightGhosts(provider)
+
+        // A `turn_duration` line is written at the END of a turn, so agents
+        // launched after it are not in its number. #28 exempts in-tail launches
+        // from the zero reading for exactly this reason, and a ceiling that
+        // ignored the same boundary would kill the agents a busy turn had just
+        // started — the false departure this launch memory exists to prevent.
+        fake.addFile(TRANSCRIPT, turnDuration(1) + eightLaunches, 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS))
+      })
+
+      it('drops the agents a deep read proves finished rather than the oldest ones', async () => {
+        const provider = makeProvider()
+        const deepReads = watchDeepReads()
+        await rememberEightGhosts(provider)
+
+        // Five terminal notifications sit past the routine window but inside
+        // the recovery one. Oldest-belief-first would have kept the last three
+        // launched; the record says the survivors are the second, fourth and
+        // sixth. The count decides HOW MANY on every poll, the deep read
+        // decides WHICH whenever one can be afforded.
+        const finished = [0, 2, 4, 6, 7]
+        fake.addFile(
+          TRANSCRIPT,
+          eightLaunches +
+            finished.map((index) => notification(GHOSTS[index]!, 'completed')).join('') +
+            pastRegularTail +
+            turnDuration(3),
+          43_000
+        )
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual(crew(GHOSTS[1]!, GHOSTS[3]!, GHOSTS[5]!))
+        expect(deepReads()).toBe(1)
+      })
+
+      it('never re-adopts a pruned agent when its launch record returns to the tail', async () => {
+        const provider = makeProvider()
+        await pruneToThree(provider)
+
+        // A quieter turn leaves every launch record inside the window again,
+        // and the count now agrees with the crew this provider WOULD rebuild.
+        // Without a sticky record of the pruning the tail merge alone would
+        // refill the panel and it would oscillate 3, 8, 3, 8 for the session's
+        // whole life — the same reason #40 remembers what it abandoned.
+        fake.addFile(TRANSCRIPT, eightLaunches + turnDuration(8), 44_000)
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5)))
+      })
+
+      it('still escalates for an under-count after a ceiling prune', async () => {
+        const provider = makeProvider()
+        const deepReads = watchDeepReads()
+        await pruneToThree(provider)
+
+        // A genuinely new agent launches and its record scrolls past the
+        // routine window before any poll sees it, while the count climbs to
+        // four. Both readings of the same number stay live: the ceiling shed
+        // five beliefs a moment ago, and this shortfall must still be chased.
+        fake.addFile(
+          TRANSCRIPT,
+          eightLaunches +
+            launch(FRESH_AGENT, 'Fresh agent task') +
+            pastRegularTail +
+            turnDuration(4),
+          44_000
+        )
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5), FRESH_AGENT))
+        expect(deepReads()).toBe(1)
+      })
+
+      it('never re-adopts a pruned agent through a later under-count deep read', async () => {
+        const provider = makeProvider()
+        await pruneToThree(provider)
+
+        // The recovery window reaches every one of the eight launch records,
+        // and the count asks for six. Ended memory outranks launch memory, so
+        // an unexplainable shortfall settles without inventing a dwarf instead
+        // of refilling the panel with the ghosts the ceiling just cleared.
+        fake.addFile(TRANSCRIPT, eightLaunches + pastRegularTail + turnDuration(6), 44_000)
+        for (const poll of [1, 2, 3]) {
+          const snapshots = await provider.scan()
+          expect(
+            snapshots[0]!.dwarfs.map((d) => d.id),
+            `poll ${poll}`
+          ).toEqual(crew(...GHOSTS.slice(5)))
+        }
+      })
+
+      it('escalates once, not every poll, while a surplus keeps returning at the same count', async () => {
+        const provider = makeProvider()
+        const deepReads = watchDeepReads()
+        await rememberEightGhosts(provider)
+
+        // Poll two: six launch records have scrolled out, two are still in the
+        // window, and the count is three. Only the six the count can speak for
+        // are candidates, so three of those go — and one deep read is spent
+        // looking for the notifications that would name them exactly.
+        fake.addFile(
+          TRANSCRIPT,
+          [0, 1, 2, 3, 4, 5].map(ghostLaunch).join('') +
+            pastRegularTail +
+            ghostLaunch(6) +
+            ghostLaunch(7) +
+            turnDuration(3),
+          43_000
+        )
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(3)))
+        expect(deepReads()).toBe(1)
+
+        // Poll three: the last two records scroll out too, so the same count
+        // now has five beliefs to judge and a fresh surplus appears. The poller
+        // ticks every 2s against files that reach megabytes — the ceiling must
+        // still land, and the 16MiB read must not.
+        fake.addFile(TRANSCRIPT, pastRegularTail + turnDuration(3), 44_000)
+        const third = await provider.scan()
+        expect(third[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5)))
+        expect(deepReads()).toBe(1)
+
+        // Poll four: reconciled. Nothing left to prune, nothing to read.
+        fake.addFile(TRANSCRIPT, pastRegularTail + turnDuration(3), 45_000)
+        const fourth = await provider.scan()
+        expect(fourth[0]!.dwarfs.map((d) => d.id)).toEqual(crew(...GHOSTS.slice(5)))
+        expect(deepReads()).toBe(1)
+      })
+
+      it('leaves a zero count to the eviction that owns it, without escalating a read', async () => {
+        const provider = makeProvider()
+        const deepReads = watchDeepReads()
+        await rememberEightGhosts(provider)
+
+        // Zero is #28's reading of this same number, and it already empties the
+        // crew of every launch older than the tail. The ceiling must find
+        // nothing left to judge — and must certainly not spend a 16MiB read
+        // confirming an eviction that has already happened.
+        fake.addFile(TRANSCRIPT, pastRegularTail + turnDuration(0), 43_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
+        expect(deepReads()).toBe(0)
+      })
+    })
   })
 
   it('maps an idle session to a snapshot with no dwarfs', async () => {
