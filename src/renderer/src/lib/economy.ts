@@ -1,16 +1,13 @@
 /**
- * Tokens-to-ore visual economy: tokens the AI sessions burn are shown as the
- * gold/ore the dwarfs have mined. Deliberately a rough idle-game metaphor,
- * not exact billing (see Dwarf.tokensObserved in shared/contracts.ts).
+ * Display-only token helpers shared across the renderer's idle-game economy.
+ *
+ * TOKENS_PER_ORE/oreCount() — the flat, material-blind conversion this file
+ * used to define — are gone with the map badge's last read of them (#48):
+ * #22 gave every mine a real MATERIAL with its own grain size, so one rate
+ * for "ore" no longer means anything. materialUnits() in lib/vault.ts, keyed
+ * per material off MATERIAL_TOKENS_PER_UNIT in shared/contracts.ts, is what
+ * every display now uses instead.
  */
-
-/** Tokens that make up one visible ore nugget. */
-export const TOKENS_PER_ORE = 10_000
-
-/** Ore nuggets a token count represents, rounded down (an idle-game currency floor). */
-export function oreCount(tokensObserved: number): number {
-  return Math.floor(Math.max(0, tokensObserved) / TOKENS_PER_ORE)
-}
 
 const COMPACT_UNITS: readonly [threshold: number, suffix: string][] = [
   [1_000_000_000, 'B'],

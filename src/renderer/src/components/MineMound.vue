@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { MOUND_SRC } from '../lib/art'
-import { oreCount } from '../lib/economy'
-import { tierLabel } from '../lib/presentation'
+import { materialLabel, tierLabel } from '../lib/presentation'
+import { currentMaterialRow, vaultRows } from '../lib/vault'
 import type { Mine } from '../types'
 
 const props = defineProps<{ mine: Mine }>()
@@ -14,7 +14,23 @@ const countLabel = computed(
   () => `${dwarfCount.value} ${dwarfCount.value === 1 ? 'dwarf' : 'dwarfs'}`
 )
 const moundSrc = computed(() => MOUND_SRC[props.mine.tier])
-const mineOre = computed(() => oreCount(props.mine.tokensObserved))
+
+/**
+ * Every material this mine's PERSISTED ledger holds, poorest first — never
+ * mine.tokensObserved, the live gauge that drops to zero the moment the crew
+ * leaves (see #48, and the mine.materials doc comment in shared/contracts.ts).
+ * Feeds the tooltip, which has room for a tier-hopping mine's older materials
+ * and any backfilled coal, neither of which the badge alone can show.
+ */
+const materialRows = computed(() => vaultRows(props.mine.materials))
+
+/**
+ * The one row the badge shows: the material this mine's CURRENT tier yields.
+ * A mine that has changed tier holds several materials (see #22), and the
+ * badge is one small number, so it shows what this mine is producing right
+ * now rather than a sum across materials — the conversion #22 refuses.
+ */
+const badgeRow = computed(() => currentMaterialRow(props.mine.materials, props.mine.tier))
 </script>
 
 <template>
@@ -27,7 +43,13 @@ const mineOre = computed(() => oreCount(props.mine.tokensObserved))
     >
       <img class="mound-art" :src="moundSrc" alt="" aria-hidden="true" draggable="false" />
       <span class="mound-count" aria-hidden="true">{{ dwarfCount }}</span>
-      <span v-if="mineOre > 0" class="mound-ore" aria-hidden="true">{{ mineOre }}</span>
+      <span
+        v-if="badgeRow"
+        class="mound-ore"
+        :data-material="badgeRow.material"
+        aria-hidden="true"
+        >{{ badgeRow.units }}</span
+      >
       <span class="mound-name">{{ mine.name }}</span>
     </button>
     <div class="mine-tooltip" role="tooltip">
@@ -35,7 +57,9 @@ const mineOre = computed(() => oreCount(props.mine.tokensObserved))
       <em>{{ tierLabel(mine.tier) }} mine</em>
       <span class="tooltip-path">{{ mine.path }}</span>
       <span>{{ countLabel }} inside</span>
-      <span v-if="mineOre > 0">{{ mineOre }} ore mined</span>
+      <span v-for="row in materialRows" :key="row.material"
+        >{{ row.units }} {{ materialLabel(row.material) }} mined</span
+      >
     </div>
   </div>
 </template>
@@ -133,10 +157,18 @@ const mineOre = computed(() => oreCount(props.mine.tokensObserved))
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  border: 1px solid #d8a53d;
+  border: 1px solid var(--tier-accent);
   border-radius: 9px;
-  color: #2a1c08;
-  background: radial-gradient(circle at 35% 30%, #ffe29c, #d8a53d 65%, #8a611f 100%);
+  color: var(--ink);
+  /*
+    Material colour, not gold (see #48). This badge always shows the material
+    the mine's CURRENT tier yields (materialForTier() is the identity
+    function), so theme.css's own [data-tier] palette — already scoped onto
+    .mine-mound above — is the material's colour, not a second hardcoded
+    table. mid/deep only (never the brighter accent) so var(--ink) stays
+    legible against every material, gold and silver included.
+  */
+  background: radial-gradient(circle at 35% 30%, var(--tier-mid), var(--tier-deep) 100%);
   font-size: 10px;
   font-weight: 700;
 }

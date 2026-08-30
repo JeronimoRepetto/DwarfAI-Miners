@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { MaterialTotals } from '../types'
 import { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../types'
-import { emptyMaterialTotals, formatUnits, materialUnits, vaultRows } from './vault'
+import {
+  currentMaterialRow,
+  emptyMaterialTotals,
+  formatUnits,
+  materialUnits,
+  vaultRows
+} from './vault'
 
 function totals(overrides: Partial<MaterialTotals> = {}): MaterialTotals {
   return { ...emptyMaterialTotals(), ...overrides }
@@ -97,5 +103,39 @@ describe('formatUnits', () => {
   it('compacts a pile too large to read digit by digit', () => {
     expect(formatUnits(1_200)).toBe('1.2K')
     expect(formatUnits(3_000_000)).toBe('3M')
+  })
+})
+
+/*
+ * The map badge (see #48) has room for exactly one figure, so it needs the row
+ * for whichever material the mine's CURRENT tier yields — never a sum across
+ * the several materials a tier-hopping mine can hold. materialForTier() in the
+ * main process is the identity function today (a copper mine yields copper),
+ * and MineTier is already a subset of Material, so the tier IS the lookup key.
+ */
+describe('currentMaterialRow', () => {
+  it("returns the row for the mine's current tier once it has reached a whole unit", () => {
+    expect(currentMaterialRow(totals({ copper: 50_000 }), 'copper')).toEqual({
+      material: 'copper',
+      tokens: 50_000,
+      units: 2
+    })
+  })
+
+  it('returns undefined once the current tier has not reached a whole unit yet, even with older materials in the ledger', () => {
+    // A mine just promoted from bronze to silver: bronze has whole units, but
+    // the badge must not fall back to them once the tier has moved on.
+    expect(currentMaterialRow(totals({ bronze: 20_000, silver: 10_000 }), 'silver')).toBeUndefined()
+  })
+
+  it('treats an absent breakdown as nothing mined', () => {
+    expect(currentMaterialRow(undefined, 'gold')).toBeUndefined()
+  })
+
+  it("returns only the current tier's own row, never a total across materials", () => {
+    // bronze (2 units) + copper (2 units) would wrongly read "4" if this ever
+    // summed; it must return copper's own row alone.
+    const row = currentMaterialRow(totals({ bronze: 20_000, copper: 50_000 }), 'copper')
+    expect(row).toEqual({ material: 'copper', tokens: 50_000, units: 2 })
   })
 })

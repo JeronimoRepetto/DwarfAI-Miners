@@ -15,7 +15,13 @@
  * how common that ore is. Dividing gold's tokens by gold's grain is the only
  * thing it is ever used for.
  */
-import { MATERIALS, MATERIAL_TOKENS_PER_UNIT, type Material, type MaterialTotals } from '../types'
+import {
+  MATERIALS,
+  MATERIAL_TOKENS_PER_UNIT,
+  type Material,
+  type MaterialTotals,
+  type MineTier
+} from '../types'
 import { formatTokens } from './economy'
 
 /**
@@ -76,6 +82,29 @@ export function vaultRows(totals: MaterialTotals | undefined): VaultRow[] {
     if (units > 0) rows.push({ material, tokens, units })
   }
   return rows
+}
+
+/**
+ * The one row for the material a mine's CURRENT tier yields (see #48).
+ *
+ * A map badge has room for exactly one figure, but a mine that has changed
+ * tier holds several materials in its ledger (see #22) — so the badge shows
+ * the tier in force now rather than a sum across the others, which is exactly
+ * the conversion this module's rule refuses. `tier` doubles as the lookup key
+ * directly: materialForTier() in the main process is the identity function
+ * today (a copper mine yields copper), and MineTier is already a subset of
+ * Material, so no separate mapping is needed here.
+ *
+ * undefined when this material has not yet reached one whole unit — a mine
+ * freshly promoted to a new tier, for instance, before it has mined anything
+ * at that tier's own grain size yet. The badge hides rather than show a "0"
+ * for a pile that, at this material, is not there.
+ */
+export function currentMaterialRow(
+  totals: MaterialTotals | undefined,
+  tier: MineTier
+): VaultRow | undefined {
+  return vaultRows(totals).find((row) => row.material === tier)
 }
 
 /**
