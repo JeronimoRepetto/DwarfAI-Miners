@@ -487,6 +487,116 @@ describe('AgentRuntime.sendDwarfText', () => {
     })
   })
 
+  it('falls back to the relay when the console fails and the session has a name', async () => {
+    const port = {
+      sendToConsole: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    // The verdict names the channel that actually delivered, not the one that
+    // was tried first, so the panel's ✓ stays honest about the fallback.
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    expect(port.sendToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'run the tests',
+      pressEnter: true
+    })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: 'run the tests'
+    })
+  })
+
+  it('never touches the relay while the console delivery succeeds', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' }
+    })
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    // The relay is slower than keystrokes (a one-shot claude turn), so it is
+    // strictly the fallback, never a parallel or default attempt.
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('combines both reasons, terminal first, when the relay fallback also fails', async () => {
+    const port = {
+      sendToConsole: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
+      relayToClaudeSession: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The relay timed out.' }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'terminal',
+      error: 'Terminal: The terminal would not come forward.\nRelay fallback: The relay timed out.'
+    })
+  })
+
+  it('never falls back for a terminal session that has no relay address', async () => {
+    const port = {
+      sendToConsole: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'terminal',
+      error: 'The terminal would not come forward.'
+    })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps the message text out of the log on the fallback path too', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const port = {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: false, error: 'still no' }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'my-secret-payload',
+      pressEnter: false
+    })
+    const written = [...warn.mock.calls, ...log.mock.calls].flat().join(' ')
+    expect(written).not.toContain('my-secret-payload')
+    warn.mockRestore()
+    log.mockRestore()
+  })
+
   it('turns a throwing delivery port into a failed verdict', async () => {
     const port = {
       sendToConsole: vi.fn().mockRejectedValue(new Error('boom')),
@@ -611,6 +721,27 @@ describe('AgentRuntime.sendDwarfText', () => {
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
     ).resolves.toMatchObject({ delivered: false, via: 'none' })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('degrades a named terminal target to its relay where console input is unavailable', async () => {
+    // An interactive session with a registry name is still name-addressable on
+    // a platform that cannot type into consoles, so Send/Kick must stay
+    // enabled — advertised and delivered as the relay, not disabled (issue #24).
+    const port = { ...fakePort(), supportsConsoleInput: false }
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    expect(runtime.getMines()[0]!.dwarfs[0]?.textDelivery).toBe('claude-relay')
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: 'hi'
+    })
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 
@@ -832,6 +963,116 @@ describe('AgentRuntime.kickDwarf', () => {
       via: 'terminal',
       error: 'The terminal would not come forward.'
     })
+  })
+
+  it('falls back to the relay cancel instruction when the interrupt fails and the session has a name', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'claude-relay'
+    })
+    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
+    // The fallback carries the exact instruction the relay tier already uses —
+    // a kick has no user text, only this fixed message.
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
+    })
+  })
+
+  it("prefixes the worker's cancel tag on the fallback, same as the relay tier", async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' })
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      {
+        [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
+        [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' }
+      },
+      port
+    )
+
+    await expect(runtime.kickDwarf({ dwarfId: WORKER_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'claude-relay'
+    })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: '[cancel agent Explorer] Stop that agent now. Interrupt its work, leave things in a safe state, and wait for further instructions.'
+    })
+  })
+
+  it('combines both reasons, terminal first, when the relay fallback also fails', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The relay timed out.' }),
+      sendInterrupt: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
+      delivered: false,
+      via: 'terminal',
+      error: 'Terminal: The terminal would not come forward.\nRelay fallback: The relay timed out.'
+    })
+  })
+
+  it('never falls back for a terminal session that has no relay address', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
+
+    await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
+      delivered: false,
+      via: 'terminal',
+      error: 'The terminal would not come forward.'
+    })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('kicks over the relay where console input is unavailable and the session has a name', async () => {
+    // Same degrade as sendDwarfText: a named interactive session on a platform
+    // with no console input keeps a working Kick through its relay address.
+    const port = { ...fakePort(), supportsConsoleInput: false }
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } },
+      port
+    )
+
+    await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'claude-relay'
+    })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'ai-tools-70',
+      text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
+    })
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
   })
 
   it('turns a throwing delivery port into a failed verdict', async () => {

@@ -36,6 +36,21 @@ describe('resolveTextDelivery', () => {
     })
   })
 
+  it("carries a terminal endpoint's relay fallback address through unchanged", () => {
+    // The runtime reads sessionName off the resolved endpoint when the console
+    // attempt fails (issue #24); dropping it here would silently disable the
+    // fallback for every send.
+    const resolved = resolveTextDelivery(
+      'claude:s1',
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' } })
+    )
+    expect(resolved).toEqual({
+      channel: 'terminal',
+      endpoint: { kind: 'terminal', pid: 42, sessionName: 'ai-tools-70' },
+      prefix: ''
+    })
+  })
+
   it('routes a worker to its foreman endpoint and prefixes the worker name', () => {
     const resolved = resolveTextDelivery(
       'claude:s1:agent-9',
@@ -144,6 +159,28 @@ describe('resolveKickDelivery', () => {
     expect(resolved).toEqual({
       channel: 'foreman-relay',
       endpoint: { kind: 'claude-relay', sessionName: 'ai-tools-70' },
+      prefix: '[cancel agent Explorer] '
+    })
+  })
+
+  it("carries a terminal-hosted foreman's relay fallback address across the hop", () => {
+    // A worker kick lands on the foreman's console; when that console cannot
+    // be reached, the runtime falls back to the foreman's relay address, so
+    // the hop must not strip it (issue #24).
+    const resolved = resolveKickDelivery(
+      'claude:s1:agent-9',
+      targetsFrom({
+        'claude:s1:agent-9': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': { kind: 'terminal', pid: 7, sessionName: 'ai-tools-70' }
+      })
+    )
+    expect(resolved).toEqual({
+      channel: 'foreman-relay',
+      endpoint: { kind: 'terminal', pid: 7, sessionName: 'ai-tools-70' },
       prefix: '[cancel agent Explorer] '
     })
   })

@@ -14,9 +14,18 @@
  *   swaps in behind this interface without touching the runtime or the UI.
  */
 
-/** Where one dwarf's text should physically go, as reported by its provider. */
+/**
+ * Where one dwarf's text should physically go, as reported by its provider.
+ *
+ * A 'terminal' target may also carry `sessionName`: the same relay address a
+ * 'claude-relay' target uses. It is the fallback, not the channel — the
+ * runtime tries the console first (keystrokes are instant; a relay turn is a
+ * whole `claude -p` run) and reaches for the name only when the console
+ * cannot be focused or typed into, so a failed focus no longer loses the
+ * message (issue #24).
+ */
 export type TextDeliveryTarget =
-  | { kind: 'terminal'; pid: number }
+  | { kind: 'terminal'; pid: number; sessionName?: string }
   | { kind: 'claude-relay'; sessionName: string }
   | { kind: 'foreman-relay'; foremanDwarfId: string; workerName: string }
 

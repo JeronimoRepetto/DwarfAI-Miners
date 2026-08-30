@@ -114,6 +114,11 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
  * so a relay turn can hand it the message. Anything else — including an older
  * entry that records no kind at all — is assumed to own a console: those
  * predate background sessions, so a console is the safe reading.
+ *
+ * Interactive sessions get names too, and that name is the exact same relay
+ * address a bg session uses. It rides along on the terminal target so the
+ * runtime can fall back to the relay when the console cannot be focused or
+ * typed into, instead of losing the message entirely (issue #24).
  */
 export function claudeSessionDeliveryTarget(session: {
   pid: number
@@ -123,7 +128,9 @@ export function claudeSessionDeliveryTarget(session: {
   if (session.kind === 'bg') {
     return session.name === undefined ? null : { kind: 'claude-relay', sessionName: session.name }
   }
-  return { kind: 'terminal', pid: session.pid }
+  return session.name === undefined
+    ? { kind: 'terminal', pid: session.pid }
+    : { kind: 'terminal', pid: session.pid, sessionName: session.name }
 }
 
 /**

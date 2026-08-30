@@ -603,12 +603,15 @@ describe('ClaudeProvider', () => {
       expect(provider.textDelivery('claude:nobody')).toBeNull()
     })
 
-    it('types into the console of an interactive session', async () => {
+    it('types into the console of an interactive session, keeping its relay address', async () => {
       const provider = makeProvider()
       await provider.scan()
+      // sessionName is the relay fallback address the runtime uses when the
+      // console cannot be focused or typed into (issue #24).
       expect(provider.textDelivery(`claude:${SESSION_ID}`)).toEqual({
         kind: 'terminal',
-        pid: 32896
+        pid: 32896,
+        sessionName: 'ai-tools-70'
       })
     })
 

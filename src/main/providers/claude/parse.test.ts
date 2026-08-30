@@ -81,10 +81,20 @@ describe('parseClaudeSessionEntry', () => {
 })
 
 describe('claudeSessionDeliveryTarget', () => {
-  it('types straight into the console of an interactive TUI session', () => {
+  it('types into the console of an interactive session, keeping its relay address', () => {
+    // The name is the same relay address a bg session uses. It rides along on
+    // the terminal target so the runtime can fall back to the relay when the
+    // console cannot be focused, instead of losing the message (issue #24).
     expect(
       claudeSessionDeliveryTarget({ pid: 4242, kind: 'interactive', name: 'ai-tools-70' })
-    ).toEqual({ kind: 'terminal', pid: 4242 })
+    ).toEqual({ kind: 'terminal', pid: 4242, sessionName: 'ai-tools-70' })
+  })
+
+  it('offers a console-only target for an interactive session that never got a name', () => {
+    const target = claudeSessionDeliveryTarget({ pid: 4242, kind: 'interactive' })
+    expect(target).toEqual({ kind: 'terminal', pid: 4242 })
+    // No name means no relay address at all — the fallback must not exist.
+    expect(target !== null && 'sessionName' in target).toBe(false)
   })
 
   it('relays to a headless background job by its registry name', () => {
@@ -99,9 +109,12 @@ describe('claudeSessionDeliveryTarget', () => {
   })
 
   it('assumes a console for an older entry that records no kind at all', () => {
+    // A named legacy entry is just as relay-addressable as a named interactive
+    // one, so its target carries the same fallback address.
     expect(claudeSessionDeliveryTarget({ pid: 4242, name: 'ai-tools-70' })).toEqual({
       kind: 'terminal',
-      pid: 4242
+      pid: 4242,
+      sessionName: 'ai-tools-70'
     })
   })
 })

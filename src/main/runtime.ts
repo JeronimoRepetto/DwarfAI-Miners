@@ -9,7 +9,8 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
-  Mine
+  Mine,
+  TextDeliveryChannel
 } from '../shared/contracts'
 import { MAX_DWARF_TEXT_CHARS } from '../shared/contracts'
 import { DwarfLifecycleTracker } from './domain/lifecycle'
@@ -42,6 +43,24 @@ const CANCEL_INSTRUCTION =
 /** Addressed at a specific worker through its foreman; resolveKickDelivery's '[cancel agent X] ' prefix already names which one. */
 const CANCEL_WORKER_INSTRUCTION =
   'Stop that agent now. Interrupt its work, leave things in a safe state, and wait for further instructions.'
+
+/** Stands in for a channel that failed without saying why, so the combined verdict never reads 'undefined'. */
+const NO_REASON_GIVEN = 'It failed without a reason.'
+
+/**
+ * Both channels were tried and both failed: the panel's ✕ tooltip must carry
+ * both stories — terminal first, since that is the channel the user expected —
+ * each on its own labeled line so neither reason reads as the other's.
+ */
+function combineFallbackErrors(
+  terminalError: string | undefined,
+  relayError: string | undefined
+): string {
+  return (
+    `Terminal: ${terminalError ?? NO_REASON_GIVEN}\n` +
+    `Relay fallback: ${relayError ?? NO_REASON_GIVEN}`
+  )
+}
 
 /** Expand only a leading home shorthand; other paths are passed through. */
 export function expandHomePath(path: string, home: string = homedir()): string {
@@ -193,22 +212,64 @@ export class AgentRuntime {
    * provider that predates the capability surface (or does not implement it)
    * simply reports no channel.
    *
-   * A 'terminal' target is dropped on platforms whose delivery port cannot
+   * A 'terminal' target is degraded on platforms whose delivery port cannot
    * type into a console (macOS until its osascript path is verified, Linux
-   * always). Providers answer from what the SESSION offers, which is a fact
+   * always): to its relay address when the session carries one — the relay
+   * spawns a CLI, so it works on every platform — and to no channel at all
+   * otherwise. Providers answer from what the SESSION offers, which is a fact
    * about the session, not about this machine; intersecting the two here is
-   * what makes the panel show a disabled button with a reason instead of a
-   * Send that quietly types nowhere.
+   * what makes the panel show a working relay Send (or a disabled button with
+   * a reason) instead of a Send that quietly types nowhere.
    */
   private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
     const consoleSupported = this.textDelivery.supportsConsoleInput !== false
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
       if (target === undefined || target === null) continue
-      if (target.kind === 'terminal' && !consoleSupported) return null
+      if (target.kind === 'terminal' && !consoleSupported) {
+        return target.sessionName === undefined
+          ? null
+          : { kind: 'claude-relay', sessionName: target.sessionName }
+      }
       return target
     }
     return null
+  }
+
+  /**
+   * Second attempt behind a failed console delivery (issue #24): an
+   * interactive session with a registry name is also relay-addressable, so a
+   * window that cannot be focused or typed into no longer swallows the
+   * payload — the exact same text goes over the relay instead. On success the
+   * verdict names 'claude-relay', the channel that actually delivered, so the
+   * panel's ✓ stays honest; on a double failure it carries both reasons,
+   * terminal first. Logs the verdict only, never the text.
+   */
+  private async relayFallback(options: {
+    dwarfId: string
+    /** Only for the log line — the payload is already the right one for the attempt. */
+    attempt: 'message' | 'kick'
+    /** The channel the verdict reports when the fallback fails too. */
+    channel: TextDeliveryChannel
+    sessionName: string
+    text: string
+    terminalError: string | undefined
+  }): Promise<DwarfTextResult> {
+    const relay = await this.textDelivery.relayToClaudeSession({
+      sessionName: options.sessionName,
+      text: options.text
+    })
+    console.log(
+      `[runtime] Relay fallback (${options.attempt}) for ${options.dwarfId}: ` +
+        `${relay.delivered ? 'delivered' : 'failed'}`
+    )
+    return relay.delivered
+      ? { delivered: true, via: 'claude-relay' }
+      : {
+          delivered: false,
+          via: options.channel,
+          error: combineFallbackErrors(options.terminalError, relay.error)
+        }
   }
 
   /**
@@ -253,9 +314,20 @@ export class AgentRuntime {
         `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
           `${outcome.delivered ? 'delivered' : 'failed'} (${payload.length} chars)`
       )
-      return outcome.delivered
-        ? { delivered: true, via: resolved.channel }
-        : { delivered: false, via: resolved.channel, error: outcome.error }
+      if (outcome.delivered) return { delivered: true, via: resolved.channel }
+      // The console attempt failed, but a session with a registry name is
+      // also relay-addressable: same payload, second channel (issue #24).
+      if (resolved.endpoint.kind === 'terminal' && resolved.endpoint.sessionName !== undefined) {
+        return this.relayFallback({
+          dwarfId: request.dwarfId,
+          attempt: 'message',
+          channel: resolved.channel,
+          sessionName: resolved.endpoint.sessionName,
+          text: payload,
+          terminalError: outcome.error
+        })
+      }
+      return { delivered: false, via: resolved.channel, error: outcome.error }
     } catch (error) {
       console.warn(`[runtime] Delivery to ${request.dwarfId} threw`, error)
       return {
@@ -302,9 +374,23 @@ export class AgentRuntime {
         `[runtime] Kick for ${request.dwarfId} via ${resolved.channel}: ` +
           `${outcome.delivered ? 'delivered' : 'failed'}`
       )
-      return outcome.delivered
-        ? { delivered: true, via: resolved.channel }
-        : { delivered: false, via: resolved.channel, error: outcome.error }
+      if (outcome.delivered) return { delivered: true, via: resolved.channel }
+      // Same fallback as sendDwarfText, carrying the exact instruction the
+      // relay tier already uses — a kick has no user text, only this message.
+      if (resolved.endpoint.kind === 'terminal' && resolved.endpoint.sessionName !== undefined) {
+        return this.relayFallback({
+          dwarfId: request.dwarfId,
+          attempt: 'kick',
+          channel: resolved.channel,
+          sessionName: resolved.endpoint.sessionName,
+          text:
+            resolved.prefix === ''
+              ? CANCEL_INSTRUCTION
+              : `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`,
+          terminalError: outcome.error
+        })
+      }
+      return { delivered: false, via: resolved.channel, error: outcome.error }
     } catch (error) {
       console.warn(`[runtime] Kick for ${request.dwarfId} threw`, error)
       return {
