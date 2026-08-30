@@ -83,6 +83,8 @@ onBeforeUnmount(() => board.dispose())
             @activate="emit('activate', dwarf)"
             @send-text="emit('send-text', dwarf, $event)"
             @kick="emit('kick', dwarf)"
+            @bubble-hold="board.hold(dwarf.id)"
+            @bubble-release="board.release(dwarf.id)"
           />
         </div>
         <div class="crew">
@@ -97,6 +99,8 @@ onBeforeUnmount(() => board.dispose())
             @activate="emit('activate', dwarf)"
             @send-text="emit('send-text', dwarf, $event)"
             @kick="emit('kick', dwarf)"
+            @bubble-hold="board.hold(dwarf.id)"
+            @bubble-release="board.release(dwarf.id)"
           />
         </div>
       </div>

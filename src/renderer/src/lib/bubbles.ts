@@ -13,6 +13,18 @@ export interface BubbleSource {
 export interface BubbleBoard {
   /** Reconcile with the latest dwarf list; a changed lastMessage shows a bubble. */
   sync(dwarfs: readonly BubbleSource[]): void
+  /**
+   * Pause the auto-hide of one visible bubble (the user expanded it and is
+   * reading). A hold on a hidden or unknown bubble is a no-op — it never
+   * resurrects anything. Holds do not stack: one release undoes any number.
+   */
+  hold(id: string): void
+  /**
+   * Resume auto-hide after a hold, granting a fresh full TTL from this moment
+   * so a bubble never vanishes the instant it collapses. A release without a
+   * matching hold is a no-op — it must not extend a running timer.
+   */
+  release(id: string): void
   /** Cancel every pending hide timer; the board stops emitting. */
   dispose(): void
 }
@@ -20,6 +32,8 @@ export interface BubbleBoard {
 interface TrackedDwarf {
   message: string
   timer?: ReturnType<typeof setTimeout>
+  /** While true the hide timer stays parked; `release` re-arms it. */
+  held?: boolean
 }
 
 /**
@@ -41,6 +55,12 @@ export function createBubbleBoard(
 
   function hideLater(id: string, entry: TrackedDwarf): void {
     if (entry.timer) clearTimeout(entry.timer)
+    // A held bubble is being read in its expanded form: schedule nothing, so
+    // a message change mid-read updates the text without restarting a timer.
+    if (entry.held) {
+      entry.timer = undefined
+      return
+    }
     entry.timer = setTimeout(() => {
       entry.timer = undefined
       if (visible.delete(id)) emit()
@@ -76,6 +96,29 @@ export function createBubbleBoard(
       for (const id of [...tracked.keys()]) {
         if (!present.has(id)) drop(id)
       }
+    },
+    hold(id) {
+      if (disposed) return
+      const entry = tracked.get(id)
+      // Only a currently visible bubble can be held: holding a hidden or
+      // unknown one must never resurrect it or leak a parked `held` flag.
+      if (!entry || !visible.has(id)) return
+      entry.held = true
+      if (entry.timer) {
+        clearTimeout(entry.timer)
+        entry.timer = undefined
+      }
+    },
+    release(id) {
+      if (disposed) return
+      const entry = tracked.get(id)
+      // A release without a matching hold is a no-op — rescheduling here
+      // would silently extend the TTL of a bubble nobody was reading.
+      if (!entry?.held) return
+      entry.held = false
+      // Fresh full TTL from this moment: the reader just collapsed the
+      // bubble, so it should not vanish the instant it shrinks back.
+      if (visible.has(id)) hideLater(id, entry)
     },
     dispose() {
       disposed = true

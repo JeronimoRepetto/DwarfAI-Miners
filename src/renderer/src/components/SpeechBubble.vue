@@ -1,10 +1,34 @@
 <script setup lang="ts">
-defineProps<{ text: string }>()
+/**
+ * The truncated in-cave bubble. Its text sits inside a real <button> so the
+ * full message is one click — or Enter, native button activation — away
+ * (see #26); the chrome is stripped below so the bubble looks exactly as it
+ * did before it became clickable. `.stop` keeps the click from bubbling to
+ * the document-level close handlers: expanding a bubble must never toggle
+ * the dwarf's own action menu.
+ */
+defineProps<{
+  text: string
+  /** Accessible name for the expand control, e.g. "Read the full message from Gimli". */
+  expandLabel: string
+  /** Mirrored onto aria-expanded so assistive tech tracks the panel state. */
+  expanded: boolean
+}>()
+
+const emit = defineEmits<{ expand: [] }>()
 </script>
 
 <template>
   <div class="speech-bubble" role="status">
-    <span class="bubble-text">{{ text }}</span>
+    <button
+      class="bubble-hit"
+      type="button"
+      :aria-label="expandLabel"
+      :aria-expanded="expanded"
+      @click.stop="emit('expand')"
+    >
+      <span class="bubble-text">{{ text }}</span>
+    </button>
   </div>
 </template>
 
@@ -30,6 +54,23 @@ defineProps<{ text: string }>()
   border: 6px solid transparent;
   border-top-color: var(--parchment);
   border-bottom: 0;
+}
+/* Strip the button chrome: the clickable bubble must look exactly like the plain one did. */
+.bubble-hit {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  text-align: inherit;
+}
+.bubble-hit:focus-visible {
+  outline: 2px solid #ffe29c;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 .bubble-text {
   display: -webkit-box;

@@ -191,6 +191,99 @@ describe('DwarfSprite', () => {
     expect(talking.find('.speech-bubble').text()).toContain('Refactoring the parser')
   })
 
+  describe('speech bubble expansion', () => {
+    const FULL_MESSAGE =
+      'A very long report that the truncated bubble cannot possibly show in full, spanning several sentences of agent chatter.'
+
+    function mountTalking() {
+      return mount(DwarfSprite, {
+        props: {
+          dwarf: defaultDwarf({ name: 'Echo', lastMessage: FULL_MESSAGE }),
+          bubbleText: 'A very long report that the truncated bubble cannot…'
+        }
+      })
+    }
+
+    it('renders the bubble as a real button so Enter can expand it', () => {
+      const hit = mountTalking().find('.bubble-hit')
+      expect(hit.element.tagName).toBe('BUTTON')
+      expect(hit.attributes('aria-label')).toContain('Echo')
+      expect(hit.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('expands on click, showing the full message and holding the bubble', async () => {
+      const wrapper = mountTalking()
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
+
+      await wrapper.find('.bubble-hit').trigger('click')
+      expect(wrapper.find('.bubble-expanded').text()).toContain(FULL_MESSAGE)
+      expect(wrapper.find('.bubble-hit').attributes('aria-expanded')).toBe('true')
+      expect(wrapper.emitted('bubble-hold')).toHaveLength(1)
+    })
+
+    it('does not toggle the dwarf action menu when the bubble is clicked', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+      expect(wrapper.find('.action-menu').exists()).toBe(false)
+      expect(wrapper.emitted('activate')).toBeUndefined()
+    })
+
+    it('collapses on a second bubble click and releases the hold', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.bubble-hit').trigger('click')
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
+      expect(wrapper.emitted('bubble-release')).toHaveLength(1)
+    })
+
+    it('collapses on Escape and releases the hold', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
+      expect(wrapper.emitted('bubble-release')).toHaveLength(1)
+    })
+
+    it('collapses on an outside click', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+
+      document.body.click()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
+      expect(wrapper.emitted('bubble-release')).toHaveLength(1)
+    })
+
+    it('stays open on a click inside the panel (scrolling a long message)', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.bubble-expanded').trigger('click')
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(true)
+      expect(wrapper.emitted('bubble-release')).toBeUndefined()
+    })
+
+    it('collapses and releases when the bubble disappears mid-read', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+
+      await wrapper.setProps({ bubbleText: undefined })
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
+      expect(wrapper.emitted('bubble-release')).toHaveLength(1)
+    })
+
+    it('opening the action menu collapses the expanded bubble', async () => {
+      const wrapper = mountTalking()
+      await wrapper.find('.bubble-hit').trigger('click')
+
+      await wrapper.find('.dwarf-hit').trigger('click')
+      expect(wrapper.find('.action-menu').exists()).toBe(true)
+      expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
+      expect(wrapper.emitted('bubble-release')).toHaveLength(1)
+    })
+  })
+
   it('describes the dwarf in its tooltip', () => {
     const wrapper = mount(DwarfSprite, {
       props: {

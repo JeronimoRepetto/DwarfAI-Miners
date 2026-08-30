@@ -26,6 +26,10 @@ const emit = defineEmits<{
   activate: []
   'send-text': [payload: { text: string; pressEnter: boolean }]
   kick: []
+  /** The user expanded the bubble: the owner must pause its auto-hide (board.hold). */
+  'bubble-hold': []
+  /** The expanded bubble closed: the owner resumes auto-hide with a fresh TTL (board.release). */
+  'bubble-release': []
 }>()
 
 const hitRef = ref<HTMLButtonElement | null>(null)
@@ -46,6 +50,9 @@ const menuStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' }
 async function openMenu(): Promise<void> {
   menuOpen.value = true
   hideTooltip()
+  // One popover at a time: the menu replaces an expanded bubble, mirroring
+  // how it replaces the hover tooltip just above.
+  collapseBubble()
   await nextTick()
   const anchorEl = hitRef.value
   const menuEl = menuRef.value?.$el as HTMLElement | undefined
@@ -88,7 +95,75 @@ function kick(): void {
   emit('kick')
 }
 
-onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
+/**
+ * Clicking the bubble swaps it for a fixed panel carrying the whole
+ * `lastMessage` (see #26) — positioned like the tooltip and menu, because the
+ * cave clips anything absolute inside it. Expanding holds the bubble on the
+ * board so the TTL cannot hide it mid-read; every way out of the panel
+ * (outside click, Escape, second click, opening the menu, the dwarf leaving)
+ * funnels through collapseBubble so the hold is always released.
+ */
+const expandedRef = ref<HTMLElement | null>(null)
+const bubbleExpanded = ref(false)
+const expandedStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
+
+async function expandBubble(): Promise<void> {
+  closeMenu()
+  bubbleExpanded.value = true
+  emit('bubble-hold')
+  await nextTick()
+  const anchorEl = hitRef.value
+  const panelEl = expandedRef.value
+  if (anchorEl && panelEl) {
+    const placement = computeTooltipPlacement(
+      anchorEl.getBoundingClientRect(),
+      panelEl.getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+    expandedStyle.value = { left: `${placement.left}px`, top: `${placement.top}px` }
+  }
+  document.addEventListener('click', collapseBubble)
+  document.addEventListener('keydown', onExpandedKeydown)
+}
+
+function collapseBubble(): void {
+  if (!bubbleExpanded.value) return
+  bubbleExpanded.value = false
+  // Releasing grants a fresh full TTL, so the bubble never vanishes the
+  // instant it shrinks back (a release on a dropped bubble is a board no-op).
+  emit('bubble-release')
+  document.removeEventListener('click', collapseBubble)
+  document.removeEventListener('keydown', onExpandedKeydown)
+}
+
+function onExpandedKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') collapseBubble()
+}
+
+function toggleBubble(): void {
+  if (bubbleExpanded.value) {
+    collapseBubble()
+    return
+  }
+  void expandBubble()
+}
+
+// The board drops a held bubble when its dwarf walks out — nothing is left
+// to read, so the panel goes with it.
+watch(
+  () => props.bubbleText,
+  (text) => {
+    if (!text) collapseBubble()
+  }
+)
+
+const bubbleLabel = computed(() => `Read the full message from ${props.dwarf.name}`)
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMenu)
+  document.removeEventListener('click', collapseBubble)
+  document.removeEventListener('keydown', onExpandedKeydown)
+})
 
 /**
  * The tooltip stays mounted at all times (its content never depends on
@@ -201,7 +276,27 @@ const kickMarker = computed(() => {
 
 <template>
   <div class="dwarf-sprite" :class="rootClasses" :style="exitStyle">
-    <SpeechBubble v-if="bubbleText" class="bubble-holder" :text="bubbleText" />
+    <SpeechBubble
+      v-if="bubbleText"
+      class="bubble-holder"
+      :text="bubbleText"
+      :expand-label="bubbleLabel"
+      :expanded="bubbleExpanded"
+      @expand="toggleBubble"
+    />
+    <!-- Click-through protection: a click inside the panel (scrolling, text
+         selection) must not count as the outside click that closes it. -->
+    <div
+      v-if="bubbleExpanded"
+      ref="expandedRef"
+      class="bubble-expanded"
+      role="note"
+      :aria-label="`Full message from ${dwarf.name}`"
+      :style="expandedStyle"
+      @click.stop
+    >
+      {{ dwarf.lastMessage }}
+    </div>
     <button
       ref="hitRef"
       class="dwarf-hit"
@@ -405,6 +500,30 @@ const kickMarker = computed(() => {
 .menu-holder {
   position: fixed;
   z-index: 40;
+}
+/*
+ * The expanded bubble: fixed and clamped like the tooltip/menu (the cave
+ * clips absolute children). Scrolls when an agent wrote an essay; pre-wrap
+ * keeps the message's own line breaks — the truncated bubble flattens them,
+ * the full view must not.
+ */
+.bubble-expanded {
+  position: fixed;
+  z-index: 40;
+  overflow-y: auto;
+  max-width: 280px;
+  max-height: 190px;
+  padding: 8px 11px;
+  border: 1px solid var(--parchment-line);
+  border-radius: 10px;
+  color: var(--parchment-ink);
+  background: var(--parchment);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 18px #000a;
 }
 
 /* Delivery verdict for the last message, cleared by the store after a moment. */
