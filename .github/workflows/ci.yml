@@ -87,6 +87,14 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+      # AGENTS.md's catalogue and auto-invoke tables are generated from each
+      # skill's own frontmatter, which is the whole reason the instructions and
+      # the metadata cannot drift apart. That only holds if drift fails the
+      # build: a hand-edited table or a skill added without regenerating would
+      # otherwise sit there being quietly wrong. --check writes nothing.
+      - name: Skills in sync with AGENTS.md
+        run: node skills/skill-sync/assets/sync.mjs --check
+
       - name: Test
         run: pnpm test
 

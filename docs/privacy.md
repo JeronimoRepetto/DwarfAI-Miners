@@ -75,7 +75,7 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
   under your Claude account, and its network behavior is Claude Code's — DwarfAI-Miners
   itself opens no connection.
 - **External links open in your browser.** The panel denies all navigation and hands URLs to
-  the system browser (`src/main/window.ts`).
+  the system browser (`src/main/shell/window.ts`).
 
 ## What is shown on screen
 

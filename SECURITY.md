@@ -44,7 +44,7 @@ In scope — the app's own attack surface:
   install or uninstall corrupts the file or touches entries that are not DwarfAI-Miners' own.
 - **The message relay** (`src/main/textDelivery/`): making the one-shot `claude -p` turn do
   anything beyond delivering the message to the named session.
-- **The renderer/preload boundary** (`src/main/window.ts`, `src/preload/`): escaping the
+- **The renderer/preload boundary** (`src/main/shell/window.ts`, `src/preload/`): escaping the
   typed API or the deny-and-open-externally navigation rule.
 - **Transcript redaction** (`src/main/domain/redactSecrets.ts`): a class of secrets that
   predictably escapes the redaction pass. Note that redaction is display hardening and
@@ -67,7 +67,7 @@ Verified in source, not aspirational:
 
 - The renderer runs with context isolation enabled and Node integration disabled, and the
   panel denies all external navigation, handing URLs to the system browser
-  (`src/main/window.ts`). Electron's Chromium sandbox is currently disabled
+  (`src/main/shell/window.ts`). Electron's Chromium sandbox is currently disabled
   (`sandbox: false`), so the preload/context-isolation line is the boundary that matters.
 - The hooks listener binds `127.0.0.1` only, drops unauthenticated requests before reading
   their body (constant-time token comparison), and caps bodies at 4 KB

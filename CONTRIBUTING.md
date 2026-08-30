@@ -20,7 +20,7 @@ pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`
 Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
 
 Configuration is env-based: copy `.env.example` to `.env` if you want to override defaults.
-Every key is optional and invalid values fail fast at startup (`src/main/config.ts`).
+Every key is optional and invalid values fail fast at startup (`src/main/config/config.ts`).
 
 ## Verification
 
