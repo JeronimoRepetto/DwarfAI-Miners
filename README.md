@@ -393,6 +393,12 @@ dmg or a deb):
 | `pnpm package:mac`   | macOS   | dmg + zip, arm64 and x64                    |
 | `pnpm package:linux` | Linux   | AppImage + deb, x64                         |
 
+`package:mac` names no targets on the command line, and that is deliberate. Naming any target
+there replaces the configured list _including its architectures_, after which electron-builder
+falls back to the build host's own architecture — which is how two releases shipped arm64 only
+from an arm64 runner. Leaving the list off keeps `build.mac.target` in `package.json` the single
+place that decides which architectures ship.
+
 Nothing is code-signed or notarized, so Windows SmartScreen and macOS Gatekeeper will both warn —
 see [`docs/signing.md`](docs/signing.md) for exactly what that means and what it takes to fix.
 The application icon (installer, exe, tray, and window) is generated from the painted mound art
@@ -417,17 +423,22 @@ preload, and renderer. Providers depend on the `FsLike` port so parsers and scan
 without the real filesystem.
 
 `src/main/platform/platformAdapters.ts` is the single composition point for everything
-operating-system-specific. Nothing else in the app reads `process.platform`: the runtime gets a
-focus function, a `TextDeliveryPort`, a transcript-viewer launcher and a `ProcessProbePort`, and
-autostart gets an `AutostartPort` — all selected there and all injectable in tests. Each adapter
+operating-system-specific: the runtime gets a focus function, a `TextDeliveryPort`, a
+transcript-viewer launcher and a `ProcessProbePort`, and autostart gets an `AutostartPort` — all
+selected there and all injectable in tests. No adapter branches on `process.platform` itself; it
+is read at three call sites (four occurrences), all outside the adapters — `currentPlatform()`,
+which normalises it onto a supported family, and the entry point twice, for the modifier names
+the settings panel prints and for the value handed to the hook channel. Each adapter
 is split into pure builders (a command's argv, a plist's exact bytes) and a thin runner, which is
 what makes platforms that cannot be executed here still testable here.
 
 ## Security posture
 
 The renderer runs with context isolation enabled and Node integration disabled. The preload
-exposes only the typed DwarfAI-Miners API. External navigation is denied in the panel and opened in
-the system browser instead.
+exposes only the typed DwarfAI-Miners API. A request to open a new window is denied and its URL
+handed to the system browser instead. There is no `will-navigate` handler, so navigation within
+the panel's own frame is not intercepted — the panel loads one local document and has no links,
+which is why that has never been reachable, not because it is blocked.
 
 The app makes no outbound network requests of its own — no telemetry, no auto-updater.
 [`docs/privacy.md`](docs/privacy.md) documents the full data boundary (what is read, what is
@@ -453,7 +464,7 @@ privately.
   shaped the design.
 - [`docs/simulated-provider.md`](docs/simulated-provider.md) — the development-only simulated
   valley: seeing the panel under load without launching real agents (`DWARFAI_SIMULATE=1`).
-- [`LICENSE`](LICENSE) — MIT.
+- [`LICENSE`](LICENSE) — MIT, code and artwork alike.
 
 ## Support the project
 
@@ -463,4 +474,6 @@ nothing in the app is, or will be, gated on it.
 
 ## License
 
-[MIT](LICENSE) © 2026 Jeronimo Repetto.
+[MIT](LICENSE) © 2026 Jeronimo Repetto — code and artwork alike. The images under
+`src/renderer/src/assets/art/` carry the same MIT grant as the source files, deliberately: there
+is no carve-out.
