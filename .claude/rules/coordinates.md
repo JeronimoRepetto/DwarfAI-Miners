@@ -19,9 +19,17 @@ reasons. Before adding or moving a point, know which one you are in.
 `MAP_TRAILS` as percentages of the _rendered box_. `MapView.vue` uses them raw. This is safe
 only because `object-position: 50% 60%` makes the crop contract inward from every edge, so an
 authored point can drift toward the valley floor but never off the canvas. It holds up because
-sites stay inside a conservative central band and are pinned to broad landforms, both enforced
-by `mapSites.test.ts`. A point that needs to hit a 2%-wide rock is wrong the moment someone
+sites stay inside a conservative central band, which `mapSites.test.ts` enforces as explicit
+safe bounds — along with a minimum distance between sites, a stable ordering, and every site
+being reachable by a trail. A point that needs to hit a 2%-wide rock is wrong the moment someone
 drags the panel wider.
+
+Be careful with one claim here: the header of `mapSites.ts` says two rules are enforced by
+`mapSites.test.ts`, the second being that sites are pinned to broad landforms. **That second one
+is not tested**, and cannot be from coordinates alone — the nearest thing is the minimum-distance
+check, which is about two mounds reading as one blob, not about the size of the feature
+underneath. Keeping a site on a broad landform is still the right instinct; it is just on you,
+not on the suite.
 
 **The cave interior — image percent, projected at render time.** `sceneLayout.ts` authors
 anchors as percentages of the _painting_, because the interiors are tall portrait art

@@ -20,9 +20,9 @@
  * or a comment: a stable over-count costs nothing when only the DELTA is read.
  *
  * Usage:
- *   node .claude/scripts/test-census.mjs           # test files changed vs HEAD
- *   node .claude/scripts/test-census.mjs --all     # every tracked test file
- *   node .claude/scripts/test-census.mjs --base <ref>
+ *   node skills/test-safety/assets/test-census.mjs         # changed vs HEAD
+ *   node skills/test-safety/assets/test-census.mjs --all   # every tracked test file
+ *   node skills/test-safety/assets/test-census.mjs --base <ref>
  *
  * Exit code 1 means at least one file lost test statements. That is not proof
  * of a mistake — deleting a genuinely obsolete test is legitimate — it means
