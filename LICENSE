@@ -19,3 +19,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Artwork
+
+The MIT terms above cover the artwork as well as the code. The images committed
+under src/renderer/src/assets/art/ are licensed on exactly the same terms as the
+source files. That is deliberate, not an omission: there is no carve-out for
+them, or for any other file in this repository.

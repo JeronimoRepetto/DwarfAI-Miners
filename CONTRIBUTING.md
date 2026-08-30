@@ -106,6 +106,12 @@ appears in all four corners), and dwarf animations come as pose pairs (two worki
 two resting poses, two walking poses). Open an issue with a sample before painting a full
 set, so style fit gets settled cheaply.
 
+**Inbound terms.** Contributed art ships under the same license as the code. By opening a pull
+request with artwork you confirm it is yours to give — your own work, not derived from someone
+else's, and free of third-party claims — and you license it to the project and everyone
+downstream under the [MIT license](LICENSE), on the same terms as the art already in the tree.
+You keep the copyright; nothing here asks you to assign it.
+
 ## Scope and non-goals
 
 So that nobody invests work the project will decline:
