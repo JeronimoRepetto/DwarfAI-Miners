@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ProbeCommand } from '../adapters/processProbe'
+import type { ProbeCommand } from './processProbe'
 import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
 import { createAutostartPort, createPlatformAdapters, type Platform } from './platformAdapters'
 

@@ -38,7 +38,7 @@ checked rather than trusted.
 - **Process lists, and process start times.** Liveness probes ask the operating system whether
   a pid is alive, when that process started, and whether a `codex` process is running —
   PowerShell `Get-CimInstance Win32_Process` on Windows, `pgrep -f` and `ps -o lstart=`
-  elsewhere (`src/main/adapters/processProbe.ts`).
+  elsewhere (`src/main/platform/processProbe.ts`).
 
 ### The one-time history scan
 
