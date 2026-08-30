@@ -411,12 +411,19 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 </template>
 
 <style scoped>
+/*
+ * `--sprite-width` / `--sprite-height` are set by MineScene from the MEASURED
+ * cave box (see lib/sceneSizing.ts), so the crew scales with the painting they
+ * stand in rather than staying one size while the panel shrinks around them.
+ * The fallbacks are the sizes the sprite was authored at, which is what a
+ * sprite mounted outside any scene still draws at.
+ */
 .dwarf-sprite {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 96px;
+  width: var(--sprite-width, 96px);
 }
 .dwarf-hit {
   position: relative;
@@ -437,12 +444,20 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   width: auto;
   /*
    * All nine poses share one canvas, so a fixed height fixes the width too.
-   * The depth scale shrinks the drawing rather than transforming the sprite:
-   * a transform here would become the containing block for the `position:
-   * fixed` tooltip, bar and expanded bubble below, and they must stay clamped
-   * to the viewport (see computeTooltipPlacement).
+   *
+   * Two scales compose here, and they answer different questions.
+   * `--sprite-height` is how big the SCENE is drawn — MineScene derives it from
+   * the measured cave box, so a dwarf is the right size next to the rock at
+   * every panel shape (issue #44). `--depth-scale` is perspective WITHIN that
+   * scene, shrinking a dwarf standing further back down the gallery.
+   *
+   * Both shrink the drawing rather than transforming the sprite: a transform
+   * here would become the containing block for the `position: fixed` tooltip,
+   * bar and expanded bubble below, and they must stay clamped to the viewport
+   * (see computeTooltipPlacement). That constraint is why the panel size
+   * arrives as a custom property feeding `height` and not as a `scale()`.
    */
-  height: calc(100px * var(--depth-scale, 1));
+  height: calc(var(--sprite-height, 100px) * var(--depth-scale, 1));
   filter: drop-shadow(0 4px 5px #000a);
   user-select: none;
 }
@@ -453,7 +468,8 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   opacity: 0.55;
 }
 .dwarf-name {
-  max-width: 96px;
+  /* Follows the sprite's own box so the label never outgrows the dwarf it names. */
+  max-width: var(--sprite-width, 96px);
   margin-top: 2px;
   overflow: hidden;
   color: var(--ink-dim);

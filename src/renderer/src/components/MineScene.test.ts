@@ -3,10 +3,17 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDwarfKicking } from '../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../composables/useDwarfMessaging'
+import { INTERIOR_ART_SIZE } from '../lib/art'
 import { BUBBLE_TTL_MS } from '../lib/bubbles'
 import { MAX_PILE_NUGGETS } from '../lib/nuggetPile'
 import { assignScene, type SceneOccupant } from '../lib/sceneAssignment'
 import { sceneLayout } from '../lib/sceneLayout'
+import {
+  AUTHORED_CAVE_BOX,
+  AUTHORED_SPRITE,
+  CAVE_MIN_HEIGHT_PX,
+  spriteFootprintPx
+} from '../lib/sceneSizing'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../testing/factories'
 import type { Dwarf } from '../types'
 import MineScene from './MineScene.vue'
@@ -443,5 +450,130 @@ describe('MineScene with reduced motion', () => {
       props: { mine: defaultMine({ dwarfs: [defaultDwarf({ id: 'a' })] }) }
     })
     expect(wrapper.get('.crew-floor').classes()).not.toContain('is-still')
+  })
+})
+
+/*
+ * Issue #44 — the crew used to be drawn at a hard-coded 100px whatever the
+ * panel was doing, so a smaller panel held the same sprites in less room rather
+ * than the same scene in a smaller frame. MineScene already measured the cave
+ * box for the anchor projection; it now hands that measurement to the sprites
+ * as well, so the crew scales with the painting they stand in.
+ */
+describe('MineScene sprite scaling', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  /** Make jsdom, which lays nothing out, report a cave of a given size. */
+  function stubCaveBox(box: { width: number; height: number }): void {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: box.width,
+      height: box.height,
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: box.width,
+      bottom: box.height,
+      toJSON: () => ({})
+    } as DOMRect)
+  }
+
+  function customPropertyOf(wrapper: ReturnType<typeof mount>, name: string): number {
+    const style = wrapper.get('.crew-floor').attributes('style') ?? ''
+    return Number(new RegExp(`${name}:\\s*([\\d.]+)px`).exec(style)?.[1] ?? NaN)
+  }
+
+  /*
+    The measurement lands in `onMounted`, so the first render still carries the
+    authored fallback and the measured size only reaches the DOM a tick later.
+    Every reader here waits for that tick — without it these would silently
+    assert the fallback and agree with themselves.
+  */
+  async function sceneOfOne(): Promise<ReturnType<typeof mount>> {
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [defaultDwarf({ id: 'a' })] }) }
+    })
+    await wrapper.vm.$nextTick()
+    return wrapper
+  }
+
+  it('draws the crew at the authored size in the cave the authored panel produces', async () => {
+    stubCaveBox(AUTHORED_CAVE_BOX)
+    const wrapper = await sceneOfOne()
+    expect(customPropertyOf(wrapper, '--sprite-height')).toBeCloseTo(AUTHORED_SPRITE.height)
+    expect(customPropertyOf(wrapper, '--sprite-width')).toBeCloseTo(AUTHORED_SPRITE.width)
+  })
+
+  it('tracks the measured cave box across a range of panel shapes', async () => {
+    for (const box of [
+      { width: 244, height: 320 },
+      { width: 428, height: 512 },
+      { width: 640, height: 700 },
+      { width: 900, height: 400 },
+      { width: 300, height: 900 }
+    ]) {
+      stubCaveBox(box)
+      const wrapper = await sceneOfOne()
+      const expected = spriteFootprintPx(box, INTERIOR_ART_SIZE)
+      const where = `${box.width}x${box.height}`
+      expect(customPropertyOf(wrapper, '--sprite-height'), where).toBeCloseTo(expected.height)
+      expect(customPropertyOf(wrapper, '--sprite-width'), where).toBeCloseTo(expected.width)
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('holds the same scene in a smaller panel, not the same sprites in less room', async () => {
+    stubCaveBox({ width: 244, height: 320 })
+    const small = customPropertyOf(await sceneOfOne(), '--sprite-height')
+    vi.restoreAllMocks()
+    stubCaveBox(AUTHORED_CAVE_BOX)
+    const authored = customPropertyOf(await sceneOfOne(), '--sprite-height')
+    expect(small).toBeLessThan(authored)
+  })
+
+  /*
+    The two scales compose rather than replace each other: the panel decides how
+    big the scene is drawn, perspective decides how big one dwarf is within it.
+  */
+  it('keeps --depth-scale as a per-dwarf multiplier on top of the panel size', async () => {
+    stubCaveBox({ width: 640, height: 700 })
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({
+          dwarfs: [
+            defaultDwarf({ id: 'far', status: 'leaving' }),
+            defaultDwarf({ id: 'near', status: 'waiting' })
+          ]
+        })
+      }
+    })
+    await wrapper.vm.$nextTick()
+    // A panel bigger than the authored one, so the scene scale is visibly not 1x
+    // and the two multipliers cannot be confused for each other.
+    expect(customPropertyOf(wrapper, '--sprite-height')).toBeCloseTo(
+      spriteFootprintPx({ width: 640, height: 700 }, INTERIOR_ART_SIZE).height
+    )
+    expect(customPropertyOf(wrapper, '--sprite-height')).toBeGreaterThan(AUTHORED_SPRITE.height)
+    const depths = wrapper
+      .findAll('.dwarf-sprite')
+      .map((sprite) =>
+        Number(/--depth-scale:\s*([\d.]+)/.exec(sprite.attributes('style') ?? '')?.[1])
+      )
+    expect(depths).toHaveLength(2)
+    // A dwarf at the back of the gallery is drawn smaller than one at the front.
+    expect(new Set(depths).size).toBe(2)
+    for (const depth of depths) expect(depth).toBeGreaterThan(0)
+  })
+
+  /*
+    The cave has declared its own vertical floor since #19, but nothing enforced
+    it: the window had no minimum, so a panel dragged shorter simply overflowed
+    it. That constant is now the same one the window minimum is derived from.
+  */
+  it('floors the cave at the height the window minimum is derived from', () => {
+    const style = mount(MineScene, { props: { mine: defaultMine() } })
+      .get('.cave')
+      .attributes('style')
+    expect(style).toContain(`--cave-min-height: ${CAVE_MIN_HEIGHT_PX}px`)
   })
 })

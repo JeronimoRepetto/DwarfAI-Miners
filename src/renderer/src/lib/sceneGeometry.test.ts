@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampToBox, projectToBox, visibleImageRect } from './sceneGeometry'
+import { clampToBox, coverScale, projectToBox, visibleImageRect } from './sceneGeometry'
 
 /** The cave paintings: tall portrait art shown inside a much squarer panel. */
 const ART = { width: 1289, height: 1600 }
@@ -122,5 +122,35 @@ describe('clampToBox', () => {
   it('holds a cropped-away point at the edge, keeping the dwarf on screen', () => {
     expect(clampToBox({ x: -20, y: -30 }, 6, 4)).toEqual({ x: 6, y: 4 })
     expect(clampToBox({ x: 140, y: 130 }, 6, 4)).toEqual({ x: 94, y: 96 })
+  })
+})
+
+/*
+  The other half of the same `cover` sum visibleImageRect does. That one asks
+  WHICH slice of the painting survives; this one asks how much bigger everything
+  in that slice is drawn — which is what a figure standing in the painting has to
+  be scaled by to stay the right size next to the rock (issue #44, sceneSizing).
+*/
+describe('coverScale', () => {
+  it('scales the art until it covers the box, so exactly one axis overflows', () => {
+    // Wider than the art: the width binds and the extra height is the crop.
+    expect(coverScale({ width: 200, height: 100 }, ART)).toBeCloseTo(200 / ART.width)
+    // Narrower than the art: the height binds and the side walls are the crop.
+    expect(coverScale({ width: 40, height: 100 }, ART)).toBeCloseTo(100 / ART.height)
+  })
+
+  it('agrees with visibleImageRect about which axis got cropped', () => {
+    for (const aspect of [0.2, 0.5, 0.8, 1, 1.5, 3, 6]) {
+      const box = { width: 100 * aspect, height: 100 }
+      const rect = visibleImageRect(box, ART)
+      const widthBound = coverScale(box, ART) === box.width / ART.width
+      // A width-bound cover keeps the whole width and crops height, and vice versa.
+      expect(rect.x1 - rect.x0 === 100, `${aspect}`).toBe(widthBound)
+    }
+  })
+
+  it('reports no scale at all for a box it cannot measure yet', () => {
+    expect(coverScale({ width: 0, height: 0 }, ART)).toBe(0)
+    expect(coverScale({ width: 428, height: 512 }, { width: 0, height: 0 })).toBe(0)
   })
 })

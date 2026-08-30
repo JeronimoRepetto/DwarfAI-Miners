@@ -6,6 +6,7 @@ import { sceneDwarfAnimation } from '../lib/presentation'
 import { defaultDwarf } from '../testing/factories'
 import type { DwarfKickState, DwarfSendState } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
+import spriteSource from './DwarfSprite.vue?raw'
 
 /*
  * Every animation the app currently ships cycles at least two poses, so the
@@ -604,5 +605,59 @@ describe('DwarfSprite pick sparks', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.spark-burst').exists(), status).toBe(false)
     }
+  })
+})
+
+/*
+ * Issue #44 — the sprite's size is a CSS contract, so these read the component's
+ * own <style> block rather than a mounted element: vitest does not apply scoped
+ * styles, so `getComputedStyle` here would report nothing at all and quietly
+ * agree with whatever it was asked.
+ */
+describe('DwarfSprite sizing', () => {
+  /** The body of one rule from the component's style block, by exact selector. */
+  function styleRule(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const body = new RegExp(`(?:^|\\n)\\s*${escaped}\\s*\\{([\\s\\S]*?)\\}`).exec(spriteSource)?.[1]
+    if (body === undefined) throw new Error(`no ${selector} rule in DwarfSprite.vue`)
+    return body
+  }
+
+  it('takes its height from the panel-derived sprite size, with depth still on top', () => {
+    // `--sprite-height` is the scene's own scale (MineScene, from the measured
+    // cave box); `--depth-scale` is perspective WITHIN that scene. Both, in
+    // that order — the hard-coded 100px was what issue #44 came to remove.
+    expect(styleRule('.dwarf-frame')).toMatch(
+      /height:\s*calc\(\s*var\(--sprite-height[^)]*\)\s*\*\s*var\(--depth-scale/
+    )
+  })
+
+  it('still draws a sprite mounted outside any scene at its authored size', () => {
+    // The var fallbacks are what keep a bare sprite byte-for-byte what it was.
+    expect(styleRule('.dwarf-frame')).toContain('--sprite-height, 100px')
+    expect(styleRule('.dwarf-sprite')).toContain('--sprite-width, 96px')
+  })
+
+  it('scales its own box with its height, so the pose stays centred on the anchor', () => {
+    expect(styleRule('.dwarf-sprite')).toMatch(/width:\s*var\(--sprite-width/)
+    expect(styleRule('.dwarf-name')).toMatch(/max-width:\s*var\(--sprite-width/)
+  })
+
+  /*
+    The constraint the sizing mechanism had to route around, and the reason it
+    is a custom property driving `height` rather than the obvious `transform:
+    scale()`. The tooltip, action bar and expanded bubble are `position: fixed`
+    and placed in viewport coordinates by computeTooltipPlacement; a transform
+    on `.dwarf-sprite` would make it their containing block and every one of
+    them would land in the wrong place.
+
+    Two neighbours were considered and left alone: `.is-flipped .dwarf-frame`
+    keeps its `scale: -1 1` (the frame is a leaf <img> with no fixed descendants
+    to capture), and the unanchored `walk-out` keyframes keep their `translate`
+    (a sprite outside a scene has no anchored popover placement to break).
+  */
+  it('puts no transform on the sprite, so the fixed tooltip, bar and bubble stay clamped', () => {
+    expect(styleRule('.dwarf-frame')).not.toMatch(/transform\s*:/)
+    expect(styleRule('.dwarf-sprite')).not.toMatch(/transform\s*:/)
   })
 })

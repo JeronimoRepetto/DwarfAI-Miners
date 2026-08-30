@@ -73,6 +73,28 @@ export function visibleImageRect(box: BoxSize, image: BoxSize): ImageRect {
 }
 
 /**
+ * How much bigger than life the painting is drawn in this box.
+ *
+ * The other half of the same `cover` sum `visibleImageRect` does: that one asks
+ * which slice of the art survives, this one asks what that slice is magnified
+ * by. `cover` scales until the art covers BOTH axes, so the scale is whichever
+ * axis needs more — and everything painted in the surviving slice, the rock and
+ * the timber and the ore, is drawn at exactly this factor.
+ *
+ * Which is why a dwarf's own drawn size has to come from here (see
+ * sceneSizing.ts): he is a figure IN the painting, and a figure that does not
+ * scale with the rock he leans on stops being in the cave and starts being
+ * pasted over it.
+ *
+ * An unmeasured box reports 0 rather than Infinity or NaN, so a caller can test
+ * it as falsy and fall back the way `visibleImageRect` does.
+ */
+export function coverScale(box: BoxSize, image: BoxSize): number {
+  if (box.width <= 0 || box.height <= 0 || image.width <= 0 || image.height <= 0) return 0
+  return Math.max(box.width / image.width, box.height / image.height)
+}
+
+/**
  * Project an authored image-percent point into the box's own percent space.
  *
  * Deliberately un-clamped: a point the crop removed comes back outside 0-100

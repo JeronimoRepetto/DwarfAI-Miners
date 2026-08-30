@@ -20,6 +20,12 @@ import {
   walkDurationMs,
   walkFacesLeft
 } from '../lib/sceneMotion'
+import {
+  AUTHORED_CAVE_BOX,
+  CAVE_MIN_HEIGHT_PX,
+  spriteFootprintPx,
+  spriteMarginPercent
+} from '../lib/sceneSizing'
 import { vaultRows } from '../lib/vault'
 import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../types'
 import DwarfSprite from './DwarfSprite.vue'
@@ -62,20 +68,15 @@ const interiorSrc = computed(() => INTERIOR_SRC[props.mine.tier])
  * This component only measures the box and mirrors the results into style.
  */
 
-/**
- * The cave box at the default 460x600 panel. Used until a real measurement
- * lands — and in tests, where jsdom lays nothing out and every rect is 0x0.
- * Without it the first paint would project every anchor through a degenerate
- * box and stack the whole crew in one corner.
+/*
+ * The measured box is used until a real measurement lands — and in tests, where
+ * jsdom lays nothing out and every rect is 0x0. Without it the first paint would
+ * project every anchor through a degenerate box and stack the whole crew in one
+ * corner. `AUTHORED_CAVE_BOX` is the box the default 460x600 panel produces, and
+ * lives in sceneSizing because the window minimum is derived from it too.
  */
-const DEFAULT_CAVE_BOX = { width: 428, height: 512 }
-
-/** Half the drawn width and height of a sprite, in box percent, so clamping keeps it on screen. */
-const SPRITE_MARGIN_X = 11
-const SPRITE_MARGIN_Y = 4
-
 const caveRef = ref<HTMLElement | null>(null)
-const boxSize = ref({ ...DEFAULT_CAVE_BOX })
+const boxSize = ref({ ...AUTHORED_CAVE_BOX })
 let boxObserver: ResizeObserver | undefined
 
 onMounted(() => {
@@ -98,6 +99,18 @@ onMounted(() => {
   }
 })
 onBeforeUnmount(() => boxObserver?.disconnect())
+
+/*
+ * The one measurement now answers two questions, not one (issue #44). It has
+ * always said WHERE an anchor lands once the painting is cropped; it now also
+ * says HOW BIG a dwarf standing on it is drawn, because a sprite at a fixed
+ * 100px in a panel dragged small is the same scene's worth of dwarf crammed
+ * into less cave. The maths is in lib/sceneSizing.ts; this hands the result to
+ * CSS as custom properties the sprites inherit.
+ */
+const spriteFootprint = computed(() => spriteFootprintPx(boxSize.value, INTERIOR_ART_SIZE))
+/** Clamping margins that move with the sprite, rather than the old fixed pair. */
+const spriteMargin = computed(() => spriteMarginPercent(boxSize.value, INTERIOR_ART_SIZE))
 
 const layout = computed(() => sceneLayout(props.mine.tier))
 const placements = computed(() => assignScene(props.mine.dwarfs, layout.value))
@@ -173,8 +186,8 @@ const slots = computed<SceneSlot[]>(() => {
     if (!placement) continue
     const projected = clampToBox(
       projectToBox(placement.point, box, INTERIOR_ART_SIZE),
-      SPRITE_MARGIN_X,
-      SPRITE_MARGIN_Y
+      spriteMargin.value.x,
+      spriteMargin.value.y
     )
     const walking = !reducedMotion.value && walkingIds.value.has(dwarf.id)
     result.push({
@@ -276,7 +289,13 @@ onBeforeUnmount(() => {
       <span class="tier-badge">{{ tierLabel(mine.tier) }}</span>
     </header>
 
-    <div ref="caveRef" class="cave">
+    <!--
+      `--cave-min-height` is bound from the same constant the WINDOW minimum is
+      derived from (lib/sceneSizing.ts), so the floor the cave declares and the
+      floor the panel enforces cannot drift apart — before #44 the cave declared
+      one and nothing enforced it.
+    -->
+    <div ref="caveRef" class="cave" :style="{ '--cave-min-height': `${CAVE_MIN_HEIGHT_PX}px` }">
       <img class="cave-art" :src="interiorSrc" alt="" aria-hidden="true" draggable="false" />
       <!-- Keeps the crew readable against a busy painting. -->
       <div class="cave-vignette" aria-hidden="true"></div>
@@ -314,8 +333,21 @@ onBeforeUnmount(() => {
         <p>Nobody is working this mine yet.</p>
       </div>
 
-      <!-- the crew, each on the painted feature its status sends it to -->
-      <div v-else class="crew-floor" :class="{ 'is-still': reducedMotion }">
+      <!--
+        The crew, each on the painted feature its status sends it to, and each
+        drawn at the size this panel's cave calls for. The two sizing properties
+        are set once on the floor and inherited by every sprite below it — one
+        measurement, one place it is published.
+      -->
+      <div
+        v-else
+        class="crew-floor"
+        :class="{ 'is-still': reducedMotion }"
+        :style="{
+          '--sprite-width': `${spriteFootprint.width}px`,
+          '--sprite-height': `${spriteFootprint.height}px`
+        }"
+      >
         <div
           v-for="slot in slots"
           :key="slot.dwarf.id"
@@ -419,7 +451,8 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   overflow: hidden;
-  min-height: 320px;
+  /* Bound from CAVE_MIN_HEIGHT_PX above; the literal is only the fallback. */
+  min-height: var(--cave-min-height, 320px);
   border: 1px solid var(--line-soft);
   border-radius: 14px;
   background: #171009;
@@ -505,14 +538,18 @@ onBeforeUnmount(() => {
  *
  * `--walk-ms` is the distance-derived duration from sceneMotion, so a dwarf
  * crossing the whole gallery takes longer than one shuffling along a vein.
- * `margin-left` centres the fixed 96px sprite on its anchor, and the negative
- * `margin-bottom` discounts the name label so the *feet* land on the spot.
+ *
+ * `margin-left` centres the sprite on its anchor and so has to follow the
+ * sprite's own width, which now moves with the panel (issue #44). The negative
+ * `margin-bottom` discounts the name label so the *feet* land on the spot, and
+ * stays a constant because the label is 10px type that does not scale with the
+ * painting — it is chrome hanging off the scene, not part of it.
  */
 .scene-slot {
   position: absolute;
-  width: 96px;
+  width: var(--sprite-width, 96px);
   margin-bottom: -14px;
-  margin-left: -48px;
+  margin-left: calc(var(--sprite-width, 96px) / -2);
   transition:
     left var(--walk-ms, 0ms) linear,
     bottom var(--walk-ms, 0ms) linear;

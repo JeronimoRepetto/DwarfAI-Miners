@@ -43,6 +43,27 @@ export interface MainWindowOptionsInput {
 }
 
 /**
+ * The floor the panel may be dragged to (see #44).
+ *
+ * These are not taste. They are the smallest cave box in which every authored
+ * anchor still lands inside the painting's `object-fit: cover` crop with a whole
+ * sprite footprint of clearance, plus the chrome that surrounds that box —
+ * derived from the art, the anchors and the cave's own declared min-height in
+ * `renderer/src/lib/sceneSizing.ts` (SMALLEST_READABLE_CAVE_BOX, MIN_PANEL_SIZE).
+ *
+ * They are copied here rather than imported because renderer modules have no
+ * business in the main bundle. `window.test.ts` imports that derivation and
+ * holds these two numbers to it, so the copy cannot drift: re-author an anchor
+ * or repaint the interior at another size and the test says so.
+ *
+ * Without them 460x600 was only ever a STARTING size on a `resizable: true`
+ * window, and everything below the smallest shape the scene was drawn for was
+ * undefined behaviour.
+ */
+const MIN_PANEL_WIDTH = 276
+const MIN_PANEL_HEIGHT = 408
+
+/**
  * Pure options builder, split from createMainWindow so the creation-time
  * contract — the stored pin preference lands in `alwaysOnTop`, the frameless
  * floating-panel flags stay fixed — is testable without an Electron runtime.
@@ -53,6 +74,8 @@ export function buildMainWindowOptions(
   return {
     width: 460,
     height: 600,
+    minWidth: MIN_PANEL_WIDTH,
+    minHeight: MIN_PANEL_HEIGHT,
     show: false,
     frame: false,
     transparent: true,
