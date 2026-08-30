@@ -767,3 +767,30 @@ describe('DwarfSprite sizing', () => {
     expect(styleRule('.dwarf-sprite')).not.toMatch(/transform\s*:/)
   })
 })
+
+/*
+ * Issue #72 — a resting dwarf used to carry two sleep indicators at once: the
+ * `z` painted into `rest-2`, and this CSS overlay drawn over the same image.
+ * The overlay is the one that stayed, which leaves rest a single pose the
+ * sprite never has to run a timer for.
+ */
+describe('DwarfSprite sleep indicator', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('says a dwarf is asleep exactly once, and it is the drifting overlay', async () => {
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
+    expect(wrapper.find('.zzz').exists()).toBe(true)
+
+    // The painted z lived on the second rest frame, so a cycle long enough to
+    // have reached it is what proves nothing is drawing a second one.
+    vi.advanceTimersByTime(10_000)
+    await wrapper.vm.$nextTick()
+    expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+  })
+
+  it('starts no timer at all, because resting is one pose rather than a loop', () => {
+    mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})

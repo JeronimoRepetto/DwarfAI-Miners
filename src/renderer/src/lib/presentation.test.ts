@@ -64,9 +64,12 @@ describe('dwarfAnimation', () => {
     })
   })
 
-  it('rests a waiting worker on a much slower cycle', () => {
+  it('sits a waiting worker down on one resting pose and leaves it there', () => {
+    // Was the two-frame ['rest-1', 'rest-2'] pair until issue #72 retired the
+    // painted z: the second frame differed from the first by that glyph alone,
+    // and the CSS z z z was already saying the same thing over the top of it.
     expect(dwarfAnimation('waiting', 'worker')).toEqual({
-      frames: ['rest-1', 'rest-2'],
+      frames: ['rest-1'],
       frameMs: 1400
     })
   })
@@ -83,7 +86,7 @@ describe('dwarfAnimation', () => {
     // blocked foreman temporarily reuses the worker sleeping/rest animation —
     // it must read as paused, not as a foreman still checking the log book.
     expect(dwarfAnimation('waiting', 'foreman')).toEqual({
-      frames: ['rest-1', 'rest-2'],
+      frames: ['rest-1'],
       frameMs: 1400
     })
     expect(dwarfAnimation('waiting', 'foreman')).toEqual(dwarfAnimation('waiting', 'worker'))
@@ -459,11 +462,18 @@ describe('dwarfAnimation while awaiting an answer', () => {
     }
   })
 
-  it('is not asleep: the loop keeps two frames, never a single frozen pose', () => {
-    // The issue asks for attentive, not asleep — a single frame reads as the
-    // silence pose (#47), which says the opposite thing about the dwarf.
+  it('is never the silence pose, whatever the loop it borrows is made of', () => {
+    // #60 asks for attentive, not asleep, and pinned that as "keeps two
+    // frames" back when every active loop was a pair — a single frame would
+    // then have read as the silence pose (#47), which says the opposite thing
+    // about the dwarf. Issue #72 retired the painted z, so the rest loop this
+    // placeholder borrows is a single pose now and a frame count stands in for
+    // nothing. What it was standing in for is pinned directly instead.
     for (const role of ['worker', 'foreman'] as const) {
-      expect(AWAITING_ANSWER_ANIMATION[role].frames, role).toHaveLength(2)
+      expect(AWAITING_ANSWER_ANIMATION[role], role).not.toEqual(
+        dwarfAnimation('working', role, true)
+      )
+      expect(AWAITING_ANSWER_ANIMATION[role].frames, role).not.toContain(NEUTRAL_DWARF_FRAME)
     }
   })
 })
@@ -487,5 +497,49 @@ describe('sceneDwarfAnimation while awaiting an answer', () => {
         sceneDwarfAnimation('waiting', 'foreman', walking, false, undefined)
       )
     }
+  })
+})
+
+/*
+ * Issue #72 — a resting dwarf carried two sleep indicators at once: the `z`
+ * painted into `rest-2`, and the CSS `z z z` DwarfSprite floats over the same
+ * image. The CSS one is the one that stays, so no loop plays the painted frame
+ * any more and rest is a single pose rather than a two-frame cycle whose whole
+ * content was one glyph (silhouette IoU 0.994 — see docs/animation-loops.md).
+ */
+describe('the rest loop, with the painted z retired', () => {
+  /** Every loop the panel can actually select, whatever the dwarf is doing. */
+  function everyLoop(): { where: string; animation: ReturnType<typeof dwarfAnimation> }[] {
+    const found: { where: string; animation: ReturnType<typeof dwarfAnimation> }[] = []
+    for (const status of ['working', 'waiting', 'leaving'] as const) {
+      for (const role of ['worker', 'foreman'] as const) {
+        for (const silent of [false, true]) {
+          for (const reason of [undefined, 'approval', 'unknown', 'user-input'] as const) {
+            found.push({
+              where: `${status}/${role}/silent=${silent}/${reason}`,
+              animation: dwarfAnimation(status, role, silent, reason)
+            })
+          }
+        }
+      }
+    }
+    found.push({ where: 'walking', animation: WALK_ANIMATION })
+    return found
+  }
+
+  it('rests on one pose, because the painted z was the whole of the animation', () => {
+    for (const role of ['worker', 'foreman'] as const) {
+      expect(dwarfAnimation('waiting', role).frames, role).toEqual(['rest-1'])
+    }
+  })
+
+  it('plays the painted-z frame in no loop at all, so one indicator is left', () => {
+    for (const { where, animation } of everyLoop()) {
+      expect(animation.frames, where).not.toContain('rest-2')
+    }
+  })
+
+  it('keeps the tempo it always rested at, so nothing else has to move', () => {
+    expect(dwarfAnimation('waiting', 'worker').frameMs).toBe(1400)
   })
 })
