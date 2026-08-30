@@ -6,6 +6,7 @@ import { kickMarker as kickMarkerFor, sendMarker as sendMarkerFor } from '../lib
 import {
   LEAVING_EXIT_MS,
   NEUTRAL_DWARF_FRAME,
+  isDwarfSilent,
   isPickImpact,
   isSpriteFlipped,
   sceneDwarfAnimation,
@@ -232,8 +233,19 @@ function hideTooltip(): void {
 // Cheap after the first sprite: every later call is a no-op.
 preloadDwarfArt()
 
+/**
+ * Whether this dwarf has produced nothing for its role's whole window (issue
+ * #47). Read off the wire figure the provider stamps, against the provider's
+ * own windows — the sprite decides nothing about it, it only draws it.
+ *
+ * Note what this is NOT: a status. `props.dwarf.status` is untouched, so the
+ * animation class, the accessible name and every consumer downstream still see
+ * a working dwarf. Only the pose changes.
+ */
+const silent = computed(() => isDwarfSilent(props.dwarf.role, props.dwarf.silentForMs))
+
 const animation = computed(() =>
-  sceneDwarfAnimation(props.dwarf.status, props.dwarf.role, props.walking === true)
+  sceneDwarfAnimation(props.dwarf.status, props.dwarf.role, props.walking === true, silent.value)
 )
 const frameIndex = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
@@ -244,8 +256,11 @@ function stopCycle(): void {
   timer = undefined
 }
 
-// A status change restarts the loop on its first frame, so a dwarf that just
-// picked up a task never starts mid-swing.
+// Any change of loop restarts it on its first frame, so a dwarf that just
+// picked up a task never starts mid-swing — and one that breaks its silence
+// picks the pick back up from the top of the swing rather than mid-stroke.
+// A loop of fewer than two frames (the silence pose, #47) starts no timer at
+// all, which is why standing still costs less than working.
 watch(
   animation,
   (next) => {

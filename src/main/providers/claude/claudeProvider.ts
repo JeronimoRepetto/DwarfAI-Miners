@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../adapters/processProbe'
 import { redactSecrets } from '../../domain/redactSecrets'
@@ -56,18 +57,17 @@ const RECOVERY_TAIL_BYTES = 16 * 1024 * 1024
  * writing their terminal `<task-notification>`, and #28's launch memory has no
  * other exit — the reported ghost had been mining for 13 hours.
  *
- * They differ because the two silences are not equally telling, and that
- * asymmetry is the point — do not collapse them back into one number. A
- * FOREMAN legitimately sits idle for as long as it takes a human to type the
- * next prompt, so its silence is weak evidence and gets the longer hour. A
- * WORKER cannot wait on anyone: once launched it runs to completion, so
- * silence from its own transcript is strong evidence and half an hour of it
- * says enough. Both stay generous anyway, because the opposite error is the
- * false departure #28 exists to prevent: a live subagent grinding through one
- * long tool call appends nothing at all until that call returns.
+ * The two numbers, and the asymmetry that is the point of them, live on the
+ * wire contract (DWARF_SILENCE_WINDOW_MS) rather than here since issue #47:
+ * the panel now shows the same silence to the user, and a panel judging a
+ * dwarf by a different window than this rule does would say "still working"
+ * about one already being counted out. Both stay generous anyway, because the
+ * opposite error is the false departure #28 exists to prevent: a live subagent
+ * grinding through one long tool call appends nothing at all until that call
+ * returns.
  */
-const STALE_FOREMAN_SILENCE_MS = 60 * 60 * 1000
-const STALE_WORKER_SILENCE_MS = 30 * 60 * 1000
+const STALE_FOREMAN_SILENCE_MS = DWARF_SILENCE_WINDOW_MS.foreman
+const STALE_WORKER_SILENCE_MS = DWARF_SILENCE_WINDOW_MS.worker
 
 /**
  * How far a probed process creation time may sit from the registry's procStart
@@ -512,6 +512,9 @@ export class ClaudeProvider implements Provider {
     // Tracked unconditionally, even when the foreman isn't listed below (idle,
     // no agents out), so an idle-then-busy session never loses its total.
     const mainTokens = this.trackTokens(mainDwarfId, info.tokensObserved)
+    // One reading of the clock for every dwarf this session lists, so a crew
+    // measured in the same poll is measured against the same instant.
+    const now = this.now()
 
     const dwarfs: Dwarf[] = []
     // The foreman is on scene while its session is busy, has agents out, or is
@@ -541,7 +544,10 @@ export class ClaudeProvider implements Provider {
         sessionId: session.sessionId,
         pid: session.pid,
         startedAt: session.startedAt,
-        ...(mainTokens !== undefined ? { tokensObserved: mainTokens } : {})
+        ...(mainTokens !== undefined ? { tokensObserved: mainTokens } : {}),
+        // The session transcript's own mtime — the foreman's proof of life,
+        // and the same one pruneStaleLaunches weighs (issue #47).
+        ...this.silenceField(transcriptStat?.mtimeMs, now)
       })
     }
     for (const agent of inFlightAgents) {
@@ -557,11 +563,16 @@ export class ClaudeProvider implements Provider {
         foremanDwarfId: mainDwarfId,
         workerName
       })
+      // One stat answers both questions this file raises: whether there is a
+      // tail worth reading at all, and how long this worker itself has been
+      // silent (issue #47). Its mtime is the worker's OWN proof of life —
+      // never its parent's, which is the whole point of naming one agent.
+      const subagentStat = await this.fs.stat(subagentPath)
       // Attributed to the worker when its own subagent tail cheaply carries
       // usage (the common case); when it doesn't, trackTokens simply returns
       // whatever total was already known for this worker id instead of
       // fabricating one, so nothing is double-counted against the foreman.
-      const workerInfo = await this.subagentTranscriptInfo(subagentPath)
+      const workerInfo = await this.subagentTranscriptInfo(subagentPath, subagentStat !== null)
       const workerTokens = this.trackTokens(workerId, workerInfo.tokensObserved)
       dwarfs.push({
         id: workerId,
@@ -579,7 +590,8 @@ export class ClaudeProvider implements Provider {
         lastMessage: redactSecrets(workerInfo.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,
-        ...(workerTokens !== undefined ? { tokensObserved: workerTokens } : {})
+        ...(workerTokens !== undefined ? { tokensObserved: workerTokens } : {}),
+        ...this.silenceField(subagentStat?.mtimeMs, now)
       })
     }
 
@@ -850,9 +862,32 @@ export class ClaudeProvider implements Provider {
     return [...remembered.keys()].filter((agentId) => !launchedInTail.has(agentId))
   }
 
-  private async subagentTranscriptInfo(path: string): Promise<ClaudeTranscriptInfo> {
-    if (!(await this.fs.exists(path))) return parseClaudeTranscriptTail('')
+  /** `exists` comes from the caller's stat, so one file is not stat'd twice per poll. */
+  private async subagentTranscriptInfo(
+    path: string,
+    exists: boolean
+  ): Promise<ClaudeTranscriptInfo> {
+    if (!exists) return parseClaudeTranscriptTail('')
     return parseClaudeTranscriptTail(await this.fs.readTextTail(path, SUBAGENT_TAIL_BYTES))
+  }
+
+  /**
+   * How long one transcript has gone unwritten, as a spreadable dwarf field
+   * (issue #47).
+   *
+   * This is the very mtime #40's staleness rule already weighs, published as an
+   * age instead of consumed as a verdict — no new evidence, just the number the
+   * app had and threw away. Two shapes are deliberate. A missing file yields NO
+   * KEY rather than 0: the absence of a transcript means "nothing is known
+   * about this agent's output", where 0 would claim it had just spoken, and
+   * that difference is exactly what lets a provider with no per-subagent file
+   * (Codex) stay honest. And a clock standing behind an mtime floors at 0,
+   * because clock skew is not evidence of the future and "no output for -3
+   * minutes" is not a sentence the panel can say.
+   */
+  private silenceField(mtimeMs: number | undefined, now: number): { silentForMs?: number } {
+    if (mtimeMs === undefined) return {}
+    return { silentForMs: Math.max(0, now - mtimeMs) }
   }
 
   /**

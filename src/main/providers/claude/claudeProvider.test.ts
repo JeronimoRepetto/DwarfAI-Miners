@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Dwarf } from '../../../shared/contracts'
 import { FakeFs } from '../../adapters/fakeFs'
 import { ClaudeProvider } from './claudeProvider'
 
@@ -1707,6 +1708,101 @@ describe('ClaudeProvider', () => {
       alivePids.clear()
       await provider.scan()
       expect(provider.textDelivery(`claude:${SESSION_ID}`)).toBeNull()
+    })
+  })
+
+  /*
+   * Issue #47 — this provider already reads each transcript's mtime for #40's
+   * staleness rule and then threw the number away, so every heuristic the app
+   * has operated entirely behind the user's back and the first sight of any of
+   * it was a dwarf that had suddenly gone.
+   *
+   * Exposing the figure is not a new derivation: it is the same per-agent proof
+   * of life, phrased as an age instead of a verdict. What matters here is WHOSE
+   * proof of life each dwarf carries, and that a provider with no evidence says
+   * so rather than guessing zero.
+   */
+  describe('per-dwarf silence (issue #47)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+    const MINUTE = 60_000
+
+    /** The fixture crew, read with the clock the default fixtures were built around. */
+    async function crewAtDefaultClock(): Promise<Dwarf[]> {
+      return (await makeProvider().scan())[0]!.dwarfs
+    }
+
+    /** A provider whose only difference from makeProvider is where its clock stands. */
+    function providerAt(now: number): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => now
+      })
+    }
+
+    it('reports how long each dwarf has been silent, from its own transcript', async () => {
+      // The fixtures: the clock stands at 99_000, the parent last wrote at
+      // 42_000 and the worker's own subagent file at 43_000.
+      const [foreman, worker] = await crewAtDefaultClock()
+      expect(foreman!.silentForMs).toBe(57_000)
+      expect(worker!.silentForMs).toBe(56_000)
+    })
+
+    it('measures a worker against its own transcript, never against its parent', async () => {
+      // The whole point of the field: the app can say this about ONE specific,
+      // identifiable agent. A worker still writing under a long-quiet foreman
+      // must read as producing, and the reverse must read as silent.
+      fake.addFile(TRANSCRIPT, parentTranscript, 10_000)
+      fake.addFile(SUBAGENT, subagentTranscript, 98_000)
+      const [foreman, worker] = await crewAtDefaultClock()
+      expect(foreman!.silentForMs).toBe(89_000)
+      expect(worker!.silentForMs).toBe(1_000)
+    })
+
+    it('reports nothing rather than zero when there is no per-agent evidence', async () => {
+      // Codex has no equivalent per-subagent file, and a Claude worker whose
+      // transcript has not appeared yet is the same case: undefined says "not
+      // known", where 0 would claim the agent had just spoken.
+      fake.removeFile(SUBAGENT)
+      const [, worker] = await crewAtDefaultClock()
+      expect(worker!.silentForMs).toBeUndefined()
+      expect('silentForMs' in worker!).toBe(false)
+    })
+
+    it('never reports a negative age when the clock runs behind an mtime', async () => {
+      // Clock skew and a filesystem timestamp are not the same measurement, so
+      // "written in the future" has to floor at zero instead of rendering as
+      // "no output for -3 minutes".
+      fake.addFile(TRANSCRIPT, parentTranscript, 120_000)
+      const [foreman] = await crewAtDefaultClock()
+      expect(foreman!.silentForMs).toBe(0)
+    })
+
+    it('keeps a long-silent worker working: silence is never a fourth status', async () => {
+      // THE constraint of #47. The ledger, the delivery channels and the
+      // capability matrix all key off DwarfStatus, so a silence that leaked in
+      // there would change what the app believes about the dwarf rather than
+      // only what it shows. It stays a number beside an unchanged status.
+      fake.addFile(SUBAGENT, subagentTranscript, 1_000)
+      const provider = providerAt(1_000 + 45 * MINUTE)
+      const worker = (await provider.scan())[0]!.dwarfs[1]!
+
+      expect(worker.silentForMs).toBe(45 * MINUTE)
+      expect(worker.status).toBe('working')
+      expect(worker.role).toBe('worker')
+      expect(provider.textDelivery(worker.id)).toMatchObject({ kind: 'foreman-relay' })
+    })
+
+    it('carries the figure on a foreman with no agents out at all', async () => {
+      // A lone foreman is the shape a user watches most often, and it is the
+      // one #40 judges by the hour rather than the half hour.
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 1_000)
+      const dwarfs = (await providerAt(1_000 + 70 * MINUTE).scan())[0]!.dwarfs
+      expect(dwarfs).toHaveLength(1)
+      expect(dwarfs[0]).toMatchObject({ role: 'foreman', status: 'working' })
+      expect(dwarfs[0]!.silentForMs).toBe(70 * MINUTE)
     })
   })
 })

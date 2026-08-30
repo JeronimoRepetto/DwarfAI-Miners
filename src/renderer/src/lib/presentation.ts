@@ -1,3 +1,4 @@
+import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { DwarfRole, DwarfStatus, Material, MaterialTotals, MineTier } from '../types'
 import { formatTokens } from './economy'
 import { materialUnits, vaultRows } from './vault'
@@ -58,9 +59,15 @@ export interface DwarfAnimation {
 }
 
 /**
- * The plain standing pose. Deliberately absent from every running loop below,
- * so showing it always reads as a pause — it covers brief transitions such as
- * the moment between clicking a dwarf and its terminal taking focus.
+ * The plain standing pose: the dwarf upright with his pickaxe over his
+ * shoulder, tool in hand, not swinging.
+ *
+ * Deliberately absent from every RUNNING loop below, so showing it always reads
+ * as a pause. It covers brief transitions such as the moment between clicking a
+ * dwarf and its terminal taking focus — and, since issue #47, the silence pose,
+ * which is what that reserve was being kept for: "supposed to be working, and
+ * nothing is happening" is exactly what this drawing says, so the change needed
+ * no new art at all.
  */
 export const NEUTRAL_DWARF_FRAME: DwarfFrame = 'idle'
 
@@ -84,6 +91,26 @@ const WAITING: Record<DwarfRole, DwarfAnimation> = {
 }
 
 /**
+ * The pose of a dwarf that is supposed to be working and has produced nothing
+ * for its whole window (issue #47).
+ *
+ * One frame each, and each rank stands the way its own art already stands: the
+ * worker shoulders the pick instead of swinging it, the foreman stops looking
+ * up from the log book. That completes the visual language rather than adding
+ * to it — swinging, standing, sat down, walking out — and needs no new asset.
+ *
+ * `frameMs` is inert here: the sprite starts no timer at all for a single-frame
+ * loop, so a dwarf we suspect is dead costs LESS to draw than a live one, which
+ * is quietly the right way round. Each borrows the tempo of the loop it
+ * replaces so that adding a second frame later would not change the cadence by
+ * surprise.
+ */
+const SILENT: Record<DwarfRole, DwarfAnimation> = {
+  worker: { frames: [NEUTRAL_DWARF_FRAME], frameMs: WORKING.worker.frameMs },
+  foreman: { frames: ['foreman-idle'], frameMs: WORKING.foreman.frameMs }
+}
+
+/**
  * The walk cycle. Leaving is a walk regardless of rank — the foreman uses the
  * same door — and since issue #19 every dwarf also walks *to* the painted
  * feature its status calls for, so the same two frames cover both journeys and
@@ -91,10 +118,40 @@ const WAITING: Record<DwarfRole, DwarfAnimation> = {
  */
 export const WALK_ANIMATION: DwarfAnimation = { frames: ['walk-1', 'walk-2'], frameMs: 350 }
 
-/** Which poses to cycle for a dwarf in this state, and how fast. */
-export function dwarfAnimation(status: DwarfStatus, role: DwarfRole): DwarfAnimation {
+/**
+ * Has this dwarf gone quiet for long enough to be worth showing as such?
+ *
+ * The windows are the PROVIDER's own (DWARF_SILENCE_WINDOW_MS, shared with
+ * issue #40's staleness rule) and are read rather than restated, so the panel
+ * can never call a dwarf busy while the provider is already counting it out.
+ * A window that has exactly elapsed reads as silent, the same side of the
+ * boundary the provider picks.
+ *
+ * `undefined` is the absence of evidence — a provider that keeps no per-agent
+ * transcript — and is never treated as silence.
+ */
+export function isDwarfSilent(role: DwarfRole, silentForMs: number | undefined): boolean {
+  return silentForMs !== undefined && silentForMs >= DWARF_SILENCE_WINDOW_MS[role]
+}
+
+/**
+ * Which poses to cycle for a dwarf in this state, and how fast.
+ *
+ * `silent` layers over `working` ALONE and is deliberately a separate argument
+ * rather than a fourth status: a waiting dwarf is already provably blocked and
+ * a leaving one is already on its way out, so neither needs a second reading of
+ * the same fact — and keeping silence out of DwarfStatus is what stops it
+ * leaking into the ledger, the delivery channels and the capability matrix,
+ * every one of which keys off status (see Dwarf.silentForMs).
+ */
+export function dwarfAnimation(
+  status: DwarfStatus,
+  role: DwarfRole,
+  silent = false
+): DwarfAnimation {
   if (status === 'leaving') return WALK_ANIMATION
-  return status === 'working' ? WORKING[role] : WAITING[role]
+  if (status !== 'working') return WAITING[role]
+  return silent ? SILENT[role] : WORKING[role]
 }
 
 /**
@@ -107,9 +164,36 @@ export function dwarfAnimation(status: DwarfStatus, role: DwarfRole): DwarfAnima
 export function sceneDwarfAnimation(
   status: DwarfStatus,
   role: DwarfRole,
-  walking: boolean
+  walking: boolean,
+  silent = false
 ): DwarfAnimation {
-  return walking ? WALK_ANIMATION : dwarfAnimation(status, role)
+  return walking ? WALK_ANIMATION : dwarfAnimation(status, role, silent)
+}
+
+/**
+ * How long this dwarf has produced nothing, as the tooltip says it out loud:
+ * "no output for 25 minutes".
+ *
+ * The wording is the affordance, which is why it lives here rather than in the
+ * template — the sprite can only say "something is wrong with this one", and
+ * the sentence is what turns that into something a person can act on. A user
+ * who has read "no output for 25 minutes" needs no explanation when the dwarf
+ * leaves at thirty.
+ *
+ * It rounds DOWN throughout and never counts seconds: claiming more silence
+ * than was observed would be the app arguing on the pessimistic side, and no
+ * one reads a figure that ticks every second anyway.
+ */
+export function describeSilence(silentForMs: number): string {
+  const totalMinutes = Math.floor(Math.max(0, silentForMs) / 60_000)
+  if (totalMinutes < 1) return 'no output for less than a minute'
+
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  const parts: string[] = []
+  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`)
+  if (minutes > 0) parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`)
+  return `no output for ${parts.join(' ')}`
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import type { DwarfRole, DwarfStatus, MineTier } from '../types'
 import { MATERIALS } from '../types'
 import { emptyMaterialTotals } from './vault'
@@ -7,7 +8,9 @@ import {
   LEAVING_EXIT_MS,
   NEUTRAL_DWARF_FRAME,
   WALK_ANIMATION,
+  describeSilence,
   dwarfAnimation,
+  isDwarfSilent,
   isPickImpact,
   isSpriteFlipped,
   materialLabel,
@@ -117,6 +120,14 @@ describe('NEUTRAL_DWARF_FRAME', () => {
         expect(dwarfAnimation(status, role).frames).not.toContain(NEUTRAL_DWARF_FRAME)
       }
     }
+  })
+
+  it('is exactly what a silent worker stands on, because that is the pause (issue #47)', () => {
+    // The pose was held back from every running loop above so that showing it
+    // would read as "supposed to be working, and nothing is happening". That
+    // is the sentence #47 needed a picture for, so it spends the reserve
+    // rather than adding art — and it stays out of the running loops.
+    expect(dwarfAnimation('working', 'worker', true).frames).toEqual([NEUTRAL_DWARF_FRAME])
   })
 })
 
@@ -243,5 +254,157 @@ describe('vaultLabel', () => {
 
   it('treats a snapshot that carries no breakdown as an empty vault', () => {
     expect(vaultLabel(undefined, 500)).toBe('Vault: nothing mined yet. 500 tokens observed.')
+  })
+})
+
+/*
+ * Issue #47 — a dwarf that had produced nothing for twenty-nine minutes looked
+ * exactly like one that finished a tool call a second ago, right up until it
+ * vanished at thirty. The provider now puts the figure on the wire; these pin
+ * what the panel is allowed to do with it.
+ *
+ * Two properties are load-bearing throughout. The windows are the PROVIDER's
+ * own staleness windows (#40), read rather than re-invented, so the panel can
+ * never say "still working" about a dwarf the provider is already judging. And
+ * silence is a presentation layer over `working` — never a fourth DwarfStatus,
+ * which the ledger, the delivery channels and the capability matrix all key
+ * off.
+ */
+describe('isDwarfSilent', () => {
+  const { foreman, worker } = DWARF_SILENCE_WINDOW_MS
+
+  it('scales the window to the role, matching the provider staleness rule', () => {
+    // A foreman legitimately idles for as long as a human takes to type; a
+    // worker cannot wait on anyone, so its silence is judged twice as soon.
+    expect(foreman).toBe(60 * 60_000)
+    expect(worker).toBe(30 * 60_000)
+  })
+
+  it('calls a dwarf silent the moment its own window has exactly elapsed', () => {
+    // Same side of the boundary the provider picks for the same numbers.
+    expect(isDwarfSilent('worker', worker)).toBe(true)
+    expect(isDwarfSilent('worker', worker - 1)).toBe(false)
+    expect(isDwarfSilent('foreman', foreman)).toBe(true)
+    expect(isDwarfSilent('foreman', foreman - 1)).toBe(false)
+  })
+
+  it('judges each role against its own window rather than one shared number', () => {
+    const betweenTheTwo = 45 * 60_000
+    expect(isDwarfSilent('worker', betweenTheTwo)).toBe(true)
+    expect(isDwarfSilent('foreman', betweenTheTwo)).toBe(false)
+  })
+
+  it('stays quiet about a provider that has no per-agent evidence at all', () => {
+    // Codex writes no per-subagent transcript, so there is no mtime to read
+    // and the field is absent. Absence of evidence is not evidence of silence.
+    expect(isDwarfSilent('worker', undefined)).toBe(false)
+    expect(isDwarfSilent('foreman', undefined)).toBe(false)
+  })
+})
+
+describe('dwarfAnimation while silent', () => {
+  it('stands a silent worker still, pick on the shoulder, instead of swinging', () => {
+    expect(dwarfAnimation('working', 'worker', true)).toEqual({ frames: ['idle'], frameMs: 550 })
+  })
+
+  it('leaves a silent foreman on his own idle pose rather than the worker one', () => {
+    // He already has a pose that carries this meaning for his rank, so the
+    // change costs no art here either — it only stops him checking the book.
+    expect(dwarfAnimation('working', 'foreman', true)).toEqual({
+      frames: ['foreman-idle'],
+      frameMs: 1000
+    })
+  })
+
+  it('draws the silence pose in a single frame, which starts no timer at all', () => {
+    // Quietly correct: a dwarf we suspect is dead should not cost more to draw
+    // than a live one. The sprite starts no interval for a one-frame loop.
+    for (const role of ['worker', 'foreman'] as const) {
+      expect(dwarfAnimation('working', role, true).frames, role).toHaveLength(1)
+    }
+  })
+
+  it('changes nothing for a dwarf that is not working', () => {
+    // Silence layers over `working` alone. A waiting dwarf is provably blocked
+    // and a leaving one is already on its way out — neither needs a second
+    // rendering of the same fact.
+    for (const status of ['waiting', 'leaving'] as const) {
+      for (const role of ['worker', 'foreman'] as const) {
+        expect(dwarfAnimation(status, role, true), `${status}/${role}`).toEqual(
+          dwarfAnimation(status, role)
+        )
+      }
+    }
+  })
+
+  it('swings as it always did when nothing says the dwarf is silent', () => {
+    expect(dwarfAnimation('working', 'worker', false)).toEqual({
+      frames: ['pick-1', 'pick-2'],
+      frameMs: 550
+    })
+    expect(dwarfAnimation('working', 'worker')).toEqual(dwarfAnimation('working', 'worker', false))
+  })
+
+  it('never borrows another status pose, so silence cannot be misread as one', () => {
+    // The constraint the whole change hangs on: this is a fourth *picture*,
+    // not a fourth state. Reusing the resting or walking loop would make a
+    // suspected ghost indistinguishable from a dwarf that really is waiting.
+    const silentWorker = dwarfAnimation('working', 'worker', true)
+    expect(silentWorker).not.toEqual(dwarfAnimation('waiting', 'worker'))
+    expect(silentWorker).not.toEqual(dwarfAnimation('leaving', 'worker'))
+    expect(statusAnimationClass('working')).toBe('is-working')
+  })
+})
+
+describe('sceneDwarfAnimation while silent', () => {
+  it('keeps a silent dwarf walking while it is still crossing the floor', () => {
+    // Travel outranks everything, exactly as it does for the other loops: a
+    // dwarf mid-stride must not be standing still with its pick shouldered.
+    expect(sceneDwarfAnimation('working', 'worker', true, true)).toEqual(WALK_ANIMATION)
+  })
+
+  it('drops it onto the silence pose the moment it arrives', () => {
+    expect(sceneDwarfAnimation('working', 'worker', false, true)).toEqual(
+      dwarfAnimation('working', 'worker', true)
+    )
+  })
+
+  it('animates a dwarf with no silence figure exactly as it did before', () => {
+    for (const walking of [true, false]) {
+      expect(sceneDwarfAnimation('working', 'worker', walking), String(walking)).toEqual(
+        sceneDwarfAnimation('working', 'worker', walking, false)
+      )
+    }
+  })
+})
+
+/*
+ * The tooltip's sentence. It lives here rather than in the template for the
+ * same reason orePileLabel does: the wording is the affordance — "no output
+ * for 25 minutes" is what makes a dwarf leaving at thirty need no explanation.
+ */
+describe('describeSilence', () => {
+  it('says how long the dwarf has produced nothing, in plain words', () => {
+    expect(describeSilence(25 * 60_000)).toBe('no output for 25 minutes')
+    expect(describeSilence(90 * 60_000)).toBe('no output for 1 hour 30 minutes')
+  })
+
+  it('keeps the singular singular', () => {
+    expect(describeSilence(60_000)).toBe('no output for 1 minute')
+    expect(describeSilence(60 * 60_000)).toBe('no output for 1 hour')
+  })
+
+  it('drops an empty minutes tail from a whole number of hours', () => {
+    expect(describeSilence(2 * 60 * 60_000)).toBe('no output for 2 hours')
+  })
+
+  it('rounds down, so it never claims more silence than was observed', () => {
+    expect(describeSilence(25 * 60_000 + 59_999)).toBe('no output for 25 minutes')
+    expect(describeSilence(60 * 60_000 + 59_999)).toBe('no output for 1 hour')
+  })
+
+  it('says less than a minute rather than counting seconds nobody reads', () => {
+    expect(describeSilence(0)).toBe('no output for less than a minute')
+    expect(describeSilence(59_999)).toBe('no output for less than a minute')
   })
 })

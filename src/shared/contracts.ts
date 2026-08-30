@@ -88,6 +88,29 @@ export type DwarfRole = 'foreman' | 'worker'
 export type DwarfStatus = 'working' | 'waiting' | 'leaving'
 
 /**
+ * How long a dwarf of each role has to have produced nothing before its silence
+ * is worth showing (issue #47).
+ *
+ * These are the SAME windows the Claude provider's staleness rule judges a
+ * remembered launch by (issue #40), which is the whole point of them living
+ * here: the panel must never say "still working" about a dwarf the provider has
+ * already started counting out. Read them, do not re-invent them.
+ *
+ * They differ because the two silences are not equally telling, and collapsing
+ * them into one number would lose the distinction. A FOREMAN legitimately sits
+ * idle for as long as it takes a human to type the next prompt, so its silence
+ * is weak evidence and gets the longer hour. A WORKER cannot wait on anyone:
+ * once launched it runs to completion, so silence from its own transcript is
+ * strong evidence and half an hour of it says enough.
+ *
+ * A dwarf past its window is NOT in a different state — see Dwarf.silentForMs.
+ */
+export const DWARF_SILENCE_WINDOW_MS: Record<DwarfRole, number> = {
+  foreman: 60 * 60 * 1000,
+  worker: 30 * 60 * 1000
+}
+
+/**
  * How a live session can be handed a typed message.
  *
  * terminal: the session owns a console window — keystrokes are injected into it.
@@ -126,6 +149,25 @@ export interface Dwarf {
    * transcript tail (see ClaudeProvider).
    */
   tokensObserved?: number
+  /**
+   * How long THIS agent's own transcript has gone unwritten, in milliseconds
+   * (issue #47). A worker is measured against its own subagent file, a foreman
+   * against its session transcript — never against each other's.
+   *
+   * Deliberately a measurement rather than a state. Silence is not something
+   * the agent is doing; it is how much confidence we have that it still
+   * exists, so it sits beside `status` instead of inside it — the ledger, the
+   * delivery channels and the capability matrix all key off DwarfStatus, and a
+   * fourth value there would change what the app BELIEVES about a dwarf rather
+   * than only what it shows. The panel layers a pose and a tooltip line over an
+   * unchanged `working` (see DWARF_SILENCE_WINDOW_MS).
+   *
+   * Absent where no such evidence exists — Codex writes no equivalent
+   * per-subagent file — which means "not known", never "just spoke". A clock
+   * running behind a filesystem timestamp floors at 0 rather than going
+   * negative.
+   */
+  silentForMs?: number
   /**
    * The channel a typed message would travel through right now, resolved by
    * the runtime on every poll. Absent means the panel must offer no send

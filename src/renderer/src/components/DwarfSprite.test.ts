@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DWARF_SILENCE_WINDOW_MS } from '../../../shared/contracts'
 import { BUBBLE_ROW_HEIGHT_PX } from '../lib/bubbleLayout'
 import { sceneDwarfAnimation } from '../lib/presentation'
 import { defaultDwarf } from '../testing/factories'
@@ -605,6 +606,111 @@ describe('DwarfSprite pick sparks', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.spark-burst').exists(), status).toBe(false)
     }
+  })
+})
+
+/*
+ * Issue #47 — the first change that lets the person watching form their own
+ * judgement about a probable ghost. Every earlier ghost fix argued with itself
+ * behind the user's back; a dwarf that stops swinging and stands with its pick
+ * shouldered says "nothing has come out of this one in a long time" without a
+ * single new asset, and without silence ever becoming a state anything else
+ * can key off.
+ */
+describe('DwarfSprite silence', () => {
+  /** Just past the worker's half hour — a dwarf the provider is about to judge. */
+  const WORKER_SILENT = DWARF_SILENCE_WINDOW_MS.worker
+  /** Just past the foreman's hour, which is twice as long for good reason. */
+  const FOREMAN_SILENT = DWARF_SILENCE_WINDOW_MS.foreman
+
+  it('stands a silent worker still, pick on the shoulder, instead of swinging', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-idle')
+  })
+
+  it('keeps swinging for a worker that produced something a moment ago', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working', silentForMs: 12_000 }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+  })
+
+  it('keeps swinging for a provider that reports no silence figure at all', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }) }
+    })
+    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+  })
+
+  it('leaves everything else about the dwarf saying working', () => {
+    // Silence is a picture layered over `working`, not a fourth status: the
+    // animation class, the accessible name and the resting overlay must all
+    // read exactly as they do for a busy dwarf.
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
+    })
+    expect(wrapper.classes()).toContain('is-working')
+    expect(wrapper.find('.dwarf-hit').attributes('aria-label')).toContain('working')
+    expect(wrapper.find('.zzz').exists()).toBe(false)
+  })
+
+  it('shows the exact figure in the tooltip beside the name and model', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ name: 'Durin', silentForMs: 25 * 60_000 }) }
+    })
+    const tooltip = wrapper.find('.dwarf-tooltip')
+    expect(tooltip.text()).toContain('Durin')
+    expect(tooltip.text()).toContain('no output for 25 minutes')
+  })
+
+  describe('cost of standing still', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('starts no timer for the one-frame silence pose', () => {
+      // The guarantee that made this the right pose: a dwarf we suspect is
+      // dead costs LESS to draw than a live one, because a single-frame loop
+      // never reaches setInterval at all.
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
+      })
+      expect(vi.getTimerCount()).toBe(0)
+
+      vi.advanceTimersByTime(10_000)
+      expect(poseOf(wrapper)).toBe('dwarf-idle')
+    })
+
+    it('stops the foreman looking up from his log book once he goes silent', async () => {
+      // His working loop alternates foreman-idle with foreman-check, so only
+      // advancing the clock can tell a silent foreman from a busy one.
+      const busy = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
+      })
+      const silent = mount(DwarfSprite, {
+        props: {
+          dwarf: defaultDwarf({ role: 'foreman', status: 'working', silentForMs: FOREMAN_SILENT })
+        }
+      })
+
+      vi.advanceTimersByTime(1000)
+      await busy.vm.$nextTick()
+      await silent.vm.$nextTick()
+      expect(poseOf(busy)).toBe('dwarf-foreman-check')
+      expect(poseOf(silent)).toBe('dwarf-foreman-idle')
+    })
+
+    it('picks the swing back up the moment the dwarf produces something', async () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
+      })
+      expect(poseOf(wrapper)).toBe('dwarf-idle')
+
+      await wrapper.setProps({ dwarf: defaultDwarf({ status: 'working', silentForMs: 0 }) })
+      expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+      expect(vi.getTimerCount()).toBe(1)
+    })
   })
 })
 
