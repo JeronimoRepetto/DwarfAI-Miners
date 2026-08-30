@@ -100,6 +100,22 @@ export const AUTHORED_SPRITE: BoxSize = { width: 96, height: 100 }
 export const CAVE_MIN_HEIGHT_PX = 320
 
 /**
+ * A readability floor for width, the horizontal twin of the height above.
+ *
+ * Geometry alone stopped binding here once the ore deposit was excluded from
+ * the fit check: with only the anchors dwarfs stand on to satisfy, the crop
+ * lets the box get considerably narrower than anyone would want to look at.
+ * The scene would still be geometrically correct at that width — every dwarf
+ * on his own rock, just very small — which is exactly why geometry is the
+ * wrong thing to ask.
+ *
+ * Set to the width the derivation produced while the deposit still bound it,
+ * so the window floor did not quietly loosen when the ore heap moved into the
+ * corner. Moving a pile is not a reason to let the panel shrink.
+ */
+export const CAVE_MIN_WIDTH_PX = 244
+
+/**
  * Vertical clearance for a dwarf's feet, in box percent.
  *
  * Not half his height: he is positioned by his FEET, so what has to stay clear
@@ -146,17 +162,24 @@ export function spriteMarginPercent(box: BoxSize, art: BoxSize): { x: number; y:
 }
 
 /**
- * Whether every authored anchor still stands where the painting says it does in
- * this cave box — inside the crop, and far enough from the edge that the sprite
- * on it is drawn whole rather than held against the frame.
+ * Whether every anchor a DWARF uses still stands where the painting says it
+ * does in this cave box — inside the crop, and far enough from the edge that
+ * the sprite on it is drawn whole rather than held against the frame.
  *
- * Checked with the SPRITE footprint for every anchor, the deposit included: the
- * sprite is the largest thing that ever stands on an anchor at or above the
- * minimum size, so clearing it clears the ore mounds too.
+ * Checked with the sprite footprint, which is the largest thing that ever
+ * stands on one of these anchors at or above the minimum size.
+ *
+ * Deposits are excluded, and that exclusion is what lets them sit in the very
+ * corner. A dwarf held against the frame by the crop is standing on nothing,
+ * which is the failure this minimum exists to prevent; a heap of ore held
+ * against the frame is exactly where a corner heap belongs. Including them
+ * would let the ore pile — which is allowed to be clipped — dictate how small
+ * the window may be, which is backwards.
  */
 export function anchorsFitCaveBox(box: BoxSize, art: BoxSize, layout: SceneLayout): boolean {
   const margin = spriteMarginPercent(box, art)
-  return layout.anchors.every((anchor) => {
+  const occupied = layout.anchors.filter((anchor) => anchor.kind !== 'deposit')
+  return occupied.every((anchor) => {
     const point = projectToBox(anchor, box, art)
     return (
       point.x >= margin.x &&
@@ -181,7 +204,11 @@ export function anchorsFitCaveBox(box: BoxSize, art: BoxSize, layout: SceneLayou
  * that nothing more of the side walls can be recovered, so a layout that still
  * does not fit is an authoring bug, not a size problem.
  */
-function smallestReadableCaveWidth(height: number, art: BoxSize, layout: SceneLayout): number {
+export function smallestReadableCaveWidth(
+  height: number,
+  art: BoxSize,
+  layout: SceneLayout
+): number {
   const cap = Math.ceil((height * art.width) / art.height)
   for (let width = 1; width <= cap; width++) {
     if (anchorsFitCaveBox({ width, height }, art, layout)) return width
@@ -189,9 +216,17 @@ function smallestReadableCaveWidth(height: number, art: BoxSize, layout: SceneLa
   return cap
 }
 
-/** The smallest cave the authored interior still reads in. */
+/**
+ * The smallest cave the authored interior still reads in: whichever of the two
+ * floors binds harder. Geometry says where the crop starts stealing anchors;
+ * CAVE_MIN_WIDTH_PX says where the picture stops being worth looking at. Both
+ * are real limits and the scene needs to clear both.
+ */
 export const SMALLEST_READABLE_CAVE_BOX: BoxSize = {
-  width: smallestReadableCaveWidth(CAVE_MIN_HEIGHT_PX, CAVE_ART_SIZE, CAVE_LAYOUT),
+  width: Math.max(
+    CAVE_MIN_WIDTH_PX,
+    smallestReadableCaveWidth(CAVE_MIN_HEIGHT_PX, CAVE_ART_SIZE, CAVE_LAYOUT)
+  ),
   height: CAVE_MIN_HEIGHT_PX
 }
 

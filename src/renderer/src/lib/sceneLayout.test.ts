@@ -251,15 +251,35 @@ describe('depthOrder', () => {
 describe('anchors against the cover crop', () => {
   const ART = { width: 1289, height: 1600 }
 
-  it('keeps every anchor visible across the panel shapes the app is used at', () => {
+  it('keeps every anchor a dwarf uses visible across the panel shapes the app is used at', () => {
     for (const aspect of [0.6, 0.75, 0.9, 1.1, 1.3, 1.6]) {
       const rect = visibleImageRect({ width: 100 * aspect, height: 100 }, ART)
       for (const anchor of CAVE_LAYOUT.anchors) {
+        if (anchor.kind === 'deposit') continue
         expect(anchor.x, `${anchor.id} @ ${aspect}`).toBeGreaterThanOrEqual(rect.x0)
         expect(anchor.x, `${anchor.id} @ ${aspect}`).toBeLessThanOrEqual(rect.x1)
         expect(anchor.y, `${anchor.id} @ ${aspect}`).toBeGreaterThanOrEqual(rect.y0)
         expect(anchor.y, `${anchor.id} @ ${aspect}`).toBeLessThanOrEqual(rect.y1)
       }
+    }
+  })
+
+  /*
+    The deposit is exempt from the rule above, and the exemption is the point
+    rather than a concession. A dwarf clipped by the crop is held at the panel
+    edge by clampToBox, standing on nothing — a bug. A heap of ore held at the
+    panel edge is precisely where a corner heap belongs. So instead of
+    demanding it survive every crop, pin that it is genuinely in the corner:
+    further out than anything a dwarf uses, on both axes.
+  */
+  it('puts the deposit outside every dwarf anchor, in the corner', () => {
+    const deposits = anchorsOfKind(CAVE_LAYOUT, 'deposit')
+    const occupied = CAVE_LAYOUT.anchors.filter((anchor) => anchor.kind !== 'deposit')
+    const leftmost = Math.min(...occupied.map((anchor) => anchor.x))
+    const nearest = Math.max(...occupied.map((anchor) => anchor.y))
+    for (const deposit of deposits) {
+      expect(deposit.x, deposit.id).toBeLessThan(leftmost)
+      expect(deposit.y, deposit.id).toBeGreaterThan(nearest)
     }
   })
 })

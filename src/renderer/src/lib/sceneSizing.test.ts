@@ -8,10 +8,12 @@ import {
   AUTHORED_SPRITE,
   CAVE_ART_SIZE,
   CAVE_MIN_HEIGHT_PX,
+  CAVE_MIN_WIDTH_PX,
   MIN_PANEL_SIZE,
   PANEL_CHROME,
   SMALLEST_READABLE_CAVE_BOX,
   anchorsFitCaveBox,
+  smallestReadableCaveWidth,
   spriteFootprintPx,
   spriteHeightPx
 } from './sceneSizing'
@@ -138,17 +140,40 @@ describe('SMALLEST_READABLE_CAVE_BOX', () => {
   })
 
   /*
-    The minimum is the boundary itself, not a comfortable number near it: one
-    pixel narrower and an anchor has to be clamped to the edge. That is what
-    makes it derived rather than guessed, and it is what would fail loudly if
-    an anchor were re-authored further into a corner.
+    Two floors, and the minimum is whichever binds harder. Geometry says where
+    the crop starts stealing anchors; CAVE_MIN_WIDTH_PX says where the picture
+    stops being worth looking at. Since the ore deposit moved into the corner
+    and left the fit check, geometry alone would allow a considerably narrower
+    box — every dwarf still on his own rock, just far too small to read. That
+    gap is the whole reason the readability floor exists, so it is asserted
+    rather than left implicit.
   */
-  it('is tight — one pixel narrower and an anchor no longer fits', () => {
-    const narrower = {
-      width: SMALLEST_READABLE_CAVE_BOX.width - 1,
-      height: SMALLEST_READABLE_CAVE_BOX.height
-    }
-    expect(anchorsFitCaveBox(narrower, CAVE_ART_SIZE, CAVE_LAYOUT)).toBe(false)
+  it('takes whichever of the two floors binds harder', () => {
+    const geometric = smallestReadableCaveWidth(
+      SMALLEST_READABLE_CAVE_BOX.height,
+      CAVE_ART_SIZE,
+      CAVE_LAYOUT
+    )
+    expect(SMALLEST_READABLE_CAVE_BOX.width).toBe(Math.max(CAVE_MIN_WIDTH_PX, geometric))
+    expect(geometric).toBeLessThan(CAVE_MIN_WIDTH_PX)
+  })
+
+  /*
+    The geometric floor is still tight in its own right, which is what would
+    fail loudly if an occupied anchor were ever re-authored further into a
+    corner — the guard the readability floor must not be allowed to mask.
+  */
+  it('keeps its geometric floor tight — one pixel narrower and an anchor no longer fits', () => {
+    const geometric = smallestReadableCaveWidth(
+      SMALLEST_READABLE_CAVE_BOX.height,
+      CAVE_ART_SIZE,
+      CAVE_LAYOUT
+    )
+    const height = SMALLEST_READABLE_CAVE_BOX.height
+    expect(anchorsFitCaveBox({ width: geometric, height }, CAVE_ART_SIZE, CAVE_LAYOUT)).toBe(true)
+    expect(anchorsFitCaveBox({ width: geometric - 1, height }, CAVE_ART_SIZE, CAVE_LAYOUT)).toBe(
+      false
+    )
   })
 
   /** The drawn box of one dwarf, in cave pixels, standing with his feet on `anchor`. */
