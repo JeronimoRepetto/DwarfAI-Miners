@@ -45,6 +45,43 @@ export interface ClaudeInFlightAgent {
   resolvedModel?: string
 }
 
+/**
+ * One answer an AskUserQuestion offers.
+ *
+ * The tool's own option carries a third field, `preview`, and it is dropped at
+ * parse time on purpose: it can hold a whole code block, nothing downstream
+ * needs it, and carrying arbitrary source across the wire to render 70 chars is
+ * a cost with no buyer.
+ */
+export interface ClaudeQuestionOption {
+  label: string
+  description?: string
+}
+
+/**
+ * A question the model asked the user through the AskUserQuestion tool and that
+ * nothing in this tail has answered (issue #94).
+ *
+ * This is a `tool_use` block, not prose: the model declaring in schema that it
+ * is asking, and enumerating the answers it will accept. That is why reading it
+ * does not touch the prohibition on inferring a blocked state from assistant
+ * text (see WaitingReason in contracts.ts) — nothing here is pattern-matched
+ * out of a sentence, and a question asked as plain prose stays uncaught, which
+ * is the correct outcome rather than a gap.
+ *
+ * `toolUseId` is what makes "answered" exact instead of inferred: the reply
+ * arrives later as a `tool_result` naming the same id.
+ */
+export interface ClaudePendingQuestion {
+  toolUseId: string
+  question: string
+  header?: string
+  multiSelect: boolean
+  options: ClaudeQuestionOption[]
+  /** The asking line's own timestamp, when it carried one. */
+  askedAt?: string
+}
+
 /** Everything the provider needs from the tail of a session transcript. */
 export interface ClaudeTranscriptInfo {
   model?: string
@@ -66,6 +103,18 @@ export interface ClaudeTranscriptInfo {
    * wildly over-count. "Latest observed" is the honest cheap approximation.
    */
   tokensObserved?: number
+  /**
+   * The latest AskUserQuestion in this tail that no `tool_result` resolved
+   * (issue #94), or undefined when there is none.
+   *
+   * The truncation asymmetry is what makes this safe to publish. A tail is a
+   * suffix of the file (readTextTail) and the result line is always written
+   * after the ask, so "the ask is visible but its answer scrolled out" cannot
+   * happen. A window that is too small can only HIDE a pending question — the
+   * dwarf goes dark — never invent one. Misses are possible here; false claims
+   * are not, which is the direction this codebase takes every time.
+   */
+  pendingQuestion?: ClaudePendingQuestion
 }
 
 type Rec = Record<string, unknown>
@@ -295,6 +344,84 @@ function assistantText(line: Rec): string | undefined {
 }
 
 /**
+ * The options on one question, or undefined when `options` is not an array at
+ * all.
+ *
+ * Two different failures, answered differently on purpose. A non-array where
+ * the schema promises a list means the block is not the shape this parser
+ * thinks it is, and nothing about it can be trusted — the caller refuses the
+ * whole ask. A single entry inside a real list that carries no label is only
+ * that one entry being unusable: a label is what a human would press and what
+ * an answer would name, so it is dropped alone rather than costing the panel a
+ * question it could otherwise show.
+ */
+function questionOptions(value: unknown): ClaudeQuestionOption[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const options: ClaudeQuestionOption[] = []
+  for (const item of value) {
+    if (!isRecord(item)) continue
+    const label = asString(item.label)
+    if (label === undefined) continue
+    const description = asString(item.description)
+    options.push({ label, ...(description === undefined ? {} : { description }) })
+  }
+  return options
+}
+
+/**
+ * The ask on one content block, or undefined for any other tool and for an
+ * input this parser cannot read a question out of.
+ *
+ * Nothing is repaired. A block with no `id` is refused outright even when the
+ * question itself is perfectly readable: without an id no later `tool_result`
+ * could ever mark it answered, so it would sit on the panel forever — a claim
+ * with no way to retire it, which is worse than the miss.
+ *
+ * Only the first entry of `questions` is carried. The tool's input is an array
+ * and this reads one question; a call that asked several would have the rest
+ * dropped rather than misreported.
+ */
+function askedQuestion(block: Rec, askedAt: string | undefined): ClaudePendingQuestion | undefined {
+  if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') return undefined
+  const toolUseId = asString(block.id)
+  if (toolUseId === undefined || !isRecord(block.input)) return undefined
+  const questions = block.input.questions
+  if (!Array.isArray(questions) || !isRecord(questions[0])) return undefined
+  const first = questions[0]
+  const question = asString(first.question)
+  const options = questionOptions(first.options)
+  if (question === undefined || options === undefined) return undefined
+  const header = asString(first.header)
+  return {
+    toolUseId,
+    question,
+    ...(header === undefined ? {} : { header }),
+    // Absent or non-boolean reads as single-select: the narrower promise is the
+    // one a panel can honour without knowing what the tool would accept.
+    multiSelect: first.multiSelect === true,
+    options,
+    ...(askedAt === undefined ? {} : { askedAt })
+  }
+}
+
+/**
+ * The tool_use ids this line answers.
+ *
+ * `is_error` is deliberately NOT consulted: a question the user escaped out of
+ * is resolved, not still waiting on them. The panel must stop showing it either
+ * way, and only the id says which ask it belongs to.
+ */
+function resolvedToolUseIds(line: Rec): string[] {
+  const ids: string[] = []
+  for (const block of contentBlocks(line.message)) {
+    if (block.type !== 'tool_result') continue
+    const id = asString(block.tool_use_id)
+    if (id !== undefined) ids.push(id)
+  }
+  return ids
+}
+
+/**
  * Every string a message's content can hold, whether it is the content itself,
  * a bare string in a block array, or text nested one level down inside a block
  * object. `{type:'text', text}` and `{type:'tool_result', content}` both hide
@@ -388,6 +515,11 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   let tokensObserved: number | undefined
   const launched = new Map<string, ClaudeInFlightAgent>()
   const finished = new Set<string>()
+  // The same asked-then-resolved bookkeeping the launches above use, on the
+  // tool's own ids. Insertion order is ask order, so the last survivor is the
+  // latest open question (issue #94).
+  const asked = new Map<string, ClaudePendingQuestion>()
+  const answered = new Set<string>()
 
   for (const line of jsonlObjects(tailText)) {
     // Runs for every line, not inside the `user` branch: the envelopes that
@@ -403,9 +535,14 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
       effort = asString(line.effort) ?? effort
       lastAssistantText = assistantText(line) ?? lastAssistantText
       tokensObserved = usageTokens(line.message) ?? tokensObserved
+      for (const block of contentBlocks(line.message)) {
+        const question = askedQuestion(block, asString(line.timestamp))
+        if (question !== undefined) asked.set(question.toolUseId, question)
+      }
       continue
     }
     if (line.type === 'user') {
+      for (const id of resolvedToolUseIds(line)) answered.add(id)
       const result = line.toolUseResult
       if (isRecord(result) && result.status === 'async_launched') {
         const agentId = asString(result.agentId)
@@ -432,7 +569,10 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     inFlightAgents: [...launched.values()].filter((agent) => !finished.has(agent.agentId)),
     terminalAgentIds: [...finished],
     pendingBackgroundAgentCount,
-    tokensObserved
+    tokensObserved,
+    // Matched by id over the whole tail rather than by line order: a suffix read
+    // cannot show a result before its ask, and the rule must not depend on that.
+    pendingQuestion: [...asked.values()].filter((ask) => !answered.has(ask.toolUseId)).at(-1)
   }
 }
 
