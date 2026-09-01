@@ -98,3 +98,73 @@ describe('parseClaudeHookPayload', () => {
     expect(parseClaudeHookPayload('{"__proto__":{"hook_event_name":"Stop"}}')).toBeNull()
   })
 })
+
+/**
+ * Issue #94. A Notification payload names what kind of attention the CLI wants,
+ * and the parser was dropping it along with everything else it had no use for.
+ * It tells `agent_needs_input` apart from `idle_prompt` at no cost, which is
+ * more than the registry's commonest waitingFor value can say.
+ *
+ * The twelve values Claude Code documents were read off the live hook docs
+ * (2026-09-01). The FIELD NAME was not: the docs' matcher table names the
+ * notification type without showing the Notification payload's own schema. So
+ * this is read the way every optional field here is read — present or absent,
+ * never repaired — and a different spelling costs the log line, not the event.
+ */
+describe('parseClaudeHookPayload notification type (issue #94)', () => {
+  const notification = JSON.stringify({
+    session_id: '0198f2f0-9c1a-7b3e-8d21-6f4c2a1b9e77',
+    cwd: '/home/j/repo',
+    hook_event_name: 'Notification',
+    notification_type: 'agent_needs_input',
+    notification_matcher: 'agent_needs_input'
+  })
+
+  it('reads the notification type off a Notification payload', () => {
+    expect(parseClaudeHookPayload(notification)).toEqual({
+      provider: 'claude',
+      event: 'Notification',
+      sessionId: '0198f2f0-9c1a-7b3e-8d21-6f4c2a1b9e77',
+      cwd: '/home/j/repo',
+      notificationType: 'agent_needs_input'
+    })
+  })
+
+  it('carries a value this version of Claude Code has never written', () => {
+    // Not a bounded union: the vocabulary is version-gated and has grown
+    // before, and an unrecognized value logged verbatim is worth more than one
+    // folded into a default that claims something else.
+    expect(
+      parseClaudeHookPayload(
+        JSON.stringify({ hook_event_name: 'Notification', notification_type: 'invented_later' })
+      )?.notificationType
+    ).toBe('invented_later')
+  })
+
+  it('keeps the field out entirely when it is absent, blank or not a string', () => {
+    expect(parseClaudeHookPayload(JSON.stringify({ hook_event_name: 'Notification' }))).toEqual({
+      provider: 'claude',
+      event: 'Notification'
+    })
+    expect(
+      parseClaudeHookPayload(
+        JSON.stringify({ hook_event_name: 'Notification', notification_type: '  ' })
+      )
+    ).toEqual({ provider: 'claude', event: 'Notification' })
+    expect(
+      parseClaudeHookPayload(
+        JSON.stringify({ hook_event_name: 'Notification', notification_type: 7 })
+      )
+    ).toEqual({ provider: 'claude', event: 'Notification' })
+  })
+
+  it('still parses a Notification whose type field is missing entirely', () => {
+    // The field name is unconfirmed, so a payload that spells it differently
+    // must still earn its rescan — the nudge never depended on any of this.
+    const parsed = parseClaudeHookPayload(
+      JSON.stringify({ hook_event_name: 'Notification', notificationType: 'permission_prompt' })
+    )
+    expect(parsed?.event).toBe('Notification')
+    expect(parsed?.notificationType).toBeUndefined()
+  })
+})

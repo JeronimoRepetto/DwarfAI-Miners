@@ -234,7 +234,13 @@ async function init(): Promise<void> {
     port: config.hooksPort,
     platform: process.platform,
     onEvent: (event) => {
-      console.log(`[hooks] ${event.event}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`)
+      // The notification type is the whole point of reading it (issue #94):
+      // 'agent_needs_input' and 'idle_prompt' arrive as the same event name and
+      // mean opposite things, and the log is where that first becomes visible.
+      const kind = event.notificationType === undefined ? '' : ` (${event.notificationType})`
+      console.log(
+        `[hooks] ${event.event}${kind}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`
+      )
       runtime?.nudge()
     },
     log: (message) => console.log(message),
