@@ -244,6 +244,60 @@ export function dwarfSilenceWindowKey(
  */
 export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay'
 
+/**
+ * One answer an agent said it would accept, in its own words.
+ *
+ * `label` is the whole answer — what a human would press and what a reply would
+ * have to name — so an option that carried none was never offered here. The
+ * description is the agent's own gloss on it, and both are display text: they
+ * pass redaction at the provider boundary like every other transcript string.
+ */
+export interface DwarfQuestionOption {
+  label: string
+  description?: string
+}
+
+/**
+ * A question an agent asked its user and that nothing has answered yet
+ * (issue #94).
+ *
+ * This is NOT the prose the WaitingReason comment above bars. The rule there is
+ * about inferring a blocked state from text — a question mark, a sentence that
+ * reads like a request — and it stands. What crosses here is a provider's own
+ * structured record of an ask: Claude's AskUserQuestion tool call, where the
+ * model enumerates in schema the question and the answers it will take. The
+ * panel is not guessing what was asked; it is repeating what the agent stated.
+ * A question asked as plain prose produces no such record and stays uncaught,
+ * which is exactly the line the prohibition draws rather than a gap in this.
+ *
+ * Carrying a question does NOT set waitingReason. Blocked and blocked-on-what
+ * are two different facts from two different sources, and neither may claim the
+ * other's: this field says an ask is outstanding, the registry says whether the
+ * session can still move.
+ *
+ * `toolUseId` is what makes the round trip observable — the answer is written
+ * back as a result naming the same id, so "answered" is matched rather than
+ * inferred, which is the evidence `delivered` versus `reacted` has been missing
+ * (see the renderer's reaction.ts).
+ *
+ * Absent means one of two things and deliberately does not distinguish them:
+ * nothing is being asked, or the ask is older than the provider's transcript
+ * window. Truncation can only hide a question, never invent one — see
+ * ClaudeTranscriptInfo.pendingQuestion for why that asymmetry holds — so a
+ * missing field is a miss, never a false claim.
+ */
+export interface DwarfQuestion {
+  toolUseId: string
+  question: string
+  /** The agent's own short title for the ask, when it wrote one. */
+  header?: string
+  /** Whether the agent said it would accept more than one option. */
+  multiSelect: boolean
+  options: DwarfQuestionOption[]
+  /** When the ask was written, as the provider recorded it. */
+  askedAt?: string
+}
+
 export interface Dwarf {
   id: string
   provider: DwarfProvider
@@ -315,6 +369,17 @@ export interface Dwarf {
    * about it rather than only what the panel shows.
    */
   waitingReason?: WaitingReason
+  /**
+   * What this dwarf's agent asked its user, when the agent asked it through a
+   * structured channel and nothing has answered it yet (issue #94).
+   *
+   * Sits beside `waitingReason` and never feeds it, for the reason DwarfQuestion
+   * spells out: an outstanding ask and a blocked session are two facts with two
+   * sources. Today only a Claude session can produce one; Codex writes no
+   * equivalent, and a dwarf without the field is never "not asking", only "not
+   * shown to be".
+   */
+  pendingQuestion?: DwarfQuestion
   /**
    * The channel a typed message would travel through right now, resolved by
    * the runtime on every poll. Absent means the panel must offer no send
