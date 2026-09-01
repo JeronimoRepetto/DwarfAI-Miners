@@ -180,7 +180,14 @@ export class AgentRuntime {
         home,
         appPaths,
         relayModel: options.config.sendTextRelayModel,
-        relayTimeoutMs: options.config.sendTextTimeoutS * 1_000
+        relayTimeoutMs: options.config.sendTextTimeoutS * 1_000,
+        // CLI detection (#91) reads the same fs the providers do, and honours an
+        // explicit override path per CLI; blank means "detect it".
+        fs,
+        cliOverrides: {
+          ...(options.config.claudeCliPath === '' ? {} : { claude: options.config.claudeCliPath }),
+          ...(options.config.codexCliPath === '' ? {} : { codex: options.config.codexCliPath })
+        }
       })
 
     this.now = options.now ?? Date.now

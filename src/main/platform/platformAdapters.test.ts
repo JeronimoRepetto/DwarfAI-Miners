@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { FakeFs } from '../adapters/fakeFs'
 import type { ProbeCommand } from './processProbe'
 import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
 import { createAutostartPort, createPlatformAdapters, type Platform } from './platformAdapters'
@@ -96,6 +97,35 @@ describe('createPlatformAdapters — focus', () => {
     expect(await adapters.focusPid(42)).toBe(false)
     expect(runCommand).not.toHaveBeenCalled()
     expect(runShell).not.toHaveBeenCalled()
+  })
+})
+
+describe('createPlatformAdapters — CLI detection (#91)', () => {
+  it('detects a conventionally-installed claude through the composed fs', async () => {
+    const fs = new FakeFs()
+    fs.addFile('/home/j/.local/bin/claude', '#!/bin/sh\n')
+    const adapters = createPlatformAdapters(options('linux', { fs }))
+    expect(await adapters.cliDetector.detect('claude')).toEqual({
+      cli: 'claude',
+      installed: true,
+      path: '/home/j/.local/bin/claude',
+      source: 'convention'
+    })
+  })
+
+  it('lets a config override reach the detector and win over convention', async () => {
+    const fs = new FakeFs()
+    fs.addFile('/home/j/.local/bin/codex', 'convention')
+    fs.addFile('/opt/codex/codex', 'override')
+    const adapters = createPlatformAdapters(
+      options('linux', { fs, cliOverrides: { codex: '/opt/codex/codex' } })
+    )
+    expect(await adapters.cliDetector.detect('codex')).toEqual({
+      cli: 'codex',
+      installed: true,
+      path: '/opt/codex/codex',
+      source: 'override'
+    })
   })
 })
 

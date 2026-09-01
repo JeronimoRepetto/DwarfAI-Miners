@@ -25,7 +25,9 @@ describe('defaultConfig', () => {
       codexLogsDb: '~/.codex/logs_2.sqlite',
       sendTextRelayModel: 'haiku',
       sendTextTimeoutS: 60,
-      hooksPort: 47821
+      hooksPort: 47821,
+      claudeCliPath: '',
+      codexCliPath: ''
     })
   })
 
@@ -172,6 +174,23 @@ describe('loadConfig', () => {
         expect(() => loadConfig({ HOOKS_PORT: value })).toThrowError(/HOOKS_PORT/)
       }
     )
+  })
+
+  describe('CLI detection overrides', () => {
+    it('reads and trims explicit claude and codex binary paths (#91)', () => {
+      const config = loadConfig({
+        CLAUDE_CLI_PATH: '  /opt/claude/bin/claude  ',
+        CODEX_CLI_PATH: '/opt/codex/codex'
+      })
+      expect(config.claudeCliPath).toBe('/opt/claude/bin/claude')
+      expect(config.codexCliPath).toBe('/opt/codex/codex')
+    })
+
+    it('leaves the overrides blank when unset, meaning "detect it"', () => {
+      const config = loadConfig({})
+      expect(config.claudeCliPath).toBe('')
+      expect(config.codexCliPath).toBe('')
+    })
   })
 })
 

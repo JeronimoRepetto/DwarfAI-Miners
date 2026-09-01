@@ -366,6 +366,8 @@ above for an installed app.
 | `SENDTEXT_RELAY_MODEL`     | `haiku`                   | Model the one-shot `claude -p` relay runs when delivering a message to a session.                     |
 | `SENDTEXT_TIMEOUT_S`       | `60`                      | How long a message delivery may take before it is reported as timed out.                              |
 | `HOOKS_PORT`               | `47821`                   | Loopback port for instant updates (see above). Nothing binds it until you opt in.                     |
+| `CLAUDE_CLI_PATH`          | _(detect)_                | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.     |
+| `CODEX_CLI_PATH`           | _(detect)_                | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.      |
 
 Tier thresholds must be strictly increasing.
 

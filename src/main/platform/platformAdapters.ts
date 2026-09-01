@@ -1,4 +1,7 @@
 import { homedir } from 'node:os'
+import { NodeFs } from '../adapters/fsLike'
+import type { FsLike } from '../adapters/fsLike'
+import { createCliDetector, type AgentCli, type CliDetector } from './cliDetection'
 import { createProcessProbe, type ProbeRunner, type ProcessProbePort } from './processProbe'
 import { focusPid as windowsFocusPid, type ShellRunner } from './focus'
 import {
@@ -68,6 +71,8 @@ export interface PlatformAdapters {
   viewerScriptPath: string
   textDelivery: TextDeliveryPort
   processProbe: ProcessProbePort
+  /** Which agent CLIs are installed on this machine, and where (#91). */
+  cliDetector: CliDetector
 }
 
 export interface PlatformAdapterOptions {
@@ -93,6 +98,10 @@ export interface PlatformAdapterOptions {
   spawn?: SpawnFn
   /** Injected for tests; defaults to a real claude spawn. */
   runRelay?: RelayRunner
+  /** Explicit binary paths that override CLI detection; blank means "detect it" (#91). */
+  cliOverrides?: Partial<Record<AgentCli, string>>
+  /** Injected for tests; defaults to the real filesystem, used by CLI detection. */
+  fs?: FsLike
 }
 
 function createFocus(
@@ -168,6 +177,13 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
     processProbe: createProcessProbe({
       platform,
       ...(options.probeRun === undefined ? {} : { run: options.probeRun })
+    }),
+    cliDetector: createCliDetector({
+      home: options.home,
+      platform,
+      fs: options.fs ?? new NodeFs(),
+      ...(options.env === undefined ? {} : { env: options.env }),
+      ...(options.cliOverrides === undefined ? {} : { overrides: options.cliOverrides })
     })
   }
 }

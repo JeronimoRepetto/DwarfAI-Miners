@@ -1983,6 +1983,10 @@ describe('AgentRuntime simulated provider wiring (#42)', () => {
       processProbe: {
         isCodexProcessRunning: vi.fn().mockResolvedValue(false),
         processStartTimeMs: vi.fn().mockResolvedValue(null)
+      },
+      cliDetector: {
+        detect: vi.fn().mockResolvedValue({ cli: 'claude', installed: false }),
+        peek: vi.fn().mockReturnValue('unprobed')
       }
     }
   }
