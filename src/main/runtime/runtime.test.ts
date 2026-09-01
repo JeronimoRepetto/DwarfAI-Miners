@@ -5,7 +5,8 @@ import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../c
 import type { PlatformAdapters } from '../platform/platformAdapters'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
-import type { FeedMessage } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type FeedMessage } from '../domain/types'
+import type { SessionLauncher } from '../sessionLaunch/launchRunner'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import type { Provider } from '../providers/provider'
@@ -2101,5 +2102,152 @@ describe('AgentRuntime simulated provider wiring (#42)', () => {
     await runtime.refresh()
     expect(runtime.getMines()).toEqual([])
     expect(persisted.totals()).toEqual(emptyMaterialTotals())
+  })
+})
+
+describe('AgentRuntime.launchAgent (#86)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'claude:session-1',
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  async function runtimeWith(launchSession: SessionLauncher) {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    // The id the panel would hold, derived exactly as aggregation derives it,
+    // so the assertion does not depend on which OS the suite runs on.
+    return { runtime, mineId: runtime.getMines()[0]!.id }
+  }
+
+  it("starts the session in the mine's own folder, which is what puts the dwarf there", async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(runtime.launchAgent({ mineId, prompt: '  run the tests  ' })).resolves.toEqual({
+      launched: true,
+      provider: 'claude'
+    })
+    expect(launchSession).toHaveBeenCalledWith({
+      minePath: 'C:\\work\\project',
+      prompt: 'run the tests'
+    })
+  })
+
+  it('resolves the folder itself and never takes one from the request', async () => {
+    // The renderer names a mine; main decides what directory that is. A launch
+    // is therefore confined to a folder the panel is already showing.
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({
+      mineId,
+      prompt: 'go',
+      ...({ minePath: 'C:\\somewhere\\else' } as object)
+    })
+    expect(launchSession).toHaveBeenCalledWith({ minePath: 'C:\\work\\project', prompt: 'go' })
+  })
+
+  it('refuses a mine that is not on the board', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime } = await runtimeWith(launchSession)
+
+    await expect(runtime.launchAgent({ mineId: 'mine:nowhere', prompt: 'go' })).resolves.toEqual({
+      launched: false,
+      provider: 'none',
+      error: 'That mine is no longer on the map.'
+    })
+    expect(launchSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty prompt with its own reason', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(runtime.launchAgent({ mineId, prompt: '  \n ' })).resolves.toEqual({
+      launched: false,
+      provider: 'none',
+      error: 'Type a prompt first.'
+    })
+    expect(launchSession).not.toHaveBeenCalled()
+  })
+
+  it('caps the prompt at the delivered-message limit', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, prompt: 'y'.repeat(MAX_DWARF_TEXT_CHARS + 200) })
+    expect(launchSession.mock.calls[0]![0].prompt).toHaveLength(MAX_DWARF_TEXT_CHARS)
+  })
+
+  it('passes the launcher verdict straight through when it refuses', async () => {
+    const refusal = {
+      launched: false,
+      provider: 'claude',
+      error: 'Claude Code is not installed on this machine.'
+    }
+    const { runtime, mineId } = await runtimeWith(vi.fn().mockResolvedValue(refusal))
+
+    await expect(runtime.launchAgent({ mineId, prompt: 'go' })).resolves.toEqual(refusal)
+  })
+
+  it('turns a thrown launcher into a stated reason rather than a rejected promise', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(vi.fn().mockRejectedValue(new Error('boom')))
+
+    await expect(runtime.launchAgent({ mineId, prompt: 'go' })).resolves.toEqual({
+      launched: false,
+      provider: 'claude',
+      error: 'The agent could not be started.'
+    })
+    warn.mockRestore()
+  })
+
+  it('never logs the prompt, only how long it was', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(
+      vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    )
+
+    await runtime.launchAgent({ mineId, prompt: 'rotate the deploy key' })
+
+    const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('21 chars')
+    expect(lines).not.toContain('rotate the deploy key')
+    log.mockRestore()
+  })
+
+  it('adds no dwarf of its own: the poll is the only thing that discovers one', async () => {
+    // The launch acknowledges a START. Inventing a dwarf here would be a second
+    // observation path, which is exactly what #86 refuses.
+    const { runtime, mineId } = await runtimeWith(
+      vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    )
+    const before = runtime.getMines()[0]!.dwarfs.length
+
+    await runtime.launchAgent({ mineId, prompt: 'go' })
+
+    expect(runtime.getMines()[0]!.dwarfs).toHaveLength(before)
   })
 })

@@ -58,6 +58,7 @@ src/
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
 │   ├── providers/   reading each agent CLI's own on-disk session state
 │   ├── runtime/     the poll loop: AgentRuntime, the poller, the publish gate, the profiler
+│   ├── sessionLaunch/ starting a NEW agent session in a folder — the opposite of textDelivery
 │   ├── shell/       the app as a desktop citizen: window, tray, autostart, shortcut, persisted preferences
 │   ├── textDelivery/ getting text into a running session, and knowing which channel can
 │   └── tier/        measuring a project to a tier
