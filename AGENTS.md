@@ -1,4 +1,4 @@
-# DwarfAI-Miners — notes for agents
+# DwarfAI-Miners — notes for AI agents
 
 A floating Electron panel that shows AI coding sessions running on this machine as dwarfs working
 in mines. Vue renderer, TypeScript throughout, vitest.
@@ -76,7 +76,13 @@ This table is the imperative form, and it is the one that binds.
 
 ## Path-scoped rules
 
+For Claude:
 `.claude/rules/coordinates.md` loads automatically when you open one of the scene or map layout
+files. It is a rule rather than a skill on purpose: you cannot add a point to either file without
+reading it first, so a read-triggered rule reaches the failure in time.
+
+For Other AI Agent:
+`.agent/rules/coordinates.md` loads automatically when you open one of the scene or map layout
 files. It is a rule rather than a skill on purpose: you cannot add a point to either file without
 reading it first, so a read-triggered rule reaches the failure in time.
 

@@ -8,6 +8,9 @@ node_modules/
 /release/
 /out/
 /coverage/
+.codex/*
+.claude/*
+.agent/*
 
 .env
 *.local
@@ -15,3 +18,9 @@ node_modules/
 .atl/
 .DS_Store
 Thumbs.db
+
+#art
+src/renderer/src/assets/art/aseprite
+src/renderer/src/assets/art/dwarf-base
+src/renderer/src/assets/art/skins
+docs/dwarfai-miners-design/*
