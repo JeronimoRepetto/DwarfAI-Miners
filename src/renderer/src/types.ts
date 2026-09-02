@@ -10,6 +10,8 @@ export type {
   DwarfKickRequest,
   DwarfKickResult,
   DwarfProvider,
+  DwarfQuestion,
+  DwarfQuestionOption,
   DwarfRole,
   DwarfStatus,
   DwarfTextRequest,

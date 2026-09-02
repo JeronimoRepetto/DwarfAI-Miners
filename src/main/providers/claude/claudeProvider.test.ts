@@ -1693,6 +1693,163 @@ describe('ClaudeProvider', () => {
     })
   })
 
+  /**
+   * Issue #94. The question rides the same boundary `lastMessage` does, and for
+   * the same reason: it is transcript text on its way into an always-on-top
+   * window, so it passes redactSecrets BEFORE the renderer can truncate it
+   * (issue #59). Nothing renders it yet — the panel surface waits on the
+   * redesign — and a field crossing the wire unused is the intended state.
+   */
+  describe('pending question on the wire (issue #94)', () => {
+    // Fixture-shaped fake, never a real credential.
+    const FAKE_KEY = 'sk-FAKEFAKEFAKEFAKEFAKEFAKE1234'
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+
+    /** The `tool_use` block Claude writes when the model asks the user something. */
+    function askLine(toolUseId: string, question: string, optionDescription: string): string {
+      return (
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-09-01T09:03:41.062Z',
+          message: {
+            role: 'assistant',
+            model: 'claude-fable-5',
+            content: [
+              {
+                type: 'tool_use',
+                id: toolUseId,
+                name: 'AskUserQuestion',
+                input: {
+                  questions: [
+                    {
+                      question,
+                      header: 'Approach',
+                      multiSelect: false,
+                      options: [{ label: 'Accumulate', description: optionDescription }]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }) + '\n'
+      )
+    }
+
+    /** The `tool_result` block that resolves one ask. */
+    function answerLine(toolUseId: string): string {
+      return (
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'Accumulate' }]
+          }
+        }) + '\n'
+      )
+    }
+
+    it('stamps the foreman with the question nothing has answered yet', async () => {
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + askLine('toolu_01Pending', 'Which approach?', 'Walk the tail once.'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toEqual({
+        toolUseId: 'toolu_01Pending',
+        question: 'Which approach?',
+        header: 'Approach',
+        multiSelect: false,
+        options: [{ label: 'Accumulate', description: 'Walk the tail once.' }],
+        askedAt: '2026-09-01T09:03:41.062Z'
+      })
+    })
+
+    it('carries no question at all once the session answered it', async () => {
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript +
+          askLine('toolu_01Pending', 'Which approach?', 'Walk the tail once.') +
+          answerLine('toolu_01Pending'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toBeUndefined()
+    })
+
+    it('redacts the question and every option description before they cross', async () => {
+      // A question is a new class of text reaching the panel, so it enters
+      // through the same gate lastMessage does rather than beside it.
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript +
+          askLine('toolu_01Pending', `Should I rotate ${FAKE_KEY}?`, `Replace ${FAKE_KEY} first.`),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      const question = snapshots[0]!.dwarfs[0]!.pendingQuestion!
+      expect(question.question).toBe('Should I rotate [redacted]?')
+      expect(question.options[0]!.description).toBe('Replace [redacted] first.')
+      expect(JSON.stringify(snapshots)).not.toContain(FAKE_KEY)
+    })
+
+    it('redacts an option label too, which the panel would render as a button', async () => {
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript +
+          JSON.stringify({
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              model: 'claude-fable-5',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'toolu_01Pending',
+                  name: 'AskUserQuestion',
+                  input: {
+                    questions: [
+                      {
+                        question: 'Which key?',
+                        options: [{ label: `Use ${FAKE_KEY}` }]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }) +
+          '\n',
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion!.options).toEqual([
+        { label: 'Use [redacted]' }
+      ])
+    })
+
+    it('carries a worker question read from its own subagent tail', async () => {
+      // Whether a subagent ever asks is left to observation. The field falls
+      // out of the same parse either way, and inventing a rule that hides it
+      // would be a claim about a session nobody has watched.
+      fake.addFile(
+        SUBAGENT,
+        subagentTranscript + askLine('toolu_01Worker', 'Which file?', 'The first one.'),
+        43_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[1]!.pendingQuestion?.toolUseId).toBe('toolu_01Worker')
+    })
+
+    it('leaves a dwarf whose transcript holds no ask without the field', async () => {
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toBeUndefined()
+      expect('pendingQuestion' in snapshots[0]!.dwarfs[0]!).toBe(false)
+    })
+  })
+
   describe('pid-reuse guard', () => {
     /** session-entry.json's procStart ("134324755721362761") as epoch ms. */
     const REGISTRY_START_MS = 1_788_001_972_136

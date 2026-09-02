@@ -7,6 +7,7 @@ import {
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowKey,
   type Dwarf,
+  type DwarfQuestion,
   type FeedMessage,
   type ProviderSnapshot,
   type WaitingReason
@@ -23,6 +24,7 @@ import {
   parseClaudeSessionEntry,
   parseClaudeTranscriptTail,
   type ClaudeInFlightAgent,
+  type ClaudePendingQuestion,
   type ClaudeSessionEntry,
   type ClaudeTranscriptInfo
 } from './parse'
@@ -163,6 +165,41 @@ function subagentTranscriptPath(projectDir: string, sessionId: string, agentId: 
 function waitingReasonField(session: ClaudeSessionEntry): { waitingReason?: WaitingReason } {
   const reason = claudeWaitingReason(session)
   return reason === undefined ? {} : { waitingReason: reason }
+}
+
+/**
+ * The tail's pending question as a spreadable dwarf field, redacted (issue #94).
+ *
+ * A question and its options are transcript text on their way into an
+ * always-on-top window, so they pass the same gate lastMessage does and pass it
+ * HERE, at the provider boundary, before the renderer can truncate anything —
+ * a truncated prefix can still contain a whole key (issue #59). The label goes
+ * through it too: it is the string a button would carry, and a leak the user
+ * has to press is no better than one they only read.
+ *
+ * Field by field rather than by spreading the parsed value, so a field added to
+ * ClaudePendingQuestion later cannot ride across unredacted by being forgotten.
+ */
+function pendingQuestionField(question: ClaudePendingQuestion | undefined): {
+  pendingQuestion?: DwarfQuestion
+} {
+  if (question === undefined) return {}
+  const header = question.header === undefined ? undefined : redactSecrets(question.header)
+  return {
+    pendingQuestion: {
+      toolUseId: question.toolUseId,
+      question: redactSecrets(question.question),
+      ...(header === undefined ? {} : { header }),
+      multiSelect: question.multiSelect,
+      options: question.options.map((option) => ({
+        label: redactSecrets(option.label),
+        ...(option.description === undefined
+          ? {}
+          : { description: redactSecrets(option.description) })
+      })),
+      ...(question.askedAt === undefined ? {} : { askedAt: question.askedAt })
+    }
+  }
 }
 
 /**
@@ -581,6 +618,11 @@ export class ClaudeProvider implements Provider {
         // #60). Structured evidence only: the registry's own waitingFor
         // vocabulary, never the transcript and never assistant prose.
         ...waitingReasonField(session),
+        // WHAT it asked, when the model asked it through the tool that says so
+        // in schema (issue #94). Beside the reason above, never feeding it: the
+        // registry proves blocked, the tool block proves what is outstanding,
+        // and neither source claims the other's fact.
+        ...pendingQuestionField(info.pendingQuestion),
         // Redacted BEFORE the renderer's 70-char bubble truncation can ever
         // slice it: a truncated prefix can still contain a whole key.
         lastMessage: redactSecrets(info.lastAssistantText),
@@ -645,6 +687,10 @@ export class ClaudeProvider implements Provider {
         // guessed into waiting. It works until its terminal notification.
         status: 'working',
         description,
+        // Falls out of the same parse the foreman's does. Whether a subagent
+        // ever asks is left to observation rather than assumed either way: a
+        // rule that hid it would be a claim about sessions nobody has watched.
+        ...pendingQuestionField(workerInfo.pendingQuestion),
         lastMessage: redactSecrets(workerInfo.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,
