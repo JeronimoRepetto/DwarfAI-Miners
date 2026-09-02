@@ -32,6 +32,8 @@ import { NodeFs } from './adapters/fsLike'
 import { runCoalBackfill } from './ledger/coalBackfill'
 import { createLedgerStore } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
+import { openProjectsStore } from './projects/openProjectsStore'
+import { PROJECTS_DB_FILENAME, type ProjectsStore } from './projects/projectsStore'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
 import { createShortcutPreferenceStore } from './shell/shortcutPreference'
@@ -48,6 +50,8 @@ import {
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
+/** Held at module scope so the quit handler can close the database handle. */
+let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
 let toggleShortcut: ToggleShortcutController | null = null
 
@@ -182,9 +186,24 @@ async function init(): Promise<void> {
   })
   await ledger.load()
 
+  // Every project the app has been shown (#93), the fifth userData file and
+  // the first that is a database rather than a document. The path is injected
+  // for the same reason the ledger's is: the store imports no Electron.
+  //
+  // A null here is a state, not a failure to handle later. The store refuses
+  // loudly by design — a locked or corrupt database answers with a reason
+  // instead of an empty list — and this is the one place that can turn that
+  // refusal into a panel missing its declared mines rather than an app that
+  // will not start. openProjectsStore logs the reason once.
+  projects = await openProjectsStore({
+    filePath: join(app.getPath('userData'), PROJECTS_DB_FILENAME),
+    warn: (message) => console.warn(message)
+  })
+
   runtime = new AgentRuntime({
     config,
     ledger,
+    projects,
     appPaths: {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -367,6 +386,11 @@ if (!app.requestSingleInstanceLock()) {
     // non-blocking error.
     void hooks?.shutdown()
     hooks = null
+    // Releases the database handle. Whatever the last poll observed has already
+    // been written or has already missed its window; there is nothing buffered
+    // here for a final flush to save, unlike the ledger above.
+    void projects?.close()
+    projects = null
     removeIpcHandlers()
     markQuitting()
   })

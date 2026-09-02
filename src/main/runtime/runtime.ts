@@ -20,6 +20,8 @@ import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
 import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
+import { ProjectObserver } from '../projects/projectObserver'
+import type { ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
 import { ClaudeProvider } from '../providers/claude/claudeProvider'
@@ -143,6 +145,13 @@ export interface RuntimeOptions {
    * the ambient environment; defaults to `process.env`.
    */
   simulationEnv?: ConfigEnv
+  /**
+   * Every project the app remembers (#93), or null when its database refused
+   * to open. Null is a real state rather than an error: index.ts turns a
+   * locked, corrupt or unknown-schema store into one, and the panel goes on
+   * showing discovered mines without it. Omitted has the same effect.
+   */
+  projects?: ProjectsStore | null
 }
 
 /**
@@ -162,6 +171,16 @@ export class AgentRuntime {
   private readonly publishGate = new PublishGate()
   /** Owns both the 'leaving' grace window and the retirement record (#46). */
   private readonly lifecycle: DwarfLifecycleTracker
+  /** Null whenever the projects database will not open, or a demo is running. */
+  private readonly projects: ProjectsStore | null
+  /** Writes a row per observed project, throttled (#93); null without a store. */
+  private readonly projectObserver: ProjectObserver | null
+  /**
+   * Serializes the fire-and-forget project writes, and is what settleProjects()
+   * hands back. The poll loop must never await a disk write, so without this
+   * there is nothing a test can wait on and no ordering between two polls.
+   */
+  private projectWrites: Promise<void> = Promise.resolve()
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -267,6 +286,28 @@ export class AgentRuntime {
     const confirmedTierOf = simulation
       ? (mine: Mine): MineTier | undefined => simulation.knownTierOf(mine.path)
       : (mine: Mine): MineTier | undefined => tiers.knownTierOf(mine.path)
+    /*
+     * A demo must never write into real persistence (#42), and the reasoning
+     * is the ledger's one line for line: the store index.ts handed in is
+     * dropped on the floor for the whole simulated run. It is also narrower
+     * here — /simulated-valley/... is not a project on anybody's disk, so a row
+     * for one would be a false memory rather than merely a phantom total, and
+     * the declared mines a real user added must not be shown inside a demo
+     * whose whole point is that its valley is invented.
+     */
+    this.projects = simulation ? null : (options.projects ?? null)
+    this.projectObserver =
+      this.projects === null
+        ? null
+        : new ProjectObserver({
+            store: this.projects,
+            // knownTierOf, exactly as the ledger below: the column takes a
+            // MEASURED tier only, and mine.tier is a provisional bronze until
+            // the project's first walk finishes (#41).
+            knownTierOf: confirmedTierOf,
+            onError: (message, detail) => console.warn(message, detail)
+          })
+
     const lifecycle = new DwarfLifecycleTracker({
       graceMs: options.config.dwarfLeaveGraceS * 1_000,
       now: options.now
@@ -315,6 +356,12 @@ export class AgentRuntime {
         // Throttled inside the ledger, and deliberately not awaited: the panel
         // must never wait on a disk write to see its dwarfs move.
         void this.ledger.save(now)
+        // Same discipline for the projects store, and on the published list so
+        // a mine held back by the grace window is judged by what the panel was
+        // actually shown. Throttled inside the observer for the reason the
+        // ledger throttles: node:sqlite is synchronous and this is the thread
+        // the panel paints from.
+        this.recordProjects(published, now)
       },
       logError: (message, error) => console.warn(message, error)
     })
@@ -340,6 +387,31 @@ export class AgentRuntime {
   /** The whole vault by material, including projects with no crew right now. */
   materialTotals(): MaterialTotals {
     return this.ledger.totals()
+  }
+
+  /**
+   * Resolve once every project write this poll started has finished.
+   *
+   * A test seam, mirroring TierService.settle(): the writes are deliberately
+   * not awaited by the poll loop, so a test that asserted on the store right
+   * after refresh() would be racing them.
+   */
+  async settleProjects(): Promise<void> {
+    await this.projectWrites
+  }
+
+  /**
+   * Queue one poll's worth of project observations behind the last (#93).
+   *
+   * Serialized rather than fired in parallel because node:sqlite is
+   * synchronous: two overlapping polls would interleave writes on the main
+   * thread for no benefit, and the throttle's own bookkeeping assumes the
+   * previous decision has been made.
+   */
+  private recordProjects(mines: Mine[], now: number): void {
+    const observer = this.projectObserver
+    if (observer === null) return
+    this.projectWrites = this.projectWrites.then(() => observer.observe(mines, now))
   }
 
   /** Execute a deterministic scan for IPC/tests without starting an interval. */

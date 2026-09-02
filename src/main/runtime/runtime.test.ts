@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
+import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
+import {
+  createProjectsStore,
+  type ProjectRecord,
+  type ProjectsStore
+} from '../projects/projectsStore'
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
 import type { PlatformAdapters } from '../platform/platformAdapters'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
@@ -2097,5 +2103,142 @@ describe('AgentRuntime simulated provider wiring (#42)', () => {
     await runtime.refresh()
     expect(runtime.getMines()).toEqual([])
     expect(persisted.totals()).toEqual(emptyMaterialTotals())
+  })
+})
+
+describe('AgentRuntime projects wiring (#93)', () => {
+  /** One session working one project, with no token counter to move. */
+  function workingProvider(cwd = 'C:\\work\\project'): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd,
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: 'claude:session-1',
+              provider: 'claude',
+              role: 'foreman',
+              name: 'foreman',
+              status: 'working',
+              sessionId: 'session-1'
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function projectsStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  async function rows(store: ProjectsStore): Promise<ProjectRecord[]> {
+    const result = await store.list()
+    if (!result.ok) throw new Error(`the store refused: ${result.message}`)
+    return result.value
+  }
+
+  it('records every project a session is seen working in', async () => {
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(await rows(projects)).toMatchObject([
+      { name: 'project', origin: 'discovered', lastProvider: 'claude', lastOpenedAt: 5_000 }
+    ])
+  })
+
+  it('records the MEASURED tier only, never the bronze the mound is drawn as', async () => {
+    // The mine crosses the wire as bronze because tierOf serves a placeholder
+    // until the first walk finishes; the column stays empty until a walk has
+    // actually produced an answer (#41).
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(runtime.getMines()[0]!.tier).toBe('bronze')
+    expect((await rows(projects))[0]!.knownTier).toBeNull()
+  })
+
+  it('keeps polling when there is no projects store at all', async () => {
+    // The store refuses loudly by design, and index.ts turns that refusal into
+    // a null. A broken projects database costs the declared mines, nothing else.
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects: null,
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(runtime.getMines()).toHaveLength(1)
+  })
+
+  it('writes nothing at all while the simulated valley is running', async () => {
+    // Same rule as the vault: a demo must never write into real persistence,
+    // and /simulated-valley/... is not a project on anybody's disk.
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      home: 'C:\\Users\\test',
+      fs: new FakeFs(),
+      sqlite: { openReadOnly: async () => null },
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      projects,
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(runtime.getMines().length).toBeGreaterThan(0)
+    expect(await rows(projects)).toEqual([])
+  })
+
+  it('does not write a row for every poll of the same unchanged project', async () => {
+    const projects = projectsStore()
+    const upsert = vi.spyOn(projects, 'upsertObserved')
+    let now = 5_000
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    now += 2_000
+    await runtime.refresh()
+    now += 2_000
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(upsert).toHaveBeenCalledTimes(1)
   })
 })
