@@ -1,4 +1,10 @@
-import type { DwarfAttendance, FeedMessage, SessionStatus, WaitingReason } from '../../domain/types'
+import {
+  type DwarfAttendance,
+  type FeedMessage,
+  type SessionStatus,
+  WAITING_ON_HUMAN_REASON,
+  type WaitingReason
+} from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 
 /**
@@ -67,7 +73,9 @@ export interface ClaudeQuestionOption {
  * does not touch the prohibition on inferring a blocked state from assistant
  * text (see WaitingReason in contracts.ts) — nothing here is pattern-matched
  * out of a sentence, and a question asked as plain prose stays uncaught, which
- * is the correct outcome rather than a gap.
+ * is the correct outcome rather than a gap. It is on that footing, and no
+ * broader one, that claudeWaitingReason lets an open ask name the condition a
+ * blocked session left unnamed.
  *
  * `toolUseId` is what makes "answered" exact instead of inferred: the reply
  * arrives later as a `tool_result` naming the same id.
@@ -206,24 +214,49 @@ const CLAUDE_WAITING_REASONS: Readonly<Record<string, WaitingReason>> = {
 /**
  * What this session is blocked on, or undefined when it is not blocked.
  *
- * Reads the registry's `waitingFor` and nothing else — never the transcript,
- * never assistant text. A session that is blocked with no condition recorded,
- * or with one this version does not know, is 'unknown': proof that it is
- * waiting, no proof of what for.
+ * The registry's `waitingFor` decides, and it is the only thing that can make
+ * this a value at all — never the transcript, never assistant text. A session
+ * that is blocked with no condition recorded, or with one this version does not
+ * know, is 'unknown': proof that it is waiting, no proof of what for.
  *
  * The condition, not the status, is what decides. `parseClaudeSessionEntry`
  * folds every status it does not recognize into `idle`, so a future spelling of
  * "blocked" would erase a live session's only proof of life; a recorded
  * condition survives that fold and is therefore the sounder thing to key on.
+ *
+ * `pendingQuestion` is the tail's unanswered AskUserQuestion, and it may only
+ * REFINE (issue #94). The registry proves blocked; the tool block names what
+ * the registry could not; neither source claims the other's fact. So exactly
+ * one reading moves — 'unknown', which is "blocked, and the condition is not
+ * one this table recognizes", the hole an ask fills exactly. A named condition
+ * is the registry's own answer and is left alone even here, and `undefined`
+ * stays absent: moving that would be the tool block ASSERTING a blocked state
+ * from the transcript, which is the thing WaitingReason forbids. An ask in the
+ * tail of a busy session is the model still working, not a human being waited
+ * on.
+ *
+ * Omitting the argument is the same statement as an answered ask: no question
+ * is outstanding as far as this caller can see. That is safe in the one
+ * direction that matters, because the tail is a suffix of the file and a result
+ * is always written after its ask — so a window too small to hold the ask can
+ * only cost the refinement (the reason stays 'unknown', today's behaviour),
+ * never invent one. This can under-claim; it cannot over-claim.
  */
-export function claudeWaitingReason(session: {
-  status: SessionStatus
-  waitingFor?: string
-}): WaitingReason | undefined {
-  if (session.waitingFor !== undefined) {
-    return CLAUDE_WAITING_REASONS[session.waitingFor] ?? 'unknown'
-  }
-  return session.status === 'waiting' ? 'unknown' : undefined
+export function claudeWaitingReason(
+  session: {
+    status: SessionStatus
+    waitingFor?: string
+  },
+  pendingQuestion?: ClaudePendingQuestion
+): WaitingReason | undefined {
+  const proven =
+    session.waitingFor !== undefined
+      ? (CLAUDE_WAITING_REASONS[session.waitingFor] ?? 'unknown')
+      : session.status === 'waiting'
+        ? 'unknown'
+        : undefined
+  if (proven !== 'unknown' || pendingQuestion === undefined) return proven
+  return WAITING_ON_HUMAN_REASON
 }
 
 /**

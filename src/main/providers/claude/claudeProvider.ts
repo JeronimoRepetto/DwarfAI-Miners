@@ -161,9 +161,19 @@ function subagentTranscriptPath(projectDir: string, sessionId: string, agentId: 
  * different statement from 'unknown' — "blocked, and the condition is not one
  * this app can read". Only a main session ever gets one; a subagent has no
  * registry entry and its sidecar records no status at all.
+ *
+ * The tail's own unanswered ask is handed in so it can refine that middle value
+ * and only that (issue #94, see claudeWaitingReason). It travels with the
+ * registry entry everywhere the reason is derived — here and in
+ * pruneStaleLaunches — because the panel and the eviction rule reading the same
+ * field from different evidence is exactly the disagreement this contract was
+ * put on the wire to prevent.
  */
-function waitingReasonField(session: ClaudeSessionEntry): { waitingReason?: WaitingReason } {
-  const reason = claudeWaitingReason(session)
+function waitingReasonField(
+  session: ClaudeSessionEntry,
+  pendingQuestion: ClaudePendingQuestion | undefined
+): { waitingReason?: WaitingReason } {
+  const reason = claudeWaitingReason(session, pendingQuestion)
   return reason === undefined ? {} : { waitingReason: reason }
 }
 
@@ -572,6 +582,7 @@ export class ClaudeProvider implements Provider {
       session,
       projectDir,
       parentMtimeMs: transcriptStat?.mtimeMs,
+      pendingQuestion: info.pendingQuestion,
       remembered
     })
     const inFlightAgents = [...remembered.values()]
@@ -614,14 +625,15 @@ export class ClaudeProvider implements Provider {
         // resting foreman. The registry is re-read every poll, so transitions
         // are prompt in both directions (issue #34).
         status: session.status === 'busy' ? 'working' : 'waiting',
-        // WHAT it is blocked on, when the registry named a condition (issue
-        // #60). Structured evidence only: the registry's own waitingFor
-        // vocabulary, never the transcript and never assistant prose.
-        ...waitingReasonField(session),
+        // WHAT it is blocked on (issue #60): the registry's own waitingFor
+        // vocabulary, refined — where it proved blocked and named nothing this
+        // app can read — by the tail's own unanswered ask (issue #94). Never
+        // assistant prose in either half; see claudeWaitingReason.
+        ...waitingReasonField(session, info.pendingQuestion),
         // WHAT it asked, when the model asked it through the tool that says so
-        // in schema (issue #94). Beside the reason above, never feeding it: the
-        // registry proves blocked, the tool block proves what is outstanding,
-        // and neither source claims the other's fact.
+        // in schema (issue #94). The reason above says the session cannot move
+        // and this says what it is waiting to hear: one may complete the other,
+        // and neither may manufacture it.
         ...pendingQuestionField(info.pendingQuestion),
         // Redacted BEFORE the renderer's 70-char bubble truncation can ever
         // slice it: a truncated prefix can still contain a whole key.
@@ -746,9 +758,14 @@ export class ClaudeProvider implements Provider {
    *   spelling of "blocked" would turn a live session — one whose human has
    *   been asked a question and has not answered yet — into an evictable idle
    *   one. An agent waiting on a person writes nothing at all, which is exactly
-   *   why age cannot be the judge of it. Only 'user-input' buys this: an open
-   *   dialog or a pending approval keeps today's behaviour, because neither
-   *   proves a question is outstanding (see WaitingReason).
+   *   why age cannot be the judge of it. Only 'user-input' buys this, and a
+   *   pending approval still keeps today's behaviour: it names something to
+   *   allow or refuse, not a question outstanding. An open dialog buys it only
+   *   once the tail carries the ask that says what the dialog wants (issue
+   *   #94), which is why the question is handed in here rather than read off
+   *   the dwarf: eviction and the panel must not derive the same field from
+   *   different evidence (see claudeWaitingReason). An answered ask returns
+   *   this session to ordinary staleness on the very next poll.
    * - The registry must report `idle`. `busy` is #28's case verbatim — a long
    *   turn writing megabytes of tool output pushed the launch record out of the
    *   window while the agent worked — and `waiting` is still mid-turn (blocked
@@ -771,11 +788,13 @@ export class ClaudeProvider implements Provider {
     projectDir: string
     /** undefined when no transcript exists — no evidence, not fresh evidence. */
     parentMtimeMs: number | undefined
+    /** This session's own unanswered ask, when its tail still shows one. */
+    pendingQuestion: ClaudePendingQuestion | undefined
     remembered: Map<string, ClaudeInFlightAgent>
   }): Promise<void> {
     const { session, remembered } = options
     if (remembered.size === 0) return
-    if (claudeWaitingReason(session) === WAITING_ON_HUMAN_REASON) return
+    if (claudeWaitingReason(session, options.pendingQuestion) === WAITING_ON_HUMAN_REASON) return
     if (session.status !== 'idle') return
     const now = this.now()
     if (this.writtenWithinWindow(options.parentMtimeMs, now, this.sessionSilenceMs(session))) return
