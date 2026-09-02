@@ -22,9 +22,9 @@ const DEFAULT_BUILD = { version: '1.2.3', packaged: true }
 /**
  * Full window.api stub: App touches the mines surface on mount (load + push
  * subscription), the pin surface for the titlebar control, the shortcut
- * surface for the settings panel and the build surface for the version beside
- * the title, so every member must exist even in tests that only look at the
- * titlebar.
+ * surface for the settings panel, the build surface for the version beside
+ * the title and the answer surface for a dwarf's pending question, so every
+ * member must exist even in tests that only look at the titlebar.
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
@@ -34,6 +34,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     activateDwarf: vi.fn(),
     sendDwarfText: vi.fn(),
     kickDwarf: vi.fn(),
+    answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
     getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
@@ -370,7 +371,6 @@ describe('App answering an agent question', () => {
   async function openAskingDwarf(overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountApp({
       getMines: vi.fn().mockResolvedValue({ mines: [ASKING_MINE], tokensObserved: 0 }),
-      answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
       ...overrides
     })
     wrapper.findComponent(MapView).vm.$emit('open', ASKING_MINE.id)
