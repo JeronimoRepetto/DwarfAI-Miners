@@ -18,6 +18,16 @@
  *
  * For the same reason the regex does not try to exclude `it(` inside a string
  * or a comment: a stable over-count costs nothing when only the DELTA is read.
+ * It does exclude a `function test(` / `function it(` declaration, because
+ * that one is not stable — a repo can have at most a handful of hand-rolled
+ * harnesses defining that name, and each is a fixed, one-time over-count that
+ * would otherwise sit in every census of that file forever. See the
+ * `TEST_CALL` comment below (issue #120).
+ *
+ * Matches `.test.ts`, `.test.tsx`, `.test.js`, `.test.jsx`, `.test.mjs` and
+ * `.test.cjs` files — every suite in the repo, including the hand-rolled ones
+ * that run outside vitest (issue #120: the matcher used to stop at `tsx?`,
+ * so a `.test.mjs` suite could lose tests invisibly).
  *
  * Usage:
  *   node skills/test-safety/assets/test-census.mjs         # changed vs HEAD
@@ -32,11 +42,17 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
 
 /**
- * A test statement as authored. The lookbehind keeps `submit(` and `.it(` out;
- * the optional modifier chain catches `it.each`, `it.skip.each`, `test.only`.
+ * A test statement as authored. The first lookbehind keeps `submit(` and
+ * `.it(` out; the optional modifier chain catches `it.each`, `it.skip.each`,
+ * `test.only`. The second lookbehind excludes `function test(` /
+ * `function it(` — a hand-rolled harness (sync.test.mjs, this file's own
+ * sibling) declares its own `test()` runner under that name, and without the
+ * exclusion that declaration counts as a test statement it is not. Verified
+ * empirically against sync.test.mjs: the old regex over-counted by exactly
+ * one (17 vs. 16 statements that actually run).
  */
 const TEST_CALL =
-  /(?<![\w$.])(?:it|test)(?:\.(?:each|skip|only|todo|concurrent|fails|runIf|skipIf|sequential|extend))*\s*(?:\(|`|\[)/g
+  /(?<!function )(?<![\w$.])(?:it|test)(?:\.(?:each|skip|only|todo|concurrent|fails|runIf|skipIf|sequential|extend))*\s*(?:\(|`|\[)/g
 
 function git(args, quiet = false) {
   return execFileSync('git', args, {
@@ -67,12 +83,23 @@ function main() {
   const baseIndex = argv.indexOf('--base')
   const base = baseIndex === -1 ? 'HEAD' : argv[baseIndex + 1]
 
-  const isTest = (p) => /\.test\.[cm]?tsx?$/.test(p)
+  const isTest = (p) => /\.test\.[cm]?[jt]sx?$/.test(p)
 
   // Changed-only is the default because the question is almost always "what did
   // I just touch". --all is for auditing a branch someone else wrote.
   const paths = all
-    ? git(['ls-files', '--', '*.test.ts', '*.test.tsx']).split('\n').filter(Boolean)
+    ? git([
+        'ls-files',
+        '--',
+        '*.test.ts',
+        '*.test.tsx',
+        '*.test.js',
+        '*.test.jsx',
+        '*.test.mjs',
+        '*.test.cjs'
+      ])
+        .split('\n')
+        .filter(Boolean)
     : [
         ...new Set(
           [

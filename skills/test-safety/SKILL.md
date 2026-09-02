@@ -49,6 +49,11 @@ the number vitest reports: one `it.each` expands into many runtime cases. The qu
 is _"did a block of tests stop existing"_, not _"how many assertions ran"_, and only the delta is
 ever read.
 
+It sees every suite shape in the repo — `.test.ts`, `.test.tsx`, `.test.js`, `.test.jsx`,
+`.test.mjs` and `.test.cjs` — including the hand-rolled ones that run outside vitest, and excludes
+a `function test(`/`function it(` declaration (a hand-rolled harness's own runner) from the count
+(issue #120).
+
 ## When a test genuinely goes
 
 Say so where it stood. When a test goes because its subject went, leave the note in the file it
