@@ -12,11 +12,18 @@ import type { PlatformAdapters } from '../platform/platformAdapters'
 import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
-import { MAX_DWARF_TEXT_CHARS, type FeedMessage } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfQuestion, type FeedMessage } from '../domain/types'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
+import { createCliDetector } from '../platform/cliDetection'
 import type { Provider } from '../providers/provider'
+import type {
+  HeldAnswer,
+  HeldSessionPort,
+  HeldSessionStartRequest
+} from '../sessionLaunch/heldSession'
+import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { TierService, type TierThresholds } from '../tier/tierService'
 import { AgentRuntime, expandHomePath } from './runtime'
@@ -3066,5 +3073,253 @@ describe('AgentRuntime project queries (#92)', () => {
     expect(result.answered).toBe(false)
     expect(result.projects).toEqual([])
     expect(result.reason).not.toBeUndefined()
+  })
+})
+
+describe('AgentRuntime held sessions (#86, #94)', () => {
+  const MINE_PATH = 'C:\\X\\anvil'
+  const CLAUDE = '/home/j/.local/bin/claude'
+
+  /** The Agent SDK seam. No runtime test starts a real agent. */
+  function heldPort(): {
+    port: HeldSessionPort
+    started: HeldSessionStartRequest[]
+    closes: () => number
+    reportSessionId: (index: number, sessionId: string) => void
+    ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
+  } {
+    const started: HeldSessionStartRequest[] = []
+    let closed = 0
+    return {
+      started,
+      closes: () => closed,
+      port: async (request) => {
+        started.push(request)
+        return {
+          close: () => {
+            closed += 1
+          },
+          send: () => true
+        }
+      },
+      reportSessionId: (index, sessionId) => started[index]!.onSessionId(sessionId),
+      ask: (index, toolUseId) =>
+        started[index]!.onAsk(toolUseId, {
+          questions: [
+            {
+              question: 'Which colour?',
+              multiSelect: false,
+              options: [{ label: 'Green' }, { label: 'Red' }]
+            }
+          ]
+        })
+    }
+  }
+
+  function heldRegistry(port: HeldSessionPort): HeldSessionRegistry {
+    const fs = new FakeFs()
+    fs.addFile(CLAUDE, '#!/bin/sh\n')
+    return new HeldSessionRegistry({
+      detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+      start: port,
+      now: () => 1_700_000_000_000,
+      log: () => {}
+    })
+  }
+
+  /** A provider reporting one foreman in MINE_PATH, with an optional tail-derived ask. */
+  function foremanProvider(pendingQuestion?: DwarfQuestion): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude' as const,
+          sessionId: 'sess-1',
+          cwd: MINE_PATH,
+          status: 'busy' as const,
+          updatedAt: 7,
+          dwarfs: [
+            {
+              id: 'claude:sess-1',
+              provider: 'claude' as const,
+              role: 'foreman' as const,
+              name: 'foreman',
+              status: 'working' as const,
+              sessionId: 'sess-1',
+              ...(pendingQuestion === undefined ? {} : { pendingQuestion })
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function heldRuntime(options: {
+    heldSessions: HeldSessionRegistry
+    providers?: Provider[]
+  }): AgentRuntime {
+    return new AgentRuntime({
+      config: defaultConfig(),
+      providers: options.providers ?? [],
+      heldSessions: options.heldSessions,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  it("starts a held session in the mine's own folder, which is what puts its dwarf there", async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await expect(
+      runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig here' })
+    ).resolves.toEqual({ launched: true })
+    runtime.stop()
+
+    expect(port.started).toHaveLength(1)
+    expect(port.started[0]!.cwd).toBe(MINE_PATH)
+    // The binary detection found (#91), never one this app constructed and
+    // never the SDK's own bundled executable.
+    expect(port.started[0]!.executablePath).toBe(CLAUDE)
+  })
+
+  it('refuses a mine that is not on the board, so the channel can never name a folder', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({ heldSessions: heldRegistry(port.port) })
+
+    const result = await runtime.launchHeldSession({ mineId: 'mine-nobody', prompt: 'dig' })
+    runtime.stop()
+
+    expect(result.launched).toBe(false)
+    expect(result.error).not.toBeUndefined()
+    expect(port.started).toHaveLength(0)
+  })
+
+  it('refuses to start a real agent inside a simulated valley', async () => {
+    // The rule the ledger and the projects store already hold (#42): a demo
+    // must not reach into the real machine, and /simulated-valley/... is
+    // nobody's folder.
+    const port = heldPort()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
+      heldSessions: heldRegistry(port.port),
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]?.id ?? ''
+
+    const result = await runtime.launchHeldSession({ mineId, prompt: 'dig' })
+    runtime.stop()
+
+    expect(mineId).not.toBe('')
+    expect(result.launched).toBe(false)
+    expect(port.started).toHaveLength(0)
+  })
+
+  it("stamps a held session's live question on its foreman, superseding the tail's", async () => {
+    const port = heldPort()
+    const stale: DwarfQuestion = {
+      toolUseId: 'toolu_stale',
+      question: 'Which shape?',
+      multiSelect: false,
+      options: [{ label: 'Round' }]
+    }
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider(stale)]
+    })
+    await runtime.refresh()
+    // The tail's own ask is what the panel would show without a held session.
+    expect(runtime.getMines()[0]!.dwarfs[0]!.pendingQuestion?.toolUseId).toBe('toolu_stale')
+
+    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    void port.ask(0, 'toolu_live')
+    await Promise.resolve()
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs[0]!.pendingQuestion?.toolUseId).toBe('toolu_live')
+
+    // ...and it CLEARS when the ask is answered, rather than falling back to
+    // the tail's post-hoc one, which would resurrect an answered question.
+    runtime.answerDwarfQuestion({
+      dwarfId: 'claude:sess-1',
+      toolUseId: 'toolu_live',
+      answers: { 'Which colour?': 'Green' }
+    })
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs[0]!.pendingQuestion).toBeUndefined()
+    runtime.stop()
+  })
+
+  it("releases the agent's blocked call with exactly the answers record, found by dwarf id", async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    const asked = port.ask(0, 'toolu_live')
+    await Promise.resolve()
+
+    expect(
+      runtime.answerDwarfQuestion({
+        dwarfId: 'claude:sess-1',
+        toolUseId: 'toolu_live',
+        answers: { 'Which colour?': 'Green' }
+      })
+    ).toEqual({ answered: true })
+    await expect(asked).resolves.toEqual({
+      answered: true,
+      answers: { 'Which colour?': 'Green' }
+    })
+    runtime.stop()
+  })
+
+  it('refuses an answer for a dwarf that is not on the board', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({ heldSessions: heldRegistry(port.port) })
+
+    const result = runtime.answerDwarfQuestion({
+      dwarfId: 'claude:nobody',
+      toolUseId: 'toolu_live',
+      answers: { 'Which colour?': 'Green' }
+    })
+    runtime.stop()
+
+    expect(result.answered).toBe(false)
+    expect(result.error).not.toBeUndefined()
+  })
+
+  it('dissolves every open question on shutdown, and closes the session it held', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    const asked = port.ask(0, 'toolu_live')
+    await Promise.resolve()
+
+    runtime.stop()
+
+    // Never a fabricated answer: the panel quit, and the agent is told exactly
+    // that rather than being handed an empty choice.
+    expect((await asked).answered).toBe(false)
+    expect(port.closes()).toBe(1)
   })
 })

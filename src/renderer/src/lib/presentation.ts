@@ -45,7 +45,7 @@ export function tierLabel(tier: MineTier): string {
 export const BUBBLE_MAX_CHARS = 70
 
 /**
- * One painted dwarf pose. Each name maps to `assets/art/dwarf-<name>.png`,
+ * One painted dwarf pose. Each name maps to `assets/art/concept/dwarf-<name>.png`,
  * and every pose shares one canvas and baseline (see scripts/build-art.mjs),
  * so swapping frames animates the drawing without moving the sprite.
  */

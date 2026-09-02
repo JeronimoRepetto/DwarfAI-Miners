@@ -30,9 +30,10 @@ function expectedWorld(spec: SimulationConfig, tick: number, nowMs: number): unk
 
 describe('SimulatedProvider', () => {
   it('reports a real provider kind, so nothing downstream can tell it apart', () => {
-    // DwarfProvider has exactly two members and widening it would ripple into
-    // the wire contract and the renderer art. Claiming 'claude' keeps the
-    // simulation indistinguishable, which is the entire point of #42.
+    // Cheap to widen since #78 (DWARF_PROVIDERS is one table), and still not
+    // widened: the wire contract is what a packaged build publishes, and the
+    // renderer has no art for a value only a dev run can produce. Claiming
+    // 'claude' keeps the simulation indistinguishable, the whole point of #42.
     expect(new SimulatedProvider({ config: config() }).kind).toBe('claude')
   })
 

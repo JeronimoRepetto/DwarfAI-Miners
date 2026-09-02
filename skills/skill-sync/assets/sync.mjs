@@ -281,7 +281,7 @@ const MAIN_TREE_GLOSSES = {
   projects: null,
   providers: 'one per agent CLI plus the simulated one',
   runtime: 'the poll loop',
-  sessionLaunch: 'starting a session',
+  sessionLaunch: 'starting a session and holding one',
   shell: 'window, tray, autostart, shortcuts',
   textDelivery: null,
   tier: null

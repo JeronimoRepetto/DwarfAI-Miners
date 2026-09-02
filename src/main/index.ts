@@ -9,8 +9,12 @@ import type {
   AppBuild,
   DwarfKickRequest,
   DwarfKickResult,
+  DwarfQuestionAnswerRequest,
+  DwarfQuestionAnswerResult,
   DwarfTextRequest,
   DwarfTextResult,
+  HeldSessionLaunchRequest,
+  HeldSessionLaunchResult,
   MaterialTotals,
   Mine,
   MineDeclareResult,
@@ -91,6 +95,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
+  ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
+  ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
 }
 
 /**
@@ -128,6 +134,43 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+/**
+ * Same boundary discipline as parseTextRequest, and the prompt is never logged
+ * here either. Note what is NOT accepted: a directory. The renderer names a
+ * mine and the runtime decides which folder that is, so this channel cannot be
+ * talked into starting a process somewhere the panel is not showing.
+ */
+function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
+  return { mineId: record.mineId, prompt: record.prompt }
+}
+
+/**
+ * Same boundary discipline again, plus the one thing no other channel carries:
+ * a RECORD of strings.
+ *
+ * Every key and value is checked here, and an entry that is not a string pair
+ * takes the whole answer down rather than being dropped — a partly-read answer
+ * is one the panel would be answering differently from how the user did. What
+ * the strings MEAN is not judged here: they are matched against the ask the
+ * agent actually made, in main, where the ask is (see HeldSessionRegistry). So
+ * this refuses a shape and never a choice.
+ */
+function parseAnswerRequest(payload: unknown): DwarfQuestionAnswerRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string' || typeof record.toolUseId !== 'string') return null
+  if (typeof record.answers !== 'object' || record.answers === null) return null
+  const answers: Record<string, string> = {}
+  for (const [question, label] of Object.entries(record.answers as Record<string, unknown>)) {
+    if (typeof label !== 'string') return null
+    answers[question] = label
+  }
+  return { dwarfId: record.dwarfId, toolUseId: record.toolUseId, answers }
 }
 
 const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = ['addedAt', 'lastOpenedAt']
@@ -339,8 +382,8 @@ async function init(): Promise<void> {
     fs: new NodeFs(),
     markerFs: { readFile, writeFile, rename },
     markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
-    claudeRoots: config.claudeConfigDirs.map((path) => expandHomePath(path)),
-    codexSessionsRoot: expandHomePath(config.codexSessionsRoot),
+    claudeRoots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
+    codexSessionsRoot: expandHomePath(config.providers.codex.sessionsRoot),
     credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
     now: Date.now,
     warn: (message, error) => console.warn(message, error)
@@ -360,7 +403,7 @@ async function init(): Promise<void> {
   // brings back a choice they already made on a previous launch.
   hooks = new HookChannel({
     fs: new NodeHookFs(),
-    roots: config.claudeConfigDirs.map((path) => expandHomePath(path)),
+    roots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
     userDataDir: app.getPath('userData'),
     port: config.hooksPort,
     platform: process.platform,
@@ -522,6 +565,28 @@ async function init(): Promise<void> {
     const query = parseProjectQuery(payload)
     if (query === null) return notAQuery
     return runtime?.queryProjects(query) ?? notQueried
+  })
+
+  // Starting a session the panel holds, and answering what it asks (#86, #94).
+  // Both refusals below are what a runtime that never came up would say,
+  // phrased for the panel rather than left silent.
+  const notHeldLaunched: HeldSessionLaunchResult = {
+    launched: false,
+    error: 'The agent could not be started.'
+  }
+  const notAnswered: DwarfQuestionAnswerResult = {
+    answered: false,
+    error: 'That answer could not be delivered.'
+  }
+  ipcMain.handle(IPC_CHANNELS.launchHeldSession, (_event, payload: unknown) => {
+    const request = parseHeldLaunchRequest(payload)
+    if (request === null) return notHeldLaunched
+    return runtime?.launchHeldSession(request) ?? notHeldLaunched
+  })
+  ipcMain.handle(IPC_CHANNELS.answerDwarfQuestion, (_event, payload: unknown) => {
+    const request = parseAnswerRequest(payload)
+    if (request === null) return notAnswered
+    return runtime?.answerDwarfQuestion(request) ?? notAnswered
   })
 
   // The panel watched a kicked agent stop (#46). One-way: main decides what

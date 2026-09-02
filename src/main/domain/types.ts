@@ -21,12 +21,16 @@ export type {
   DwarfKickResult,
   DwarfProvider,
   DwarfQuestion,
+  DwarfQuestionAnswerRequest,
+  DwarfQuestionAnswerResult,
   DwarfQuestionOption,
   DwarfRole,
   DwarfStatus,
   DwarfTextRequest,
   DwarfTextResult,
   FeedMessage,
+  HeldSessionLaunchRequest,
+  HeldSessionLaunchResult,
   Material,
   MaterialTotals,
   Mine,
@@ -52,6 +56,7 @@ export type {
  * barrel is what makes a module reach across the process boundary itself.
  */
 export {
+  DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
@@ -59,6 +64,7 @@ export {
   MINE_TIERS,
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowKey,
+  isDwarfProvider,
   isMineTier
 } from '../../shared/contracts'
 
