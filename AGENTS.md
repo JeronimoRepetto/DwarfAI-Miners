@@ -180,8 +180,8 @@ adding a file. This is the index — one line per group, so you can tell what a 
   seams with their fakes), `config`, `domain` (pure rules and the type barrel), `hooks` (the opt-in
   Claude push channel), `ledger` (what has been mined, persisted), `platform` (everything that
   knows an OS, composed once in `platformAdapters.ts`), `providers` (one per agent CLI plus the
-  simulated one), `runtime` (the poll loop), `shell` (window, tray, autostart, shortcuts),
-  `textDelivery`, `tier`.
+  simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session, the opposite act
+  to textDelivery), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
 - **`renderer/src/`** — `components/` is thin and decides nothing, `lib/` is the framework-agnostic
   logic, and the two share the family names `map`, `scene` and `vault` on purpose. `composables/`
   is the Vue-bound state; `types.ts` is this process's barrel onto `contracts.ts`.
