@@ -8,7 +8,7 @@ import type { TierThresholds } from '../tier/tierService'
  * This module deliberately knows nothing about where those strings came from.
  * A development checkout gets them from a repo `.env` that dotenv has already
  * merged into `process.env`; an installed app gets them from the userData
- * config file, which `src/main/configFile.ts` layers underneath the real
+ * config file, which `src/main/config/configFile.ts` layers underneath the real
  * environment before calling in here (see #38). Keeping one string-map parser
  * means both transports share this file's validation and error messages
  * instead of growing a second, divergent set for a second format.

@@ -2,10 +2,10 @@
 
 This file exists to answer one question: **where does the file I am about to add go?**
 
-It does not repeat the project's rules. [`CONTRIBUTING.md`](../CONTRIBUTING.md) is the
-contributor guide and [`CLAUDE.md`](../CLAUDE.md) carries the boundaries that must survive
-(`shared/contracts.ts` as the single wire-type declaration point, `platform/platformAdapters.ts`
-as the only place that knows the operating system, pure builders separated from thin runners).
+It does not repeat the project's rules. [`AGENTS.md`](../AGENTS.md) carries the boundaries that
+must survive (`shared/contracts.ts` as the single wire-type declaration point above all), and
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) is the contributor guide — including the per-platform
+rule: pure builders plus a thin runner, selected once in `platform/platformAdapters.ts`.
 Read those for _why_; this one is only _where_.
 
 ## The rule

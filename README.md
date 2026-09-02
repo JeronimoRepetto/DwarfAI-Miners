@@ -106,8 +106,8 @@ re-claimed, and the settings panel says so rather than showing a shortcut that d
 > pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
 > Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
 
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, tests, and build on every
-push to `main` and on every pull request.
+CI (`.github/workflows/ci.yml`) runs seven checks on every push to `main` and on every pull
+request: privacy guard, typecheck, lint, format check, skills-sync check, tests, and build.
 
 ## Platform support
 
@@ -213,11 +213,11 @@ twice in a row reproduces every output file byte-for-byte. The README logo
 
 ## Provider support
 
-| Provider    | Support | Liveness and hierarchy                                                                                                                            |
-| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | Active  | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported.           |
-| Codex       | Active  | Uses recent rollout mtimes and open-turn events. `thread_spawn.parent_thread_id` is used for verified worker/foreman relationships.               |
-| Gemini CLI  | Planned | No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed. |
+| Provider    | Support | Liveness and hierarchy                                                                                                                                                                                                                 |
+| ----------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | Active  | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported.                                                                                                |
+| Codex       | Active  | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` is used for verified worker/foreman relationships. |
+| Gemini CLI  | Planned | No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed.                                                                                      |
 
 Codex liveness is heuristic: a recently modified rollout can remain visible until the
 configured liveness window expires after the CLI closes.
@@ -268,8 +268,9 @@ Turning it on does three things, and turning it off undoes all three:
    it is never reachable from the network.
 2. Writes one hook entry per event into `settings.json` in every configured Claude root, for
    `SessionStart`, `Notification`, `Stop`, `SubagentStop` and `SessionEnd`. The command is a
-   one-line `curl.exe` that forwards the hook's own JSON to the listener and exits; Windows
-   10 1803+ ships `curl.exe`, and enabling refuses with an explanation if it is missing.
+   one-line curl invocation — `curl.exe` on Windows to bypass PowerShell's alias, plain `curl`
+   elsewhere — that forwards the hook's own JSON to the listener and exits; Windows 10 1803+
+   ships `curl.exe`, and enabling refuses with an explanation if it is missing.
 3. Records the choice in a marker file under Electron's user-data directory, so the channel
    comes back on the next launch.
 

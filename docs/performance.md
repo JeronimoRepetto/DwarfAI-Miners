@@ -23,6 +23,11 @@ It has to be a real environment variable. A `.env` entry will **not** work:
 before `index.ts` calls `loadDotenv()`, so the flag would arrive too late to be
 read.
 
+**The tier walk has the same kind of switch.** `TIER_DEBUG=1` (or `true`) makes every
+tier walk print one line per skipped file — reason, size, path — and a closing tally
+per project (#39). Unlike `DWARFAI_PERF` it is read per walk, not at import time, so a
+`.env` entry works in a dev checkout.
+
 Every poll then prints one line: the total, where the time went, and what it
 saw.
 
