@@ -31,6 +31,8 @@ export interface ThreadSeed {
   tokensUsed?: number
   /** Plain "cli"/"vscode", or the JSON sub-agent spawn blob. */
   source?: string
+  /** The Codex build that opened the thread; blank, as the column defaults, unless stated. */
+  cliVersion?: string
   agentNickname?: string
   archived?: number
 }
@@ -43,6 +45,7 @@ export function threadInsert(seed: ThreadSeed): string {
     created_at: '0',
     updated_at: '0',
     source: quote(seed.source ?? 'cli'),
+    cli_version: quote(seed.cliVersion ?? ''),
     model_provider: quote('openai'),
     cwd: quote(seed.cwd),
     title: quote(''),

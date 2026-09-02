@@ -11,6 +11,7 @@ import {
 import {
   normalizeCodexCwd,
   parseCodexThreadSource,
+  readCodexCliVersions,
   readCodexHeartbeats,
   readCodexSpawnEdges,
   readCodexThreads
@@ -109,7 +110,9 @@ describe('readCodexThreads', () => {
         model: 'gpt-5.6-luna',
         effort: 'medium',
         tokensUsed: 19343971,
-        updatedAtMs: NOW - 1_000
+        updatedAtMs: NOW - 1_000,
+        // threadInsert defaults source to 'cli'; carried on the row since #97.
+        sourceTag: 'cli'
       }
     ])
   })
@@ -176,6 +179,87 @@ describe('readCodexThreads', () => {
     bare.define('bare', 'CREATE TABLE unrelated (x TEXT)')
     const db = await bare.openReadOnly('bare')
     expect(readCodexThreads(db!, 0)).toEqual([])
+  })
+
+  /**
+   * `threads.source` was read only for sub-agent identity until #97. The plain
+   * tag is what decides whether a thread's message queue is one anybody has
+   * watched drain, so it now travels on the row as well.
+   */
+  it('carries the plain source tag of a cli or desktop-app thread', async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: 'tui', cwd: 'C:\\p', updatedAtMs: NOW, source: 'cli' })
+    )
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: 'app', cwd: 'C:\\p', updatedAtMs: NOW - 1, source: 'vscode' })
+    )
+    const threads = await read(NOW - 60_000)
+    expect(threads.map((t) => [t.threadId, t.sourceTag])).toEqual([
+      ['tui', 'cli'],
+      ['app', 'vscode']
+    ])
+  })
+
+  it('reports no source tag for a sub-agent thread, whose source is the spawn blob', async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({
+        id: 'child',
+        cwd: 'C:\\p',
+        updatedAtMs: NOW,
+        source: subagentSource('parent', 'Bernoulli')
+      })
+    )
+    expect((await read(NOW - 60_000))[0]!.sourceTag).toBeUndefined()
+  })
+})
+
+describe('readCodexCliVersions', () => {
+  let sqlite: MemorySqlite
+
+  beforeEach(() => {
+    sqlite = new MemorySqlite()
+    sqlite.define(STATE_DB, CODEX_STATE_SCHEMA)
+  })
+
+  async function read() {
+    const db = await sqlite.openReadOnly(STATE_DB)
+    return readCodexCliVersions(db!)
+  }
+
+  it('maps each thread to the Codex build that opened it', async () => {
+    sqlite.exec(STATE_DB, threadInsert({ id: 'new', cwd: 'C:\\p', cliVersion: '0.151.0' }))
+    sqlite.exec(STATE_DB, threadInsert({ id: 'old', cwd: 'C:\\p', cliVersion: '0.148.0' }))
+    expect([...(await read())]).toEqual([
+      ['new', '0.151.0'],
+      ['old', '0.148.0']
+    ])
+  })
+
+  // cli_version is NOT NULL DEFAULT '', so "never written" is a blank string.
+  // Omitting it is what makes the version floor refuse the thread.
+  it('omits a thread whose version column was never written', async () => {
+    sqlite.exec(STATE_DB, threadInsert({ id: 'blank', cwd: 'C:\\p' }))
+    expect((await read()).size).toBe(0)
+  })
+
+  /**
+   * Read in its own query rather than folded into THREADS_SQL on purpose: a
+   * Codex whose `threads` table predates this column would otherwise fail the
+   * whole registry read and lose model, effort, tokens and the sub-agent graph
+   * for every session — a heavy price for a capability that install cannot use
+   * anyway. Here the same schema gap costs only the version.
+   */
+  it('returns an empty map when the column or table is missing, leaving threads readable', async () => {
+    const older = new MemorySqlite()
+    older.define(
+      'older',
+      'CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT, archived INTEGER)'
+    )
+    const db = await older.openReadOnly('older')
+    expect(readCodexCliVersions(db!).size).toBe(0)
   })
 })
 
