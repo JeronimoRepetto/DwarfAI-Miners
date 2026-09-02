@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
 import { mineIdForPath } from '../domain/aggregate'
+import type { MineTier } from '../domain/types'
 import {
   PROJECTS_DB_FILENAME,
   PROJECTS_SCHEMA_VERSION,
@@ -252,6 +253,231 @@ describe('projects store — schema version', () => {
   })
 })
 
+/**
+ * The #92 query, run against real SQLite through the in-memory fake.
+ *
+ * These are deliberately not tests of a generated SQL string — that is
+ * projectQuery.test.ts. Every rule here depends on what SQLite actually does
+ * with a LIKE pattern, an ESCAPE clause, a NULL in an ORDER BY and a
+ * comparison against a NULL column, and a canned result would hide all four.
+ */
+describe('projects store — searching by name (#92)', () => {
+  /** Synthetic names only: a real project name from this machine is a privacy leak. */
+  const NAMES = [
+    'C:\\code\\Cafetería-Ñandú',
+    'C:\\code\\Contáiner',
+    'C:\\code\\smelter',
+    'C:\\code\\100%-cotton',
+    'C:\\code\\1000-monkeys',
+    'C:\\code\\report_final',
+    'C:\\code\\reportXfinal'
+  ]
+
+  async function seeded(): Promise<ProjectsStore> {
+    const { store } = newStore()
+    let at = 1_000
+    for (const path of NAMES) {
+      value(await store.upsertObserved({ path, at: (at += 1_000) }))
+    }
+    return store
+  }
+
+  async function found(store: ProjectsStore, nameContains: string): Promise<string[]> {
+    const page = value(await store.query({ nameContains, sortBy: 'addedAt', direction: 'asc' }))
+    return page.map((project) => project.name)
+  }
+
+  it('finds an accented name from the folded term the user typed', async () => {
+    // The empirical result in #92: this LIKE matches nothing on the raw column
+    // and matches here only because name_norm was written folded.
+    expect(await found(await seeded(), 'cafeteria')).toEqual(['Cafetería-Ñandú'])
+  })
+
+  it('finds it from the accented spelling too, since both fold to the same thing', async () => {
+    expect(await found(await seeded(), 'Cafetería')).toEqual(['Cafetería-Ñandú'])
+  })
+
+  it('ignores the case that was typed', async () => {
+    expect(await found(await seeded(), 'CAFETERÍA')).toEqual(['Cafetería-Ñandú'])
+  })
+
+  it('matches a substring that is not a prefix, which is why this is not FTS5', async () => {
+    // "typing `ontein` finds `container`" — the stated requirement, and the
+    // whole reason option 1 was chosen. A token index would return nothing.
+    expect(await found(await seeded(), 'ontain')).toEqual(['Contáiner'])
+  })
+
+  it('matches inside a folded accented word, not only around it', async () => {
+    // 'Ñandú' folds to 'nandu', so this substring only exists after the fold.
+    expect(await found(await seeded(), 'andu')).toEqual(['Cafetería-Ñandú'])
+  })
+
+  it('treats a typed percent sign as a literal instead of a wildcard', async () => {
+    // The classic hole. Unescaped, this term becomes the pattern '%100%%' and
+    // matches '1000-monkeys' as well — a search for one project returning two.
+    expect(await found(await seeded(), '100%')).toEqual(['100%-cotton'])
+  })
+
+  it('treats a typed underscore as a literal instead of any-single-character', async () => {
+    // Unescaped, 'report_final' would also match 'reportXfinal'.
+    expect(await found(await seeded(), 'report_final')).toEqual(['report_final'])
+  })
+
+  it('answers a term containing the escape character instead of failing on it', async () => {
+    // A lone backslash left unescaped is a dangling escape sequence, which is a
+    // malformed pattern rather than a search. A project name can never contain
+    // one — it is a path segment — so the honest answer is no matches, and the
+    // thing being pinned is that SQLite is handed something it can run.
+    const store = await seeded()
+    expect(await found(store, 'a\\b')).toEqual([])
+    expect(await found(store, '\\')).toEqual([])
+  })
+
+  it('returns every project when the term is blank', async () => {
+    expect(await found(await seeded(), '   ')).toHaveLength(NAMES.length)
+  })
+})
+
+describe('projects store — filtering by tier (#92)', () => {
+  async function tiers(store: ProjectsStore, tier: MineTier): Promise<string[]> {
+    const page = value(await store.query({ tier, sortBy: 'addedAt', direction: 'asc' }))
+    return page.map((project) => project.name)
+  }
+
+  it('returns the projects measured at that tier', async () => {
+    const { store } = newStore()
+    value(await store.upsertObserved({ path: PATH, at: 1_000, knownTier: 'gold' }))
+    value(await store.upsertObserved({ path: OTHER, at: 2_000, knownTier: 'silver' }))
+    expect(await tiers(store, 'gold')).toEqual(['Cafetería-Ñandú'])
+    expect(await tiers(store, 'silver')).toEqual(['smelter'])
+  })
+
+  it('never matches an unmeasured project, bronze included (#41)', async () => {
+    const { store } = newStore()
+    // Declared and never walked: known_tier is NULL. tierOf() would draw this
+    // mound as a provisional bronze, but that placeholder was never stored and
+    // must not answer a filter — a bronze filter that swept up every project
+    // nobody has measured is exactly the mistake #41 exists to prevent.
+    value(await store.declare({ path: PATH, at: 1_000 }))
+    value(await store.upsertObserved({ path: OTHER, at: 2_000, knownTier: 'bronze' }))
+
+    expect(await tiers(store, 'bronze')).toEqual(['smelter'])
+    for (const tier of ['copper', 'silver', 'gold', 'uranium'] as const) {
+      expect(await tiers(store, tier)).toEqual([])
+    }
+  })
+
+  it('combines the tier filter with the name search', async () => {
+    const { store } = newStore()
+    value(await store.upsertObserved({ path: PATH, at: 1_000, knownTier: 'gold' }))
+    value(await store.upsertObserved({ path: 'C:\\code\\Cafetería-Dos', at: 2_000 }))
+
+    const page = value(
+      await store.query({
+        tier: 'gold',
+        nameContains: 'cafeteria',
+        sortBy: 'addedAt',
+        direction: 'asc'
+      })
+    )
+    expect(page.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+  })
+})
+
+describe('projects store — ordering (#92)', () => {
+  it('sorts by when the project was added, in both directions', async () => {
+    const { store } = newStore()
+    value(await store.upsertObserved({ path: PATH, at: 1_000 }))
+    value(await store.upsertObserved({ path: OTHER, at: 2_000 }))
+
+    const desc = value(await store.query({ sortBy: 'addedAt', direction: 'desc' }))
+    expect(desc.map((project) => project.addedAt)).toEqual([2_000, 1_000])
+    const asc = value(await store.query({ sortBy: 'addedAt', direction: 'asc' }))
+    expect(asc.map((project) => project.addedAt)).toEqual([1_000, 2_000])
+  })
+
+  it('sorts by when the project was last opened, in both directions', async () => {
+    const { store } = newStore()
+    value(await store.upsertObserved({ path: PATH, at: 5_000 }))
+    value(await store.upsertObserved({ path: OTHER, at: 9_000 }))
+
+    const desc = value(await store.query({ sortBy: 'lastOpenedAt', direction: 'desc' }))
+    expect(desc.map((project) => project.lastOpenedAt)).toEqual([9_000, 5_000])
+    const asc = value(await store.query({ sortBy: 'lastOpenedAt', direction: 'asc' }))
+    expect(asc.map((project) => project.lastOpenedAt)).toEqual([5_000, 9_000])
+  })
+
+  it('puts a project nobody has opened last by recency, and first by the reverse', async () => {
+    const { store } = newStore()
+    // Declared, never worked: last_opened_at is NULL, and SQLite sorts NULL
+    // below every number. "Most recently worked first" then ends with the ones
+    // never worked, which is the right reading of the order the user asked for.
+    value(await store.declare({ path: PATH, at: 1_000 }))
+    value(await store.upsertObserved({ path: OTHER, at: 2_000 }))
+
+    const desc = value(await store.query({ sortBy: 'lastOpenedAt', direction: 'desc' }))
+    expect(desc.map((project) => project.name)).toEqual(['smelter', 'Cafetería-Ñandú'])
+    const asc = value(await store.query({ sortBy: 'lastOpenedAt', direction: 'asc' }))
+    expect(asc.map((project) => project.name)).toEqual(['Cafetería-Ñandú', 'smelter'])
+  })
+
+  it('breaks a tie on the id, so the order is total and a page cannot shuffle', async () => {
+    const { store } = newStore()
+    // Same millisecond: without the id tiebreak SQLite may return these in
+    // either order, and paging over a partial order skips rows.
+    for (const path of ['C:\\code\\zinc', 'C:\\code\\alum', 'C:\\code\\mica']) {
+      value(await store.upsertObserved({ path, at: 4_000 }))
+    }
+
+    const ids = value(await store.query({ sortBy: 'addedAt', direction: 'desc' })).map(
+      (project) => project.id
+    )
+    expect(ids).toEqual([...ids].sort())
+    // And the same answer again, rather than a fresh shuffle.
+    expect(
+      value(await store.query({ sortBy: 'addedAt', direction: 'desc' })).map(
+        (project) => project.id
+      )
+    ).toEqual(ids)
+  })
+})
+
+describe('projects store — paging (#92)', () => {
+  async function paged(): Promise<ProjectsStore> {
+    const { store } = newStore()
+    for (let index = 0; index < 5; index += 1) {
+      value(await store.upsertObserved({ path: `C:\\code\\seam-${index}`, at: 1_000 + index }))
+    }
+    return store
+  }
+
+  it('returns one page at a time, and the next page continues where it stopped', async () => {
+    const store = await paged()
+    const first = value(await store.query({ sortBy: 'addedAt', direction: 'asc', limit: 2 }))
+    const second = value(
+      await store.query({ sortBy: 'addedAt', direction: 'asc', limit: 2, offset: 2 })
+    )
+    expect(first.map((project) => project.name)).toEqual(['seam-0', 'seam-1'])
+    expect(second.map((project) => project.name)).toEqual(['seam-2', 'seam-3'])
+  })
+
+  it('runs off the end of the table as an empty page, not as a failure', async () => {
+    const store = await paged()
+    expect(
+      value(await store.query({ sortBy: 'addedAt', direction: 'asc', limit: 2, offset: 99 }))
+    ).toEqual([])
+  })
+
+  it('caps a limit that asks for more than one page can hold', async () => {
+    const store = await paged()
+    const page = value(
+      await store.query({ sortBy: 'addedAt', direction: 'asc', limit: Number.MAX_SAFE_INTEGER })
+    )
+    // Clamped, and the clamp is above this fixture, so every row still arrives.
+    expect(page).toHaveLength(5)
+  })
+})
+
 describe('projects store — failures the app must not mistake for emptiness', () => {
   it('reports a locked database rather than an empty project list', async () => {
     const sqlite = new MemoryWritableSqlite()
@@ -267,6 +493,21 @@ describe('projects store — failures the app must not mistake for emptiness', (
     expect(await store.declare({ path: PATH, at: 1 })).toMatchObject({
       ok: false,
       failure: 'unavailable'
+    })
+  })
+
+  it('reports a refused query rather than answering it with no matches (#92)', async () => {
+    // A search that finds nothing and a database that will not open are both
+    // zero rows, and the second must never be shown as the first: a user typing
+    // into a browse surface would read it as "that project is gone".
+    const sqlite = new MemoryWritableSqlite()
+    sqlite.failWith('locked')
+    const { store } = newStore(sqlite)
+    expect(
+      await store.query({ nameContains: 'cafeteria', sortBy: 'addedAt', direction: 'asc' })
+    ).toMatchObject({
+      ok: false,
+      failure: 'locked'
     })
   })
 
