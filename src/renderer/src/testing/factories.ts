@@ -1,5 +1,5 @@
 import { emptyMaterialTotals } from '../lib/vault/vault'
-import type { Dwarf, MaterialTotals, Mine } from '../types'
+import type { Dwarf, MaterialTotals, Mine, ProjectSummary } from '../types'
 
 /**
  * Deterministic material breakdown for renderer tests: every material at zero
@@ -37,6 +37,26 @@ export function defaultMine(overrides: Partial<Mine> = {}): Mine {
     // panel without a breakdown is not a state the renderer has to handle.
     materials: defaultMaterials(),
     updatedAt: 0,
+    ...overrides
+  }
+}
+
+/**
+ * Deterministic project fixture for renderer tests (#92).
+ *
+ * Neither `knownTier` nor `lastOpenedAt` is stamped by default, because both
+ * are genuinely absent for most rows: a project nobody has walked has no
+ * measured tier, and a project the user declared and no agent was seen in has
+ * never been opened. A test that wants either says so.
+ */
+export function defaultProject(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
+  return {
+    id: 'C:/dev/sample',
+    path: 'C:/dev/sample',
+    name: 'sample',
+    declared: false,
+    addedAt: 0,
+    live: false,
     ...overrides
   }
 }
