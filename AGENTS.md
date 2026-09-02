@@ -23,17 +23,18 @@ does not — mostly things that have already gone wrong at least once.
 
 <!-- BEGIN GENERATED: skill-catalogue -->
 
-| Skill                                                  | What it covers                                                                                                                      |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| [`config-layering`](skills/config-layering/SKILL.md)   | The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value    |
-| [`platform-ports`](skills/platform-ports/SKILL.md)     | How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host                              |
-| [`privacy-guard`](skills/privacy-guard/SKILL.md)       | Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in                    |
-| [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building            |
-| [`simulated-valley`](skills/simulated-valley/SKILL.md) | The development-only simulated provider, for seeing the panel under load without launching real agent sessions                      |
-| [`skill-creator`](skills/skill-creator/SKILL.md)       | How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all                          |
-| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating the skill catalogue and the imperative auto-invoke table in AGENTS.md from skill frontmatter                           |
-| [`tdd`](skills/tdd/SKILL.md)                           | The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here                        |
-| [`test-safety`](skills/test-safety/SKILL.md)           | Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud |
+| Skill                                                  | What it covers                                                                                                                                                  |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`config-layering`](skills/config-layering/SKILL.md)   | The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value                                |
+| [`platform-ports`](skills/platform-ports/SKILL.md)     | How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host                                                          |
+| [`privacy-guard`](skills/privacy-guard/SKILL.md)       | Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in                                                |
+| [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building                                        |
+| [`simulated-valley`](skills/simulated-valley/SKILL.md) | The development-only simulated provider, for seeing the panel under load without launching real agent sessions                                                  |
+| [`skill-creator`](skills/skill-creator/SKILL.md)       | How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all                                                      |
+| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating the skill catalogue and the imperative auto-invoke table in AGENTS.md from skill frontmatter                                                       |
+| [`tdd`](skills/tdd/SKILL.md)                           | The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here                                                    |
+| [`test-safety`](skills/test-safety/SKILL.md)           | Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud                             |
+| [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             | The local design source behind the interface rebuild, the reading route through it, and the source corrections already resolved there that code must not reopen |
 
 <!-- END GENERATED: skill-catalogue -->
 
@@ -44,29 +45,32 @@ This table is the imperative form, and it is the one that binds.
 
 <!-- BEGIN GENERATED: auto-invoke -->
 
-| When you are about to…                                    | ALWAYS invoke this skill first                         |
-| --------------------------------------------------------- | ------------------------------------------------------ |
-| adding behaviour that differs per operating system        | [`platform-ports`](skills/platform-ports/SKILL.md)     |
-| adding or changing a configuration setting                | [`config-layering`](skills/config-layering/SKILL.md)   |
-| adding or changing a skill under skills/                  | [`skill-creator`](skills/skill-creator/SKILL.md)       |
-| adding or editing a test fixture                          | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
-| changing an existing test file                            | [`test-safety`](skills/test-safety/SKILL.md)           |
-| changing packaging or the release workflow                | [`release`](skills/release/SKILL.md)                   |
-| committing a screenshot or a captured terminal transcript | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
-| cutting a release or publishing installers                | [`release`](skills/release/SKILL.md)                   |
-| deleting or replacing a test                              | [`test-safety`](skills/test-safety/SKILL.md)           |
-| documenting a configuration option                        | [`config-layering`](skills/config-layering/SKILL.md)   |
-| finishing a change under skills/                          | [`skill-sync`](skills/skill-sync/SKILL.md)             |
-| fixing a bug                                              | [`tdd`](skills/tdd/SKILL.md)                           |
-| fixing a skill that is missing from a table in AGENTS.md  | [`skill-sync`](skills/skill-sync/SKILL.md)             |
-| implementing a behaviour change                           | [`tdd`](skills/tdd/SKILL.md)                           |
-| making a failing test pass                                | [`tdd`](skills/tdd/SKILL.md)                           |
-| reading process.platform or shelling out to an OS command | [`platform-ports`](skills/platform-ports/SKILL.md)     |
-| reporting that a change with tests is finished            | [`test-safety`](skills/test-safety/SKILL.md)           |
-| reproducing a layout limit that needs many sessions       | [`simulated-valley`](skills/simulated-valley/SKILL.md) |
-| verifying visual or performance behaviour at scale        | [`simulated-valley`](skills/simulated-valley/SKILL.md) |
-| writing a path, hostname or username into a tracked file  | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
-| writing down a rule an agent keeps getting wrong          | [`skill-creator`](skills/skill-creator/SKILL.md)       |
+| When you are about to…                                          | ALWAYS invoke this skill first                         |
+| --------------------------------------------------------------- | ------------------------------------------------------ |
+| adding art, icons or sprite assets for the new interface        | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
+| adding behaviour that differs per operating system              | [`platform-ports`](skills/platform-ports/SKILL.md)     |
+| adding or changing a configuration setting                      | [`config-layering`](skills/config-layering/SKILL.md)   |
+| adding or changing a skill under skills/                        | [`skill-creator`](skills/skill-creator/SKILL.md)       |
+| adding or editing a test fixture                                | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
+| changing an existing test file                                  | [`test-safety`](skills/test-safety/SKILL.md)           |
+| changing packaging or the release workflow                      | [`release`](skills/release/SKILL.md)                   |
+| committing a screenshot or a captured terminal transcript       | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
+| cutting a release or publishing installers                      | [`release`](skills/release/SKILL.md)                   |
+| deleting or replacing a test                                    | [`test-safety`](skills/test-safety/SKILL.md)           |
+| documenting a configuration option                              | [`config-layering`](skills/config-layering/SKILL.md)   |
+| finishing a change under skills/                                | [`skill-sync`](skills/skill-sync/SKILL.md)             |
+| fixing a bug                                                    | [`tdd`](skills/tdd/SKILL.md)                           |
+| fixing a skill that is missing from a table in AGENTS.md        | [`skill-sync`](skills/skill-sync/SKILL.md)             |
+| implementing a behaviour change                                 | [`tdd`](skills/tdd/SKILL.md)                           |
+| implementing a screen, panel or component of the redesigned UI  | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
+| making a failing test pass                                      | [`tdd`](skills/tdd/SKILL.md)                           |
+| reading process.platform or shelling out to an OS command       | [`platform-ports`](skills/platform-ports/SKILL.md)     |
+| reporting that a change with tests is finished                  | [`test-safety`](skills/test-safety/SKILL.md)           |
+| reproducing a layout limit that needs many sessions             | [`simulated-valley`](skills/simulated-valley/SKILL.md) |
+| styling renderer UI with colors, typography, spacing or borders | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
+| verifying visual or performance behaviour at scale              | [`simulated-valley`](skills/simulated-valley/SKILL.md) |
+| writing a path, hostname or username into a tracked file        | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
+| writing down a rule an agent keeps getting wrong                | [`skill-creator`](skills/skill-creator/SKILL.md)       |
 
 <!-- END GENERATED: auto-invoke -->
 
