@@ -118,7 +118,7 @@ purpose, so that it can be earned rather than pre-built.
 ## Regenerating
 
 ```bash
-node skills/skill-sync/assets/sync.mjs             # rewrite the tables
+node skills/skill-sync/assets/sync.mjs             # rewrite the generated regions
 node skills/skill-sync/assets/sync.mjs --check     # exit 1 if stale — for CI
 node skills/skill-sync/assets/sync.mjs --dry-run   # print, change nothing
 ```
@@ -133,6 +133,8 @@ Everything below is a **hard failure**, not a warning:
 - `auto_invoke` empty — a skill in no table is a skill nobody invokes
 - an `AGENTS.md` that a scope points at but that does not exist
 - an `AGENTS.md` missing its `<!-- BEGIN GENERATED: … -->` / `<!-- END GENERATED: … -->` markers
+- `src/main` missing, which the `main-tree` region is generated from
+- a result over the 199 lines `AGENTS.md` budgets for itself
 
 That list is deliberate. In the surveyed implementation each of those was a warning that let the
 run exit 0, and the observed result was skills that existed, looked registered, and appeared in no
