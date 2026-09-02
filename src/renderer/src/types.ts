@@ -43,6 +43,7 @@ export type {
  * import statement across (#77).
  */
 export {
+  DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
@@ -50,6 +51,7 @@ export {
   MINE_TIERS,
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowMs,
+  isDwarfProvider,
   isMineTier
 } from '../../shared/contracts'
 

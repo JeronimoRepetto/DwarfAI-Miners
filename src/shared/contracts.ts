@@ -102,7 +102,37 @@ export const MATERIAL_TOKENS_PER_UNIT: Record<Material, number> = {
  */
 export type MaterialTotals = Record<Material, number>
 
-export type DwarfProvider = 'claude' | 'codex'
+/**
+ * Every provider identity the wire admits, and the ONE place a new one is
+ * added (issue #78).
+ *
+ * The union below is derived from this table rather than written out beside
+ * it, so the two cannot drift: adding a backend is one entry here, and the
+ * type system then names the places that owe it something — `ProviderConfigs`
+ * in main/config/config.ts will not compile without its settings block, and
+ * `PROVIDER_REGISTRY` in main/providers/registry.ts will not compile without
+ * its factory row. What the table cannot reach is the renderer's sprite art
+ * and the CSS class per provider, which is still a switch on identity and is
+ * the last of #78's four places (it waits on the UI rebuild in #105).
+ *
+ * The table is not an invitation: `CONTRIBUTING.md`'s evidence bar decides
+ * whether a third backend exists at all. This only makes the addition cheap.
+ */
+export const DWARF_PROVIDERS = ['claude', 'codex'] as const
+
+export type DwarfProvider = (typeof DWARF_PROVIDERS)[number]
+
+/**
+ * Whether an unknown value names a provider this build has.
+ *
+ * Same reason `isMineTier` is a value and not a cast: every caller is reading
+ * something it did not produce — a `last_provider` column off the user's disk,
+ * a value arriving over IPC — and an unrecognised one has to read as "no
+ * provider" rather than being passed on as a guess.
+ */
+export function isDwarfProvider(value: unknown): value is DwarfProvider {
+  return typeof value === 'string' && (DWARF_PROVIDERS as readonly string[]).includes(value)
+}
 
 export type DwarfRole = 'foreman' | 'worker'
 
