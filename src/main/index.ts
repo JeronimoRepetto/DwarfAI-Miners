@@ -1,5 +1,5 @@
 import { config as loadDotenv } from 'dotenv'
-import { app, globalShortcut, ipcMain } from 'electron'
+import { app, dialog, globalShortcut, ipcMain, type BrowserWindow } from 'electron'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
@@ -11,7 +11,9 @@ import type {
   DwarfTextResult,
   MaterialTotals,
   Mine,
-  MinesSnapshot
+  MineDeclareResult,
+  MinesSnapshot,
+  MineUndeclareResult
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 import {
@@ -32,6 +34,8 @@ import { NodeFs } from './adapters/fsLike'
 import { runCoalBackfill } from './ledger/coalBackfill'
 import { createLedgerStore } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
+import { openProjectsStore } from './projects/openProjectsStore'
+import { PROJECTS_DB_FILENAME, type ProjectsStore } from './projects/projectsStore'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
 import { createShortcutPreferenceStore } from './shell/shortcutPreference'
@@ -48,6 +52,8 @@ import {
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
+/** Held at module scope so the quit handler can close the database handle. */
+let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
 let toggleShortcut: ToggleShortcutController | null = null
 
@@ -73,6 +79,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
+  ipcMain.removeHandler(IPC_CHANNELS.declareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
 }
 
 /**
@@ -97,6 +105,21 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+/**
+ * Open the operating system's folder picker (#85) — the first use of Electron's
+ * `dialog` anywhere in this app.
+ *
+ * Owned by the panel window so it comes up in front of an always-on-top panel
+ * rather than behind it, and so the two cannot be interacted with at once. The
+ * renderer never reaches this: it asks on `mine:declare`, and the path exists
+ * only inside main.
+ */
+async function chooseProjectDirectory(parent: BrowserWindow): Promise<string | null> {
+  const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'] })
+  if (result.canceled) return null
+  return result.filePaths[0] ?? null
 }
 
 /**
@@ -182,20 +205,40 @@ async function init(): Promise<void> {
   })
   await ledger.load()
 
+  // Every project the app has been shown (#93), the fifth userData file and
+  // the first that is a database rather than a document. The path is injected
+  // for the same reason the ledger's is: the store imports no Electron.
+  //
+  // A null here is a state, not a failure to handle later. The store refuses
+  // loudly by design — a locked or corrupt database answers with a reason
+  // instead of an empty list — and this is the one place that can turn that
+  // refusal into a panel missing its declared mines rather than an app that
+  // will not start. openProjectsStore logs the reason once.
+  projects = await openProjectsStore({
+    filePath: join(app.getPath('userData'), PROJECTS_DB_FILENAME),
+    warn: (message) => console.warn(message)
+  })
+
   runtime = new AgentRuntime({
     config,
     ledger,
+    projects,
     appPaths: {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath()
     },
+    chooseDirectory: () => chooseProjectDirectory(mainWindow),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => {
       if (!mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials))
       }
     }
   })
+  // Before the loop starts, exactly as the ledger is loaded before the runtime
+  // exists: the first published poll then already carries the user's own mines
+  // instead of drawing an empty valley and filling it a moment later.
+  await runtime.loadDeclared()
   runtime.start()
 
   // The historical coal pile, produced once and never again (see #22).
@@ -341,6 +384,28 @@ async function init(): Promise<void> {
     return runtime?.kickDwarf(request) ?? notKicked
   })
 
+  // Adding and removing a user-declared mine (#85). declare takes no payload:
+  // the folder picker runs here, so there is no path for the renderer to send
+  // and none to validate. Both refusals below are what a runtime that never
+  // came up would say, phrased for the panel rather than left silent.
+  const notDeclared: MineDeclareResult = {
+    declared: false,
+    reason: 'The panel is still starting up.'
+  }
+  const notUndeclared: MineUndeclareResult = {
+    outcome: 'failed',
+    reason: 'The panel is still starting up.'
+  }
+  ipcMain.handle(IPC_CHANNELS.declareMine, () => runtime?.declareMine() ?? notDeclared)
+  ipcMain.handle(IPC_CHANNELS.undeclareMine, (_event, mineId: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing,
+    // and says so rather than resolving as a removal that never happened.
+    if (typeof mineId !== 'string' || mineId === '') {
+      return { outcome: 'unchanged', reason: 'No mine was named.' } satisfies MineUndeclareResult
+    }
+    return runtime?.undeclareMine(mineId) ?? notUndeclared
+  })
+
   // The panel watched a kicked agent stop (#46). One-way: main decides what
   // that costs the dwarf, and the answer travels back on the next poll.
   ipcMain.on(IPC_CHANNELS.retireDwarf, (_event, dwarfId: unknown) => {
@@ -373,6 +438,11 @@ if (!app.requestSingleInstanceLock()) {
     // non-blocking error.
     void hooks?.shutdown()
     hooks = null
+    // Releases the database handle. Whatever the last poll observed has already
+    // been written or has already missed its window; there is nothing buffered
+    // here for a final flush to save, unlike the ledger above.
+    void projects?.close()
+    projects = null
     removeIpcHandlers()
     markQuitting()
   })

@@ -6,7 +6,9 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
+  MineDeclareResult,
   MinesSnapshot,
+  MineUndeclareResult,
   ShortcutState
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
@@ -55,6 +57,22 @@ export interface DwarfAiMinersApi {
    * the panel's version the one Electron reports for the running process.
    */
   getAppBuild: () => Promise<AppBuild>
+  /**
+   * Ask main to open the OS folder picker and adopt the chosen folder as a
+   * mine (#85).
+   *
+   * No argument, by design: the picker runs in main, so the renderer asks for a
+   * mine and never names a directory. Resolves with main's verdict, including
+   * the reason when nothing was added — the panel must be able to say why.
+   */
+  declareMine: () => Promise<MineDeclareResult>
+  /**
+   * Undo a declaration, by MINE ID and never by path — the id is what both
+   * processes already agree on, and a path would be a second key to keep in
+   * step. A mine a session is still working reverts to a discovered one rather
+   * than disappearing, which is what the resolved outcome distinguishes.
+   */
+  undeclareMine: (mineId: string) => Promise<MineUndeclareResult>
 }
 
 const api: DwarfAiMinersApi = {
@@ -86,7 +104,12 @@ const api: DwarfAiMinersApi = {
   // string BEFORE it crosses, so main's boundary check only reasons about one.
   retireDwarf: (dwarfId) =>
     ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : ''),
-  getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild)
+  getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild),
+  declareMine: () => ipcRenderer.invoke(IPC_CHANNELS.declareMine),
+  // Same discipline as retireDwarf: collapse anything that is not a string
+  // BEFORE it crosses, so main's boundary check only reasons about one.
+  undeclareMine: (mineId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.undeclareMine, typeof mineId === 'string' ? mineId : '')
 }
 
 contextBridge.exposeInMainWorld('api', api)

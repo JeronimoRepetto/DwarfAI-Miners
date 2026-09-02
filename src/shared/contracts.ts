@@ -439,6 +439,17 @@ export interface Mine {
    */
   materials?: MaterialTotals
   updatedAt: number
+  /**
+   * True when the USER put this mine on the board (#85) rather than the app
+   * discovering it from a running session.
+   *
+   * Absent is the ordinary case and means discovered — the panel offers to undo
+   * a declaration only where this is true, and a mine that is both declared and
+   * currently being worked is still ONE mine carrying this flag. It is not a
+   * second identity: the id is `mineIdForPath` either way, which is what lets
+   * whatever the ledger already accrued for the path attach to it.
+   */
+  declared?: boolean
 }
 
 /**
@@ -595,6 +606,42 @@ export interface AppBuild {
   packaged: boolean
 }
 
+/**
+ * Verdict of asking main to adopt a folder as a mine (#85).
+ *
+ * There is no request payload: the OS folder picker is opened in MAIN, so the
+ * renderer asks and never names a path. A refusal always says why — a cancelled
+ * picker, a projects database that will not open — because a control that
+ * silently does nothing is indistinguishable from a broken one.
+ */
+export interface MineDeclareResult {
+  declared: boolean
+  /**
+   * The mine that now exists, when one does — the SAME id aggregation and the
+   * ledger use for that path, never a second scheme. The mine itself arrives on
+   * the next minesUpdated like every other change.
+   */
+  mineId?: string
+  /** Why nothing was added; absent exactly when `declared` is true. */
+  reason?: string
+}
+
+/**
+ * Verdict of undoing a declaration (#85). Keyed by mine id, never by path:
+ * the id is what the board, the ledger and the projects store already agree on.
+ *
+ * 'removed' means the mine leaves the board. 'reverted' means a live session is
+ * still working it, so it stays as an ordinary discovered mine — the user asked
+ * to undo their declaration, not to hide a running agent. 'unchanged' is an id
+ * the store holds no declaration for, and 'failed' is a store that refused.
+ * Neither of the last two ever removes anything, and both carry a reason.
+ */
+export interface MineUndeclareResult {
+  outcome: 'removed' | 'reverted' | 'unchanged' | 'failed'
+  /** Why nothing changed; absent exactly when the outcome is 'removed' or 'reverted'. */
+  reason?: string
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -629,5 +676,17 @@ export const IPC_CHANNELS = {
    * version cannot change while the process lives, so there is nothing to
    * push and nothing to keep in step.
    */
-  getAppBuild: 'app:build'
+  getAppBuild: 'app:build',
+  /**
+   * Adopting a folder as a mine, and undoing that (#85).
+   *
+   * declare carries NO payload in either direction beyond its verdict: the
+   * native folder picker is opened in main, so the renderer asks for one and
+   * never chooses, names or even sees a path it did not already receive on a
+   * mine. undeclare carries a mine id and never a path, for the same reason
+   * every other dwarf channel does — the id is the thing both sides already
+   * agree on, and a path would be a second key to keep in step.
+   */
+  declareMine: 'mine:declare',
+  undeclareMine: 'mine:undeclare'
 } as const

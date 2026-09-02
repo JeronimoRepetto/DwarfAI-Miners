@@ -13,13 +13,18 @@ import {
   type DwarfTextResult,
   type MaterialTotals,
   type Mine,
+  type MineDeclareResult,
   type MineTier,
+  type MineUndeclareResult,
   type TextDeliveryChannel
 } from '../domain/types'
+import { mergeDeclaredMines, type DeclaredProject } from '../domain/aggregate'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
 import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
+import { ProjectObserver } from '../projects/projectObserver'
+import type { ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
 import { ClaudeProvider } from '../providers/claude/claudeProvider'
@@ -43,6 +48,21 @@ const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_KICK_CHANNEL = "This session type can't be canceled yet."
+
+/**
+ * Refusals for adding and removing a mine (#85), phrased for the panel.
+ *
+ * Every one of them is stated rather than swallowed: the control that triggers
+ * them is a button the user just pressed, and a button that sometimes does
+ * nothing at all reads as broken rather than as declined.
+ */
+const NO_PROJECT_STORE = "The projects database didn't open, so mines can't be added right now."
+const NO_PICKER = "This build can't open a folder picker."
+const PICKER_FAILED = 'The folder picker could not be opened.'
+const NO_FOLDER_CHOSEN = 'No folder was chosen.'
+const DECLARE_FAILED = 'That folder could not be saved as a mine.'
+const UNDECLARE_FAILED = 'That mine could not be removed.'
+const NOT_DECLARED = 'That mine is not one you added.'
 
 /**
  * Fixed instructions Kick delivers over the relay tier. Never user text, so
@@ -143,6 +163,23 @@ export interface RuntimeOptions {
    * the ambient environment; defaults to `process.env`.
    */
   simulationEnv?: ConfigEnv
+  /**
+   * Every project the app remembers (#93), or null when its database refused
+   * to open. Null is a real state rather than an error: index.ts turns a
+   * locked, corrupt or unknown-schema store into one, and the panel goes on
+   * showing discovered mines without it. Omitted has the same effect.
+   */
+  projects?: ProjectsStore | null
+  /**
+   * Opens the operating system's folder picker and resolves with the chosen
+   * directory, or null when the user closed it (#85).
+   *
+   * Injected exactly as `focus` and `launchTerminal` are, and for the same
+   * reason: this module knows no Electron, and `dialog` is Electron's. Absent
+   * means the app has no picker to offer, which is a refusal with a reason —
+   * never a silently missing control.
+   */
+  chooseDirectory?: () => Promise<string | null>
 }
 
 /**
@@ -162,6 +199,27 @@ export class AgentRuntime {
   private readonly publishGate = new PublishGate()
   /** Owns both the 'leaving' grace window and the retirement record (#46). */
   private readonly lifecycle: DwarfLifecycleTracker
+  /** Null whenever the projects database will not open, or a demo is running. */
+  private readonly projects: ProjectsStore | null
+  /** Writes a row per observed project, throttled (#93); null without a store. */
+  private readonly projectObserver: ProjectObserver | null
+  /**
+   * Serializes the fire-and-forget project writes, and is what settleProjects()
+   * hands back. The poll loop must never await a disk write, so without this
+   * there is nothing a test can wait on and no ordering between two polls.
+   */
+  private projectWrites: Promise<void> = Promise.resolve()
+  /** Opens the OS folder picker; null when this build was given none. */
+  private readonly chooseDirectory: (() => Promise<string | null>) | null
+  /**
+   * The projects the user declared, as of the last read of the store (#85).
+   *
+   * Cached because the poll loop is synchronous and the store is not, and
+   * because re-reading a table on a two-second interval to learn something that
+   * changes only when the user clicks would be the same mistake the observer's
+   * throttle exists to avoid. Refreshed on load and after every declaration.
+   */
+  private declared: DeclaredProject[] = []
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -274,6 +332,29 @@ export class AgentRuntime {
     const confirmedTierOf = simulation
       ? (mine: Mine): MineTier | undefined => simulation.knownTierOf(mine.path)
       : (mine: Mine): MineTier | undefined => tiers.knownTierOf(mine.path)
+    /*
+     * A demo must never write into real persistence (#42), and the reasoning
+     * is the ledger's one line for line: the store index.ts handed in is
+     * dropped on the floor for the whole simulated run. It is also narrower
+     * here — /simulated-valley/... is not a project on anybody's disk, so a row
+     * for one would be a false memory rather than merely a phantom total, and
+     * the declared mines a real user added must not be shown inside a demo
+     * whose whole point is that its valley is invented.
+     */
+    this.projects = simulation ? null : (options.projects ?? null)
+    this.chooseDirectory = options.chooseDirectory ?? null
+    this.projectObserver =
+      this.projects === null
+        ? null
+        : new ProjectObserver({
+            store: this.projects,
+            // knownTierOf, exactly as the ledger below: the column takes a
+            // MEASURED tier only, and mine.tier is a provisional bronze until
+            // the project's first walk finishes (#41).
+            knownTierOf: confirmedTierOf,
+            onError: (message, detail) => console.warn(message, detail)
+          })
+
     const lifecycle = new DwarfLifecycleTracker({
       graceMs: options.config.dwarfLeaveGraceS * 1_000,
       now: options.now
@@ -283,8 +364,14 @@ export class AgentRuntime {
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
       tierOf,
-      onUpdate: (mines) => {
+      onUpdate: (rawMines) => {
         const now = this.now()
+        // The board is discovery PLUS declaration (#85), and this is the one
+        // place that knows it — aggregateMines stays a projection of the
+        // snapshots alone. Merged before the lifecycle and the ledger see it,
+        // so a declared mine is stamped with its persisted material like any
+        // other and a crew arriving in one lands in the mine already there.
+        const mines = mergeDeclaredMines(rawMines, this.declared, tierOf)
         // Accrual happens on the lifecycle's output, which is exactly what
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
@@ -322,6 +409,12 @@ export class AgentRuntime {
         // Throttled inside the ledger, and deliberately not awaited: the panel
         // must never wait on a disk write to see its dwarfs move.
         void this.ledger.save(now)
+        // Same discipline for the projects store, and on the published list so
+        // a mine held back by the grace window is judged by what the panel was
+        // actually shown. Throttled inside the observer for the reason the
+        // ledger throttles: node:sqlite is synchronous and this is the thread
+        // the panel paints from.
+        this.recordProjects(published, now)
       },
       logError: (message, error) => console.warn(message, error)
     })
@@ -347,6 +440,130 @@ export class AgentRuntime {
   /** The whole vault by material, including projects with no crew right now. */
   materialTotals(): MaterialTotals {
     return this.ledger.totals()
+  }
+
+  /**
+   * Read the declarations already on disk into the cache the poll loop merges
+   * from (#85).
+   *
+   * Awaited by index.ts BEFORE start(), exactly as the ledger is loaded before
+   * the runtime exists: the very first published poll then already carries the
+   * user's mines instead of drawing an empty valley and filling it a moment
+   * later. Never throws — a store that refuses leaves the cache as it was.
+   */
+  async loadDeclared(): Promise<void> {
+    const store = this.projects
+    if (store === null) return
+    const result = await store.list()
+    if (!result.ok) {
+      console.warn(
+        `[projects] Could not read the declared mines (${result.failure}):`,
+        result.message
+      )
+      return
+    }
+    // Keeping the previous cache on a failure rather than emptying it: a
+    // momentary lock must not sweep the user's mines off the board.
+    this.declared = result.value
+      .filter((project) => project.origin === 'declared')
+      .map((project) => ({
+        path: project.path,
+        // null means never measured, and mergeDeclaredMines falls back to the
+        // provisional tier for drawing (#41).
+        ...(project.knownTier === null ? {} : { knownTier: project.knownTier })
+      }))
+  }
+
+  /**
+   * Adopt a folder the user picks as a mine (#85).
+   *
+   * The picker is opened HERE, in the main process, and the renderer only asks:
+   * a channel that accepted a path would be a channel that accepts any path.
+   * Every refusal carries a reason, because an Add button that sometimes does
+   * nothing is indistinguishable from one that is broken.
+   */
+  async declareMine(): Promise<MineDeclareResult> {
+    const store = this.projects
+    // Asked before the picker on purpose: making the user choose a folder and
+    // then dropping it is worse than refusing before they start.
+    if (store === null) return { declared: false, reason: NO_PROJECT_STORE }
+    if (this.chooseDirectory === null) return { declared: false, reason: NO_PICKER }
+
+    let path: string | null
+    try {
+      path = await this.chooseDirectory()
+    } catch (error) {
+      console.warn('[projects] The folder picker failed', error)
+      return { declared: false, reason: PICKER_FAILED }
+    }
+    if (path === null || path.trim() === '') return { declared: false, reason: NO_FOLDER_CHOSEN }
+
+    const result = await store.declare({ path, at: this.now() })
+    if (!result.ok) {
+      console.warn(`[projects] Could not add a mine (${result.failure}):`, result.message)
+      return { declared: false, reason: DECLARE_FAILED }
+    }
+
+    await this.loadDeclared()
+    // AWAITED rather than nudged. Both reuse the same already-tested scan path
+    // and neither can produce a state the next ordinary poll would not have,
+    // but a nudge leaves its scan in flight, and the poller drops an
+    // overlapping tick — so the panel could ask for the mines, be answered from
+    // the board this very declaration is not on yet, and sit on it until the
+    // interval came round. The user has just spent seconds in a folder picker;
+    // one scan is not the cost worth saving here.
+    await this.refresh()
+    return { declared: true, mineId: result.value.id }
+  }
+
+  /**
+   * Undo a declaration, by mine id and never by path (#85).
+   *
+   * The ledger is never touched: the ore that mine produced is history, and
+   * history is immutable here (#22). A mine a session is still working simply
+   * goes back to being a discovered one — the user asked to undo their
+   * declaration, not to hide a running agent.
+   */
+  async undeclareMine(mineId: string): Promise<MineUndeclareResult> {
+    const store = this.projects
+    if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
+
+    const result = await store.removeDeclared(mineId)
+    if (!result.ok) {
+      console.warn(`[projects] Could not remove a mine (${result.failure}):`, result.message)
+      return { outcome: 'failed', reason: UNDECLARE_FAILED }
+    }
+    if (result.value === 'unchanged') return { outcome: 'unchanged', reason: NOT_DECLARED }
+
+    await this.loadDeclared()
+    // Awaited for the reason declareMine's rescan is.
+    await this.refresh()
+    return { outcome: result.value === 'removed' ? 'removed' : 'reverted' }
+  }
+
+  /**
+   * Resolve once every project write this poll started has finished.
+   *
+   * A test seam, mirroring TierService.settle(): the writes are deliberately
+   * not awaited by the poll loop, so a test that asserted on the store right
+   * after refresh() would be racing them.
+   */
+  async settleProjects(): Promise<void> {
+    await this.projectWrites
+  }
+
+  /**
+   * Queue one poll's worth of project observations behind the last (#93).
+   *
+   * Serialized rather than fired in parallel because node:sqlite is
+   * synchronous: two overlapping polls would interleave writes on the main
+   * thread for no benefit, and the throttle's own bookkeeping assumes the
+   * previous decision has been made.
+   */
+  private recordProjects(mines: Mine[], now: number): void {
+    const observer = this.projectObserver
+    if (observer === null) return
+    this.projectWrites = this.projectWrites.then(() => observer.observe(mines, now))
   }
 
   /** Execute a deterministic scan for IPC/tests without starting an interval. */
