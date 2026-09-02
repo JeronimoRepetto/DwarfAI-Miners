@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
-import type { AppConfig, ConfigEnv } from '../config/config'
+import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import {
   MAX_DWARF_TEXT_CHARS,
@@ -44,9 +44,8 @@ import {
   runLaunchProcess,
   type SessionLauncher
 } from '../sessionLaunch/launchRunner'
-import { ClaudeProvider } from '../providers/claude/claudeProvider'
-import { CodexProvider } from '../providers/codex/codexProvider'
 import type { Provider } from '../providers/provider'
+import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
@@ -169,6 +168,16 @@ export interface RuntimeOptions {
   /** Read-only SQLite access for the Codex registry; injected for tests. */
   sqlite?: SqliteLike
   providers?: Provider[]
+  /**
+   * Which providers to build, instead of the real registry (#78).
+   *
+   * Injected for tests, and narrower than `providers` above on purpose: that
+   * one hands the runtime finished providers and skips the composition
+   * entirely, while this one goes THROUGH it — the context, the config blocks,
+   * the expanded paths — which is what makes "registering a provider is one
+   * entry" a claim a test can hold this file to.
+   */
+  providerRegistry?: ProviderRegistry
   focus?: (pid: number) => Promise<boolean>
   /** Electron packaging info, used only to resolve the transcript-viewer script path. */
   appPaths?: ViewerPathOptions
@@ -297,12 +306,11 @@ export class AgentRuntime {
         relayModel: options.config.sendTextRelayModel,
         relayTimeoutMs: options.config.sendTextTimeoutS * 1_000,
         // CLI detection (#91) reads the same fs the providers do, and honours an
-        // explicit override path per CLI; blank means "detect it".
+        // explicit override path per CLI; blank means "detect it". Derived from
+        // the provider blocks (#78), so a backend added to the table has its
+        // override honoured here without a line of its own.
         fs,
-        cliOverrides: {
-          ...(options.config.claudeCliPath === '' ? {} : { claude: options.config.claudeCliPath }),
-          ...(options.config.codexCliPath === '' ? {} : { codex: options.config.codexCliPath })
-        }
+        cliOverrides: cliOverridesFrom(options.config)
       })
 
     this.now = options.now ?? Date.now
@@ -320,27 +328,21 @@ export class AgentRuntime {
       warn: (message) => console.warn(message)
     })
 
-    const realProviders = (): Provider[] => [
-      new ClaudeProvider({
-        fs,
-        roots: options.config.claudeConfigDirs.map((path) => expandHomePath(path, home)),
-        // The pid-reuse guard's source of truth: a registry entry only counts
-        // as alive when the pid's real creation time matches its procStart.
-        processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid)
-      }),
-      new CodexProvider({
-        isCodexProcessRunning: () => platform.processProbe.isCodexProcessRunning(),
-        fs,
-        sessionsRoot: expandHomePath(options.config.codexSessionsRoot, home),
-        livenessWindowS: options.config.codexLivenessWindowS,
-        scanDays: options.config.codexScanDays,
-        idleRetentionS: options.config.codexIdleRetentionS,
-        heartbeatWindowS: options.config.codexHeartbeatWindowS,
-        sqlite: options.sqlite ?? new NodeSqlite(),
-        stateDbPath: expandHomePath(options.config.codexStateDb, home),
-        logsDbPath: expandHomePath(options.config.codexLogsDb, home)
-      })
-    ]
+    // Every real detector, built from the registry (#78) rather than listed
+    // here: this file owns the poll loop and the wiring around it, and which
+    // backends exist is the registry's subject. Deferred behind a function
+    // because a simulated run must not construct them at all.
+    const realProviders = (): Provider[] =>
+      createProviders(
+        {
+          config: options.config,
+          fs,
+          sqlite: options.sqlite ?? new NodeSqlite(),
+          platform,
+          expandPath: (path) => expandHomePath(path, home)
+        },
+        options.providerRegistry ?? PROVIDER_REGISTRY
+      )
 
     // A simulated valley REPLACES the real detectors rather than joining them:
     // a demo that also reported the developer's own live sessions would be
