@@ -14,6 +14,11 @@ export function useView() {
     state.view = { kind: 'map' }
   }
 
+  /** The browse over every remembered project, not just the ones on the board (#92). */
+  function showMines(): void {
+    state.view = { kind: 'mines' }
+  }
+
   /** Fall back to the map when the currently open mine no longer exists. */
   function syncWithMines(mineIds: readonly string[]): void {
     if (state.view.kind === 'mine' && !mineIds.includes(state.view.mineId)) showMap()
@@ -23,5 +28,5 @@ export function useView() {
     Object.assign(state, defaultViewState())
   }
 
-  return { state, openMine, showMap, syncWithMines, clear }
+  return { state, openMine, showMap, showMines, syncWithMines, clear }
 }

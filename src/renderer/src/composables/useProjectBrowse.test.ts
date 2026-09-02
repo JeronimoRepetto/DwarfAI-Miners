@@ -74,7 +74,9 @@ describe('useProjectBrowse paging', () => {
     const { load, loadMore } = useProjectBrowse()
     await load()
     await loadMore()
-    expect(queryProjects.mock.calls[1][0].offset).toBe(BROWSE_PAGE_SIZE)
+    expect(queryProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offset: BROWSE_PAGE_SIZE })
+    )
   })
 
   it('appends the next page rather than replacing the list', async () => {
@@ -88,7 +90,7 @@ describe('useProjectBrowse paging', () => {
     await load()
     await loadMore()
     expect(projects.value).toHaveLength(BROWSE_PAGE_SIZE + 2)
-    expect(projects.value[BROWSE_PAGE_SIZE].id).toBe(`p${BROWSE_PAGE_SIZE}`)
+    expect(projects.value.at(BROWSE_PAGE_SIZE)?.id).toBe(`p${BROWSE_PAGE_SIZE}`)
   })
 
   it('keeps paging while a page comes back full', async () => {
@@ -138,7 +140,9 @@ describe('useProjectBrowse filters', () => {
     const { load, setSearch } = useProjectBrowse()
     await load()
     await setSearch('Café')
-    expect(queryProjects.mock.calls[1][0]).toMatchObject({ nameContains: 'Café', offset: 0 })
+    expect(queryProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ nameContains: 'Café', offset: 0 })
+    )
   })
 
   it('replaces the list on a filter change rather than appending to it', async () => {
@@ -166,7 +170,7 @@ describe('useProjectBrowse filters', () => {
     stubQuery(queryProjects)
     const { setTier } = useProjectBrowse()
     await setTier('copper')
-    expect(queryProjects.mock.calls[0][0].tier).toBe('copper')
+    expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ tier: 'copper' }))
   })
 
   it('sends no tier at all for the All chip', async () => {
@@ -175,7 +179,14 @@ describe('useProjectBrowse filters', () => {
     const { setTier } = useProjectBrowse()
     await setTier('gold')
     await setTier(null)
-    expect('tier' in queryProjects.mock.calls[1][0]).toBe(false)
+    // Asserted as the WHOLE query, so an All chip that quietly sent a tier
+    // key with an undefined value would still fail here.
+    expect(queryProjects).toHaveBeenLastCalledWith({
+      sortBy: 'addedAt',
+      direction: 'desc',
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0
+    })
   })
 
   it('flips the date order and re-queries from the top', async () => {
@@ -185,7 +196,9 @@ describe('useProjectBrowse filters', () => {
     await load()
     await toggleDirection()
     expect(filters.value.direction).toBe('asc')
-    expect(queryProjects.mock.calls[1][0]).toMatchObject({ direction: 'asc', offset: 0 })
+    expect(queryProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ direction: 'asc', offset: 0 })
+    )
   })
 
   it('never lets a slower earlier answer overwrite a newer one', async () => {

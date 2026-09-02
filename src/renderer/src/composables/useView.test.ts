@@ -45,4 +45,29 @@ describe('useView', () => {
     syncWithMines([])
     expect(state.view).toEqual({ kind: 'map' })
   })
+
+  /* The browse over every project the app remembers, mines the board included (#92). */
+  it('opens the mines list and returns to the map', () => {
+    const { state, showMines, showMap } = useView()
+    showMines()
+    expect(state.view).toEqual({ kind: 'mines' })
+    showMap()
+    expect(state.view).toEqual({ kind: 'map' })
+  })
+
+  it('leaves the mines list open when the board changes under it', () => {
+    // The list spans projects with no session running, so a mine leaving the
+    // board says nothing about whether the browse is still worth showing.
+    const { state, showMines, syncWithMines } = useView()
+    showMines()
+    syncWithMines([])
+    expect(state.view).toEqual({ kind: 'mines' })
+  })
+
+  it('enters a mine straight from the list', () => {
+    const { state, showMines, openMine } = useView()
+    showMines()
+    openMine('m1')
+    expect(state.view).toEqual({ kind: 'mine', mineId: 'm1' })
+  })
 })
