@@ -57,7 +57,7 @@ src/
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
 │   ├── projects/    every project the app has been shown, persisted: name, dates, provenance
-│   ├── providers/   reading each agent CLI's own on-disk session state
+│   ├── providers/   reading each agent CLI's own on-disk session state, and registry.ts that composes it
 │   ├── runtime/     the poll loop: AgentRuntime, the poller, the publish gate, the profiler
 │   ├── shell/       the app as a desktop citizen: window, tray, autostart, shortcut, persisted preferences
 │   ├── textDelivery/ getting text into a running session, and knowing which channel can

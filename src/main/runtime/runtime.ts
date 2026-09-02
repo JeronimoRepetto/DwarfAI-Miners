@@ -29,9 +29,8 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
-import { ClaudeProvider } from '../providers/claude/claudeProvider'
-import { CodexProvider } from '../providers/codex/codexProvider'
 import type { Provider } from '../providers/provider'
+import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
@@ -139,6 +138,16 @@ export interface RuntimeOptions {
   /** Read-only SQLite access for the Codex registry; injected for tests. */
   sqlite?: SqliteLike
   providers?: Provider[]
+  /**
+   * Which providers to build, instead of the real registry (#78).
+   *
+   * Injected for tests, and narrower than `providers` above on purpose: that
+   * one hands the runtime finished providers and skips the composition
+   * entirely, while this one goes THROUGH it — the context, the config blocks,
+   * the expanded paths — which is what makes "registering a provider is one
+   * entry" a claim a test can hold this file to.
+   */
+  providerRegistry?: ProviderRegistry
   focus?: (pid: number) => Promise<boolean>
   /** Electron packaging info, used only to resolve the transcript-viewer script path. */
   appPaths?: ViewerPathOptions
@@ -271,27 +280,21 @@ export class AgentRuntime {
       warn: (message) => console.warn(message)
     })
 
-    const realProviders = (): Provider[] => [
-      new ClaudeProvider({
-        fs,
-        roots: options.config.providers.claude.configDirs.map((path) => expandHomePath(path, home)),
-        // The pid-reuse guard's source of truth: a registry entry only counts
-        // as alive when the pid's real creation time matches its procStart.
-        processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid)
-      }),
-      new CodexProvider({
-        isCodexProcessRunning: () => platform.processProbe.isCodexProcessRunning(),
-        fs,
-        sessionsRoot: expandHomePath(options.config.providers.codex.sessionsRoot, home),
-        livenessWindowS: options.config.providers.codex.livenessWindowS,
-        scanDays: options.config.providers.codex.scanDays,
-        idleRetentionS: options.config.providers.codex.idleRetentionS,
-        heartbeatWindowS: options.config.providers.codex.heartbeatWindowS,
-        sqlite: options.sqlite ?? new NodeSqlite(),
-        stateDbPath: expandHomePath(options.config.providers.codex.stateDb, home),
-        logsDbPath: expandHomePath(options.config.providers.codex.logsDb, home)
-      })
-    ]
+    // Every real detector, built from the registry (#78) rather than listed
+    // here: this file owns the poll loop and the wiring around it, and which
+    // backends exist is the registry's subject. Deferred behind a function
+    // because a simulated run must not construct them at all.
+    const realProviders = (): Provider[] =>
+      createProviders(
+        {
+          config: options.config,
+          fs,
+          sqlite: options.sqlite ?? new NodeSqlite(),
+          platform,
+          expandPath: (path) => expandHomePath(path, home)
+        },
+        options.providerRegistry ?? PROVIDER_REGISTRY
+      )
 
     // A simulated valley REPLACES the real detectors rather than joining them:
     // a demo that also reported the developer's own live sessions would be
