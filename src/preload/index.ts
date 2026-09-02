@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AgentLaunchRequest,
+  AgentLaunchResult,
   AppBuild,
   DwarfActivation,
   DwarfKickRequest,
@@ -45,6 +47,12 @@ export interface DwarfAiMinersApi {
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
+  /**
+   * Start a new agent session in a mine (see #86). Resolves with the verdict of
+   * the START — the dwarf itself arrives on a later minesUpdated, up to one
+   * poll interval away, so the panel must acknowledge from this and not wait.
+   */
+  launchAgent: (request: AgentLaunchRequest) => Promise<AgentLaunchResult>
   /**
    * Report that a kicked agent was SEEN stopping, so main retires the dwarf
    * (see #46). One-way by design: there is no verdict to wait for, because the
@@ -112,6 +120,15 @@ const api: DwarfAiMinersApi = {
   activateDwarf: (dwarfId) => ipcRenderer.invoke(IPC_CHANNELS.activateDwarf, dwarfId),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
   kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
+  // Same discipline as setToggleShortcut, applied field by field: a launch
+  // starts a real process, so what crosses is rebuilt here as two strings
+  // rather than forwarded whole. Anything else the caller attached — a
+  // directory, above all — is dropped before main ever sees it.
+  launchAgent: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.launchAgent, {
+      mineId: typeof request?.mineId === 'string' ? request.mineId : '',
+      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+    }),
   // Same discipline as setToggleShortcut: collapse anything that is not a
   // string BEFORE it crosses, so main's boundary check only reasons about one.
   retireDwarf: (dwarfId) =>

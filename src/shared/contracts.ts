@@ -575,6 +575,29 @@ export interface DwarfKickResult {
   error?: string
 }
 
+/** One request to start a new agent session in a mine's folder (#86). */
+export interface AgentLaunchRequest {
+  /** Which mine to start in. The id, never a path: main resolves the folder. */
+  mineId: string
+  /** The first thing to say to the new session. Capped like any delivered message. */
+  prompt: string
+}
+
+/**
+ * Verdict of one launch attempt. Never carries the prompt back, and never
+ * claims a dwarf: `launched` means a process was STARTED, not that anything is
+ * on the board. The session is discovered by the ordinary poll like every
+ * other one, so a dwarf appears up to `pollIntervalMs` later and the panel has
+ * to acknowledge the launch itself rather than waiting for the crew to change.
+ */
+export interface AgentLaunchResult {
+  launched: boolean
+  /** Which CLI the launch was for, or 'none' when it was refused before one was chosen. */
+  provider: DwarfProvider | 'none'
+  /** Human-readable reason shown in the panel when launched is false. */
+  error?: string
+}
+
 /**
  * Wire payload for both the getMines() pull and the minesUpdated push: the
  * per-mine breakdown plus the cross-mine vault total, so the panel never has
@@ -833,5 +856,11 @@ export const IPC_CHANNELS = {
    * with arguments, asked when a user types, rather than a state to keep in
    * step — so it answers on request and pushes nothing.
    */
-  queryProjects: 'projects:query'
+  queryProjects: 'projects:query',
+  /**
+   * Start a new agent session in a mine (see #86). Answers with the verdict of
+   * the START only — the dwarf itself arrives on a later minesUpdated, because
+   * the launched session is discovered by the same poll as every other one.
+   */
+  launchAgent: 'agent:launch'
 } as const
