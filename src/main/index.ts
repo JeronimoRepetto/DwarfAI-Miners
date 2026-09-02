@@ -4,6 +4,8 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
+  AgentLaunchRequest,
+  AgentLaunchResult,
   AppBuild,
   DwarfKickRequest,
   DwarfKickResult,
@@ -90,6 +92,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
+  ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
   ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
 }
@@ -108,6 +111,19 @@ function parseTextRequest(payload: unknown): DwarfTextRequest | null {
     text: record.text,
     pressEnter: record.pressEnter === true
   }
+}
+
+/**
+ * Same boundary discipline as parseTextRequest, and the prompt is never logged
+ * here either. Note what is NOT accepted: a directory. The renderer names a
+ * mine and the runtime decides which folder that is, so this channel cannot be
+ * talked into starting a process somewhere the panel is not showing.
+ */
+function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
+  return { mineId: record.mineId, prompt: record.prompt }
 }
 
 /** Same boundary discipline as parseTextRequest: kick carries no user text at all. */
@@ -474,6 +490,17 @@ async function init(): Promise<void> {
     return runtime?.kickDwarf(request) ?? notKicked
   })
 
+  const notLaunched: AgentLaunchResult = {
+    launched: false,
+    provider: 'none',
+    error: 'The agent could not be started.'
+  }
+  ipcMain.handle(IPC_CHANNELS.launchAgent, (_event, payload: unknown) => {
+    const request = parseLaunchRequest(payload)
+    if (request === null) return notLaunched
+    return runtime?.launchAgent(request) ?? notLaunched
+  })
+
   // Adding and removing a user-declared mine (#85). declare takes no payload:
   // the folder picker runs here, so there is no path for the renderer to send
   // and none to validate. Both refusals below are what a runtime that never
@@ -518,7 +545,7 @@ async function init(): Promise<void> {
   // Starting a session the panel holds, and answering what it asks (#86, #94).
   // Both refusals below are what a runtime that never came up would say,
   // phrased for the panel rather than left silent.
-  const notLaunched: HeldSessionLaunchResult = {
+  const notHeldLaunched: HeldSessionLaunchResult = {
     launched: false,
     error: 'The agent could not be started.'
   }
@@ -528,8 +555,8 @@ async function init(): Promise<void> {
   }
   ipcMain.handle(IPC_CHANNELS.launchHeldSession, (_event, payload: unknown) => {
     const request = parseHeldLaunchRequest(payload)
-    if (request === null) return notLaunched
-    return runtime?.launchHeldSession(request) ?? notLaunched
+    if (request === null) return notHeldLaunched
+    return runtime?.launchHeldSession(request) ?? notHeldLaunched
   })
   ipcMain.handle(IPC_CHANNELS.answerDwarfQuestion, (_event, payload: unknown) => {
     const request = parseAnswerRequest(payload)
