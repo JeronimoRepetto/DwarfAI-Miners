@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Regenerates the skill catalogue and the "Auto-invoke Skills" table in every
- * AGENTS.md, from the frontmatter of the skills themselves.
+ * Regenerates every AGENTS.md's three generated regions: the skill catalogue and
+ * the "Auto-invoke Skills" table, from the frontmatter of the skills themselves,
+ * and the `main/` bullet in "The tree", from the directories under `src/main`.
  *
  * Why this exists. A `Trigger:` clause in a skill's frontmatter is advisory, and
  * advisory text loses to an agent's default approach. What actually gets obeyed
@@ -44,7 +45,8 @@ const SCOPES = {
 
 const MARKERS = {
   catalogue: 'skill-catalogue',
-  autoInvoke: 'auto-invoke'
+  autoInvoke: 'auto-invoke',
+  mainTree: 'main-tree'
 }
 
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -244,6 +246,115 @@ function autoInvokeTable(skills) {
   return renderTable(['When you are about to…', 'ALWAYS invoke this skill first'], rows)
 }
 
+// ── the main/ tree bullet ──────────────────────────────────────────────────
+
+/**
+ * One phrase per subject directory under `src/main/`.
+ *
+ * The LIST is what drifts, not the wording: three branches rewrote this bullet
+ * on 2026-09-02 alone (`d4cba91`, `5dbccce`, `46a8899`), two of them in commits
+ * whose entire content was re-typing this sentence, and a fourth edit is open in
+ * #113 — because adding a directory to the app means editing a wrapped paragraph
+ * in AGENTS.md, where two branches collide on lines neither meant to touch. So
+ * the list is read off the filesystem and only the phrasing lives here (#118).
+ *
+ * Here rather than in each directory. A convention like "the first comment in
+ * the directory's most central file is its gloss" has to decide which file is
+ * central, and nothing stops that file being renamed or its comment rewritten
+ * for a different reason — the gloss would rot invisibly. This table is one
+ * reviewable place, in the generator whose output it feeds.
+ *
+ * Two absences, deliberately distinguished. An explicit `null` is a directory
+ * whose name already says everything, rendered bare and silently. A directory
+ * absent from this table altogether is NEW: it renders as its bare name too —
+ * never invisible, and never with an invented gloss — and the run reports it so
+ * the phrase gets written by a human rather than guessed by a script.
+ */
+const MAIN_TREE_GLOSSES = {
+  adapters: 'fs and sqlite seams with their fakes',
+  appDatabase: 'the one SQLite file',
+  config: null,
+  domain: 'pure rules and the type barrel',
+  hooks: 'the opt-in Claude push channel',
+  ledger: 'mined, persisted',
+  platform: 'composed once in `platformAdapters.ts`',
+  projects: null,
+  providers: 'one per agent CLI plus the simulated one',
+  runtime: 'the poll loop',
+  sessionLaunch: 'starting a session and holding one',
+  shell: 'window, tray, autostart, shortcuts',
+  textDelivery: null,
+  tier: null
+}
+
+/**
+ * The half of the bullet that is a claim about the code rather than a list of
+ * it. It is generated with the list because the two are one sentence, and a
+ * marker cannot sit in the middle of a Markdown paragraph.
+ */
+const MAIN_TREE_LEAD =
+  "- **`main/`** — `index.ts` is the composition root, and the only file that owns Electron's " +
+  '`ipcMain` and `globalShortcut`. Beside it, one directory per subject:'
+
+/**
+ * `.prettierrc.json` sets `printWidth: 100`, and Prettier's `proseWrap` default
+ * leaves prose line breaks alone — so nothing reflows this bullet for us and
+ * nothing complains either. 99 is where every hand-wrapped prose line in
+ * AGENTS.md stops today, and generated text that wraps like its neighbours is
+ * the whole point.
+ */
+const WRAP_COLUMNS = 99
+const HANGING_INDENT = '  '
+
+/**
+ * AGENTS.md's own second bullet: "It is budgeted under 200 lines, because
+ * adherence drops as it grows." A generated region is exactly the kind of thing
+ * that grows a line at a time without anyone deciding to, so the generator
+ * refuses to be the one that breaks the budget.
+ */
+const AGENTS_MAX_LINES = 199
+
+/** Greedy wrap with a hanging indent — the shape the bullet already has. */
+function wrapBullet(text) {
+  const lines = []
+  let current = ''
+  for (const word of text.split(' ')) {
+    const indent = lines.length === 0 ? '' : HANGING_INDENT
+    const candidate = current ? `${current} ${word}` : word
+    if (current && (indent + candidate).length > WRAP_COLUMNS) {
+      lines.push(indent + current)
+      current = word
+    } else {
+      current = candidate
+    }
+  }
+  if (current) lines.push((lines.length === 0 ? '' : HANGING_INDENT) + current)
+  return lines.join('\n')
+}
+
+function mainTreeDirs(repoRoot) {
+  const rel = 'src/main'
+  const abs = path.join(repoRoot, 'src', 'main')
+  if (!existsSync(abs)) {
+    throw new SkillError(rel, 'must exist — the `main-tree` region is generated from it')
+  }
+  return readdirSync(abs, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort()
+}
+
+function mainTreeBullet(dirs) {
+  const parts = dirs.map((name) => {
+    const gloss = MAIN_TREE_GLOSSES[name]
+    return gloss ? `\`${name}\` (${gloss})` : `\`${name}\``
+  })
+  return wrapBullet(`${MAIN_TREE_LEAD} ${parts.join(', ')}.`)
+}
+
+/** Directories this table has never heard of — reported, never invented for. */
+const unglossed = (dirs) => dirs.filter((name) => !(name in MAIN_TREE_GLOSSES))
+
 // ── splicing ───────────────────────────────────────────────────────────────
 
 /**
@@ -255,6 +366,13 @@ function autoInvokeTable(skills) {
  * being found, the file silently fell through to an insert path that also did
  * nothing, and the script still exited 0. Markers are unambiguous, and a
  * missing marker is an error here rather than a no-op.
+ *
+ * The blank line each side of the content is not decoration: Prettier separates
+ * an HTML comment from whatever block sits next to it, so a marker written flush
+ * against its content fails `format:check` on a file this script just wrote.
+ * That is what the `main/` bullet costs: six lines of the file's budget — two
+ * markers, the two blanks Prettier wants inside them, and two more separating
+ * them from the list items each side. Paying for it meant taking prose out.
  */
 function splice(content, id, replacement, file) {
   const begin = `<!-- BEGIN GENERATED: ${id} -->`
@@ -298,7 +416,8 @@ function main(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(
       [
-        'Regenerate the skill tables in AGENTS.md from skills/*/SKILL.md frontmatter.',
+        'Regenerate the three generated regions in AGENTS.md — the two skill tables from',
+        "skills/*/SKILL.md frontmatter, and the main/ tree bullet from src/main's directories.",
         '',
         '  --check          exit 1 if any AGENTS.md is out of date (for CI)',
         '  --dry-run        print what would be written, change nothing',
@@ -339,6 +458,19 @@ function main(argv) {
 
   const skills = loadSkills(skillsDir)
 
+  const mainDirs = mainTreeDirs(repoRoot)
+  const bare = unglossed(mainDirs)
+  if (bare.length > 0) {
+    // A warning, not a refusal: the directory is already in the app, and a bare
+    // name in the tree is honest. Only the phrase is missing, and only a human
+    // can write it.
+    console.log(
+      `  ! no gloss for ${bare.map((n) => `src/main/${n}`).join(', ')} — listed by bare name.` +
+        ' Add a phrase to `MAIN_TREE_GLOSSES` in this script, or an explicit `null` if the' +
+        ' name says everything.'
+    )
+  }
+
   const targets = Object.entries(SCOPES).filter(([scope]) => !onlyScope || scope === onlyScope)
   let stale = 0
 
@@ -358,12 +490,28 @@ function main(argv) {
     const before = raw.replace(/\r\n/g, '\n')
     let after = splice(before, MARKERS.catalogue, catalogueTable(registered), relPath)
     after = splice(after, MARKERS.autoInvoke, autoInvokeTable(registered), relPath)
+    after = splice(after, MARKERS.mainTree, mainTreeBullet(mainDirs), relPath)
+
+    // Counted on the RESULT, so the budget is checked against what would be
+    // written rather than against what is there — and checked before the write,
+    // so an over-budget file is refused rather than produced and then reported.
+    const lineCount = after.replace(/\n$/, '').split('\n').length
+    if (lineCount > AGENTS_MAX_LINES) {
+      throw new SkillError(
+        relPath,
+        `would be ${lineCount} lines, over the ${AGENTS_MAX_LINES}-line budget the file declares` +
+          " for itself. Take prose out — the file's own rule is that prose another file already" +
+          ' carries in full goes first.'
+      )
+    }
 
     if (dryRun) {
       console.log(`--- ${relPath} (dry run, ${registered.length} skill(s)) ---`)
       console.log(catalogueTable(registered))
       console.log()
       console.log(autoInvokeTable(registered))
+      console.log()
+      console.log(mainTreeBullet(mainDirs))
       continue
     }
     if (after === raw) {

@@ -10,13 +10,10 @@ does not — mostly things that have already gone wrong at least once.
 
 ## How to use this file
 
-- **This file is the single source of truth.** `CLAUDE.md` is three lines that import it; every
-  other tool reads this file directly. Nothing here is duplicated anywhere else.
-- **It is budgeted under 200 lines**, because adherence drops as it grows. Adding a section means
-  taking one out, and prose another file already carries in full goes first.
-- **The two tables below are generated** from the skills' own frontmatter by
-  `node skills/skill-sync/assets/sync.mjs`. Never hand-edit anything between a
-  `BEGIN GENERATED` marker and its `END GENERATED` marker.
+- **The single source of truth.** `CLAUDE.md` imports it; every other tool reads it directly.
+- **Budgeted under 200 lines** — a new section takes one out; duplicated prose goes first.
+- **Three regions are generated** by `node skills/skill-sync/assets/sync.mjs` — skill tables from
+  frontmatter, the `main/` tree bullet from the filesystem. Never hand-edit inside the markers.
 - [`skills/README.md`](skills/README.md) is the spec for the skills system itself.
 
 ## Skills
@@ -31,7 +28,7 @@ does not — mostly things that have already gone wrong at least once.
 | [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building                                        |
 | [`simulated-valley`](skills/simulated-valley/SKILL.md) | The development-only simulated provider, for seeing the panel under load without launching real agent sessions                                                  |
 | [`skill-creator`](skills/skill-creator/SKILL.md)       | How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all                                                      |
-| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating the skill catalogue and the imperative auto-invoke table in AGENTS.md from skill frontmatter                                                       |
+| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating AGENTS.md's three generated regions — the skill catalogue, the auto-invoke table, and the main/ tree bullet                                        |
 | [`tdd`](skills/tdd/SKILL.md)                           | The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here                                                    |
 | [`test-safety`](skills/test-safety/SKILL.md)           | Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud                             |
 | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             | The local design source behind the interface rebuild, the reading route through it, and the source corrections already resolved there that code must not reopen |
@@ -76,15 +73,9 @@ This table is the imperative form, and it is the one that binds.
 
 ## Path-scoped rules
 
-For Claude:
-`.claude/rules/coordinates.md` loads automatically when you open one of the scene or map layout
-files. It is a rule rather than a skill on purpose: you cannot add a point to either file without
-reading it first, so a read-triggered rule reaches the failure in time.
-
-For Other AI Agent:
-`.agent/rules/coordinates.md` loads automatically when you open one of the scene or map layout
-files. It is a rule rather than a skill on purpose: you cannot add a point to either file without
-reading it first, so a read-triggered rule reaches the failure in time.
+`.claude/rules/coordinates.md` (Claude) and `.agent/rules/coordinates.md` (other agent tools) load
+automatically when you open a scene or map layout file. A rule rather than a skill on purpose: you
+cannot add a point to either file without reading it first, so it reaches the failure in time.
 
 ## Rules with a scar behind them
 
@@ -99,10 +90,8 @@ commit. When a build is red, read the name of the failing step before diagnosing
 
 ## Before you report done
 
-`CONTRIBUTING.md` lists the seven checks CI runs, in CI's order; run those. One thing it does not
-ask for: **the per-file test census** for every test file you touched, using the script in
-[`test-safety`](skills/test-safety/SKILL.md). A passing suite cannot tell you what is no longer in
-it.
+Run the seven checks `CONTRIBUTING.md` lists, in CI's order — then **the per-file test census** it
+does not ask for, on every test file you touched: [`test-safety`](skills/test-safety/SKILL.md).
 
 ## Boundaries that must survive
 
@@ -159,23 +148,21 @@ reasoning, and this list is only the index. None of these is enforced by the typ
 
 ## Comments
 
-Comments state the constraint and the _why_ — never what the next line does. Match the existing
-register rather than inventing one: `contracts.ts`, `reaction.ts` and `sceneGeometry.ts` are good
-samples to read before writing any.
+Comments state the constraint and the _why_ — never what the next line does. Match the register of
+`contracts.ts`, `reaction.ts` or `sceneGeometry.ts` rather than inventing one.
 
 ## Commits
 
-Conventional commits, imperative mood, no AI attribution trailers of any kind — see
-`CONTRIBUTING.md`. One convention it does not state: the subject says what the change achieves in
-plain language and ends with its issue number — 49 of the 60 non-merge commits at `a810e42` do.
+Conventional commits, imperative mood, no AI attribution trailers — see `CONTRIBUTING.md`. One
+unstated convention: the subject says what the change achieves and ends with its issue number.
 
 ```
 fix(vault): never credit ore from a tier that is still a guess (#41)
 ```
 
-**Commit bodies are the best documentation in this repository.** Several decisions are explained
-in a commit body and nowhere else. When a document and the history disagree, the history is
-usually right — `git log --format='%B' -n 20` before trusting a claim you cannot verify in code.
+**Commit bodies are the best documentation in this repository** — several decisions live only
+there. When a document and the history disagree, the history is usually right: run
+`git log --format='%B' -n 20` before trusting a claim you cannot verify in code.
 
 ## The tree
 
@@ -185,25 +172,28 @@ adding a file. This is the index — one line per group, so you can tell what a 
 - **`shared/`** — the wire boundary: `contracts.ts`, `accelerator.ts`, `truncate.ts`. No Electron
   and no Node imports anywhere in it.
 - **`preload/`** — the one typed API surface handed to the renderer.
+
+<!-- BEGIN GENERATED: main-tree -->
+
 - **`main/`** — `index.ts` is the composition root, and the only file that owns Electron's
   `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
-  seams with their fakes), `appDatabase` (the one SQLite file), `config`, `domain` (pure rules
-  and the type barrel), `hooks` (the opt-in Claude push channel), `ledger` (mined, persisted),
-  `platform` (composed once in `platformAdapters.ts`), `projects`, `providers` (one per agent
-  CLI plus the simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session
-  and holding one), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
+  seams with their fakes), `appDatabase` (the one SQLite file), `config`, `domain` (pure rules and
+  the type barrel), `hooks` (the opt-in Claude push channel), `ledger` (mined, persisted),
+  `platform` (composed once in `platformAdapters.ts`), `projects`, `providers` (one per agent CLI
+  plus the simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session and
+  holding one), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
+
+<!-- END GENERATED: main-tree -->
+
 - **`renderer/src/`** — `components/` is thin and decides nothing, `lib/` is the framework-agnostic
   logic, and the two share the family names `map`, `scene` and `vault` on purpose. `composables/`
   is the Vue-bound state; `types.ts` is this process's barrel onto `contracts.ts`.
 
 **Where the next file goes:** name a directory for the subject it is about, never for the kind of
-module it holds — `utils/`, `helpers/`, `types/` are refused on sight. An existing subject wins
-however few files it has, and a module about the panel as a whole stays flat rather than being
-pushed into the nearest group. `src/README.md` has the four consequences that follow.
+module it holds — `utils/`, `helpers/`, `types/` are refused on sight.
 
 ## Verified versus assumed
 
-Everything above was checked against the code, in the spirit of the README's support matrix — and
-claims here have still been wrong. Writing this harness found a rule file that had inherited an
-inaccurate claim from a source comment, and several remembered details off by more than a little.
-Verify before you restate, and prefer "three call sites (four occurrences)" to "about three".
+Everything above was checked against the code — and claims here have still been wrong: one rule
+file had inherited an inaccurate claim from a source comment. Verify before you restate, and
+prefer "three call sites (four occurrences)" to "about three".

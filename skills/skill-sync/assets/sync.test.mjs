@@ -33,10 +33,33 @@ const AGENTS_TEMPLATE = `# Test
 <!-- BEGIN GENERATED: auto-invoke -->
 <!-- END GENERATED: auto-invoke -->
 
+## The tree
+
+<!-- BEGIN GENERATED: main-tree -->
+<!-- END GENERATED: main-tree -->
+
 ## Tail
 
 Content after the regions must survive.
 `
+
+/** Enough real subject directories that the rendered bullet has to wrap. */
+const MANY_MAIN_DIRS = [
+  'adapters',
+  'appDatabase',
+  'config',
+  'domain',
+  'hooks',
+  'ledger',
+  'platform',
+  'projects',
+  'providers',
+  'runtime',
+  'sessionLaunch',
+  'shell',
+  'textDelivery',
+  'tier'
+]
 
 const skill = (over = {}) => ({
   name: 'alpha',
@@ -71,8 +94,19 @@ Body.
 }
 
 /** Builds a throwaway repo and returns its root. */
-function makeRepo({ skills = [skill()], agents = AGENTS_TEMPLATE, dirNames = null } = {}) {
+function makeRepo({
+  skills = [skill()],
+  agents = AGENTS_TEMPLATE,
+  dirNames = null,
+  mainDirs = ['adapters', 'runtime']
+} = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'skill-sync-test-'))
+  // The main-tree region is generated from whatever is under `src/main`, so a
+  // throwaway repo needs one. `mainDirs: null` leaves it out entirely, which is
+  // a refusal rather than an empty list.
+  for (const dir of mainDirs ?? []) {
+    mkdirSync(path.join(root, 'src', 'main', dir), { recursive: true })
+  }
   mkdirSync(path.join(root, 'skills'), { recursive: true })
   skills.forEach((s, i) => {
     const dir = dirNames ? dirNames[i] : s.name
@@ -262,6 +296,111 @@ test('normalises a CRLF AGENTS.md to LF, as .gitattributes requires', () => {
     run(root)
     assert(!agentsOf(root).includes('\r\n'), 'output should contain no CRLF')
     assert(run(root, ['--check']).code === 0, 'should be up to date after normalising')
+  })
+})
+
+// ── the main/ tree region ──────────────────────────────────────────────────
+
+/**
+ * The generated lines between the main-tree markers, without the blank line
+ * Prettier requires each side of a marker.
+ */
+const mainTreeRegion = (root) =>
+  agentsOf(root)
+    .split('<!-- BEGIN GENERATED: main-tree -->')[1]
+    .split('<!-- END GENERATED: main-tree -->')[0]
+    .trim()
+    .split('\n')
+
+/**
+ * The region as one sentence again. The bullet is wrapped, so a gloss can
+ * straddle a line break — unwrap before asserting on wording, and leave the
+ * wrapping to the test that is about wrapping.
+ */
+const mainTreeSentence = (root) =>
+  mainTreeRegion(root)
+    .map((l) => l.trim())
+    .join(' ')
+
+test('lists the directories that are actually under src/main, with their glosses', () => {
+  withRepo({ mainDirs: ['runtime', 'adapters', 'tier'] }, (root) => {
+    const result = run(root)
+    assert(result.code === 0, `expected success, got:\n${result.out}`)
+    const sentence = mainTreeSentence(root)
+    assert(sentence.includes('`adapters` (fs and sqlite seams with their fakes)'), 'gloss missing')
+    assert(sentence.includes('`runtime` (the poll loop)'), 'gloss missing')
+    // `tier` is in the gloss table with no phrase — bare on purpose, no parens.
+    assert(sentence.endsWith('`tier`.'), 'a deliberately bare directory renders as a bare name')
+    assert(
+      sentence.indexOf('`adapters`') < sentence.indexOf('`runtime`'),
+      'the list should be sorted'
+    )
+  })
+})
+
+test('a directory with no gloss appears as its bare name, and the run says so', () => {
+  withRepo({ mainDirs: ['adapters', 'telemetry'] }, (root) => {
+    const result = run(root)
+    assert(result.code === 0, `a missing gloss must not fail the build, got:\n${result.out}`)
+    const sentence = mainTreeSentence(root)
+    assert(sentence.includes('`telemetry`'), 'a new directory must appear, not be skipped')
+    assert(!sentence.includes('`telemetry` ('), 'a gloss must never be invented')
+    assert(result.out.includes('telemetry'), 'the run should name the unglossed directory')
+    assert(/no gloss/i.test(result.out), `expected a gloss warning, got:\n${result.out}`)
+    assert(run(root, ['--check']).code === 0, '--check must pass, warning and all')
+  })
+})
+
+test('a directory that goes away disappears from the bullet', () => {
+  withRepo({ mainDirs: ['adapters', 'runtime'] }, (root) => {
+    run(root)
+    assert(agentsOf(root).includes('`runtime`'), 'precondition: runtime was listed')
+    rmSync(path.join(root, 'src', 'main', 'runtime'), { recursive: true, force: true })
+    assert(run(root).code === 0, 'should regenerate after a removal')
+    assert(!agentsOf(root).includes('`runtime`'), 'a removed directory must not survive')
+  })
+})
+
+test('wraps the bullet inside the column limit, with a two-space hanging indent', () => {
+  withRepo({ mainDirs: MANY_MAIN_DIRS }, (root) => {
+    run(root)
+    const lines = mainTreeRegion(root)
+    assert(lines.length > 1, 'a list this long has to wrap')
+    const tooWide = lines.filter((l) => l.length > 100)
+    assert(tooWide.length === 0, `lines over 100 columns: ${tooWide.map((l) => l.length)}`)
+    assert(lines[0].startsWith('- **`main/`**'), `first line was: ${lines[0]}`)
+    for (const line of lines.slice(1)) {
+      assert(line.startsWith('  ') && line.trim() !== '', `bad continuation line: ${line}`)
+    }
+  })
+})
+
+test('--check catches a directory added without regenerating', () => {
+  withRepo({ mainDirs: ['adapters'] }, (root) => {
+    run(root)
+    assert(run(root, ['--check']).code === 0, 'precondition: up to date after a write')
+    mkdirSync(path.join(root, 'src', 'main', 'projects'), { recursive: true })
+    const before = agentsOf(root)
+    const result = run(root, ['--check'])
+    assert(result.code === 1, 'a directory added by hand should read as stale')
+    assert(result.out.includes('out of date'), `expected a staleness report, got:\n${result.out}`)
+    assert(agentsOf(root) === before, '--check must not write')
+  })
+})
+
+test('refuses to exceed the line budget AGENTS.md declares for itself', () => {
+  const padding = Array.from({ length: 200 }, (_, i) => `Filler line ${i}.`).join('\n\n')
+  withRepo({ agents: `${AGENTS_TEMPLATE}\n${padding}\n` }, (root) => {
+    const before = agentsOf(root)
+    refuses(run(root, ['--check']), 'budget')
+    refuses(run(root), 'budget')
+    assert(agentsOf(root) === before, 'an over-budget file must not be written')
+  })
+})
+
+test('refuses when src/main does not exist', () => {
+  withRepo({ mainDirs: null }, (root) => {
+    refuses(run(root), 'src/main')
   })
 })
 
