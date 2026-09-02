@@ -6,6 +6,8 @@ import type { AppConfig, ConfigEnv } from '../config/config'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import {
   MAX_DWARF_TEXT_CHARS,
+  type AgentLaunchRequest,
+  type AgentLaunchResult,
   type DwarfActivation,
   type DwarfKickRequest,
   type DwarfKickResult,
@@ -29,6 +31,12 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
+import { prepareLaunchPrompt } from '../sessionLaunch/launch'
+import {
+  launchClaudeSession,
+  runLaunchProcess,
+  type SessionLauncher
+} from '../sessionLaunch/launchRunner'
 import { ClaudeProvider } from '../providers/claude/claudeProvider'
 import { CodexProvider } from '../providers/codex/codexProvider'
 import type { Provider } from '../providers/provider'
@@ -55,6 +63,9 @@ const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_KICK_CHANNEL = "This session type can't be canceled yet."
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
+const NO_SUCH_MINE = 'That mine is no longer on the map.'
+const EMPTY_PROMPT = 'Type a prompt first.'
+const LAUNCH_FAILED = 'The agent could not be started.'
 
 /**
  * Refusals for adding and removing a mine (#85), phrased for the panel.
@@ -146,6 +157,12 @@ export interface RuntimeOptions {
   launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   /** Writes a typed message into a live session; injected for tests. */
   textDelivery?: TextDeliveryPort
+  /**
+   * Starts a NEW session in a folder (#86); injected for tests, which must
+   * never spawn a real agent. The default drives Claude through its own
+   * headless interface, over the binary CLI detection (#91) found.
+   */
+  launchSession?: SessionLauncher
   /** Every per-OS adapter, already selected; injected for tests. */
   platformAdapters?: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
@@ -201,6 +218,7 @@ export class AgentRuntime {
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly launchTerminal: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   private readonly textDelivery: TextDeliveryPort
+  private readonly launchSession: SessionLauncher
   /** Shared by the lifecycle grace window and the delivery stage timings. */
   private readonly now: () => number
   private readonly ledger: MaterialLedger
@@ -304,6 +322,20 @@ export class AgentRuntime {
       options.launchTerminal ??
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
+    // Composed here rather than in platformAdapters: starting a CLI is the same
+    // act on all three platforms, so there is no per-OS branch to own — only
+    // the PATH spelling, which arrives as the already-selected platform.
+    this.launchSession =
+      options.launchSession ??
+      ((request) =>
+        launchClaudeSession({
+          minePath: request.minePath,
+          prompt: request.prompt,
+          detector: platform.cliDetector,
+          env: process.env,
+          platform: platform.platform,
+          run: runLaunchProcess
+        }))
     /*
      * A demo must never put phantom ore in a real vault (#42).
      *
@@ -825,6 +857,45 @@ export class AgentRuntime {
         via: resolved.channel,
         error: 'The message could not be delivered.'
       }
+    }
+  }
+
+  /**
+   * Start a new agent session in a mine's folder (#86).
+   *
+   * **This resolves when the process has been STARTED, not when its dwarf
+   * appears.** Nothing is added to the board here: the launched session is
+   * discovered by the ordinary poll like every other one, so up to
+   * `pollIntervalMs` (2000ms by default) passes before a dwarf shows. The panel
+   * therefore has to acknowledge the launch on this verdict alone — waiting for
+   * the crew to change would look like nothing happened for two seconds, and
+   * inventing a dwarf here would be the second observation path #86 refuses.
+   *
+   * The request names a mine, never a directory: the folder is read off the
+   * board here, so a launch can only ever start in a place the panel is
+   * already showing. Refusals are explicit and cheap for the reason
+   * sendDwarfText's are, and nothing here logs the prompt — only its length.
+   */
+  async launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
+    const mine = this.mines.find((item) => item.id === request.mineId)
+    if (mine === undefined) return { launched: false, provider: 'none', error: NO_SUCH_MINE }
+
+    const prompt = prepareLaunchPrompt(request.prompt)
+    if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
+
+    const timer = createStageTimer(this.now)
+    try {
+      const result = await timer.measure('total', () =>
+        this.launchSession({ minePath: mine.path, prompt })
+      )
+      console.log(
+        `[runtime] Launch in ${mine.id}: ${result.launched ? 'started' : 'failed'} ` +
+          `(${prompt.length} chars)${stageSuffix(timer.timings())}`
+      )
+      return result
+    } catch (error) {
+      console.warn(`[runtime] Launch in ${request.mineId} threw`, error)
+      return { launched: false, provider: 'claude', error: LAUNCH_FAILED }
     }
   }
 

@@ -11,6 +11,8 @@
  */
 
 export type {
+  AgentLaunchRequest,
+  AgentLaunchResult,
   Dwarf,
   DwarfActivation,
   DwarfAttendance,
