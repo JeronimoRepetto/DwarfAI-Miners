@@ -1,5 +1,5 @@
 import { config as loadDotenv } from 'dotenv'
-import { app, globalShortcut, ipcMain } from 'electron'
+import { app, dialog, globalShortcut, ipcMain, type BrowserWindow } from 'electron'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
@@ -11,7 +11,9 @@ import type {
   DwarfTextResult,
   MaterialTotals,
   Mine,
-  MinesSnapshot
+  MineDeclareResult,
+  MinesSnapshot,
+  MineUndeclareResult
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
 import {
@@ -77,6 +79,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
+  ipcMain.removeHandler(IPC_CHANNELS.declareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
 }
 
 /**
@@ -101,6 +105,21 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+/**
+ * Open the operating system's folder picker (#85) — the first use of Electron's
+ * `dialog` anywhere in this app.
+ *
+ * Owned by the panel window so it comes up in front of an always-on-top panel
+ * rather than behind it, and so the two cannot be interacted with at once. The
+ * renderer never reaches this: it asks on `mine:declare`, and the path exists
+ * only inside main.
+ */
+async function chooseProjectDirectory(parent: BrowserWindow): Promise<string | null> {
+  const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'] })
+  if (result.canceled) return null
+  return result.filePaths[0] ?? null
 }
 
 /**
@@ -209,12 +228,17 @@ async function init(): Promise<void> {
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath()
     },
+    chooseDirectory: () => chooseProjectDirectory(mainWindow),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => {
       if (!mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials))
       }
     }
   })
+  // Before the loop starts, exactly as the ledger is loaded before the runtime
+  // exists: the first published poll then already carries the user's own mines
+  // instead of drawing an empty valley and filling it a moment later.
+  await runtime.loadDeclared()
   runtime.start()
 
   // The historical coal pile, produced once and never again (see #22).
@@ -352,6 +376,28 @@ async function init(): Promise<void> {
     const request = parseKickRequest(payload)
     if (request === null) return notKicked
     return runtime?.kickDwarf(request) ?? notKicked
+  })
+
+  // Adding and removing a user-declared mine (#85). declare takes no payload:
+  // the folder picker runs here, so there is no path for the renderer to send
+  // and none to validate. Both refusals below are what a runtime that never
+  // came up would say, phrased for the panel rather than left silent.
+  const notDeclared: MineDeclareResult = {
+    declared: false,
+    reason: 'The panel is still starting up.'
+  }
+  const notUndeclared: MineUndeclareResult = {
+    outcome: 'failed',
+    reason: 'The panel is still starting up.'
+  }
+  ipcMain.handle(IPC_CHANNELS.declareMine, () => runtime?.declareMine() ?? notDeclared)
+  ipcMain.handle(IPC_CHANNELS.undeclareMine, (_event, mineId: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing,
+    // and says so rather than resolving as a removal that never happened.
+    if (typeof mineId !== 'string' || mineId === '') {
+      return { outcome: 'unchanged', reason: 'No mine was named.' } satisfies MineUndeclareResult
+    }
+    return runtime?.undeclareMine(mineId) ?? notUndeclared
   })
 
   // The panel watched a kicked agent stop (#46). One-way: main decides what

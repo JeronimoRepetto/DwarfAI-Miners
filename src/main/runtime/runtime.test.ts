@@ -9,6 +9,7 @@ import {
 } from '../projects/projectsStore'
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
 import type { PlatformAdapters } from '../platform/platformAdapters'
+import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
 import type { FeedMessage } from '../domain/types'
@@ -2220,6 +2221,27 @@ describe('AgentRuntime projects wiring (#93)', () => {
     expect(await rows(projects)).toEqual([])
   })
 
+  it('never records a project the user merely declared', async () => {
+    // Declaring is not opening: last_opened_at is what #92 sorts recency by,
+    // and a folder nobody has run an agent in has never been opened.
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      projects,
+      chooseDirectory: async () => 'C:\\X\\Adopted',
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.declareMine()
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    await runtime.settleProjects()
+    runtime.stop()
+
+    expect((await rows(projects))[0]!.lastOpenedAt).toBeNull()
+  })
+
   it('does not write a row for every poll of the same unchanged project', async () => {
     const projects = projectsStore()
     const upsert = vi.spyOn(projects, 'upsertObserved')
@@ -2240,5 +2262,281 @@ describe('AgentRuntime projects wiring (#93)', () => {
     await runtime.settleProjects()
 
     expect(upsert).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('AgentRuntime declared mines (#85)', () => {
+  const ADOPTED = 'C:\\X\\Adopted'
+
+  /** A provider that reports a session in `cwd` only while `working` is true. */
+  function toggleProvider(cwd: string): { provider: Provider; setWorking: (on: boolean) => void } {
+    let working = false
+    const provider: Provider = {
+      kind: 'claude',
+      scan: async () =>
+        working
+          ? [
+              {
+                provider: 'claude' as const,
+                sessionId: 'session-1',
+                cwd,
+                status: 'busy' as const,
+                updatedAt: 7,
+                dwarfs: [
+                  {
+                    id: 'claude:session-1',
+                    provider: 'claude' as const,
+                    role: 'foreman' as const,
+                    name: 'foreman',
+                    status: 'working' as const,
+                    sessionId: 'session-1'
+                  }
+                ]
+              }
+            ]
+          : [],
+      feed: vi.fn().mockResolvedValue([])
+    }
+    return { provider, setWorking: (on) => (working = on) }
+  }
+
+  function declaredRuntime(options: {
+    projects?: ProjectsStore | null
+    providers?: Provider[]
+    chooseDirectory?: () => Promise<string | null>
+    ledger?: MaterialLedger
+  }): AgentRuntime {
+    return new AgentRuntime({
+      // A zero grace window so a departed crew is gone the moment it stops
+      // being reported: what remains on the board is then the declaration, and
+      // nothing borrowed from the leaving-dwarf path.
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: options.providers ?? [],
+      projects: options.projects === undefined ? projectsStoreFor() : options.projects,
+      chooseDirectory: options.chooseDirectory,
+      ledger: options.ledger,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  function projectsStoreFor(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  it('adopts the folder the picker returned and reports the id the ledger uses', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result).toEqual({ declared: true, mineId: mineIdForPath(ADOPTED) })
+  })
+
+  it('keeps a declared mine on the board with no crew, poll after poll', async () => {
+    // The whole defect: a project is invisible until an agent runs in it and
+    // gone twenty seconds later. A declaration is a steady state.
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    await runtime.declareMine()
+    await runtime.refresh()
+    const first = runtime.getMines()
+    await runtime.refresh()
+    await runtime.refresh()
+    const third = runtime.getMines()
+    runtime.stop()
+
+    expect(first.map((mine) => mine.name)).toEqual(['Adopted'])
+    expect(third).toHaveLength(1)
+    expect(third[0]!.dwarfs).toEqual([])
+    expect(third[0]!.declared).toBe(true)
+  })
+
+  it('shows a declared mine that is also being worked exactly once', async () => {
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    setWorking(true)
+    await runtime.declareMine()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+    expect(mines[0]!.declared).toBe(true)
+  })
+
+  it('keeps a declared mine when its crew goes home, rather than expiring it', async () => {
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    await runtime.declareMine()
+    setWorking(true)
+    await runtime.refresh()
+    setWorking(false)
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.dwarfs).toEqual([])
+  })
+
+  it('stamps a declared mine with the material that path already earned', async () => {
+    // The reason not to invent a second id scheme: whatever the vault accrued
+    // under this path attaches to the mine the moment the user adopts it.
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
+
+    await runtime.declareMine()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines[0]!.materials?.coal).toBe(40_000)
+  })
+
+  it('draws a declared mine at the tier the store measured for it', async () => {
+    const projects = projectsStoreFor()
+    await projects.declare({ path: ADOPTED, at: 1 })
+    await projects.upsertObserved({ path: ADOPTED, at: 2, knownTier: 'uranium' })
+    const runtime = declaredRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines[0]!.tier).toBe('uranium')
+  })
+
+  it('takes an idle declared mine off the board when the user undeclares it', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const declared = await runtime.declareMine()
+    await runtime.refresh()
+    const result = await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(result).toEqual({ outcome: 'removed' })
+    expect(mines).toEqual([])
+  })
+
+  it('reverts a worked mine to an ordinary discovered one instead of hiding it', async () => {
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    setWorking(true)
+    const declared = await runtime.declareMine()
+    await runtime.refresh()
+    // The store demotes rather than deletes a project it has SEEN worked, so
+    // the sighting has to have reached it before the declaration is undone.
+    await runtime.settleProjects()
+    const result = await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(result).toEqual({ outcome: 'reverted' })
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.declared).toBeUndefined()
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+  })
+
+  it('says why nothing happened when the user closes the picker', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => null })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.declared).toBe(false)
+    expect(result.reason).not.toBe('')
+    expect(result.mineId).toBeUndefined()
+  })
+
+  it('says why nothing happened when the projects database refused to open', async () => {
+    const runtime = declaredRuntime({ projects: null, chooseDirectory: async () => ADOPTED })
+
+    const result = await runtime.declareMine()
+    const undeclared = await runtime.undeclareMine('mine:whatever')
+    runtime.stop()
+
+    expect(result).toMatchObject({ declared: false })
+    expect(result.reason).toContain('projects database')
+    expect(undeclared.outcome).toBe('failed')
+    expect(undeclared.reason).toContain('projects database')
+  })
+
+  it('never opens the picker when there is nowhere to record the answer', async () => {
+    // Asking the user to choose a folder and then dropping it on the floor is
+    // worse than refusing: they did the work and the app forgot.
+    const chooseDirectory = vi.fn().mockResolvedValue(ADOPTED)
+    const runtime = declaredRuntime({ projects: null, chooseDirectory })
+
+    await runtime.declareMine()
+    runtime.stop()
+
+    expect(chooseDirectory).not.toHaveBeenCalled()
+  })
+
+  it('refuses with a reason when no picker was wired in at all', async () => {
+    const runtime = declaredRuntime({})
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.declared).toBe(false)
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('reports a picker that threw instead of letting it reach the panel', async () => {
+    const runtime = declaredRuntime({
+      chooseDirectory: async () => {
+        throw new Error('no window to attach the dialog to')
+      }
+    })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.declared).toBe(false)
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('says nothing changed for a mine the user never declared', async () => {
+    const runtime = declaredRuntime({})
+
+    const result = await runtime.undeclareMine('mine:never-declared')
+    runtime.stop()
+
+    expect(result.outcome).toBe('unchanged')
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('reads the declarations already stored before the first poll publishes', async () => {
+    const projects = projectsStoreFor()
+    await projects.declare({ path: ADOPTED, at: 1 })
+    const runtime = declaredRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines.map((mine) => mine.name)).toEqual(['Adopted'])
   })
 })
