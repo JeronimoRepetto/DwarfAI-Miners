@@ -1,11 +1,15 @@
 import {
-  NodeWritableSqlite,
   SqliteWriteError,
   type SqliteFailure,
   type SqliteRow,
   type WritableSqliteDb,
   type WritableSqliteLike
 } from '../adapters/sqliteWritable'
+import {
+  UnsupportedSchemaError,
+  createAppDatabase,
+  type AppDatabase
+} from '../appDatabase/appDatabase'
 import { mineIdForPath } from '../domain/aggregate'
 import { isMineTier, type DwarfProvider, type MineTier, type ProjectQuery } from '../domain/types'
 import { currentPlatform, type Platform } from '../platform/platform'
@@ -20,21 +24,20 @@ import { buildProjectQuery } from './projectQuery'
  * Storage is a SQLite database under userData rather than another hand-rolled
  * JSON document, because #92 asks for filtering, two sort orders and a
  * substring search over a list with no bound on its length. The path is
- * INJECTED, exactly as the ledger store's is (src/main/index.ts:177-182): this
- * module never imports Electron, so it is unit-testable with no app instance.
+ * INJECTED, exactly as the ledger's is (src/main/index.ts:256-258): this module
+ * never imports Electron, so it is unit-testable with no app instance.
  *
- * Two seams are open on purpose, and neither is an oversight:
+ * THE FILE IS SHARED. Since the ledger migrated into it (#93) the projects
+ * table is one tenant of two, and the schema, the version stamp and the one
+ * open handle all belong to appDatabase/appDatabase.ts. This module owns the
+ * projects table's statements and nothing else — a store that opened its own
+ * handle would take turns at SQLITE_BUSY with the ledger's saves.
  *
- * - **The material ledger stays in material-ledger-v1.json.** Moving it is the
- *   risky half of #93 — it holds real mined history, including a one-time coal
- *   backfill that is expensive to reproduce — and it needs the first real
- *   migration this repository has ever written. Two persistence models for one
- *   release is the deliberate price of not writing that migration under
- *   pressure.
- * - **The browse surface itself is unbuilt.** query() answers #92's question
- *   and the runtime carries it over IPC, but no renderer view calls it and
- *   nothing in the panel chrome opens one — that waits on the interface
- *   rebuild (#90), which is also where being reachable at all gets decided.
+ * One seam is still open, and it is not an oversight: **the browse surface
+ * itself is unbuilt.** query() answers #92's question and the runtime carries
+ * it over IPC, but no renderer view calls it and nothing in the panel chrome
+ * opens one — that waits on the interface rebuild (#90), which is also where
+ * being reachable at all gets decided.
  *
  * On the main thread: node:sqlite is synchronous, so every statement here runs
  * on it. That is affordable for one row per observed project per poll, and it
@@ -42,12 +45,6 @@ import { buildProjectQuery } from './projectQuery'
  * behind a throttle or a worker later (the pattern materialLedger.ts:34 already
  * uses for the same reason) changes this file and no caller.
  */
-
-/** Versioned like every other userData file: a new schema means a new filename. */
-export const PROJECTS_DB_FILENAME = 'projects-v1.db'
-
-/** Stamped in PRAGMA user_version, and refused when it is anything else. */
-export const PROJECTS_SCHEMA_VERSION = 1
 
 /** How the app came to know about a project (#85). */
 export type ProjectOrigin = 'declared' | 'discovered'
@@ -140,46 +137,31 @@ export interface ProjectsStore {
   close(): Promise<void>
 }
 
-export interface ProjectsStoreOptions {
-  /** Full path of the database file (under userData in production). */
-  filePath: string
-  /** Injected for tests; defaults to the real node:sqlite driver. */
-  sqlite?: WritableSqliteLike
-  /** Injected so the win32 id rules are assertable on any host. */
-  platform?: Platform
-}
-
 /**
- * Schema v1.
+ * Either the shared database, or the path to build a private one from.
  *
- * added_at and last_opened_at are separate columns because #92 sorts by either,
- * and they answer different questions — one is provenance, the other is
- * recency. name_norm is written by both INSERT paths (see projectName.ts) so a
- * search never has to fold a column it is scanning. The three indexes are the
- * three orders #92 asked for; none of them is speculative.
+ * Production always passes `database`: the ledger is in the same file and the
+ * two must share one handle. The `filePath` form is what every test in this
+ * directory uses, and what keeps a store constructible without a caller having
+ * to assemble the database first.
  */
-const CREATE_SCHEMA = `
-CREATE TABLE projects (
-  id TEXT PRIMARY KEY NOT NULL,
-  path TEXT NOT NULL,
-  name TEXT NOT NULL,
-  name_norm TEXT NOT NULL,
-  added_at INTEGER NOT NULL,
-  last_opened_at INTEGER,
-  origin TEXT NOT NULL,
-  last_provider TEXT,
-  known_tier TEXT
-);
-CREATE INDEX projects_name_norm ON projects (name_norm);
-CREATE INDEX projects_added_at ON projects (added_at);
-CREATE INDEX projects_last_opened_at ON projects (last_opened_at);
-`
+export type ProjectsStoreOptions =
+  | {
+      /** The one app database, shared with the material ledger. */
+      database: AppDatabase
+      /** Injected so the win32 id rules are assertable on any host. */
+      platform?: Platform
+    }
+  | {
+      /** Full path of the database file (under userData in production). */
+      filePath: string
+      /** Injected for tests; defaults to the real node:sqlite driver. */
+      sqlite?: WritableSqliteLike
+      platform?: Platform
+    }
 
 const COLUMNS =
   'id, path, name, name_norm, added_at, last_opened_at, origin, last_provider, known_tier'
-
-/** Refusal to read a database this code did not write. */
-class UnsupportedSchemaError extends Error {}
 
 /**
  * The providers a stored row may name.
@@ -190,23 +172,8 @@ class UnsupportedSchemaError extends Error {}
 const KNOWN_PROVIDERS: readonly string[] = ['claude', 'codex']
 
 export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStore {
-  const sqlite = options.sqlite ?? new NodeWritableSqlite()
+  const database = 'database' in options ? options.database : createAppDatabase(options)
   const platform = options.platform ?? currentPlatform()
-  let handle: WritableSqliteDb | null = null
-
-  /** Open once and keep the handle; the schema check happens on that first open. */
-  async function connect(): Promise<WritableSqliteDb> {
-    if (handle !== null) return handle
-    const db = await sqlite.open(options.filePath)
-    try {
-      prepareSchema(db)
-    } catch (error) {
-      db.close()
-      throw error
-    }
-    handle = db
-    return db
-  }
 
   /**
    * Run one unit of work against the database, turning any failure into an
@@ -217,15 +184,14 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
   async function withDb<T>(work: (db: WritableSqliteDb) => T): Promise<ProjectsResult<T>> {
     let db: WritableSqliteDb
     try {
-      db = await connect()
+      db = await database.connect()
     } catch (error) {
       return toFailure(error)
     }
     try {
       return { ok: true, value: work(db) }
     } catch (error) {
-      handle = null
-      db.close()
+      database.invalidate()
       return toFailure(error)
     }
   }
@@ -327,62 +293,13 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
     },
 
     async close() {
-      handle?.close()
-      handle = null
+      // Only a database this store built is this store's to close. The shared
+      // one belongs to whoever composed it, and closing it here would pull the
+      // file out from under the ledger's forced final save (runtime.ts:446),
+      // which is deliberately not awaited.
+      if (!('database' in options)) database.close()
     }
   }
-}
-
-/**
- * Create the schema on a fresh database, and REFUSE anything else.
- *
- * The JSON stores discard a document whose version they do not know
- * (domain/ledger.ts:302-311), and that is right for a file the app can rebuild
- * from what it observes next. A database is the opposite case: discarding it
- * means deleting the user's project history to make room for an empty table,
- * and it would happen silently, at startup, on the machine of whoever
- * downgraded a version. So an unknown version refuses, the file is left
- * untouched, and the failure travels to the caller as itself. A user can be
- * told; a deleted table cannot be untold.
- *
- * Creation is one transaction so the version stamp and the table land together.
- * A half-created database that carried the table with no stamp would refuse
- * itself forever on the next start.
- */
-function prepareSchema(db: WritableSqliteDb): void {
-  const version = readUserVersion(db)
-  if (version === PROJECTS_SCHEMA_VERSION) return
-  if (version !== 0 || hasProjectsTable(db)) {
-    throw new UnsupportedSchemaError(
-      `projects database is schema version ${version}, this build knows ${PROJECTS_SCHEMA_VERSION}`
-    )
-  }
-
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    db.exec(CREATE_SCHEMA)
-    db.exec(`PRAGMA user_version = ${PROJECTS_SCHEMA_VERSION}`)
-    db.exec('COMMIT')
-  } catch (error) {
-    try {
-      db.exec('ROLLBACK')
-    } catch {
-      // A transaction that never opened needs no rolling back.
-    }
-    throw error
-  }
-}
-
-function readUserVersion(db: WritableSqliteDb): number {
-  const [row] = db.all('PRAGMA user_version')
-  const raw = row?.user_version
-  return typeof raw === 'number' ? raw : Number(raw ?? 0)
-}
-
-function hasProjectsTable(db: WritableSqliteDb): boolean {
-  return (
-    db.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'").length > 0
-  )
 }
 
 function toFailure<T>(error: unknown): ProjectsResult<T> {

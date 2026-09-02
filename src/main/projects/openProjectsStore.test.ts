@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
+import { APP_SCHEMA_VERSION } from '../appDatabase/appDatabase'
 import { openProjectsStore } from './openProjectsStore'
-import { PROJECTS_SCHEMA_VERSION } from './projectsStore'
 
 const DB = 'C:\\userData\\projects-v1.db'
 
@@ -45,7 +45,7 @@ describe('openProjectsStore', () => {
     // the user as a panel with no declared mines, never as a failed launch.
     const sqlite = new MemoryWritableSqlite()
     const handle = await sqlite.open(DB)
-    handle.exec(`PRAGMA user_version = ${PROJECTS_SCHEMA_VERSION + 1}`)
+    handle.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION + 1}`)
     handle.close()
     const warn = vi.fn()
 
