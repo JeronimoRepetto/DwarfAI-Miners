@@ -598,6 +598,76 @@ export interface AgentLaunchResult {
   error?: string
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * Held sessions (#86, #94) — the panel STARTING a session and keeping hold of
+ * it, rather than observing one somebody else started.
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * One request to start a session the panel holds open (#86).
+ *
+ * Names a MINE, never a directory, for the reason every other dwarf channel
+ * names an id: the folder is resolved in main from the board the panel is
+ * already being shown, so this channel cannot be talked into starting a process
+ * somewhere the panel is not showing.
+ */
+export interface HeldSessionLaunchRequest {
+  mineId: string
+  /** The first thing to say to the new session. Capped like any delivered message. */
+  prompt: string
+}
+
+/**
+ * Verdict of one held launch. Never carries the prompt back, and never claims a
+ * dwarf: `launched` means the session STARTED, not that anything is on the
+ * board. The session persists to the provider's own project directory and the
+ * ordinary poll discovers it there like any other, so a dwarf appears up to
+ * `pollIntervalMs` later and the panel must acknowledge from this verdict
+ * rather than waiting for the crew to change.
+ *
+ * No session id travels. It is not known at this moment — the CLI reports its
+ * own id asynchronously — and an optional field nobody could rely on is worse
+ * than none. Answering a question names a DWARF (see below), which is the id
+ * both processes already agree on.
+ */
+export interface HeldSessionLaunchResult {
+  launched: boolean
+  /** Human-readable reason shown in the panel when launched is false. */
+  error?: string
+}
+
+/**
+ * One answer to a question a held session asked (see DwarfQuestion).
+ *
+ * `toolUseId` is what makes this an answer to a specific ask rather than to
+ * whatever is open now: an answer naming an ask that has since been withdrawn
+ * is refused, never re-aimed.
+ *
+ * `answers` is the shape the agent's own tool takes — keyed by the question's
+ * TEXT, valued by the chosen option's LABEL. Both halves are checked in main
+ * against the ask the agent actually made, so nothing in an answer is free
+ * text: it can only ever repeat the agent's own words back to it.
+ */
+export interface DwarfQuestionAnswerRequest {
+  dwarfId: string
+  toolUseId: string
+  answers: Record<string, string>
+}
+
+/**
+ * Verdict of one answer. `answered` means the agent's blocked tool call was
+ * released with this answer — the panel's ✓ for a question, and as narrow as
+ * `delivered` is for a message: it says the agent was handed the choice, never
+ * what it then did with it.
+ */
+export interface DwarfQuestionAnswerResult {
+  answered: boolean
+  /** Human-readable reason shown in the panel when answered is false. */
+  error?: string
+}
+
 /**
  * Wire payload for both the getMines() pull and the minesUpdated push: the
  * per-mine breakdown plus the cross-mine vault total, so the panel never has
@@ -862,5 +932,22 @@ export const IPC_CHANNELS = {
    * the START only — the dwarf itself arrives on a later minesUpdated, because
    * the launched session is discovered by the same poll as every other one.
    */
-  launchAgent: 'agent:launch'
+  launchAgent: 'agent:launch',
+  /**
+   * Starting a session the panel HOLDS, and answering what it asks (#86, #94).
+   *
+   * Two channels rather than one because they are two acts with different
+   * lifetimes: a launch is a request that resolves in a moment, an answer
+   * releases a tool call the agent has been blocked inside — possibly for
+   * minutes, since a human is on this end. Both name an id and never a path
+   * (launchHeldSession) or a session (answerDwarfQuestion), for the reason the
+   * mine channels above give.
+   *
+   * A held session is not the only way to start one. The detached mode
+   * (`agent:launch`, #86's first cut) hands the session over and lets go, so it
+   * outlives the panel; a held session's child dies with the panel, and in
+   * exchange its asks reach the panel live rather than post-hoc. Both belong.
+   */
+  launchHeldSession: 'agent:launchHeld',
+  answerDwarfQuestion: 'agent:answerQuestion'
 } as const

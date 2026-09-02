@@ -6,8 +6,12 @@ import type {
   DwarfActivation,
   DwarfKickRequest,
   DwarfKickResult,
+  DwarfQuestionAnswerRequest,
+  DwarfQuestionAnswerResult,
   DwarfTextRequest,
   DwarfTextResult,
+  HeldSessionLaunchRequest,
+  HeldSessionLaunchResult,
   MineDeclareResult,
   MinesSnapshot,
   MineUndeclareResult,
@@ -93,6 +97,28 @@ export interface DwarfAiMinersApi {
    * that comes from the poll rather than from disk.
    */
   queryProjects: (query: ProjectQuery) => Promise<ProjectQueryResult>
+  /**
+   * Start a session the panel HOLDS in a mine, over the Agent SDK (#86, #94).
+   *
+   * Resolves with the verdict of the START — the dwarf itself arrives on a
+   * later minesUpdated, up to one poll interval away, so the panel must
+   * acknowledge from this and not wait for the crew to change.
+   *
+   * Held is what makes a question answerable from the panel: the session's asks
+   * reach main live while the stream is open. The price is that its child dies
+   * with the panel; the session on disk survives and resumes by id.
+   */
+  launchHeldSession: (request: HeldSessionLaunchRequest) => Promise<HeldSessionLaunchResult>
+  /**
+   * Answer a question a held session asked (see Dwarf.pendingQuestion).
+   *
+   * Addressed by DWARF, like every other action: a question can only be
+   * answered from where it was shown. `answers` is keyed by the question's text
+   * and valued by the chosen option's label — both are checked in main against
+   * the ask the agent actually made, so an answer can only repeat the agent's
+   * own words back to it.
+   */
+  answerDwarfQuestion: (request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
 }
 
 const api: DwarfAiMinersApi = {
@@ -145,7 +171,32 @@ const api: DwarfAiMinersApi = {
   // cannot run. Folding the search term and clamping the page both happen
   // there too — each has to agree with the database, and a copy here would be a
   // second place for that agreement to break.
-  queryProjects: (query) => ipcRenderer.invoke(IPC_CHANNELS.queryProjects, query)
+  queryProjects: (query) => ipcRenderer.invoke(IPC_CHANNELS.queryProjects, query),
+  // Same discipline as setToggleShortcut, applied field by field: a launch
+  // starts a real process, so what crosses is rebuilt here as two strings
+  // rather than forwarded whole. Anything else the caller attached — a
+  // directory, above all — is dropped before main ever sees it.
+  launchHeldSession: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.launchHeldSession, {
+      mineId: typeof request?.mineId === 'string' ? request.mineId : '',
+      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+    }),
+  // Field by field again, and the record entry by entry: an answer releases a
+  // tool call a live agent is blocked inside, so what crosses is rebuilt from
+  // string pairs only. A non-string value is dropped rather than coerced —
+  // main then sees an answer that names no option and refuses it, which is the
+  // right end for a payload nobody could have chosen.
+  answerDwarfQuestion: (request) => {
+    const answers: Record<string, string> = {}
+    for (const [question, label] of Object.entries(request?.answers ?? {})) {
+      if (typeof label === 'string') answers[question] = label
+    }
+    return ipcRenderer.invoke(IPC_CHANNELS.answerDwarfQuestion, {
+      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
+      toolUseId: typeof request?.toolUseId === 'string' ? request.toolUseId : '',
+      answers
+    })
+  }
 }
 
 contextBridge.exposeInMainWorld('api', api)

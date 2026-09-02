@@ -11,8 +11,12 @@ import {
   type DwarfActivation,
   type DwarfKickRequest,
   type DwarfKickResult,
+  type DwarfQuestionAnswerRequest,
+  type DwarfQuestionAnswerResult,
   type DwarfTextRequest,
   type DwarfTextResult,
+  type HeldSessionLaunchRequest,
+  type HeldSessionLaunchResult,
   type MaterialTotals,
   type Mine,
   type MineDeclareResult,
@@ -31,6 +35,9 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
+import { stampHeldQuestions } from '../sessionLaunch/heldSession'
+import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
+import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
 import {
   launchClaudeSession,
@@ -83,6 +90,18 @@ const UNDECLARE_FAILED = 'That mine could not be removed.'
 const NOT_DECLARED = 'That mine is not one you added.'
 /** #92's browse refusal. Stated for the same reason: a list that is empty because nothing could be read looks like a list with nothing in it. */
 const QUERY_FAILED = 'The projects could not be read.'
+
+/**
+ * Refusals for held sessions (#86, #94), phrased for the panel.
+ *
+ * NO_SIMULATED_LAUNCH is the same rule the ledger and the projects store hold
+ * (#42), one step further: those refuse to WRITE during a demo, and this
+ * refuses to reach out of one at all. A simulated mine's folder is not on
+ * anybody's disk, so a launch there is not a phantom total but a real agent
+ * started in the wrong place — or in no place.
+ */
+const NO_SIMULATED_LAUNCH =
+  "A simulated valley's mines are not folders, so nothing can start in one."
 
 /**
  * Fixed instructions Kick delivers over the relay tier. Never user text, so
@@ -163,6 +182,13 @@ export interface RuntimeOptions {
    * headless interface, over the binary CLI detection (#91) found.
    */
   launchSession?: SessionLauncher
+  /**
+   * Sessions the panel STARTS and HOLDS over the Agent SDK (#86, #94) —
+   * injected already composed, exactly as the ledger and the tier service are,
+   * so no test can reach the SDK. The default drives the real one over the
+   * binary CLI detection found (#91).
+   */
+  heldSessions?: HeldSessionRegistry
   /** Every per-OS adapter, already selected; injected for tests. */
   platformAdapters?: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
@@ -219,6 +245,10 @@ export class AgentRuntime {
   private readonly launchTerminal: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   private readonly textDelivery: TextDeliveryPort
   private readonly launchSession: SessionLauncher
+  /** Sessions this panel started and still holds (#86, #94). */
+  private readonly heldSessions: HeldSessionRegistry
+  /** Whether this run is a simulated valley, which nothing real may be started in. */
+  private readonly simulated: boolean
   /** Shared by the lifecycle grace window and the delivery stage timings. */
   private readonly now: () => number
   private readonly ledger: MaterialLedger
@@ -322,6 +352,20 @@ export class AgentRuntime {
       options.launchTerminal ??
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
+    this.simulated = simulation !== null
+    // Composed here rather than in platformAdapters: holding a session is the
+    // same act on all three platforms, so there is no per-OS branch to own.
+    // Model and turn ceiling are deliberately left to the CLI's own defaults —
+    // guessing either would bake an answer into a wire contract before the
+    // question is settled, and it would have meant a config value (#95).
+    this.heldSessions =
+      options.heldSessions ??
+      new HeldSessionRegistry({
+        detector: platform.cliDetector,
+        start: createSdkHeldSession(),
+        now: this.now,
+        log: (message) => console.log(message)
+      })
     // Composed here rather than in platformAdapters: starting a CLI is the same
     // act on all three platforms, so there is no per-OS branch to own — only
     // the PATH spelling, which arrives as the already-selected platform.
@@ -429,8 +473,16 @@ export class AgentRuntime {
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
-        const published = pollProfiler.measureSync('stamp', () =>
+        const delivered = pollProfiler.measureSync('stamp', () =>
           stampTextDelivery(withMaterials, (dwarfId) => this.deliveryTargetOf(dwarfId))
+        )
+        // What a session the panel HOLDS is asking, live (#94). This runs after
+        // the provider has already stamped whatever its transcript tail
+        // derived, and supersedes it for held sessions only — including
+        // clearing it, because for those the held stream is the complete truth
+        // and the tail's version is the post-hoc one. See stampHeldQuestions.
+        const published = stampHeldQuestions(delivered, (sessionId) =>
+          this.heldSessions.questionState(sessionId)
         )
         this.mines = published
         pollProfiler.count(
@@ -473,6 +525,11 @@ export class AgentRuntime {
   stop(): void {
     this.poller.stop()
     this.textDelivery.dispose?.()
+    // A held session's child dies with the panel, so this is where that
+    // happens deliberately rather than as a stray process being reaped. Every
+    // question still open is dissolved on the way out — told that nobody
+    // answered, never handed a fabricated one (see HeldSessionRegistry).
+    this.heldSessions.closeAll()
     // Forced past the save throttle: whatever the last poll accrued would
     // otherwise be lost, and quitting is exactly when that is most likely.
     void this.ledger.save(this.now(), true)
@@ -770,6 +827,64 @@ export class AgentRuntime {
           via: options.channel,
           error: combineFallbackErrors(options.terminalError, relay.error)
         }
+  }
+
+  /**
+   * Start a session the panel HOLDS, in a mine's folder (#86, #94).
+   *
+   * The request names a mine and the folder is resolved HERE, from the board
+   * the panel is already being shown, so this can never be talked into starting
+   * a process somewhere the panel is not showing. `cwd` is the whole trick
+   * besides: aggregation groups by it, so the new session's dwarf appears in
+   * the mine it was launched from with no second observation path — and it
+   * arrives on an ordinary poll, up to `pollIntervalMs` later, which is why the
+   * verdict says a session started and refuses to claim a dwarf.
+   *
+   * Held is not the only mode a session can be started in. The detached one
+   * (#86's first cut) hands the session over and lets go, so it outlives the
+   * panel; a held session's child dies with the panel, and in exchange its asks
+   * arrive live rather than post-hoc. Neither replaces the other.
+   */
+  async launchHeldSession(request: HeldSessionLaunchRequest): Promise<HeldSessionLaunchResult> {
+    // Refused before the mine is even looked up: a demo's mines are invented,
+    // so there is no folder for one to start in (#42).
+    if (this.simulated) return { launched: false, error: NO_SIMULATED_LAUNCH }
+
+    const mine = this.mines.find((item) => item.id === request.mineId)
+    if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
+
+    return this.heldSessions.launch({
+      mineId: mine.id,
+      minePath: mine.path,
+      prompt: request.prompt
+    })
+  }
+
+  /**
+   * Answer a question a held session asked (#94).
+   *
+   * Addressed by DWARF, like every other action the panel offers, because a
+   * question can only be answered from where it was shown — and it is shown on
+   * a dwarf. The session id the held stream is keyed by is read off that dwarf
+   * here rather than travelling on the wire, so the two processes keep agreeing
+   * on one id instead of two.
+   *
+   * Synchronous on purpose: releasing a blocked tool call is a local handover,
+   * not a delivery over a channel that can fail slowly. What happens next is
+   * the agent's own business, and the verdict says only that it was handed the
+   * choice — the same narrowness `delivered` has for a message.
+   */
+  answerDwarfQuestion(request: DwarfQuestionAnswerRequest): DwarfQuestionAnswerResult {
+    const dwarf = this.mines
+      .flatMap((mine) => mine.dwarfs)
+      .find((item) => item.id === request.dwarfId)
+    if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
+
+    return this.heldSessions.answer({
+      sessionId: dwarf.sessionId,
+      toolUseId: request.toolUseId,
+      answers: request.answers
+    })
   }
 
   /**
