@@ -113,6 +113,18 @@ describe('resolveTextDelivery', () => {
     )
     expect(resolved).toBeNull()
   })
+
+  it('resolves a Codex thread to its own queue endpoint with no prefix', () => {
+    const resolved = resolveTextDelivery(
+      'codex:t1',
+      targetsFrom({ 'codex:t1': { kind: 'codex-queue', threadId: 't1' } })
+    )
+    expect(resolved).toEqual({
+      channel: 'codex-queue',
+      endpoint: { kind: 'codex-queue', threadId: 't1' },
+      prefix: ''
+    })
+  })
 })
 
 describe('resolveKickDelivery', () => {
@@ -209,6 +221,33 @@ describe('resolveKickDelivery', () => {
     )
     expect(resolved).toBeNull()
   })
+
+  /**
+   * The one place send and kick routing part company (#97). A Codex queue item
+   * is drained at the thread's next idle boundary, so an interrupt sent that
+   * way arrives exactly when the turn it meant to cut short has already ended:
+   * exit 0, a ✓, and nothing cancelled. Mid-turn drain is precisely the half
+   * the live experiment did not test, and a channel that reports a cancel it
+   * never performed is worse than a disabled button with a reason.
+   */
+  it('refuses to route a kick over the Codex queue, which cannot interrupt a turn', () => {
+    expect(
+      resolveKickDelivery(
+        'codex:t1',
+        targetsFrom({ 'codex:t1': { kind: 'codex-queue', threadId: 't1' } })
+      )
+    ).toBeNull()
+  })
+
+  it('still routes that same session for a message', () => {
+    // The point of the refusal above: it takes away the kick, never the send.
+    expect(
+      resolveTextDelivery(
+        'codex:t1',
+        targetsFrom({ 'codex:t1': { kind: 'codex-queue', threadId: 't1' } })
+      )
+    ).not.toBeNull()
+  })
 })
 
 describe('stampTextDelivery', () => {
@@ -295,6 +334,24 @@ describe('stampTextDelivery', () => {
       targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42 } })
     )
     expect(stamped?.dwarfs[0]?.capabilities).toBeUndefined()
+  })
+
+  /**
+   * The queue is the one channel where sendText and cancel disagree, so the
+   * stamped matrix has to carry both answers rather than mirroring one (#97).
+   * The panel then enables Chat and disables Kick with the queue's own reason.
+   */
+  it('stamps the queue for sending and null for cancelling on a Codex thread', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf({ id: 'codex:t1', provider: 'codex' })])],
+      targetsFrom({ 'codex:t1': { kind: 'codex-queue', threadId: 't1' } })
+    )
+    expect(stamped?.dwarfs[0]?.textDelivery).toBe('codex-queue')
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'codex-queue',
+      cancel: null,
+      adjustEffort: null
+    })
   })
 
   it('always reports adjustEffort as null: no provider exposes a channel for it yet', () => {

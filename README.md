@@ -128,6 +128,7 @@ or Linux desktop, so the table is honest about the difference.
 | Live transcript viewer                  | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
 | Type a message into a terminal session  | SendKeys                      | **Disabled** (built, gated)            | **Unsupported**                        |
 | Relay a message to a named session      | Supported                     | Supported                              | Supported                              |
+| Queue a message to a Codex CLI session  | **Verified**                  | Expected to work (spawns `codex`)      | Expected to work (spawns `codex`)      |
 | Start at login                          | HKCU Run key                  | `~/Library/LaunchAgents` plist         | `~/.config/autostart` desktop entry    |
 | Packaging                               | NSIS + portable               | dmg + zip (arm64 & x64)                | AppImage + deb                         |
 
@@ -371,6 +372,11 @@ above for an installed app.
 | `CODEX_CLI_PATH`           | _(detect)_                | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.      |
 
 Tier thresholds must be strictly increasing.
+
+`CODEX_CLI_PATH` is also what the Codex message queue addresses. If detection lands on an
+npm-global `codex.cmd`/`.bat` shim, sending is refused with that reason rather than run: a shim
+cannot be spawned without a shell, and a shell would re-parse the message — expanding `%VAR%`
+into it, or letting a quote end the argument. Point this at the real executable to fix it.
 
 </details>
 

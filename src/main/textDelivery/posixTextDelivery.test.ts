@@ -164,3 +164,47 @@ describe('PosixTextDelivery.relayToClaudeSession', () => {
     ).resolves.toMatchObject({ delivered: false })
   })
 })
+
+/**
+ * The Codex queue tier (#97) is the second platform-neutral one: it spawns a
+ * CLI, so macOS and Linux get it on exactly the same terms Windows does. Only
+ * the detected binary path differs, and that comes from the detection port.
+ */
+describe('PosixTextDelivery.queueToCodexThread', () => {
+  const THREAD_ID = '01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+
+  it('spawns the detected codex binary with the thread and the message as argv', async () => {
+    const runCodexQueue = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
+    const port = delivery({
+      platform: 'linux',
+      codexBinary: async () => '/home/j/.local/bin/codex',
+      runCodexQueue
+    })
+
+    await expect(
+      port.queueToCodexThread({ threadId: THREAD_ID, text: 'run the tests' })
+    ).resolves.toEqual({ delivered: true })
+    expect(runCodexQueue.mock.calls[0]?.[0]).toMatchObject({
+      command: '/home/j/.local/bin/codex',
+      args: ['queue', '--thread', THREAD_ID, '--message', 'run the tests']
+    })
+  })
+
+  it('refuses with a reason when codex was never detected', async () => {
+    const runCodexQueue = vi.fn()
+    const port = delivery({ runCodexQueue })
+    const outcome = await port.queueToCodexThread({ threadId: THREAD_ID, text: 'hi' })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toBeTruthy()
+    expect(runCodexQueue).not.toHaveBeenCalled()
+  })
+
+  it('never echoes the message back in a refusal', async () => {
+    const port = delivery({ runCodexQueue: vi.fn() })
+    const outcome = await port.queueToCodexThread({
+      threadId: THREAD_ID,
+      text: 'my-secret-payload'
+    })
+    expect(outcome.error).not.toContain('my-secret-payload')
+  })
+})

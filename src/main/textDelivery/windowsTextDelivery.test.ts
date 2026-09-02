@@ -354,3 +354,62 @@ describe('WindowsTextDelivery console transport', () => {
     expect(() => port.dispose()).not.toThrow()
   })
 })
+
+/**
+ * The Codex message queue (#97). Windows is the platform this channel was
+ * actually proven on, and it needs no PowerShell, no window and no pid — only
+ * the detected binary and the thread UUID.
+ */
+describe('WindowsTextDelivery.queueToCodexThread', () => {
+  const THREAD_ID = '01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+
+  it('spawns the detected codex.exe with the thread and the message as argv', async () => {
+    const runCodexQueue = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
+    const port = delivery({
+      codexBinary: async () => 'C:\\Users\\j\\.local\\bin\\codex.exe',
+      runCodexQueue
+    })
+
+    await expect(
+      port.queueToCodexThread({ threadId: THREAD_ID, text: 'run the tests' })
+    ).resolves.toEqual({ delivered: true })
+    expect(runCodexQueue.mock.calls[0]?.[0]).toMatchObject({
+      command: 'C:\\Users\\j\\.local\\bin\\codex.exe',
+      args: ['queue', '--thread', THREAD_ID, '--message', 'run the tests']
+    })
+  })
+
+  /**
+   * The npm-global install's `.cmd` cannot be spawned without a shell, and a
+   * shell would re-parse the payload. Refused with the remedy rather than run —
+   * see isShellShimPath in codexQueue.ts.
+   */
+  it('refuses a .cmd shim rather than running the payload through a shell', async () => {
+    const runCodexQueue = vi.fn()
+    const port = delivery({
+      codexBinary: async () => 'C:\\Users\\j\\AppData\\Roaming\\npm\\codex.cmd',
+      runCodexQueue
+    })
+    const outcome = await port.queueToCodexThread({ threadId: THREAD_ID, text: 'hi' })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toContain('CODEX_CLI_PATH')
+    expect(runCodexQueue).not.toHaveBeenCalled()
+  })
+
+  it('refuses with a reason when codex was never detected', async () => {
+    const outcome = await delivery({ runCodexQueue: vi.fn() }).queueToCodexThread({
+      threadId: THREAD_ID,
+      text: 'hi'
+    })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toBeTruthy()
+  })
+
+  it('never echoes the message back in a refusal', async () => {
+    const outcome = await delivery({ runCodexQueue: vi.fn() }).queueToCodexThread({
+      threadId: THREAD_ID,
+      text: 'my-secret-payload'
+    })
+    expect(outcome.error).not.toContain('my-secret-payload')
+  })
+})

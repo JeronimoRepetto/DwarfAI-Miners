@@ -2,12 +2,14 @@ import { homedir } from 'node:os'
 import type { Platform } from '../platform/platform'
 import type { ConsoleInputAdapter } from './osascriptInput'
 import type {
+  CodexQueueRequest,
   ConsoleTextRequest,
   InterruptRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
   TextDeliveryPort
 } from './port'
+import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
 import { deliverViaRelay, runRelayProcess, type RelayRunner } from './relayRunner'
 
 /**
@@ -50,6 +52,14 @@ export interface PosixTextDeliveryOptions {
   consoleInput?: ConsoleInputAdapter | null
   /** Injected for tests; defaults to a real claude spawn. */
   runRelay?: RelayRunner
+  /**
+   * Resolves the codex binary through the CLI detection port (#91), or
+   * undefined when it is not installed. Omitted, the queue tier has no binary
+   * to address and refuses with a reason — never a second hardcoded path.
+   */
+  codexBinary?: () => Promise<string | undefined>
+  /** Injected for tests; defaults to a real codex spawn. */
+  runCodexQueue?: CodexQueueRunner
 }
 
 export class PosixTextDelivery implements TextDeliveryPort {
@@ -63,6 +73,8 @@ export class PosixTextDelivery implements TextDeliveryPort {
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly consoleInput: ConsoleInputAdapter | null
   private readonly runRelay: RelayRunner
+  private readonly codexBinary: () => Promise<string | undefined>
+  private readonly runCodexQueue: CodexQueueRunner
 
   constructor(options: PosixTextDeliveryOptions) {
     this.platform = options.platform
@@ -73,6 +85,8 @@ export class PosixTextDelivery implements TextDeliveryPort {
     this.focus = options.focus ?? (async () => false)
     this.consoleInput = options.consoleInput ?? null
     this.runRelay = options.runRelay ?? runRelayProcess
+    this.codexBinary = options.codexBinary ?? (async () => undefined)
+    this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
     this.supportsConsoleInput = this.consoleInput !== null
   }
 
@@ -107,6 +121,20 @@ export class PosixTextDelivery implements TextDeliveryPort {
       model: this.relayModel,
       timeoutMs: this.relayTimeoutMs,
       run: this.runRelay
+    })
+  }
+
+  /**
+   * The Codex queue tier: platform-neutral like the relay, because it spawns a
+   * CLI rather than touching a window server. macOS and Linux get it on the
+   * same terms Windows does; only the detected binary path differs.
+   */
+  async queueToCodexThread(request: CodexQueueRequest): Promise<TextDeliveryOutcome> {
+    return deliverViaCodexQueue({
+      threadId: request.threadId,
+      text: request.text,
+      binaryPath: await this.codexBinary(),
+      run: this.runCodexQueue
     })
   }
 

@@ -30,6 +30,16 @@ export interface CodexThread {
   /** Present only for a thread spawned as a Codex sub-agent. */
   parentThreadId?: string
   agentName?: string
+  /**
+   * The plain `threads.source` tag — 'cli' for a CLI/TUI session, 'vscode' for
+   * the desktop app. Absent when the column carries the sub-agent spawn blob
+   * instead, which is a different fact and is parsed separately above.
+   *
+   * Read for the message-queue capability (#97), which is proven only for
+   * 'cli': the tag is the difference between a queue somebody has watched drain
+   * and one nobody has.
+   */
+  sourceTag?: string
 }
 
 /** Identity extracted from a `threads.source` value. */
@@ -126,7 +136,15 @@ function toThread(row: SqliteRow): CodexThread | null {
   const agentName = source.agentName ?? asString(row.agent_nickname)
   if (source.parentThreadId !== undefined) thread.parentThreadId = source.parentThreadId
   if (agentName !== undefined) thread.agentName = agentName
+  const sourceTag = plainSourceTag(row.source)
+  if (sourceTag !== undefined) thread.sourceTag = sourceTag
   return thread
+}
+
+/** The plain `threads.source` tag, or undefined when it is the sub-agent blob. */
+function plainSourceTag(source: unknown): string | undefined {
+  const text = asString(source)
+  return text === undefined || text.startsWith('{') ? undefined : text
 }
 
 /** Non-archived threads whose newest activity timestamp is at or after `sinceMs`. */
@@ -137,6 +155,31 @@ export function readCodexThreads(db: SqliteDb, sinceMs: number): CodexThread[] {
     if (thread !== null) threads.push(thread)
   }
   return threads
+}
+
+/**
+ * threadId -> the Codex build that opened it, for threads that recorded one.
+ *
+ * Deliberately its own query rather than another column on THREADS_SQL. A
+ * Codex whose `threads` table predates `cli_version` would make that query fail
+ * outright, and all() maps a failing query to no rows — costing every session
+ * its model, effort, token count and place in the sub-agent graph, for a
+ * capability that install could not use anyway. Isolated here, the same schema
+ * gap costs only the version, and the version floor then refuses the queue for
+ * exactly the right reason (#97).
+ *
+ * A blank version is omitted rather than reported: the column is `NOT NULL
+ * DEFAULT ''`, so "never written" arrives as an empty string, and that is an
+ * absence, not a version.
+ */
+export function readCodexCliVersions(db: SqliteDb): Map<string, string> {
+  const versions = new Map<string, string>()
+  for (const row of db.all('SELECT id, cli_version FROM threads WHERE archived = 0')) {
+    const threadId = asString(row.id)
+    const version = asString(row.cli_version)
+    if (threadId !== undefined && version !== undefined) versions.set(threadId, version)
+  }
+  return versions
 }
 
 /** childThreadId -> parentThreadId, from the sub-agent spawn graph. */

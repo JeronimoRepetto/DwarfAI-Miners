@@ -25,17 +25,35 @@ import type { StageTimings } from './timing'
  * whole `claude -p` run) and reaches for the name only when the console
  * cannot be focused or typed into, so a failed focus no longer loses the
  * message (issue #24).
+ *
+ * A 'codex-queue' target has no such second address and needs none: it wants
+ * neither a window nor a pid, only the thread's own UUID, which is why it is
+ * the one channel a Codex session has ever had (#97).
  */
 export type TextDeliveryTarget =
   | { kind: 'terminal'; pid: number; sessionName?: string }
   | { kind: 'claude-relay'; sessionName: string }
   | { kind: 'foreman-relay'; foremanDwarfId: string; workerName: string }
+  | { kind: 'codex-queue'; threadId: string }
 
 /** A target that can actually be written to (a foreman hop has been resolved away). */
 export type TextDeliveryEndpoint = Extract<
   TextDeliveryTarget,
-  { kind: 'terminal' } | { kind: 'claude-relay' }
+  { kind: 'terminal' } | { kind: 'claude-relay' } | { kind: 'codex-queue' }
 >
+
+/**
+ * The endpoints a KICK can land on — every writable one except the Codex queue.
+ *
+ * A queued item is drained at the thread's next idle boundary, so an interrupt
+ * sent that way would arrive precisely when the turn it meant to cut short had
+ * already ended: `delivered: true`, a ✓, and nothing cancelled. Mid-turn drain
+ * is the one thing the live experiment did not test, and a cancel channel built
+ * on the untested half would be the exit-0-shaped lie (#97). The exclusion is
+ * in the type rather than in a comment so kickDwarf cannot grow a queue branch
+ * by accident; resolveKickDelivery is where it is enforced.
+ */
+export type KickEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'codex-queue' }>
 
 export interface ConsoleTextRequest {
   /** The session pid; its hosting terminal window is what receives the keystrokes. */
@@ -47,6 +65,12 @@ export interface ConsoleTextRequest {
 export interface RelayTextRequest {
   /** The addressable Claude session name, e.g. 'sample-project-70'. */
   sessionName: string
+  text: string
+}
+
+export interface CodexQueueRequest {
+  /** The Codex thread's own UUID, which is what `codex queue --thread` takes. */
+  threadId: string
   text: string
 }
 
@@ -85,6 +109,16 @@ export interface TextDeliveryPort {
   sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome>
   /** Hand the text to a named, window-less Claude session over its own messaging. */
   relayToClaudeSession(request: RelayTextRequest): Promise<TextDeliveryOutcome>
+  /**
+   * Hand the text to a Codex thread's own message queue, addressed by thread id
+   * (#97).
+   *
+   * Optional for the reason supportsConsoleInput and dispose are: a port that
+   * implements nothing here simply has no queue tier, and the runtime turns
+   * that into a stated refusal rather than a silent no-op. Both shipped ports
+   * implement it — it spawns a CLI, so it is platform-neutral like the relay.
+   */
+  queueToCodexThread?(request: CodexQueueRequest): Promise<TextDeliveryOutcome>
   /**
    * Send a raw interrupt keystroke (ESC) to the console hosting `pid` —
    * Kick's terminal path. Never routed through the message path: there is no

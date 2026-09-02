@@ -207,6 +207,57 @@ describe('createPlatformAdapters — text delivery', () => {
       '/home/j/.local/bin/claude'
     ])
   })
+
+  /**
+   * The Codex queue tier (#97) reaches its binary through the SAME detection
+   * port the rest of the app uses (#91) — not through a second hardcoded path.
+   * That is what makes CODEX_CLI_PATH work for it, and what keeps the queue on
+   * every platform, since it spawns a CLI like the relay does.
+   */
+  it('resolves the codex queue binary through the CLI detection port on every platform', async () => {
+    const runCodexQueue = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
+    const paths: Array<string | undefined> = []
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      const fs = new FakeFs()
+      const binary =
+        platform === 'win32' ? 'C:\\Users\\j\\.local\\bin\\codex.exe' : '/home/j/.local/bin/codex'
+      fs.addFile(binary, 'codex')
+      const adapters = createPlatformAdapters(options(platform, { fs, runCodexQueue }))
+      await expect(
+        adapters.textDelivery.queueToCodexThread!({ threadId: 'thread-1', text: 'hi' })
+      ).resolves.toEqual({ delivered: true })
+      paths.push(runCodexQueue.mock.calls.at(-1)?.[0].command)
+    }
+    expect(paths).toEqual([
+      'C:\\Users\\j\\.local\\bin\\codex.exe',
+      '/home/j/.local/bin/codex',
+      '/home/j/.local/bin/codex'
+    ])
+  })
+
+  it('honours the CODEX_CLI_PATH override for the queue binary', async () => {
+    const runCodexQueue = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
+    const fs = new FakeFs()
+    fs.addFile('/home/j/.local/bin/codex', 'convention')
+    fs.addFile('/opt/codex/codex', 'override')
+    const adapters = createPlatformAdapters(
+      options('linux', { fs, runCodexQueue, cliOverrides: { codex: '/opt/codex/codex' } })
+    )
+    await adapters.textDelivery.queueToCodexThread!({ threadId: 'thread-1', text: 'hi' })
+    expect(runCodexQueue.mock.calls[0]?.[0].command).toBe('/opt/codex/codex')
+  })
+
+  it('refuses the queue with a reason when codex is not installed', async () => {
+    const runCodexQueue = vi.fn()
+    const adapters = createPlatformAdapters(options('linux', { fs: new FakeFs(), runCodexQueue }))
+    const outcome = await adapters.textDelivery.queueToCodexThread!({
+      threadId: 'thread-1',
+      text: 'hi'
+    })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toBeTruthy()
+    expect(runCodexQueue).not.toHaveBeenCalled()
+  })
 })
 
 describe('createAutostartPort', () => {

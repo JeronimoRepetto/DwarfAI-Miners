@@ -594,19 +594,23 @@ describe('CodexProvider', () => {
   })
 
   /**
-   * Codex offers no way in: it records no pid for a thread (so no console can
-   * be located, TUI or not) and exposes no cross-session messaging channel the
-   * way Claude Code does. Both shapes must report "no channel" so the panel
-   * disables the action with an explanation instead of failing silently.
+   * Codex has no console tier and never will from here: it records no pid for a
+   * thread, so no window can be located, TUI or not. Its one way in is the
+   * message queue (#97), and that is answered strictly from the SQLite registry
+   * row — the source tag and the build that opened the thread. This provider is
+   * built without a registry, so every session here is rollout-only and must
+   * report "no channel": nothing on disk proves either condition, and a channel
+   * offered on an unproven session is the ✓ that lies. The queue's own matrix
+   * is pinned in codexProviderRegistry.test.ts, where a registry exists.
    */
   describe('textDelivery', () => {
-    it('has no channel for a CLI/TUI-hosted thread', async () => {
+    it('has no channel for a busy rollout-only thread the registry never recorded', async () => {
       const provider = makeProvider()
       await provider.scan()
       expect(provider.textDelivery(`codex:${BUSY_SESSION_ID}`)).toBeNull()
     })
 
-    it('has no channel for a desktop app-server thread', async () => {
+    it('has no channel for an idle rollout-only thread the registry never recorded', async () => {
       const provider = makeProvider()
       await provider.scan()
       expect(provider.textDelivery(`codex:${SESSION_ID}`)).toBeNull()

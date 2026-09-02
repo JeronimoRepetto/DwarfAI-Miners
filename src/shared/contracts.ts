@@ -276,10 +276,20 @@ export function dwarfSilenceWindowKey(
  *   `claude -p` turn delivers the text over Claude Code's cross-session messaging.
  * foreman-relay: the dwarf is a subagent with no channel of its own; the text
  *   goes to its foreman (parent session) under an explicit `[for agent X] ` prefix.
+ * codex-queue: the session is a Codex thread whose own message queue accepts an
+ *   item addressed by thread id, so `codex queue` hands it over without any
+ *   window, pid or console (#97).
+ *
+ * A ✓ means the same thing on every one of them and nothing more: handed over.
+ * It is worth restating for the queue, because that tier is the one where the
+ * gap is visible — a queued item is persisted immediately and drained at the
+ * thread's next idle boundary (6-8s in the one measured run), so the panel is
+ * reporting a durable hand-over, never that anything has read it. Only the
+ * renderer's observed-reaction rule may ever say more (see reaction.ts).
  *
  * A dwarf with no channel at all simply carries no value.
  */
-export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay'
+export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay' | 'codex-queue'
 
 /**
  * One answer an agent said it would accept, in its own words.
