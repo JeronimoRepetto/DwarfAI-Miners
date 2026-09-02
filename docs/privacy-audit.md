@@ -65,20 +65,18 @@ Edited files were re-formatted with the repo's Prettier so `format:check` stays 
 
 ## 4. Report-only items (owned by other zones — proposed changes)
 
-Status: 4.1, 4.2 and 4.3 were applied in the follow-up pass described under each
-heading. The one piece still outstanding is the `.env.example` line in 4.1 — that
-file is excluded from tooling by a local permission rule, so the maintainer must
-apply it by hand. **Until it is applied the 4.3 CI guard fails**, because
-`.env.example` still names the personal second root.
+Status: 4.1, 4.2 and 4.3 were applied in full, including the `.env.example` line in
+4.1, which the maintainer applied by hand — that file is excluded from tooling by a
+local permission rule. The 4.3 CI guard passes against it.
 
 ### 4.1 Machine-specific shipped default Claude root (MEDIUM — highest-priority report-only item)
 
-`defaultConfig()` in `src/main/config.ts:80` ships a second, machine-specific Claude
+`defaultConfig()` in `src/main/config/config.ts:80` ships a second, machine-specific Claude
 account root (a personal `~/.claude-*` directory whose name also hints at the
 maintainer's employer) to every user. Proposed change, in one coherent pass:
 
-- `src/main/config.ts:80`: default `claudeConfigDirs` becomes `['~/.claude']` only.
-- Update together: `src/main/config.test.ts:16` (default expectation), the
+- `src/main/config/config.ts:80`: default `claudeConfigDirs` becomes `['~/.claude']` only.
+- Update together: `src/main/config/config.test.ts:16` (default expectation), the
   `CLAUDE_CONFIG_DIRS` line in `.env.example` (keep a comment showing the
   semicolon-separated multi-root form with a neutral example such as
   `~/.claude;~/.claude-work`), the `CLAUDE_CONFIG_DIRS` default in the README table, and
@@ -204,10 +202,11 @@ Recommendation (decision for the maintainer — this audit performed no rewrite)
 
 ## 6. Post-audit state of hidden directories
 
-| Directory                                                 | State                                                                                                          |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `.atl/`                                                   | Untracked after this audit, now in `.gitignore`                                                                |
-| `.codegraph/`                                             | Ignored, never tracked                                                                                         |
-| `.github/`                                                | Tracked intentionally (CI + release workflows only, clean)                                                     |
-| `out/`, `release/`, `dist/`, `coverage/`, `node_modules/` | Ignored, never tracked                                                                                         |
-| `.claude/`, `.vscode/`, `.idea/`                          | Do not exist; the `*.local` ignore already covers `settings.local.json`-style files if `.claude/` ever appears |
+| Directory                                                 | State                                                                                                                                                            |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.atl/`                                                   | Untracked after this audit, now in `.gitignore`                                                                                                                  |
+| `.codegraph/`                                             | Ignored, never tracked                                                                                                                                           |
+| `.github/`                                                | Tracked intentionally (CI + release workflows only, clean)                                                                                                       |
+| `out/`, `release/`, `dist/`, `coverage/`, `node_modules/` | Ignored, never tracked                                                                                                                                           |
+| `.claude/`                                                | Tracked intentionally (`rules/coordinates.md` only — the read-triggered rule AGENTS.md points at); the `*.local` ignore covers `settings.local.json`-style files |
+| `.vscode/`, `.idea/`                                      | Do not exist                                                                                                                                                     |

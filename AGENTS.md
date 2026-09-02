@@ -157,7 +157,7 @@ samples to read before writing any.
 
 Conventional commits, imperative mood, no AI attribution trailers of any kind — see
 `CONTRIBUTING.md`. One convention it does not state: the subject says what the change achieves in
-plain language and ends with its issue number. 52 of the last 60 commits do this.
+plain language and ends with its issue number — 49 of the 60 non-merge commits at `a810e42` do.
 
 ```
 fix(vault): never credit ore from a tier that is still a guess (#41)
