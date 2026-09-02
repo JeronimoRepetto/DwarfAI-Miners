@@ -20,6 +20,18 @@
   --parchment: #f0e3c8;
   --parchment-line: #ad9772;
   --parchment-ink: #33261a;
+  /*
+   * The design source's own palette, under its own names, so a corrected hex is
+   * one edit here rather than a hunt through components. Only the four the
+   * agent-question flow needs are declared; the rest arrive with the screens
+   * that use them. `--color-panel` is the message-panel brown and is a
+   * different colour from `--bg-panel` above, which the source calls
+   * "panel deep".
+   */
+  --color-accent: #d19831;
+  --color-cream: #fae2b6;
+  --color-panel: #2b2119;
+  --color-question-dark: #13100a;
 }
 
 /* Earthy brown */

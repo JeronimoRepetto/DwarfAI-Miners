@@ -67,21 +67,26 @@ export function answerStateForAsk(
 }
 
 /**
- * Whether Enter would send anything right now.
+ * Whether this ask can still be answered at all — which is what decides whether
+ * the cards are live or inert.
  *
- * False while an answer is in flight — a second press must never release the
- * same tool call twice — and false once one was released, because the ask is
- * gone at that moment even though the card stays on screen until main's next
- * snapshot drops it. A refusal re-opens it: nothing was handed over.
+ * False while an answer is in flight, so a second press cannot release the same
+ * tool call twice, and false once one was released: the ask is gone at that
+ * moment even though the card stays on screen until main's next snapshot drops
+ * it. A refusal re-opens it, because nothing was handed over.
  */
+export function isAnswerable(state: DwarfAnswerState | undefined, toolUseId: string): boolean {
+  const verdict = answerStateForAsk(state, toolUseId)
+  return verdict === undefined || verdict.phase === 'refused'
+}
+
+/** Whether Enter would send anything right now: something chosen, and still answerable. */
 export function canSendAnswer(
   current: QuestionSelection | null,
   toolUseId: string,
   state: DwarfAnswerState | undefined
 ): boolean {
-  if (!belongsTo(current, toolUseId)) return false
-  const verdict = answerStateForAsk(state, toolUseId)
-  return verdict === undefined || verdict.phase === 'refused'
+  return belongsTo(current, toolUseId) && isAnswerable(state, toolUseId)
 }
 
 /**

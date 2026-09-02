@@ -5,6 +5,7 @@ import {
   answerStateForAsk,
   answerStatusLine,
   canSendAnswer,
+  isAnswerable,
   optionState,
   selectOption
 } from './questionAnswer'
@@ -107,6 +108,19 @@ describe('canSendAnswer', () => {
 
   it('refuses a selection that belongs to a different ask', () => {
     expect(canSendAnswer(chosen, 'toolu_02', undefined)).toBe(false)
+  })
+})
+
+describe('isAnswerable', () => {
+  it('is open until something is in flight against this ask', () => {
+    expect(isAnswerable(undefined, 'toolu_01')).toBe(true)
+    expect(isAnswerable({ phase: 'answering', toolUseId: 'toolu_01' }, 'toolu_01')).toBe(false)
+    expect(isAnswerable({ phase: 'answered', toolUseId: 'toolu_01' }, 'toolu_01')).toBe(false)
+    expect(isAnswerable({ phase: 'refused', toolUseId: 'toolu_01' }, 'toolu_01')).toBe(true)
+  })
+
+  it('ignores a verdict that belongs to a different ask', () => {
+    expect(isAnswerable({ phase: 'answered', toolUseId: 'toolu_01' }, 'toolu_02')).toBe(true)
   })
 })
 
