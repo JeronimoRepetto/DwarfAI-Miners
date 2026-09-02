@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  type ClaudeSessionEntry,
   claudeSessionAttendance,
   claudeSessionDeliveryTarget,
   claudeWaitingReason,
@@ -776,5 +777,87 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
     // that: resolution is id matching over the whole tail, not line order.
     const tail = answerLine('toolu_a') + askLine('toolu_a', askInput('Which approach?'))
     expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+})
+
+/**
+ * Issue #94. The registry proves a session is BLOCKED; an outstanding ask can
+ * only say what it is blocked ON. Neither source may claim the other's fact,
+ * which is the whole shape of this: the tool block refines, and never asserts.
+ *
+ * So exactly one value moves, 'unknown' — "the provider proved this session is
+ * blocked but named no condition this table recognizes" (see WaitingReason).
+ * That is proof of blocked with the condition missing, which is precisely the
+ * hole an unanswered AskUserQuestion fills. Every other reading is untouched:
+ * a named condition is the registry's own answer and needs no help, and
+ * `undefined` — not blocked, or nothing proves it either way — must stay
+ * absent, because moving THAT would be the tool block asserting a blocked
+ * state, which is the thing #60 refused.
+ */
+describe('claudeWaitingReason refined by an outstanding ask (issue #94)', () => {
+  /** The one ask the fixture ends on with no result behind it. */
+  const openAsk = parseClaudeTranscriptTail(askUserQuestion).pendingQuestion
+
+  /** A registry entry with just the status and condition a case is about. */
+  function entry(status: string, waitingFor?: string): ClaudeSessionEntry {
+    return parseClaudeSessionEntry({
+      pid: 1,
+      sessionId: 's',
+      cwd: 'c',
+      status,
+      ...(waitingFor !== undefined ? { waitingFor } : {})
+    })!
+  }
+
+  it('refines a bare open dialog into user-input, and only with the ask', () => {
+    // The commonest waiting value in the whole vocabulary, and the one the
+    // issue is about: the registry says a modal is up, the model's own tool
+    // call says what the modal wants. Both halves are asserted here so the
+    // refinement cannot pass by making 'dialog open' user-input outright.
+    expect(openAsk).toBeDefined()
+    expect(claudeWaitingReason(entry('waiting', 'dialog open'))).toBe('unknown')
+    expect(claudeWaitingReason(entry('waiting', 'dialog open'), openAsk)).toBe('user-input')
+  })
+
+  it('refines a session that proved waiting while naming no condition at all', () => {
+    expect(claudeWaitingReason(entry('waiting'), openAsk)).toBe('user-input')
+  })
+
+  it('refines a condition this version of Claude Code never wrote', () => {
+    // Reached 'unknown' by a different road — an unrecognized string rather
+    // than a recognized-but-uninformative one — and 'unknown' means the same
+    // thing either way, so the refinement must not care which road it came by.
+    const invented = entry('waiting', 'something invented later')
+    expect(claudeWaitingReason(invented)).toBe('unknown')
+    expect(claudeWaitingReason(invented, openAsk)).toBe('user-input')
+  })
+
+  it('leaves every explicitly named condition exactly as the registry wrote it', () => {
+    // The explicit mapping wins. An approval and an outstanding question can
+    // both be true, and the registry is the one that watched the session stop:
+    // rewriting its answer would be the tool block overruling it, not refining
+    // it. `input needed` needs nothing either — it already proved the question.
+    expect(claudeWaitingReason(entry('waiting', 'permission prompt'), openAsk)).toBe('approval')
+    expect(claudeWaitingReason(entry('waiting', 'sandbox request'), openAsk)).toBe('approval')
+    expect(claudeWaitingReason(entry('waiting', 'goal proposal'), openAsk)).toBe('approval')
+    expect(claudeWaitingReason(entry('waiting', 'input needed'), openAsk)).toBe('user-input')
+  })
+
+  it('gives a session nothing proved blocked no reason, whatever its tail holds', () => {
+    // THE guard on the whole phase. An ask sitting in the tail of a busy
+    // session is the model still working — it wrote the tool call and the turn
+    // has not stopped on it yet — and 'user-input' suspends eviction, so a
+    // reason invented here makes a dwarf that never leaves. Absent stays
+    // absent: the tool block may refine a proof, never manufacture one.
+    expect(claudeWaitingReason(entry('busy'), openAsk)).toBeUndefined()
+    expect(claudeWaitingReason(entry('idle'), openAsk)).toBeUndefined()
+  })
+
+  it('drops the refinement the moment the ask is answered', () => {
+    const answered = parseClaudeTranscriptTail(
+      askUserQuestion + answerLine('toolu_01AskPlaceholderPending')
+    ).pendingQuestion
+    expect(answered).toBeUndefined()
+    expect(claudeWaitingReason(entry('waiting', 'dialog open'), answered)).toBe('unknown')
   })
 })

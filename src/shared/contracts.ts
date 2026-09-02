@@ -90,12 +90,22 @@ export type DwarfStatus = 'working' | 'waiting' | 'leaving'
 /**
  * What a blocked agent is blocked ON, normalized across providers (issue #60).
  *
- * Derived ONLY from a provider's own structured lifecycle evidence. A question
+ * Derived ONLY from a provider's own structured evidence, of which there are
+ * two kinds and no third. Its lifecycle record — Claude Code's registry
+ * `waitingFor` — is the only one that can make this a value at all, because it
+ * is the thing that watched the session stop. Its structured record of an ask,
+ * where the agent itself enumerated in schema the question and the answers it
+ * would take (see DwarfQuestion), may then name a condition that lifecycle
+ * record left 'unknown', and may do nothing else: it refines a proof, never
+ * manufactures one.
+ *
+ * Prose remains forbidden outright, and nothing above softens it. A question
  * mark in a speech bubble, a sentence that reads like a request, an agent that
  * has simply gone quiet — none of them may ever produce a value here. An agent
  * waiting on a human writes nothing at all, so prose is exactly the signal that
  * is absent when it matters, and reading it would make the panel claim a thing
- * it cannot know.
+ * it cannot know. A question asked as plain prose therefore stays uncaught,
+ * which is where the line falls rather than a gap in it.
  *
  * 'user-input' is the only value that carries a behavioural promise: while it
  * is active the agent is exempt from age-based eviction whatever its role's
@@ -104,11 +114,12 @@ export type DwarfStatus = 'working' | 'waiting' | 'leaving'
  * until it is answered — and never "probably blocked on someone".
  *
  * 'unknown' is the honest middle: the provider proved the session is blocked
- * but named no condition this table recognizes. It must never be treated as
- * 'user-input'. The same shape has been decided twice already in this codebase
- * — absence of a `pendingBackgroundAgentCount` is not a count of zero, and
- * `tierOf`'s placeholder must never seal a ledger delta — and this is the
- * third: absence of proof is not proof, in either direction.
+ * but named no condition this table recognizes. Nothing may TREAT it as
+ * 'user-input' — a second structured proof REPLACING it is a different move,
+ * and the only one allowed. The same shape has been decided twice already in
+ * this codebase — absence of a `pendingBackgroundAgentCount` is not a count of
+ * zero, and `tierOf`'s placeholder must never seal a ledger delta — and this
+ * is the third: absence of proof is not proof, in either direction.
  *
  * Deliberately three values, not four. The issue also suggested a 'tool'
  * reason for a long tool call, and nothing on this machine writes evidence of
@@ -270,10 +281,14 @@ export interface DwarfQuestionOption {
  * A question asked as plain prose produces no such record and stays uncaught,
  * which is exactly the line the prohibition draws rather than a gap in this.
  *
- * Carrying a question does NOT set waitingReason. Blocked and blocked-on-what
- * are two different facts from two different sources, and neither may claim the
- * other's: this field says an ask is outstanding, the registry says whether the
- * session can still move.
+ * Carrying a question may REFINE waitingReason and may never assert it. Blocked
+ * and blocked-on-what are two different facts from two different sources, and
+ * neither may claim the other's: this field says an ask is outstanding, the
+ * registry says whether the session can still move. So where the provider
+ * proved a session blocked and named no condition it recognized, an outstanding
+ * ask names it; where the provider proved nothing, no reason appears however
+ * many asks are open, because an ask inside a running turn is the model still
+ * working rather than a human being waited on.
  *
  * `toolUseId` is what makes the round trip observable — the answer is written
  * back as a result naming the same id, so "answered" is matched rather than
@@ -373,11 +388,11 @@ export interface Dwarf {
    * What this dwarf's agent asked its user, when the agent asked it through a
    * structured channel and nothing has answered it yet (issue #94).
    *
-   * Sits beside `waitingReason` and never feeds it, for the reason DwarfQuestion
-   * spells out: an outstanding ask and a blocked session are two facts with two
-   * sources. Today only a Claude session can produce one; Codex writes no
-   * equivalent, and a dwarf without the field is never "not asking", only "not
-   * shown to be".
+   * Sits beside `waitingReason` and may only refine it, for the reason
+   * DwarfQuestion spells out: an outstanding ask and a blocked session are two
+   * facts with two sources. Today only a Claude session can produce one; Codex
+   * writes no equivalent, and a dwarf without the field is never "not asking",
+   * only "not shown to be" — so its absence never unsets a reason either.
    */
   pendingQuestion?: DwarfQuestion
   /**

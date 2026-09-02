@@ -2311,6 +2311,173 @@ describe('ClaudeProvider', () => {
         expect((await provider.scan())[0]!.dwarfs).toEqual([])
       })
     })
+
+    /**
+     * Issue #94. The registry proves a session is blocked and, in its commonest
+     * waiting value, proves nothing about what on. An unanswered
+     * AskUserQuestion is the model saying in schema that it asked the user
+     * something, so it can name that missing condition — and only that. It
+     * never makes a session blocked; the registry's 'unknown' is the one
+     * reading it may move (see claudeWaitingReason).
+     *
+     * These tests carry the weight of the phase, because 'user-input' is the
+     * value that suspends eviction: the refinement has to engage that promise
+     * when the ask is real and let go of it the moment an answer is written.
+     */
+    describe('refined by an outstanding ask (issue #94)', () => {
+      /** The tool_use block Claude writes when the model asks the user something. */
+      function askLine(toolUseId: string): string {
+        return (
+          JSON.stringify({
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: 'AskUserQuestion',
+                  input: {
+                    questions: [{ question: 'Which approach?', options: [{ label: 'Accumulate' }] }]
+                  }
+                }
+              ]
+            }
+          }) + '\n'
+        )
+      }
+
+      /** The tool_result block that closes one ask. */
+      function answerLine(toolUseId: string): string {
+        return (
+          JSON.stringify({
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'Accumulate' }]
+            }
+          }) + '\n'
+        )
+      }
+
+      /** The lone-foreman transcript with an ask appended, answered or not. */
+      function loneForemanAsking(answered = false): void {
+        fake.addFile(
+          TRANSCRIPT,
+          noAgentTranscript +
+            askLine('toolu_01Open') +
+            (answered ? answerLine('toolu_01Open') : ''),
+          LAST_WRITE
+        )
+      }
+
+      it('refines an open dialog into user-input when an ask is outstanding', async () => {
+        registry(blockedOn('dialog open'))
+        loneForemanAsking()
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman).toMatchObject({ role: 'foreman', status: 'waiting' })
+        expect(foreman!.waitingReason).toBe('user-input')
+        // Both facts, still from their own sources: the reason says the session
+        // cannot move, the question says what it is waiting to hear.
+        expect(foreman!.pendingQuestion?.toolUseId).toBe('toolu_01Open')
+      })
+
+      it('keeps an explicit approval condition, question or no question', async () => {
+        // The registry watched the session stop and named the condition, so
+        // there is nothing for the tail to refine. Rewriting it would be the
+        // tool block overruling the registry rather than completing it.
+        registry(blockedOn('permission prompt'))
+        loneForemanAsking()
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman!.waitingReason).toBe('approval')
+        expect(foreman!.pendingQuestion?.toolUseId).toBe('toolu_01Open')
+      })
+
+      it('gives a working session no reason at all, whatever its tail holds', async () => {
+        // An ask in the tail of a busy session is the model still working: it
+        // wrote the tool call and the turn has not stopped on it yet. The
+        // question rides the wire, the reason stays absent.
+        registry(sessionEntry)
+        loneForemanAsking()
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman).toMatchObject({ status: 'working' })
+        expect(foreman!.pendingQuestion?.toolUseId).toBe('toolu_01Open')
+        expect(foreman!.waitingReason).toBeUndefined()
+        expect('waitingReason' in foreman!).toBe(false)
+      })
+
+      it('drops the refinement once the answer is written back', async () => {
+        registry(blockedOn('dialog open'))
+        loneForemanAsking(true)
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman!.pendingQuestion).toBeUndefined()
+        expect(foreman!.waitingReason).toBe('unknown')
+      })
+
+      it('never refines a worker, which has no registry entry to refine', async () => {
+        // The invariant the phase must not dent: a subagent's sidecar records
+        // no status, so it has no proof of being blocked for an ask to name.
+        // Its own question crossing the wire changes nothing about that.
+        registry(blockedOn('dialog open'))
+        fake.addFile(SUBAGENT, subagentTranscript + askLine('toolu_01Worker'), LAST_WRITE)
+        const dwarfs = (await providerHere().scan())[0]!.dwarfs
+        const worker = dwarfs.find((dwarf) => dwarf.role === 'worker')!
+        expect(worker.id).toBe(WORKER_ID)
+        expect(worker.pendingQuestion?.toolUseId).toBe('toolu_01Worker')
+        expect(worker.waitingReason).toBeUndefined()
+        expect('waitingReason' in worker).toBe(false)
+      })
+
+      /**
+       * The behavioural half, and the reason this phase was separated so it
+       * could be rejected alone. 'user-input' suspends `pruneStaleLaunches`,
+       * so a refinement that outlived its ask would make a dwarf nothing can
+       * evict. The pair below is the whole bargain: the exemption engages on
+       * the ask and lets go on the answer.
+       */
+      describe('the eviction exemption it engages', () => {
+        /** Both transcripts long past both windows, and no notification coming. */
+        function ageEverythingPastBothWindows(): void {
+          clock = LAST_WRITE + FOREMAN_WINDOW * 100
+        }
+
+        /** The crew's transcript with an ask appended, answered or not. */
+        function crewAsking(answered = false): void {
+          fake.addFile(
+            TRANSCRIPT,
+            parentTranscript +
+              askLine('toolu_01Open') +
+              (answered ? answerLine('toolu_01Open') : ''),
+            LAST_WRITE
+          )
+        }
+
+        it('suspends eviction that an open dialog alone would not have stopped', async () => {
+          // The control is the existing 'unknown' test above: this same
+          // registry entry, with no ask in the tail, evicts the whole crew.
+          registry(blockedOn('dialog open', 'idle'))
+          crewAsking()
+          const provider = providerHere()
+          expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+          ageEverythingPastBothWindows()
+          expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+        })
+
+        it('lets go of it the moment the ask is answered', async () => {
+          registry(blockedOn('dialog open', 'idle'))
+          crewAsking()
+          const provider = providerHere()
+          ageEverythingPastBothWindows()
+          expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+          // The user answered. Nothing else changed — same registry entry, same
+          // silence, same clock — and the silence counts again.
+          crewAsking(true)
+          expect((await provider.scan())[0]!.dwarfs).toEqual([])
+        })
+      })
+    })
   })
 
   /**
