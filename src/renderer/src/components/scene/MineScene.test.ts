@@ -581,3 +581,55 @@ describe('MineScene sprite scaling', () => {
     expect(style).toContain(`--cave-min-height: ${CAVE_MIN_HEIGHT_PX}px`)
   })
 })
+
+/*
+ * An agent's question (#125) travels the same way a message does: the scene
+ * names which dwarf it came from, and App owns the IPC.
+ */
+describe('MineScene pending question', () => {
+  const asking = () =>
+    defaultDwarf({
+      id: 'claude:s1',
+      pendingQuestion: {
+        toolUseId: 'toolu_01',
+        question: 'Which database?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    })
+
+  it('names the dwarf when an answer travels up from its sprite', async () => {
+    const dwarf = asking()
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [dwarf] }) } })
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('answer-question')).toEqual([[dwarf, 'SQLite']])
+  })
+
+  it("hands each dwarf its own answer verdict, keyed by that dwarf's id", async () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({ dwarfs: [asking()] }),
+        answerStates: {
+          'claude:s1': {
+            phase: 'refused',
+            toolUseId: 'toolu_01',
+            error: 'That question is no longer open.'
+          }
+        }
+      }
+    })
+    await wrapper.find('.dwarf-hit').trigger('click')
+    expect(wrapper.find('.answer-error').text()).toBe('That question is no longer open.')
+  })
+
+  it('leaves a dwarf with nothing outstanding exactly as it was', async () => {
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [defaultDwarf()] }) }
+    })
+    await wrapper.find('.dwarf-hit').trigger('click')
+    expect(wrapper.find('.question-card').exists()).toBe(false)
+  })
+})

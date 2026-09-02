@@ -6,6 +6,7 @@ import MineScene from './components/scene/MineScene.vue'
 import ShortcutSettings from './components/panel/ShortcutSettings.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
+import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useToggleShortcut } from './composables/useToggleShortcut'
@@ -18,6 +19,7 @@ const { state, setMines } = useMines()
 const { state: viewState, openMine, showMap, syncWithMines } = useView()
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 const { state: kickingState, kick } = useDwarfKicking()
+const { state: questionState, answer: answerDwarfQuestion } = useDwarfQuestion()
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
 // The hover line explains what the CURRENT state does; the accessible name
@@ -192,6 +194,18 @@ function kickDwarf(dwarf: Dwarf): void {
   void kick(dwarf.id)
 }
 
+/**
+ * Answer the question that dwarf's agent is blocked on (#125).
+ *
+ * The question itself is never touched here. It is drawn from the dwarf's own
+ * `pendingQuestion` on the latest snapshot, and only main's next snapshot may
+ * drop it — the panel's part ends at handing the choice over.
+ */
+function answerQuestion(dwarf: Dwarf, label: string): void {
+  if (dwarf.pendingQuestion === undefined) return
+  void answerDwarfQuestion(dwarf.id, dwarf.pendingQuestion, label)
+}
+
 onMounted(() => {
   void load()
   // The button's initial "pinned" guess matches main's default; this adopts
@@ -311,10 +325,12 @@ onBeforeUnmount(() => unsubscribe?.())
         :activating-id="activating"
         :send-states="messagingState.byDwarfId"
         :kick-states="kickingState.byDwarfId"
+        :answer-states="questionState.byDwarfId"
         @back="backToMap"
         @activate="activate"
         @send-text="sendText"
         @kick="kickDwarf"
+        @answer-question="answerQuestion"
       />
       <MapView
         v-else

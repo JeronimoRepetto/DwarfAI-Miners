@@ -127,6 +127,51 @@ describe('DwarfSprite', () => {
       expect(wrapper.find('.action-bar').exists()).toBe(false)
     })
 
+    it('forwards an answer from the bar and keeps the bar open for the verdict', async () => {
+      // Same reasoning as a composed message: the verdict has to land somewhere,
+      // and closing the bar would take the question with it.
+      const wrapper = mount(DwarfSprite, {
+        props: {
+          dwarf: defaultDwarf({
+            pendingQuestion: {
+              toolUseId: 'toolu_01',
+              question: 'Which database?',
+              multiSelect: false,
+              options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+            }
+          })
+        }
+      })
+      await wrapper.find('.dwarf-hit').trigger('click')
+      await wrapper.findAll('.option-card')[0]!.trigger('click')
+      await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+
+      expect(wrapper.emitted('answer')).toEqual([['Postgres']])
+      expect(wrapper.find('.action-bar').exists()).toBe(true)
+    })
+
+    it('carries the answer verdict down to the question card', async () => {
+      const wrapper = mount(DwarfSprite, {
+        props: {
+          dwarf: defaultDwarf({
+            pendingQuestion: {
+              toolUseId: 'toolu_01',
+              question: 'Which database?',
+              multiSelect: false,
+              options: [{ label: 'Postgres' }]
+            }
+          }),
+          answerState: {
+            phase: 'refused',
+            toolUseId: 'toolu_01',
+            error: 'That question is no longer open.'
+          }
+        }
+      })
+      await wrapper.find('.dwarf-hit').trigger('click')
+      expect(wrapper.find('.answer-error').text()).toBe('That question is no longer open.')
+    })
+
     it('forwards a composed message and keeps the bar open for the verdict', async () => {
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }) }
