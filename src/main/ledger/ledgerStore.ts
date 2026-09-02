@@ -20,6 +20,17 @@ import { emptyLedger, parseLedger, serializeLedger, type LedgerState } from '../
 /** Sibling suffix for the atomic write; same directory keeps rename on one volume. */
 const TEMP_SUFFIX = '.tmp'
 
+/**
+ * The document's name under userData.
+ *
+ * Since #93 the vault lives in the app's database and this file is a BACKUP: it
+ * is read once, by the migration, and then never opened, written or removed
+ * again. It is named here rather than inlined at the composition root because
+ * two places now have to agree on it — the fallback store and the migration
+ * that decides the fallback is no longer needed.
+ */
+export const LEDGER_JSON_FILENAME = 'material-ledger-v1.json'
+
 export interface LedgerFsLike {
   readFile: (path: string, encoding: 'utf8') => Promise<string>
   writeFile: (path: string, data: string, encoding: 'utf8') => Promise<void>
@@ -48,7 +59,15 @@ export async function writeFileAtomic(
 }
 
 export interface LedgerStore {
-  /** The stored vault, or an empty one when there is none (or it is unreadable). */
+  /**
+   * The stored vault, or an empty one when there is none.
+   *
+   * This store degrades an UNREADABLE document to an empty vault, which is
+   * right for a file the app can rebuild. The database-backed implementation
+   * (sqliteLedgerStore.ts) deliberately rejects instead, because "empty" from
+   * it would be indistinguishable from a whole history reported as gone. Both
+   * satisfy this surface, and openLedgerStore.ts is where that choice is made.
+   */
   load: () => Promise<LedgerState>
   /** Persist atomically. Rejections are the caller's to handle. */
   save: (state: LedgerState) => Promise<void>

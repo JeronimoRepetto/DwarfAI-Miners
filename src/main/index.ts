@@ -41,11 +41,13 @@ import { sumTokensObserved } from './domain/aggregate'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
+import { APP_DB_FILENAME, createAppDatabase } from './appDatabase/appDatabase'
 import { runCoalBackfill } from './ledger/coalBackfill'
-import { createLedgerStore } from './ledger/ledgerStore'
+import { LEDGER_JSON_FILENAME } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
+import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
-import { PROJECTS_DB_FILENAME, type ProjectsStore } from './projects/projectsStore'
+import type { ProjectsStore } from './projects/projectsStore'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
 import { createShortcutPreferenceStore } from './shell/shortcutPreference'
@@ -300,20 +302,43 @@ async function init(): Promise<void> {
   })
   const storedAccelerator = await shortcutStore.load()
 
-  // The cumulative material vault (see #22), the fourth userData file. Loaded
-  // before the runtime exists so the very first published poll already carries
-  // real totals instead of briefly showing an empty vault.
+  // The app's own database, and the only one it writes (#93). Both tenants —
+  // the material vault and the projects list — share this ONE handle, because
+  // two handles on one file take turns at SQLITE_BUSY rather than sharing a
+  // write queue. The path is injected for the same reason the ledger's always
+  // was: neither store imports Electron.
+  //
+  // Deliberately never closed on quit. The last thing the app does is force the
+  // ledger's final save past its throttle without awaiting it (runtime.ts:446),
+  // so closing the handle in the same tick would drop the last poll's ore. WAL
+  // means an unclosed handle costs nothing: every write is already committed.
+  const appDatabase = createAppDatabase({
+    filePath: join(app.getPath('userData'), APP_DB_FILENAME)
+  })
+
+  // The cumulative material vault (see #22), loaded before the runtime exists
+  // so the very first published poll already carries real totals instead of
+  // briefly showing an empty vault.
+  //
+  // Which backing it gets is decided once, here: the database normally, the
+  // JSON document while the migration has not happened and could not, and
+  // nothing at all when neither can be trusted. That last case is the honest
+  // answer to an unanswerable question rather than a bug — openLedgerStore
+  // carries the reasoning and states the outcome in the log either way.
+  const vault = await openLedgerStore({
+    database: appDatabase,
+    jsonPath: join(app.getPath('userData'), LEDGER_JSON_FILENAME),
+    now: Date.now,
+    warn: (message) => console.warn(message),
+    log: (message) => console.log(message)
+  })
   const ledger = new MaterialLedger({
-    store: createLedgerStore({
-      filePath: join(app.getPath('userData'), 'material-ledger-v1.json')
-    }),
+    store: vault.store,
     onError: (message, error) => console.warn(message, error)
   })
   await ledger.load()
 
-  // Every project the app has been shown (#93), the fifth userData file and
-  // the first that is a database rather than a document. The path is injected
-  // for the same reason the ledger's is: the store imports no Electron.
+  // Every project the app has been shown (#93), the other tenant of that file.
   //
   // A null here is a state, not a failure to handle later. The store refuses
   // loudly by design — a locked or corrupt database answers with a reason
@@ -321,7 +346,7 @@ async function init(): Promise<void> {
   // refusal into a panel missing its declared mines rather than an app that
   // will not start. openProjectsStore logs the reason once.
   projects = await openProjectsStore({
-    filePath: join(app.getPath('userData'), PROJECTS_DB_FILENAME),
+    database: appDatabase,
     warn: (message) => console.warn(message)
   })
 
@@ -596,9 +621,11 @@ if (!app.requestSingleInstanceLock()) {
     // non-blocking error.
     void hooks?.shutdown()
     hooks = null
-    // Releases the database handle. Whatever the last poll observed has already
-    // been written or has already missed its window; there is nothing buffered
-    // here for a final flush to save, unlike the ledger above.
+    // Drops the store's reference. It no longer closes the database — that file
+    // is shared with the vault, whose forced final save is still in flight at
+    // this point (see the composition block above). Whatever the last poll
+    // observed here has already been written or has already missed its window;
+    // there is nothing buffered for a final flush to save, unlike the ledger.
     void projects?.close()
     projects = null
     removeIpcHandlers()

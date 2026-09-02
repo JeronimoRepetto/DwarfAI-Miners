@@ -51,10 +51,11 @@ src/
 ├── main/
 │   ├── index.ts     composition root — the only file that owns Electron's ipcMain and globalShortcut
 │   ├── adapters/    injectable seams for fs and sqlite, with their fakes
+│   ├── appDatabase/ the one file the app writes: its schema version, and the migrations between versions
 │   ├── config/      typed settings, and the userData document layered under the environment
 │   ├── domain/      this process's type barrel, and the pure domain rules (materials, ledger, lifecycle)
 │   ├── hooks/       the opt-in Claude hooks push channel
-│   ├── ledger/      what has been mined, persisted, plus the coal backfill
+│   ├── ledger/      what has been mined, persisted, plus the coal backfill and its migration
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
 │   ├── projects/    every project the app has been shown, persisted: name, dates, provenance
 │   ├── providers/   reading each agent CLI's own on-disk session state

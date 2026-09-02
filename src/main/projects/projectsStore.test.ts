@@ -2,13 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
 import { mineIdForPath } from '../domain/aggregate'
 import type { MineTier } from '../domain/types'
-import {
-  PROJECTS_DB_FILENAME,
-  PROJECTS_SCHEMA_VERSION,
-  createProjectsStore,
-  type ProjectsResult,
-  type ProjectsStore
-} from './projectsStore'
+import { APP_DB_FILENAME, APP_SCHEMA_VERSION } from '../appDatabase/appDatabase'
+import { createProjectsStore, type ProjectsResult, type ProjectsStore } from './projectsStore'
 
 const PATH = 'C:\\code\\Cafetería-Ñandú'
 const OTHER = 'C:\\code\\smelter'
@@ -21,7 +16,7 @@ function newStore(sqlite = new MemoryWritableSqlite()): {
   // the win32 id rules have to be assertable on any host (see platform-ports).
   return {
     sqlite,
-    store: createProjectsStore({ filePath: PROJECTS_DB_FILENAME, sqlite, platform: 'win32' })
+    store: createProjectsStore({ filePath: APP_DB_FILENAME, sqlite, platform: 'win32' })
   }
 }
 
@@ -51,7 +46,7 @@ describe('projects store — declaring a project (#85)', () => {
     const { store, sqlite } = newStore()
     value(await store.declare({ path: PATH, at: 1_000 }))
 
-    const db = await sqlite.open(PROJECTS_DB_FILENAME)
+    const db = await sqlite.open(APP_DB_FILENAME)
     // The query #92 will build. It matches only because the folded column was
     // written by the INSERT, which is why the normalization is a schema
     // requirement rather than a query-time concern.
@@ -213,14 +208,14 @@ describe('projects store — schema version', () => {
   it('stamps the version it wrote on a fresh database', async () => {
     const { store, sqlite } = newStore()
     value(await store.list())
-    const db = await sqlite.open(PROJECTS_DB_FILENAME)
-    expect(db.all('PRAGMA user_version')).toEqual([{ user_version: PROJECTS_SCHEMA_VERSION }])
+    const db = await sqlite.open(APP_DB_FILENAME)
+    expect(db.all('PRAGMA user_version')).toEqual([{ user_version: APP_SCHEMA_VERSION }])
     db.close()
   })
 
   it('refuses a database from a version it does not know, instead of reporting no projects', async () => {
     const sqlite = new MemoryWritableSqlite()
-    const seeded = await sqlite.open(PROJECTS_DB_FILENAME)
+    const seeded = await sqlite.open(APP_DB_FILENAME)
     seeded.exec('PRAGMA user_version = 99')
     seeded.close()
 
@@ -231,7 +226,7 @@ describe('projects store — schema version', () => {
 
   it('refuses a database that already holds a projects table with no version stamp', async () => {
     const sqlite = new MemoryWritableSqlite()
-    const seeded = await sqlite.open(PROJECTS_DB_FILENAME)
+    const seeded = await sqlite.open(APP_DB_FILENAME)
     seeded.exec('CREATE TABLE projects (id TEXT PRIMARY KEY)')
     seeded.close()
 
@@ -241,7 +236,7 @@ describe('projects store — schema version', () => {
 
   it('refuses every operation, not only the read', async () => {
     const sqlite = new MemoryWritableSqlite()
-    const seeded = await sqlite.open(PROJECTS_DB_FILENAME)
+    const seeded = await sqlite.open(APP_DB_FILENAME)
     seeded.exec('PRAGMA user_version = 99')
     seeded.close()
 
