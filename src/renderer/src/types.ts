@@ -24,6 +24,11 @@ export type {
   MinesSnapshot,
   MineTier,
   MineUndeclareResult,
+  ProjectQuery,
+  ProjectQueryResult,
+  ProjectSortDirection,
+  ProjectSortKey,
+  ProjectSummary,
   ShortcutState,
   TextDeliveryChannel,
   WaitingReason
@@ -42,8 +47,10 @@ export {
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
   MAX_DWARF_TEXT_CHARS,
+  MINE_TIERS,
   WAITING_ON_HUMAN_REASON,
-  dwarfSilenceWindowMs
+  dwarfSilenceWindowMs,
+  isMineTier
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */

@@ -2544,3 +2544,194 @@ describe('AgentRuntime declared mines (#85)', () => {
     expect(mines.map((mine) => mine.name)).toEqual(['Adopted'])
   })
 })
+
+describe('AgentRuntime project queries (#92)', () => {
+  const WORKED = 'C:\\X\\Cafetería-Ñandú'
+  const ADOPTED = 'C:\\X\\Adopted'
+
+  /** A provider that reports a session in `cwd` only while `working` is true. */
+  function toggleProvider(cwd: string): { provider: Provider; setWorking: (on: boolean) => void } {
+    let working = false
+    const provider: Provider = {
+      kind: 'claude',
+      scan: async () =>
+        working
+          ? [
+              {
+                provider: 'claude' as const,
+                sessionId: 'session-1',
+                cwd,
+                status: 'busy' as const,
+                updatedAt: 7,
+                dwarfs: [
+                  {
+                    id: 'claude:session-1',
+                    provider: 'claude' as const,
+                    role: 'foreman' as const,
+                    name: 'foreman',
+                    status: 'working' as const,
+                    sessionId: 'session-1'
+                  }
+                ]
+              }
+            ]
+          : [],
+      feed: vi.fn().mockResolvedValue([])
+    }
+    return { provider, setWorking: (on) => (working = on) }
+  }
+
+  function queryRuntime(options: {
+    projects?: ProjectsStore | null
+    providers?: Provider[]
+  }): AgentRuntime {
+    return new AgentRuntime({
+      // A zero grace window for the reason the #85 block uses one: a crew that
+      // stopped being reported is gone at once, so `live` is answered from the
+      // board rather than from the leaving-dwarf window.
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: options.providers ?? [],
+      projects: options.projects === undefined ? queryStore() : options.projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  function queryStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  const newest = { sortBy: 'addedAt', direction: 'desc' } as const
+
+  it('answers with what was remembered, on the wire shape rather than the row shape', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000, provider: 'codex', knownTier: 'gold' })
+    const runtime = queryRuntime({ projects })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.answered).toBe(true)
+    expect(result.projects).toEqual([
+      {
+        id: mineIdForPath(WORKED),
+        path: WORKED,
+        name: 'Cafetería-Ñandú',
+        declared: false,
+        knownTier: 'gold',
+        addedAt: 4_000,
+        lastOpenedAt: 4_000,
+        lastProvider: 'codex',
+        live: false
+      }
+    ])
+  })
+
+  it('leaves an unmeasured tier absent rather than reporting bronze (#41)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const runtime = queryRuntime({ projects })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    // Absent means "nobody has walked this yet". tierOf()'s provisional bronze
+    // draws the mound and must never travel as an answer.
+    expect(project).not.toHaveProperty('knownTier')
+    expect(project).not.toHaveProperty('lastProvider')
+  })
+
+  it('leaves lastOpenedAt absent for a project the user added and no agent has entered', async () => {
+    const projects = queryStore()
+    await projects.declare({ path: ADOPTED, at: 1_000 })
+    const runtime = queryRuntime({ projects })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    expect(project?.declared).toBe(true)
+    expect(project).not.toHaveProperty('lastOpenedAt')
+  })
+
+  it('stamps live from the board this poll produced, not from anything stored', async () => {
+    // The fact the database deliberately does not hold. A project is remembered
+    // forever and is live only while a session is in it.
+    const { provider, setWorking } = toggleProvider(WORKED)
+    const projects = queryStore()
+    const runtime = queryRuntime({ projects, providers: [provider] })
+
+    setWorking(true)
+    await runtime.refresh()
+    await runtime.settleProjects()
+    expect((await runtime.queryProjects(newest)).projects[0]?.live).toBe(true)
+
+    setWorking(false)
+    await runtime.refresh()
+    const after = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    // Still remembered, no longer live — which is the entire reason a browse
+    // surface is not a filter over the board.
+    expect(after.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+    expect(after.projects[0]?.live).toBe(false)
+  })
+
+  it('counts a declared mine as live, because a declaration keeps it on the board', async () => {
+    // Not an exception to the rule above: `live` is "on the board", and #85
+    // puts a declared project there with no crew. The two facts agree.
+    const projects = queryStore()
+    await projects.declare({ path: ADOPTED, at: 1_000 })
+    const runtime = queryRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.projects[0]?.live).toBe(true)
+  })
+
+  it('passes the filters and the order down to the store rather than trimming the answer here', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 1_000 })
+    await projects.upsertObserved({ path: 'C:\\X\\smelter', at: 2_000, knownTier: 'silver' })
+    const runtime = queryRuntime({ projects })
+
+    const searched = await runtime.queryProjects({ ...newest, nameContains: 'cafeteria' })
+    const filtered = await runtime.queryProjects({ ...newest, tier: 'silver' })
+    const oldest = await runtime.queryProjects({ sortBy: 'addedAt', direction: 'asc' })
+    const page = await runtime.queryProjects({ ...newest, limit: 1, offset: 1 })
+    runtime.stop()
+
+    expect(searched.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+    expect(filtered.projects.map((project) => project.name)).toEqual(['smelter'])
+    expect(oldest.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú', 'smelter'])
+    expect(page.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+  })
+
+  it('says why it cannot answer when this run has no projects database', async () => {
+    const runtime = queryRuntime({ projects: null })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.answered).toBe(false)
+    expect(result.projects).toEqual([])
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('reports a refusing store as a refusal, never as a project list that is empty', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    sqlite.failWith('locked')
+    const runtime = queryRuntime({ projects: queryStore(sqlite) })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    // The distinction the whole store contract exists for: a user reading an
+    // empty browse must never be looking at a database that would not open.
+    expect(result.answered).toBe(false)
+    expect(result.projects).toEqual([])
+    expect(result.reason).not.toBeUndefined()
+  })
+})

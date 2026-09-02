@@ -13,9 +13,13 @@ import type {
   Mine,
   MineDeclareResult,
   MinesSnapshot,
-  MineUndeclareResult
+  MineUndeclareResult,
+  ProjectQuery,
+  ProjectQueryResult,
+  ProjectSortDirection,
+  ProjectSortKey
 } from '../shared/contracts'
-import { IPC_CHANNELS } from '../shared/contracts'
+import { IPC_CHANNELS, isMineTier } from '../shared/contracts'
 import {
   enable as enableAutostart,
   ensureDefaultAutostart,
@@ -81,6 +85,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
 }
 
 /**
@@ -105,6 +110,48 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = ['addedAt', 'lastOpenedAt']
+const PROJECT_SORT_DIRECTIONS: readonly ProjectSortDirection[] = ['asc', 'desc']
+
+/**
+ * Same boundary discipline as parseTextRequest, with one thing the other
+ * channels never had to check: two of these fields NAME PARTS OF A STATEMENT
+ * rather than travelling as values.
+ *
+ * `sortBy` and `direction` become a column and a keyword in the ORDER BY, so
+ * both are checked against a closed list here and a payload naming anything
+ * else is refused outright — a sort key that fell through would reach SQLite as
+ * a column that does not exist. Everything else IS a value and is bound as a
+ * parameter downstream, `nameContains` above all: the user's search term is
+ * never inspected here beyond its type, and never concatenated anywhere.
+ *
+ * The two numbers are only checked for being numbers. Their policy — a default,
+ * a cap, a floor — belongs to the query builder, so that main's own callers get
+ * it too rather than only the ones that came over the wire.
+ */
+function parseProjectQuery(payload: unknown): ProjectQuery | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  const sortBy = record.sortBy
+  const direction = record.direction
+  if (!isOneOf(sortBy, PROJECT_SORT_KEYS)) return null
+  if (!isOneOf(direction, PROJECT_SORT_DIRECTIONS)) return null
+  return {
+    sortBy,
+    direction,
+    // An unrecognised tier is dropped rather than refused: it means "no tier
+    // filter", which is a browse that shows everything instead of an error.
+    ...(isMineTier(record.tier) ? { tier: record.tier } : {}),
+    ...(typeof record.nameContains === 'string' ? { nameContains: record.nameContains } : {}),
+    ...(typeof record.limit === 'number' ? { limit: record.limit } : {}),
+    ...(typeof record.offset === 'number' ? { offset: record.offset } : {})
+  }
+}
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
 }
 
 /**
@@ -404,6 +451,25 @@ async function init(): Promise<void> {
       return { outcome: 'unchanged', reason: 'No mine was named.' } satisfies MineUndeclareResult
     }
     return runtime?.undeclareMine(mineId) ?? notUndeclared
+  })
+
+  // Browsing every remembered project (#92). Both refusals answer with an
+  // EMPTY list and `answered: false` rather than no list at all, so the panel
+  // renders one way and still cannot read "nothing to show" as "no projects".
+  const notQueried: ProjectQueryResult = {
+    answered: false,
+    projects: [],
+    reason: 'The panel is still starting up.'
+  }
+  const notAQuery: ProjectQueryResult = {
+    answered: false,
+    projects: [],
+    reason: 'That is not a search this panel can run.'
+  }
+  ipcMain.handle(IPC_CHANNELS.queryProjects, (_event, payload: unknown) => {
+    const query = parseProjectQuery(payload)
+    if (query === null) return notAQuery
+    return runtime?.queryProjects(query) ?? notQueried
   })
 
   // The panel watched a kicked agent stop (#46). One-way: main decides what

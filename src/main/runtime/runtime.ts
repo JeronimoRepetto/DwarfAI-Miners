@@ -16,6 +16,8 @@ import {
   type MineDeclareResult,
   type MineTier,
   type MineUndeclareResult,
+  type ProjectQuery,
+  type ProjectQueryResult,
   type TextDeliveryChannel
 } from '../domain/types'
 import { mergeDeclaredMines, type DeclaredProject } from '../domain/aggregate'
@@ -63,6 +65,8 @@ const NO_FOLDER_CHOSEN = 'No folder was chosen.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
 const UNDECLARE_FAILED = 'That mine could not be removed.'
 const NOT_DECLARED = 'That mine is not one you added.'
+/** #92's browse refusal. Stated for the same reason: a list that is empty because nothing could be read looks like a list with nothing in it. */
+const QUERY_FAILED = 'The projects could not be read.'
 
 /**
  * Fixed instructions Kick delivers over the relay tier. Never user text, so
@@ -539,6 +543,56 @@ export class AgentRuntime {
     // Awaited for the reason declareMine's rescan is.
     await this.refresh()
     return { outcome: result.value === 'removed' ? 'removed' : 'reverted' }
+  }
+
+  /**
+   * Browse every project the app remembers, filtered and ordered in SQL (#92).
+   *
+   * Nothing is filtered, sorted or paged here: the store answers the whole
+   * question, because a browse spans a table with no bound on its length and
+   * reading it into this process to trim it would use none of the indexes it
+   * was given. What this method adds is the one fact the database deliberately
+   * does not hold — whether each project is on the board RIGHT NOW.
+   *
+   * `live` is poll-truth, stamped as the answer is assembled and never stored.
+   * Two readings of `false` are worth separating: a project that is remembered
+   * and has no session in it, and any project at all before the first poll has
+   * published, when `this.mines` is still empty. The second is a window of one
+   * tick at startup and resolves itself; nothing acts on `live` but the drawing.
+   *
+   * A declared mine reads as live even with no crew, and that is not an
+   * exception — #85 keeps it on the board as a steady state, so "on the board"
+   * and "live" still say the same thing.
+   */
+  async queryProjects(query: ProjectQuery): Promise<ProjectQueryResult> {
+    const store = this.projects
+    if (store === null) return { answered: false, projects: [], reason: NO_PROJECT_STORE }
+
+    const result = await store.query(query)
+    if (!result.ok) {
+      console.warn(`[projects] Could not read the projects (${result.failure}):`, result.message)
+      return { answered: false, projects: [], reason: QUERY_FAILED }
+    }
+
+    // A set rather than a scan per row: the board is small but a page is not
+    // one id, and a find() inside the map would be O(page × board).
+    const onBoard = new Set(this.mines.map((mine) => mine.id))
+    return {
+      answered: true,
+      projects: result.value.map((project) => ({
+        id: project.id,
+        path: project.path,
+        name: project.name,
+        declared: project.origin === 'declared',
+        // Absent, never null and never a placeholder: the wire says "nobody has
+        // measured this" by saying nothing at all (#41).
+        ...(project.knownTier === null ? {} : { knownTier: project.knownTier }),
+        addedAt: project.addedAt,
+        ...(project.lastOpenedAt === null ? {} : { lastOpenedAt: project.lastOpenedAt }),
+        ...(project.lastProvider === null ? {} : { lastProvider: project.lastProvider }),
+        live: onBoard.has(project.id)
+      }))
+    }
   }
 
   /**

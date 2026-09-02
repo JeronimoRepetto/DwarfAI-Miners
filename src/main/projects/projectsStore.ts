@@ -7,9 +7,10 @@ import {
   type WritableSqliteLike
 } from '../adapters/sqliteWritable'
 import { mineIdForPath } from '../domain/aggregate'
-import { MATERIALS, type DwarfProvider, type MineTier } from '../domain/types'
+import { isMineTier, type DwarfProvider, type MineTier, type ProjectQuery } from '../domain/types'
 import { currentPlatform, type Platform } from '../platform/platform'
 import { normalizeProjectName, projectNameForPath } from './projectName'
+import { buildProjectQuery } from './projectQuery'
 
 /**
  * Every project this app has been shown — declared by the user (#85) or
@@ -22,21 +23,18 @@ import { normalizeProjectName, projectNameForPath } from './projectName'
  * INJECTED, exactly as the ledger store's is (src/main/index.ts:177-182): this
  * module never imports Electron, so it is unit-testable with no app instance.
  *
- * Three seams are open on purpose, and none of them is an oversight:
+ * Two seams are open on purpose, and neither is an oversight:
  *
- * - **Nothing wires this into the runtime yet.** index.ts does not construct
- *   it, no IPC channel carries it and the renderer cannot see it. Aggregation
- *   still builds mines from provider snapshots alone, so a declared project is
- *   remembered here and drawn nowhere.
  * - **The material ledger stays in material-ledger-v1.json.** Moving it is the
  *   risky half of #93 — it holds real mined history, including a one-time coal
  *   backfill that is expensive to reproduce — and it needs the first real
  *   migration this repository has ever written. Two persistence models for one
  *   release is the deliberate price of not writing that migration under
  *   pressure.
- * - **#92 owns the queries.** list() returns everything in one stable order;
- *   the tier filter, the two sort directions and the folded-name search are
- *   built on this schema, which is shaped to answer them (indexes included).
+ * - **The browse surface itself is unbuilt.** query() answers #92's question
+ *   and the runtime carries it over IPC, but no renderer view calls it and
+ *   nothing in the panel chrome opens one — that waits on the interface
+ *   rebuild (#90), which is also where being reachable at all gets decided.
  *
  * On the main thread: node:sqlite is synchronous, so every statement here runs
  * on it. That is affordable for one row per observed project per poll, and it
@@ -128,8 +126,17 @@ export interface ProjectsStore {
   /** Undo a declaration. Never touches a project that was only ever discovered. */
   removeDeclared(id: string): Promise<ProjectsResult<ProjectRemoval>>
   get(id: string): Promise<ProjectsResult<ProjectRecord | null>>
-  /** Every project, newest-added first. Filtering and the other orders are #92. */
+  /** Every project, newest-added first — the whole table, and the only unfiltered read. */
   list(): Promise<ProjectsResult<ProjectRecord[]>>
+  /**
+   * One filtered, ordered page of projects (#92).
+   *
+   * Every part of the question is answered in SQL — see projectQuery.ts for
+   * why, and for the rules the query itself carries. This method exists so no
+   * caller has to read list() and filter it in JavaScript, which would use none
+   * of the three indexes the schema was given for exactly this.
+   */
+  query(query: ProjectQuery): Promise<ProjectsResult<ProjectRecord[]>>
   close(): Promise<void>
 }
 
@@ -173,13 +180,6 @@ const COLUMNS =
 
 /** Refusal to read a database this code did not write. */
 class UnsupportedSchemaError extends Error {}
-
-/**
- * Every tier that can be MEASURED, derived from the material table so a new
- * tier cannot be added to the vault and silently rejected here. 'coal' is the
- * one material no mine tier produces.
- */
-const MEASURABLE_TIERS: readonly string[] = MATERIALS.filter((material) => material !== 'coal')
 
 /**
  * The providers a stored row may name.
@@ -319,6 +319,13 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
       )
     },
 
+    async query(query) {
+      const { sql, params } = buildProjectQuery(query)
+      return withDb((db) =>
+        db.all(`SELECT ${COLUMNS} FROM projects${sql}`, params).map((row) => toRecord(row))
+      )
+    },
+
     async close() {
       handle?.close()
       handle = null
@@ -407,7 +414,9 @@ function toRecord(row: SqliteRow): ProjectRecord {
     origin: asText(row.origin) === 'declared' ? 'declared' : 'discovered',
     lastProvider:
       provider !== null && KNOWN_PROVIDERS.includes(provider) ? (provider as DwarfProvider) : null,
-    knownTier: tier !== null && MEASURABLE_TIERS.includes(tier) ? (tier as MineTier) : null
+    // Checked against the shared tier list, so a value this build does not
+    // recognise reads as unmeasured rather than as a guess.
+    knownTier: tier !== null && isMineTier(tier) ? tier : null
   }
 }
 

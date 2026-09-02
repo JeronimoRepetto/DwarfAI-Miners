@@ -31,6 +31,32 @@ export const MATERIALS: readonly Material[] = [
 ]
 
 /**
+ * Every tier a mine can actually BE, poorest first — the materials minus the
+ * one no mine produces.
+ *
+ * Derived rather than written out a second time, so a tier added to the vault
+ * cannot be silently missing from the places that check one: the projects store
+ * reads a tier back off disk against this list, and #92's boundary validation
+ * checks a tier filter against it before it reaches SQL. Both would otherwise
+ * keep their own copy and drift.
+ */
+export const MINE_TIERS: readonly MineTier[] = MATERIALS.filter(
+  (material): material is MineTier => material !== 'coal'
+)
+
+/**
+ * Whether an unknown value names a tier.
+ *
+ * Both callers are reading something they did not produce — a row off the
+ * user's disk, and a filter off the IPC boundary — and both must treat an
+ * unrecognised value as "no tier" rather than passing it on. Neither can use
+ * the type system for it, which is why this is a value and not a cast.
+ */
+export function isMineTier(value: unknown): value is MineTier {
+  return typeof value === 'string' && (MINE_TIERS as readonly string[]).includes(value)
+}
+
+/**
  * How many tokens ONE drawn nugget of each material stands for.
  *
  * This is a per-material grain size, NOT an exchange rate. Materials never
@@ -642,6 +668,89 @@ export interface MineUndeclareResult {
   reason?: string
 }
 
+/**
+ * Which stored date a project browse is ordered by (#92).
+ *
+ * Two keys because they answer different questions and the user asked to sort
+ * by either: `addedAt` is provenance — when the project first arrived — and
+ * `lastOpenedAt` is recency. Neither is `Mine.updatedAt`, which is recomputed
+ * from this poll's snapshots and never persisted; a browse spans projects with
+ * no session running, so a liveness figure cannot order it.
+ */
+export type ProjectSortKey = 'addedAt' | 'lastOpenedAt'
+
+export type ProjectSortDirection = 'asc' | 'desc'
+
+/**
+ * What the panel asks for when browsing every project it has ever been shown
+ * (#92) — the filters, the order, and one page of it.
+ *
+ * `tier` matches the MEASURED tier only. A project nobody has walked yet has
+ * no stored tier and therefore matches no tier filter, including 'bronze':
+ * `tierOf()`'s provisional bronze is for DRAWING a mound, never for answering
+ * a question, and a bronze filter that swept up every unmeasured project would
+ * be exactly the #41 mistake.
+ *
+ * `nameContains` is a SUBSTRING of the folded name, so typing 'ontein' finds
+ * 'container' and 'cafeteria' finds 'Cafetería'. Main folds the term with the
+ * same normalizer that wrote the stored column, so the renderer sends whatever
+ * was typed and never pre-processes it.
+ *
+ * `limit` and `offset` are a page. Both are advisory: main clamps them, so a
+ * renderer cannot ask for the whole table and cannot ask for nothing.
+ */
+export interface ProjectQuery {
+  tier?: MineTier
+  sortBy: ProjectSortKey
+  direction: ProjectSortDirection
+  nameContains?: string
+  limit?: number
+  offset?: number
+}
+
+/**
+ * One row of a project browse (#92): what is REMEMBERED about a project, plus
+ * the one fact that is not remembered at all.
+ *
+ * `live` is whether the project is on the board this poll produced — it is
+ * poll-truth, stamped as the answer is assembled, and is deliberately not a
+ * stored column. Everything else here comes off disk and survives a restart;
+ * `live` cannot, because it is a statement about right now.
+ *
+ * `knownTier` is absent until a walk has measured one, and absent means
+ * unmeasured rather than bronze (#41). `lastOpenedAt` is absent for a project
+ * the user declared and no agent has been seen in: declaring is not opening.
+ */
+export interface ProjectSummary {
+  /** mineIdForPath — the same id the board and the ledger use, never a second scheme. */
+  id: string
+  path: string
+  name: string
+  /** True when the user adopted this folder (#85); false when it was discovered. */
+  declared: boolean
+  knownTier?: MineTier
+  addedAt: number
+  lastOpenedAt?: number
+  lastProvider?: DwarfProvider
+  live: boolean
+}
+
+/**
+ * The answer to a project browse (#92).
+ *
+ * `answered` exists so an empty page is never ambiguous: no projects yet and a
+ * projects database that would not open are both "zero rows", and reporting the
+ * second as the first would tell a user their history is gone. A refusal always
+ * carries its reason, and `projects` is empty rather than absent so the panel
+ * can render the same way either way.
+ */
+export interface ProjectQueryResult {
+  answered: boolean
+  projects: ProjectSummary[]
+  /** Why nothing could be read; absent exactly when `answered` is true. */
+  reason?: string
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -688,5 +797,16 @@ export const IPC_CHANNELS = {
    * agree on, and a path would be a second key to keep in step.
    */
   declareMine: 'mine:declare',
-  undeclareMine: 'mine:undeclare'
+  undeclareMine: 'mine:undeclare',
+  /**
+   * Browsing every project the app remembers (#92) — filtered, ordered and
+   * paged in SQL, in main.
+   *
+   * Pull-only, and deliberately not folded into minesUpdated: that push carries
+   * the board, which is the projects being worked THIS poll, and the whole point
+   * of this channel is the projects that are not. A browse is also a question
+   * with arguments, asked when a user types, rather than a state to keep in
+   * step — so it answers on request and pushes nothing.
+   */
+  queryProjects: 'projects:query'
 } as const
