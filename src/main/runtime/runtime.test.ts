@@ -1192,6 +1192,191 @@ describe('AgentRuntime.kickDwarf', () => {
   })
 })
 
+/**
+ * Routing over a Codex thread's message queue (#97).
+ *
+ * The queue is unlike both existing tiers in two ways the runtime has to
+ * respect: it needs no console, so it must NOT be degraded on a platform that
+ * cannot type into one; and it cannot interrupt a turn, so it carries a send
+ * and never a kick.
+ */
+describe('AgentRuntime over the Codex message queue', () => {
+  const DWARF_ID = 'codex:01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+  const THREAD_ID = '01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+
+  function queuePort(
+    overrides: Partial<Record<keyof TextDeliveryPort, unknown>> = {}
+  ): TextDeliveryPort {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      queueToCodexThread: vi.fn().mockResolvedValue({ delivered: true }),
+      ...overrides
+    } as TextDeliveryPort
+  }
+
+  async function runtimeWithQueue(port: TextDeliveryPort) {
+    const source: Provider = {
+      kind: 'codex',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'codex',
+          sessionId: THREAD_ID,
+          cwd: 'C:\\work\\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: DWARF_ID,
+              provider: 'codex',
+              role: 'worker',
+              name: 'codex-01a04d79',
+              status: 'working',
+              sessionId: THREAD_ID
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) =>
+        dwarfId === DWARF_ID ? { kind: 'codex-queue', threadId: THREAD_ID } : null
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      textDelivery: port,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return runtime
+  }
+
+  it('queues the message on the thread and reports the channel that carried it', async () => {
+    const port = queuePort()
+    const runtime = await runtimeWithQueue(port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'codex-queue' })
+    expect(port.queueToCodexThread).toHaveBeenCalledWith({
+      threadId: THREAD_ID,
+      text: 'run the tests'
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The degrade in deliveryTargetOf exists because a 'terminal' target is a
+   * claim about a console this platform may be unable to type into. The queue
+   * makes no such claim — it spawns a CLI — so intersecting it with console
+   * support would delete a working channel on macOS and Linux, the two
+   * platforms with the least to lose it by.
+   */
+  it('keeps the queue on a platform that cannot type into a console at all', async () => {
+    const port = queuePort({ supportsConsoleInput: false })
+    const runtime = await runtimeWithQueue(port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'codex-queue' })
+    expect(runtime.getMines()[0]?.dwarfs[0]?.textDelivery).toBe('codex-queue')
+  })
+
+  it('stamps the queue for sending and no channel for cancelling on the published dwarf', async () => {
+    const runtime = await runtimeWithQueue(queuePort())
+    expect(runtime.getMines()[0]?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'codex-queue',
+      cancel: null,
+      adjustEffort: null
+    })
+  })
+
+  it('refuses a kick outright rather than queueing one that could never interrupt', async () => {
+    const port = queuePort()
+    const runtime = await runtimeWithQueue(port)
+
+    const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    expect(result).toMatchObject({ delivered: false, via: 'none' })
+    expect(result.error).toBeTruthy()
+    expect(port.queueToCodexThread).not.toHaveBeenCalled()
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+  })
+
+  it('reports the reason the queue tier gave, with no relay fallback to reach for', async () => {
+    const port = queuePort({
+      queueToCodexThread: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'Codex no longer knows that session.' })
+    })
+    const runtime = await runtimeWithQueue(port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'codex-queue',
+      error: 'Codex no longer knows that session.'
+    })
+    // A queue endpoint carries no session name, so there is nothing to fall
+    // back to and nothing that should try.
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('turns a throwing queue tier into a failed verdict', async () => {
+    const port = queuePort({
+      queueToCodexThread: vi.fn().mockRejectedValue(new Error('boom'))
+    })
+    const runtime = await runtimeWithQueue(port)
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+    ).resolves.toMatchObject({ delivered: false, via: 'codex-queue' })
+  })
+
+  /**
+   * A port with no queue tier at all — the optional method left unimplemented.
+   * It must refuse with a reason rather than silently reporting success or
+   * throwing inside the send path.
+   */
+  it('refuses with a reason when the delivery port implements no queue tier', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await runtimeWithQueue(port)
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: DWARF_ID,
+      text: 'hi',
+      pressEnter: true
+    })
+    expect(result.delivered).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  // The privacy rule for every tier: the log carries the channel, the verdict
+  // and a character count, never the message (see port.ts and runtime.ts).
+  it('logs the character count and never the message text', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const runtime = await runtimeWithQueue(queuePort())
+      await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'sk-do-not-log-this',
+        pressEnter: true
+      })
+      const lines = log.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(lines).toContain('codex-queue')
+      expect(lines).toContain('18 chars')
+      expect(lines).not.toContain('sk-do-not-log-this')
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
 describe('AgentRuntime provider wiring', () => {
   /**
    * R3-wiring-test-real-clock: this test builds a real (non-injected)

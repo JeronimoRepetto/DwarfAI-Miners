@@ -16,6 +16,7 @@ import {
 } from '../textDelivery/osascriptInput'
 import type { TextDeliveryPort } from '../textDelivery/port'
 import { PosixTextDelivery } from '../textDelivery/posixTextDelivery'
+import type { CodexQueueRunner } from '../textDelivery/codexQueue'
 import type { RelayRunner } from '../textDelivery/relayRunner'
 import { WindowsTextDelivery } from '../textDelivery/windowsTextDelivery'
 import {
@@ -98,6 +99,8 @@ export interface PlatformAdapterOptions {
   spawn?: SpawnFn
   /** Injected for tests; defaults to a real claude spawn. */
   runRelay?: RelayRunner
+  /** Injected for tests; defaults to a real codex spawn (#97). */
+  runCodexQueue?: CodexQueueRunner
   /** Explicit binary paths that override CLI detection; blank means "detect it" (#91). */
   cliOverrides?: Partial<Record<AgentCli, string>>
   /** Injected for tests; defaults to the real filesystem, used by CLI detection. */
@@ -130,15 +133,25 @@ function createConsoleInput(
 function createTextDelivery(
   platform: Platform,
   options: PlatformAdapterOptions,
-  focus: (pid: number) => Promise<boolean>
+  focus: (pid: number) => Promise<boolean>,
+  cliDetector: CliDetector
 ): TextDeliveryPort {
   const shared = {
     home: options.home,
     relayModel: options.relayModel,
     relayTimeoutMs: options.relayTimeoutMs,
     focus,
+    // The Codex queue tier addresses the binary the detection port found (#91),
+    // so CODEX_CLI_PATH reaches it and no second install-location guess exists.
+    // Asked per delivery rather than resolved once: the detector caches with a
+    // TTL, and a codex installed after the app started must still be found.
+    codexBinary: async (): Promise<string | undefined> => {
+      const detection = await cliDetector.detect('codex')
+      return detection.installed ? detection.path : undefined
+    },
     ...(options.env === undefined ? {} : { env: options.env }),
-    ...(options.runRelay === undefined ? {} : { runRelay: options.runRelay })
+    ...(options.runRelay === undefined ? {} : { runRelay: options.runRelay }),
+    ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue })
   }
   if (platform === 'win32') {
     return new WindowsTextDelivery({
@@ -159,6 +172,14 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
   const focus = createFocus(platform, options)
   const viewerScriptPath = resolveViewerScriptPath(options.appPaths, platform)
   const nodePath = options.nodePath ?? process.execPath
+  // Built before the delivery port, which asks it for the codex binary (#97).
+  const cliDetector = createCliDetector({
+    home: options.home,
+    platform,
+    fs: options.fs ?? new NodeFs(),
+    ...(options.env === undefined ? {} : { env: options.env }),
+    ...(options.cliOverrides === undefined ? {} : { overrides: options.cliOverrides })
+  })
 
   return {
     platform,
@@ -173,18 +194,12 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
         nodePath,
         ...(options.spawn === undefined ? {} : { spawn: options.spawn })
       }),
-    textDelivery: createTextDelivery(platform, options, focus),
+    textDelivery: createTextDelivery(platform, options, focus, cliDetector),
     processProbe: createProcessProbe({
       platform,
       ...(options.probeRun === undefined ? {} : { run: options.probeRun })
     }),
-    cliDetector: createCliDetector({
-      home: options.home,
-      platform,
-      fs: options.fs ?? new NodeFs(),
-      ...(options.env === undefined ? {} : { env: options.env }),
-      ...(options.cliOverrides === undefined ? {} : { overrides: options.cliOverrides })
-    })
+    cliDetector
   }
 }
 

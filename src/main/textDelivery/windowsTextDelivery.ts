@@ -2,12 +2,14 @@ import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { focusPid, type ShellRunner } from '../platform/focus'
 import type {
+  CodexQueueRequest,
   ConsoleTextRequest,
   InterruptRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
   TextDeliveryPort
 } from './port'
+import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
 import {
   createConsoleWorker,
   createResilientShellRunner,
@@ -62,6 +64,14 @@ export interface WindowsTextDeliveryOptions {
   spawnConsoleWorker?: () => ConsoleWorkerProcess
   /** Injected for tests; defaults to a real claude.exe spawn. */
   runRelay?: RelayRunner
+  /**
+   * Resolves the codex binary through the CLI detection port (#91), or
+   * undefined when it is not installed. Omitted, the queue tier has no binary
+   * to address and refuses with a reason — never a second hardcoded path.
+   */
+  codexBinary?: () => Promise<string | undefined>
+  /** Injected for tests; defaults to a real codex.exe spawn. */
+  runCodexQueue?: CodexQueueRunner
   /** Injected for tests; defaults to Date.now. Only ever reads durations. */
   now?: () => number
 }
@@ -94,6 +104,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly runPowerShell: ShellRunner
   private readonly runRelay: RelayRunner
+  private readonly codexBinary: () => Promise<string | undefined>
+  private readonly runCodexQueue: CodexQueueRunner
   private readonly now: () => number
   /** Null when the transport was replaced outright and there is nothing to keep alive. */
   private readonly consoleWorker: ConsoleWorker | null
@@ -105,6 +117,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.relayTimeoutMs = options.relayTimeoutMs
     this.focus = options.focus ?? focusPid
     this.runRelay = options.runRelay ?? runRelayProcess
+    this.codexBinary = options.codexBinary ?? (async () => undefined)
+    this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
     this.now = options.now ?? Date.now
 
     // An injected runner with no worker spawn is a test replacing the whole
@@ -173,6 +187,21 @@ export class WindowsTextDelivery implements TextDeliveryPort {
       model: this.relayModel,
       timeoutMs: this.relayTimeoutMs,
       run: this.runRelay
+    })
+  }
+
+  /**
+   * The Codex queue tier — the one channel a Codex session has ever had (#97),
+   * and the one proven on this platform. No PowerShell, no window, no pid: it
+   * spawns the detected codex binary with the thread UUID and the message as
+   * argv, so the payload is never text a shell re-parses.
+   */
+  async queueToCodexThread(request: CodexQueueRequest): Promise<TextDeliveryOutcome> {
+    return deliverViaCodexQueue({
+      threadId: request.threadId,
+      text: request.text,
+      binaryPath: await this.codexBinary(),
+      run: this.runCodexQueue
     })
   }
 

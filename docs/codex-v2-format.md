@@ -177,10 +177,31 @@ for a given `thread_id` tells you how recently that thread had any core activity
 
 `queued_items` (`id, thread_id, payload_json, queue_order, created_at_ms,
 updated_at_ms`) and `queued_thread_revisions` (`revision, thread_id`) — both 0 rows
-right now. This is the desktop app's **message queue** (queued follow-up messages
-while a turn is running — `followUpQueueMode = "queue"` appears in `config.toml`
-under `[desktop]`). A non-empty `queued_items` row for a thread is itself a liveness
-signal (a message is queued because a turn is still in flight).
+when this page was first written. It is a **per-thread message queue**, and
+`followUpQueueMode = "queue"` under `[desktop]` in `config.toml` is why this page
+originally called it the desktop app's. That attribution was wrong, and the correction
+is measured rather than argued: on 2026-09-02, `codex queue --thread <uuid> --message
+…` against a plain `source = 'cli'` TUI thread on Windows (Codex 0.151.0) exited 0,
+put one row in `queued_items` with payload
+`{"UserInput":{"content":[{"type":"text",…}]}}`, and the row was **gone 6-8s later**
+with the message rendered in the TUI and answered. No `app-server` daemon was
+involved — which matters, because `codex app-server daemon` refuses to run on
+Windows at all. A plain TUI thread owns and drains its own queue.
+
+Submission goes through the app-server RPC `thread/queue/add`
+(`ThreadQueueAddParams { thread_id, input, client_user_message_id }`), added in
+rust-v0.149.0 — the floor this app enforces per thread off `threads.cli_version`. The
+`--thread` argument takes a session UUID **or** an exact session name, and the two
+resolve differently: a UUID is a thread-store lookup (`no rollout found for thread
+id …` when absent), a name requires an ACTIVE session (`No active session found
+matching …`). Only the UUID form is used here.
+
+Still unmeasured, and therefore not relied on anywhere: whether a **mid-turn** thread
+drains at its "next safe point" before the turn ends, and whether a `vscode`-source
+desktop thread drains at all.
+
+A non-empty `queued_items` row for a thread is itself a liveness signal (something is
+queued because the thread has not drained it yet).
 
 ### `goals_1.sqlite`
 

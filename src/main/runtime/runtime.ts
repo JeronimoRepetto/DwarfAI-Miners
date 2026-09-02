@@ -32,7 +32,11 @@ import { CodexProvider } from '../providers/codex/codexProvider'
 import type { Provider } from '../providers/provider'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
-import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
+import type {
+  TextDeliveryOutcome,
+  TextDeliveryPort,
+  TextDeliveryTarget
+} from '../textDelivery/port'
 import {
   resolveKickDelivery,
   resolveTextDelivery,
@@ -48,6 +52,7 @@ const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_KICK_CHANNEL = "This session type can't be canceled yet."
+const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 
 /**
  * Refusals for adding and removing a mine (#85), phrased for the panel.
@@ -601,6 +606,13 @@ export class AgentRuntime {
    * about the session, not about this machine; intersecting the two here is
    * what makes the panel show a working relay Send (or a disabled button with
    * a reason) instead of a Send that quietly types nowhere.
+   *
+   * ONLY a 'terminal' target is degraded, and the reason matters: it is the one
+   * kind that claims a console this machine may be unable to type into. A
+   * 'codex-queue' target claims no console at all — it spawns a CLI, like the
+   * relay — so intersecting it with console support would delete a working
+   * channel from macOS and Linux, the two platforms with the fewest to spare
+   * (#97).
    */
   private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
     const consoleSupported = this.textDelivery.supportsConsoleInput !== false
@@ -615,6 +627,19 @@ export class AgentRuntime {
       return target
     }
     return null
+  }
+
+  /**
+   * The Codex queue tier, with the one thing the port may honestly not have.
+   *
+   * queueToCodexThread is optional on TextDeliveryPort, so a port built without
+   * it reports a reason rather than a silent no-op — the same discipline as a
+   * platform with no console input. Both shipped ports implement it.
+   */
+  private async queueToCodexThread(threadId: string, text: string): Promise<TextDeliveryOutcome> {
+    const queue = this.textDelivery.queueToCodexThread
+    if (queue === undefined) return { delivered: false, error: NO_QUEUE_TIER }
+    return queue.call(this.textDelivery, { threadId, text })
   }
 
   /**
@@ -693,20 +718,32 @@ export class AgentRuntime {
       // 'total' is everything the caller waited for; the tier below reports the
       // stages only it can see (focus, spawn), and the relay call is timed here
       // because the runtime is what makes it.
-      const outcome = await timer.measure('total', () =>
-        endpoint.kind === 'terminal'
-          ? this.textDelivery.sendToConsole({
-              pid: endpoint.pid,
-              text: payload,
-              pressEnter: request.pressEnter
-            })
-          : timer.measure('relay', () =>
-              this.textDelivery.relayToClaudeSession({
-                sessionName: endpoint.sessionName,
-                text: payload
-              })
-            )
-      )
+      const outcome = await timer.measure('total', () => {
+        if (endpoint.kind === 'terminal') {
+          return this.textDelivery.sendToConsole({
+            pid: endpoint.pid,
+            text: payload,
+            pressEnter: request.pressEnter
+          })
+        }
+        if (endpoint.kind === 'codex-queue') {
+          // 'spawn' rather than 'relay': this is a local process submitting one
+          // RPC, not a model turn, and the two costs differ by three orders of
+          // magnitude — folding them into one stage would make the log line
+          // useless for the thing it exists to answer.
+          //
+          // request.pressEnter is deliberately dropped. A queue item has no
+          // console line to leave unsent: the message is either handed over or
+          // it is not, exactly as the relay tier already works.
+          return timer.measure('spawn', () => this.queueToCodexThread(endpoint.threadId, payload))
+        }
+        return timer.measure('relay', () =>
+          this.textDelivery.relayToClaudeSession({
+            sessionName: endpoint.sessionName,
+            text: payload
+          })
+        )
+      })
       timer.absorb(outcome.stages)
       console.log(
         `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +

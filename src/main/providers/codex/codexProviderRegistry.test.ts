@@ -338,4 +338,107 @@ describe('CodexProvider with the Codex SQLite registry', () => {
     const snapshots = await makeProvider({ sqlite: other }).scan()
     expect(snapshots.map((s) => s.sessionId)).toEqual([LIVE_ID])
   })
+
+  /**
+   * The message-queue channel (#97). The capability is answered from two facts
+   * on the registry row the scan already read — the plain source tag and the
+   * build that opened the thread — and from nothing else. See queue.ts for what
+   * the live experiment actually proved and what it did not.
+   */
+  describe('textDelivery over the Codex message queue', () => {
+    it('offers the queue to a cli-source thread on a new enough Codex', async () => {
+      seedLiveThread({ source: 'cli', cliVersion: '0.151.0' })
+      const provider = makeProvider()
+      await provider.scan()
+      // The addressed id is the thread UUID itself, which is what `codex queue
+      // --thread` takes; no translation and no second read.
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toEqual({
+        kind: 'codex-queue',
+        threadId: LIVE_ID
+      })
+    })
+
+    it('offers no channel to a desktop-app thread, whose drain nobody has watched', async () => {
+      seedLiveThread({ source: 'vscode', cliVersion: '0.151.0' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+
+    it('offers no channel to a thread opened by a Codex older than the floor', async () => {
+      seedLiveThread({ source: 'cli', cliVersion: '0.148.0' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+
+    it('offers no channel when the row records no version at all', async () => {
+      seedLiveThread({ source: 'cli' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+
+    /**
+     * A sub-agent thread carries the spawn blob in `threads.source`, so it has
+     * no plain tag: a Codex worker owns no queue anyone has watched drain, and
+     * it gets no foreman hop either — the parent's queue is the parent's.
+     */
+    it('offers no channel to a sub-agent thread even under a queue-capable parent', async () => {
+      seedLiveThread({ source: 'cli', cliVersion: '0.151.0' })
+      const childId = '01a04d79-0000-7a31-9b1a-000000000001'
+      fake.addFile(rolloutPathFor(childId), busyRollout(childId), NOW - 10_000)
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: childId,
+          cwd: 'C:\\proj',
+          rolloutPath: rolloutPathFor(childId),
+          updatedAtMs: NOW - 10_000,
+          cliVersion: '0.151.0',
+          source: subagentSource(LIVE_ID, 'Bernoulli')
+        })
+      )
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + childId)).toBeNull()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toEqual({
+        kind: 'codex-queue',
+        threadId: LIVE_ID
+      })
+    })
+
+    it('offers no channel for a rollout the registry never recorded', async () => {
+      fake.addFile(LIVE_ROLLOUT, idleRollout(LIVE_ID), NOW - 30_000)
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+
+    it('offers no channel for an unknown dwarf id', async () => {
+      seedLiveThread({ source: 'cli', cliVersion: '0.151.0' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:nobody')).toBeNull()
+    })
+
+    /**
+     * The map is rebuilt per scan and swapped in one assignment, exactly as
+     * feedSources is (#12): a session that has ended must not keep answering
+     * with a queue address, and a click landing mid-scan must never read a
+     * half-rebuilt map.
+     */
+    it('stops offering the queue once the thread is gone from a later scan', async () => {
+      seedLiveThread({ source: 'cli', cliVersion: '0.151.0' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).not.toBeNull()
+
+      // Same provider, second scan: the session has ended and been archived.
+      fake.removeFile(LIVE_ROLLOUT)
+      sqlite.exec(STATE_DB, `UPDATE threads SET archived = 1 WHERE id = '${LIVE_ID}'`)
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+  })
 })
