@@ -75,6 +75,15 @@ export interface AppConfig {
    * until the user enables "Instant updates" in the tray.
    */
   hooksPort: number
+  /**
+   * Explicit paths to the claude and codex binaries, overriding CLI detection
+   * (#91). Blank means "detect it" — the app looks in the known install
+   * locations and then PATH. Set one when your install is somewhere the
+   * conventions do not reach (npm global, Homebrew, a custom prefix), where an
+   * empty result would otherwise be the only signal.
+   */
+  claudeCliPath: string
+  codexCliPath: string
 }
 
 export function defaultConfig(): AppConfig {
@@ -94,7 +103,9 @@ export function defaultConfig(): AppConfig {
     codexLogsDb: '~/.codex/logs_2.sqlite',
     sendTextRelayModel: 'haiku',
     sendTextTimeoutS: 60,
-    hooksPort: 47821
+    hooksPort: 47821,
+    claudeCliPath: '',
+    codexCliPath: ''
   }
 }
 
@@ -215,7 +226,9 @@ export function loadConfig(env: ConfigEnv = process.env): AppConfig {
     codexLogsDb: readTrimmed(env, 'CODEX_LOGS_DB', defaults.codexLogsDb),
     sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
     sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS),
-    hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort)
+    hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort),
+    claudeCliPath: readTrimmed(env, 'CLAUDE_CLI_PATH', defaults.claudeCliPath),
+    codexCliPath: readTrimmed(env, 'CODEX_CLI_PATH', defaults.codexCliPath)
   }
 }
 
