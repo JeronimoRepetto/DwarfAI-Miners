@@ -30,9 +30,10 @@ export const DARWIN_TERMINAL_HOSTS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Linux processes that own a terminal window, lowercased. Only used to decide
- * whether a chain *has* a terminal — Linux focus itself is unsupported (see
- * createUnsupportedFocus).
+ * Linux processes that own a terminal window, lowercased. Nothing consults
+ * this set today — Linux focus itself is unsupported (see
+ * createUnsupportedFocus) — but it stays as the seed of a future Linux focus
+ * path, ready for whenever one gets built.
  */
 export const LINUX_TERMINAL_HOSTS: ReadonlySet<string> = new Set([
   'gnome-terminal-server',

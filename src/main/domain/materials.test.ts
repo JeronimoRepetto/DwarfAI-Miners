@@ -112,3 +112,12 @@ describe('sumMaterialTotals', () => {
     expect(sumMaterialTotals([])).toEqual(emptyMaterialTotals())
   })
 })
+
+/*
+ * The materialUnits() and totalMaterialTokens() tests that stood here went
+ * with the functions themselves — main had no production caller for either
+ * (#104). materialUnits()'s subject lives on as the renderer's own copy,
+ * covered against every material's own grain size in lib/vault/vault.test.ts.
+ * totalMaterialTokens() has no replacement: nothing needs the raw
+ * cross-material sum (see the materials invariant in AGENTS.md).
+ */
