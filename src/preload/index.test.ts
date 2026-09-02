@@ -49,6 +49,9 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.getToggleShortcut).toBe('function')
     expect(typeof api.setToggleShortcut).toBe('function')
     expect(typeof api.getAppBuild).toBe('function')
+    expect(typeof api.declareMine).toBe('function')
+    expect(typeof api.undeclareMine).toBe('function')
+    expect(typeof api.queryProjects).toBe('function')
   })
 
   it('asks for the current state on the panel:getAlwaysOnTop channel with no payload', async () => {
@@ -154,5 +157,108 @@ describe('preload app build contract', () => {
     const build = { version: '0.3.0', packaged: false }
     invoke.mockResolvedValueOnce(build)
     await expect(api.getAppBuild()).resolves.toEqual(build)
+  })
+})
+
+/**
+ * Adding and removing a user-declared mine (#85). The folder picker is opened
+ * in MAIN, so this side carries no path in either direction — it asks, and it
+ * names a mine by the id both processes already agree on.
+ */
+describe('preload declared-mine contract', () => {
+  it('asks for a mine on the mine:declare channel with no payload at all', async () => {
+    const result = { declared: true, mineId: 'mine:c:\\x\\adopted' }
+    invoke.mockResolvedValueOnce(result)
+    await expect(api.declareMine()).resolves.toEqual(result)
+    expect(invoke).toHaveBeenLastCalledWith('mine:declare')
+  })
+
+  it('hands back a refusal and its reason rather than flattening it to nothing', async () => {
+    // A control that silently does nothing reads as broken; the panel needs the
+    // reason main gave it.
+    const refused = { declared: false, reason: 'No folder was chosen.' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.declareMine()).resolves.toEqual(refused)
+  })
+
+  it('removes a mine on mine:undeclare by id, exactly as recorded', async () => {
+    invoke.mockResolvedValueOnce({ outcome: 'removed' })
+    await api.undeclareMine('mine:c:\\x\\adopted')
+    expect(invoke).toHaveBeenLastCalledWith('mine:undeclare', 'mine:c:\\x\\adopted')
+  })
+
+  it('collapses a non-string id to an empty string before it crosses the bridge', async () => {
+    // Same discipline as retireDwarf: main's boundary check should only ever
+    // have to reason about a clean string.
+    invoke.mockResolvedValueOnce({
+      outcome: 'unchanged',
+      reason: 'That mine is not one you added.'
+    })
+    await (api.undeclareMine as unknown as (value: unknown) => Promise<unknown>)(42)
+    expect(invoke).toHaveBeenLastCalledWith('mine:undeclare', '')
+  })
+
+  it('hands back the outcome main decided, including a mine that only reverted', async () => {
+    const reverted = { outcome: 'reverted' }
+    invoke.mockResolvedValueOnce(reverted)
+    await expect(api.undeclareMine('mine:c:\\x\\adopted')).resolves.toEqual(reverted)
+  })
+})
+
+/**
+ * Browsing every remembered project (#92). An object payload, so it crosses
+ * uncoerced exactly as sendDwarfText's does — main owns the validation, and it
+ * is main that has to reject a sort key it cannot run.
+ */
+describe('preload project-query contract', () => {
+  const newest = { sortBy: 'addedAt', direction: 'desc' } as const
+
+  it('asks on the projects:query channel with the query exactly as given', async () => {
+    invoke.mockResolvedValueOnce({ answered: true, projects: [] })
+    await api.queryProjects(newest)
+    expect(invoke).toHaveBeenLastCalledWith('projects:query', newest)
+  })
+
+  it('carries the filters and the page across untouched', async () => {
+    // Nothing is folded, trimmed or clamped here on purpose: the term is folded
+    // with the normalizer that wrote the stored column, and the page is clamped
+    // by the query builder, both in main. A bridge that pre-processed either
+    // would be a second copy of a rule that has to match the database.
+    const query = {
+      ...newest,
+      tier: 'gold',
+      nameContains: '  Cafetería  ',
+      limit: 25,
+      offset: 50
+    } as const
+    invoke.mockResolvedValueOnce({ answered: true, projects: [] })
+    await api.queryProjects(query)
+    expect(invoke).toHaveBeenLastCalledWith('projects:query', query)
+  })
+
+  it('hands back the projects main found, live flag included', async () => {
+    const answer = {
+      answered: true,
+      projects: [
+        {
+          id: 'mine:c:\\x\\smelter',
+          path: 'C:\\x\\smelter',
+          name: 'smelter',
+          declared: false,
+          addedAt: 1_000,
+          live: true
+        }
+      ]
+    }
+    invoke.mockResolvedValueOnce(answer)
+    await expect(api.queryProjects(newest)).resolves.toEqual(answer)
+  })
+
+  it('hands back a refusal and its reason rather than an empty list on its own', async () => {
+    // The distinction that must survive the bridge: a browse showing nothing
+    // because the database would not open is not a browse of no projects.
+    const refused = { answered: false, projects: [], reason: 'The projects could not be read.' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.queryProjects(newest)).resolves.toEqual(refused)
   })
 })

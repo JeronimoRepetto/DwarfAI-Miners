@@ -7,6 +7,7 @@ import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import type { Provider } from '../provider'
+import type { TextDeliveryTarget } from '../../textDelivery/port'
 import {
   extractCodexFeed,
   parseCodexRolloutContext,
@@ -15,7 +16,9 @@ import {
   type CodexRolloutHead,
   type CodexRolloutInfo
 } from './parse'
+import { canQueueToCodexThread } from './queue'
 import {
+  readCodexCliVersions,
   readCodexHeartbeats,
   readCodexSpawnEdges,
   readCodexThreads,
@@ -105,12 +108,15 @@ interface CodexRegistry {
   edges: Map<string, string>
   /** threadId -> newest log timestamp within the heartbeat window, in ms. */
   heartbeats: Map<string, number>
+  /** threadId -> the Codex build that opened it, for the queue's version floor (#97). */
+  cliVersions: Map<string, string>
 }
 
 const EMPTY_REGISTRY: CodexRegistry = {
   threads: new Map(),
   edges: new Map(),
-  heartbeats: new Map()
+  heartbeats: new Map(),
+  cliVersions: new Map()
 }
 
 /** One rollout considered by a scan, with whatever the registry knows about it. */
@@ -206,6 +212,16 @@ export class CodexProvider implements Provider {
    * resolve to another dwarf's transcript.
    */
   private feedSources: ReadonlyMap<string, string> = new Map()
+  /**
+   * dwarfId -> the thread UUID `codex queue --thread` addresses, for the
+   * threads a queued message has been proven to reach (#97).
+   *
+   * Rebuilt and swapped exactly as feedSources is, and for the same reason
+   * (#12): a send landing mid-scan must not read a half-rebuilt map, and a
+   * session that has ended must stop answering with a queue address rather than
+   * keep offering one.
+   */
+  private queueTargets: ReadonlyMap<string, string> = new Map()
 
   constructor(options: CodexProviderOptions) {
     this.fs = options.fs
@@ -227,6 +243,7 @@ export class CodexProvider implements Provider {
     // Built off to the side; swapped in atomically once the scan completes so
     // concurrent feed()/transcriptPath() calls always see a whole generation.
     const feedSources = new Map<string, string>()
+    const queueTargets = new Map<string, string>()
     const nowMs = this.now()
     const freshAfter = nowMs - this.livenessWindowS * 1_000
     // Retention is ADDITIVE to the liveness window (as documented for
@@ -286,7 +303,15 @@ export class CodexProvider implements Provider {
 
       const discoveredSnapshot = await this.snapshotSession(
         { path, thread },
-        { activityMs: Math.max(activityMs, grew ? nowMs : 0), grew, unchanged, size, feedSources }
+        {
+          activityMs: Math.max(activityMs, grew ? nowMs : 0),
+          grew,
+          unchanged,
+          size,
+          feedSources,
+          queueTargets,
+          cliVersion: thread === undefined ? undefined : registry.cliVersions.get(thread.threadId)
+        }
       )
       if (discoveredSnapshot === null || seenSessions.has(discoveredSnapshot.snapshot.sessionId)) {
         continue
@@ -306,6 +331,7 @@ export class CodexProvider implements Provider {
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
     this.feedSources = feedSources
+    this.queueTargets = queueTargets
     return discovered.map(({ snapshot }) => snapshot)
   }
 
@@ -339,6 +365,7 @@ export class CodexProvider implements Provider {
     const threads = new Map<string, CodexThread>()
     let edges = new Map<string, string>()
     let heartbeats = new Map<string, number>()
+    let cliVersions = new Map<string, string>()
 
     if (this.stateDbPath !== undefined) {
       const db = await this.sqlite.openReadOnly(this.stateDbPath)
@@ -350,6 +377,7 @@ export class CodexProvider implements Provider {
             }
           })
           edges = pollProfiler.measureSync('cx.q.edges', () => readCodexSpawnEdges(db))
+          cliVersions = pollProfiler.measureSync('cx.q.vers', () => readCodexCliVersions(db))
         } finally {
           db.close()
         }
@@ -371,7 +399,7 @@ export class CodexProvider implements Provider {
         }
       }
     }
-    return { threads, edges, heartbeats }
+    return { threads, edges, heartbeats, cliVersions }
   }
 
   /**
@@ -424,21 +452,23 @@ export class CodexProvider implements Provider {
   }
 
   /**
-   * Codex sessions currently have no input channel, whichever product owns
-   * them.
+   * A Codex session's one way in: its own message queue (#97).
    *
-   * The CLI/TUI never records a pid anywhere this provider can read — neither
-   * the rollout's session_meta nor the state_5.sqlite `threads` row carries
-   * one — so there is no process to walk up to a console window, and matching
-   * a running codex.exe to a specific thread would be guesswork. The desktop
-   * app (`codex.exe app-server`) has no console at all, and Codex exposes no
-   * cross-session messaging the way Claude Code does.
+   * There is still no console tier and there never will be from here — the
+   * CLI/TUI records a pid nowhere this provider can read, so no window can be
+   * located, and matching a running codex.exe to a thread would be guesswork.
+   * What the queue needs instead is the thread UUID, which the registry row
+   * already carries, so `codex queue --thread <id>` reaches a session with no
+   * window, no pid and no daemon.
    *
-   * Reporting null for both keeps the panel honest: the send action renders
-   * disabled with an explanation instead of failing after the user has typed.
+   * Offered only where a drain has actually been WATCHED — see queue.ts for the
+   * two conditions and the experiment behind them. Everything else keeps
+   * reporting null, which renders the send action disabled with its reason
+   * instead of failing after the user has typed.
    */
-  textDelivery(_dwarfId: string): null {
-    return null
+  textDelivery(dwarfId: string): TextDeliveryTarget | null {
+    const threadId = this.queueTargets.get(dwarfId)
+    return threadId === undefined ? null : { kind: 'codex-queue', threadId }
   }
 
   /**
@@ -459,6 +489,10 @@ export class CodexProvider implements Provider {
       /** This scan's observed size, used as the rolloutCache key alongside path. */
       size: number | undefined
       feedSources: Map<string, string>
+      /** dwarfId -> thread UUID, filled in for queue-reachable threads only (#97). */
+      queueTargets: Map<string, string>
+      /** The Codex build that opened this thread, for the queue's version floor (#97). */
+      cliVersion: string | undefined
     }
   ): Promise<DiscoveredCodexSnapshot | null> {
     const { path, thread } = candidate
@@ -476,6 +510,18 @@ export class CodexProvider implements Provider {
 
     const dwarfId = `codex:${sessionId}`
     if (rollout !== null) context.feedSources.set(dwarfId, path)
+    // Keyed on the REGISTRY row, never on the rollout: the source tag and the
+    // build that opened the thread are both registry facts, and a rollout the
+    // registry never recorded proves neither of them (#97).
+    if (
+      thread !== undefined &&
+      canQueueToCodexThread({
+        ...(thread.sourceTag === undefined ? {} : { sourceTag: thread.sourceTag }),
+        ...(context.cliVersion === undefined ? {} : { cliVersion: context.cliVersion })
+      })
+    ) {
+      context.queueTargets.set(dwarfId, thread.threadId)
+    }
 
     const mainDwarf: Dwarf = {
       id: dwarfId,

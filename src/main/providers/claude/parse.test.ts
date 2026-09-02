@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  type ClaudeSessionEntry,
   claudeSessionAttendance,
   claudeSessionDeliveryTarget,
   claudeWaitingReason,
@@ -15,6 +16,8 @@ const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')
 const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'), 'utf8')
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
 const notificationEnvelopes = readFileSync(join(FIXTURES, 'notification-envelopes.jsonl'), 'utf8')
+/** Three AskUserQuestion calls: one answered, one declined, one still open. */
+const askUserQuestion = readFileSync(join(FIXTURES, 'ask-user-question.jsonl'), 'utf8')
 const sessionEntryJson: unknown = JSON.parse(
   readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
 )
@@ -582,5 +585,279 @@ describe('claudeWaitingReason (issue #60)', () => {
     })
     expect(entry?.status).toBe('idle')
     expect(claudeWaitingReason(entry!)).toBe('user-input')
+  })
+})
+
+/** The `tool_use` block Claude writes when the model asks the user something. */
+function askLine(toolUseId: string, input: unknown, timestamp?: string): string {
+  return (
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'AskUserQuestion', input }]
+      },
+      ...(timestamp === undefined ? {} : { timestamp })
+    }) + '\n'
+  )
+}
+
+/** The `tool_result` block that resolves one ask; is_error is a decline or an interrupt. */
+function answerLine(toolUseId: string, isError = false): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: 'Accumulate',
+            ...(isError ? { is_error: true } : {})
+          }
+        ]
+      }
+    }) + '\n'
+  )
+}
+
+/** One well-formed AskUserQuestion input, so a case can vary just the part it is about. */
+function askInput(question: string): unknown {
+  return {
+    questions: [
+      {
+        question,
+        header: 'Approach',
+        multiSelect: false,
+        options: [{ label: 'Accumulate', description: 'Collect asks while walking the tail.' }]
+      }
+    ]
+  }
+}
+
+/**
+ * Issue #94. A question the model asks through the AskUserQuestion tool is not
+ * prose that reads like a request — it is the model declaring in schema that it
+ * is asking, and enumerating the answers it will accept. That is why reading it
+ * does not touch the prohibition at contracts.ts:93-98, which bars INFERRING a
+ * blocked state from text.
+ *
+ * The asymmetry that makes it safe: a tail is a suffix of the file and the
+ * result line is always written after the ask, so "ask visible, its answer
+ * scrolled out" cannot happen. Truncation can only hide a pending question,
+ * never invent one. Misses are possible, false claims are not.
+ */
+describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
+  const info = parseClaudeTranscriptTail(askUserQuestion)
+
+  it('carries the ask that has no tool_result behind it in this tail', () => {
+    expect(info.pendingQuestion).toEqual({
+      toolUseId: 'toolu_01AskPlaceholderPending',
+      question: 'Which materials should the vault chart?',
+      header: 'Materials',
+      multiSelect: true,
+      options: [
+        { label: 'Copper', description: 'The starter material every mine yields.' },
+        { label: 'Silver', description: 'The second tier, once a mine is measured.' },
+        { label: 'Uranium', description: 'The rarest tier in the ladder.' }
+      ],
+      askedAt: '2026-09-01T09:03:41.062Z'
+    })
+  })
+
+  it('drops the option preview, which can carry a whole code block', () => {
+    // Every option in the fixture has one. Nothing downstream needs it, and the
+    // panel would be carrying arbitrary source across the wire to show 70 chars.
+    expect(JSON.stringify(info.pendingQuestion)).not.toContain('preview')
+    expect(JSON.stringify(info.pendingQuestion)).not.toContain('materialUnits')
+  })
+
+  it('still reads the assistant text sitting beside the tool_use block', () => {
+    // The ask and a text block share one assistant message in the fixture, so a
+    // question must not cost the speech bubble.
+    expect(info.lastAssistantText).toBe('Latest assistant reply placeholder.')
+  })
+
+  it('reports no pending question once the matching tool_result arrives', () => {
+    const tail = askLine('toolu_a', askInput('Which approach?')) + answerLine('toolu_a')
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  it('reports no pending question when the ask was declined or interrupted', () => {
+    // is_error marks the refusal Claude writes when the user escapes out of the
+    // picker. A cancelled question is resolved, not still waiting on anyone.
+    const tail = askLine('toolu_a', askInput('Which approach?')) + answerLine('toolu_a', true)
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  it('reports the later ask when an earlier one has already been answered', () => {
+    const tail =
+      askLine('toolu_a', askInput('First question?')) +
+      answerLine('toolu_a') +
+      askLine('toolu_b', askInput('Second question?'))
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.toolUseId).toBe('toolu_b')
+  })
+
+  it('reports the latest of two asks that are both still open', () => {
+    const tail =
+      askLine('toolu_a', askInput('First question?')) + askLine('toolu_b', askInput('Second?'))
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.question).toBe('Second?')
+  })
+
+  it('carries no question at all for a tail that holds no ask', () => {
+    // The window bounds visibility: an ask older than the tail is simply absent,
+    // which is the miss the design accepts rather than a claim it invents.
+    expect(parseClaudeTranscriptTail(parentTranscript).pendingQuestion).toBeUndefined()
+    expect(parseClaudeTranscriptTail('').pendingQuestion).toBeUndefined()
+  })
+
+  it('ignores a tool_use block for any other tool', () => {
+    const tail =
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'toolu_a', name: 'Bash', input: askInput('Which?') }]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  it.each([
+    ['no input at all', undefined],
+    ['a non-object input', 'questions'],
+    ['no questions key', { headers: [] }],
+    ['a non-array questions value', { questions: { question: 'Which?' } }],
+    ['an empty questions array', { questions: [] }],
+    ['a question that is not a record', { questions: ['Which approach?'] }],
+    ['a non-string question', { questions: [{ question: 7, options: [] }] }],
+    ['a non-array options value', { questions: [{ question: 'Which?', options: 'Accumulate' }] }]
+  ])('tolerates %s without throwing or claiming a question', (_label, input) => {
+    const tail = askLine('toolu_a', input)
+    expect(() => parseClaudeTranscriptTail(tail)).not.toThrow()
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  it('keeps a well-formed question whose options are individually malformed', () => {
+    // The question is the load-bearing half. A junk option is dropped on its
+    // own rather than costing the panel the whole ask.
+    const tail = askLine('toolu_a', {
+      questions: [
+        {
+          question: 'Which approach?',
+          options: [{ label: 'Accumulate' }, 'Second pass', { description: 'no label' }]
+        }
+      ]
+    })
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toEqual({
+      toolUseId: 'toolu_a',
+      question: 'Which approach?',
+      multiSelect: false,
+      options: [{ label: 'Accumulate' }]
+    })
+  })
+
+  it('ignores an ask whose tool_use block carries no id to resolve it by', () => {
+    // Without an id nothing could ever mark it answered, so it would sit on the
+    // panel forever. Absent evidence, not a question.
+    const tail =
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', name: 'AskUserQuestion', input: askInput('Which?') }]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  it('resolves an ask even when its result line arrives before it in the tail', () => {
+    // Cannot happen in a real suffix read, and the parser must not depend on
+    // that: resolution is id matching over the whole tail, not line order.
+    const tail = answerLine('toolu_a') + askLine('toolu_a', askInput('Which approach?'))
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+})
+
+/**
+ * Issue #94. The registry proves a session is BLOCKED; an outstanding ask can
+ * only say what it is blocked ON. Neither source may claim the other's fact,
+ * which is the whole shape of this: the tool block refines, and never asserts.
+ *
+ * So exactly one value moves, 'unknown' — "the provider proved this session is
+ * blocked but named no condition this table recognizes" (see WaitingReason).
+ * That is proof of blocked with the condition missing, which is precisely the
+ * hole an unanswered AskUserQuestion fills. Every other reading is untouched:
+ * a named condition is the registry's own answer and needs no help, and
+ * `undefined` — not blocked, or nothing proves it either way — must stay
+ * absent, because moving THAT would be the tool block asserting a blocked
+ * state, which is the thing #60 refused.
+ */
+describe('claudeWaitingReason refined by an outstanding ask (issue #94)', () => {
+  /** The one ask the fixture ends on with no result behind it. */
+  const openAsk = parseClaudeTranscriptTail(askUserQuestion).pendingQuestion
+
+  /** A registry entry with just the status and condition a case is about. */
+  function entry(status: string, waitingFor?: string): ClaudeSessionEntry {
+    return parseClaudeSessionEntry({
+      pid: 1,
+      sessionId: 's',
+      cwd: 'c',
+      status,
+      ...(waitingFor !== undefined ? { waitingFor } : {})
+    })!
+  }
+
+  it('refines a bare open dialog into user-input, and only with the ask', () => {
+    // The commonest waiting value in the whole vocabulary, and the one the
+    // issue is about: the registry says a modal is up, the model's own tool
+    // call says what the modal wants. Both halves are asserted here so the
+    // refinement cannot pass by making 'dialog open' user-input outright.
+    expect(openAsk).toBeDefined()
+    expect(claudeWaitingReason(entry('waiting', 'dialog open'))).toBe('unknown')
+    expect(claudeWaitingReason(entry('waiting', 'dialog open'), openAsk)).toBe('user-input')
+  })
+
+  it('refines a session that proved waiting while naming no condition at all', () => {
+    expect(claudeWaitingReason(entry('waiting'), openAsk)).toBe('user-input')
+  })
+
+  it('refines a condition this version of Claude Code never wrote', () => {
+    // Reached 'unknown' by a different road — an unrecognized string rather
+    // than a recognized-but-uninformative one — and 'unknown' means the same
+    // thing either way, so the refinement must not care which road it came by.
+    const invented = entry('waiting', 'something invented later')
+    expect(claudeWaitingReason(invented)).toBe('unknown')
+    expect(claudeWaitingReason(invented, openAsk)).toBe('user-input')
+  })
+
+  it('leaves every explicitly named condition exactly as the registry wrote it', () => {
+    // The explicit mapping wins. An approval and an outstanding question can
+    // both be true, and the registry is the one that watched the session stop:
+    // rewriting its answer would be the tool block overruling it, not refining
+    // it. `input needed` needs nothing either — it already proved the question.
+    expect(claudeWaitingReason(entry('waiting', 'permission prompt'), openAsk)).toBe('approval')
+    expect(claudeWaitingReason(entry('waiting', 'sandbox request'), openAsk)).toBe('approval')
+    expect(claudeWaitingReason(entry('waiting', 'goal proposal'), openAsk)).toBe('approval')
+    expect(claudeWaitingReason(entry('waiting', 'input needed'), openAsk)).toBe('user-input')
+  })
+
+  it('gives a session nothing proved blocked no reason, whatever its tail holds', () => {
+    // THE guard on the whole phase. An ask sitting in the tail of a busy
+    // session is the model still working — it wrote the tool call and the turn
+    // has not stopped on it yet — and 'user-input' suspends eviction, so a
+    // reason invented here makes a dwarf that never leaves. Absent stays
+    // absent: the tool block may refine a proof, never manufacture one.
+    expect(claudeWaitingReason(entry('busy'), openAsk)).toBeUndefined()
+    expect(claudeWaitingReason(entry('idle'), openAsk)).toBeUndefined()
+  })
+
+  it('drops the refinement the moment the ask is answered', () => {
+    const answered = parseClaudeTranscriptTail(
+      askUserQuestion + answerLine('toolu_01AskPlaceholderPending')
+    ).pendingQuestion
+    expect(answered).toBeUndefined()
+    expect(claudeWaitingReason(entry('waiting', 'dialog open'), answered)).toBe('unknown')
   })
 })

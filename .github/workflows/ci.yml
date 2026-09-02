@@ -17,7 +17,7 @@ env:
 
 jobs:
   checks:
-    name: Typecheck, lint, test, build
+    name: Privacy guard, typecheck, lint, format, skills-sync, test, build
     # Windows-only for now. Cross-platform support has landed (issue #5) and
     # the whole suite is platform-independent — every per-OS builder is tested
     # by passing the platform explicitly — so a macos-latest/ubuntu-latest

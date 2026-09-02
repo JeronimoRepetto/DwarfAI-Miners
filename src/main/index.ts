@@ -1,5 +1,5 @@
 import { config as loadDotenv } from 'dotenv'
-import { app, globalShortcut, ipcMain } from 'electron'
+import { app, dialog, globalShortcut, ipcMain, type BrowserWindow } from 'electron'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
@@ -13,9 +13,15 @@ import type {
   DwarfTextResult,
   MaterialTotals,
   Mine,
-  MinesSnapshot
+  MineDeclareResult,
+  MinesSnapshot,
+  MineUndeclareResult,
+  ProjectQuery,
+  ProjectQueryResult,
+  ProjectSortDirection,
+  ProjectSortKey
 } from '../shared/contracts'
-import { IPC_CHANNELS } from '../shared/contracts'
+import { IPC_CHANNELS, isMineTier } from '../shared/contracts'
 import {
   enable as enableAutostart,
   ensureDefaultAutostart,
@@ -34,6 +40,8 @@ import { NodeFs } from './adapters/fsLike'
 import { runCoalBackfill } from './ledger/coalBackfill'
 import { createLedgerStore } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
+import { openProjectsStore } from './projects/openProjectsStore'
+import { PROJECTS_DB_FILENAME, type ProjectsStore } from './projects/projectsStore'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
 import { createShortcutPreferenceStore } from './shell/shortcutPreference'
@@ -50,6 +58,8 @@ import {
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
+/** Held at module scope so the quit handler can close the database handle. */
+let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
 let toggleShortcut: ToggleShortcutController | null = null
 
@@ -75,6 +85,9 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
+  ipcMain.removeHandler(IPC_CHANNELS.declareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
 }
 
@@ -113,6 +126,63 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = ['addedAt', 'lastOpenedAt']
+const PROJECT_SORT_DIRECTIONS: readonly ProjectSortDirection[] = ['asc', 'desc']
+
+/**
+ * Same boundary discipline as parseTextRequest, with one thing the other
+ * channels never had to check: two of these fields NAME PARTS OF A STATEMENT
+ * rather than travelling as values.
+ *
+ * `sortBy` and `direction` become a column and a keyword in the ORDER BY, so
+ * both are checked against a closed list here and a payload naming anything
+ * else is refused outright — a sort key that fell through would reach SQLite as
+ * a column that does not exist. Everything else IS a value and is bound as a
+ * parameter downstream, `nameContains` above all: the user's search term is
+ * never inspected here beyond its type, and never concatenated anywhere.
+ *
+ * The two numbers are only checked for being numbers. Their policy — a default,
+ * a cap, a floor — belongs to the query builder, so that main's own callers get
+ * it too rather than only the ones that came over the wire.
+ */
+function parseProjectQuery(payload: unknown): ProjectQuery | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  const sortBy = record.sortBy
+  const direction = record.direction
+  if (!isOneOf(sortBy, PROJECT_SORT_KEYS)) return null
+  if (!isOneOf(direction, PROJECT_SORT_DIRECTIONS)) return null
+  return {
+    sortBy,
+    direction,
+    // An unrecognised tier is dropped rather than refused: it means "no tier
+    // filter", which is a browse that shows everything instead of an error.
+    ...(isMineTier(record.tier) ? { tier: record.tier } : {}),
+    ...(typeof record.nameContains === 'string' ? { nameContains: record.nameContains } : {}),
+    ...(typeof record.limit === 'number' ? { limit: record.limit } : {}),
+    ...(typeof record.offset === 'number' ? { offset: record.offset } : {})
+  }
+}
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+}
+
+/**
+ * Open the operating system's folder picker (#85) — the first use of Electron's
+ * `dialog` anywhere in this app.
+ *
+ * Owned by the panel window so it comes up in front of an always-on-top panel
+ * rather than behind it, and so the two cannot be interacted with at once. The
+ * renderer never reaches this: it asks on `mine:declare`, and the path exists
+ * only inside main.
+ */
+async function chooseProjectDirectory(parent: BrowserWindow): Promise<string | null> {
+  const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'] })
+  if (result.canceled) return null
+  return result.filePaths[0] ?? null
 }
 
 /**
@@ -198,20 +268,40 @@ async function init(): Promise<void> {
   })
   await ledger.load()
 
+  // Every project the app has been shown (#93), the fifth userData file and
+  // the first that is a database rather than a document. The path is injected
+  // for the same reason the ledger's is: the store imports no Electron.
+  //
+  // A null here is a state, not a failure to handle later. The store refuses
+  // loudly by design — a locked or corrupt database answers with a reason
+  // instead of an empty list — and this is the one place that can turn that
+  // refusal into a panel missing its declared mines rather than an app that
+  // will not start. openProjectsStore logs the reason once.
+  projects = await openProjectsStore({
+    filePath: join(app.getPath('userData'), PROJECTS_DB_FILENAME),
+    warn: (message) => console.warn(message)
+  })
+
   runtime = new AgentRuntime({
     config,
     ledger,
+    projects,
     appPaths: {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath()
     },
+    chooseDirectory: () => chooseProjectDirectory(mainWindow),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => {
       if (!mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials))
       }
     }
   })
+  // Before the loop starts, exactly as the ledger is loaded before the runtime
+  // exists: the first published poll then already carries the user's own mines
+  // instead of drawing an empty valley and filling it a moment later.
+  await runtime.loadDeclared()
   runtime.start()
 
   // The historical coal pile, produced once and never again (see #22).
@@ -250,7 +340,13 @@ async function init(): Promise<void> {
     port: config.hooksPort,
     platform: process.platform,
     onEvent: (event) => {
-      console.log(`[hooks] ${event.event}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`)
+      // The notification type is the whole point of reading it (issue #94):
+      // 'agent_needs_input' and 'idle_prompt' arrive as the same event name and
+      // mean opposite things, and the log is where that first becomes visible.
+      const kind = event.notificationType === undefined ? '' : ` (${event.notificationType})`
+      console.log(
+        `[hooks] ${event.event}${kind}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`
+      )
       runtime?.nudge()
     },
     log: (message) => console.log(message),
@@ -362,6 +458,47 @@ async function init(): Promise<void> {
     return runtime?.launchAgent(request) ?? notLaunched
   })
 
+  // Adding and removing a user-declared mine (#85). declare takes no payload:
+  // the folder picker runs here, so there is no path for the renderer to send
+  // and none to validate. Both refusals below are what a runtime that never
+  // came up would say, phrased for the panel rather than left silent.
+  const notDeclared: MineDeclareResult = {
+    declared: false,
+    reason: 'The panel is still starting up.'
+  }
+  const notUndeclared: MineUndeclareResult = {
+    outcome: 'failed',
+    reason: 'The panel is still starting up.'
+  }
+  ipcMain.handle(IPC_CHANNELS.declareMine, () => runtime?.declareMine() ?? notDeclared)
+  ipcMain.handle(IPC_CHANNELS.undeclareMine, (_event, mineId: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing,
+    // and says so rather than resolving as a removal that never happened.
+    if (typeof mineId !== 'string' || mineId === '') {
+      return { outcome: 'unchanged', reason: 'No mine was named.' } satisfies MineUndeclareResult
+    }
+    return runtime?.undeclareMine(mineId) ?? notUndeclared
+  })
+
+  // Browsing every remembered project (#92). Both refusals answer with an
+  // EMPTY list and `answered: false` rather than no list at all, so the panel
+  // renders one way and still cannot read "nothing to show" as "no projects".
+  const notQueried: ProjectQueryResult = {
+    answered: false,
+    projects: [],
+    reason: 'The panel is still starting up.'
+  }
+  const notAQuery: ProjectQueryResult = {
+    answered: false,
+    projects: [],
+    reason: 'That is not a search this panel can run.'
+  }
+  ipcMain.handle(IPC_CHANNELS.queryProjects, (_event, payload: unknown) => {
+    const query = parseProjectQuery(payload)
+    if (query === null) return notAQuery
+    return runtime?.queryProjects(query) ?? notQueried
+  })
+
   // The panel watched a kicked agent stop (#46). One-way: main decides what
   // that costs the dwarf, and the answer travels back on the next poll.
   ipcMain.on(IPC_CHANNELS.retireDwarf, (_event, dwarfId: unknown) => {
@@ -394,6 +531,11 @@ if (!app.requestSingleInstanceLock()) {
     // non-blocking error.
     void hooks?.shutdown()
     hooks = null
+    // Releases the database handle. Whatever the last poll observed has already
+    // been written or has already missed its window; there is nothing buffered
+    // here for a final flush to save, unlike the ledger above.
+    void projects?.close()
+    projects = null
     removeIpcHandlers()
     markQuitting()
   })

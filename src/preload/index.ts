@@ -8,7 +8,11 @@ import type {
   DwarfKickResult,
   DwarfTextRequest,
   DwarfTextResult,
+  MineDeclareResult,
   MinesSnapshot,
+  MineUndeclareResult,
+  ProjectQuery,
+  ProjectQueryResult,
   ShortcutState
 } from '../shared/contracts'
 import { IPC_CHANNELS } from '../shared/contracts'
@@ -63,6 +67,32 @@ export interface DwarfAiMinersApi {
    * the panel's version the one Electron reports for the running process.
    */
   getAppBuild: () => Promise<AppBuild>
+  /**
+   * Ask main to open the OS folder picker and adopt the chosen folder as a
+   * mine (#85).
+   *
+   * No argument, by design: the picker runs in main, so the renderer asks for a
+   * mine and never names a directory. Resolves with main's verdict, including
+   * the reason when nothing was added — the panel must be able to say why.
+   */
+  declareMine: () => Promise<MineDeclareResult>
+  /**
+   * Undo a declaration, by MINE ID and never by path — the id is what both
+   * processes already agree on, and a path would be a second key to keep in
+   * step. A mine a session is still working reverts to a discovered one rather
+   * than disappearing, which is what the resolved outcome distinguishes.
+   */
+  undeclareMine: (mineId: string) => Promise<MineUndeclareResult>
+  /**
+   * Browse every project the app remembers — filtered by tier, ordered by
+   * either stored date, searched by a substring of the name (#92).
+   *
+   * Answered from the database in main, NOT from the mines the panel already
+   * holds: the point is the projects nobody is working right now, and those are
+   * on no board. Each result says whether it is live, which is the one field
+   * that comes from the poll rather than from disk.
+   */
+  queryProjects: (query: ProjectQuery) => Promise<ProjectQueryResult>
 }
 
 const api: DwarfAiMinersApi = {
@@ -103,7 +133,19 @@ const api: DwarfAiMinersApi = {
   // string BEFORE it crosses, so main's boundary check only reasons about one.
   retireDwarf: (dwarfId) =>
     ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : ''),
-  getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild)
+  getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild),
+  declareMine: () => ipcRenderer.invoke(IPC_CHANNELS.declareMine),
+  // Same discipline as retireDwarf: collapse anything that is not a string
+  // BEFORE it crosses, so main's boundary check only reasons about one.
+  undeclareMine: (mineId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.undeclareMine, typeof mineId === 'string' ? mineId : ''),
+  // Forwarded uncoerced, exactly as sendDwarfText's payload is: an object with
+  // a closed set of sort keys cannot be collapsed to a safe default the way a
+  // stray boolean or string can, so main validates it and refuses what it
+  // cannot run. Folding the search term and clamping the page both happen
+  // there too — each has to agree with the database, and a copy here would be a
+  // second place for that agreement to break.
+  queryProjects: (query) => ipcRenderer.invoke(IPC_CHANNELS.queryProjects, query)
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -41,20 +41,25 @@ export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
 export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   terminal: 'Typed straight into the session console.',
   'claude-relay': 'Relayed to the headless session by name.',
-  'foreman-relay': "Delivered to this worker's foreman, tagged for them."
+  'foreman-relay': "Delivered to this worker's foreman, tagged for them.",
+  'codex-queue': "Added to this Codex session's queue; it reads it between turns."
 }
 
 export const NO_KICK_REASON = "This session type can't be canceled yet."
 
 /**
- * What kicking that channel actually does, in honest terms: a terminal gets a
- * real interrupt keystroke, but a relay tier is a semantic ask — the session
- * decides how (or whether) to stop.
+ * What kicking that channel actually does, in honest terms — or, where a
+ * channel cannot kick at all, why not: a terminal gets a real interrupt
+ * keystroke, a relay tier is a semantic ask the session may decline, and the
+ * Codex queue cannot cut a turn short at all, because the only thing it is
+ * proven to do is drain between turns (#97).
  */
 export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   terminal: 'Sends an interrupt keystroke to the session console.',
   'claude-relay': 'Asks the agent to stop — it decides how.',
-  'foreman-relay': "Asks this worker's foreman to stop it — it decides how."
+  'foreman-relay': "Asks this worker's foreman to stop it — it decides how.",
+  'codex-queue':
+    "The queue only drains between turns, so it can't interrupt one — a kick still has to come from the session console."
 }
 
 export const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."
@@ -63,7 +68,19 @@ export const CONSOLE_HINT = "Focus this session's console."
 
 function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   const channel = dwarf.capabilities?.cancel ?? null
-  const hint = channel === null ? NO_KICK_REASON : KICK_HINT[channel]
+  // A session reachable for text but not for a kick (the Codex queue, #97) is
+  // told apart from one with no way in at all: the generic reason would deny a
+  // channel the chat action next to it has just offered, so the send channel
+  // supplies the refusal in its own terms. Read off the SAME matrix as `cancel`
+  // rather than off textDelivery, so the two halves of one refusal can never
+  // come from two different facts.
+  const sendChannel = dwarf.capabilities?.sendText ?? undefined
+  const hint =
+    channel !== null
+      ? KICK_HINT[channel]
+      : sendChannel === undefined
+        ? NO_KICK_REASON
+        : KICK_HINT[sendChannel]
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
   if (channel === null) return { id: 'kick', name: 'Kick', enabled: false, hint }
   return {

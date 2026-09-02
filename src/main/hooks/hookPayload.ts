@@ -26,6 +26,22 @@ export interface HookEvent {
   sessionId?: string
   /** The session's working directory, when the payload carried one. */
   cwd?: string
+  /**
+   * What kind of attention a Notification wants — `agent_needs_input`,
+   * `idle_prompt`, `permission_prompt` and nine more (issue #94).
+   *
+   * Kept as a plain string rather than a union. The vocabulary is version-gated
+   * and has grown before, and an unrecognized value logged verbatim says more
+   * than one folded into a default that claims something else. This is the same
+   * reading the registry's waitingFor vocabulary gets, for the same reason.
+   *
+   * The twelve documented values were read off Claude Code's live hook docs
+   * (2026-09-01); the field NAME was not — the docs' matcher table names the
+   * notification type without publishing the Notification payload's own schema.
+   * So it is read like every optional field here, present or absent and never
+   * repaired: a different spelling costs the log line, never the rescan.
+   */
+  notificationType?: string
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
@@ -68,10 +84,12 @@ export function parseClaudeHookPayload(body: string): HookEvent | null {
 
   const sessionId = optionalText(parsed.session_id)
   const cwd = optionalText(parsed.cwd)
+  const notificationType = optionalText(parsed.notification_type)
   return {
     provider: 'claude',
     event,
     ...(sessionId === undefined ? {} : { sessionId }),
-    ...(cwd === undefined ? {} : { cwd })
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(notificationType === undefined ? {} : { notificationType })
   }
 }

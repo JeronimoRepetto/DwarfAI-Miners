@@ -3,6 +3,8 @@ import { defaultDwarf } from '../../testing/factories'
 import type { Dwarf } from '../../types'
 import {
   buildActionBar,
+  CHANNEL_HINT,
+  KICK_HINT,
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
   NO_KICK_REASON,
@@ -78,6 +80,27 @@ describe('buildActionBar', () => {
       expect(entry.enabled).toBe(false)
       expect(entry.name).toBe('Kicking...')
     })
+
+    /**
+     * A Codex thread's queue delivers messages but drains only between turns,
+     * so it can never interrupt one (#97). The generic reason would read as
+     * "there is no way into this session at all", which is wrong here — the
+     * chat action is enabled on the very same channel — so the disabled kick
+     * names the queue's own limit and where a kick does still land.
+     */
+    it('names the queue limit, not the generic reason, when only the queue can deliver', () => {
+      const entry = entryFor(
+        'kick',
+        capableDwarf({
+          textDelivery: 'codex-queue',
+          capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        })
+      )
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).not.toBe(NO_KICK_REASON)
+      expect(entry.hint).toBe(KICK_HINT['codex-queue'])
+      expect(entry.hint).toContain('console')
+    })
   })
 
   describe('boost', () => {
@@ -111,6 +134,18 @@ describe('buildActionBar', () => {
       const entry = entryFor('chat', capableDwarf({ textDelivery: undefined }))
       expect(entry.enabled).toBe(false)
       expect(entry.hint).toBe(NO_CHANNEL_REASON)
+    })
+
+    /**
+     * The queue tier's ✓ means handed to the session's queue and nothing more
+     * (#97) — the hint has to say so, because a message read between turns can
+     * sit there for seconds after the panel has ticked.
+     */
+    it('says a queued message waits for the next turn boundary', () => {
+      const entry = entryFor('chat', capableDwarf({ textDelivery: 'codex-queue' }))
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(CHANNEL_HINT['codex-queue'])
+      expect(entry.hint).toContain('queue')
     })
   })
 

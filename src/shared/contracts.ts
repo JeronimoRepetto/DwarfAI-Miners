@@ -31,6 +31,32 @@ export const MATERIALS: readonly Material[] = [
 ]
 
 /**
+ * Every tier a mine can actually BE, poorest first — the materials minus the
+ * one no mine produces.
+ *
+ * Derived rather than written out a second time, so a tier added to the vault
+ * cannot be silently missing from the places that check one: the projects store
+ * reads a tier back off disk against this list, and #92's boundary validation
+ * checks a tier filter against it before it reaches SQL. Both would otherwise
+ * keep their own copy and drift.
+ */
+export const MINE_TIERS: readonly MineTier[] = MATERIALS.filter(
+  (material): material is MineTier => material !== 'coal'
+)
+
+/**
+ * Whether an unknown value names a tier.
+ *
+ * Both callers are reading something they did not produce — a row off the
+ * user's disk, and a filter off the IPC boundary — and both must treat an
+ * unrecognised value as "no tier" rather than passing it on. Neither can use
+ * the type system for it, which is why this is a value and not a cast.
+ */
+export function isMineTier(value: unknown): value is MineTier {
+  return typeof value === 'string' && (MINE_TIERS as readonly string[]).includes(value)
+}
+
+/**
  * How many tokens ONE drawn nugget of each material stands for.
  *
  * This is a per-material grain size, NOT an exchange rate. Materials never
@@ -90,12 +116,22 @@ export type DwarfStatus = 'working' | 'waiting' | 'leaving'
 /**
  * What a blocked agent is blocked ON, normalized across providers (issue #60).
  *
- * Derived ONLY from a provider's own structured lifecycle evidence. A question
+ * Derived ONLY from a provider's own structured evidence, of which there are
+ * two kinds and no third. Its lifecycle record — Claude Code's registry
+ * `waitingFor` — is the only one that can make this a value at all, because it
+ * is the thing that watched the session stop. Its structured record of an ask,
+ * where the agent itself enumerated in schema the question and the answers it
+ * would take (see DwarfQuestion), may then name a condition that lifecycle
+ * record left 'unknown', and may do nothing else: it refines a proof, never
+ * manufactures one.
+ *
+ * Prose remains forbidden outright, and nothing above softens it. A question
  * mark in a speech bubble, a sentence that reads like a request, an agent that
  * has simply gone quiet — none of them may ever produce a value here. An agent
  * waiting on a human writes nothing at all, so prose is exactly the signal that
  * is absent when it matters, and reading it would make the panel claim a thing
- * it cannot know.
+ * it cannot know. A question asked as plain prose therefore stays uncaught,
+ * which is where the line falls rather than a gap in it.
  *
  * 'user-input' is the only value that carries a behavioural promise: while it
  * is active the agent is exempt from age-based eviction whatever its role's
@@ -104,11 +140,12 @@ export type DwarfStatus = 'working' | 'waiting' | 'leaving'
  * until it is answered — and never "probably blocked on someone".
  *
  * 'unknown' is the honest middle: the provider proved the session is blocked
- * but named no condition this table recognizes. It must never be treated as
- * 'user-input'. The same shape has been decided twice already in this codebase
- * — absence of a `pendingBackgroundAgentCount` is not a count of zero, and
- * `tierOf`'s placeholder must never seal a ledger delta — and this is the
- * third: absence of proof is not proof, in either direction.
+ * but named no condition this table recognizes. Nothing may TREAT it as
+ * 'user-input' — a second structured proof REPLACING it is a different move,
+ * and the only one allowed. The same shape has been decided twice already in
+ * this codebase — absence of a `pendingBackgroundAgentCount` is not a count of
+ * zero, and `tierOf`'s placeholder must never seal a ledger delta — and this
+ * is the third: absence of proof is not proof, in either direction.
  *
  * Deliberately three values, not four. The issue also suggested a 'tool'
  * reason for a long tool call, and nothing on this machine writes evidence of
@@ -239,10 +276,78 @@ export function dwarfSilenceWindowKey(
  *   `claude -p` turn delivers the text over Claude Code's cross-session messaging.
  * foreman-relay: the dwarf is a subagent with no channel of its own; the text
  *   goes to its foreman (parent session) under an explicit `[for agent X] ` prefix.
+ * codex-queue: the session is a Codex thread whose own message queue accepts an
+ *   item addressed by thread id, so `codex queue` hands it over without any
+ *   window, pid or console (#97).
+ *
+ * A ✓ means the same thing on every one of them and nothing more: handed over.
+ * It is worth restating for the queue, because that tier is the one where the
+ * gap is visible — a queued item is persisted immediately and drained at the
+ * thread's next idle boundary (6-8s in the one measured run), so the panel is
+ * reporting a durable hand-over, never that anything has read it. Only the
+ * renderer's observed-reaction rule may ever say more (see reaction.ts).
  *
  * A dwarf with no channel at all simply carries no value.
  */
-export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay'
+export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay' | 'codex-queue'
+
+/**
+ * One answer an agent said it would accept, in its own words.
+ *
+ * `label` is the whole answer — what a human would press and what a reply would
+ * have to name — so an option that carried none was never offered here. The
+ * description is the agent's own gloss on it, and both are display text: they
+ * pass redaction at the provider boundary like every other transcript string.
+ */
+export interface DwarfQuestionOption {
+  label: string
+  description?: string
+}
+
+/**
+ * A question an agent asked its user and that nothing has answered yet
+ * (issue #94).
+ *
+ * This is NOT the prose the WaitingReason comment above bars. The rule there is
+ * about inferring a blocked state from text — a question mark, a sentence that
+ * reads like a request — and it stands. What crosses here is a provider's own
+ * structured record of an ask: Claude's AskUserQuestion tool call, where the
+ * model enumerates in schema the question and the answers it will take. The
+ * panel is not guessing what was asked; it is repeating what the agent stated.
+ * A question asked as plain prose produces no such record and stays uncaught,
+ * which is exactly the line the prohibition draws rather than a gap in this.
+ *
+ * Carrying a question may REFINE waitingReason and may never assert it. Blocked
+ * and blocked-on-what are two different facts from two different sources, and
+ * neither may claim the other's: this field says an ask is outstanding, the
+ * registry says whether the session can still move. So where the provider
+ * proved a session blocked and named no condition it recognized, an outstanding
+ * ask names it; where the provider proved nothing, no reason appears however
+ * many asks are open, because an ask inside a running turn is the model still
+ * working rather than a human being waited on.
+ *
+ * `toolUseId` is what makes the round trip observable — the answer is written
+ * back as a result naming the same id, so "answered" is matched rather than
+ * inferred, which is the evidence `delivered` versus `reacted` has been missing
+ * (see the renderer's reaction.ts).
+ *
+ * Absent means one of two things and deliberately does not distinguish them:
+ * nothing is being asked, or the ask is older than the provider's transcript
+ * window. Truncation can only hide a question, never invent one — see
+ * ClaudeTranscriptInfo.pendingQuestion for why that asymmetry holds — so a
+ * missing field is a miss, never a false claim.
+ */
+export interface DwarfQuestion {
+  toolUseId: string
+  question: string
+  /** The agent's own short title for the ask, when it wrote one. */
+  header?: string
+  /** Whether the agent said it would accept more than one option. */
+  multiSelect: boolean
+  options: DwarfQuestionOption[]
+  /** When the ask was written, as the provider recorded it. */
+  askedAt?: string
+}
 
 export interface Dwarf {
   id: string
@@ -316,6 +421,17 @@ export interface Dwarf {
    */
   waitingReason?: WaitingReason
   /**
+   * What this dwarf's agent asked its user, when the agent asked it through a
+   * structured channel and nothing has answered it yet (issue #94).
+   *
+   * Sits beside `waitingReason` and may only refine it, for the reason
+   * DwarfQuestion spells out: an outstanding ask and a blocked session are two
+   * facts with two sources. Today only a Claude session can produce one; Codex
+   * writes no equivalent, and a dwarf without the field is never "not asking",
+   * only "not shown to be" — so its absence never unsets a reason either.
+   */
+  pendingQuestion?: DwarfQuestion
+  /**
    * The channel a typed message would travel through right now, resolved by
    * the runtime on every poll. Absent means the panel must offer no send
    * action for this dwarf (see TextDeliveryChannel).
@@ -374,6 +490,17 @@ export interface Mine {
    */
   materials?: MaterialTotals
   updatedAt: number
+  /**
+   * True when the USER put this mine on the board (#85) rather than the app
+   * discovering it from a running session.
+   *
+   * Absent is the ordinary case and means discovered — the panel offers to undo
+   * a declaration only where this is true, and a mine that is both declared and
+   * currently being worked is still ONE mine carrying this flag. It is not a
+   * second identity: the id is `mineIdForPath` either way, which is what lets
+   * whatever the ledger already accrued for the path attach to it.
+   */
+  declared?: boolean
 }
 
 /**
@@ -553,6 +680,125 @@ export interface AppBuild {
   packaged: boolean
 }
 
+/**
+ * Verdict of asking main to adopt a folder as a mine (#85).
+ *
+ * There is no request payload: the OS folder picker is opened in MAIN, so the
+ * renderer asks and never names a path. A refusal always says why — a cancelled
+ * picker, a projects database that will not open — because a control that
+ * silently does nothing is indistinguishable from a broken one.
+ */
+export interface MineDeclareResult {
+  declared: boolean
+  /**
+   * The mine that now exists, when one does — the SAME id aggregation and the
+   * ledger use for that path, never a second scheme. The mine itself arrives on
+   * the next minesUpdated like every other change.
+   */
+  mineId?: string
+  /** Why nothing was added; absent exactly when `declared` is true. */
+  reason?: string
+}
+
+/**
+ * Verdict of undoing a declaration (#85). Keyed by mine id, never by path:
+ * the id is what the board, the ledger and the projects store already agree on.
+ *
+ * 'removed' means the mine leaves the board. 'reverted' means a live session is
+ * still working it, so it stays as an ordinary discovered mine — the user asked
+ * to undo their declaration, not to hide a running agent. 'unchanged' is an id
+ * the store holds no declaration for, and 'failed' is a store that refused.
+ * Neither of the last two ever removes anything, and both carry a reason.
+ */
+export interface MineUndeclareResult {
+  outcome: 'removed' | 'reverted' | 'unchanged' | 'failed'
+  /** Why nothing changed; absent exactly when the outcome is 'removed' or 'reverted'. */
+  reason?: string
+}
+
+/**
+ * Which stored date a project browse is ordered by (#92).
+ *
+ * Two keys because they answer different questions and the user asked to sort
+ * by either: `addedAt` is provenance — when the project first arrived — and
+ * `lastOpenedAt` is recency. Neither is `Mine.updatedAt`, which is recomputed
+ * from this poll's snapshots and never persisted; a browse spans projects with
+ * no session running, so a liveness figure cannot order it.
+ */
+export type ProjectSortKey = 'addedAt' | 'lastOpenedAt'
+
+export type ProjectSortDirection = 'asc' | 'desc'
+
+/**
+ * What the panel asks for when browsing every project it has ever been shown
+ * (#92) — the filters, the order, and one page of it.
+ *
+ * `tier` matches the MEASURED tier only. A project nobody has walked yet has
+ * no stored tier and therefore matches no tier filter, including 'bronze':
+ * `tierOf()`'s provisional bronze is for DRAWING a mound, never for answering
+ * a question, and a bronze filter that swept up every unmeasured project would
+ * be exactly the #41 mistake.
+ *
+ * `nameContains` is a SUBSTRING of the folded name, so typing 'ontein' finds
+ * 'container' and 'cafeteria' finds 'Cafetería'. Main folds the term with the
+ * same normalizer that wrote the stored column, so the renderer sends whatever
+ * was typed and never pre-processes it.
+ *
+ * `limit` and `offset` are a page. Both are advisory: main clamps them, so a
+ * renderer cannot ask for the whole table and cannot ask for nothing.
+ */
+export interface ProjectQuery {
+  tier?: MineTier
+  sortBy: ProjectSortKey
+  direction: ProjectSortDirection
+  nameContains?: string
+  limit?: number
+  offset?: number
+}
+
+/**
+ * One row of a project browse (#92): what is REMEMBERED about a project, plus
+ * the one fact that is not remembered at all.
+ *
+ * `live` is whether the project is on the board this poll produced — it is
+ * poll-truth, stamped as the answer is assembled, and is deliberately not a
+ * stored column. Everything else here comes off disk and survives a restart;
+ * `live` cannot, because it is a statement about right now.
+ *
+ * `knownTier` is absent until a walk has measured one, and absent means
+ * unmeasured rather than bronze (#41). `lastOpenedAt` is absent for a project
+ * the user declared and no agent has been seen in: declaring is not opening.
+ */
+export interface ProjectSummary {
+  /** mineIdForPath — the same id the board and the ledger use, never a second scheme. */
+  id: string
+  path: string
+  name: string
+  /** True when the user adopted this folder (#85); false when it was discovered. */
+  declared: boolean
+  knownTier?: MineTier
+  addedAt: number
+  lastOpenedAt?: number
+  lastProvider?: DwarfProvider
+  live: boolean
+}
+
+/**
+ * The answer to a project browse (#92).
+ *
+ * `answered` exists so an empty page is never ambiguous: no projects yet and a
+ * projects database that would not open are both "zero rows", and reporting the
+ * second as the first would tell a user their history is gone. A refusal always
+ * carries its reason, and `projects` is empty rather than absent so the panel
+ * can render the same way either way.
+ */
+export interface ProjectQueryResult {
+  answered: boolean
+  projects: ProjectSummary[]
+  /** Why nothing could be read; absent exactly when `answered` is true. */
+  reason?: string
+}
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -588,6 +834,29 @@ export const IPC_CHANNELS = {
    * push and nothing to keep in step.
    */
   getAppBuild: 'app:build',
+  /**
+   * Adopting a folder as a mine, and undoing that (#85).
+   *
+   * declare carries NO payload in either direction beyond its verdict: the
+   * native folder picker is opened in main, so the renderer asks for one and
+   * never chooses, names or even sees a path it did not already receive on a
+   * mine. undeclare carries a mine id and never a path, for the same reason
+   * every other dwarf channel does — the id is the thing both sides already
+   * agree on, and a path would be a second key to keep in step.
+   */
+  declareMine: 'mine:declare',
+  undeclareMine: 'mine:undeclare',
+  /**
+   * Browsing every project the app remembers (#92) — filtered, ordered and
+   * paged in SQL, in main.
+   *
+   * Pull-only, and deliberately not folded into minesUpdated: that push carries
+   * the board, which is the projects being worked THIS poll, and the whole point
+   * of this channel is the projects that are not. A browse is also a question
+   * with arguments, asked when a user types, rather than a state to keep in
+   * step — so it answers on request and pushes nothing.
+   */
+  queryProjects: 'projects:query',
   /**
    * Start a new agent session in a mine (see #86). Answers with the verdict of
    * the START only — the dwarf itself arrives on a later minesUpdated, because

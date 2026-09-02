@@ -2,10 +2,10 @@
 
 This file exists to answer one question: **where does the file I am about to add go?**
 
-It does not repeat the project's rules. [`CONTRIBUTING.md`](../CONTRIBUTING.md) is the
-contributor guide and [`CLAUDE.md`](../CLAUDE.md) carries the boundaries that must survive
-(`shared/contracts.ts` as the single wire-type declaration point, `platform/platformAdapters.ts`
-as the only place that knows the operating system, pure builders separated from thin runners).
+It does not repeat the project's rules. [`AGENTS.md`](../AGENTS.md) carries the boundaries that
+must survive (`shared/contracts.ts` as the single wire-type declaration point above all), and
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) is the contributor guide — including the per-platform
+rule: pure builders plus a thin runner, selected once in `platform/platformAdapters.ts`.
 Read those for _why_; this one is only _where_.
 
 ## The rule
@@ -56,6 +56,7 @@ src/
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
+│   ├── projects/    every project the app has been shown, persisted: name, dates, provenance
 │   ├── providers/   reading each agent CLI's own on-disk session state
 │   ├── runtime/     the poll loop: AgentRuntime, the poller, the publish gate, the profiler
 │   ├── sessionLaunch/ starting a NEW agent session in a folder — the opposite of textDelivery

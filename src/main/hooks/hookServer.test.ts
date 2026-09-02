@@ -115,6 +115,28 @@ describe('HookServer', () => {
     expect(received).toHaveLength(1)
   })
 
+  it('hands the notification type through to the listener (issue #94)', async () => {
+    // The field is parsed at the boundary, so what the consumer receives is the
+    // only place its survival across the POST can be seen.
+    await post(
+      JSON.stringify({
+        session_id: 'sess-1',
+        cwd: 'C:\\repo',
+        hook_event_name: 'Notification',
+        notification_type: 'agent_needs_input'
+      })
+    )
+    expect(received).toEqual([
+      {
+        provider: 'claude',
+        event: 'Notification',
+        sessionId: 'sess-1',
+        cwd: 'C:\\repo',
+        notificationType: 'agent_needs_input'
+      }
+    ])
+  })
+
   it('handles a burst of events without dropping any', async () => {
     await Promise.all(Array.from({ length: 10 }, () => post(stopPayload)))
     expect(received).toHaveLength(10)

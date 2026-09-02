@@ -155,7 +155,7 @@ question:
 - Claude's inferred transcript path when a hook payload omits
   `transcript_path` (`transcript.rs::inferred_path`, lines 115–127) sanitizes
   the cwd by replacing path separators with `-` — the same convention our own
-  `encodeClaudeProjectDir` (`src/main/providers/claude/parse.ts:62`) already
+  `encodeClaudeProjectDir` (`src/main/providers/claude/parse.ts:90`) already
   implements. Confirms we're reading the same on-disk contract Claude Code
   itself publishes.
 

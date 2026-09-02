@@ -117,9 +117,9 @@ reasoning, and this list is only the index. None of these is enforced by the typ
 - **Materials never convert into one another.** `MATERIAL_TOKENS_PER_UNIT` is a per-material grain
   size, not an exchange rate; each material owns an independent counter. Nothing converts one into
   another and nothing sums _units_ across materials — `materialUnits()` is always per-material,
-  because the grain size differs. Raw _tokens_ are a common substrate and are summed, in
-  `totalMaterialTokens`. Tokens yes, units no. Three renderer tests pin this; no main-process test
-  does.
+  because the grain size differs. Raw _tokens_ are the one substrate a sum may cross. Tokens yes,
+  units no. The renderer's vault tests pin this (`lib/vault/vault.ts`); the ledger never needs the
+  sum.
 - **Delivered and reacted are different facts.** `delivered` means the relay exited 0 and the
   message reached the session's _queue_ — not that anything acted on it. A ✓ says handed over, ✓✓
   says the session was seen acting, and a session reads its queue between tool calls. When in
@@ -157,7 +157,7 @@ samples to read before writing any.
 
 Conventional commits, imperative mood, no AI attribution trailers of any kind — see
 `CONTRIBUTING.md`. One convention it does not state: the subject says what the change achieves in
-plain language and ends with its issue number. 52 of the last 60 commits do this.
+plain language and ends with its issue number — 49 of the 60 non-merge commits at `a810e42` do.
 
 ```
 fix(vault): never credit ore from a tier that is still a guess (#41)
@@ -178,10 +178,10 @@ adding a file. This is the index — one line per group, so you can tell what a 
 - **`main/`** — `index.ts` is the composition root, and the only file that owns Electron's
   `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
   seams with their fakes), `config`, `domain` (pure rules and the type barrel), `hooks` (the opt-in
-  Claude push channel), `ledger` (what has been mined, persisted), `platform` (everything that
-  knows an OS, composed once in `platformAdapters.ts`), `providers` (one per agent CLI plus the
-  simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session, the opposite act
-  to textDelivery), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
+  Claude push channel), `ledger` (mined, persisted), `platform` (everything that knows an OS,
+  composed once in `platformAdapters.ts`), `projects` (every project remembered), `providers` (one
+  per agent CLI plus the simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a
+  session), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
 - **`renderer/src/`** — `components/` is thin and decides nothing, `lib/` is the framework-agnostic
   logic, and the two share the family names `map`, `scene` and `vault` on purpose. `composables/`
   is the Vue-bound state; `types.ts` is this process's barrel onto `contracts.ts`.

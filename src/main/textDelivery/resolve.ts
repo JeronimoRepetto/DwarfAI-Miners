@@ -1,5 +1,5 @@
 import type { Mine, TextDeliveryChannel } from '../domain/types'
-import type { TextDeliveryEndpoint, TextDeliveryTarget } from './port'
+import type { KickEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './port'
 
 /**
  * Turning a provider's raw target into something writable, and stamping the
@@ -24,7 +24,8 @@ export interface ResolvedTextDelivery {
 export interface ResolvedKickDelivery {
   /** Tier reported to the panel and the logs. */
   channel: TextDeliveryChannel
-  endpoint: TextDeliveryEndpoint
+  /** Narrower than a send's: the Codex queue cannot interrupt a turn (see KickEndpoint). */
+  endpoint: KickEndpoint
   /** Prepended tag naming the worker being cancelled, e.g. '[cancel agent Explorer] '. Empty for a direct kick. */
   prefix: string
 }
@@ -95,16 +96,32 @@ export function resolveTextDelivery(
 }
 
 /**
+ * Whether a resolved endpoint can carry a KICK — the ONE rule by which kick
+ * routing differs from send routing, so it lives in one place and both
+ * resolveKickDelivery and stampTextDelivery read it (#97). Duplicating it is
+ * how the panel and the runtime would start disagreeing about the same dwarf.
+ *
+ * See KickEndpoint in port.ts for why the queue is excluded.
+ */
+function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint {
+  return endpoint.kind !== 'codex-queue'
+}
+
+/**
  * Same routing as resolveTextDelivery, for Kick: a worker contributes a
  * `[cancel agent <name>] ` tag instead, so the foreman relaying the instruction
  * knows which of its agents to stop.
+ *
+ * Null also when the endpoint a send would use cannot interrupt anything — a
+ * Codex queue. The kick is refused rather than downgraded, because there is no
+ * weaker honest thing for it to do.
  */
 export function resolveKickDelivery(
   dwarfId: string,
   targetOf: TextDeliveryLookup
 ): ResolvedKickDelivery | null {
   const hops = followForemanHops(dwarfId, targetOf)
-  if (hops === null) return null
+  if (hops === null || !canCarryKick(hops.endpoint)) return null
   return {
     channel: hops.channel,
     endpoint: hops.endpoint,
@@ -118,10 +135,15 @@ export function resolveKickDelivery(
  * trip. A 'leaving' dwarf is skipped: its session has already finished, so its
  * pid is stale and its name no longer addressable.
  *
- * capabilities.cancel mirrors the same resolved channel: Kick reuses whatever
- * routing sendText would use (see resolveKickDelivery), just with a raw
- * keystroke or a fixed instruction instead of the user's text. adjustEffort is
- * always null — no provider exposes a channel for it yet.
+ * capabilities.cancel mirrors the same resolved channel wherever a kick can
+ * ride it: Kick reuses whatever routing sendText would use (see
+ * resolveKickDelivery), just with a raw keystroke or a fixed instruction
+ * instead of the user's text. The exception is a channel that cannot interrupt
+ * a turn at all — the Codex queue — which stamps a null cancel beside a working
+ * sendText, through the same canCarryKick rule resolveKickDelivery enforces
+ * (#97). Read off the endpoint already resolved rather than by resolving a
+ * second time: the poll asks each provider once per dwarf, and it should stay
+ * once. adjustEffort is always null — no provider exposes a channel for it yet.
  */
 export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): Mine[] {
   return mines.map((mine) => ({
@@ -136,7 +158,7 @@ export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): 
             textDelivery: resolved.channel,
             capabilities: {
               sendText: resolved.channel,
-              cancel: resolved.channel,
+              cancel: canCarryKick(resolved.endpoint) ? resolved.channel : null,
               adjustEffort: null
             }
           }

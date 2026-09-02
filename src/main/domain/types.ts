@@ -20,6 +20,8 @@ export type {
   DwarfKickRequest,
   DwarfKickResult,
   DwarfProvider,
+  DwarfQuestion,
+  DwarfQuestionOption,
   DwarfRole,
   DwarfStatus,
   DwarfTextRequest,
@@ -28,8 +30,15 @@ export type {
   Material,
   MaterialTotals,
   Mine,
+  MineDeclareResult,
   MinesSnapshot,
   MineTier,
+  MineUndeclareResult,
+  ProjectQuery,
+  ProjectQueryResult,
+  ProjectSortDirection,
+  ProjectSortKey,
+  ProjectSummary,
   ProviderSnapshot,
   SessionStatus,
   ShortcutState,
@@ -47,8 +56,10 @@ export {
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
   MAX_DWARF_TEXT_CHARS,
+  MINE_TIERS,
   WAITING_ON_HUMAN_REASON,
-  dwarfSilenceWindowKey
+  dwarfSilenceWindowKey,
+  isMineTier
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

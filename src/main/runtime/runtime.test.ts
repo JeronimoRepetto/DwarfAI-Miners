@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
+import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
+import {
+  createProjectsStore,
+  type ProjectRecord,
+  type ProjectsStore
+} from '../projects/projectsStore'
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
 import type { PlatformAdapters } from '../platform/platformAdapters'
+import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
 import { MAX_DWARF_TEXT_CHARS, type FeedMessage } from '../domain/types'
@@ -1186,6 +1193,191 @@ describe('AgentRuntime.kickDwarf', () => {
   })
 })
 
+/**
+ * Routing over a Codex thread's message queue (#97).
+ *
+ * The queue is unlike both existing tiers in two ways the runtime has to
+ * respect: it needs no console, so it must NOT be degraded on a platform that
+ * cannot type into one; and it cannot interrupt a turn, so it carries a send
+ * and never a kick.
+ */
+describe('AgentRuntime over the Codex message queue', () => {
+  const DWARF_ID = 'codex:01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+  const THREAD_ID = '01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+
+  function queuePort(
+    overrides: Partial<Record<keyof TextDeliveryPort, unknown>> = {}
+  ): TextDeliveryPort {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      queueToCodexThread: vi.fn().mockResolvedValue({ delivered: true }),
+      ...overrides
+    } as TextDeliveryPort
+  }
+
+  async function runtimeWithQueue(port: TextDeliveryPort) {
+    const source: Provider = {
+      kind: 'codex',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'codex',
+          sessionId: THREAD_ID,
+          cwd: 'C:\\work\\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: DWARF_ID,
+              provider: 'codex',
+              role: 'worker',
+              name: 'codex-01a04d79',
+              status: 'working',
+              sessionId: THREAD_ID
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) =>
+        dwarfId === DWARF_ID ? { kind: 'codex-queue', threadId: THREAD_ID } : null
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      textDelivery: port,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return runtime
+  }
+
+  it('queues the message on the thread and reports the channel that carried it', async () => {
+    const port = queuePort()
+    const runtime = await runtimeWithQueue(port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'codex-queue' })
+    expect(port.queueToCodexThread).toHaveBeenCalledWith({
+      threadId: THREAD_ID,
+      text: 'run the tests'
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The degrade in deliveryTargetOf exists because a 'terminal' target is a
+   * claim about a console this platform may be unable to type into. The queue
+   * makes no such claim — it spawns a CLI — so intersecting it with console
+   * support would delete a working channel on macOS and Linux, the two
+   * platforms with the least to lose it by.
+   */
+  it('keeps the queue on a platform that cannot type into a console at all', async () => {
+    const port = queuePort({ supportsConsoleInput: false })
+    const runtime = await runtimeWithQueue(port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'codex-queue' })
+    expect(runtime.getMines()[0]?.dwarfs[0]?.textDelivery).toBe('codex-queue')
+  })
+
+  it('stamps the queue for sending and no channel for cancelling on the published dwarf', async () => {
+    const runtime = await runtimeWithQueue(queuePort())
+    expect(runtime.getMines()[0]?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'codex-queue',
+      cancel: null,
+      adjustEffort: null
+    })
+  })
+
+  it('refuses a kick outright rather than queueing one that could never interrupt', async () => {
+    const port = queuePort()
+    const runtime = await runtimeWithQueue(port)
+
+    const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    expect(result).toMatchObject({ delivered: false, via: 'none' })
+    expect(result.error).toBeTruthy()
+    expect(port.queueToCodexThread).not.toHaveBeenCalled()
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+  })
+
+  it('reports the reason the queue tier gave, with no relay fallback to reach for', async () => {
+    const port = queuePort({
+      queueToCodexThread: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'Codex no longer knows that session.' })
+    })
+    const runtime = await runtimeWithQueue(port)
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'codex-queue',
+      error: 'Codex no longer knows that session.'
+    })
+    // A queue endpoint carries no session name, so there is nothing to fall
+    // back to and nothing that should try.
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('turns a throwing queue tier into a failed verdict', async () => {
+    const port = queuePort({
+      queueToCodexThread: vi.fn().mockRejectedValue(new Error('boom'))
+    })
+    const runtime = await runtimeWithQueue(port)
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+    ).resolves.toMatchObject({ delivered: false, via: 'codex-queue' })
+  })
+
+  /**
+   * A port with no queue tier at all — the optional method left unimplemented.
+   * It must refuse with a reason rather than silently reporting success or
+   * throwing inside the send path.
+   */
+  it('refuses with a reason when the delivery port implements no queue tier', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const runtime = await runtimeWithQueue(port)
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: DWARF_ID,
+      text: 'hi',
+      pressEnter: true
+    })
+    expect(result.delivered).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  // The privacy rule for every tier: the log carries the channel, the verdict
+  // and a character count, never the message (see port.ts and runtime.ts).
+  it('logs the character count and never the message text', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const runtime = await runtimeWithQueue(queuePort())
+      await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'sk-do-not-log-this',
+        pressEnter: true
+      })
+      const lines = log.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(lines).toContain('codex-queue')
+      expect(lines).toContain('18 chars')
+      expect(lines).not.toContain('sk-do-not-log-this')
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
 describe('AgentRuntime provider wiring', () => {
   /**
    * R3-wiring-test-real-clock: this test builds a real (non-injected)
@@ -2249,5 +2441,630 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     await runtime.launchAgent({ mineId, prompt: 'go' })
 
     expect(runtime.getMines()[0]!.dwarfs).toHaveLength(before)
+  })
+})
+
+describe('AgentRuntime projects wiring (#93)', () => {
+  /** One session working one project, with no token counter to move. */
+  function workingProvider(cwd = 'C:\\work\\project'): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd,
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: 'claude:session-1',
+              provider: 'claude',
+              role: 'foreman',
+              name: 'foreman',
+              status: 'working',
+              sessionId: 'session-1'
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function projectsStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  async function rows(store: ProjectsStore): Promise<ProjectRecord[]> {
+    const result = await store.list()
+    if (!result.ok) throw new Error(`the store refused: ${result.message}`)
+    return result.value
+  }
+
+  it('records every project a session is seen working in', async () => {
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(await rows(projects)).toMatchObject([
+      { name: 'project', origin: 'discovered', lastProvider: 'claude', lastOpenedAt: 5_000 }
+    ])
+  })
+
+  it('records the MEASURED tier only, never the bronze the mound is drawn as', async () => {
+    // The mine crosses the wire as bronze because tierOf serves a placeholder
+    // until the first walk finishes; the column stays empty until a walk has
+    // actually produced an answer (#41).
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(runtime.getMines()[0]!.tier).toBe('bronze')
+    expect((await rows(projects))[0]!.knownTier).toBeNull()
+  })
+
+  it('keeps polling when there is no projects store at all', async () => {
+    // The store refuses loudly by design, and index.ts turns that refusal into
+    // a null. A broken projects database costs the declared mines, nothing else.
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects: null,
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(runtime.getMines()).toHaveLength(1)
+  })
+
+  it('writes nothing at all while the simulated valley is running', async () => {
+    // Same rule as the vault: a demo must never write into real persistence,
+    // and /simulated-valley/... is not a project on anybody's disk.
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      home: 'C:\\Users\\test',
+      fs: new FakeFs(),
+      sqlite: { openReadOnly: async () => null },
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      projects,
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(runtime.getMines().length).toBeGreaterThan(0)
+    expect(await rows(projects)).toEqual([])
+  })
+
+  it('never records a project the user merely declared', async () => {
+    // Declaring is not opening: last_opened_at is what #92 sorts recency by,
+    // and a folder nobody has run an agent in has never been opened.
+    const projects = projectsStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      projects,
+      chooseDirectory: async () => 'C:\\X\\Adopted',
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.declareMine()
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    await runtime.settleProjects()
+    runtime.stop()
+
+    expect((await rows(projects))[0]!.lastOpenedAt).toBeNull()
+  })
+
+  it('does not write a row for every poll of the same unchanged project', async () => {
+    const projects = projectsStore()
+    const upsert = vi.spyOn(projects, 'upsertObserved')
+    let now = 5_000
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [workingProvider()],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    now += 2_000
+    await runtime.refresh()
+    now += 2_000
+    await runtime.refresh()
+    await runtime.settleProjects()
+
+    expect(upsert).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('AgentRuntime declared mines (#85)', () => {
+  const ADOPTED = 'C:\\X\\Adopted'
+
+  /** A provider that reports a session in `cwd` only while `working` is true. */
+  function toggleProvider(cwd: string): { provider: Provider; setWorking: (on: boolean) => void } {
+    let working = false
+    const provider: Provider = {
+      kind: 'claude',
+      scan: async () =>
+        working
+          ? [
+              {
+                provider: 'claude' as const,
+                sessionId: 'session-1',
+                cwd,
+                status: 'busy' as const,
+                updatedAt: 7,
+                dwarfs: [
+                  {
+                    id: 'claude:session-1',
+                    provider: 'claude' as const,
+                    role: 'foreman' as const,
+                    name: 'foreman',
+                    status: 'working' as const,
+                    sessionId: 'session-1'
+                  }
+                ]
+              }
+            ]
+          : [],
+      feed: vi.fn().mockResolvedValue([])
+    }
+    return { provider, setWorking: (on) => (working = on) }
+  }
+
+  function declaredRuntime(options: {
+    projects?: ProjectsStore | null
+    providers?: Provider[]
+    chooseDirectory?: () => Promise<string | null>
+    ledger?: MaterialLedger
+  }): AgentRuntime {
+    return new AgentRuntime({
+      // A zero grace window so a departed crew is gone the moment it stops
+      // being reported: what remains on the board is then the declaration, and
+      // nothing borrowed from the leaving-dwarf path.
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: options.providers ?? [],
+      projects: options.projects === undefined ? projectsStoreFor() : options.projects,
+      chooseDirectory: options.chooseDirectory,
+      ledger: options.ledger,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  function projectsStoreFor(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  it('adopts the folder the picker returned and reports the id the ledger uses', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result).toEqual({ declared: true, mineId: mineIdForPath(ADOPTED) })
+  })
+
+  it('keeps a declared mine on the board with no crew, poll after poll', async () => {
+    // The whole defect: a project is invisible until an agent runs in it and
+    // gone twenty seconds later. A declaration is a steady state.
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    await runtime.declareMine()
+    await runtime.refresh()
+    const first = runtime.getMines()
+    await runtime.refresh()
+    await runtime.refresh()
+    const third = runtime.getMines()
+    runtime.stop()
+
+    expect(first.map((mine) => mine.name)).toEqual(['Adopted'])
+    expect(third).toHaveLength(1)
+    expect(third[0]!.dwarfs).toEqual([])
+    expect(third[0]!.declared).toBe(true)
+  })
+
+  it('shows a declared mine that is also being worked exactly once', async () => {
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    setWorking(true)
+    await runtime.declareMine()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+    expect(mines[0]!.declared).toBe(true)
+  })
+
+  it('keeps a declared mine when its crew goes home, rather than expiring it', async () => {
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    await runtime.declareMine()
+    setWorking(true)
+    await runtime.refresh()
+    setWorking(false)
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.dwarfs).toEqual([])
+  })
+
+  it('stamps a declared mine with the material that path already earned', async () => {
+    // The reason not to invent a second id scheme: whatever the vault accrued
+    // under this path attaches to the mine the moment the user adopts it.
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
+
+    await runtime.declareMine()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines[0]!.materials?.coal).toBe(40_000)
+  })
+
+  it('draws a declared mine at the tier the store measured for it', async () => {
+    const projects = projectsStoreFor()
+    await projects.declare({ path: ADOPTED, at: 1 })
+    await projects.upsertObserved({ path: ADOPTED, at: 2, knownTier: 'uranium' })
+    const runtime = declaredRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines[0]!.tier).toBe('uranium')
+  })
+
+  it('takes an idle declared mine off the board when the user undeclares it', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const declared = await runtime.declareMine()
+    await runtime.refresh()
+    const result = await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(result).toEqual({ outcome: 'removed' })
+    expect(mines).toEqual([])
+  })
+
+  it('reverts a worked mine to an ordinary discovered one instead of hiding it', async () => {
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    setWorking(true)
+    const declared = await runtime.declareMine()
+    await runtime.refresh()
+    // The store demotes rather than deletes a project it has SEEN worked, so
+    // the sighting has to have reached it before the declaration is undone.
+    await runtime.settleProjects()
+    const result = await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(result).toEqual({ outcome: 'reverted' })
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.declared).toBeUndefined()
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+  })
+
+  it('says why nothing happened when the user closes the picker', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => null })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.declared).toBe(false)
+    expect(result.reason).not.toBe('')
+    expect(result.mineId).toBeUndefined()
+  })
+
+  it('says why nothing happened when the projects database refused to open', async () => {
+    const runtime = declaredRuntime({ projects: null, chooseDirectory: async () => ADOPTED })
+
+    const result = await runtime.declareMine()
+    const undeclared = await runtime.undeclareMine('mine:whatever')
+    runtime.stop()
+
+    expect(result).toMatchObject({ declared: false })
+    expect(result.reason).toContain('projects database')
+    expect(undeclared.outcome).toBe('failed')
+    expect(undeclared.reason).toContain('projects database')
+  })
+
+  it('never opens the picker when there is nowhere to record the answer', async () => {
+    // Asking the user to choose a folder and then dropping it on the floor is
+    // worse than refusing: they did the work and the app forgot.
+    const chooseDirectory = vi.fn().mockResolvedValue(ADOPTED)
+    const runtime = declaredRuntime({ projects: null, chooseDirectory })
+
+    await runtime.declareMine()
+    runtime.stop()
+
+    expect(chooseDirectory).not.toHaveBeenCalled()
+  })
+
+  it('refuses with a reason when no picker was wired in at all', async () => {
+    const runtime = declaredRuntime({})
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.declared).toBe(false)
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('reports a picker that threw instead of letting it reach the panel', async () => {
+    const runtime = declaredRuntime({
+      chooseDirectory: async () => {
+        throw new Error('no window to attach the dialog to')
+      }
+    })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.declared).toBe(false)
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('says nothing changed for a mine the user never declared', async () => {
+    const runtime = declaredRuntime({})
+
+    const result = await runtime.undeclareMine('mine:never-declared')
+    runtime.stop()
+
+    expect(result.outcome).toBe('unchanged')
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('reads the declarations already stored before the first poll publishes', async () => {
+    const projects = projectsStoreFor()
+    await projects.declare({ path: ADOPTED, at: 1 })
+    const runtime = declaredRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines.map((mine) => mine.name)).toEqual(['Adopted'])
+  })
+})
+
+describe('AgentRuntime project queries (#92)', () => {
+  const WORKED = 'C:\\X\\Cafetería-Ñandú'
+  const ADOPTED = 'C:\\X\\Adopted'
+
+  /** A provider that reports a session in `cwd` only while `working` is true. */
+  function toggleProvider(cwd: string): { provider: Provider; setWorking: (on: boolean) => void } {
+    let working = false
+    const provider: Provider = {
+      kind: 'claude',
+      scan: async () =>
+        working
+          ? [
+              {
+                provider: 'claude' as const,
+                sessionId: 'session-1',
+                cwd,
+                status: 'busy' as const,
+                updatedAt: 7,
+                dwarfs: [
+                  {
+                    id: 'claude:session-1',
+                    provider: 'claude' as const,
+                    role: 'foreman' as const,
+                    name: 'foreman',
+                    status: 'working' as const,
+                    sessionId: 'session-1'
+                  }
+                ]
+              }
+            ]
+          : [],
+      feed: vi.fn().mockResolvedValue([])
+    }
+    return { provider, setWorking: (on) => (working = on) }
+  }
+
+  function queryRuntime(options: {
+    projects?: ProjectsStore | null
+    providers?: Provider[]
+  }): AgentRuntime {
+    return new AgentRuntime({
+      // A zero grace window for the reason the #85 block uses one: a crew that
+      // stopped being reported is gone at once, so `live` is answered from the
+      // board rather than from the leaving-dwarf window.
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: options.providers ?? [],
+      projects: options.projects === undefined ? queryStore() : options.projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  function queryStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  const newest = { sortBy: 'addedAt', direction: 'desc' } as const
+
+  it('answers with what was remembered, on the wire shape rather than the row shape', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000, provider: 'codex', knownTier: 'gold' })
+    const runtime = queryRuntime({ projects })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.answered).toBe(true)
+    expect(result.projects).toEqual([
+      {
+        id: mineIdForPath(WORKED),
+        path: WORKED,
+        name: 'Cafetería-Ñandú',
+        declared: false,
+        knownTier: 'gold',
+        addedAt: 4_000,
+        lastOpenedAt: 4_000,
+        lastProvider: 'codex',
+        live: false
+      }
+    ])
+  })
+
+  it('leaves an unmeasured tier absent rather than reporting bronze (#41)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const runtime = queryRuntime({ projects })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    // Absent means "nobody has walked this yet". tierOf()'s provisional bronze
+    // draws the mound and must never travel as an answer.
+    expect(project).not.toHaveProperty('knownTier')
+    expect(project).not.toHaveProperty('lastProvider')
+  })
+
+  it('leaves lastOpenedAt absent for a project the user added and no agent has entered', async () => {
+    const projects = queryStore()
+    await projects.declare({ path: ADOPTED, at: 1_000 })
+    const runtime = queryRuntime({ projects })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    expect(project?.declared).toBe(true)
+    expect(project).not.toHaveProperty('lastOpenedAt')
+  })
+
+  it('stamps live from the board this poll produced, not from anything stored', async () => {
+    // The fact the database deliberately does not hold. A project is remembered
+    // forever and is live only while a session is in it.
+    const { provider, setWorking } = toggleProvider(WORKED)
+    const projects = queryStore()
+    const runtime = queryRuntime({ projects, providers: [provider] })
+
+    setWorking(true)
+    await runtime.refresh()
+    await runtime.settleProjects()
+    expect((await runtime.queryProjects(newest)).projects[0]?.live).toBe(true)
+
+    setWorking(false)
+    await runtime.refresh()
+    const after = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    // Still remembered, no longer live — which is the entire reason a browse
+    // surface is not a filter over the board.
+    expect(after.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+    expect(after.projects[0]?.live).toBe(false)
+  })
+
+  it('counts a declared mine as live, because a declaration keeps it on the board', async () => {
+    // Not an exception to the rule above: `live` is "on the board", and #85
+    // puts a declared project there with no crew. The two facts agree.
+    const projects = queryStore()
+    await projects.declare({ path: ADOPTED, at: 1_000 })
+    const runtime = queryRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.projects[0]?.live).toBe(true)
+  })
+
+  it('passes the filters and the order down to the store rather than trimming the answer here', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 1_000 })
+    await projects.upsertObserved({ path: 'C:\\X\\smelter', at: 2_000, knownTier: 'silver' })
+    const runtime = queryRuntime({ projects })
+
+    const searched = await runtime.queryProjects({ ...newest, nameContains: 'cafeteria' })
+    const filtered = await runtime.queryProjects({ ...newest, tier: 'silver' })
+    const oldest = await runtime.queryProjects({ sortBy: 'addedAt', direction: 'asc' })
+    const page = await runtime.queryProjects({ ...newest, limit: 1, offset: 1 })
+    runtime.stop()
+
+    expect(searched.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+    expect(filtered.projects.map((project) => project.name)).toEqual(['smelter'])
+    expect(oldest.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú', 'smelter'])
+    expect(page.projects.map((project) => project.name)).toEqual(['Cafetería-Ñandú'])
+  })
+
+  it('says why it cannot answer when this run has no projects database', async () => {
+    const runtime = queryRuntime({ projects: null })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.answered).toBe(false)
+    expect(result.projects).toEqual([])
+    expect(result.reason).not.toBeUndefined()
+  })
+
+  it('reports a refusing store as a refusal, never as a project list that is empty', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    sqlite.failWith('locked')
+    const runtime = queryRuntime({ projects: queryStore(sqlite) })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    // The distinction the whole store contract exists for: a user reading an
+    // empty browse must never be looking at a database that would not open.
+    expect(result.answered).toBe(false)
+    expect(result.projects).toEqual([])
+    expect(result.reason).not.toBeUndefined()
   })
 })

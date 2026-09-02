@@ -9,6 +9,7 @@ const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')
 const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'), 'utf8')
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
 const sessionEntry = readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
+const subagentMeta = readFileSync(join(FIXTURES, 'subagent-meta.json'), 'utf8')
 
 const ROOT1 = 'C:\\Users\\j\\.claude'
 const ROOT2 = 'C:\\Users\\j\\.claude-work'
@@ -1693,6 +1694,163 @@ describe('ClaudeProvider', () => {
     })
   })
 
+  /**
+   * Issue #94. The question rides the same boundary `lastMessage` does, and for
+   * the same reason: it is transcript text on its way into an always-on-top
+   * window, so it passes redactSecrets BEFORE the renderer can truncate it
+   * (issue #59). Nothing renders it yet — the panel surface waits on the
+   * redesign — and a field crossing the wire unused is the intended state.
+   */
+  describe('pending question on the wire (issue #94)', () => {
+    // Fixture-shaped fake, never a real credential.
+    const FAKE_KEY = 'sk-FAKEFAKEFAKEFAKEFAKEFAKE1234'
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+
+    /** The `tool_use` block Claude writes when the model asks the user something. */
+    function askLine(toolUseId: string, question: string, optionDescription: string): string {
+      return (
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-09-01T09:03:41.062Z',
+          message: {
+            role: 'assistant',
+            model: 'claude-fable-5',
+            content: [
+              {
+                type: 'tool_use',
+                id: toolUseId,
+                name: 'AskUserQuestion',
+                input: {
+                  questions: [
+                    {
+                      question,
+                      header: 'Approach',
+                      multiSelect: false,
+                      options: [{ label: 'Accumulate', description: optionDescription }]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }) + '\n'
+      )
+    }
+
+    /** The `tool_result` block that resolves one ask. */
+    function answerLine(toolUseId: string): string {
+      return (
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'Accumulate' }]
+          }
+        }) + '\n'
+      )
+    }
+
+    it('stamps the foreman with the question nothing has answered yet', async () => {
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + askLine('toolu_01Pending', 'Which approach?', 'Walk the tail once.'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toEqual({
+        toolUseId: 'toolu_01Pending',
+        question: 'Which approach?',
+        header: 'Approach',
+        multiSelect: false,
+        options: [{ label: 'Accumulate', description: 'Walk the tail once.' }],
+        askedAt: '2026-09-01T09:03:41.062Z'
+      })
+    })
+
+    it('carries no question at all once the session answered it', async () => {
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript +
+          askLine('toolu_01Pending', 'Which approach?', 'Walk the tail once.') +
+          answerLine('toolu_01Pending'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toBeUndefined()
+    })
+
+    it('redacts the question and every option description before they cross', async () => {
+      // A question is a new class of text reaching the panel, so it enters
+      // through the same gate lastMessage does rather than beside it.
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript +
+          askLine('toolu_01Pending', `Should I rotate ${FAKE_KEY}?`, `Replace ${FAKE_KEY} first.`),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      const question = snapshots[0]!.dwarfs[0]!.pendingQuestion!
+      expect(question.question).toBe('Should I rotate [redacted]?')
+      expect(question.options[0]!.description).toBe('Replace [redacted] first.')
+      expect(JSON.stringify(snapshots)).not.toContain(FAKE_KEY)
+    })
+
+    it('redacts an option label too, which the panel would render as a button', async () => {
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript +
+          JSON.stringify({
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              model: 'claude-fable-5',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'toolu_01Pending',
+                  name: 'AskUserQuestion',
+                  input: {
+                    questions: [
+                      {
+                        question: 'Which key?',
+                        options: [{ label: `Use ${FAKE_KEY}` }]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }) +
+          '\n',
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion!.options).toEqual([
+        { label: 'Use [redacted]' }
+      ])
+    })
+
+    it('carries a worker question read from its own subagent tail', async () => {
+      // Whether a subagent ever asks is left to observation. The field falls
+      // out of the same parse either way, and inventing a rule that hides it
+      // would be a claim about a session nobody has watched.
+      fake.addFile(
+        SUBAGENT,
+        subagentTranscript + askLine('toolu_01Worker', 'Which file?', 'The first one.'),
+        43_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[1]!.pendingQuestion?.toolUseId).toBe('toolu_01Worker')
+    })
+
+    it('leaves a dwarf whose transcript holds no ask without the field', async () => {
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toBeUndefined()
+      expect('pendingQuestion' in snapshots[0]!.dwarfs[0]!).toBe(false)
+    })
+  })
+
   describe('pid-reuse guard', () => {
     /** session-entry.json's procStart ("134324755721362761") as epoch ms. */
     const REGISTRY_START_MS = 1_788_001_972_136
@@ -2057,6 +2215,15 @@ describe('ClaudeProvider', () => {
       // spawnDepth and model — no status, no blocked condition, nothing. Its
       // parent's registry describes the main session alone, so inheriting the
       // foreman's reason would be a claim about a dwarf nobody measured.
+      const meta: Record<string, unknown> = JSON.parse(subagentMeta)
+      expect(meta).toMatchObject({
+        agentType: 'general-purpose',
+        toolUseId: 'toolu_01SqxjWtW7bcsXUEQQnKmprS',
+        spawnDepth: 1
+      })
+      expect(meta.description).toBeTypeOf('string')
+      expect(meta).not.toHaveProperty('status')
+
       registry(blockedOn('input needed'))
       const dwarfs = (await providerHere().scan())[0]!.dwarfs
       const worker = dwarfs.find((dwarf) => dwarf.role === 'worker')!
@@ -2142,6 +2309,173 @@ describe('ClaudeProvider', () => {
 
         registry(blockedOn(undefined, 'idle'))
         expect((await provider.scan())[0]!.dwarfs).toEqual([])
+      })
+    })
+
+    /**
+     * Issue #94. The registry proves a session is blocked and, in its commonest
+     * waiting value, proves nothing about what on. An unanswered
+     * AskUserQuestion is the model saying in schema that it asked the user
+     * something, so it can name that missing condition — and only that. It
+     * never makes a session blocked; the registry's 'unknown' is the one
+     * reading it may move (see claudeWaitingReason).
+     *
+     * These tests carry the weight of the phase, because 'user-input' is the
+     * value that suspends eviction: the refinement has to engage that promise
+     * when the ask is real and let go of it the moment an answer is written.
+     */
+    describe('refined by an outstanding ask (issue #94)', () => {
+      /** The tool_use block Claude writes when the model asks the user something. */
+      function askLine(toolUseId: string): string {
+        return (
+          JSON.stringify({
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: toolUseId,
+                  name: 'AskUserQuestion',
+                  input: {
+                    questions: [{ question: 'Which approach?', options: [{ label: 'Accumulate' }] }]
+                  }
+                }
+              ]
+            }
+          }) + '\n'
+        )
+      }
+
+      /** The tool_result block that closes one ask. */
+      function answerLine(toolUseId: string): string {
+        return (
+          JSON.stringify({
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'Accumulate' }]
+            }
+          }) + '\n'
+        )
+      }
+
+      /** The lone-foreman transcript with an ask appended, answered or not. */
+      function loneForemanAsking(answered = false): void {
+        fake.addFile(
+          TRANSCRIPT,
+          noAgentTranscript +
+            askLine('toolu_01Open') +
+            (answered ? answerLine('toolu_01Open') : ''),
+          LAST_WRITE
+        )
+      }
+
+      it('refines an open dialog into user-input when an ask is outstanding', async () => {
+        registry(blockedOn('dialog open'))
+        loneForemanAsking()
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman).toMatchObject({ role: 'foreman', status: 'waiting' })
+        expect(foreman!.waitingReason).toBe('user-input')
+        // Both facts, still from their own sources: the reason says the session
+        // cannot move, the question says what it is waiting to hear.
+        expect(foreman!.pendingQuestion?.toolUseId).toBe('toolu_01Open')
+      })
+
+      it('keeps an explicit approval condition, question or no question', async () => {
+        // The registry watched the session stop and named the condition, so
+        // there is nothing for the tail to refine. Rewriting it would be the
+        // tool block overruling the registry rather than completing it.
+        registry(blockedOn('permission prompt'))
+        loneForemanAsking()
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman!.waitingReason).toBe('approval')
+        expect(foreman!.pendingQuestion?.toolUseId).toBe('toolu_01Open')
+      })
+
+      it('gives a working session no reason at all, whatever its tail holds', async () => {
+        // An ask in the tail of a busy session is the model still working: it
+        // wrote the tool call and the turn has not stopped on it yet. The
+        // question rides the wire, the reason stays absent.
+        registry(sessionEntry)
+        loneForemanAsking()
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman).toMatchObject({ status: 'working' })
+        expect(foreman!.pendingQuestion?.toolUseId).toBe('toolu_01Open')
+        expect(foreman!.waitingReason).toBeUndefined()
+        expect('waitingReason' in foreman!).toBe(false)
+      })
+
+      it('drops the refinement once the answer is written back', async () => {
+        registry(blockedOn('dialog open'))
+        loneForemanAsking(true)
+        const [foreman] = (await providerHere().scan())[0]!.dwarfs
+        expect(foreman!.pendingQuestion).toBeUndefined()
+        expect(foreman!.waitingReason).toBe('unknown')
+      })
+
+      it('never refines a worker, which has no registry entry to refine', async () => {
+        // The invariant the phase must not dent: a subagent's sidecar records
+        // no status, so it has no proof of being blocked for an ask to name.
+        // Its own question crossing the wire changes nothing about that.
+        registry(blockedOn('dialog open'))
+        fake.addFile(SUBAGENT, subagentTranscript + askLine('toolu_01Worker'), LAST_WRITE)
+        const dwarfs = (await providerHere().scan())[0]!.dwarfs
+        const worker = dwarfs.find((dwarf) => dwarf.role === 'worker')!
+        expect(worker.id).toBe(WORKER_ID)
+        expect(worker.pendingQuestion?.toolUseId).toBe('toolu_01Worker')
+        expect(worker.waitingReason).toBeUndefined()
+        expect('waitingReason' in worker).toBe(false)
+      })
+
+      /**
+       * The behavioural half, and the reason this phase was separated so it
+       * could be rejected alone. 'user-input' suspends `pruneStaleLaunches`,
+       * so a refinement that outlived its ask would make a dwarf nothing can
+       * evict. The pair below is the whole bargain: the exemption engages on
+       * the ask and lets go on the answer.
+       */
+      describe('the eviction exemption it engages', () => {
+        /** Both transcripts long past both windows, and no notification coming. */
+        function ageEverythingPastBothWindows(): void {
+          clock = LAST_WRITE + FOREMAN_WINDOW * 100
+        }
+
+        /** The crew's transcript with an ask appended, answered or not. */
+        function crewAsking(answered = false): void {
+          fake.addFile(
+            TRANSCRIPT,
+            parentTranscript +
+              askLine('toolu_01Open') +
+              (answered ? answerLine('toolu_01Open') : ''),
+            LAST_WRITE
+          )
+        }
+
+        it('suspends eviction that an open dialog alone would not have stopped', async () => {
+          // The control is the existing 'unknown' test above: this same
+          // registry entry, with no ask in the tail, evicts the whole crew.
+          registry(blockedOn('dialog open', 'idle'))
+          crewAsking()
+          const provider = providerHere()
+          expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+          ageEverythingPastBothWindows()
+          expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+        })
+
+        it('lets go of it the moment the ask is answered', async () => {
+          registry(blockedOn('dialog open', 'idle'))
+          crewAsking()
+          const provider = providerHere()
+          ageEverythingPastBothWindows()
+          expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+          // The user answered. Nothing else changed — same registry entry, same
+          // silence, same clock — and the silence counts again.
+          crewAsking(true)
+          expect((await provider.scan())[0]!.dwarfs).toEqual([])
+        })
       })
     })
   })
