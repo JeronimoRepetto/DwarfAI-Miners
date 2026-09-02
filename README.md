@@ -472,6 +472,8 @@ privately.
   and worker mean, and the contract a new backend inherits.
 - [`docs/hook-detection-evaluation.md`](docs/hook-detection-evaluation.md) — the evaluation
   behind the instant-updates hooks channel.
+- [`docs/console-hosting.md`](docs/console-hosting.md) — whether the panel can be the console:
+  the four paths to hosting a session, and what shipped from the one that won.
 - [`docs/ecosystem-research.md`](docs/ecosystem-research.md) — the prior-art survey that
   shaped the design.
 - [`docs/simulated-provider.md`](docs/simulated-provider.md) — the development-only simulated
