@@ -1,6 +1,52 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfAttendance, DwarfRole } from './contracts'
-import { DWARF_SILENCE_WINDOW_MS, dwarfSilenceWindowKey, dwarfSilenceWindowMs } from './contracts'
+import type { DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
+import {
+  DWARF_PROVIDERS,
+  DWARF_SILENCE_WINDOW_MS,
+  dwarfSilenceWindowKey,
+  dwarfSilenceWindowMs,
+  isDwarfProvider
+} from './contracts'
+
+/*
+ * Issue #78. Adding a provider used to mean editing the union here and then
+ * finding every hand-written copy of it elsewhere. These pin the table as the
+ * one declaration point: the union is derived from it, and the two mirrors
+ * that used to exist (the projects store's read-back list, the CLI detector's
+ * own type) now read this instead of restating it.
+ */
+describe('DWARF_PROVIDERS', () => {
+  it('names every provider identity the wire admits, and nothing else', () => {
+    expect(DWARF_PROVIDERS).toEqual(['claude', 'codex'])
+  })
+
+  it('is the type the union is derived from, so the two cannot drift apart', () => {
+    // Assignable in both directions: a member added to the table becomes a
+    // member of the union with no second edit, and a union member missing from
+    // the table would fail to compile here rather than at a call site.
+    const fromTable: DwarfProvider[] = [...DWARF_PROVIDERS]
+    const fromUnion: readonly DwarfProvider[] = DWARF_PROVIDERS
+    expect(fromTable).toEqual([...fromUnion])
+  })
+})
+
+describe('isDwarfProvider', () => {
+  it('recognises every identity in the table', () => {
+    for (const provider of DWARF_PROVIDERS) {
+      expect(isDwarfProvider(provider)).toBe(true)
+    }
+  })
+
+  it.each(['gemini', 'Claude', 'CODEX', '', ' claude ', 42, null, undefined, {}])(
+    'refuses %j, which this build has no provider for',
+    (value) => {
+      // Every caller is reading something it did not produce — a row off the
+      // user's disk, a value off the IPC boundary — so an unrecognised one has
+      // to read as "no provider" rather than being passed on as a guess.
+      expect(isDwarfProvider(value)).toBe(false)
+    }
+  )
+})
 
 /*
  * Issue #68. The long window exists because a human may be typing the next
