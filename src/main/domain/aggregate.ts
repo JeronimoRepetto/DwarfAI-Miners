@@ -43,6 +43,76 @@ export function aggregateMines(
   return mines.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+/** One project the user declared (#85), as the merge below needs to draw it. */
+export interface DeclaredProject {
+  path: string
+  /**
+   * The tier a walk has actually MEASURED for this project, when the store
+   * holds one. Omitted means never walked, and the merge falls back to the
+   * provisional placeholder for DRAWING only — nothing here records a decision,
+   * so the #41 rule is satisfied by asking for a known tier and accepting none.
+   */
+  knownTier?: MineTier
+}
+
+/**
+ * Fold the projects the user declared into the mines discovery produced (#85).
+ *
+ * A SECOND function rather than a second argument to aggregateMines, because
+ * that function's contract is that a mine is a projection of the snapshots and
+ * nothing else — it exists to answer "who is working where right now", and a
+ * mine it emitted for a project nobody is in would make its own doc a lie and
+ * every one of its callers ask a question it no longer answers. Composed
+ * instead: aggregation stays single-source and pure, this step is single-source
+ * over the declared list and pure, and the runtime is the one place that knows
+ * the board is both.
+ *
+ * A declared project that IS being worked merges into the discovered mine
+ * rather than doubling it — same path, same `mineIdForPath`, one mine — and the
+ * live reading wins on everything except the declaration itself. The input
+ * mines are never mutated; a stamped copy takes the original's place.
+ */
+export function mergeDeclaredMines(
+  mines: Mine[],
+  declared: readonly DeclaredProject[],
+  tierOf: (path: string) => MineTier,
+  platform: Platform = currentPlatform()
+): Mine[] {
+  if (declared.length === 0) return mines
+
+  const output = [...mines]
+  const indexByKey = new Map<string, number>()
+  output.forEach((mine, index) => indexByKey.set(normalizeKey(mine.path, platform), index))
+
+  for (const project of declared) {
+    const displayPath = trimTrailingSlashes(project.path)
+    const key = normalizeKey(displayPath, platform)
+    const index = indexByKey.get(key)
+    if (index !== undefined) {
+      output[index] = { ...output[index]!, declared: true }
+      continue
+    }
+    indexByKey.set(key, output.length)
+    output.push({
+      id: mineIdForPath(displayPath, platform),
+      path: displayPath,
+      name: lastSegment(displayPath),
+      // A measured tier when there is one, the provisional bronze otherwise:
+      // an unwalked mine is drawn as the poorest thing it could be, which is
+      // exactly what that placeholder is for.
+      tier: project.knownTier ?? tierOf(displayPath),
+      dwarfs: [],
+      tokensObserved: 0,
+      // Nothing has happened in it. The board sorts by activity, so a crewless
+      // declared mine belongs behind every project that has any.
+      updatedAt: 0,
+      declared: true
+    })
+  }
+
+  return output.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
 /**
  * The mine id for one project path, using the same platform-aware
  * normalization aggregateMines groups by.

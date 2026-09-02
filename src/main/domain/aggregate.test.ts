@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateMines, mineIdForPath, sumTokensObserved } from './aggregate'
+import { aggregateMines, mergeDeclaredMines, mineIdForPath, sumTokensObserved } from './aggregate'
 import {
   defaultDwarf,
   defaultMine,
@@ -214,6 +214,108 @@ describe('mineIdForPath', () => {
 
   it('keeps two Linux projects that differ only in case apart', () => {
     expect(mineIdForPath('/home/j/Proj', 'linux')).not.toBe(mineIdForPath('/home/j/proj', 'linux'))
+  })
+})
+
+describe('mergeDeclaredMines', () => {
+  it('puts a declared project with no live session on the board with no crew', () => {
+    const mines = mergeDeclaredMines([], [{ path: 'C:\\X\\Adopted' }], tierOf, 'win32')
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.name).toBe('Adopted')
+    expect(mines[0]!.dwarfs).toEqual([])
+    expect(mines[0]!.tokensObserved).toBe(0)
+    expect(mines[0]!.declared).toBe(true)
+  })
+
+  it('gives a declared mine the id the ledger already credits that path under', () => {
+    // The whole reason not to invent a second id scheme: whatever the vault
+    // accrued for this project attaches to the mine the user just added.
+    const [mine] = mergeDeclaredMines([], [{ path: 'c:/x/adopted/' }], tierOf, 'win32')
+    expect(mine!.id).toBe(mineIdForPath('C:\\X\\Adopted', 'win32'))
+  })
+
+  it('merges a declared project that is also being worked into one mine', () => {
+    const live = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\X\\Adopted', updatedAt: 40 })],
+      tierOf,
+      'win32'
+    )
+    const mines = mergeDeclaredMines(live, [{ path: 'c:\\x\\adopted' }], tierOf, 'win32')
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.declared).toBe(true)
+    // The live reading wins on everything else: the crew, the display spelling
+    // and the activity clock all come from the session that is actually there.
+    expect(mines[0]!.path).toBe('C:\\X\\Adopted')
+    expect(mines[0]!.updatedAt).toBe(40)
+  })
+
+  it('leaves a discovered mine unmarked so the panel can tell the two apart', () => {
+    const live = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\X\\Other' })],
+      tierOf,
+      'win32'
+    )
+    const mines = mergeDeclaredMines(live, [{ path: 'C:\\X\\Adopted' }], tierOf, 'win32')
+
+    expect(mines.find((mine) => mine.name === 'Other')!.declared).toBeUndefined()
+  })
+
+  it('draws a declared mine at its MEASURED tier when the store holds one', () => {
+    const [mine] = mergeDeclaredMines(
+      [],
+      [{ path: 'C:\\X\\Adopted', knownTier: 'gold' }],
+      tierOf,
+      'win32'
+    )
+    expect(mine!.tier).toBe('gold')
+  })
+
+  it('falls back to the provisional tier for a project nobody has walked yet', () => {
+    // tierOf's placeholder is exactly what a never-measured mine is DRAWN as
+    // (#41); it seals nothing, and the ledger is asked separately.
+    const [mine] = mergeDeclaredMines([], [{ path: 'C:\\X\\Adopted' }], tierOf, 'win32')
+    expect(mine!.tier).toBe('silver')
+  })
+
+  it('never mutates the mines aggregation handed it', () => {
+    const live = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\X\\Adopted' })],
+      tierOf,
+      'win32'
+    )
+    mergeDeclaredMines(live, [{ path: 'C:\\X\\Adopted' }], tierOf, 'win32')
+    expect(live[0]!.declared).toBeUndefined()
+  })
+
+  it('returns the same list untouched when nothing is declared', () => {
+    const live = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\X\\Proj' })],
+      tierOf,
+      'win32'
+    )
+    expect(mergeDeclaredMines(live, [], tierOf, 'win32')).toBe(live)
+  })
+
+  it('sorts a crewless declared mine behind everything with recent activity', () => {
+    const live = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: 'C:\\X\\Busy', updatedAt: 10 })],
+      tierOf,
+      'win32'
+    )
+    const mines = mergeDeclaredMines(live, [{ path: 'C:\\X\\Adopted' }], tierOf, 'win32')
+    expect(mines.map((mine) => mine.name)).toEqual(['Busy', 'Adopted'])
+  })
+
+  it('keeps two Linux projects that differ only in case apart', () => {
+    const live = aggregateMines(
+      [snapshot({ sessionId: 's1', cwd: '/home/j/Proj' })],
+      tierOf,
+      'linux'
+    )
+    const mines = mergeDeclaredMines(live, [{ path: '/home/j/proj' }], tierOf, 'linux')
+    expect(mines).toHaveLength(2)
   })
 })
 

@@ -18,8 +18,10 @@ export type {
   Material,
   MaterialTotals,
   Mine,
+  MineDeclareResult,
   MinesSnapshot,
   MineTier,
+  MineUndeclareResult,
   ShortcutState,
   TextDeliveryChannel,
   WaitingReason
