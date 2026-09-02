@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
-import type { AppConfig, ConfigEnv } from '../config/config'
+import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import {
   MAX_DWARF_TEXT_CHARS,
@@ -249,12 +249,11 @@ export class AgentRuntime {
         relayModel: options.config.sendTextRelayModel,
         relayTimeoutMs: options.config.sendTextTimeoutS * 1_000,
         // CLI detection (#91) reads the same fs the providers do, and honours an
-        // explicit override path per CLI; blank means "detect it".
+        // explicit override path per CLI; blank means "detect it". Derived from
+        // the provider blocks (#78), so a backend added to the table has its
+        // override honoured here without a line of its own.
         fs,
-        cliOverrides: {
-          ...(options.config.claudeCliPath === '' ? {} : { claude: options.config.claudeCliPath }),
-          ...(options.config.codexCliPath === '' ? {} : { codex: options.config.codexCliPath })
-        }
+        cliOverrides: cliOverridesFrom(options.config)
       })
 
     this.now = options.now ?? Date.now
@@ -275,7 +274,7 @@ export class AgentRuntime {
     const realProviders = (): Provider[] => [
       new ClaudeProvider({
         fs,
-        roots: options.config.claudeConfigDirs.map((path) => expandHomePath(path, home)),
+        roots: options.config.providers.claude.configDirs.map((path) => expandHomePath(path, home)),
         // The pid-reuse guard's source of truth: a registry entry only counts
         // as alive when the pid's real creation time matches its procStart.
         processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid)
@@ -283,14 +282,14 @@ export class AgentRuntime {
       new CodexProvider({
         isCodexProcessRunning: () => platform.processProbe.isCodexProcessRunning(),
         fs,
-        sessionsRoot: expandHomePath(options.config.codexSessionsRoot, home),
-        livenessWindowS: options.config.codexLivenessWindowS,
-        scanDays: options.config.codexScanDays,
-        idleRetentionS: options.config.codexIdleRetentionS,
-        heartbeatWindowS: options.config.codexHeartbeatWindowS,
+        sessionsRoot: expandHomePath(options.config.providers.codex.sessionsRoot, home),
+        livenessWindowS: options.config.providers.codex.livenessWindowS,
+        scanDays: options.config.providers.codex.scanDays,
+        idleRetentionS: options.config.providers.codex.idleRetentionS,
+        heartbeatWindowS: options.config.providers.codex.heartbeatWindowS,
         sqlite: options.sqlite ?? new NodeSqlite(),
-        stateDbPath: expandHomePath(options.config.codexStateDb, home),
-        logsDbPath: expandHomePath(options.config.codexLogsDb, home)
+        stateDbPath: expandHomePath(options.config.providers.codex.stateDb, home),
+        logsDbPath: expandHomePath(options.config.providers.codex.logsDb, home)
       })
     ]
 

@@ -128,7 +128,7 @@ describe('withConfigFileFallback', () => {
       )
     )
     expect(config.pollIntervalMs).toBe(250) // environment
-    expect(config.claudeConfigDirs).toEqual(['~/.claude', '~/.claude-work']) // file
+    expect(config.providers.claude.configDirs).toEqual(['~/.claude', '~/.claude-work']) // file
     expect(config.hooksPort).toBe(defaultConfig().hooksPort) // default
   })
 
