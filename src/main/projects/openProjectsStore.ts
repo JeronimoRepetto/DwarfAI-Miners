@@ -1,6 +1,6 @@
 import { createProjectsStore, type ProjectsStore, type ProjectsStoreOptions } from './projectsStore'
 
-export interface OpenProjectsStoreOptions extends ProjectsStoreOptions {
+export type OpenProjectsStoreOptions = ProjectsStoreOptions & {
   /** Where the one refusal line goes; defaults to swallowing it. */
   warn?: (message: string) => void
 }
