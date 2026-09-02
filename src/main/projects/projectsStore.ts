@@ -7,13 +7,7 @@ import {
   type WritableSqliteLike
 } from '../adapters/sqliteWritable'
 import { mineIdForPath } from '../domain/aggregate'
-import {
-  isDwarfProvider,
-  isMineTier,
-  type DwarfProvider,
-  type MineTier,
-  type ProjectQuery
-} from '../domain/types'
+import { isMineTier, type DwarfProvider, type MineTier, type ProjectQuery } from '../domain/types'
 import { currentPlatform, type Platform } from '../platform/platform'
 import { normalizeProjectName, projectNameForPath } from './projectName'
 import { buildProjectQuery } from './projectQuery'
@@ -186,6 +180,14 @@ const COLUMNS =
 
 /** Refusal to read a database this code did not write. */
 class UnsupportedSchemaError extends Error {}
+
+/**
+ * The providers a stored row may name.
+ *
+ * Read back defensively because the database is a file on the user's disk: a
+ * value this build does not recognise reads as "unknown", never as a guess.
+ */
+const KNOWN_PROVIDERS: readonly string[] = ['claude', 'codex']
 
 export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStore {
   const sqlite = options.sqlite ?? new NodeWritableSqlite()
@@ -410,11 +412,8 @@ function toRecord(row: SqliteRow): ProjectRecord {
     addedAt: asNumber(row.added_at) ?? 0,
     lastOpenedAt: asNumber(row.last_opened_at),
     origin: asText(row.origin) === 'declared' ? 'declared' : 'discovered',
-    // Read back defensively against the shared provider table, because the
-    // database is a file on the user's disk: a value this build has no provider
-    // for reads as "unknown", never as a guess (#78 made the table the one
-    // declaration point, so this no longer keeps a copy of the list).
-    lastProvider: provider !== null && isDwarfProvider(provider) ? provider : null,
+    lastProvider:
+      provider !== null && KNOWN_PROVIDERS.includes(provider) ? (provider as DwarfProvider) : null,
     // Checked against the shared tier list, so a value this build does not
     // recognise reads as unmeasured rather than as a guess.
     knownTier: tier !== null && isMineTier(tier) ? tier : null

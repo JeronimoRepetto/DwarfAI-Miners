@@ -20,10 +20,10 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
     const provider = new CodexProvider({
       fs: new NodeFs(),
       sessionsRoot: join(homedir(), '.codex', 'sessions'),
-      livenessWindowS: config.providers.codex.livenessWindowS,
-      scanDays: config.providers.codex.scanDays,
-      idleRetentionS: config.providers.codex.idleRetentionS,
-      heartbeatWindowS: config.providers.codex.heartbeatWindowS,
+      livenessWindowS: config.codexLivenessWindowS,
+      scanDays: config.codexScanDays,
+      idleRetentionS: config.codexIdleRetentionS,
+      heartbeatWindowS: config.codexHeartbeatWindowS,
       sqlite: new NodeSqlite(),
       stateDbPath: join(homedir(), '.codex', 'state_5.sqlite'),
       logsDbPath: join(homedir(), '.codex', 'logs_2.sqlite')
@@ -173,9 +173,9 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
       const provider = new CodexProvider({
         fs: new NodeFs(),
         sessionsRoot: scratchRoot,
-        livenessWindowS: config.providers.codex.livenessWindowS,
-        scanDays: config.providers.codex.scanDays,
-        idleRetentionS: config.providers.codex.idleRetentionS
+        livenessWindowS: config.codexLivenessWindowS,
+        scanDays: config.codexScanDays,
+        idleRetentionS: config.codexIdleRetentionS
       })
       const snapshots = await provider.scan()
       console.log(

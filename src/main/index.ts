@@ -298,8 +298,8 @@ async function init(): Promise<void> {
     fs: new NodeFs(),
     markerFs: { readFile, writeFile, rename },
     markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
-    claudeRoots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
-    codexSessionsRoot: expandHomePath(config.providers.codex.sessionsRoot),
+    claudeRoots: config.claudeConfigDirs.map((path) => expandHomePath(path)),
+    codexSessionsRoot: expandHomePath(config.codexSessionsRoot),
     credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
     now: Date.now,
     warn: (message, error) => console.warn(message, error)
@@ -319,7 +319,7 @@ async function init(): Promise<void> {
   // brings back a choice they already made on a previous launch.
   hooks = new HookChannel({
     fs: new NodeHookFs(),
-    roots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
+    roots: config.claudeConfigDirs.map((path) => expandHomePath(path)),
     userDataDir: app.getPath('userData'),
     port: config.hooksPort,
     platform: process.platform,

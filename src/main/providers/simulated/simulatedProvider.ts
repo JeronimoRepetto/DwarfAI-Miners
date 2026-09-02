@@ -36,25 +36,13 @@ export interface SimulatedProviderOptions {
 
 export class SimulatedProvider implements Provider {
   /**
-   * One of the two REAL provider identities, still, after #78.
+   * One of the two REAL provider identities.
    *
-   * The reason used to be the cost of the edit: `DwarfProvider` was a closed
-   * literal union, so admitting a third member meant finding every
-   * hand-written copy of the list. #78 removed that reason — `DWARF_PROVIDERS`
-   * is one table now and a new member is one entry — and this stays 'claude'
-   * anyway, for the two reasons the edit cost was hiding.
-   *
-   * The first is the renderer: it still switches on provider identity for
-   * sprite art and for a CSS class per provider, so a 'simulated' value would
-   * arrive with no art behind it and draw wrong. That is the last of #78's
-   * four places, and it waits on the UI rebuild in #105.
-   *
-   * The second outlives #105. This union is the WIRE contract a packaged build
-   * publishes to the renderer, and a development-only tool has no business
-   * adding a member to the product's own vocabulary — every consumer of a
-   * dwarf would then owe an answer for a value that can only ever appear in an
-   * unpackaged run. Claiming 'claude' costs nothing that matters (the field is
-   * a label for logs and perf stages) and keeps the simulation
+   * `DwarfProvider` has exactly two members, and widening it to admit a third
+   * would ripple through the wire contract, the renderer's sprite art and every
+   * consumer of a dwarf — turning a development-only tool into a change to the
+   * product's own vocabulary. Claiming 'claude' costs nothing that matters
+   * (the field is a label for logs and perf stages) and keeps the simulation
    * indistinguishable downstream, which is the entire point of #42. Individual
    * dwarfs still carry a mix of both providers, so both sprite sets are drawn.
    */

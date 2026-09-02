@@ -1,4 +1,4 @@
-import { DWARF_PROVIDERS, type DwarfProvider, type MineTier } from '../domain/types'
+import type { MineTier } from '../domain/types'
 import type { TierThresholds } from '../tier/tierService'
 
 /**
@@ -13,103 +13,54 @@ import type { TierThresholds } from '../tier/tierService'
  * means both transports share this file's validation and error messages
  * instead of growing a second, divergent set for a second format.
  */
-/**
- * The settings EVERY provider has, whatever its backend reads (issue #78).
- *
- * Provider settings used to be flat top-level `AppConfig` keys — nine of them
- * between two backends — so a third cost N more fields and N more parse calls
- * written into one flat literal, and provider-agnostic code had no way to ask
- * a provider for its own setting without knowing its name. This is the shared
- * half: what a new backend gets for free rather than having to plumb.
- *
- * The CLI override is the one that already had a provider-agnostic consumer —
- * `platformAdapters`'s `cliOverrides` used to spread two hand-written entries.
- */
-export interface ProviderConfig {
-  /**
-   * Explicit path to this provider's CLI binary, overriding detection (#91).
-   * Blank means "detect it" — the app looks in the known install locations and
-   * then PATH. Set one when the install is somewhere the conventions do not
-   * reach (npm global, Homebrew, a custom prefix), where an empty result would
-   * otherwise be the only signal.
-   */
-  cliPath: string
-}
-
-/** Claude's settings block: which config roots to scan. */
-export interface ClaudeConfig extends ProviderConfig {
-  /**
-   * Claude config roots to scan. Defaults to the single standard root; set
-   * CLAUDE_CONFIG_DIRS (semicolon-separated) to scan more, which is what a
-   * machine running several Claude accounts with separate dirs needs. Roots
-   * that do not exist are skipped.
-   */
-  configDirs: string[]
-}
-
-/** Codex's settings block: where its rollouts and registry live, and its windows. */
-export interface CodexConfig extends ProviderConfig {
-  /** The Codex sessions root. A leading ~ is expanded against the real home dir. */
-  sessionsRoot: string
-  /**
-   * Codex's authoritative thread registry (CODEX_HOME/state_5.sqlite). Read
-   * read-only; a missing file simply disables registry-backed discovery.
-   */
-  stateDb: string
-  /** Codex's structured log stream (CODEX_HOME/logs_2.sqlite), used as a liveness heartbeat. */
-  logsDb: string
-  /** Activity age that still counts as an open session, in seconds. */
-  livenessWindowS: number
-  /**
-   * How recent a logs_2.sqlite row must be to count as a liveness heartbeat,
-   * in seconds. Codex appends log rows continuously while a turn runs, which
-   * is the signal a rollout's mtime fails to provide on Windows.
-   */
-  heartbeatWindowS: number
-  /**
-   * How many day-directories (today back N-1 days) to scan under the sessions
-   * root. A rollout lives in its START-date directory forever, so scanning
-   * only today/yesterday hides a session opened earlier that is still active;
-   * mtime filtering keeps this cheap even at a week of days.
-   */
-  scanDays: number
-  /**
-   * How long a rollout stays visible past livenessWindowS while a codex
-   * process is still running (an idle CLI writes nothing to its rollout, so
-   * mtime alone can't tell "open but quiet" from "closed").
-   */
-  idleRetentionS: number
-}
-
-/**
- * One settings block per provider identity.
- *
- * Keyed by `DwarfProvider` on purpose: this is a `Record` over the shared
- * provider table, so a member added to `DWARF_PROVIDERS` stops this file
- * compiling until its block exists. That is what makes "a provider's settings
- * live in one place" enforced rather than remembered — the same trick
- * `MaterialTotals` uses to guarantee every material has a counter.
- */
-export interface ProviderConfigs extends Record<DwarfProvider, ProviderConfig> {
-  claude: ClaudeConfig
-  codex: CodexConfig
-}
-
 export interface AppConfig {
   /** How often the provider scanner polls for agent activity, in milliseconds. */
   pollIntervalMs: number
-  /**
-   * How long an agent counts as alive after its last observed activity, in
-   * seconds. Reserved and general: a provider that measures liveness its own
-   * way carries its own window in its block below (Codex does).
-   */
+  /** How long an agent counts as alive after its last observed activity, in seconds. */
   livenessWindowS: number
+  /** Codex-specific liveness: activity age that still counts as an open session. */
+  codexLivenessWindowS: number
+  /**
+   * How recent a Codex logs_2.sqlite row must be to count as a liveness
+   * heartbeat, in seconds. Codex appends log rows continuously while a turn
+   * runs, which is the signal a rollout's mtime fails to provide on Windows.
+   */
+  codexHeartbeatWindowS: number
+  /**
+   * How many day-directories (today back N-1 days) to scan under the Codex
+   * sessions root. A rollout lives in its START-date directory forever, so
+   * scanning only today/yesterday hides a session opened earlier that is
+   * still active; mtime filtering keeps this cheap even at a week of days.
+   */
+  codexScanDays: number
+  /**
+   * How long a Codex rollout stays visible past codexLivenessWindowS while a
+   * codex process is still running (idle CLI writes nothing to its rollout,
+   * so mtime alone can't tell "open but quiet" from "closed").
+   */
+  codexIdleRetentionS: number
   /** How long a disappeared dwarf stays visible with status 'leaving' before being dropped. */
   dwarfLeaveGraceS: number
   /** How long a computed project tier stays cached, in seconds. */
   tierCacheTtlS: number
   /** Source-byte-weight (KB) thresholds at which a mine upgrades to the next tier. */
   tierThresholds: TierThresholds
+  /**
+   * Claude config roots to scan. Defaults to the single standard root; set
+   * CLAUDE_CONFIG_DIRS (semicolon-separated) to scan more, which is what a
+   * machine running several Claude accounts with separate dirs needs. Roots
+   * that do not exist are skipped.
+   */
+  claudeConfigDirs: string[]
+  /** The Codex sessions root. A leading ~ is expanded against the real home dir. */
+  codexSessionsRoot: string
+  /**
+   * Codex's authoritative thread registry (CODEX_HOME/state_5.sqlite). Read
+   * read-only; a missing file simply disables registry-backed discovery.
+   */
+  codexStateDb: string
+  /** Codex's structured log stream (CODEX_HOME/logs_2.sqlite), used as a liveness heartbeat. */
+  codexLogsDb: string
   /**
    * Model the one-shot `claude -p` relay runs on when delivering a message to
    * a headless session. The relay only forwards a string, so the cheapest
@@ -124,58 +75,38 @@ export interface AppConfig {
    * until the user enables "Instant updates" in the tray.
    */
   hooksPort: number
-  /** Everything that belongs to one backend rather than to the panel (#78). */
-  providers: ProviderConfigs
+  /**
+   * Explicit paths to the claude and codex binaries, overriding CLI detection
+   * (#91). Blank means "detect it" — the app looks in the known install
+   * locations and then PATH. Set one when your install is somewhere the
+   * conventions do not reach (npm global, Homebrew, a custom prefix), where an
+   * empty result would otherwise be the only signal.
+   */
+  claudeCliPath: string
+  codexCliPath: string
 }
 
 export function defaultConfig(): AppConfig {
   return {
     pollIntervalMs: 2000,
     livenessWindowS: 90,
+    codexLivenessWindowS: 300,
+    codexHeartbeatWindowS: 300,
+    codexScanDays: 7,
+    codexIdleRetentionS: 3600,
     dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
     tierThresholds: { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 },
+    claudeConfigDirs: ['~/.claude'],
+    codexSessionsRoot: '~/.codex/sessions',
+    codexStateDb: '~/.codex/state_5.sqlite',
+    codexLogsDb: '~/.codex/logs_2.sqlite',
     sendTextRelayModel: 'haiku',
     sendTextTimeoutS: 60,
     hooksPort: 47821,
-    providers: {
-      claude: {
-        cliPath: '',
-        configDirs: ['~/.claude']
-      },
-      codex: {
-        cliPath: '',
-        sessionsRoot: '~/.codex/sessions',
-        stateDb: '~/.codex/state_5.sqlite',
-        logsDb: '~/.codex/logs_2.sqlite',
-        livenessWindowS: 300,
-        heartbeatWindowS: 300,
-        scanDays: 7,
-        idleRetentionS: 3600
-      }
-    }
+    claudeCliPath: '',
+    codexCliPath: ''
   }
-}
-
-/**
- * The non-blank CLI overrides, keyed by provider (#78, #91).
- *
- * Derived from the provider table rather than written out at the composition
- * point, which used to spread one hand-written entry per backend: a third
- * provider's `*_CLI_PATH` would have been parsed into its block and then
- * silently dropped on the way to detection. Blank stays absent, because blank
- * means "detect it" and an empty string handed to the detector would override
- * detection with nothing.
- */
-export function cliOverridesFrom(config: AppConfig): Partial<Record<DwarfProvider, string>> {
-  const overrides: Partial<Record<DwarfProvider, string>> = {}
-  for (const provider of DWARF_PROVIDERS) {
-    const cliPath = config.providers[provider].cliPath
-    if (cliPath !== '') {
-      overrides[provider] = cliPath
-    }
-  }
-  return overrides
 }
 
 /**
@@ -265,69 +196,39 @@ function readTierThresholds(env: ConfigEnv, fallback: TierThresholds): TierThres
   return thresholds
 }
 
-/**
- * The documented variable each shared provider setting is read from.
- *
- * Passed in rather than derived from the provider's name, because the names
- * are the USER's contract — they are in the README table and .env.example, and
- * #78 restructured the shape behind them without touching one of them. Two
- * backends happening to prefix theirs (`CLAUDE_`, `CODEX_`) is a convention,
- * not a rule the next one can be held to, and a derived name would silently
- * rename somebody's setting the day it stopped holding.
- */
-interface ProviderEnvKeys {
-  cliPath: string
-}
-
-/** One provider's shared settings — the half `readClaudeConfig` and its siblings never repeat. */
-function readProviderConfig(
-  env: ConfigEnv,
-  keys: ProviderEnvKeys,
-  fallback: ProviderConfig
-): ProviderConfig {
-  return {
-    cliPath: readTrimmed(env, keys.cliPath, fallback.cliPath)
-  }
-}
-
-function readClaudeConfig(env: ConfigEnv, fallback: ClaudeConfig): ClaudeConfig {
-  return {
-    ...readProviderConfig(env, { cliPath: 'CLAUDE_CLI_PATH' }, fallback),
-    configDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', fallback.configDirs)
-  }
-}
-
-function readCodexConfig(env: ConfigEnv, fallback: CodexConfig): CodexConfig {
-  return {
-    ...readProviderConfig(env, { cliPath: 'CODEX_CLI_PATH' }, fallback),
-    sessionsRoot: readTrimmed(env, 'CODEX_SESSIONS_ROOT', fallback.sessionsRoot),
-    stateDb: readTrimmed(env, 'CODEX_STATE_DB', fallback.stateDb),
-    logsDb: readTrimmed(env, 'CODEX_LOGS_DB', fallback.logsDb),
-    livenessWindowS: readPositiveInt(env, 'CODEX_LIVENESS_WINDOW_S', fallback.livenessWindowS),
-    heartbeatWindowS: readPositiveInt(env, 'CODEX_HEARTBEAT_WINDOW_S', fallback.heartbeatWindowS),
-    scanDays: readPositiveInt(env, 'CODEX_SCAN_DAYS', fallback.scanDays),
-    idleRetentionS: readPositiveInt(env, 'CODEX_IDLE_RETENTION_S', fallback.idleRetentionS)
-  }
-}
-
 export function loadConfig(env: ConfigEnv = process.env): AppConfig {
   const defaults = defaultConfig()
   return {
     pollIntervalMs: readPositiveInt(env, 'POLL_INTERVAL_MS', defaults.pollIntervalMs),
     livenessWindowS: readPositiveInt(env, 'LIVENESS_WINDOW_S', defaults.livenessWindowS),
+    codexLivenessWindowS: readPositiveInt(
+      env,
+      'CODEX_LIVENESS_WINDOW_S',
+      defaults.codexLivenessWindowS
+    ),
+    codexHeartbeatWindowS: readPositiveInt(
+      env,
+      'CODEX_HEARTBEAT_WINDOW_S',
+      defaults.codexHeartbeatWindowS
+    ),
+    codexScanDays: readPositiveInt(env, 'CODEX_SCAN_DAYS', defaults.codexScanDays),
+    codexIdleRetentionS: readPositiveInt(
+      env,
+      'CODEX_IDLE_RETENTION_S',
+      defaults.codexIdleRetentionS
+    ),
     dwarfLeaveGraceS: readPositiveInt(env, 'DWARF_LEAVE_GRACE_S', defaults.dwarfLeaveGraceS),
     tierCacheTtlS: readPositiveInt(env, 'TIER_CACHE_TTL_S', defaults.tierCacheTtlS),
     tierThresholds: readTierThresholds(env, defaults.tierThresholds),
+    claudeConfigDirs: readDirList(env, 'CLAUDE_CONFIG_DIRS', defaults.claudeConfigDirs),
+    codexSessionsRoot: readTrimmed(env, 'CODEX_SESSIONS_ROOT', defaults.codexSessionsRoot),
+    codexStateDb: readTrimmed(env, 'CODEX_STATE_DB', defaults.codexStateDb),
+    codexLogsDb: readTrimmed(env, 'CODEX_LOGS_DB', defaults.codexLogsDb),
     sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
     sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS),
     hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort),
-    // One line per backend, and one reader to read it: the whole point of #78's
-    // second place. A third provider adds an entry here and its own reader,
-    // and nothing above this line has to know it exists.
-    providers: {
-      claude: readClaudeConfig(env, defaults.providers.claude),
-      codex: readCodexConfig(env, defaults.providers.codex)
-    }
+    claudeCliPath: readTrimmed(env, 'CLAUDE_CLI_PATH', defaults.claudeCliPath),
+    codexCliPath: readTrimmed(env, 'CODEX_CLI_PATH', defaults.codexCliPath)
   }
 }
 

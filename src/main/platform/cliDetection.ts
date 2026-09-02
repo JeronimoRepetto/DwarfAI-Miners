@@ -1,6 +1,5 @@
 import { posix, win32 } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
-import type { DwarfProvider } from '../domain/types'
 import { currentPlatform, type Platform } from './platform'
 
 /**
@@ -15,17 +14,12 @@ import { currentPlatform, type Platform } from './platform'
  */
 
 /**
- * The agent CLIs whose presence this app can detect.
- *
- * It used to MIRROR DwarfProvider — its own two-value copy, kept local because
- * detection never crosses the wire, with a comment saying widening it was
- * gated on #78. This is that gate: #78 made DWARF_PROVIDERS the one place a
- * provider identity is declared, so the alias reads from it instead of
- * restating the list. Detection still never crosses the wire; nothing here is
- * published, and the name stays because "which CLI is installed" is a
- * different question from "which provider found this dwarf".
+ * The agent CLIs whose presence this app can detect. Mirrors DwarfProvider in
+ * shared/contracts.ts, kept local because detection never crosses the wire;
+ * widening it past claude and codex is gated on #78 like every other provider
+ * addition, so a value the rest of the app has no type for is not added here.
  */
-export type AgentCli = DwarfProvider
+export type AgentCli = 'claude' | 'codex'
 
 /** Where a detected CLI was found. Poorest proof last: an override is a stated
  *  instruction, a convention is a known install location, PATH is a guess that
