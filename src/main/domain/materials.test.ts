@@ -3,10 +3,8 @@ import {
   emptyMaterialTotals,
   addMaterialTokens,
   materialForTier,
-  materialUnits,
   mergeMaterialTotals,
-  sumMaterialTotals,
-  totalMaterialTokens
+  sumMaterialTotals
 } from './materials'
 import { MATERIALS, MATERIAL_TOKENS_PER_UNIT, type Material } from './types'
 
@@ -112,33 +110,5 @@ describe('sumMaterialTotals', () => {
 
   it('returns an empty breakdown for no entries', () => {
     expect(sumMaterialTotals([])).toEqual(emptyMaterialTotals())
-  })
-})
-
-describe('materialUnits', () => {
-  it('floors tokens into whole units at that material rate', () => {
-    expect(materialUnits(29_999, 'bronze')).toBe(2)
-    expect(materialUnits(30_000, 'bronze')).toBe(3)
-  })
-
-  it('makes one gold unit stand for more tokens than one bronze unit', () => {
-    const tokens = 1_000_000
-    expect(materialUnits(tokens, 'gold')).toBeLessThan(materialUnits(tokens, 'bronze'))
-  })
-
-  it('floors a negative or non-finite count to zero', () => {
-    expect(materialUnits(-1, 'gold')).toBe(0)
-    expect(materialUnits(Number.NaN, 'gold')).toBe(0)
-  })
-})
-
-describe('totalMaterialTokens', () => {
-  it('sums every material back to the raw token count underneath', () => {
-    const totals = addMaterialTokens(
-      addMaterialTokens(emptyMaterialTotals(), 'coal', 400),
-      'silver',
-      600
-    )
-    expect(totalMaterialTokens(totals)).toBe(1_000)
   })
 })

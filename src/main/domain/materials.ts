@@ -1,10 +1,4 @@
-import {
-  MATERIALS,
-  MATERIAL_TOKENS_PER_UNIT,
-  type Material,
-  type MaterialTotals,
-  type MineTier
-} from './types'
+import { MATERIALS, type Material, type MaterialTotals, type MineTier } from './types'
 
 /**
  * Pure arithmetic over material breakdowns (see #22).
@@ -64,19 +58,4 @@ export function mergeMaterialTotals(a: MaterialTotals, b: MaterialTotals): Mater
 /** Every breakdown in the list folded into one. */
 export function sumMaterialTotals(list: readonly MaterialTotals[]): MaterialTotals {
   return list.reduce<MaterialTotals>(mergeMaterialTotals, emptyMaterialTotals())
-}
-
-/**
- * Whole visible units `tokens` of `material` represents, rounded down — the
- * same idle-game currency floor the renderer's oreCount() has always used, so
- * a partially-mined unit never shows up until it is complete.
- */
-export function materialUnits(tokens: number, material: Material): number {
-  if (!Number.isFinite(tokens) || tokens <= 0) return 0
-  return Math.floor(tokens / MATERIAL_TOKENS_PER_UNIT[material])
-}
-
-/** The raw token count underneath a whole breakdown. */
-export function totalMaterialTokens(totals: MaterialTotals): number {
-  return MATERIALS.reduce((sum, material) => sum + totals[material], 0)
 }

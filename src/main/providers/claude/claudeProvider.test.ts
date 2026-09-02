@@ -9,6 +9,7 @@ const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')
 const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'), 'utf8')
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
 const sessionEntry = readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
+const subagentMeta = readFileSync(join(FIXTURES, 'subagent-meta.json'), 'utf8')
 
 const ROOT1 = 'C:\\Users\\j\\.claude'
 const ROOT2 = 'C:\\Users\\j\\.claude-work'
@@ -2214,6 +2215,15 @@ describe('ClaudeProvider', () => {
       // spawnDepth and model — no status, no blocked condition, nothing. Its
       // parent's registry describes the main session alone, so inheriting the
       // foreman's reason would be a claim about a dwarf nobody measured.
+      const meta: Record<string, unknown> = JSON.parse(subagentMeta)
+      expect(meta).toMatchObject({
+        agentType: 'general-purpose',
+        toolUseId: 'toolu_01SqxjWtW7bcsXUEQQnKmprS',
+        spawnDepth: 1
+      })
+      expect(meta.description).toBeTypeOf('string')
+      expect(meta).not.toHaveProperty('status')
+
       registry(blockedOn('input needed'))
       const dwarfs = (await providerHere().scan())[0]!.dwarfs
       const worker = dwarfs.find((dwarf) => dwarf.role === 'worker')!

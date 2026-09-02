@@ -4,7 +4,7 @@ import { pollProfiler } from './perf'
 import type { Provider } from '../providers/provider'
 
 /** Default coalescing window for out-of-band nudges, in milliseconds. */
-export const DEFAULT_NUDGE_WINDOW_MS = 300
+const DEFAULT_NUDGE_WINDOW_MS = 300
 
 export interface PollerOptions {
   providers: Provider[]

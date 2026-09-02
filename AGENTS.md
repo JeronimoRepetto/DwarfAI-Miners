@@ -117,9 +117,9 @@ reasoning, and this list is only the index. None of these is enforced by the typ
 - **Materials never convert into one another.** `MATERIAL_TOKENS_PER_UNIT` is a per-material grain
   size, not an exchange rate; each material owns an independent counter. Nothing converts one into
   another and nothing sums _units_ across materials — `materialUnits()` is always per-material,
-  because the grain size differs. Raw _tokens_ are a common substrate and are summed, in
-  `totalMaterialTokens`. Tokens yes, units no. Three renderer tests pin this; no main-process test
-  does.
+  because the grain size differs. Raw _tokens_ are the one substrate a sum may cross. Tokens yes,
+  units no. The renderer's vault tests pin this (`lib/vault/vault.ts`); the ledger never needs the
+  sum.
 - **Delivered and reacted are different facts.** `delivered` means the relay exited 0 and the
   message reached the session's _queue_ — not that anything acted on it. A ✓ says handed over, ✓✓
   says the session was seen acting, and a session reads its queue between tool calls. When in
