@@ -52,6 +52,7 @@ describe('preload always-on-top contract', () => {
     expect(typeof api.declareMine).toBe('function')
     expect(typeof api.undeclareMine).toBe('function')
     expect(typeof api.queryProjects).toBe('function')
+    expect(typeof api.answerDwarfQuestion).toBe('function')
   })
 
   it('asks for the current state on the panel:getAlwaysOnTop channel with no payload', async () => {
@@ -260,5 +261,67 @@ describe('preload project-query contract', () => {
     const refused = { answered: false, projects: [], reason: 'The projects could not be read.' }
     invoke.mockResolvedValueOnce(refused)
     await expect(api.queryProjects(newest)).resolves.toEqual(refused)
+  })
+})
+
+/**
+ * Answering what a held session asked (#94, #125). The payload is rebuilt here
+ * field by field, and the record entry by entry, because an answer releases a
+ * tool call a live agent is blocked inside: what crosses must be string pairs
+ * or nothing, so main's own check against the ask can refuse a shape without
+ * ever having to reason about a coerced one.
+ */
+describe('preload question-answer contract', () => {
+  const answer = {
+    dwarfId: 'claude:s1',
+    toolUseId: 'toolu_01',
+    answers: { 'Which database?': 'Postgres' }
+  }
+
+  it('answers on the agent:answerQuestion channel, naming the dwarf and the ask', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await api.answerDwarfQuestion(answer)
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', answer)
+  })
+
+  it('collapses a non-string dwarf or tool-use id before it crosses the bridge', async () => {
+    // Same discipline as retireDwarf: main's boundary check should only ever
+    // have to reason about a clean string.
+    invoke.mockResolvedValueOnce({ answered: false, error: 'That question is no longer open.' })
+    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 42,
+      toolUseId: null,
+      answers: {}
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
+      dwarfId: '',
+      toolUseId: '',
+      answers: {}
+    })
+  })
+
+  it('drops an answer value that is not a string rather than coercing it', async () => {
+    // A coerced value would name an option nobody chose. Dropped, main sees an
+    // answer that names no option for that question and refuses it — the right
+    // end for a payload the user never gave.
+    invoke.mockResolvedValueOnce({ answered: false, error: 'That question is no longer open.' })
+    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Which database?': 7, 'Which port?': '5432' }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Which port?': '5432' }
+    })
+  })
+
+  it('hands back the refusal and its reason rather than a bare false', async () => {
+    // The panel has to be able to say WHY an answer did not land — an ask that
+    // has since been withdrawn reads nothing like a session nobody holds.
+    const refused = { answered: false, error: 'That session is not one this panel is holding.' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.answerDwarfQuestion(answer)).resolves.toEqual(refused)
   })
 })
