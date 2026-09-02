@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { declareFailureNotice } from '../lib/browse/addProject'
 import type { BrowseFilters } from '../lib/browse/browseQuery'
 import {
   defaultBrowseFilters,
@@ -15,6 +16,9 @@ import type { MineTier, ProjectSummary } from '../types'
  * "you have no projects".
  */
 const UNREADABLE = 'DwarfAI-Miners could not read your projects.'
+
+/** Said when the declare channel itself could not be reached (#85). */
+const UNREACHABLE = 'DwarfAI-Miners could not open the folder picker.'
 
 /**
  * The Mines panel's state (#92): the filters, the pages loaded so far, and
@@ -37,6 +41,16 @@ export function useProjectBrowse() {
   const error = ref<string | null>(null)
   /** True once a page came back short: there is nothing behind it to ask for. */
   const exhausted = ref(false)
+  /** True while main is showing the folder picker (#85). */
+  const adding = ref(false)
+  /**
+   * Why the last adopt did not happen, or null.
+   *
+   * Kept apart from `error` because they are different facts: the list being
+   * unreadable says nothing about a folder being refused, and one of them
+   * appearing where the other belongs would misdescribe both.
+   */
+  const addError = ref<string | null>(null)
 
   let latest = 0
 
@@ -99,16 +113,49 @@ export function useProjectBrowse() {
     return load()
   }
 
+  /**
+   * Adopt a folder as a mine (#85).
+   *
+   * The request carries nothing: main owns the picker, so the renderer asks and
+   * never names a path. A second press while the picker is open is dropped —
+   * the picker is modal in main, and queueing another behind it would reopen it
+   * for a click made before the first one ever appeared.
+   *
+   * On success the list is read again through the ordinary first-page path, so
+   * the new project appears under whatever filters are showing rather than
+   * through a second, parallel refresh that could drift from it. The map needs
+   * nothing from here: it picks the mine up on its next poll.
+   */
+  async function addProject(): Promise<void> {
+    if (adding.value) return
+    adding.value = true
+    addError.value = null
+    try {
+      const result = await window.api.declareMine()
+      // Null for an adopted folder AND for a closed picker: the list is the
+      // feedback for the first, and backing out is not a fault to report.
+      addError.value = declareFailureNotice(result)
+      if (result.declared) await load()
+    } catch {
+      addError.value = UNREACHABLE
+    } finally {
+      adding.value = false
+    }
+  }
+
   return {
     filters,
     projects,
     loading,
     error,
     exhausted,
+    adding,
+    addError,
     load,
     loadMore,
     setSearch,
     setTier,
-    toggleDirection
+    toggleDirection,
+    addProject
   }
 }

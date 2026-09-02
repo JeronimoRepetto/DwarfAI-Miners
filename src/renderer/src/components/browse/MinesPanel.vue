@@ -15,6 +15,10 @@ const props = defineProps<{
   loading: boolean
   error: string | null
   exhausted: boolean
+  /** True while main is showing the folder picker (#85). */
+  adding: boolean
+  /** Why the last adopt did not happen; null for a cancelled picker as well as for a success. */
+  addError: string | null
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +26,7 @@ const emit = defineEmits<{
   tier: [tier: MineTier | null]
   'toggle-direction': []
   'load-more': []
+  add: []
   open: [projectId: string]
 }>()
 
@@ -97,6 +102,25 @@ onBeforeUnmount(stopWatching)
       >
         {{ sortLabel }}
       </button>
+      <!--
+        Adopt a folder as a mine (#85). Main opens the OS picker itself, so
+        this asks and names no path; it is disabled while that picker is up,
+        because it is modal there and a queued second one would reopen it.
+      -->
+      <button
+        class="add-control"
+        type="button"
+        aria-label="Add a project"
+        title="Add a project folder"
+        :disabled="adding"
+        @click="emit('add')"
+      >
+        <!-- Plus on the same rect grid as the titlebar icons. -->
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="7" y="3" width="2" height="10" fill="currentColor" />
+          <rect x="3" y="7" width="10" height="2" fill="currentColor" />
+        </svg>
+      </button>
     </header>
     <div class="tier-chips" role="group" aria-label="Filter by mine type">
       <button
@@ -118,6 +142,12 @@ onBeforeUnmount(stopWatching)
         styled state the rebuild would then have to undo.
       -->
       <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
+      <!--
+        A refused folder is its own fact: the list beside it was read fine, and
+        it must not stand in for the empty state either. A cancelled picker
+        never reaches here at all — it arrives as no notice.
+      -->
+      <p v-if="addError" class="add-error" role="alert">{{ addError }}</p>
       <p v-if="empty" class="panel-empty">
         Nothing here<br />
         Add your project.
@@ -177,7 +207,9 @@ onBeforeUnmount(stopWatching)
   font: inherit;
   font-size: var(--text-meta);
 }
-.sort-control {
+/* The shared enabled-control model: accent border on the control surface. */
+.sort-control,
+.add-control {
   flex: none;
   height: var(--size-search-height);
   padding: 0 10px;
@@ -188,6 +220,28 @@ onBeforeUnmount(stopWatching)
   background: var(--color-control);
   font: inherit;
   font-size: var(--text-meta);
+}
+.add-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-search-height);
+  padding: 0;
+  line-height: 0;
+}
+.add-control svg {
+  width: 12px;
+  height: 12px;
+  /* Blocky pixel look, matching the titlebar icons. */
+  shape-rendering: crispEdges;
+}
+/* The disabled model from the same source: the deep surface, and the control
+   colour carrying both the border and the glyph. */
+.add-control:disabled {
+  border-color: var(--color-control);
+  color: var(--color-control);
+  cursor: default;
+  background: var(--color-panel-deep);
 }
 .tier-chips {
   display: flex;
@@ -231,6 +285,7 @@ onBeforeUnmount(stopWatching)
   text-align: center;
 }
 .panel-error,
+.add-error,
 .panel-loading {
   margin: 0;
   padding: 10px 0;

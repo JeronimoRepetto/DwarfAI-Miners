@@ -71,6 +71,8 @@ function panel(props: Record<string, unknown> = {}) {
       loading: false,
       error: null,
       exhausted: false,
+      adding: false,
+      addError: null,
       ...props
     }
   })
@@ -231,5 +233,67 @@ describe('MinesPanel infinite list', () => {
     await nextTick()
     wrapper.unmount()
     expect(onlyObserver().disconnected).toBe(true)
+  })
+})
+
+/* Adopting a folder from the panel (#85). */
+describe('MinesPanel add control', () => {
+  it('sits in the controls row beside the date order', () => {
+    const wrapper = panel()
+    const controls = wrapper.findAll('.panel-header button').map((button) => button.classes())
+    expect(controls).toEqual([
+      expect.arrayContaining(['sort-control']),
+      expect.arrayContaining(['add-control'])
+    ])
+  })
+
+  it('is a real keyboard-reachable button with a stable name', () => {
+    const add = panel().get('.add-control')
+    expect(add.attributes('type')).toBe('button')
+    expect(add.attributes('aria-label')).toBe('Add a project')
+  })
+
+  it('draws the control as inline pixel art, not text or emoji', () => {
+    const add = panel().get('.add-control')
+    expect(add.find('svg').exists()).toBe(true)
+    expect(add.text()).toBe('')
+  })
+
+  it('asks for a folder when pressed', async () => {
+    const wrapper = panel()
+    await wrapper.get('.add-control').trigger('click')
+    expect(wrapper.emitted('add')).toHaveLength(1)
+  })
+
+  it('is disabled while main is showing the picker', async () => {
+    const wrapper = panel({ adding: true })
+    expect(wrapper.get('.add-control').attributes('disabled')).toBeDefined()
+    await wrapper.get('.add-control').trigger('click')
+    expect(wrapper.emitted('add')).toBeUndefined()
+  })
+
+  it('states why a folder could not be added', () => {
+    const wrapper = panel({ addError: 'That folder could not be saved as a mine.' })
+    expect(wrapper.get('.add-error').text()).toBe('That folder could not be saved as a mine.')
+    expect(wrapper.get('.add-error').attributes('role')).toBe('alert')
+  })
+
+  it('says nothing when there is nothing to say about the last add', () => {
+    // A closed picker reaches the panel as no notice at all: backing out of a
+    // folder chooser is a decision, not a fault to report.
+    expect(panel({ addError: null }).find('.add-error').exists()).toBe(false)
+  })
+
+  it('keeps a failed add apart from a browse that could not be read', () => {
+    const wrapper = panel({ error: 'The projects could not be read.', addError: 'refused' })
+    expect(wrapper.get('.panel-error').text()).toBe('The projects could not be read.')
+    expect(wrapper.get('.add-error').text()).toBe('refused')
+  })
+
+  it('does not let a failed add stand in for an empty list', () => {
+    // The list was read and found nothing; the folder that was refused is a
+    // separate fact and must not replace the invitation to add one.
+    const wrapper = panel({ projects: [], addError: 'refused' })
+    expect(wrapper.get('.panel-empty').text()).toContain('Nothing here')
   })
 })

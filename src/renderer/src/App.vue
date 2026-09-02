@@ -59,11 +59,14 @@ const {
   loading: browseLoading,
   error: browseError,
   exhausted: browseExhausted,
+  adding: addingProject,
+  addError: addProjectError,
   load: loadProjects,
   loadMore: loadMoreProjects,
   setSearch: setProjectSearch,
   setTier: setProjectTier,
-  toggleDirection: toggleProjectOrder
+  toggleDirection: toggleProjectOrder,
+  addProject
 } = useProjectBrowse()
 
 const minesOpen = computed(() => viewState.view.kind === 'mines')
@@ -392,10 +395,13 @@ onBeforeUnmount(() => unsubscribe?.())
         :loading="browseLoading"
         :error="browseError"
         :exhausted="browseExhausted"
+        :adding="addingProject"
+        :add-error="addProjectError"
         @search="setProjectSearch"
         @tier="setProjectTier"
         @toggle-direction="toggleProjectOrder"
         @load-more="loadMoreProjects"
+        @add="addProject"
         @open="openFromBrowse"
       />
       <MapView

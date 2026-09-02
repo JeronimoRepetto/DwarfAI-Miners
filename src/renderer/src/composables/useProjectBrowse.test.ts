@@ -17,6 +17,11 @@ function stubQuery(queryProjects: unknown) {
   Object.defineProperty(window, 'api', { configurable: true, value: { queryProjects } })
 }
 
+/** Both halves of the browse surface, for the tests that adopt a folder (#85). */
+function stubApi(api: { queryProjects?: unknown; declareMine?: unknown }) {
+  Object.defineProperty(window, 'api', { configurable: true, value: api })
+}
+
 /** Resolves only when `release()` is called, so an in-flight page can be observed. */
 function deferred<T>() {
   let release!: (value: T) => void
@@ -285,5 +290,146 @@ describe('useProjectBrowse failures', () => {
     await load()
     await setSearch('a')
     expect(error.value).toBeNull()
+  })
+})
+
+/* Adopting a folder from the panel (#85). */
+describe('useProjectBrowse add project', () => {
+  it('asks main to open the picker, naming no path', async () => {
+    // The channel takes no payload on purpose: one that accepted a path would
+    // be one that accepts any path.
+    const declareMine = vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+    stubApi({ queryProjects: vi.fn().mockResolvedValue(page(0)), declareMine })
+    await useProjectBrowse().addProject()
+    expect(declareMine).toHaveBeenCalledWith()
+  })
+
+  it('reads the list again from the top once a folder is adopted', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE))
+    stubApi({
+      queryProjects,
+      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+    })
+    const { load, loadMore, addProject } = useProjectBrowse()
+    await load()
+    await loadMore()
+    await addProject()
+    expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
+  })
+
+  it('refreshes under the filters that are showing, not a fresh set', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(0))
+    stubApi({
+      queryProjects,
+      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+    })
+    const { setTier, addProject } = useProjectBrowse()
+    await setTier('gold')
+    await addProject()
+    expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ tier: 'gold' }))
+  })
+
+  it('says nothing at all when the picker was closed without a choice', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' })
+    })
+    const { addError, addProject } = useProjectBrowse()
+    await addProject()
+    expect(addError.value).toBeNull()
+  })
+
+  it('leaves the list alone when the picker was closed without a choice', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(0))
+    stubApi({
+      queryProjects,
+      declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' })
+    })
+    const { load, addProject } = useProjectBrowse()
+    await load()
+    await addProject()
+    expect(queryProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('states why a folder could not be added, and does not reread the list', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(0))
+    stubApi({
+      queryProjects,
+      declareMine: vi
+        .fn()
+        .mockResolvedValue({ declared: false, reason: 'That folder could not be saved as a mine.' })
+    })
+    const { addError, load, addProject } = useProjectBrowse()
+    await load()
+    await addProject()
+    expect(addError.value).toBe('That folder could not be saved as a mine.')
+    expect(queryProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a failed add apart from a browse that could not be read', async () => {
+    // Two different facts: the list is fine and the folder was refused.
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(2)),
+      declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'refused' })
+    })
+    const { error, addError, projects, load, addProject } = useProjectBrowse()
+    await load()
+    await addProject()
+    expect(error.value).toBeNull()
+    expect(addError.value).toBe('refused')
+    expect(projects.value).toHaveLength(2)
+  })
+
+  it('reports an unreachable bridge rather than looking like a cancel', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockRejectedValue(new Error('bridge is gone'))
+    })
+    const { addError, adding, addProject } = useProjectBrowse()
+    await addProject()
+    expect(addError.value).toBeTruthy()
+    expect(adding.value).toBe(false)
+  })
+
+  it('is busy for as long as the picker is open', async () => {
+    const pending = deferred<{ declared: boolean }>()
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockReturnValue(pending.promise)
+    })
+    const { adding, addProject } = useProjectBrowse()
+    const inFlight = addProject()
+    expect(adding.value).toBe(true)
+    pending.release({ declared: false })
+    await inFlight
+    expect(adding.value).toBe(false)
+  })
+
+  it('ignores a second press while the picker is still open', async () => {
+    // The picker is modal in main; a second request would queue a second one
+    // behind it for a click the user made before the first ever appeared.
+    const pending = deferred<{ declared: boolean }>()
+    const declareMine = vi.fn().mockReturnValue(pending.promise)
+    stubApi({ queryProjects: vi.fn().mockResolvedValue(page(0)), declareMine })
+    const { addProject } = useProjectBrowse()
+    const first = addProject()
+    await addProject()
+    expect(declareMine).toHaveBeenCalledTimes(1)
+    pending.release({ declared: false })
+    await first
+  })
+
+  it('clears a past add failure when the next one is attempted', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi
+        .fn()
+        .mockResolvedValueOnce({ declared: false, reason: 'refused' })
+        .mockResolvedValueOnce({ declared: true, mineId: 'C:/dev/alpha' })
+    })
+    const { addError, addProject } = useProjectBrowse()
+    await addProject()
+    await addProject()
+    expect(addError.value).toBeNull()
   })
 })

@@ -40,6 +40,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // The browse surface (#92). Answered empty by default: only the tests that
     // are about the Mines panel care what comes back.
     queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
+    // Adopting a folder (#85). Answers "cancelled" by default, the one verdict
+    // that changes nothing, so only the tests about it see any effect.
+    declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -443,6 +446,68 @@ describe('App mines browse', () => {
     await flushPromises()
     await wrapper.find('.mine-card button').trigger('click')
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
+  })
+
+  it('asks main for a folder when the add control is pressed', async () => {
+    const { wrapper, api } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(api.declareMine).toHaveBeenCalledWith()
+  })
+
+  it('shows the adopted project without the panel being reopened', async () => {
+    const queryProjects = vi
+      .fn()
+      .mockResolvedValueOnce({ answered: true, projects: [] })
+      .mockResolvedValueOnce({
+        answered: true,
+        projects: [
+          {
+            id: 'C:/dev/alpha',
+            path: 'C:/dev/alpha',
+            name: 'alpha',
+            declared: true,
+            addedAt: 1,
+            live: true
+          }
+        ]
+      })
+    const { wrapper } = await mountApp({
+      queryProjects,
+      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.mine-card')).toHaveLength(0)
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.mine-card')).toHaveLength(1)
+  })
+
+  it('says nothing at all when the picker was closed without a choice', async () => {
+    const { wrapper } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.add-error').exists()).toBe(false)
+    // Still the invitation to add one, not a complaint about the last attempt.
+    expect(wrapper.get('.panel-empty').text()).toContain('Nothing here')
+  })
+
+  it('states why a folder could not be added', async () => {
+    const { wrapper } = await mountApp({
+      declareMine: vi
+        .fn()
+        .mockResolvedValue({ declared: false, reason: 'That folder could not be saved as a mine.' })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.add-error').text()).toBe('That folder could not be saved as a mine.')
   })
 
   it('reports a refused browse as a failure, never as an empty list', async () => {
