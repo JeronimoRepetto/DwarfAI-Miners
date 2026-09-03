@@ -4,9 +4,21 @@ import { DEFAULT_TOGGLE_ACCELERATOR, formatAccelerator } from '../../../../share
 import type { ShortcutState } from '../../types'
 
 /**
- * The settings panel behind the titlebar gear (see #17). Today it holds one
- * setting — the global panel-toggle shortcut — with a recorder that listens
- * for a key combination.
+ * The Panel shortcut section of the redesigned Settings screen (#138,
+ * screens/settings.md) — the global panel-toggle shortcut, with a recorder
+ * that listens for a key combination.
+ *
+ * REHOSTED from the interim titlebar-era settings overlay (#17, #142): the
+ * capture logic below is unchanged, but this is now a plain section inside
+ * SettingsPanel rather than its own dialog. Its `role="dialog"` and the
+ * header it drew (a "Settings" title plus its own close button) are GONE —
+ * both belonged to the old overlay, and #142 already flagged the dialog role
+ * as stale for a component that is now one section of a full-page screen. The
+ * design gives the whole screen its own title/divider (drawn once, by
+ * SettingsPanel), and leaving Settings is selecting another nav area, exactly
+ * like leaving Map or Mines — there is no per-section close button to draw.
+ * The Escape-to-close keydown handler stays: it is still a reasonable way out
+ * of a listening recorder, and ShortcutSettings.test.ts still pins it.
  *
  * Presentational on purpose, like DwarfActionBar: every piece of state arrives
  * as a prop and every intent leaves as an event. App.vue owns useToggleShortcut
@@ -62,7 +74,9 @@ const hint = computed(() => {
   if (!props.state.registered) {
     return 'Unavailable - another application owns this combination. Click to record a different one.'
   }
-  return 'Active - press it anywhere to show or hide the panel.'
+  // Exact copy from screens/settings.md — not "the panel" as the interim
+  // overlay had it.
+  return 'Active - press it anywhere to show or hide panel.'
 })
 
 /**
@@ -85,8 +99,8 @@ function onRecorderClick(): void {
 
 function onRecorderKeydown(event: KeyboardEvent): void {
   // While listening the recorder consumes the keystroke completely, so Escape
-  // cancels the recording WITHOUT also reaching the dialog's close handler —
-  // changing your mind about a chord must not cost you the panel.
+  // cancels the recording WITHOUT also reaching the section's own close
+  // handler — changing your mind about a chord must not cost you the panel.
   if (props.recording) event.stopPropagation()
   emit('record', event)
 }
@@ -96,112 +110,61 @@ onMounted(() => recorderRef.value?.focus())
 </script>
 
 <template>
-  <div
-    class="shortcut-settings"
-    role="dialog"
-    aria-label="Settings"
-    @keydown.escape="emit('close')"
-  >
-    <header class="settings-head">
-      <h2 class="settings-title">Settings</h2>
-      <button
-        class="close-settings"
-        type="button"
-        aria-label="Close settings"
-        @click="emit('close')"
-      >
-        &times;
-      </button>
-    </header>
-    <div class="field">
-      <span :id="labelId" class="field-label">Panel shortcut</span>
-      <!--
-        The accessible name is the field label plus the current value, so a
-        screen reader announces "Panel shortcut, Ctrl + Alt + Shift + P" rather
-        than a bare combination; aria-pressed carries the listening state and
-        the hint below is wired up as the description.
-      -->
-      <button
-        ref="recorderRef"
-        class="recorder"
-        :class="{ 'is-recording': recording, 'is-broken': state !== null && !state.registered }"
-        type="button"
-        :disabled="busy"
-        :aria-pressed="recording ? 'true' : 'false'"
-        :aria-labelledby="`${labelId} ${valueId}`"
-        :aria-describedby="hintId"
-        @click="onRecorderClick"
-        @keydown="onRecorderKeydown"
-      >
-        <span :id="valueId">{{ recorderText }}</span>
-      </button>
-      <p :id="hintId" class="hint" role="status">{{ hint }}</p>
-      <p v-if="error" class="settings-error" role="alert">{{ error }}</p>
-      <button class="reset" type="button" :disabled="resetDisabled" @click="emit('reset')">
-        Reset to default
-      </button>
-    </div>
-  </div>
+  <section class="shortcut-settings" @keydown.escape="emit('close')">
+    <span :id="labelId" class="field-label">Panel shortcut</span>
+    <!--
+      The accessible name is the field label plus the current value, so a
+      screen reader announces "Panel shortcut, Ctrl + Alt + Shift + P" rather
+      than a bare combination; aria-pressed carries the listening state and
+      the hint below is wired up as the description.
+    -->
+    <button
+      ref="recorderRef"
+      class="recorder"
+      :class="{ 'is-recording': recording, 'is-broken': state !== null && !state.registered }"
+      type="button"
+      :disabled="busy"
+      :aria-pressed="recording ? 'true' : 'false'"
+      :aria-labelledby="`${labelId} ${valueId}`"
+      :aria-describedby="hintId"
+      @click="onRecorderClick"
+      @keydown="onRecorderKeydown"
+    >
+      <span :id="valueId">{{ recorderText }}</span>
+    </button>
+    <p :id="hintId" class="hint" role="status">{{ hint }}</p>
+    <p v-if="error" class="settings-error" role="alert">{{ error }}</p>
+    <button class="reset" type="button" :disabled="resetDisabled" @click="emit('reset')">
+      Reset to default
+    </button>
+  </section>
 </template>
 
 <style scoped>
+/* screens/settings.md's Panel shortcut section: one plain section inside
+   SettingsPanel now, not an overlay — the frame and heavy border belong to
+   the panel-frame variant this mounts inside. */
 .shortcut-settings {
-  /* Anchored under the titlebar, above the mine scene, inside the panel's
-     relative box — the same overlay approach the feed modal uses. */
-  position: absolute;
-  z-index: 95;
-  top: 44px;
-  right: 10px;
-  left: 10px;
-  padding: 10px 12px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--bg-panel);
-  box-shadow: 0 10px 24px rgb(0 0 0 / 45%);
-}
-.settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.settings-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-.close-settings {
-  padding: 0 6px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--ink-dim);
-  cursor: pointer;
-  background: transparent;
-  font: inherit;
-  font-size: 18px;
-  line-height: 1;
-}
-.field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-settings);
 }
 .field-label {
-  color: var(--ink-dim);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  padding-top: var(--space-settings);
+  color: var(--color-cream);
+  font-size: var(--text-section);
 }
 .recorder {
-  padding: 8px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  color: var(--ink);
+  width: 100%;
+  height: var(--size-shortcut-height);
+  padding: 0 var(--space-settings);
+  border: var(--border-active);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
   cursor: pointer;
-  background: #2b2119;
+  background: var(--color-control);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-meta);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -209,8 +172,9 @@ onMounted(() => recorderRef.value?.focus())
   cursor: default;
   opacity: 0.6;
 }
-/* Listening is a state the user must not have to guess at: the lantern accent
-   plus a pulse says the keyboard is being captured right now. */
+/* Listening/broken are Unspecified by the design (foundations.md) — kept on
+   the app's existing lantern/danger tokens rather than inventing a design
+   colour for a state the source never draws. */
 .recorder.is-recording {
   border-color: var(--lantern);
   color: var(--lantern);
@@ -224,15 +188,14 @@ onMounted(() => recorderRef.value?.focus())
   border-color: var(--lantern);
 }
 .recorder:focus-visible,
-.reset:focus-visible,
-.close-settings:focus-visible {
-  outline: 2px solid #ffe29c;
+.reset:focus-visible {
+  outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }
 .hint {
   margin: 0;
-  color: var(--ink-dim);
-  font-size: 11px;
+  color: var(--color-cream);
+  font-size: var(--text-helper);
   line-height: 1.4;
 }
 .settings-error {
@@ -242,28 +205,28 @@ onMounted(() => recorderRef.value?.focus())
   border-radius: 4px;
   color: var(--danger-ink);
   background: var(--danger-bg);
-  font-size: 11px;
+  font-size: var(--text-helper);
   line-height: 1.4;
 }
+/* Reset to default reuses the shared button/segmented-control model
+   (components.md): enabled looks like an active control, disabled fades to
+   the deep background — pointless once the default is already working. */
 .reset {
   align-self: flex-start;
-  margin-top: 2px;
-  padding: 5px 9px;
-  border: 1px solid var(--line-soft);
-  border-radius: 6px;
-  color: var(--ink-dim);
+  padding: 6px var(--space-settings);
+  border: var(--border-active);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
   cursor: pointer;
-  background: transparent;
+  background: var(--color-control);
   font: inherit;
-  font-size: 11px;
-}
-.reset:hover:not(:disabled) {
-  color: #fff;
-  background: #4b3c28;
+  font-size: var(--text-meta);
 }
 .reset:disabled {
   cursor: default;
-  opacity: 0.45;
+  border: 2px solid var(--color-control);
+  color: var(--color-control);
+  background: var(--color-panel-deep);
 }
 @keyframes recorder-pulse {
   50% {
