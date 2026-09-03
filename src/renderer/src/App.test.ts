@@ -886,7 +886,7 @@ describe('App shell', () => {
     expect(wrapper.find('.edge-rail').attributes('aria-expanded')).toBe('false')
   })
 
-  it('collapses back to the rail', async () => {
+  it('collapses back to the rail when there is no mine to keep', async () => {
     const { wrapper, api } = await mountOpenApp()
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
@@ -946,6 +946,55 @@ describe('App concurrent mine', () => {
     await flushPromises()
     expect(wrapper.find('.mines-panel').exists()).toBe(true)
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
+  })
+
+  /*
+   * #153's fifth correction: three controls, three different jobs. The rail's
+   * arrow used to collapse the whole shell, the app mark was inert, and the
+   * interior's round close already worked. What the maintainer ruled is that the
+   * arrow closes only the secondary panel, the mark takes the whole shell back
+   * into the rail, and the close is untouched.
+   */
+  it('closes only the secondary panel from the rail’s arrow, keeping the mine', async () => {
+    const { wrapper, api } = await openMine()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
+    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    // The navigation stack stays: it is how the panel comes back.
+    expect(wrapper.find('.shell-nav').exists()).toBe(true)
+  })
+
+  it('collapses the whole shell from the app mark, mine and all', async () => {
+    const { wrapper, api } = await openMine()
+    await wrapper.find('.nav-mark').trigger('click')
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
+    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.shell-nav').exists()).toBe(false)
+    expect(wrapper.find('.edge-rail').exists()).toBe(true)
+  })
+
+  it('brings the mine back with the panel, because collapsing forgets nothing', async () => {
+    const { wrapper } = await openMine()
+    await wrapper.find('.nav-mark').trigger('click')
+    await flushPromises()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.map-view').exists()).toBe(true)
+  })
+
+  it('lands on the rail when the last mine closes with the panel already closed', async () => {
+    const { wrapper, api } = await openMine()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    await wrapper.find('.close-mine').trigger('click')
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
+    expect(wrapper.find('.mine-scene').exists()).toBe(false)
   })
 
   it('closes the mine from the design’s round close, leaving the panel behind it', async () => {

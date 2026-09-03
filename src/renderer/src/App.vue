@@ -176,17 +176,39 @@ const currentMine = computed<Mine | undefined>(() =>
  * The mine column is width the WINDOW has to be given before anything can be
  * drawn into it, so opening or closing a mine reshapes the shell. Serialized in
  * usePanelLayout behind whatever the rail is doing, because the two overlap.
+ *
+ * The secondary panel is left exactly as it is (#153): the two columns are
+ * independent now, so a mine opening beside a closed secondary must not reopen
+ * it, and a mine closing while the secondary is closed leaves the rail.
  */
 watch(
   () => viewState.mineId !== null,
   (mineOpen) => {
-    if (!layout.value.expanded) return
-    void applyLayout({ expanded: true, mineOpen })
+    // Collapsed into the rail: nothing is drawn, and a mine opened behind it
+    // must not pop the window back out.
+    if (!layout.value.expanded && !layout.value.mineOpen) return
+    void applyLayout({ expanded: layout.value.expanded, mineOpen })
   }
 )
 
-function toggleShell(): void {
+/**
+ * The rail's arrow (#153): it closes the SECONDARY panel and leaves a mine held
+ * open beside it standing — the design's own mine mock is exactly that state.
+ * With no mine open there is nothing left to show, so it lands on the rail.
+ */
+function toggleSecondary(): void {
   void toggleLayout(viewState.mineId !== null)
+}
+
+/**
+ * The app mark above the navigation stack: the whole shell back into the rail.
+ *
+ * Which mine is open is NOT forgotten — `useView` keeps it, so the next press of
+ * the arrow brings the interior back with the panel. The layout says what is
+ * drawn, never what the user last chose.
+ */
+function collapseShell(): void {
+  void applyLayout({ expanded: false, mineOpen: false })
 }
 
 function hidePanel(): void {
@@ -323,10 +345,10 @@ onBeforeUnmount(() => unsubscribe?.())
       they are one surface in the design: the same #f6b644, with the arrow
       turned round.
     -->
-    <EdgeRail :edge="layout.edge" :expanded="layout.expanded" @toggle="toggleShell" />
+    <EdgeRail :edge="layout.edge" :expanded="layout.expanded" @toggle="toggleSecondary" />
 
-    <template v-if="layout.expanded">
-      <div class="shell-secondary">
+    <template v-if="layout.expanded || layout.mineOpen">
+      <div v-if="layout.expanded" class="shell-secondary">
         <!--
           The map container from the design: 21px padding on every side, a 2px
           #fae2b6 border and elevation 5, with the collected-materials totals
@@ -407,12 +429,20 @@ onBeforeUnmount(() => unsubscribe?.())
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
       </div>
 
-      <ShellNav :area="viewState.area" :broken="shortcutBroken" @select="selectArea" />
+      <ShellNav
+        :area="viewState.area"
+        :broken="shortcutBroken"
+        @select="selectArea"
+        @collapse="collapseShell"
+      />
 
       <!--
-        One mine beside one secondary panel: the concurrent model the design's
-        exports prove, and no more than that — the source warns in as many words
-        against assuming arbitrary multi-panel stacking.
+        One mine beside AT MOST one secondary panel: the concurrent model the
+        design's exports prove, and no more than that — the source warns in as
+        many words against assuming arbitrary multi-panel stacking. The column
+        follows the view's own open mine, as it always has; what main's
+        `mineOpen` decides is whether this whole block is drawn, so the app mark
+        can collapse the shell without the view forgetting its mine (#153).
       -->
       <div v-if="currentMine" class="shell-mine">
         <PanelFrame>

@@ -59,11 +59,17 @@ export const DESIGN_SCREEN_HEIGHT = 1080
 export const DESIGN_SECONDARY_WIDTH = 555
 
 /**
- * What the shell spends on itself either side of the secondary column: 8px of
- * padding at each end, the 20px rail, the 38px navigation stack, and the 8px
- * gap on each side of the content.
+ * What the shell spends before any content column: 8px of padding at each end,
+ * the 20px rail, the 38px navigation stack, and the 8px gap between the rail and
+ * whatever comes next.
  */
-export const SHELL_CHROME_WIDTH = 2 * 8 + RAIL_WIDTH + 2 * 8 + 38
+const SHELL_FRAME_WIDTH = 2 * 8 + RAIL_WIDTH + 8 + 38
+
+/**
+ * What the shell spends on itself either side of the secondary column: the frame
+ * above plus the second 8px gap, between the content and the navigation stack.
+ */
+export const SHELL_CHROME_WIDTH = SHELL_FRAME_WIDTH + 8
 
 /**
  * The height the shell's own 8px padding leaves a painting, top and bottom.
@@ -119,6 +125,19 @@ export function expandedWidth(windowHeight: number): number {
 }
 
 /**
+ * The panel with a mine held open and no secondary panel beside it (#153).
+ *
+ * A state the shell did not have until the acceptance run separated the two
+ * controls: the rail's arrow closes the SECONDARY panel, and a mine held open
+ * stays held open. It is the design's own mine mock — rail, navigation stack,
+ * interior, and nothing else — which is what `assets/mine/mine-interior.png`
+ * draws.
+ */
+export function mineOnlyWidth(windowHeight: number): number {
+  return SHELL_FRAME_WIDTH + mineColumnWidth(windowHeight)
+}
+
+/**
  * How much bigger than the design world this display is (#153).
  *
  * Continuous rather than quantised to whole numbers, which the maintainer chose
@@ -153,14 +172,15 @@ export function uiScale(area: ScreenRect): number {
  */
 export function panelWidth(area: ScreenRect, layout: PanelLayoutRequest): number {
   const scale = uiScale(area)
-  if (!layout.expanded) {
+  if (!layout.expanded && !layout.mineOpen) {
     // The rail scales like everything else, but the platform floor is a real
     // pixel count and does not: a window cannot be made narrower than it.
     return Math.min(Math.max(MIN_WINDOW_WIDTH, Math.round(RAIL_WIDTH * scale)), area.width)
   }
-  const design =
-    expandedWidth(DESIGN_SCREEN_HEIGHT) +
-    (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0)
+  const design = layout.expanded
+    ? expandedWidth(DESIGN_SCREEN_HEIGHT) +
+      (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0)
+    : mineOnlyWidth(DESIGN_SCREEN_HEIGHT)
   return Math.min(Math.round(design * scale), area.width)
 }
 

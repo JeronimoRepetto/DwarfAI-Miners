@@ -12,6 +12,7 @@ import {
   RAIL_WIDTH,
   expandedWidth,
   mineColumnWidth,
+  mineOnlyWidth,
   panelBounds,
   panelWidth,
   secondaryColumnWidth,
@@ -46,13 +47,29 @@ const OPEN_WITH_MINE = { expanded: true, mineOpen: true }
  * the derivations that replaced them, so nothing they covered is unwatched.
  */
 describe('panelWidth', () => {
-  it('is the closed rail while closed, whether or not a mine is held open', () => {
+  /*
+   * AMENDED for #153's fifth correction. This case used to read "whether or not
+   * a mine is held open", asserting that `{ expanded: false, mineOpen: true }`
+   * was still just the rail — because `expanded` then meant "the shell is open
+   * at all" and a mine could only ever be held BESIDE an open secondary panel.
+   * The maintainer's ruling separates the two controls: the rail's arrow closes
+   * the SECONDARY panel and leaves the mine standing, so that combination is now
+   * a state the window really has, and it has a width of its own (below).
+   */
+  it('is the closed rail only when nothing at all is drawn', () => {
     // The design's rail is 20px and the renderer still draws exactly that; the
     // WINDOW is the platform's 32px floor, because Windows will not make one
     // narrower and asking for 20 docks differently on each edge (see below).
     expect(panelWidth(AREA, CLOSED)).toBe(MIN_WINDOW_WIDTH)
-    expect(panelWidth(AREA, { expanded: false, mineOpen: true })).toBe(MIN_WINDOW_WIDTH)
     expect(RAIL_WIDTH).toBeLessThan(MIN_WINDOW_WIDTH)
+  })
+
+  it('holds the mine column open with the secondary panel closed beside it', () => {
+    const mineOnly = { expanded: false, mineOpen: true }
+    expect(panelWidth(AREA, mineOnly)).toBe(scaled(AREA, mineOnlyWidth(DESIGN_SCREEN_HEIGHT)))
+    // Wider than the rail, narrower than the panel that carries a secondary.
+    expect(panelWidth(AREA, mineOnly)).toBeGreaterThan(panelWidth(AREA, CLOSED))
+    expect(panelWidth(AREA, mineOnly)).toBeLessThan(panelWidth(AREA, OPEN_WITH_MINE))
   })
 
   it('opens to the design world’s own width, scaled onto this display', () => {

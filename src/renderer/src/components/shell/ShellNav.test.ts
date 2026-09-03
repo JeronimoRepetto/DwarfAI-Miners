@@ -51,6 +51,29 @@ describe('ShellNav', () => {
     expect(nav.find('.nav-mark').exists()).toBe(true)
   })
 
+  /*
+   * #153's fifth correction. The mark was a decoration and the rail's arrow
+   * collapsed the whole shell; the maintainer's ruling swaps them — the arrow
+   * closes only the secondary panel, and the app mark is what puts the whole
+   * thing back in the rail.
+   */
+  it('makes the app mark the control that collapses the whole shell', () => {
+    const nav = mountNav()
+    const mark = nav.find('.nav-mark')
+    expect(mark.element.tagName).toBe('BUTTON')
+    expect(mark.attributes('type')).toBe('button')
+    expect(mark.attributes('aria-label')).toMatch(/collapse/i)
+  })
+
+  it('asks to be collapsed, and collapses nothing itself', () => {
+    // Same rule the rail already keeps: the window is main's, so this reports
+    // the press and renders whatever layout comes back.
+    const nav = mountNav()
+    nav.find('.nav-mark').trigger('click')
+    expect(nav.emitted('collapse')).toHaveLength(1)
+    expect(nav.emitted('select')).toBeUndefined()
+  })
+
   it('draws each icon from the design’s own SVG rather than a substitute', () => {
     // A missing icon has to fail loudly. Rendering an empty 19px square, or
     // quietly reusing a neighbour's glyph, is the failure this catches.

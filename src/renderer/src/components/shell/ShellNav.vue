@@ -21,12 +21,36 @@ defineProps<{
   broken: boolean
 }>()
 
-const emit = defineEmits<{ select: [area: ShellArea] }>()
+const emit = defineEmits<{
+  select: [area: ShellArea]
+  /**
+   * The app mark was pressed: put the whole shell back in the rail (#153).
+   *
+   * Its own event rather than an area, because it is not one — the design's
+   * navigation stack selects between five screens and the mark above it is not
+   * a sixth. Decides nothing here for the same reason the rail's arrow does not:
+   * the window is main's, and what gets drawn is the layout that comes back.
+   */
+  collapse: []
+}>()
 </script>
 
 <template>
   <nav class="shell-nav" aria-label="DwarfAI-Miners sections">
-    <img class="nav-mark" :src="TRAY_ICON_SRC" alt="" draggable="false" />
+    <!--
+      The app mark, and the control that collapses the whole shell back into
+      the rail (#153). It was inert until the acceptance run; the arrow used to
+      do this and now closes only the secondary panel.
+    -->
+    <button
+      class="nav-mark"
+      type="button"
+      aria-label="Collapse DwarfAI-Miners into the rail"
+      title="Collapse DwarfAI-Miners"
+      @click="emit('collapse')"
+    >
+      <img class="nav-mark-art" :src="TRAY_ICON_SRC" alt="" draggable="false" />
+    </button>
     <div class="nav-stack">
       <button
         v-for="item in SHELL_NAV"
@@ -80,8 +104,21 @@ const emit = defineEmits<{ select: [area: ShellArea] }>()
   flex: none;
   width: var(--size-icon);
   height: var(--size-icon);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.nav-mark-art {
+  display: block;
+  width: 100%;
+  height: 100%;
   image-rendering: pixelated;
   user-select: none;
+}
+.nav-mark:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 /*
  * The stack is centred against the PANEL, not against what is left below the

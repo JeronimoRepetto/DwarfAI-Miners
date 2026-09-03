@@ -23,9 +23,18 @@ describe('EdgeRail', () => {
     expect(mountRail({ expanded: true }).attributes('aria-expanded')).toBe('true')
   })
 
+  /*
+   * AMENDED for #153's fifth correction. This case asserted the open label said
+   * "collapse", because the arrow collapsed the WHOLE shell. The maintainer's
+   * ruling is that it closes only the secondary panel and leaves an open mine
+   * standing — collapsing everything is the app mark's job now (ShellNav) — so
+   * the name has to stop promising the bigger action.
+   */
   it('says what pressing it will do, in both states', () => {
     expect(mountRail().attributes('aria-label')).toMatch(/open/i)
-    expect(mountRail({ expanded: true }).attributes('aria-label')).toMatch(/collapse/i)
+    const open = mountRail({ expanded: true }).attributes('aria-label')
+    expect(open).toMatch(/close/i)
+    expect(open).not.toMatch(/collapse/i)
   })
 
   it('asks to be toggled, and decides nothing itself', () => {
