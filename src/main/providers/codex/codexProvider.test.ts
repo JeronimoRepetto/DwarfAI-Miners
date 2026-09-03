@@ -620,4 +620,50 @@ describe('CodexProvider', () => {
       expect(makeProvider().textDelivery('codex:nobody')).toBeNull()
     })
   })
+
+  /**
+   * Issue #166: the phantom project. A Codex Desktop session that was never
+   * bound to a real workspace folder writes its OWN artifact-storage path
+   * (`.../Documents/Codex/<date>/<slug>`) as session_meta.cwd — verified
+   * live on the maintainer's machine, 2026-09-03. Every rollout in this file
+   * lives under the SAME `.codex\sessions` root regardless of cwd (see
+   * `beforeEach` above), which is why the passing cases below matter: the
+   * storage location a rollout is FOUND under never decides its project —
+   * only its cwd field does, and only once that field is checked against
+   * Codex's own artifact-storage shape.
+   */
+  describe('issue #166 — the storage path is never a project', () => {
+    function withCwd(rolloutText: string, cwd: string): string {
+      const lines = rolloutText.split('\n').filter(Boolean)
+      const sessionMeta: { payload: Record<string, unknown> } = JSON.parse(lines[0]!)
+      sessionMeta.payload.cwd = cwd
+      lines[0] = JSON.stringify(sessionMeta)
+      return lines.join('\n') + '\n'
+    }
+
+    const PHANTOM_SESSION_ID = '01a048b5-0000-0000-0000-000000000166'
+    const PHANTOM_CWD = 'C:\\Users\\j\\Documents\\Codex\\2026-09-03\\este-proyecto-usa-electron'
+
+    it("drops a session whose cwd IS Codex's own artifact-storage path, rather than laundering it as a project", async () => {
+      fake.addFile(
+        `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-05-00-${PHANTOM_SESSION_ID}.jsonl`,
+        withCwd(rollout.replaceAll(SESSION_ID, PHANTOM_SESSION_ID), PHANTOM_CWD),
+        NOW - 30_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots.find((s) => s.sessionId === PHANTOM_SESSION_ID)).toBeUndefined()
+      // The real sibling sessions from beforeEach are unaffected.
+      expect(snapshots.map((s) => s.sessionId).sort()).toEqual([BUSY_SESSION_ID, SESSION_ID])
+    })
+
+    it('still attributes a rollout stored under the Codex root to its real cwd (the storage location itself is never the signal)', async () => {
+      // This is the existing default-fixture behaviour, pinned explicitly for
+      // #166: the rollout physically lives under `${ROOT}` (.codex\sessions)
+      // exactly like the phantom-cwd case above, yet its cwd is a real
+      // project path and it must attribute there, not to its storage folder.
+      const snapshots = await makeProvider().scan()
+      const idle = snapshots.find((s) => s.sessionId === SESSION_ID)!
+      expect(idle.cwd).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
+    })
+  })
 })

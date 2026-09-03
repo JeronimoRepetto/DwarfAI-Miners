@@ -83,6 +83,45 @@ export function parseCodexRolloutHead(headText: string): CodexRolloutHead | null
   return null
 }
 
+const STORAGE_DATE_SEGMENT_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * True when `cwd` is shaped like Codex's own artifact-storage folder —
+ * `.../Documents/Codex/<YYYY-MM-DD>/<slug>` — rather than a real working
+ * directory (issue #166).
+ *
+ * Verified live on the maintainer's machine (2026-09-03): a "Codex Desktop"
+ * session (`session_meta.payload.originator`, `source: "vscode"`) asked
+ * about a real repository the user never opened as its bound workspace
+ * wrote exactly this shape as its own `session_meta.cwd` — a sibling rollout
+ * from the same window, for a session that DID have a bound folder, carried
+ * the real repository path in the same field instead. So this is not a
+ * parsing bug fixable by reading a different field: for a session shaped
+ * this way, Codex itself never recorded any other cwd, and laundering the
+ * storage path as a project is exactly the phantom-project failure the
+ * issue reports. `parseCodexRolloutHead`/the registry's `threads.cwd` both
+ * feed this — same string, same check.
+ *
+ * Windows-verified only. macOS/Linux equivalents are unconfirmed; see
+ * docs/codex-v2-format.md.
+ */
+export function isCodexArtifactStorageCwd(cwd: string): boolean {
+  const segments = cwd.split(/[\\/]+/).filter((segment) => segment !== '')
+  if (segments.length < 4) return false
+  const slug = segments[segments.length - 1]
+  const date = segments[segments.length - 2]
+  const codexSegment = segments[segments.length - 3]
+  const documentsSegment = segments[segments.length - 4]
+  return (
+    documentsSegment === 'Documents' &&
+    codexSegment === 'Codex' &&
+    date !== undefined &&
+    STORAGE_DATE_SEGMENT_RE.test(date) &&
+    slug !== undefined &&
+    slug !== ''
+  )
+}
+
 function outputText(payload: Rec): string | undefined {
   if (!Array.isArray(payload.content)) return undefined
   const texts = payload.content

@@ -378,3 +378,52 @@ mode).
 - The click-to-focus PID gap is **verified absent** in the sampled data
   (`chat_processes.json` only covers shell-command PIDs, and was stale); this is not
   proof no such mapping exists anywhere, just that none was found.
+
+## 7. `session_meta.cwd` is not always a working directory — issue #166, VERIFIED
+
+The phantom-project report (a Codex question about this very repository produced a
+new project named after Codex's own storage slug instead) was reproduced live on
+this machine on 2026-09-03, in the exact window it was reported.
+
+**Field inventory, re-confirmed against one real rollout head on this machine
+today**: `session_meta.payload` carries (at minimum) `session_id`, `id`,
+`forked_from_id`, `parent_thread_id`, `timestamp`, `cwd`, `originator`,
+`cli_version`, `source`, `thread_source`, `agent_nickname`, `agent_path`,
+`model_provider`, `base_instructions`, `history_mode`,
+`subagent_history_start_ordinal`, `multi_agent_version`, `context_window` **[V, keys
+only — not reported here: values]**. `cwd` **is** carried, exactly as §2.2 of
+`docs/provider-formats.md` already documented — this is not a missing-field bug.
+
+**But the value is not trustworthy on its own.** Two rollouts started three minutes
+apart on this machine, in the same investigation window:
+
+- One session (a real, folder-bound workspace) carried the real repository path in
+  `session_meta.cwd`, correctly.
+- The other — `originator: "Codex Desktop"`, `source: "vscode"`, never bound to an
+  opened workspace folder — carried its OWN artifact-storage path instead:
+  `<home>\Documents\Codex\<YYYY-MM-DD>\<slug>`, matching this repository's
+  `~/Documents/Codex/<date>/<slug>/` layout byte-for-byte in shape (confirmed: this
+  machine's own `~/Documents/Codex/2026-09-03/` directory contains a slug directory
+  from the same window). The same value is mirrored into `state_5.sqlite.threads.cwd`
+  (§3), so reading the registry instead of the rollout does not avoid this.
+
+**Conclusion: this is not a parsing bug.** For a Codex Desktop session with no bound
+workspace, Codex itself never records any cwd other than its own storage path —
+there is no second field, no `turn_context.workspace_roots` entry, and no registry
+column that recovers the real project (`workspace_roots` on a real sampled rollout
+carries a mix of the real cwd plus internal `.codex\automations\...` /
+`.codex\visualizations\...` paths, so it is not a clean substitute either). Trusting
+`cwd` unconditionally launders Codex's own storage folder into a phantom project
+exactly as reported.
+
+**Fix implemented**: `src/main/providers/codex/parse.ts` exports
+`isCodexArtifactStorageCwd(cwd)`, a structural check (both `\` and `/` separators)
+for the `.../Documents/Codex/<YYYY-MM-DD>/<slug>` shape. `codexProvider.ts` checks
+every resolved cwd (registry or rollout, same string either way) against it and
+drops the session — the same "no honest project, so no mine" behavior the Claude
+provider already has for a session whose `cwd` cannot be read at all
+(`parseClaudeSessionEntry` returns `null`) — rather than inventing an "unknown
+project" bucket or attributing to the storage folder. **[V — this machine, 2026-09-03,
+confidence: high for the Windows/Codex-Desktop/no-open-folder case sampled here; the
+macOS/Linux equivalent artifact-storage layout, if one exists, is UNCONFIRMED — this
+heuristic is Windows-verified only.]**

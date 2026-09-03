@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   extractCodexFeed,
+  isCodexArtifactStorageCwd,
   parseCodexRolloutContext,
   parseCodexRolloutHead,
   parseCodexRolloutTail
@@ -142,6 +143,49 @@ describe('parseCodexRolloutContext', () => {
       model: 'gpt-5.6-terra',
       effort: 'high'
     })
+  })
+})
+
+/**
+ * Issue #166: a "Codex Desktop"/`vscode`-sourced session asked about a real
+ * repository the user never opened as its bound workspace wrote its OWN
+ * artifact-storage folder as session_meta.cwd — `.../Documents/Codex/<date>/
+ * <slug>` — verified live on the maintainer's machine (2026-09-03): the
+ * exact same window produced one sibling rollout whose cwd was the real
+ * repository, and one whose cwd was this shape. Codex itself never recorded
+ * any other cwd for the second session, so laundering this value as a
+ * project would invent the phantom project the issue reports. Windows-
+ * verified only; see docs/codex-v2-format.md for the platform gap.
+ */
+describe('isCodexArtifactStorageCwd', () => {
+  it('recognizes the Documents/Codex/<date>/<slug> storage shape', () => {
+    expect(
+      isCodexArtifactStorageCwd(
+        'C:\\Users\\j\\Documents\\Codex\\2026-09-03\\este-proyecto-usa-electron'
+      )
+    ).toBe(true)
+  })
+
+  it('recognizes the shape with forward slashes too', () => {
+    expect(isCodexArtifactStorageCwd('/home/j/Documents/Codex/2026-09-03/some-slug')).toBe(true)
+  })
+
+  it('does not match a real project path', () => {
+    expect(isCodexArtifactStorageCwd('C:\\Users\\j\\Desktop\\Sample-Project')).toBe(false)
+  })
+
+  it('does not match a real project that happens to be named Codex', () => {
+    expect(isCodexArtifactStorageCwd('C:\\Users\\j\\Desktop\\Codex\\2026-09-03\\notes')).toBe(false)
+  })
+
+  it('does not match without a well-formed date segment', () => {
+    expect(isCodexArtifactStorageCwd('C:\\Users\\j\\Documents\\Codex\\not-a-date\\some-slug')).toBe(
+      false
+    )
+  })
+
+  it('does not match a too-short path', () => {
+    expect(isCodexArtifactStorageCwd('Documents\\Codex\\2026-09-03')).toBe(false)
   })
 })
 
