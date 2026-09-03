@@ -8,7 +8,8 @@ import {
   loopOf,
   onceOf,
   sequenceDurationMs,
-  sequenceFrameAt
+  sequenceFrameAt,
+  sequenceIsStill
 } from './spriteSheet'
 
 /** A six-frame strip, the shape the worker's idle sheet actually ships as. */
@@ -125,6 +126,22 @@ describe('sequenceDurationMs', () => {
 
   it('reports a sequence that starts on a loop as settled straight away', () => {
     expect(sequenceDurationMs([loopOf(SIX)])).toBe(0)
+  })
+})
+
+describe('sequenceIsStill', () => {
+  it('is true for a lone one-frame clip, which can never change', () => {
+    expect(sequenceIsStill([loopOf(ONE)])).toBe(true)
+    expect(sequenceIsStill([onceOf(ONE)])).toBe(true)
+  })
+
+  it('is true for nothing at all', () => {
+    expect(sequenceIsStill([])).toBe(true)
+  })
+
+  it('is false as soon as there is a second frame or a second clip to reach', () => {
+    expect(sequenceIsStill([loopOf(THREE)])).toBe(false)
+    expect(sequenceIsStill([onceOf(ONE), loopOf(ONE)])).toBe(false)
   })
 })
 

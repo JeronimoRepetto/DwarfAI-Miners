@@ -1,21 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { DWARF_FRAME_SRC, preloadDwarfArt } from '../../lib/art'
+import { preloadDwarfArt } from '../../lib/art'
 import { bubbleRowOffsetPx } from '../../lib/overlay/bubbleLayout'
 import {
   kickMarker as kickMarkerFor,
   sendMarker as sendMarkerFor
 } from '../../lib/delivery/deliveryVerdict'
+import { LEAVING_EXIT_MS, isSpriteFlipped, statusAnimationClass } from '../../lib/presentation'
+import { dwarfClips, isAwaitingAnswer, stillFrameOf } from '../../lib/sprite/dwarfSequence'
 import {
-  LEAVING_EXIT_MS,
-  NEUTRAL_DWARF_FRAME,
-  isDwarfSilent,
-  isPickImpact,
-  isSpriteFlipped,
-  sceneDwarfAnimation,
-  statusAnimationClass,
-  stillDwarfAnimation
-} from '../../lib/presentation'
+  SPRITE_FRAME_SIZE,
+  backgroundSizePercent,
+  framePositionPercent,
+  isImpactFrame,
+  sequenceFrameAt,
+  sequenceIsStill,
+  type SpriteClip
+} from '../../lib/sprite/spriteSheet'
 import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { computeTooltipPlacement } from '../../lib/overlay/tooltip'
 import type { Dwarf, DwarfAnswerState, DwarfKickState, DwarfSendState } from '../../types'
@@ -249,21 +250,6 @@ function hideTooltip(): void {
 preloadDwarfArt()
 
 /**
- * Whether this dwarf has produced nothing for its whole window (issue #47).
- * Read off the wire figure the provider stamps, against the provider's own
- * windows — the sprite decides nothing about it, it only draws it. The
- * attendance goes with it because that is what picks the window (issue #68);
- * the sprite never re-derives it from the rank.
- *
- * Note what this is NOT: a status. `props.dwarf.status` is untouched, so the
- * animation class, the accessible name and every consumer downstream still see
- * a working dwarf. Only the pose changes.
- */
-const silent = computed(() =>
-  isDwarfSilent(props.dwarf.role, props.dwarf.silentForMs, props.dwarf.attendance)
-)
-
-/**
  * Whether this viewer asked their operating system for less movement (issue
  * #71). Read the way every other site in the app reads it — the shared
  * prefersReducedMotion query, not a fifth mechanism — and then WATCHED, which
@@ -277,25 +263,31 @@ const stopWatchingMotion = watchReducedMotion((reduced) => {
 })
 onBeforeUnmount(stopWatchingMotion)
 
-// The waiting reason is passed straight through, never re-derived here: only
-// the provider knows whether a human was actually asked something (issue #60),
-// and a sprite that guessed would be the fabricated status the issue forbids.
-//
-// Reduced motion collapses whatever loop that picks onto one held pose, which
-// the watcher below then draws without starting a timer at all. Each state
-// still holds a DIFFERENT pose, so the panel loses movement and no information
-// (see stillDwarfAnimation).
-const animation = computed(() => {
-  const loop = sceneDwarfAnimation(
-    props.dwarf.status,
-    props.dwarf.role,
-    props.walking === true,
-    silent.value,
-    props.dwarf.waitingReason
-  )
-  return reducedMotion.value ? stillDwarfAnimation(loop) : loop
-})
-const frameIndex = ref(0)
+/**
+ * Whether a person has been asked something and has not answered (issue #60).
+ *
+ * The waiting reason is passed straight through, never re-derived here: only
+ * the provider knows whether a human was actually asked, and a sprite that
+ * guessed would be the fabricated status the issue forbids.
+ */
+const awaiting = computed(() => isAwaitingAnswer(props.dwarf.status, props.dwarf.waitingReason))
+
+/**
+ * The strips to play, and how far into them the drawing is.
+ *
+ * `elapsedMs` rather than a frame counter, because a sequence is more than one
+ * strip: the elapsed figure is what lets a transition played once hand over to
+ * the loop behind it without a second timer, and it makes the whole cadence a
+ * pure function this component only has to advance (see lib/sprite).
+ *
+ * The watcher carries the PREVIOUS answer into `dwarfClips`, which is what
+ * turns a state into a transition — a foreman lies down when the question
+ * arrives and gets up when it is answered, rather than simply being asleep.
+ * Vue hands `undefined` as the old value on the immediate first run, which is
+ * exactly the "nothing to leave" case the sequence wants.
+ */
+const clips = ref<readonly SpriteClip[]>([])
+const elapsedMs = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
 
 function stopCycle(): void {
@@ -304,31 +296,57 @@ function stopCycle(): void {
   timer = undefined
 }
 
-// Any change of loop restarts it on its first frame, so a dwarf that just
-// picked up a task never starts mid-swing — and one that breaks its silence
-// picks the pick back up from the top of the swing rather than mid-stroke.
-// A loop of fewer than two frames (the silence pose, #47) starts no timer at
-// all, which is why standing still costs less than working.
+// Any change of state restarts the sequence at its head, so a dwarf that just
+// picked up a task never starts mid-gesture.
 watch(
-  animation,
-  (next) => {
+  [awaiting, () => props.dwarf.role] as const,
+  ([nowAwaiting, role], previous) => {
+    clips.value = dwarfClips(role, nowAwaiting, previous?.[0])
+    elapsedMs.value = 0
+  },
+  { immediate: true }
+)
+
+const position = computed(() =>
+  // Reduced motion is answered by holding one frame and running no timer at
+  // all, which is the same shape a one-frame loop already had (issue #71).
+  reducedMotion.value ? stillFrameOf(clips.value) : sequenceFrameAt(clips.value, elapsedMs.value)
+)
+const sheet = computed(() => clips.value[position.value.clip]?.sheet)
+
+// One interval per sprite, stepping at the CURRENT clip's own hold — so a
+// transition drawn at a different tempo from the loop it hands over to needs
+// no second mechanism. A sequence that can never change starts no timer.
+watch(
+  [clips, reducedMotion, () => sheet.value?.frameMs],
+  () => {
     stopCycle()
-    frameIndex.value = 0
-    if (next.frames.length < 2) return
+    if (reducedMotion.value || sequenceIsStill(clips.value)) return
+    const step = sheet.value?.frameMs
+    if (step === undefined || step <= 0) return
     timer = setInterval(() => {
-      frameIndex.value = (frameIndex.value + 1) % next.frames.length
-    }, next.frameMs)
+      elapsedMs.value += step
+    }, step)
   },
   { immediate: true }
 )
 onBeforeUnmount(stopCycle)
 
-const frame = computed(() => {
-  // A neutral stand covers the pause between the click and the terminal focus.
-  if (props.activating === true) return NEUTRAL_DWARF_FRAME
-  return animation.value.frames[frameIndex.value] ?? NEUTRAL_DWARF_FRAME
+/**
+ * The strip, scaled to one sprite box per frame, and slid to show exactly one
+ * of them. Percentages rather than pixels so the arithmetic survives both
+ * scales the drawing is under — the scene's own and the per-depth one — neither
+ * of which lands on a whole multiple of a 36px frame.
+ */
+const frameStyle = computed(() => {
+  const strip = sheet.value
+  if (strip === undefined) return undefined
+  return {
+    '--sheet-image': `url(${strip.src})`,
+    '--sheet-size': `${backgroundSizePercent(strip)}% 100%`,
+    '--sheet-position': `${framePositionPercent(position.value.frame, strip.frames)}% 0`
+  }
 })
-const frameSrc = computed(() => DWARF_FRAME_SRC[frame.value])
 
 const isForeman = computed(() => props.dwarf.role === 'foreman')
 const rootClasses = computed(() => [
@@ -350,9 +368,11 @@ const rootClasses = computed(() => [
   }
 ])
 // The walk-out lasts exactly as long as the runtime keeps a leaving dwarf.
+// `--frame-aspect` carries the authored frame box so the CSS never repeats it.
 const exitStyle = computed(() => ({
   '--exit-ms': `${LEAVING_EXIT_MS}ms`,
-  '--depth-scale': String(props.depthScale ?? 1)
+  '--depth-scale': String(props.depthScale ?? 1),
+  '--frame-aspect': `${SPRITE_FRAME_SIZE.width} / ${SPRITE_FRAME_SIZE.height}`
 }))
 
 /**
@@ -360,15 +380,21 @@ const exitStyle = computed(() => ({
  * mounts a fresh element and replays the animation instead of the CSS running
  * once and never again. Only a dwarf actually stood at the vein throws them —
  * not one still walking there, and not one resting.
+ *
+ * Which frame IS a hit is the sheet's own claim rather than a pose name the
+ * sprite recognises, so the swing #74 has yet to draw brings the sparks back by
+ * declaring one. No sheet drawn so far declares any, and an idle loop that did
+ * would throw debris off a dwarf standing still.
  */
 const SPARKS_PER_HIT = 5
 const impactCount = ref(0)
 watch(
-  () => frame.value,
-  (pose) => {
+  () => position.value,
+  (now) => {
     if (props.dwarf.status !== 'working') return
     if (props.walking === true) return
-    if (isPickImpact(pose)) impactCount.value++
+    const strip = clips.value[now.clip]?.sheet
+    if (strip !== undefined && isImpactFrame(strip, now.frame)) impactCount.value++
   }
 )
 const ariaLabel = computed(
@@ -422,7 +448,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       @focus="showTooltip"
       @blur="hideTooltip"
     >
-      <img class="dwarf-frame" :src="frameSrc" alt="" aria-hidden="true" draggable="false" />
+      <span class="dwarf-frame" :style="frameStyle" aria-hidden="true"></span>
       <!-- Debris off the rock face, one burst per pick hit (see impactCount). -->
       <span v-if="impactCount > 0" :key="impactCount" class="spark-burst" aria-hidden="true">
         <i v-for="n in SPARKS_PER_HIT" :key="n" class="spark" :style="{ '--spark': n }"></i>
@@ -506,10 +532,27 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 }
 .dwarf-frame {
   display: block;
-  width: auto;
   /*
-   * All nine poses share one canvas, so a fixed height fixes the width too.
-   *
+   * The strip is one PNG holding every frame side by side; the box shows one
+   * of them. `--sheet-size` stretches the image to one box per frame and
+   * `--sheet-position` slides it (see lib/sprite/spriteSheet.ts). Both arrive
+   * as percentages so the arithmetic survives the two scales below, neither of
+   * which lands on a whole multiple of a 36px frame.
+   */
+  aspect-ratio: var(--frame-aspect);
+  background-image: var(--sheet-image);
+  background-repeat: no-repeat;
+  background-size: var(--sheet-size);
+  background-position: var(--sheet-position);
+  /*
+   * The one declaration that keeps hand-drawn pixel art looking hand-drawn
+   * (issue #90). The frame is 38px tall and is drawn at roughly 100, modulated
+   * again per depth, so the scale factor is essentially never an integer —
+   * without this the browser interpolates, every hard edge goes soft, and the
+   * art gets the blame for a rendering decision.
+   */
+  image-rendering: pixelated;
+  /*
    * Two scales compose here, and they answer different questions.
    * `--sprite-height` is how big the SCENE is drawn — MineScene derives it from
    * the measured cave box, so a dwarf is the right size next to the rock at

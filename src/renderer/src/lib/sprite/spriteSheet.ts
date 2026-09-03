@@ -95,6 +95,20 @@ export function isImpactFrame(sheet: SpriteSheet, index: number): boolean {
 }
 
 /**
+ * Whether this sequence can never change, and therefore needs no timer at all.
+ *
+ * The guarantee predates the sheets: a loop of fewer than two frames used to be
+ * the silence pose (#47), and a dwarf the panel suspects is dead should cost
+ * less to draw than a live one. No sheet drawn so far is single-framed, so
+ * nothing real reaches it today — it stays because the next sheet might, and
+ * because reduced motion answers the same question in the same shape.
+ */
+export function sequenceIsStill(clips: readonly SpriteClip[]): boolean {
+  if (clips.length > 1) return false
+  return (clips[0]?.sheet.frames ?? 0) < 2
+}
+
+/**
  * How long a sequence plays before it settles on its looping tail. Zero for a
  * sequence that opens on a loop, which is every sequence with no transition.
  */

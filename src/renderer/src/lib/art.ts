@@ -7,23 +7,12 @@
  * build time instead of rendering as a broken image.
  */
 import type { DwarfRole, Material, MineTier } from '../types'
-import type { DwarfFrame } from './presentation'
 
 import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
 import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-long-idle-v2-Sheet.png'
 import foremanSleepingSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-sleeping-v2-Sheet.png'
 import foremanStartSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-strart-sleep-v2-Sheet.png'
 import workerIdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker-idle-v2-Sheet.png'
-
-import dwarfForemanCheck from '../assets/art/concept/dwarf-foreman-check.png'
-import dwarfForemanIdle from '../assets/art/concept/dwarf-foreman-idle.png'
-import dwarfIdle from '../assets/art/concept/dwarf-idle.png'
-import dwarfPick1 from '../assets/art/concept/dwarf-pick-1.png'
-import dwarfPick2 from '../assets/art/concept/dwarf-pick-2.png'
-import dwarfRest1 from '../assets/art/concept/dwarf-rest-1.png'
-import dwarfRest2 from '../assets/art/concept/dwarf-rest-2.png'
-import dwarfWalk1 from '../assets/art/concept/dwarf-walk-1.png'
-import dwarfWalk2 from '../assets/art/concept/dwarf-walk-2.png'
 
 import interiorBronze from '../assets/art/concept/interior-bronze.jpg'
 import interiorCopper from '../assets/art/concept/interior-copper.jpg'
@@ -46,19 +35,6 @@ import nuggetSilver from '../assets/art/nugget-silver.png'
 import nuggetUranium from '../assets/art/nugget-uranium.png'
 
 import mapBg from '../assets/art/concept/map-bg.jpg'
-
-/** Every dwarf pose. All nine share one canvas, so frames swap without shifting. */
-export const DWARF_FRAME_SRC: Record<DwarfFrame, string> = {
-  idle: dwarfIdle,
-  'pick-1': dwarfPick1,
-  'pick-2': dwarfPick2,
-  'walk-1': dwarfWalk1,
-  'walk-2': dwarfWalk2,
-  'rest-1': dwarfRest1,
-  'rest-2': dwarfRest2,
-  'foreman-idle': dwarfForemanIdle,
-  'foreman-check': dwarfForemanCheck
-}
 
 /**
  * One packed animation strip. `idle` is the only name every rank is required to
@@ -158,14 +134,20 @@ export const MAP_BG_SRC = mapBg
 let preloaded = false
 
 /**
- * Pull every dwarf frame into the browser cache once, so the first frame swap
- * of an animation does not flash an empty sprite. Safe to call from every
+ * Pull every dwarf strip into the browser cache once, so the first frame of an
+ * animation does not draw against an empty box. Safe to call from every
  * DwarfSprite instance; only the first call does any work.
+ *
+ * Cheaper than it was, and by more than the count suggests: five files instead
+ * of nine, and each of them a handful of kilobytes of pixel art rather than a
+ * ~195 KB painted pose (see docs/animation-loops.md).
  */
 export function preloadDwarfArt(): void {
   if (preloaded || typeof Image === 'undefined') return
   preloaded = true
-  for (const src of Object.values(DWARF_FRAME_SRC)) {
-    new Image().src = src
+  for (const sheets of Object.values(DWARF_SHEET_SRC)) {
+    for (const src of Object.values(sheets)) {
+      new Image().src = src
+    }
   }
 }

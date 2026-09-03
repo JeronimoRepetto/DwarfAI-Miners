@@ -2,36 +2,53 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
-import { sceneDwarfAnimation } from '../../lib/presentation'
+import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
+import { dwarfClips } from '../../lib/sprite/dwarfSequence'
+import { SPRITE_FRAME_SIZE, loopOf } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf } from '../../testing/factories'
-import {
-  DWARF_SILENCE_WINDOW_MS,
-  type Dwarf,
-  type DwarfKickState,
-  type DwarfSendState
-} from '../../types'
+import { DWARF_SILENCE_WINDOW_MS, type DwarfKickState, type DwarfSendState } from '../../types'
 import DwarfSprite from './DwarfSprite.vue'
 import spriteSource from './DwarfSprite.vue?raw'
 
 /*
- * Every animation the app currently ships cycles at least two poses, so the
- * sprite's "do not start a timer for a single frame" branch has no real dwarf
- * to reach it. It is still a live guarantee — a one-pose loop is exactly what
- * the deferred foreman-waiting art may turn out to be — so that one test
- * substitutes the loop rather than asserting through a status that happens to
- * be single-framed today.
+ * Every sheet the maintainer has drawn holds at least six frames and none of
+ * them declares an impact, so two live guarantees have no real dwarf to reach
+ * them: "a sequence that can never change starts no timer", and "sparks fire
+ * on a frame the SHEET names as a hit". Both are substituted here rather than
+ * asserted through a state that happens to satisfy them today — which is what
+ * lets #74's pick loop restore the sparks without a second refactor.
+ *
+ * (This mock replaced one of `sceneDwarfAnimation` when the per-file poses gave
+ * way to packed sheets; the reason for having one is unchanged.)
  */
-vi.mock('../../lib/presentation', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/presentation')>()
-  return { ...actual, sceneDwarfAnimation: vi.fn(actual.sceneDwarfAnimation) }
+vi.mock('../../lib/sprite/dwarfSequence', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/sprite/dwarfSequence')>()
+  return { ...actual, dwarfClips: vi.fn(actual.dwarfClips) }
 })
 
-/** The real loop table, so the one test that substitutes it can put it back. */
-const realSceneDwarfAnimation = vi.mocked(sceneDwarfAnimation).getMockImplementation()!
+/** The real inventory, so a test that substitutes it can put it back. */
+const realDwarfClips = vi.mocked(dwarfClips).getMockImplementation()!
 
-/** The pose file a sprite is currently showing, e.g. "dwarf-pick-1". */
-function poseOf(wrapper: ReturnType<typeof mount>): string {
-  const src = wrapper.find('.dwarf-frame').attributes('src') ?? ''
+/** The sheet a sprite is drawing from, e.g. "dwarf-worker-idle-v2-Sheet". */
+function sheetOf(wrapper: ReturnType<typeof mount>): string {
+  const style = wrapper.find('.dwarf-frame').attributes('style') ?? ''
+  const url = /--sheet-image:\s*url\(([^)]*)\)/.exec(style)?.[1] ?? ''
+  return (
+    url
+      .split('/')
+      .pop()
+      ?.replace(/\.png.*$/, '') ?? ''
+  )
+}
+
+/** How far along its strip the sprite is, as the percentage the CSS carries. */
+function framePercentOf(wrapper: ReturnType<typeof mount>): number {
+  const style = wrapper.find('.dwarf-frame').attributes('style') ?? ''
+  return Number(/--sheet-position:\s*([\d.]+)%/.exec(style)?.[1] ?? NaN)
+}
+
+/** The sheet named in the inventory, by the same basename `sheetOf` returns. */
+function sheetName(src: string): string {
   return (
     src
       .split('/')
@@ -40,34 +57,45 @@ function poseOf(wrapper: ReturnType<typeof mount>): string {
   )
 }
 
+const WORKER_IDLE = sheetName(DWARF_SHEETS.worker.idle.src)
+const FOREMAN_IDLE = sheetName(DWARF_SHEETS.foreman.idle.src)
+
 describe('DwarfSprite', () => {
-  it('swings a pickaxe while a worker is working', () => {
+  it('plays the worker sheet while a worker is working', () => {
+    // Was `dwarf-pick-1` until the hand-drawn sheets landed. The swing has not
+    // been drawn as a strip yet (#74), so a worker idles at the rock — the
+    // deliberate honest mapping, not an oversight. See dwarfSequence.ts.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
+    expect(framePercentOf(wrapper)).toBe(0)
   })
 
-  it('puts the foreman on his own pose instead of a pickaxe', () => {
+  it('puts the foreman on his own sheet instead of the worker one', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'foreman', name: 'Boss', status: 'working' }) }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-foreman-idle')
+    expect(sheetOf(wrapper)).toBe(FOREMAN_IDLE)
+    expect(sheetOf(wrapper)).not.toBe(WORKER_IDLE)
   })
 
-  it('rests a waiting worker and shows the zzz overlay', () => {
+  it('shows the zzz overlay over a waiting worker, which is what marks the rest', () => {
+    // The rest POSE went with the painted frames; the overlay is what still
+    // says a dwarf is stopped, and it was already the only sleep indicator
+    // (issue #72).
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'waiting' }) }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
     expect(wrapper.find('.zzz').exists()).toBe(true)
   })
 
-  it('walks a leaving dwarf and mirrors it toward the exit', () => {
+  it('mirrors a leaving dwarf toward the exit', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'leaving' }) }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-walk-1')
+    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
     expect(wrapper.classes()).toContain('is-flipped')
   })
 
@@ -76,11 +104,21 @@ describe('DwarfSprite', () => {
     expect(wrapper.classes()).not.toContain('is-flipped')
   })
 
-  it('stands neutral while its terminal is being focused', () => {
+  it('dims the dwarf while its terminal is being focused', () => {
+    // The pause used to be a held neutral pose. There is no neutral frame in a
+    // strip, and the dimming was always the other half of saying it.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), activating: true }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-idle')
+    expect(wrapper.classes()).toContain('is-activating')
+  })
+
+  it('scales the strip to one sprite box per frame, which is what the position assumes', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
+    })
+    const style = wrapper.find('.dwarf-frame').attributes('style') ?? ''
+    expect(style).toContain(`--sheet-size: ${DWARF_SHEETS.worker.idle.frames * 100}% 100%`)
   })
 
   it('applies the animation class for its status', () => {
@@ -442,39 +480,61 @@ describe('DwarfSprite', () => {
     beforeEach(() => vi.useFakeTimers())
     afterEach(() => vi.useRealTimers())
 
-    it('alternates the two working poses on the pick cadence', async () => {
+    it('steps one frame along the strip per frame hold', async () => {
+      const { frames, frameMs } = DWARF_SHEETS.worker.idle
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ status: 'working' }) }
       })
-      expect(poseOf(wrapper)).toBe('dwarf-pick-1')
-      vi.advanceTimersByTime(550)
+      expect(framePercentOf(wrapper)).toBe(0)
+      vi.advanceTimersByTime(frameMs)
       await wrapper.vm.$nextTick()
-      expect(poseOf(wrapper)).toBe('dwarf-pick-2')
-      vi.advanceTimersByTime(550)
+      expect(framePercentOf(wrapper)).toBeCloseTo(100 / (frames - 1))
+      vi.advanceTimersByTime(frameMs)
       await wrapper.vm.$nextTick()
-      expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+      expect(framePercentOf(wrapper)).toBeCloseTo(200 / (frames - 1))
+    })
+
+    it('wraps back to the head of the strip at the end of a loop', async () => {
+      const { frames, frameMs } = DWARF_SHEETS.worker.idle
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working' }) }
+      })
+      vi.advanceTimersByTime(frames * frameMs)
+      await wrapper.vm.$nextTick()
+      expect(framePercentOf(wrapper)).toBe(0)
     })
 
     it('holds a single-frame animation still', async () => {
-      vi.mocked(sceneDwarfAnimation).mockReturnValue({ frames: ['foreman-idle'], frameMs: 1400 })
+      vi.mocked(dwarfClips).mockReturnValue([
+        loopOf({ src: '/one-frame.png', frames: 1, frameMs: 1400 })
+      ])
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
       })
+      expect(vi.getTimerCount()).toBe(0)
       vi.advanceTimersByTime(10_000)
       await wrapper.vm.$nextTick()
-      expect(poseOf(wrapper)).toBe('dwarf-foreman-idle')
-      vi.mocked(sceneDwarfAnimation).mockImplementation(realSceneDwarfAnimation)
+      expect(sheetOf(wrapper)).toBe('one-frame')
+      expect(framePercentOf(wrapper)).toBe(0)
+      vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
     })
 
-    it('restarts the cycle from the first frame when the status changes', async () => {
+    it('restarts the cycle from the first frame when the loop changes', async () => {
+      // Was pinned through a status change, which used to select a different
+      // pose table. Every status a WORKER can be in now draws the same sheet
+      // (#74), so the foreman being asked a question is the change that is
+      // actually visible — and it restarts on frame 0 exactly as before.
       const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status: 'working' }) }
+        props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
       })
-      vi.advanceTimersByTime(550)
+      vi.advanceTimersByTime(DWARF_SHEETS.foreman.idle.frameMs)
       await wrapper.vm.$nextTick()
-      expect(poseOf(wrapper)).toBe('dwarf-pick-2')
-      await wrapper.setProps({ dwarf: defaultDwarf({ status: 'waiting' }) })
-      expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+      expect(framePercentOf(wrapper)).toBeGreaterThan(0)
+
+      await wrapper.setProps({
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
+      })
+      expect(framePercentOf(wrapper)).toBe(0)
     })
 
     it('stops its timer when unmounted', () => {
@@ -564,12 +624,17 @@ describe('DwarfSprite kick marker', () => {
  * a bare sprite and still pass.
  */
 describe('DwarfSprite in the scene', () => {
-  it('plays the walk cycle while crossing the floor, whatever it is going to do', () => {
+  it('keeps its own sheet while crossing the floor, having no walk strip', () => {
+    // Was `dwarf-walk-1`. No walk sheet has been drawn (#74), and a dwarf that
+    // slid across the cave on the retired painted frames would be the only
+    // AI-painted thing left on screen. Style consistency over motion fidelity,
+    // chosen deliberately — the crossing itself is unchanged, MineScene still
+    // walks him there.
     for (const status of ['working', 'waiting'] as const) {
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ status }), anchored: true, walking: true }
       })
-      expect(poseOf(wrapper), status).toBe('dwarf-walk-1')
+      expect(sheetOf(wrapper), status).toBe(WORKER_IDLE)
     }
   })
 
@@ -577,7 +642,7 @@ describe('DwarfSprite in the scene', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: false }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
   })
 
   it('faces the rock the scene put it at, not the direction the old rule assumed', () => {
@@ -617,27 +682,41 @@ describe('DwarfSprite in the scene', () => {
 
 /*
  * The cave reacting to the crew, not just holding it: a hit on the rock throws
- * debris. Fired off the down-stroke frame so the sparks read as impacts rather
- * than as a permanent glow around the dwarf.
+ * debris. It used to fire off a pose NAME (`pick-2`); a strip has no pose
+ * names, so the sheet declares its own impact frames and the sprite reads them.
+ * That is what keeps the burst alive across the art swap — no sheet drawn so
+ * far names an impact, because no swing has been drawn, and #74's pick loop
+ * restores the sparks by declaring one.
  */
 describe('DwarfSprite pick sparks', () => {
   beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
+  })
+
+  /** A four-frame swing whose third frame is the moment it bites. */
+  function stubSwing(): void {
+    vi.mocked(dwarfClips).mockReturnValue([
+      loopOf({ src: '/swing.png', frames: 4, frameMs: 120, impactFrames: [2] })
+    ])
+  }
 
   it('throws sparks when the pick comes down on the rock', async () => {
+    stubSwing()
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
     })
     expect(wrapper.find('.spark-burst').exists()).toBe(false)
 
-    vi.advanceTimersByTime(550)
+    vi.advanceTimersByTime(240)
     await wrapper.vm.$nextTick()
-    expect(poseOf(wrapper)).toBe('dwarf-pick-2')
     expect(wrapper.find('.spark-burst').exists()).toBe(true)
     expect(wrapper.findAll('.spark').length).toBeGreaterThan(0)
   })
 
   it('throws none while the dwarf is still walking to the vein', async () => {
+    stubSwing()
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
     })
@@ -647,6 +726,7 @@ describe('DwarfSprite pick sparks', () => {
   })
 
   it('throws none off a dwarf that is resting or walking out', async () => {
+    stubSwing()
     for (const status of ['waiting', 'leaving'] as const) {
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ status }), anchored: true }
@@ -655,6 +735,17 @@ describe('DwarfSprite pick sparks', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.spark-burst').exists(), status).toBe(false)
     }
+  })
+
+  it('throws none off the sheets actually drawn, none of which claims a hit', () => {
+    // The honest state of the panel today, and the reason the three tests above
+    // have to substitute a sheet: an idle loop that threw debris would be a
+    // dwarf standing still in a shower of rock.
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(10_000)
+    expect(wrapper.find('.spark-burst').exists()).toBe(false)
   })
 })
 
@@ -669,28 +760,25 @@ describe('DwarfSprite pick sparks', () => {
 describe('DwarfSprite silence', () => {
   /** Just past the worker's half hour — a dwarf the provider is about to judge. */
   const WORKER_SILENT = DWARF_SILENCE_WINDOW_MS.unattended
-  /** Just past the foreman's hour, which is twice as long for good reason. */
-  const FOREMAN_SILENT = DWARF_SILENCE_WINDOW_MS.attended
 
-  it('stands a silent worker still, pick on the shoulder, instead of swinging', () => {
-    const wrapper = mount(DwarfSprite, {
+  /*
+   * REMOVED with the painted poses, and stated here rather than left to be
+   * noticed: three cases pinned the silence POSE — a silent worker standing on
+   * `dwarf-idle`, and two keeping the swing (`dwarf-pick-1`) for a dwarf that
+   * had produced something or whose provider reported nothing. Neither pose
+   * exists as a sheet; #74 has drawn one loop for a worker and no more.
+   *
+   * The RULE they were pinning is untouched and still tested: `isDwarfSilent`
+   * in lib/presentation.test.ts holds both windows and #68's attendance
+   * binding. What is gone is the sprite drawing the answer, and the case below
+   * is what replaces them — the honest one, which says so.
+   */
+  it('draws a silent worker exactly like a busy one, having no silence pose', () => {
+    const busy = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
+    const quiet = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-idle')
-  })
-
-  it('keeps swinging for a worker that produced something a moment ago', () => {
-    const wrapper = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ status: 'working', silentForMs: 12_000 }) }
-    })
-    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
-  })
-
-  it('keeps swinging for a provider that reports no silence figure at all', () => {
-    const wrapper = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ status: 'working' }) }
-    })
-    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
+    expect(sheetOf(quiet)).toBe(sheetOf(busy))
   })
 
   it('leaves everything else about the dwarf saying working', () => {
@@ -708,48 +796,35 @@ describe('DwarfSprite silence', () => {
   /*
    * Issue #68. Rank made a `claude -p` run a foreman — it is the root of its
    * own session tree — and the hour that came with the rank exists for a human
-   * who might be typing. There is none, so the sprite has to read the
-   * attendance the provider stamped rather than the rank.
+   * who might be typing. There is none, so the ATTENDANCE the provider stamped
+   * picks the window, never the rank.
    *
-   * A silent foreman and a busy one both stand on `foreman-idle` at frame 0,
-   * so only advancing the clock separates them: the busy one looks up from the
-   * log book, the silent one does not.
+   * REMOVED with the painted poses: three cases read that rule off the sprite,
+   * by advancing one frame and separating a foreman still looking up from his
+   * log book (`foreman-check`) from one that had stopped (`foreman-idle`). A
+   * foreman has one idle strip and no silence strip, so there is no longer a
+   * drawing to read the answer from.
+   *
+   * The rule itself is where it always was and is fully covered there:
+   * `isDwarfSilent` in lib/presentation.test.ts, "judges a headless foreman on
+   * the half hour" and the two beside it. Nothing about the windows changed
+   * here; only the sprite stopped drawing them. When #74 delivers a working
+   * loop, a silent foreman gets a pose again and these belong back.
    */
-  describe('a foreman nobody can type into', () => {
-    beforeEach(() => vi.useFakeTimers())
-    afterEach(() => vi.useRealTimers())
-
-    /** The pose after one full frame — 'foreman-check' only if still cycling. */
-    async function poseAfterOneFrame(attendance: Dwarf['attendance']): Promise<string> {
+  it('reads a silent foreman no differently from a busy one, having no silence strip', () => {
+    for (const attendance of ['unattended', 'attended', 'unknown'] as const) {
       const wrapper = mount(DwarfSprite, {
         props: {
           dwarf: defaultDwarf({
             role: 'foreman',
             status: 'working',
             silentForMs: WORKER_SILENT,
-            ...(attendance !== undefined ? { attendance } : {})
+            attendance
           })
         }
       })
-      vi.advanceTimersByTime(1000)
-      await wrapper.vm.$nextTick()
-      return poseOf(wrapper)
+      expect(sheetOf(wrapper), attendance).toBe(FOREMAN_IDLE)
     }
-
-    it('stops at the half hour once the provider proves nobody is there', async () => {
-      expect(await poseAfterOneFrame('unattended')).toBe('dwarf-foreman-idle')
-    })
-
-    it('keeps working through the half hour while a human may be typing', async () => {
-      expect(await poseAfterOneFrame('attended')).toBe('dwarf-foreman-check')
-    })
-
-    it('keeps working through the half hour when attendance was never proved', async () => {
-      // Unproven leaves the hour standing, so nothing about this dwarf changes
-      // until a provider actually answers.
-      expect(await poseAfterOneFrame('unknown')).toBe('dwarf-foreman-check')
-      expect(await poseAfterOneFrame(undefined)).toBe('dwarf-foreman-check')
-    })
   })
 
   it('shows the exact figure in the tooltip beside the name and model', () => {
@@ -761,52 +836,29 @@ describe('DwarfSprite silence', () => {
     expect(tooltip.text()).toContain('no output for 25 minutes')
   })
 
-  describe('cost of standing still', () => {
-    beforeEach(() => vi.useFakeTimers())
-    afterEach(() => vi.useRealTimers())
-
-    it('starts no timer for the one-frame silence pose', () => {
-      // The guarantee that made this the right pose: a dwarf we suspect is
-      // dead costs LESS to draw than a live one, because a single-frame loop
-      // never reaches setInterval at all.
-      const wrapper = mount(DwarfSprite, {
+  /*
+   * REMOVED with the painted poses: the "cost of standing still" trio, which
+   * held that a dwarf we suspect is dead costs LESS to draw than a live one —
+   * a single-frame silence loop never reached setInterval at all, the foreman
+   * visibly stopped looking up from his log book, and the swing came back the
+   * moment output resumed.
+   *
+   * Every sheet drawn so far holds at least six frames, so no state a real
+   * dwarf can be in reaches the no-timer branch any more. The branch is still
+   * live and still guaranteed — "holds a single-frame animation still" above
+   * substitutes a one-frame clip to reach it — and reduced motion now owns the
+   * only timer a dwarf actually stops for.
+   */
+  it('runs one timer per sprite, whatever the dwarf is doing', () => {
+    vi.useFakeTimers()
+    try {
+      mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
       })
-      expect(vi.getTimerCount()).toBe(0)
-
-      vi.advanceTimersByTime(10_000)
-      expect(poseOf(wrapper)).toBe('dwarf-idle')
-    })
-
-    it('stops the foreman looking up from his log book once he goes silent', async () => {
-      // His working loop alternates foreman-idle with foreman-check, so only
-      // advancing the clock can tell a silent foreman from a busy one.
-      const busy = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
-      })
-      const silent = mount(DwarfSprite, {
-        props: {
-          dwarf: defaultDwarf({ role: 'foreman', status: 'working', silentForMs: FOREMAN_SILENT })
-        }
-      })
-
-      vi.advanceTimersByTime(1000)
-      await busy.vm.$nextTick()
-      await silent.vm.$nextTick()
-      expect(poseOf(busy)).toBe('dwarf-foreman-check')
-      expect(poseOf(silent)).toBe('dwarf-foreman-idle')
-    })
-
-    it('picks the swing back up the moment the dwarf produces something', async () => {
-      const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status: 'working', silentForMs: WORKER_SILENT }) }
-      })
-      expect(poseOf(wrapper)).toBe('dwarf-idle')
-
-      await wrapper.setProps({ dwarf: defaultDwarf({ status: 'working', silentForMs: 0 }) })
-      expect(poseOf(wrapper)).toBe('dwarf-pick-1')
       expect(vi.getTimerCount()).toBe(1)
-    })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -862,6 +914,27 @@ describe('DwarfSprite sizing', () => {
     expect(styleRule('.dwarf-frame')).not.toMatch(/transform\s*:/)
     expect(styleRule('.dwarf-sprite')).not.toMatch(/transform\s*:/)
   })
+
+  /*
+   * Issue #90's second coupling, and the reason it is a test rather than a
+   * line of CSS nobody looks at again. `--sprite-height` and `--depth-scale`
+   * both scale the drawing continuously, so a 38px-tall frame is essentially
+   * never drawn at a whole multiple of itself. Without this the browser
+   * interpolates, the pixel art renders soft, and the art gets the blame.
+   */
+  it('scales the pixel art with nearest-neighbour rather than letting it blur', () => {
+    expect(styleRule('.dwarf-frame')).toMatch(/image-rendering:\s*pixelated/)
+  })
+
+  it('takes the frame box from the sheet geometry rather than a literal pair', () => {
+    // 36 x 38 lives in SPRITE_FRAME_SIZE and reaches the CSS as a custom
+    // property, so a redraw at another size is one constant and not a hunt.
+    expect(styleRule('.dwarf-frame')).toMatch(/aspect-ratio:\s*var\(--frame-aspect/)
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+    expect(wrapper.attributes('style')).toContain(
+      `--frame-aspect: ${SPRITE_FRAME_SIZE.width} / ${SPRITE_FRAME_SIZE.height}`
+    )
+  })
 })
 
 /*
@@ -878,16 +951,63 @@ describe('DwarfSprite sleep indicator', () => {
     const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
     expect(wrapper.find('.zzz').exists()).toBe(true)
 
-    // The painted z lived on the second rest frame, so a cycle long enough to
-    // have reached it is what proves nothing is drawing a second one.
+    // A worker has one strip and no sleep art, so the sprite says nothing
+    // about rest at all and the overlay is the whole of the indicator — which
+    // is exactly the shape #72 left it in, arrived at from the other side.
     vi.advanceTimersByTime(10_000)
     await wrapper.vm.$nextTick()
-    expect(poseOf(wrapper)).toBe('dwarf-rest-1')
+    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
   })
 
-  it('starts no timer at all, because resting is one pose rather than a loop', () => {
-    mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
-    expect(vi.getTimerCount()).toBe(0)
+  /*
+   * REPLACED: this used to hold that resting started no timer at all, because
+   * rest was a single pose. The worker's idle strip is six frames, so resting
+   * costs a timer again. What is worth pinning instead is that the overlay is
+   * still the only thing claiming sleep — a second indicator is what #72 came
+   * to remove, and the foreman's sleep sheets are the first art since that
+   * could reintroduce one.
+   */
+  it('does not draw a worker asleep, leaving the overlay the only claim', () => {
+    const resting = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
+    const working = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
+    expect(sheetOf(resting)).toBe(sheetOf(working))
+  })
+
+  it('draws a foreman actually asleep when a person was asked, and says so once', async () => {
+    const wrapper = mount(DwarfSprite, {
+      props: {
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
+      }
+    })
+    // Falls asleep first, then stays asleep: two sheets, one movement.
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['start-sleep']!.src))
+
+    const { frames, frameMs } = DWARF_SHEETS.foreman['start-sleep']!
+    vi.advanceTimersByTime(frames * frameMs)
+    await wrapper.vm.$nextTick()
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman.sleeping!.src))
+  })
+
+  it('wakes a foreman up once the question has been answered', async () => {
+    const wrapper = mount(DwarfSprite, {
+      props: {
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
+      }
+    })
+    await wrapper.setProps({ dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) })
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['end-sleep']!.src))
+
+    const { frames, frameMs } = DWARF_SHEETS.foreman['end-sleep']!
+    vi.advanceTimersByTime(frames * frameMs)
+    await wrapper.vm.$nextTick()
+    expect(sheetOf(wrapper)).toBe(FOREMAN_IDLE)
+  })
+
+  it('never wakes a foreman that was never put to sleep', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
+    })
+    expect(sheetOf(wrapper)).toBe(FOREMAN_IDLE)
   })
 })
 
@@ -929,64 +1049,92 @@ describe('DwarfSprite with reduced motion', () => {
     }
   }
 
-  it('holds one pose and starts no timer for a viewer who asked for less', async () => {
+  it('holds one frame and starts no timer for a viewer who asked for less', async () => {
     stubReducedMotion(true)
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
     })
     expect(vi.getTimerCount()).toBe(0)
 
-    const held = poseOf(wrapper)
+    const held = framePercentOf(wrapper)
     vi.advanceTimersByTime(10_000)
     await wrapper.vm.$nextTick()
-    expect(poseOf(wrapper)).toBe(held)
+    expect(framePercentOf(wrapper)).toBe(held)
+  })
+
+  it('holds the end of the loop, where the gesture finishes', () => {
+    // The rule the painted loops used, kept exactly: the last frame, not the
+    // wind-up into it (see stillFrameOf).
+    stubReducedMotion(true)
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }) }
+    })
+    expect(framePercentOf(wrapper)).toBe(100)
   })
 
   /*
    * The constraint the change hangs on: reduced motion asks for less MOVEMENT,
    * not for less information. A panel that answered it by drawing every dwarf
    * the same has failed even with every timer stopped.
+   *
+   * NARROWED, and the narrowing is the art's doing rather than this
+   * preference's. The four-way case that stood here — working, silent, resting
+   * and leaving all tellable apart — cannot hold while a worker has one strip
+   * for all four (#74). The claim is therefore made where it is still true: a
+   * foreman waiting on a person is drawn differently from one at his post, and
+   * the two states a worker's sprite no longer separates are separated by the
+   * overlay and the leaving fade instead. Restore the four-way case with the
+   * working and walking sheets.
    */
-  it('still tells a working dwarf from a silent one, a resting one and a leaver', () => {
+  it('still tells a foreman waiting on a person from one at his post', () => {
     stubReducedMotion(true)
-    const poses = [
-      defaultDwarf({ status: 'working' }),
-      defaultDwarf({ status: 'working', silentForMs: DWARF_SILENCE_WINDOW_MS.unattended }),
-      defaultDwarf({ status: 'waiting' }),
-      defaultDwarf({ status: 'leaving' })
-    ].map((dwarf) => poseOf(mount(DwarfSprite, { props: { dwarf } })))
-    expect(new Set(poses).size).toBe(poses.length)
-  })
-
-  it('keeps the foreman at his log book apart from the foreman nobody has heard from', () => {
-    stubReducedMotion(true)
-    const working = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
-    })
-    const silent = mount(DwarfSprite, {
+    const asked = mount(DwarfSprite, {
       props: {
-        dwarf: defaultDwarf({
-          role: 'foreman',
-          status: 'working',
-          silentForMs: DWARF_SILENCE_WINDOW_MS.attended
-        })
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
       }
     })
-    expect(poseOf(working)).toBe('dwarf-foreman-check')
-    expect(poseOf(silent)).toBe('dwarf-foreman-idle')
+    const posted = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
+    })
+    expect(sheetOf(asked)).not.toBe(sheetOf(posted))
   })
 
-  it('swings exactly as it always did where the platform cannot be asked at all', async () => {
+  it('shows a sleeping foreman asleep rather than caught halfway down', () => {
+    // Holding the FIRST clip would draw him mid-fall, which is a foreman
+    // frozen in an action rather than a foreman in a state.
+    stubReducedMotion(true)
+    const wrapper = mount(DwarfSprite, {
+      props: {
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
+      }
+    })
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman.sleeping!.src))
+  })
+
+  it('keeps the states the sprite no longer separates readable in the overlays', () => {
+    // Where the information went. Both were always drawn on top of the sprite
+    // rather than into it, which is why neither was lost with the poses.
+    stubReducedMotion(true)
+    const resting = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
+    const leaving = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'leaving' }) } })
+    const working = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
+
+    expect(resting.find('.zzz').exists()).toBe(true)
+    expect(working.find('.zzz').exists()).toBe(false)
+    expect(leaving.classes()).toContain('is-leaving')
+  })
+
+  it('animates exactly as it always did where the platform cannot be asked at all', async () => {
     // jsdom has no matchMedia, and neither does the very first render. Asking
     // must not throw, and no answer means motion is welcome.
     expect(window.matchMedia).toBeUndefined()
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
     })
-    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
-    vi.advanceTimersByTime(550)
+    expect(framePercentOf(wrapper)).toBe(0)
+    vi.advanceTimersByTime(DWARF_SHEETS.worker.idle.frameMs)
     await wrapper.vm.$nextTick()
-    expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+    expect(framePercentOf(wrapper)).toBeGreaterThan(0)
   })
 
   it('follows the preference being turned on under a panel already open', async () => {
@@ -1000,13 +1148,13 @@ describe('DwarfSprite with reduced motion', () => {
     await wrapper.vm.$nextTick()
     expect(vi.getTimerCount()).toBe(0)
 
-    const held = poseOf(wrapper)
+    const held = framePercentOf(wrapper)
     vi.advanceTimersByTime(10_000)
     await wrapper.vm.$nextTick()
-    expect(poseOf(wrapper)).toBe(held)
+    expect(framePercentOf(wrapper)).toBe(held)
   })
 
-  it('swings again the moment the preference is turned back off', async () => {
+  it('animates again the moment the preference is turned back off', async () => {
     const media = stubReducedMotion(true)
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
@@ -1014,10 +1162,10 @@ describe('DwarfSprite with reduced motion', () => {
     media.flip(false)
     await wrapper.vm.$nextTick()
 
-    expect(poseOf(wrapper)).toBe('dwarf-pick-1')
-    vi.advanceTimersByTime(550)
+    expect(framePercentOf(wrapper)).toBe(0)
+    vi.advanceTimersByTime(DWARF_SHEETS.worker.idle.frameMs)
     await wrapper.vm.$nextTick()
-    expect(poseOf(wrapper)).toBe('dwarf-pick-2')
+    expect(framePercentOf(wrapper)).toBeGreaterThan(0)
   })
 
   it('stops listening to the preference when the sprite goes', () => {
