@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentProviderOption } from '../../types'
 import { OTHER_CHOICE } from './launchState'
-import { OTHER_CHIP_LABEL, OTHER_NOT_BUILT, launchRefusal, providerChips } from './providerChips'
+import {
+  OTHER_CHIP_LABEL,
+  OTHER_NOT_LAUNCHABLE,
+  launchRefusal,
+  providerChips
+} from './providerChips'
 
 const claude: AgentProviderOption = { provider: 'claude', installed: true, launchable: true }
 const codex: AgentProviderOption = {
@@ -82,13 +87,24 @@ describe('what a chip cannot actually start', () => {
   })
 
   /*
-   * The engine has no custom-command path at all: both launch channels carry a
-   * mine and a prompt, and resolve the CLI themselves. So Other is offered
-   * exactly as the design draws it and refuses at the point of submission with
-   * the reason, rather than being silently absent or silently inert.
+   * The ruling #168 asked for, and it is a ruling rather than a gap: see
+   * docs/custom-launch-command.md. Other is refused because a launched command
+   * of the user's own leaves no session store behind it, so no provider can
+   * read one and no dwarf can ever be drawn — not because the wire cannot carry
+   * a command string. The chip is still offered exactly where the design draws
+   * it, and Enter says this instead of doing nothing.
    */
-  it('refuses a custom command, because no engine takes one', () => {
-    expect(launchRefusal([claude], OTHER_CHOICE)).toBe(OTHER_NOT_BUILT)
+  it('refuses a custom command, because nothing could observe what it started', () => {
+    expect(launchRefusal([claude], OTHER_CHOICE)).toBe(OTHER_NOT_LAUNCHABLE)
+  })
+
+  it('gives the refusal a reason, not a promise that it is coming', () => {
+    // The old copy said "cannot be started yet", which was true while both
+    // channels resolved their own CLI. Since #168 an engine takes a provider,
+    // and the answer for a custom command is still no — so the copy must not
+    // read as a feature in progress.
+    expect(OTHER_NOT_LAUNCHABLE).not.toContain('yet')
+    expect(OTHER_NOT_LAUNCHABLE.toLowerCase()).toContain('observ')
   })
 
   it('refuses a provider that is not on the detected list at all', () => {

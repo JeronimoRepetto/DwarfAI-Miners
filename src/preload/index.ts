@@ -24,7 +24,7 @@ import type {
   ProjectQueryResult,
   ShortcutState
 } from '../shared/contracts'
-import { IPC_CHANNELS } from '../shared/contracts'
+import { IPC_CHANNELS, isDwarfProvider } from '../shared/contracts'
 
 /** API surface exposed to the renderer as `window.api`. */
 export interface DwarfAiMinersApi {
@@ -210,9 +210,14 @@ const api: DwarfAiMinersApi = {
   // starts a real process, so what crosses is rebuilt here as two strings
   // rather than forwarded whole. Anything else the caller attached — a
   // directory, above all — is dropped before main ever sees it.
+  // The provider is the one field with no safe default (#168). Every other one
+  // collapses to '', but a provider collapsed to a favourite would start SOME
+  // agent under a name this build does not have. An unrecognised name crosses
+  // as '' so main refuses the request outright.
   launchAgent: (request) =>
     ipcRenderer.invoke(IPC_CHANNELS.launchAgent, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
+      provider: isDwarfProvider(request?.provider) ? request.provider : '',
       prompt: typeof request?.prompt === 'string' ? request.prompt : ''
     }),
   // Same discipline as setToggleShortcut: collapse anything that is not a
@@ -245,6 +250,7 @@ const api: DwarfAiMinersApi = {
   launchHeldSession: (request) =>
     ipcRenderer.invoke(IPC_CHANNELS.launchHeldSession, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
+      provider: isDwarfProvider(request?.provider) ? request.provider : '',
       prompt: typeof request?.prompt === 'string' ? request.prompt : ''
     }),
   // Field by field again, and the record entry by entry: an answer releases a

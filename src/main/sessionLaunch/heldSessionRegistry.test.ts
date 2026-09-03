@@ -107,7 +107,12 @@ describe('HeldSessionRegistry.launch', () => {
     const registry = registryOver(port)
 
     expect(
-      await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: '  dig here  ' })
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: '  dig here  '
+      })
     ).toEqual({ launched: true })
     expect(port.started).toHaveLength(1)
     expect(port.started[0]!.executablePath).toBe(CLAUDE)
@@ -120,7 +125,12 @@ describe('HeldSessionRegistry.launch', () => {
     const port = new FakePort()
     const registry = registryOver(port, missingDetector())
 
-    const result = await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig'
+    })
     expect(result.launched).toBe(false)
     expect(result.error).toContain('not installed')
     // The reason detection gave travels rather than being flattened: it is the
@@ -133,7 +143,12 @@ describe('HeldSessionRegistry.launch', () => {
     const port = new FakePort()
     const registry = registryOver(port, missingDetector())
 
-    const result = await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: '   ' })
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: '   '
+    })
     expect(result.launched).toBe(false)
     expect(result.error).toContain('prompt')
   })
@@ -143,8 +158,51 @@ describe('HeldSessionRegistry.launch', () => {
     port.failWith = new Error('spawn failed')
     const registry = registryOver(port)
 
-    const result = await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig'
+    })
     expect(result).toEqual({ launched: false, error: 'The agent could not be started.' })
+    expect(registry.count()).toBe(0)
+  })
+
+  /*
+   * #168. Holding a session means an Agent SDK stream, and only Claude has one:
+   * `docs/command-surface-evaluation.md:113` states outright that "Codex has no
+   * held-session engine in this app (no equivalent of `sdkHeldSession.ts` exists
+   * for it)". Before #168 this method could not tell — it took no provider and
+   * detected `'claude'` unconditionally — so a Codex chip would have been
+   * answered with a Claude session under Codex's name. It is refused BY NAME
+   * instead, and the refusal comes before the disk probe because nothing about
+   * this machine could change the answer.
+   */
+  it('refuses a provider it has no SDK stream for, by name, and starts nothing', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'codex',
+      minePath: MINE,
+      prompt: 'dig'
+    })
+
+    expect(result.launched).toBe(false)
+    expect(result.error).toContain('codex')
+    expect(port.started).toHaveLength(0)
+  })
+
+  it('never substitutes Claude for the provider that was asked for', async () => {
+    // The whole point of carrying a provider on this channel: a refusal is the
+    // only honest answer, and a Claude session started here would be one the
+    // user did not ask for, in a real folder.
+    const port = new FakePort()
+    const registry = registryOver(port)
+
+    await registry.launch({ mineId: 'mine-1', provider: 'codex', minePath: MINE, prompt: 'dig' })
+
     expect(registry.count()).toBe(0)
   })
 })
@@ -153,7 +211,7 @@ describe('HeldSessionRegistry questions', () => {
   it("makes an arriving ask the held session's pending question, redacted and stamped", async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     void port.ask(0, 'toolu_01')
@@ -180,7 +238,7 @@ describe('HeldSessionRegistry questions', () => {
   it('holds a session with nothing open, which is not the same as not holding it', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     expect(registry.questionState('sess-1')).toEqual({ held: true })
@@ -189,7 +247,7 @@ describe('HeldSessionRegistry questions', () => {
   it('keeps an ask that arrived before the CLI reported its id, and shows it once it does', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
 
     void port.ask(0, 'toolu_early')
     await Promise.resolve()
@@ -204,7 +262,7 @@ describe('HeldSessionRegistry questions', () => {
   it('shows the latest of two open asks, and answers either by its own id', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     void port.ask(0, 'toolu_first')
@@ -249,7 +307,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
   it('holds a session with nothing reported yet as held, with no field set', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     expect(registry.telemetryState('sess-1')).toEqual({ held: true })
@@ -258,7 +316,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
   it("keeps model, effort, mcpServers and claudeCodeVersion off the session's own init", async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     port.reportTelemetry(0, {
@@ -287,7 +345,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
   it("keeps the session's running totalCostUsd off its result message", async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     port.reportTelemetry(0, { totalCostUsd: 0.0123 })
@@ -303,7 +361,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
     // total_cost_usd exactly). Summing here would silently double-count.
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     port.reportTelemetry(0, { totalCostUsd: 0.03 })
@@ -317,7 +375,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
     // omits must not blank out what an earlier update already recorded.
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
@@ -333,7 +391,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
   it('drops an MCP server whose status this build does not recognise', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     port.reportTelemetry(0, {
@@ -352,7 +410,7 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
   it('discards telemetry once the session ends, exactly as it discards open asks', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
     port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
 
@@ -366,7 +424,7 @@ describe('HeldSessionRegistry.answer', () => {
   it('releases the blocked tool call with exactly the answers record the agent takes', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
     const asked = port.ask(0, 'toolu_01')
     await Promise.resolve()
@@ -401,7 +459,7 @@ describe('HeldSessionRegistry.answer', () => {
   it('refuses an answer naming an ask that is no longer open, rather than re-aiming it', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
     void port.ask(0, 'toolu_01')
     await Promise.resolve()
@@ -420,7 +478,7 @@ describe('HeldSessionRegistry.answer', () => {
   it('refuses an option the agent never offered, and leaves the call blocked', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
     void port.ask(0, 'toolu_01')
     await Promise.resolve()
@@ -440,7 +498,7 @@ describe('HeldSessionRegistry lifetime', () => {
   it('dissolves an open question when the session ends, and never fabricates an answer', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
     const asked = port.ask(0, 'toolu_01')
     await Promise.resolve()
@@ -458,8 +516,13 @@ describe('HeldSessionRegistry lifetime', () => {
   it('dissolves every open question and closes every session on shutdown', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
-    await registry.launch({ mineId: 'mine-2', minePath: '/home/j/code/forge', prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    await registry.launch({
+      mineId: 'mine-2',
+      provider: 'claude',
+      minePath: '/home/j/code/forge',
+      prompt: 'dig'
+    })
     port.reportSessionId(0, 'sess-1')
     port.reportSessionId(1, 'sess-2')
     const asked = port.ask(0, 'toolu_01')
@@ -476,7 +539,7 @@ describe('HeldSessionRegistry lifetime', () => {
   it('routes text over the held stream when the session is one it holds', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
     expect(registry.sendText('sess-1', 'dig deeper')).toBe(true)
@@ -497,7 +560,12 @@ describe('HeldSessionRegistry conversation', () => {
   it('opens the conversation with the prompt the panel itself sent', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: '  dig here  ' })
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: '  dig here  '
+    })
     port.reportSessionId(0, 'sess-1')
 
     // First-hand: this app composed that prompt and handed it over, so it is
@@ -511,7 +579,12 @@ describe('HeldSessionRegistry conversation', () => {
   it('keeps every message the stream carried, in the order it carried them', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
     port.reportSessionId(0, 'sess-1')
 
     port.reportMessage(0, 'assistant', 'Found the seam.')
@@ -530,7 +603,12 @@ describe('HeldSessionRegistry conversation', () => {
   it('never grows past the retention bound, however long the session runs', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
     port.reportSessionId(0, 'sess-1')
     for (let index = 0; index < 100; index++) port.reportMessage(0, 'assistant', `line ${index}`)
 
@@ -544,7 +622,12 @@ describe('HeldSessionRegistry conversation', () => {
   it('retains nothing for a session this panel does not hold', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
     port.reportSessionId(0, 'sess-1')
 
     expect(registry.conversationState('sess-nobody')).toEqual({ held: false })
@@ -556,7 +639,12 @@ describe('HeldSessionRegistry conversation', () => {
   it('lets a message with no words in it go by without retaining an empty bubble', async () => {
     const port = new FakePort()
     const registry = registryOver(port)
-    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
     port.reportSessionId(0, 'sess-1')
     port.reportMessage(0, 'assistant', '')
 

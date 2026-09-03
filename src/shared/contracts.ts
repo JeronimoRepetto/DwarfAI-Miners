@@ -135,6 +135,26 @@ export function isDwarfProvider(value: unknown): value is DwarfProvider {
 }
 
 /**
+ * The providers a session can be HELD for — kept open by this app, over the
+ * provider's own Agent SDK stream (#168).
+ *
+ * On the wire because both processes act on it and must not disagree: the
+ * renderer reads it to choose which launch channel a chip goes down, and the
+ * held registry enforces it. Two copies of this list would be two answers to
+ * "can this provider be watched", and the panel would eventually offer a chip
+ * whose only outcome is a refusal from the other side.
+ *
+ * Claude alone, and this is a capability rather than a preference: holding a
+ * session IS that stream, and Codex has no held-session engine in this app —
+ * `docs/command-surface-evaluation.md` records it, and the question-capture
+ * matrix marks the `codex exec` row No for live capture and No for answering.
+ * A provider missing here can still be LAUNCHED; it is started detached and
+ * discovered by the ordinary poll, which is a real launch and simply not a
+ * watched one.
+ */
+export const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+
+/**
  * Every connection state the Agent SDK reports for one MCP server (issue
  * #96), read verbatim off a held session's own `init` message.
  *
@@ -865,6 +885,23 @@ export interface AgentProviderList {
 export interface AgentLaunchRequest {
   /** Which mine to start in. The id, never a path: main resolves the folder. */
   mineId: string
+  /**
+   * Which CLI to start (#168).
+   *
+   * Required, and deliberately not defaulted anywhere on the way down. Until
+   * #168 this channel carried a mine and a prompt only, so the engine had
+   * nothing to read and started `claude` whichever chip the user had pressed —
+   * a Claude session laundered under another provider's name, which is the one
+   * outcome a launch must never produce. A request that names no provider this
+   * build has is refused at the boundary rather than resolved to a favourite.
+   *
+   * The existing `DwarfProvider` union, and no new vocabulary: this is the same
+   * identity the poll reports a dwarf under, so a launched session and the
+   * dwarf it becomes are named by one word rather than two that have to be kept
+   * in step. It is therefore also why a custom command is NOT a value here —
+   * see docs/custom-launch-command.md for that ruling.
+   */
+  provider: DwarfProvider
   /** The first thing to say to the new session. Capped like any delivered message. */
   prompt: string
 }
@@ -901,6 +938,14 @@ export interface AgentLaunchResult {
  */
 export interface HeldSessionLaunchRequest {
   mineId: string
+  /**
+   * Which CLI to hold (#168). Carried even though exactly one provider can be
+   * held, and carried FOR that reason: holding a session means an Agent SDK
+   * stream, only Claude has one, and a channel that took no provider would
+   * answer a Codex chip with a Claude session rather than with a refusal. The
+   * registry checks this and refuses anything else by name.
+   */
+  provider: DwarfProvider
   /** The first thing to say to the new session. Capped like any delivered message. */
   prompt: string
 }

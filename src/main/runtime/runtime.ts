@@ -433,6 +433,7 @@ export class AgentRuntime {
       options.launchSession ??
       ((request) =>
         launchClaudeSession({
+          provider: request.provider,
           minePath: request.minePath,
           prompt: request.prompt,
           detector: platform.cliDetector,
@@ -1061,6 +1062,7 @@ export class AgentRuntime {
 
     return this.heldSessions.launch({
       mineId: mine.id,
+      provider: request.provider,
       minePath: mine.path,
       prompt: request.prompt
     })
@@ -1227,16 +1229,20 @@ export class AgentRuntime {
     const timer = createStageTimer(this.now)
     try {
       const result = await timer.measure('total', () =>
-        this.launchSession({ minePath: mine.path, prompt })
+        this.launchSession({ provider: request.provider, minePath: mine.path, prompt })
       )
       console.log(
-        `[runtime] Launch in ${mine.id}: ${result.launched ? 'started' : 'failed'} ` +
+        `[runtime] Launch of ${request.provider} in ${mine.id}: ` +
+          `${result.launched ? 'started' : 'failed'} ` +
           `(${prompt.length} chars)${stageSuffix(timer.timings())}`
       )
       return result
     } catch (error) {
       console.warn(`[runtime] Launch in ${request.mineId} threw`, error)
-      return { launched: false, provider: 'claude', error: LAUNCH_FAILED }
+      // The provider that was ASKED for, not a favourite: a verdict naming the
+      // wrong CLI would have the panel report a failure against a chip nobody
+      // pressed (#168).
+      return { launched: false, provider: request.provider, error: LAUNCH_FAILED }
     }
   }
 

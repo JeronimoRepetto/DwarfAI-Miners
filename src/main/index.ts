@@ -29,7 +29,7 @@ import type {
   ProjectSortDirection,
   ProjectSortKey
 } from '../shared/contracts'
-import { IPC_CHANNELS, isMineTier } from '../shared/contracts'
+import { IPC_CHANNELS, isDwarfProvider, isMineTier } from '../shared/contracts'
 import {
   enable as enableAutostart,
   ensureDefaultAutostart,
@@ -138,7 +138,12 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   if (typeof payload !== 'object' || payload === null) return null
   const record = payload as Record<string, unknown>
   if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  return { mineId: record.mineId, prompt: record.prompt }
+  // A provider this build does not have takes the whole request down (#168).
+  // Not defaulted, for the reason the preload does not default it either: a
+  // launch starts a real process, and picking one for a name nobody sent would
+  // be starting the wrong agent rather than refusing an unreadable request.
+  if (!isDwarfProvider(record.provider)) return null
+  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt }
 }
 
 /** Same boundary discipline as parseTextRequest: kick carries no user text at all. */
@@ -159,7 +164,11 @@ function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | nu
   if (typeof payload !== 'object' || payload === null) return null
   const record = payload as Record<string, unknown>
   if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
-  return { mineId: record.mineId, prompt: record.prompt }
+  // Same ruling as parseLaunchRequest, and for the same reason (#168): which
+  // provider is being held is checked against this build's own list, and the
+  // registry then refuses the ones it has no stream for by name.
+  if (!isDwarfProvider(record.provider)) return null
+  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt }
 }
 
 /**
