@@ -128,6 +128,45 @@ export class MaterialLedger {
   }
 
   /**
+   * Wipe the vault back to empty and persist that immediately (Settings'
+   * "Reset metrics", #138) — mined totals AND session marks, both at once,
+   * which is exactly emptyLedger()'s shape. Clearing the session marks is
+   * deliberate and safe: accrue()'s rule 1 (domain/ledger.ts) rebaselines a
+   * session with no prior mark instead of crediting a delta, so a session
+   * still running right through the reset starts counting fresh from zero
+   * rather than having its whole cumulative counter re-credited as a sudden
+   * spike.
+   *
+   * Bypasses the throttle and the dirty check on purpose — this is a
+   * user-confirmed, irreversible action, so the caller must learn whether the
+   * wipe actually reached the store, not that a promise resolved. Queued
+   * behind the same `queue` a throttled or forced save uses, so this can
+   * never race one that is already in flight and land its own write out of
+   * order (the same reason stop()'s forced save is queued rather than fired
+   * directly).
+   */
+  async reset(now: number): Promise<boolean> {
+    this.ledger = emptyLedger()
+    let succeeded = false
+    this.queue = this.queue.then(async () => {
+      try {
+        await this.store.save(this.ledger)
+        this.dirty = false
+        this.lastSavedAt = now
+        succeeded = true
+      } catch (error) {
+        // The in-memory vault is already empty; leaving `dirty` true is what
+        // makes the NEXT ordinary save retry writing that empty state, same
+        // as any other failed write.
+        this.dirty = true
+        this.onError('[ledger] Failed to persist the metrics reset; will retry:', error)
+      }
+    })
+    await this.queue
+    return succeeded
+  }
+
+  /**
    * Persist if there is anything to persist and the throttle window has
    * elapsed. `force` skips the window — shutdown uses it so the last poll's
    * material is never lost.

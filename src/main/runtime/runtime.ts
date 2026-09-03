@@ -18,6 +18,7 @@ import {
   type HeldSessionLaunchRequest,
   type HeldSessionLaunchResult,
   type MaterialTotals,
+  type MetricsResetResult,
   type Mine,
   type MineDeclareResult,
   type MineTier,
@@ -86,6 +87,8 @@ const PICKER_FAILED = 'The folder picker could not be opened.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
 const UNDECLARE_FAILED = 'That mine could not be removed.'
 const NOT_DECLARED = 'That mine is not one you added.'
+/** Settings' "Reset metrics" refusal (#138). */
+const RESET_FAILED = 'The metrics could not be reset. Nothing was deleted.'
 /** #92's browse refusal. Stated for the same reason: a list that is empty because nothing could be read looks like a list with nothing in it. */
 const QUERY_FAILED = 'The projects could not be read.'
 
@@ -548,6 +551,28 @@ export class AgentRuntime {
   /** The whole vault by material, including projects with no crew right now. */
   materialTotals(): MaterialTotals {
     return this.ledger.totals()
+  }
+
+  /**
+   * Settings' "Reset metrics" action (#138), behind its typed confirmation.
+   *
+   * PRODUCT DECISION (#138): this wipes METRICS only — the material ledger
+   * (mined totals and session marks) — and never the projects store. A
+   * declared or discovered mine is the user's remembered project list, not a
+   * metric, and this method never calls into `this.projects`. The panel side,
+   * the shortcut, the pin and autostart preferences are untouched for the
+   * same reason: none of them are metrics either.
+   *
+   * `outcome: 'reset'` is only returned once the wipe is actually persisted —
+   * see MaterialLedger.reset(), which forces the write past the throttle and
+   * reports whether it reached the store. The next ordinary poll republishes
+   * the (now empty) totals like any other ledger change; this method does not
+   * force one, because a confirm click is not itself a reason to skip ahead
+   * of the poll interval.
+   */
+  async resetMetrics(): Promise<MetricsResetResult> {
+    const succeeded = await this.ledger.reset(this.now())
+    return succeeded ? { outcome: 'reset' } : { outcome: 'failed', reason: RESET_FAILED }
   }
 
   /**

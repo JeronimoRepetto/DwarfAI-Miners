@@ -325,3 +325,80 @@ describe('preload question-answer contract', () => {
     await expect(api.answerDwarfQuestion(answer)).resolves.toEqual(refused)
   })
 })
+
+describe('preload panel-layout contract (#90, #138)', () => {
+  it('asks for the current layout on the panel:layout:get channel with no payload', async () => {
+    const layout = { edge: 'right', expanded: false, mineOpen: false }
+    invoke.mockResolvedValueOnce(layout)
+    await expect(api.getPanelLayout()).resolves.toEqual(layout)
+    expect(invoke).toHaveBeenLastCalledWith('panel:layout:get')
+  })
+
+  it('collapses expanded and mineOpen to real booleans before they cross', async () => {
+    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+    await (api.setPanelLayout as unknown as (value: unknown) => Promise<unknown>)({
+      expanded: 'yes',
+      mineOpen: 1
+    })
+    expect(invoke).toHaveBeenLastCalledWith('panel:layout:set', {
+      expanded: false,
+      mineOpen: false
+    })
+  })
+
+  it('omits edge entirely when the caller (the rail toggle, a mine opening) does not name one', async () => {
+    // Only the Settings position control may ever move the docked side; every
+    // other caller must be structurally unable to nudge it by accident.
+    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+    await api.setPanelLayout({ expanded: true, mineOpen: false })
+    const [, payload] = invoke.mock.calls.at(-1) ?? []
+    expect(payload).not.toHaveProperty('edge')
+  })
+
+  it('forwards a real edge from the position control untouched', async () => {
+    invoke.mockResolvedValueOnce({ edge: 'left', expanded: true, mineOpen: false })
+    await api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+    expect(invoke).toHaveBeenLastCalledWith('panel:layout:set', {
+      expanded: true,
+      mineOpen: false,
+      edge: 'left'
+    })
+  })
+
+  it('drops an edge value no build recognizes rather than forwarding a guess', async () => {
+    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+    await (api.setPanelLayout as unknown as (value: unknown) => Promise<unknown>)({
+      expanded: true,
+      mineOpen: false,
+      edge: 'top'
+    })
+    const [, payload] = invoke.mock.calls.at(-1) ?? []
+    expect(payload).not.toHaveProperty('edge')
+  })
+
+  it('hands back the REAL layout main applied, never the wish', async () => {
+    // A screen too narrow for the whole composition, or a docked edge the
+    // window manager could not honor, must reach the renderer as a fact.
+    const actual = { edge: 'right', expanded: true, mineOpen: true }
+    invoke.mockResolvedValueOnce(actual)
+    await expect(api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })).resolves.toEqual(
+      actual
+    )
+  })
+})
+
+describe('preload metrics-reset contract (#138)', () => {
+  it('asks on the metrics:reset channel with no payload at all', async () => {
+    // The typed confirmation lives entirely on the renderer side; nothing
+    // about it crosses the bridge.
+    invoke.mockResolvedValueOnce({ outcome: 'reset' })
+    await expect(api.resetMetrics()).resolves.toEqual({ outcome: 'reset' })
+    expect(invoke).toHaveBeenLastCalledWith('metrics:reset')
+  })
+
+  it('hands back a refusal and its reason rather than flattening it to nothing', async () => {
+    const refused = { outcome: 'failed', reason: 'The metrics could not be reset. Nothing was deleted.' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.resetMetrics()).resolves.toEqual(refused)
+  })
+})

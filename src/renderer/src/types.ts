@@ -27,6 +27,7 @@ export type {
   HeldSessionLaunchResult,
   Material,
   MaterialTotals,
+  MetricsResetResult,
   Mine,
   MineDeclareResult,
   MinesSnapshot,
