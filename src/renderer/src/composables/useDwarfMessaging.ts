@@ -89,9 +89,17 @@ export function useDwarfMessaging() {
    * Deliver `text` to `dwarfId`. A second call while one is still in flight
    * for the same dwarf is ignored: a double-click must never type the message
    * into a session twice.
+   *
+   * Resolves whether the delivery actually landed. App.vue's feed watch reads
+   * this to decide whether to re-read the transcript (issue #183) — the
+   * sending dwarf is always the one this panel has open, so a delivered send
+   * is itself proof the tail may have moved, and that must not wait for the
+   * ASSISTANT to speak next. The store's own `state.byDwarfId` is keyed by
+   * dwarf id for the panel to render, not a channel for a caller to learn the
+   * verdict of the one call it just made.
    */
-  async function send(dwarfId: string, text: string, pressEnter: boolean): Promise<void> {
-    if (state.byDwarfId[dwarfId]?.phase === 'sending') return
+  async function send(dwarfId: string, text: string, pressEnter: boolean): Promise<boolean> {
+    if (state.byDwarfId[dwarfId]?.phase === 'sending') return false
     clearTimeout(clearTimers.get(dwarfId))
     clearTimers.delete(dwarfId)
     stopWatch(dwarfId)
@@ -115,6 +123,8 @@ export function useDwarfMessaging() {
     // A failure has nothing to wait for; a delivery does.
     if (result.delivered) startWatch(dwarfId)
     else scheduleClear(dwarfId)
+
+    return result.delivered
   }
 
   /**

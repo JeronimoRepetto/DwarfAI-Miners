@@ -119,6 +119,42 @@ describe('useDwarfMessaging', () => {
     await send('claude:s1', 'hi', false)
     expect(api).toHaveBeenCalledWith({ dwarfId: 'claude:s1', text: 'hi', pressEnter: false })
   })
+
+  /*
+   * Issue #183: App's own feed watch re-reads on a delivered send, and it can
+   * only do that off what `send` itself resolves to — the store's internal
+   * `state.byDwarfId` is keyed by dwarf id and a caller has no business poking
+   * through it to learn the verdict of the call it just made.
+   */
+  it('resolves true when the delivery landed, so a caller can react to it (#183)', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+    const { send } = useDwarfMessaging()
+    await expect(send('claude:s1', 'hi', true)).resolves.toBe(true)
+  })
+
+  it('resolves false when the delivery failed', async () => {
+    stubApi(() =>
+      Promise.resolve({
+        delivered: false,
+        via: 'terminal',
+        error: 'The terminal would not come forward.'
+      })
+    )
+    const { send } = useDwarfMessaging()
+    await expect(send('claude:s1', 'hi', true)).resolves.toBe(false)
+  })
+
+  it('resolves false for a second send ignored while the first is in flight', async () => {
+    const pending = deferred<DwarfTextResult>()
+    stubApi(() => pending.promise)
+    const { send } = useDwarfMessaging()
+
+    const first = send('claude:s1', 'one', true)
+    await expect(send('claude:s1', 'two', true)).resolves.toBe(false)
+
+    pending.release({ delivered: true, via: 'terminal' })
+    await first
+  })
 })
 
 /**
