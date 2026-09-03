@@ -31,9 +31,19 @@ export interface ResolvedKickDelivery {
 }
 
 /**
- * Bound on foreman hops. One hop is all a real crew needs (a worker's parent is
- * a session, never another worker); the bound exists so a malformed or circular
- * provider answer can never spin here.
+ * Bound on foreman hops.
+ *
+ * This used to say one hop was all a real crew needed, because a worker's
+ * parent was a session and never another worker. #157 is the day that stopped
+ * being true: a worker2 is a subagent OF a subagent, so it relays to the worker
+ * that launched it and that worker relays on to the session — the second hop
+ * this bound was written to allow, finally used. The trees observed on this
+ * machine reach depth 3, so a four-hop bound has room to spare, and a chain
+ * deeper than it resolves to NO channel rather than a truncated one: refusing
+ * the send is honest, and delivering it to the wrong ancestor is not.
+ *
+ * The bound itself is unchanged and its real job never was the depth: it is
+ * what stops a malformed or circular provider answer spinning here.
  */
 const MAX_FOREMAN_HOPS = 4
 
@@ -43,7 +53,18 @@ export type TextDeliveryLookup = (dwarfId: string) => TextDeliveryTarget | null
 interface ForemanHops {
   channel: TextDeliveryChannel
   endpoint: TextDeliveryEndpoint
-  /** Worker names crossed while following foreman-relay hops, outermost first. */
+  /**
+   * Worker names crossed while following foreman-relay hops, OUTERMOST FIRST —
+   * nearest the writable endpoint, furthest from the dwarf being addressed.
+   *
+   * The walk below goes the other way, from the dwarf upwards, so it unshifts
+   * rather than pushes. That order was unobservable until #157: nothing had
+   * ever produced a chain longer than one hop, and one name reads the same in
+   * either direction. It matters the moment there are two, because the prefix
+   * is an instruction to the session at the top — "pass this to Explorer, who
+   * should pass it to Scout" — and reversing it addresses an agent the session
+   * has never heard of and asks it to forward to the one it launched.
+   */
   workerNames: string[]
 }
 
@@ -71,7 +92,9 @@ function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): Forem
         workerNames
       }
     }
-    workerNames.push(target.workerName)
+    // Unshift, not push: the walk climbs from the dwarf toward the endpoint and
+    // the prefix is read from the endpoint down. See ForemanHops.workerNames.
+    workerNames.unshift(target.workerName)
     currentId = target.foremanDwarfId
   }
   return null

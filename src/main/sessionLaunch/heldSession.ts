@@ -1,11 +1,20 @@
 import { redactSecrets } from '../domain/redactSecrets'
 import { isMcpConnectionStatus, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import type {
+  Dwarf,
   DwarfMcpServerStatus,
   DwarfQuestion,
   DwarfQuestionOption,
   Mine
 } from '../domain/types'
+import type { TextDeliveryTarget } from '../textDelivery/port'
+import {
+  heldCrewDwarfs,
+  heldCrewTargets,
+  heldRootRole,
+  type HeldCrew,
+  type HeldSessionSubagentSignal
+} from './heldCrew'
 
 /**
  * A session the panel STARTED and still HOLDS, as opposed to one it merely
@@ -169,6 +178,13 @@ export interface HeldSessionStartRequest {
    * no deadline on it, because a human is on the other end.
    */
   onAsk: (toolUseId: string, input: Record<string, unknown>) => Promise<HeldAnswer>
+  /**
+   * Something in the stream bore on this session's own crew (#157) — a task
+   * starting, a task ending, or a tool call made from inside one. Forwarded
+   * RAW: the seam translates and decides nothing, so every rule about what
+   * counts as a subagent lives where a test can reach it (see heldCrew.ts).
+   */
+  onSubagent: (signal: HeldSessionSubagentSignal) => void
   /** The session finished, one way or another. Always called exactly once. */
   onEnd: (reason: string) => void
 }
@@ -470,6 +486,94 @@ export type HeldTelemetryLookup = (sessionId: string) => HeldTelemetryState
  * value: an absent field here is "not reported yet", never "unset", so it
  * leaves the dwarf's existing value alone rather than clearing it.
  */
+/**
+ * What the panel knows about a held session's own crew (#157) — the same
+ * `{held}`-discriminated shape the two states above use, and for the same
+ * reason: `held: false` is a session this panel does not hold, where whatever
+ * its provider derived from disk stands untouched.
+ */
+export type HeldCrewState = { held: false } | { held: true; crew: HeldCrew }
+
+export type HeldCrewLookup = (sessionId: string) => HeldCrewState
+
+/**
+ * Is this the dwarf that IS a session, or one of its subagents?
+ *
+ * Every provider that reports subagents names them after the session's own
+ * dwarf — `<session dwarf id>:<agent id>` in claudeProvider, and the held crew
+ * follows it — so a dwarf whose id extends another's is a subagent of it. This
+ * is the test that keeps one session's crew from being hung off every subagent
+ * that shares its session id, the trap stampHeldQuestions names.
+ */
+function isSubagentDwarf(dwarf: Dwarf, crewOfMine: readonly Dwarf[]): boolean {
+  return crewOfMine.some((other) => other.id !== dwarf.id && dwarf.id.startsWith(`${other.id}:`))
+}
+
+/**
+ * Copy `mines` with each held session's own subagents ADDED beside it, and the
+ * routes they can be written through (#157).
+ *
+ * This is the join the issue turned out to need. A held session is discovered
+ * on disk by the ordinary poll exactly like any other, so its own dwarf is
+ * already here — but its subagents are not, and cannot be: they run in the
+ * foreground, which writes no `async_launched` record for the transcript parse
+ * to find (see heldCrew.ts for the measurement). The stream is where they are,
+ * and this is where the two meet.
+ *
+ * Added rather than substituted. A held session can ALSO have background agents
+ * that the transcript path did see, and those are its provider's finding — this
+ * only contributes what the provider had no way to know.
+ *
+ * Called before the lifecycle runs, deliberately, so a crew member that has
+ * finished gets the same leaving grace every other dwarf gets and walks out to
+ * a spawn point instead of blinking off the board.
+ */
+export function stampHeldCrew(
+  mines: Mine[],
+  stateOf: HeldCrewLookup
+): { mines: Mine[]; targets: Map<string, TextDeliveryTarget> } {
+  const targets = new Map<string, TextDeliveryTarget>()
+  const stamped = mines.map((mine) => {
+    const added: Dwarf[] = []
+    for (const dwarf of mine.dwarfs) {
+      if (isSubagentDwarf(dwarf, mine.dwarfs)) continue
+      const state = stateOf(dwarf.sessionId)
+      if (!state.held) continue
+      added.push(...heldCrewDwarfs(dwarf, state.crew))
+      for (const [id, target] of heldCrewTargets(dwarf, state.crew)) targets.set(id, target)
+    }
+    return added.length === 0 ? mine : { ...mine, dwarfs: [...mine.dwarfs, ...added] }
+  })
+  return { mines: stamped, targets }
+}
+
+/**
+ * Copy `mines` with each held session's own dwarf ranked by what it has
+ * actually done (#157).
+ *
+ * Role is topology, and for a session this panel holds the stream is the
+ * topology: a launched agent digs alone until it coordinates something, and is
+ * the foreman from the moment it has a crew out. See heldRootRole for why the
+ * promotion latches rather than reversing when the crew finishes.
+ *
+ * Only the session's own dwarf, never a subagent sharing its id — which here is
+ * `role === 'foreman'`, because this runs LAST in the pipeline, after every
+ * other stamp, and the provider ranks a session's own dwarf a foreman and its
+ * subagents workers. Running it last is what lets the two stamps above keep
+ * reading that same rank to find the same dwarf.
+ */
+export function stampHeldRank(mines: Mine[], stateOf: HeldCrewLookup): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      if (dwarf.role !== 'foreman') return dwarf
+      const state = stateOf(dwarf.sessionId)
+      if (!state.held) return dwarf
+      return { ...dwarf, role: heldRootRole(state.crew) }
+    })
+  }))
+}
+
 export function stampHeldTelemetry(mines: Mine[], stateOf: HeldTelemetryLookup): Mine[] {
   return mines.map((mine) => ({
     ...mine,

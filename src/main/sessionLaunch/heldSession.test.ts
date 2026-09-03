@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf, defaultMine, type Mine } from '../domain/types'
+import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
   askToWireQuestion,
   heldTelemetryToWire,
   parseAskUserQuestion,
   resolveAnswers,
+  stampHeldCrew,
   stampHeldQuestions,
+  stampHeldRank,
   stampHeldTelemetry,
   type HeldAsk,
   type HeldSessionTelemetryUpdate,
@@ -381,6 +384,133 @@ describe('heldTelemetryToWire', () => {
       }
     }
     expect('usage' in heldTelemetryToWire(telemetry)).toBe(false)
+  })
+})
+
+describe('stampHeldCrew', () => {
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [{ ...defaultDwarf(), id: 'claude:sess-1', role: 'foreman', sessionId: 'sess-1' }]
+      }
+    ]
+  }
+
+  function crewWith(...signals: HeldSessionSubagentSignal[]): HeldCrew {
+    const crew = new HeldCrew()
+    for (const signal of signals) crew.apply(signal)
+    return crew
+  }
+
+  const launched = (taskId: string, spawnDepth = 1): HeldSessionSubagentSignal => ({
+    kind: 'task-started',
+    taskId,
+    taskType: 'local_agent',
+    spawnDepth
+  })
+
+  it('puts a held session’s subagents on the board beside its own dwarf', () => {
+    const crew = crewWith(launched('a1'), launched('a2', 2))
+    const { mines } = stampHeldCrew(board(), () => ({ held: true, crew }))
+    expect(mines[0]!.dwarfs.map((dwarf) => [dwarf.id, dwarf.role])).toEqual([
+      ['claude:sess-1', 'foreman'],
+      ['claude:sess-1:a1', 'worker'],
+      ['claude:sess-1:a2', 'worker2']
+    ])
+  })
+
+  it('leaves a mine whose session this panel does not hold exactly as it was', () => {
+    const { mines } = stampHeldCrew(board(), () => ({ held: false }))
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+  })
+
+  it('adds nobody for a held session that has launched nothing', () => {
+    const { mines } = stampHeldCrew(board(), () => ({ held: true, crew: crewWith() }))
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+  })
+
+  it('routes every crew member, so the panel can offer a send that lands', () => {
+    const crew = crewWith(launched('a1'))
+    const { targets } = stampHeldCrew(board(), () => ({ held: true, crew }))
+    expect(targets.get('claude:sess-1:a1')).toEqual({
+      kind: 'foreman-relay',
+      foremanDwarfId: 'claude:sess-1',
+      workerName: 'agent-a1'
+    })
+  })
+
+  it('never attaches a crew to a dwarf that is itself a subagent', () => {
+    // A Claude worker carries its foreman's session id, so keying on the id
+    // alone would hang one session's whole crew off every subagent in it — the
+    // same trap stampHeldQuestions names.
+    const mines = board()
+    mines[0]!.dwarfs.push({
+      ...defaultDwarf(),
+      id: 'claude:sess-1:observed',
+      role: 'worker',
+      sessionId: 'sess-1'
+    })
+    const crew = crewWith(launched('a1'))
+    const { mines: stamped } = stampHeldCrew(mines, () => ({ held: true, crew }))
+    expect(stamped[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+      'claude:sess-1',
+      'claude:sess-1:observed',
+      'claude:sess-1:a1'
+    ])
+  })
+})
+
+describe('stampHeldRank', () => {
+  function board(role: 'foreman' | 'worker' = 'foreman'): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'claude:sess-1', role, sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'claude:sess-1:a1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  function crewThatCoordinated(): HeldCrew {
+    const crew = new HeldCrew()
+    crew.apply({ kind: 'task-started', taskId: 'a1', taskType: 'local_agent', spawnDepth: 1 })
+    return crew
+  }
+
+  it('draws a launched session that has coordinated nothing as a lone worker', () => {
+    const stamped = stampHeldRank(board(), () => ({ held: true, crew: new HeldCrew() }))
+    expect(stamped[0]!.dwarfs[0]!.role).toBe('worker')
+  })
+
+  it('promotes it the moment it has a crew out', () => {
+    const stamped = stampHeldRank(board(), () => ({ held: true, crew: crewThatCoordinated() }))
+    expect(stamped[0]!.dwarfs[0]!.role).toBe('foreman')
+  })
+
+  it('keeps the promotion after the crew has finished', () => {
+    // The observed sessions' own rule, so both paths say the same thing about
+    // the same session: a session is the foreman whether or not it currently
+    // has agents out. Deriving the rank from the headcount is what made the
+    // same dwarf swap identity mid-session (claudeProvider).
+    const crew = crewThatCoordinated()
+    crew.apply({ kind: 'task-ended', taskId: 'a1' })
+    const stamped = stampHeldRank(board(), () => ({ held: true, crew }))
+    expect(stamped[0]!.dwarfs[0]!.role).toBe('foreman')
+  })
+
+  it('leaves a session this panel does not hold as its provider ranked it', () => {
+    const stamped = stampHeldRank(board(), () => ({ held: false }))
+    expect(stamped[0]!.dwarfs[0]!.role).toBe('foreman')
+  })
+
+  it('never demotes a subagent, which shares its session id', () => {
+    const stamped = stampHeldRank(board(), () => ({ held: true, crew: new HeldCrew() }))
+    expect(stamped[0]!.dwarfs[1]!.role).toBe('worker')
   })
 })
 

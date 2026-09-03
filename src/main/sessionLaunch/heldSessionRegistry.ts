@@ -1,5 +1,6 @@
 import type { DwarfQuestionAnswerResult, HeldSessionLaunchResult } from '../domain/types'
 import type { CliDetector } from '../platform/cliDetection'
+import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
   askToWireQuestion,
   heldTelemetryToWire,
@@ -8,6 +9,7 @@ import {
   resolveAnswers,
   type HeldAnswer,
   type HeldAsk,
+  type HeldCrewState,
   type HeldQuestionState,
   type HeldSessionHandle,
   type HeldSessionPort,
@@ -99,6 +101,14 @@ interface HeldRecord {
    * undefined, so a merge never has to branch on "nothing reported yet".
    */
   telemetry: HeldSessionTelemetryUpdate
+  /**
+   * The subagents this session has out, folded from its own stream (#157).
+   * Lives on the record rather than in a map keyed by session id, so it dies
+   * with the session exactly as its open asks do — the crew of a session that
+   * has gone is not a crew, and a later session reusing the id must start from
+   * what its own stream says.
+   */
+  crew: HeldCrew
 }
 
 export interface HeldSessionRegistryOptions {
@@ -171,6 +181,13 @@ export class HeldSessionRegistry {
     }
 
     const key = this.nextKey++
+    // Built BEFORE the port is called, and written to through this reference
+    // rather than through the record. `start` is awaited, so a `task_started`
+    // arriving while it settles would otherwise find no record and be dropped —
+    // and a launch signal dropped is a dwarf that never appears at all, for the
+    // life of the session. The asks above accept that race because a dropped
+    // ask is re-asked; a launch is announced once.
+    const crew = new HeldCrew()
     try {
       const handle = await this.start({
         executablePath: detection.path,
@@ -181,9 +198,16 @@ export class HeldSessionRegistry {
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
+        onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
         onEnd: (reason) => this.finish(key, reason)
       })
-      this.held.set(key, { mineId: request.mineId, handle, openAsks: new Map(), telemetry: {} })
+      this.held.set(key, {
+        mineId: request.mineId,
+        handle,
+        openAsks: new Map(),
+        telemetry: {},
+        crew
+      })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
       return { launched: true }
@@ -223,6 +247,20 @@ export class HeldSessionRegistry {
     const record = this.recordFor(sessionId)
     if (record === undefined) return { held: false }
     return { held: true, ...heldTelemetryToWire(record.telemetry) }
+  }
+
+  /**
+   * What this session's own stream says about its crew (issue #157).
+   *
+   * `held: false` for a session this panel does not hold, which is what leaves
+   * an observed session's transcript-derived subagents alone — this only ever
+   * speaks for a stream it is actually reading. See stampHeldCrew and
+   * stampHeldRank, which are the two things that read it.
+   */
+  crewState(sessionId: string): HeldCrewState {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { held: false }
+    return { held: true, crew: record.crew }
   }
 
   /**

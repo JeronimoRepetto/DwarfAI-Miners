@@ -1,4 +1,10 @@
-import { query, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import {
+  query,
+  type PermissionResult,
+  type SDKMessage,
+  type SDKUserMessage
+} from '@anthropic-ai/claude-agent-sdk'
+import type { HeldSessionSubagentSignal } from './heldCrew'
 import type { HeldSessionHandle, HeldSessionPort, HeldSessionStartRequest } from './heldSession'
 
 /**
@@ -70,6 +76,83 @@ export interface SdkHeldSessionOptions {
    * approves it unchanged.
    */
   otherTools?: 'deny' | 'allow'
+}
+
+/**
+ * Statuses a task reaches by being over. `task_updated` and `task_notification`
+ * both report the ending — the first as a patch, the second as its own message
+ * — and the crew takes the same ending twice without complaint, so both are
+ * forwarded rather than one being picked as the authority.
+ *
+ * 'paused' and 'running' are deliberately absent: a paused agent has not
+ * finished, and reading it as one would be the false departure #28 exists to
+ * prevent.
+ */
+const TERMINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'failed',
+  'killed',
+  'stopped'
+])
+
+/**
+ * Every signal one stream message carries about this session's crew (#157).
+ *
+ * A pure translation, and it is pure on purpose: this module is the one place
+ * in the app with no unit test coming through it, so it may recognise message
+ * shapes and must not decide anything about them. What a task type means, what
+ * a depth means, who launched whom, whether an ending sticks — all of that is
+ * heldCrew.ts's, under test.
+ *
+ * The three shapes, as the SDK's own types define them:
+ *
+ * - `task_started` carries the task id, its description, the tool call it came
+ *   from and `spawn_depth` ("1 for a top-level spawn, N+1 when spawned from
+ *   inside a depth-N agent"). That last field is the maintainer's taxonomy in
+ *   the CLI's own words, which is why nothing here has to infer a depth.
+ * - `task_updated` patches a status; `task_notification` reports one outright.
+ * - An assistant message with a `parent_tool_use_id` is a turn taken INSIDE a
+ *   task, so every tool call it writes was made from within that task. That is
+ *   the only thing in the stream connecting a nested agent to its parent, and
+ *   it arrives BEFORE the `task_started` that needs it (measured 2026-09-03).
+ */
+function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
+  if (message.type === 'assistant' && message.parent_tool_use_id !== null) {
+    const insideToolUseId = message.parent_tool_use_id
+    const content = message.message.content
+    if (!Array.isArray(content)) return []
+    return content
+      .filter((block) => block.type === 'tool_use')
+      .map((block) => ({ kind: 'tool-call', toolUseId: block.id, insideToolUseId }))
+  }
+  if (message.type !== 'system') return []
+  if (message.subtype === 'task_started') {
+    return [
+      {
+        kind: 'task-started',
+        taskId: message.task_id,
+        ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+        ...(message.description === undefined ? {} : { description: message.description }),
+        ...(message.spawn_depth === undefined ? {} : { spawnDepth: message.spawn_depth }),
+        ...(message.task_type === undefined ? {} : { taskType: message.task_type }),
+        // Either flag marks work the CLI says hosts should not surface; the
+        // crew reads one field, so they are collapsed here rather than there.
+        ...(message.ambient === true || message.skip_transcript === true ? { ambient: true } : {})
+      }
+    ]
+  }
+  if (message.subtype === 'task_updated') {
+    const status = message.patch.status
+    return status !== undefined && TERMINAL_TASK_STATUSES.has(status)
+      ? [{ kind: 'task-ended', taskId: message.task_id }]
+      : []
+  }
+  if (message.subtype === 'task_notification') {
+    return TERMINAL_TASK_STATUSES.has(message.status)
+      ? [{ kind: 'task-ended', taskId: message.task_id }]
+      : []
+  }
+  return []
 }
 
 /**
@@ -183,6 +266,10 @@ export function createSdkHeldSession(options: SdkHeldSessionOptions = {}): HeldS
     void (async () => {
       try {
         for await (const message of session) {
+          // Every subagent this session launches, live (#157). First, because
+          // it is the only thing here that has to see EVERY message: a launch
+          // is announced once and a dropped one is a dwarf that never appears.
+          for (const signal of subagentSignals(message)) request.onSubagent(signal)
           // The CLI names its own session, and this is where it says so. It is
           // the same id the poll will find on disk, so it is the one link
           // between this stream and the dwarf drawn from it.

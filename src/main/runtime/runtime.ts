@@ -42,7 +42,12 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
-import { stampHeldQuestions, stampHeldTelemetry } from '../sessionLaunch/heldSession'
+import {
+  stampHeldCrew,
+  stampHeldQuestions,
+  stampHeldRank,
+  stampHeldTelemetry
+} from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
@@ -315,6 +320,17 @@ export class AgentRuntime {
    */
   private readonly mapSites = new Map<string, number>()
   private mines: Mine[] = []
+  /**
+   * Where a held session's own crew can be written to, rebuilt every poll by
+   * stampHeldCrew (#157).
+   *
+   * Kept here rather than asked of the registry because the ids are the STAMP's
+   * own construction — it names each crew member after the session dwarf it
+   * found on the board, and the registry has never seen a dwarf id. Replaced in
+   * one assignment per poll, the way claudeProvider swaps its own two maps, so
+   * a click landing mid-poll reads a whole generation rather than half of one.
+   */
+  private heldCrewTargets: ReadonlyMap<string, TextDeliveryTarget> = new Map()
 
   constructor(options: RuntimeOptions) {
     const home = options.home ?? homedir()
@@ -494,7 +510,18 @@ export class AgentRuntime {
         // snapshots alone. Merged before the lifecycle and the ledger see it,
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
-        const mines = mergeDeclaredMines(rawMines, this.declared, tierOf)
+        const merged = mergeDeclaredMines(rawMines, this.declared, tierOf)
+        // A held session's own subagents (#157), which no provider can see:
+        // they run in the foreground, so the transcript carries no
+        // `async_launched` record for the poll to read (see heldCrew.ts for
+        // the measurement). Stamped HERE, before the lifecycle and everything
+        // after it, so a crew member is an ordinary dwarf from that point on —
+        // it gets the leaving grace and walks out to a spawn point, it is
+        // placed by the same solver, and its send route is resolved by the
+        // same stamp as everyone else's.
+        const crew = stampHeldCrew(merged, (sessionId) => this.heldSessions.crewState(sessionId))
+        this.heldCrewTargets = crew.targets
+        const mines = crew.mines
         // Accrual happens on the lifecycle's output, which is exactly what
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
@@ -544,8 +571,17 @@ export class AgentRuntime {
         // supersession rule: only a held session has any of this, so an
         // observed session's own tail-derived read (model, above all) stands
         // untouched. See stampHeldTelemetry.
-        const published = stampHeldTelemetry(withQuestions, (sessionId) =>
+        const withTelemetry = stampHeldTelemetry(withQuestions, (sessionId) =>
           this.heldSessions.telemetryState(sessionId)
+        )
+        // What a held session's dwarf actually IS, last of all (#157). Role is
+        // topology, and for a session this panel holds the stream is the
+        // topology: it digs alone until it coordinates something and is the
+        // foreman from the moment it has a crew out. Last because the two
+        // stamps above find the session's own dwarf by the rank its provider
+        // gave it, and this is the step that changes it.
+        const published = stampHeldRank(withTelemetry, (sessionId) =>
+          this.heldSessions.crewState(sessionId)
         )
         this.mines = published
         pollProfiler.count(
@@ -898,6 +934,13 @@ export class AgentRuntime {
    */
   private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
     const consoleSupported = this.textDelivery.supportsConsoleInput !== false
+    // A held session's crew first, because no provider knows these dwarfs
+    // exist: the panel put them on the board off the session's own stream
+    // (#157). Every one of them relays — a running subagent has no channel of
+    // its own — and resolve.ts follows the hops to the session that can be
+    // written to.
+    const heldTarget = this.heldCrewTargets.get(dwarfId)
+    if (heldTarget !== undefined) return heldTarget
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
       if (target === undefined || target === null) continue

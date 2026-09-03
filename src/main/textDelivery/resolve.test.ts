@@ -89,6 +89,43 @@ describe('resolveTextDelivery', () => {
     })
   })
 
+  /*
+   * #157's addressing rule, and the first thing in this repository to actually
+   * use the second hop MAX_FOREMAN_HOPS was built for.
+   *
+   * A worker2 is a subagent OF a subagent, so its relay names the worker that
+   * launched it and that worker relays on to the session. Both routes end in
+   * the same queue — the intermediate worker has no queue of its own — so the
+   * only thing the choice changes is what the session is TOLD, and a session
+   * that never launched the worker2 has no idea who "Scout" is. The whole path
+   * is the only phrasing it can act on.
+   */
+  it('routes a worker2 up through the worker that launched it, naming both', () => {
+    const resolved = resolveTextDelivery(
+      'claude:s1:agent-deep',
+      targetsFrom({
+        'claude:s1:agent-deep': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1:agent-9',
+          workerName: 'Scout'
+        },
+        'claude:s1:agent-9': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' }
+      })
+    )
+    expect(resolved).toEqual({
+      channel: 'foreman-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
+      // Outermost first: the session is asked to pass this to Explorer, who is
+      // asked to pass it to Scout.
+      prefix: '[for agent Explorer] [for agent Scout] '
+    })
+  })
+
   it('returns null when the foreman itself has no channel', () => {
     const resolved = resolveTextDelivery(
       'claude:s1:agent-9',
@@ -220,6 +257,26 @@ describe('resolveKickDelivery', () => {
       })
     )
     expect(resolved).toBeNull()
+  })
+
+  it('cancels a worker2 by naming the same path back up the tree (#157)', () => {
+    const resolved = resolveKickDelivery(
+      'claude:s1:agent-deep',
+      targetsFrom({
+        'claude:s1:agent-deep': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1:agent-9',
+          workerName: 'Scout'
+        },
+        'claude:s1:agent-9': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': { kind: 'terminal', pid: 7 }
+      })
+    )
+    expect(resolved?.prefix).toBe('[cancel agent Explorer] [cancel agent Scout] ')
   })
 
   /**
