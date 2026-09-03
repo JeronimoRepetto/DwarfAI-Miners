@@ -50,6 +50,7 @@
  */
 import { coverScale, projectToBox, type BoxSize } from './sceneGeometry'
 import { CAVE_LAYOUT, type SceneLayout } from './sceneLayout'
+import { SPRITE_FRAME_SIZE } from '../sprite/spriteSheet'
 
 /**
  * The interior paintings' pixel size, a deliberate copy of art.ts's
@@ -84,10 +85,33 @@ export const PANEL_CHROME: BoxSize = {
 }
 
 /**
- * The sprite as authored: all nine poses share one canvas, and this is the box
- * `.dwarf-sprite` reserved for it before the sprite learned to scale.
+ * How tall a dwarf is drawn in the cave the art was calibrated in.
+ *
+ * This is the SCENE's number, not the art's: it is how big a figure standing
+ * next to that boulder has to be, and it does not move when the drawing behind
+ * it is redone at another pixel size. It has been 100 since issue #44.
  */
-export const AUTHORED_SPRITE: BoxSize = { width: 96, height: 100 }
+const AUTHORED_SPRITE_HEIGHT = 100
+
+/**
+ * The sprite as drawn: the calibrated height above, at the shape of the frame
+ * the dwarfs are actually painted in (issue #87).
+ *
+ * The width follows the art rather than being chosen, because everything that
+ * reads this box reads it to ask for CLEARANCE — half a width before a dwarf is
+ * clamped to the panel edge, a whole footprint before an anchor counts as
+ * fitting — and a figure measured wider or narrower than it is drawn is a dwarf
+ * held off his rock or allowed to hang over the frame.
+ *
+ * It replaces a hard-coded 96x100, which was the box `.dwarf-sprite` reserved
+ * for the AI-painted poses. The pixel frames are slightly narrower, so every
+ * clearance check has a little more room than it was tuned with and no anchor
+ * that fitted can stop fitting — see sceneSizing.test.ts, which says so.
+ */
+export const AUTHORED_SPRITE: BoxSize = {
+  width: (AUTHORED_SPRITE_HEIGHT * SPRITE_FRAME_SIZE.width) / SPRITE_FRAME_SIZE.height,
+  height: AUTHORED_SPRITE_HEIGHT
+}
 
 /**
  * The cave's own declared vertical floor, bound into `.cave { min-height }` by

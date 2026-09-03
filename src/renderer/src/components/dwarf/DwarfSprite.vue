@@ -507,14 +507,16 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
  * cave box (see lib/sceneSizing.ts), so the crew scales with the painting they
  * stand in rather than staying one size while the panel shrinks around them.
  * The fallbacks are the sizes the sprite was authored at, which is what a
- * sprite mounted outside any scene still draws at.
+ * sprite mounted outside any scene still draws at. The width is AUTHORED_SPRITE
+ * rounded to a whole pixel: it follows the 36x38 frame now (94.74), and a
+ * fraction in a fallback nobody can derive from the constant reads as drift.
  */
 .dwarf-sprite {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: var(--sprite-width, 96px);
+  width: var(--sprite-width, 95px);
 }
 .dwarf-hit {
   position: relative;
@@ -577,7 +579,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 }
 .dwarf-name {
   /* Follows the sprite's own box so the label never outgrows the dwarf it names. */
-  max-width: var(--sprite-width, 96px);
+  max-width: var(--sprite-width, 95px);
   margin-top: 2px;
   overflow: hidden;
   color: var(--ink-dim);

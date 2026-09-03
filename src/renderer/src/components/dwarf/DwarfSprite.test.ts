@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import { dwarfClips } from '../../lib/sprite/dwarfSequence'
+import { AUTHORED_SPRITE } from '../../lib/scene/sceneSizing'
 import { SPRITE_FRAME_SIZE, loopOf } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf } from '../../testing/factories'
 import { DWARF_SILENCE_WINDOW_MS, type DwarfKickState, type DwarfSendState } from '../../types'
@@ -889,7 +890,10 @@ describe('DwarfSprite sizing', () => {
   it('still draws a sprite mounted outside any scene at its authored size', () => {
     // The var fallbacks are what keep a bare sprite byte-for-byte what it was.
     expect(styleRule('.dwarf-frame')).toContain('--sprite-height, 100px')
-    expect(styleRule('.dwarf-sprite')).toContain('--sprite-width, 96px')
+    // 95, not 96: the box follows the 36x38 frame now (94.74, rounded whole).
+    expect(styleRule('.dwarf-sprite')).toContain(
+      `--sprite-width, ${Math.round(AUTHORED_SPRITE.width)}px`
+    )
   })
 
   it('scales its own box with its height, so the pose stays centred on the anchor', () => {
