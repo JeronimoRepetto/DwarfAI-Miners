@@ -213,17 +213,6 @@ function toggleSecondary(): void {
   void toggleLayout(viewState.mineId !== null)
 }
 
-/**
- * The app mark above the navigation stack: the whole shell back into the rail.
- *
- * Which mine is open is NOT forgotten — `useView` keeps it, so the next press of
- * the arrow brings the interior back with the panel. The layout says what is
- * drawn, never what the user last chose.
- */
-function collapseShell(): void {
-  void applyLayout({ expanded: false, mineOpen: false })
-}
-
 function hidePanel(): void {
   window.api.hidePanel()
 }
@@ -442,11 +431,17 @@ onBeforeUnmount(() => unsubscribe?.())
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
       </div>
 
+      <!--
+        The app mark hides the WINDOW (#156), which is the same hidePanel the
+        global shortcut and Settings' own hide control already ask for. The
+        layout is deliberately untouched: the panel that comes back is the one
+        that went away, mine and page and all.
+      -->
       <ShellNav
         :area="viewState.area"
         :broken="shortcutBroken"
         @select="selectArea"
-        @collapse="collapseShell"
+        @hide="hidePanel"
       />
 
       <!--

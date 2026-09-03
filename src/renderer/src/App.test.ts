@@ -1012,25 +1012,31 @@ describe('App concurrent mine', () => {
     expect(marks()).toBe(1)
   })
 
-  it('collapses the whole shell from the app mark, mine and all', async () => {
+  /*
+   * AMENDED for #156's second correction. Both cases were written for #153's
+   * ruling, where the app mark collapsed the whole shell into the rail. The
+   * maintainer's ruling now is that it HIDES the window — the same action the
+   * global shortcut takes — and the layout is left exactly as it stands, so
+   * whatever was drawn is what comes back. Each case kept its subject: what the
+   * mark does, and what it must not forget.
+   */
+  it('hides the whole window from the app mark, mine and all', async () => {
     const { wrapper, api } = await openMine()
+    const beforeMark = api.setPanelLayout.mock.calls.length
     await wrapper.find('.nav-mark').trigger('click')
     await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
-    expect(wrapper.find('.map-view').exists()).toBe(false)
-    expect(wrapper.find('.shell-nav').exists()).toBe(false)
-    expect(wrapper.find('.edge-rail').exists()).toBe(true)
+    expect(api.hidePanel).toHaveBeenCalledOnce()
+    // The window went away; the panel it will come back as did not change.
+    expect(api.setPanelLayout.mock.calls.length).toBe(beforeMark)
   })
 
-  it('brings the mine back with the panel, because collapsing forgets nothing', async () => {
+  it('leaves the mine and the page standing, because hiding forgets nothing', async () => {
     const { wrapper } = await openMine()
     await wrapper.find('.nav-mark').trigger('click')
     await flushPromises()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.shell-nav').exists()).toBe(true)
   })
 
   it('lands on the rail when the last mine closes with the panel already closed', async () => {
