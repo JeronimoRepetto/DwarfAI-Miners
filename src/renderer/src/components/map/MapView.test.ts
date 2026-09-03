@@ -122,6 +122,22 @@ describe('MapView', () => {
     }
   })
 
+  /*
+    Markers stack among themselves by spawn-point depth, which runs to 99 —
+    well past the vault chip's own z-index of 5. Keeping them inside one
+    positioned layer bounds that: the layer takes its place in the map's
+    stacking order once, so a marker can never climb over the totals the design
+    puts in the upper-right corner. Reachable in practice, not theory: a wide
+    panel crops the painting vertically and the clamp then holds the topmost
+    markers against the top edge, right under the chip.
+  */
+  it('keeps every marker in one layer beneath the vault chip', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    const layer = wrapper.get('.map-markers')
+    expect(layer.findAll('.mine-marker')).toHaveLength(MINES.length)
+    expect(wrapper.findAll('.map-markers > .mine-marker')).toHaveLength(MINES.length)
+  })
+
   it('never stands two mines on the same spawn point', () => {
     const wrapper = mount(MapView, { props: { mines: MINES } })
     const styles = wrapper.findAll('.mine-marker').map((marker) => marker.attributes('style'))

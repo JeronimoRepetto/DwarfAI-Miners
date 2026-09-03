@@ -237,17 +237,26 @@ const tooltipStyle = computed<Record<string, string>>(() => {
       The hills are quiet.<br />
       No agents are mining right now — start a coding session and a mine will appear.
     </p>
-    <MineMarker
-      v-for="mine in mines"
-      :key="mine.id"
-      :mine="mine"
-      :style="markerStyle(mine)"
-      @open="emit('open', $event)"
-      @mouseenter="hoverMarker(mine.id)"
-      @mouseleave="leaveMarker"
-      @focusin="focusMarker(mine.id)"
-      @focusout="leaveMarker"
-    />
+    <!--
+      One layer for every marker, so their spawn-point depths (which run to 99)
+      stack against each other and not against the rest of the map: the layer
+      takes its own place in the map's order, under the vault chip and under the
+      tooltip. Without it a marker clamped to the top edge of a wide panel draws
+      over the totals the design puts in that corner.
+    -->
+    <div class="map-markers">
+      <MineMarker
+        v-for="mine in mines"
+        :key="mine.id"
+        :mine="mine"
+        :style="markerStyle(mine)"
+        @open="emit('open', $event)"
+        @mouseenter="hoverMarker(mine.id)"
+        @mouseleave="leaveMarker"
+        @focusin="focusMarker(mine.id)"
+        @focusout="leaveMarker"
+      />
+    </div>
     <div v-if="tooltipCopy" class="mine-tooltip" role="tooltip" :style="tooltipStyle">
       <span class="tooltip-tier">{{ tooltipCopy.tier }}</span>
       <span class="tooltip-name">{{ tooltipCopy.name }}</span>
@@ -277,6 +286,17 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   object-fit: cover;
   object-position: 50% 50%;
   user-select: none;
+}
+/*
+  The markers' own stacking context. `pointer-events: none` because it covers
+  the whole map: the markers inside turn it back on, and everything else on the
+  map — the chip above it, the painting below — keeps its own hover.
+*/
+.map-markers {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
 }
 .map-empty {
   position: absolute;

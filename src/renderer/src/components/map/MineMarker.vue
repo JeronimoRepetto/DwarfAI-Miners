@@ -62,6 +62,8 @@ const label = computed(() => {
   position: absolute;
   /* Centred on its spawn point: the coordinate names the middle of the marker. */
   translate: -50% -50%;
+  /* The marker layer around it is click-through; a marker itself is not. */
+  pointer-events: auto;
 }
 /*
   The design gives a 10px marker and says nothing about its hit target. 22px is
