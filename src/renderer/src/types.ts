@@ -32,6 +32,7 @@ export type {
   Material,
   MaterialTotals,
   McpConnectionStatus,
+  MessageIssuer,
   MetricsResetResult,
   Mine,
   MineDeclareResult,

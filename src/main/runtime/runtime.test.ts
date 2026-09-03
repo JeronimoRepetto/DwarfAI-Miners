@@ -247,6 +247,91 @@ describe('AgentRuntime activation', () => {
       })
     })
 
+    /**
+     * WHO issued the words, for a dwarf no human can type into (#175).
+     *
+     * The transcript of an agent-launched session opens with an ordinary `user`
+     * record carrying the task it was given, so the panel drew the coordinator's
+     * instruction under the user's own face. The runtime knows the board, which
+     * is where the launcher is; see domain/messageIssuer.
+     */
+    function crewProvider(feed: FeedMessage[]): Provider {
+      return {
+        kind: 'claude',
+        scan: vi.fn<Provider['scan']>().mockResolvedValue([
+          {
+            provider: 'claude',
+            sessionId: 'session-1',
+            cwd: 'C:\\work\\project',
+            status: 'busy',
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: 'claude:session-1',
+                provider: 'claude',
+                role: 'foreman',
+                name: 'coordinator',
+                status: 'working',
+                sessionId: 'session-1'
+              },
+              {
+                id: 'claude:session-1:agent-77',
+                provider: 'claude',
+                role: 'worker',
+                name: 'survey the seam',
+                status: 'working',
+                sessionId: 'session-1'
+              }
+            ]
+          }
+        ]),
+        feed: vi.fn().mockResolvedValue(feed)
+      }
+    }
+
+    const CREW_FEED: FeedMessage[] = [
+      { role: 'user', text: 'survey the seam', timestamp: 't0' },
+      { role: 'assistant', text: 'On my way.', timestamp: 't1' }
+    ]
+
+    it("names the foreman that launched a worker as the issuer of the worker's prompt", async () => {
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [crewProvider(CREW_FEED)],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:session-1:agent-77')).resolves.toEqual({
+        readable: true,
+        messages: [
+          {
+            role: 'user',
+            text: 'survey the seam',
+            timestamp: 't0',
+            issuer: { role: 'foreman', name: 'coordinator' }
+          },
+          { role: 'assistant', text: 'On my way.', timestamp: 't1' }
+        ]
+      })
+    })
+
+    it("leaves a session root's own prompt to the human who typed it", async () => {
+      // The other half of #175, and the one that was already right: nobody
+      // launched the root, so its first message carries no issuer at all.
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [crewProvider(CREW_FEED)],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:session-1')).resolves.toEqual({
+        readable: true,
+        messages: CREW_FEED
+      })
+    })
+
     it('reports unreadable rather than throwing when the transcript read fails', async () => {
       const source: Provider = {
         kind: 'claude',

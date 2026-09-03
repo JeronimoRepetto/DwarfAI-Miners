@@ -5,6 +5,7 @@ import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { agentProviderList } from '../domain/launchProviders'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
+import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
 import {
   DWARF_PROVIDERS,
   MAX_DWARF_TEXT_CHARS,
@@ -1384,13 +1385,24 @@ export class AgentRuntime {
    * session that has never spoken.
    */
   async dwarfFeed(dwarfId: string): Promise<DwarfFeedResult> {
-    const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
+    const board = this.mines.flatMap((mine) => mine.dwarfs)
+    const dwarf = board.find((item) => item.id === dwarfId)
     if (dwarf === undefined) return unreadableFeed()
     const provider = this.providers.find((item) => item.kind === dwarf.provider)
     if (provider === undefined) return unreadableFeed()
     try {
       const messages = await provider.feed(dwarfId, FEED_LIMIT)
-      return messages === null ? unreadableFeed() : { readable: true, messages }
+      if (messages === null) return unreadableFeed()
+      // WHO issued the user half of it (#175). A provider reads one transcript
+      // and cannot see the tree the dwarf sits in; the board can, and the
+      // launcher is a dwarf on it. Only ever ADDS a name — a dwarf whose
+      // launcher the board cannot prove comes back exactly as the provider
+      // read it, which is every session root and therefore every prompt a
+      // human actually typed.
+      return {
+        readable: true,
+        messages: attributeIssuedMessages(messages, launchingAgentOf(dwarf, board))
+      }
     } catch (error) {
       console.warn(`[runtime] Failed to read feed for ${dwarfId}`, error)
       return unreadableFeed()
