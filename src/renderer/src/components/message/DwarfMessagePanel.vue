@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   BOOST_ICON_SRC,
   CLOSE_ICON_SRC,
@@ -124,8 +124,29 @@ const alertLine = computed(() => {
   return null
 })
 
+/*
+ * Open on the LATEST message. The design orders a transcript oldest first, so
+ * an unscrolled panel would open on the message furthest from whatever just
+ * happened — and the height it opened at was derived from the newest one.
+ *
+ * Only on mount and when the history expands, never on a new message: the
+ * panel must not yank a reader to the bottom mid-sentence, which is the same
+ * reason a new message does not resize it.
+ */
+const conversationRef = ref<HTMLElement | null>(null)
+
+async function showLatest(): Promise<void> {
+  await nextTick()
+  const list = conversationRef.value
+  if (list === null) return
+  list.scrollTop = list.scrollHeight
+}
+
+onMounted(showLatest)
+
 function toggleHistory(): void {
   historyOpen.value = !historyOpen.value
+  void showLatest()
   if (historyOpen.value) {
     collapsedHeight.value = height.value
     height.value = MESSAGE_PANEL_MAX_HEIGHT
@@ -272,7 +293,12 @@ watch(
       Independently scrollable, which is a rule and not a convenience: the
       source says history can be inspected here without expanding the tab.
     -->
-    <div class="panel-conversation" tabindex="0" :aria-label="conversation.note">
+    <div
+      ref="conversationRef"
+      class="panel-conversation"
+      tabindex="0"
+      :aria-label="conversation.note"
+    >
       <p v-if="conversation.messages.length === 0" class="panel-empty">{{ conversation.note }}</p>
       <article
         v-for="entry in conversation.messages"
@@ -300,76 +326,77 @@ watch(
 
     <div class="panel-composer">
       <!--
-        The ask, in the place the design draws it: above the input, never
-        behind a toggle — it is the reason the dwarf was clicked. A free-form
-        reply leaves on the ordinary message channel, because the answer
-        channel takes back only the agent's own words.
+        The ask REPLACES the composer while one is open, which is what the
+        design's two question exports draw: the option cards, then `Other
+        Thing` and the card's own box where the panel's input would be. It is
+        never behind a toggle, because it is the reason the dwarf was clicked.
+
+        A free-form reply leaves on the ordinary message channel, because the
+        answer channel takes back only the agent's own words.
       -->
       <DwarfQuestionCard
         v-if="dwarf.pendingQuestion"
+        class="panel-ask"
         :question="dwarf.pendingQuestion"
         :answer-state="answerState"
         @answer="emit('answer', $event)"
         @send-text="emit('send', $event)"
       />
-
-      <div class="panel-input-row">
-        <textarea
-          v-model="message"
-          class="panel-input is-selectable"
-          rows="2"
-          :maxlength="MAX_DWARF_TEXT_CHARS"
-          :disabled="!canReceive"
-          :title="action('chat')?.hint"
-          placeholder="Write here..."
-          :aria-label="`Message ${dwarf.name}`"
-          @keydown="onInputKeydown"
-        ></textarea>
-        <div class="panel-controls">
-          <button
-            class="control-kick"
-            :class="{ 'is-armed': kickArmed }"
-            type="button"
-            :disabled="action('kick')?.enabled !== true"
-            :aria-label="action('kick')?.name"
-            :title="action('kick')?.hint"
-            @click="onKick"
-          >
-            <span
-              class="control-glyph"
-              :style="{ '--control-icon': maskImageValue(KICK_ICON_SRC) }"
-              aria-hidden="true"
-            ></span>
-          </button>
-          <!--
-            Boost is drawn where the design puts it and does nothing, on
-            purpose. No provider exposes a channel to change a running
-            session's effort (DwarfCapabilities.adjustEffort is the literal
-            null), and the SDK's own `applyFlagSettings` resolves as a silent
-            no-op without a supportsEffort guard — so a live button here would
-            answer a click with silence, which is a worse lie than a disabled
-            one that says why.
-          -->
-          <button
-            class="control-boost"
-            type="button"
-            disabled
-            :aria-label="action('boost')?.name"
-            :title="action('boost')?.hint"
-          >
-            <span
-              class="control-glyph"
-              :style="{ '--control-icon': maskImageValue(BOOST_ICON_SRC) }"
-              aria-hidden="true"
-            ></span>
-          </button>
-        </div>
+      <textarea
+        v-else
+        v-model="message"
+        class="panel-input is-selectable"
+        rows="2"
+        :maxlength="MAX_DWARF_TEXT_CHARS"
+        :disabled="!canReceive"
+        :title="action('chat')?.hint"
+        placeholder="Write here..."
+        :aria-label="`Message ${dwarf.name}`"
+        @keydown="onInputKeydown"
+      ></textarea>
+      <div class="panel-controls">
+        <button
+          class="control-kick"
+          :class="{ 'is-armed': kickArmed }"
+          type="button"
+          :disabled="action('kick')?.enabled !== true"
+          :aria-label="action('kick')?.name"
+          :title="action('kick')?.hint"
+          @click="onKick"
+        >
+          <span
+            class="control-glyph"
+            :style="{ '--control-icon': maskImageValue(KICK_ICON_SRC) }"
+            aria-hidden="true"
+          ></span>
+        </button>
+        <!--
+          Boost is drawn where the design puts it and does nothing, on purpose.
+          No provider exposes a channel to change a running session's effort
+          (DwarfCapabilities.adjustEffort is the literal null), and the SDK's
+          own `applyFlagSettings` resolves as a silent no-op without a
+          supportsEffort guard — so a live button here would answer a click
+          with silence, which is a worse lie than a disabled one that says why.
+        -->
+        <button
+          class="control-boost"
+          type="button"
+          disabled
+          :aria-label="action('boost')?.name"
+          :title="action('boost')?.hint"
+        >
+          <span
+            class="control-glyph"
+            :style="{ '--control-icon': maskImageValue(BOOST_ICON_SRC) }"
+            aria-hidden="true"
+          ></span>
+        </button>
       </div>
-
-      <p v-if="alertLine" class="panel-alert" role="alert">{{ alertLine }}</p>
-      <p v-else-if="statusLine" class="panel-status" role="status">{{ statusLine }}</p>
-      <p v-else class="panel-note">{{ conversation.note }}</p>
     </div>
+
+    <p v-if="alertLine" class="panel-alert" role="alert">{{ alertLine }}</p>
+    <p v-else-if="statusLine" class="panel-status" role="status">{{ statusLine }}</p>
+    <p v-else class="panel-note">{{ conversation.note }}</p>
   </section>
 </template>
 
@@ -418,15 +445,23 @@ watch(
   outline: none;
   background: var(--color-accent);
 }
+/*
+ * The design's own title row: the agent's name at the start, the history tab
+ * CENTRED, the close at the end. A grid rather than a flex row, because
+ * centring the middle child of three unequal ones is what a grid does without
+ * a spacer element on each side.
+ */
 .panel-bar {
-  display: flex;
+  display: grid;
   flex: none;
-  align-items: center;
+  grid-template-columns: 1fr auto 1fr;
   gap: var(--space-nav-gap);
+  align-items: center;
   padding: 4px 8px;
 }
 .panel-agent {
-  flex: 1;
+  justify-self: start;
+  max-width: 100%;
   overflow: hidden;
   padding: 0;
   border: 0;
@@ -442,6 +477,12 @@ watch(
 }
 .panel-agent:hover {
   color: var(--color-accent);
+}
+.panel-history {
+  justify-self: center;
+}
+.panel-close {
+  justify-self: end;
 }
 .panel-history,
 .panel-close {
@@ -539,17 +580,23 @@ watch(
   user-select: text;
   -webkit-user-select: text;
 }
+/*
+ * The composer row: whichever input is current — the ordinary box, or the ask
+ * that replaces it — with the two controls stacked at its right edge, which is
+ * where every one of the design's exports puts them.
+ */
 .panel-composer {
   display: flex;
   flex: none;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 8px 8px;
-}
-.panel-input-row {
-  display: flex;
   gap: var(--space-nav-gap);
-  align-items: stretch;
+  align-items: flex-end;
+  padding: 0 8px 4px;
+}
+/* The re-homed question card takes the composer's whole width. */
+.panel-ask {
+  flex: 1;
+  min-width: 0;
+  max-width: var(--size-message-input-width);
 }
 /*
  * The design's input: 865px, white, 12px radius, accent border, start-aligned
@@ -588,7 +635,6 @@ watch(
   flex: none;
   flex-direction: column;
   gap: 4px;
-  justify-content: space-between;
 }
 .control-kick,
 .control-boost {
@@ -639,7 +685,9 @@ watch(
 .panel-note,
 .panel-status,
 .panel-alert {
+  flex: none;
   margin: 0;
+  padding: 0 8px 8px;
   font-size: 9px;
   line-height: 1.3;
 }

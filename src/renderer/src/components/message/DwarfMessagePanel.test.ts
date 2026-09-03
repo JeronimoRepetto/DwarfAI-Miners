@@ -98,6 +98,15 @@ describe('DwarfMessagePanel shape', () => {
     expect(messages[1]!.classes()).toContain('is-agent')
   })
 
+  it('centres the history tab between the name and the close, as the design does', () => {
+    const bar = [...panel().find('.panel-bar').element.children]
+    expect(bar.map((child) => child.className)).toEqual([
+      'panel-agent',
+      'panel-history',
+      'panel-close'
+    ])
+  })
+
   it('carries the three controls the design draws: kick, boost and close', () => {
     const wrapper = panel()
     expect(wrapper.find('.control-kick').exists()).toBe(true)
@@ -107,6 +116,17 @@ describe('DwarfMessagePanel shape', () => {
 
   it('gives the messages their own scroll, so history reads without expanding anything', () => {
     expect(panel().find('.panel-conversation').exists()).toBe(true)
+  })
+
+  it('opens showing the latest message rather than the oldest', async () => {
+    // Oldest first is the design's order, so an unscrolled panel would open on
+    // the message furthest from what just happened.
+    const wrapper = panel()
+    const list = wrapper.find('.panel-conversation').element
+    Object.defineProperty(list, 'scrollHeight', { value: 900, configurable: true })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(list.scrollTop).toBe(900)
   })
 })
 
@@ -414,10 +434,15 @@ describe('DwarfMessagePanel question', () => {
     expect(panel().find('.question-card').exists()).toBe(false)
   })
 
-  it('puts the ask directly above the input, where the design draws it', () => {
+  it('replaces the composer with the ask, exactly as the design draws it', () => {
+    // The two question exports show the option cards and the card's own
+    // `Other Thing` box where the ordinary input sits — one input, not two.
     const wrapper = asking()
     const composer = [...wrapper.find('.panel-composer').element.children]
     expect(composer[0]?.classList.contains('question-card')).toBe(true)
+    expect(wrapper.find('.panel-input').exists()).toBe(false)
+    // The two controls stay beside it, where every export puts them.
+    expect(wrapper.find('.panel-composer .control-kick').exists()).toBe(true)
   })
 
   it('forwards the chosen option once Enter confirms it', async () => {
