@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { defaultMaterials, defaultProject } from '../../testing/factories'
 import MineCard from './MineCard.vue'
+import cardSource from './MineCard.vue?raw'
 
 describe('MineCard naming', () => {
   it('names the measured tier beside the project', () => {
@@ -263,5 +264,63 @@ describe('MineCard action', () => {
     // would be a dead affordance pretending to work.
     const wrapper = mount(MineCard, { props: { project: defaultProject({ live: false }) } })
     expect(wrapper.find('button').exists()).toBe(false)
+  })
+})
+
+/*
+ * ONE POSITION FOR THE LEVEL COLUMN, ON EVERY CARD (#156).
+ *
+ * Measured in a real build before this was written, over four cards: the level
+ * column started 348px, 339px and 634px from the left edge of its own card, and
+ * was absent from the fourth. The row was a flex line, so the column began
+ * wherever the text column happened to stop — and the text column's width is
+ * whatever its longest line needs, which moves with a missing painting, a
+ * missing resources capsule and the length of the project's name.
+ *
+ * Its vertical offset moved with it, 49px against 43px, for a consequence of
+ * the same cause: squeezed narrow, the `Next level: 12/500` label wrapped onto
+ * two lines, the column grew taller, and being vertically centred it therefore
+ * started higher.
+ *
+ * So the row is a GRID with three declared tracks and every child placed in one
+ * by name. A card with no painting leaves that track empty rather than sliding
+ * the rest of the row into it, and a card nobody has walked leaves the level
+ * track empty rather than closing it up.
+ *
+ * Asserted against the stylesheet, because jsdom lays nothing out; the numbers
+ * above were re-measured in a real build afterwards and came back identical on
+ * all four cards.
+ */
+describe('MineCard level column placement', () => {
+  function styleRule(selector: string): string {
+    const at = cardSource.indexOf('\n' + selector + ' {')
+    if (at === -1) throw new Error(`no ${selector} rule in MineCard.vue`)
+    const open = cardSource.indexOf('{', at)
+    const close = cardSource.indexOf('}', open)
+    return cardSource.slice(open + 1, close)
+  }
+
+  it('lays the row out as declared tracks rather than as a flex line', () => {
+    const body = styleRule('.card-body')
+    expect(body).toMatch(/display:\s*grid/)
+    expect(body).toMatch(/grid-template-columns:/)
+  })
+
+  it('gives the painting, the text and the level a track each, by name', () => {
+    // The whole correction: without an explicit column, a card with no painting
+    // slides its text into the painting's track and everything after it moves.
+    expect(styleRule('.card-art')).toMatch(/grid-column:\s*1/)
+    expect(styleRule('.card-text')).toMatch(/grid-column:\s*2/)
+    expect(styleRule('.card-level')).toMatch(/grid-column:\s*3/)
+  })
+
+  it('never lets the level label wrap, so the column is one height everywhere', () => {
+    // A wrapped label is a taller column, and a taller column centred in a
+    // fixed-height card starts higher than its neighbours.
+    expect(styleRule('.level-label')).toMatch(/white-space:\s*nowrap/)
+  })
+
+  it('keeps the level column out of the flex sizing it used to depend on', () => {
+    expect(styleRule('.card-level')).not.toMatch(/flex:\s*1/)
   })
 })
