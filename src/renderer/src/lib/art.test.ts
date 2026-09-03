@@ -7,6 +7,7 @@ import {
   MAP_ART_SIZE,
   MAP_BG_SRC,
   NUGGET_SRC,
+  PORTRAIT_SRC,
   SHELL_ICON_SRC,
   SLEEP_ICON_SRC,
   SORT_ICON_SRC,
@@ -147,5 +148,19 @@ describe('maskImageValue', () => {
       // The only double quotes are the two the wrapper itself put there.
       expect(value.split('"').length - 1).toBe(2)
     }
+  })
+})
+
+/*
+ * The message panel draws a portrait beside each message (#159). Every rank
+ * gets its own face, not a borrowed one — the sheet inventory can fall short,
+ * but the portrait record stays a complete Record keyed by rank, so the type
+ * system enforces it. This test pins that each rank carries its own distinct
+ * painting, not a copy of someone else's.
+ */
+describe('PORTRAIT_SRC', () => {
+  it('gives each rank its own distinct portrait rather than reusing one', () => {
+    const sources = Object.values(PORTRAIT_SRC)
+    expect(new Set(sources).size).toBe(sources.length)
   })
 })

@@ -22,6 +22,7 @@ import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-work
 
 import foremanFace from '../assets/art/dwarf-foreman/dwarf-foreman-face.jpg'
 import workerFace from '../assets/art/dwarf-worker/dwarf-worker-face.jpg'
+import worker2Face from '../assets/art/dwarf-worker/dwarf-worker2-face.jpg'
 import userFace from '../assets/art/user/Gemini_Generated_Image_r35k1hr35k1hr35k.jpg'
 
 import interiorBronze from '../assets/art/inside-mines/inside-bronze-mine.jpg'
@@ -321,25 +322,17 @@ export function maskImageValue(src: string): string {
 
 /**
  * The faces in the message panel (#159), at the paths `screens/mine.md` names:
- * `dwarf-worker/dwarf-worker-face.jpg`, `dwarf-foreman/dwarf-foreman-face.jpg`
- * and the user portrait under `assets/art/user`.
+ * `dwarf-worker/dwarf-worker-face.jpg`, `dwarf-foreman/dwarf-foreman-face.jpg`,
+ * `dwarf-worker/dwarf-worker2-face.jpg`, and the user portrait under `assets/art/user`.
  *
  * Painted portraits rather than the sprite sheets: a sprite is 34x36 of pixel
  * art meant to stand in a cave, and the panel's portrait is a 100x100 framed
  * face. The user's file keeps its delivered name for the reason every other
  * asset here does.
- *
- * A `worker2` (#157) borrows the worker's face, and this is the one place a
- * rank borrows across ranks: no worker2 portrait has been drawn, and a crew
- * member two levels down is a dwarf the panel can be opened on, so the
- * alternative was an `<img>` with no source at all. The sheets above stay
- * strict — each rank owns its own `idle` there — because that art exists.
- * Keeping this a TOTAL Record is what forced the decision rather than letting
- * it arrive as a blank frame; the next rank will trip the same compiler error.
  */
 export const PORTRAIT_SRC: Record<DwarfRole, string> = {
   worker: workerFace,
-  worker2: workerFace,
+  worker2: worker2Face,
   foreman: foremanFace
 }
 

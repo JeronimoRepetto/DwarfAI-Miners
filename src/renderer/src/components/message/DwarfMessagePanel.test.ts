@@ -88,8 +88,10 @@ describe('DwarfMessagePanel shape', () => {
 
   it("draws the dwarf's own portrait beside what it said", () => {
     const worker = panel({ dwarf: defaultDwarf({ role: 'worker', conversation: HELD }) })
+    const worker2 = panel({ dwarf: defaultDwarf({ role: 'worker2', conversation: HELD }) })
     const foreman = panel({ dwarf: defaultDwarf({ role: 'foreman', conversation: HELD }) })
-    expect(worker.find('.message.is-agent .portrait').attributes('src')).toContain('worker')
+    expect(worker.find('.message.is-agent .portrait').attributes('src')).toContain('worker-face')
+    expect(worker2.find('.message.is-agent .portrait').attributes('src')).toContain('worker2-face')
     expect(foreman.find('.message.is-agent .portrait').attributes('src')).toContain('foreman')
   })
 
