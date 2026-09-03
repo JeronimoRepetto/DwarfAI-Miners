@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { INTERIOR_ART_SIZE } from '../art'
+import { SPRITE_FRAME_SIZE } from '../sprite/spriteSheet'
 import { projectToBox, visibleImageRect, type BoxSize } from './sceneGeometry'
 import { CAVE_LAYOUT, depthScale, type SceneAnchor } from './sceneLayout'
 import {
@@ -86,6 +87,51 @@ describe('spriteHeightPx', () => {
   })
 })
 
+/*
+ * Issue #87 — the sprite stopped being a 507x512 painting shown at 96x100 and
+ * became a 36x38 pixel frame packed into a strip.
+ *
+ * The DRAWN HEIGHT does not move with it. 100px in the authored cave is the
+ * scene's own calibration (#44) — how big a figure standing next to that
+ * boulder has to be — and has nothing to do with how many pixels the drawing
+ * is made of. What follows the art is the WIDTH, and with it the footprint that
+ * every clamp margin and anchor fit check is measured against.
+ */
+describe('AUTHORED_SPRITE', () => {
+  it('takes its shape from the frame the dwarfs are actually drawn in', () => {
+    expect(AUTHORED_SPRITE.width / AUTHORED_SPRITE.height).toBeCloseTo(
+      SPRITE_FRAME_SIZE.width / SPRITE_FRAME_SIZE.height
+    )
+  })
+
+  it('keeps the drawn height the cave was calibrated against', () => {
+    expect(AUTHORED_SPRITE.height).toBe(100)
+  })
+
+  /*
+   * The safety argument for the reshape, made as an assertion rather than left
+   * in a commit message. Every consumer of this box uses it to ask for
+   * CLEARANCE — half a width of margin before a dwarf is clamped, a whole
+   * footprint before an anchor counts as fitting — so a box no wider than the
+   * one those checks were tuned against cannot make a passing anchor fail.
+   */
+  it('is no wider than the painted canvas it replaces, so no anchor can newly fail', () => {
+    expect(AUTHORED_SPRITE.width).toBeLessThanOrEqual(96)
+  })
+
+  it('leaves every authored anchor standing on its rock after the reshape', () => {
+    for (const box of [
+      SMALLEST_READABLE_CAVE_BOX,
+      AUTHORED_CAVE_BOX,
+      { width: 900, height: 400 }
+    ]) {
+      expect(anchorsFitCaveBox(box, CAVE_ART_SIZE, CAVE_LAYOUT), `${box.width}x${box.height}`).toBe(
+        true
+      )
+    }
+  })
+})
+
 describe('spriteFootprintPx', () => {
   it('keeps the authored width-to-height ratio of the shared pose canvas', () => {
     for (const box of [
@@ -100,7 +146,7 @@ describe('spriteFootprintPx', () => {
     }
   })
 
-  it('is the authored 96x100 box at the authored cave box', () => {
+  it('is exactly the authored sprite box at the authored cave box', () => {
     const footprint = spriteFootprintPx(AUTHORED_CAVE_BOX, CAVE_ART_SIZE)
     expect(footprint.width).toBeCloseTo(AUTHORED_SPRITE.width)
     expect(footprint.height).toBeCloseTo(AUTHORED_SPRITE.height)

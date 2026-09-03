@@ -75,6 +75,7 @@ src/
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
     │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
+    │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
     │                  art.ts · presentation.ts · placement.ts — see rule 3
     └── testing/     factories for tests
 ```
