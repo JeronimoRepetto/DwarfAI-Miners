@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ADD_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
+import { browseRows } from '../../lib/browse/boardRows'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
 import MineCard from './MineCard.vue'
@@ -35,7 +36,15 @@ const emit = defineEmits<{
  * refusal is zero rows too, and rendering it the same way would tell a user
  * their history is gone (see ProjectQueryResult.answered).
  */
-const empty = computed(() => !props.loading && props.error === null && props.projects.length === 0)
+/**
+ * The rows on screen: the page the store answered with, plus every mine on the
+ * board it has no row for (#165). See lib/browse/boardRows.ts for the rule —
+ * this list and the map are one world, so nothing stands on the map without a
+ * card here.
+ */
+const rows = computed(() => browseRows(props.projects, props.mines, props))
+
+const empty = computed(() => !props.loading && props.error === null && rows.value.length === 0)
 
 const sortLabel = computed(() => (props.direction === 'desc' ? 'Newest first' : 'Oldest first'))
 
@@ -170,13 +179,14 @@ onBeforeUnmount(stopWatching)
         Nothing here<br />
         Add your project.
       </p>
-      <ul v-if="projects.length" class="card-list">
+      <ul v-if="rows.length" class="card-list">
         <MineCard
-          v-for="project in projects"
-          :key="project.id"
-          :project="project"
-          :active-agents="activeAgentsFor(project, mines)"
-          :status="cardStatusFor(project, mines)"
+          v-for="row in rows"
+          :key="row.id"
+          :project="row"
+          :unrecorded="row.unrecorded"
+          :active-agents="activeAgentsFor(row, mines)"
+          :status="cardStatusFor(row, mines)"
           @open="emit('open', $event)"
         />
       </ul>

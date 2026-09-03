@@ -5,6 +5,7 @@ import {
   cardArtFor,
   cardTierFor,
   cardTierLabel,
+  isMeasuring,
   nextLevelFor,
   type CardStatus
 } from '../../lib/browse/browseCards'
@@ -26,6 +27,17 @@ const props = defineProps<{
    * at all, for the same reason an absent count prints no line.
    */
   status?: CardStatus
+  /**
+   * True when this card was built from the BOARD because the projects store
+   * holds no row for it (#165) — see lib/browse/boardRows.ts.
+   *
+   * The card says so out loud rather than passing the row off as a stored
+   * project: everything a store row carries and this one cannot — a tier, a
+   * weight, a vault, the date it was added — is missing for a reason, and a
+   * card that stayed silent about it would look like a broken stored project
+   * instead of an honest live one.
+   */
+  unrecorded?: boolean
 }>()
 
 const emit = defineEmits<{ open: [projectId: string] }>()
@@ -62,6 +74,16 @@ const resources = computed(() => vaultRows(props.project.materials))
  * nextLevelFor for what cur/max/ratio mean and why uranium prints no boundary.
  */
 const level = computed(() => nextLevelFor(props.project.weightBytes))
+
+/**
+ * Whether this card is a mine still being measured (#165) — see `isMeasuring`.
+ *
+ * Drawn where the level column would be, because that is the fact it stands in
+ * for: the bar is missing precisely because the walk has not finished. Mutually
+ * exclusive with the bar by construction, not by ordering — the state is
+ * defined as "the card has no tier to state", and a card with a bar has one.
+ */
+const measuring = computed(() => isMeasuring(props.project))
 
 /*
  * Only a project with a mine on the board can be entered: the interior of a
@@ -137,6 +159,19 @@ const enterable = computed(() => props.project.live)
           >
         </span>
       </span>
+      <!--
+        A mine the walk has not finished measuring (#165). It stands in the
+        level column because it stands in for the bar: a declared card with no
+        tier, no entrance and no bar read as broken rather than as busy, and
+        this says which it is without claiming anything about the outcome.
+      -->
+      <span v-else-if="measuring" class="card-measuring" role="status">Measuring the mine...</span>
+      <!--
+        A mine on the board that the projects store has no row for (#165). It
+        takes the same column for the same reason: it is why there is no bar,
+        no tier and no vault beside the name.
+      -->
+      <span v-else-if="unrecorded" class="card-unrecorded">Working now - not recorded yet</span>
       <!--
         The mock's lower-right corner. Drawn only where the board proved the
         fact, and the row itself disappears when it proved neither — a pair of
@@ -343,6 +378,27 @@ button.card-body:focus-visible {
 }
 .level-label-value {
   color: var(--color-cream);
+}
+/*
+ * The measuring line takes the level column's own place and the level label's
+ * accent, so a card waiting on its walk has the same shape as one that has
+ * finished — the row does not reflow when the measurement lands (#165). One
+ * line, always, for the same reason .level-label is.
+ */
+.card-measuring,
+.card-unrecorded {
+  grid-column: 3;
+  min-width: 0;
+  color: var(--color-accent);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+/*
+ * Quieter than the measuring line: a mine being measured is about to become a
+ * full card, and one the store has no row for may simply never be.
+ */
+.card-unrecorded {
+  color: var(--color-tooltip-text);
 }
 /*
  * The mock parks both markers against the card's lower-right corner, clear of

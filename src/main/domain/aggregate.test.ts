@@ -5,6 +5,7 @@ import {
   mergeDeclaredMines,
   mineIdForPath,
   stampMapSites,
+  stampUnrecorded,
   sumTokensObserved
 } from './aggregate'
 import {
@@ -472,5 +473,79 @@ describe('collapseDuplicateMines', () => {
     const first = mineOf({ id: 'mine:a', dwarfs: [{ ...defaultDwarf(), id: 'claude:1' }] })
     collapseDuplicateMines([first, mineOf({ id: 'mine:a' })])
     expect(first.dwarfs).toHaveLength(1)
+  })
+})
+
+/**
+ * The nameless mine of the third acceptance run (#165).
+ *
+ * A bronze mine with no name at all reached the panel, and it was not in the
+ * projects store — every stored row carries a name. It was board-side: a live
+ * session whose cwd is the filesystem root. Trimming the trailing separator off
+ * `/` leaves the empty string, which has no last segment either, so both the
+ * path and the name came out empty and the card drew nothing where a project
+ * belongs.
+ */
+describe('a mine whose cwd is a root', () => {
+  it('names a POSIX-root session by its path rather than by nothing', () => {
+    const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd: '/' })], tierOf, 'linux')
+    expect(mine!.name).toBe('/')
+    expect(mine!.path).toBe('/')
+  })
+
+  it('names a Windows drive root by the drive', () => {
+    const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\' })], tierOf, 'win32')
+    expect(mine!.name).toBe('C:')
+    expect(mine!.path).toBe('C:')
+  })
+
+  it('never hands the board an empty name for a cwd that is only separators', () => {
+    for (const cwd of ['/', '//', '\\', '\\\\']) {
+      const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd })], tierOf, 'linux')
+      expect(mine!.name).not.toBe('')
+      expect(mine!.path).not.toBe('')
+    }
+  })
+})
+
+/**
+ * One world for the map and the list (#165).
+ *
+ * The map draws the board; the Mines list draws store rows. A mine that reached
+ * the board with no row behind it therefore appeared on the map with no card,
+ * and the third acceptance run photographed the gap. The stamp is what lets the
+ * list surface it: a mine main can positively say the store has no row for.
+ */
+describe('stampUnrecorded', () => {
+  const mineOf = (overrides: Partial<ReturnType<typeof defaultMine>>) => ({
+    ...defaultMine(),
+    ...overrides
+  })
+  const board = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
+
+  it('marks the mines the store has no row for', () => {
+    const stamped = stampUnrecorded(board, new Set(['mine:a']))
+    expect(stamped.map((mine) => mine.unrecorded)).toEqual([undefined, true])
+  })
+
+  it('says nothing at all about a mine the store does hold', () => {
+    // Absent rather than false, like every other optional fact on the wire:
+    // the panel asks whether the flag is there, never what it says.
+    const stamped = stampUnrecorded(board, new Set(['mine:a', 'mine:b']))
+    expect(stamped[0]!.unrecorded).toBeUndefined()
+    expect(stamped[1]!.unrecorded).toBeUndefined()
+  })
+
+  it('stamps nothing when the store has never answered', () => {
+    // A store that answered nothing has recorded nothing AND knows nothing.
+    // Reading that as "none of them are recorded" would put the whole board in
+    // the list a second time — a simulated valley above all (#42).
+    expect(stampUnrecorded(board, null)).toBe(board)
+  })
+
+  it('never mutates the board it was given', () => {
+    const original = mineOf({ id: 'mine:a' })
+    stampUnrecorded([original], new Set<string>())
+    expect(original.unrecorded).toBeUndefined()
   })
 })

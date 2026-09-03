@@ -357,3 +357,61 @@ describe('MinesPanel add control', () => {
     expect(wrapper.get('.panel-empty').text()).toContain('Nothing here')
   })
 })
+
+/**
+ * One world for the map and the list (#165).
+ *
+ * The map draws the board and this list draws store rows, so a mine could stand
+ * on the map with no card anywhere here. Every board mine main can say the
+ * store holds no row for now gets a card built from the board itself.
+ */
+describe('MinesPanel board-and-list coherence', () => {
+  const boardOnly = defaultMine({
+    id: 'mine:live',
+    path: 'C:\dev\scratch',
+    name: 'scratch',
+    unrecorded: true
+  })
+
+  it('lists a board mine the store has no row for', () => {
+    const wrapper = panel({ projects: [], mines: [boardOnly] })
+
+    const names = wrapper.findAll('.card-name').map((card) => card.text())
+    expect(names).toEqual(['scratch'])
+  })
+
+  it('marks it as unrecorded rather than passing it off as a stored project', () => {
+    const wrapper = panel({ projects: [], mines: [boardOnly] })
+
+    expect(wrapper.get('.card-unrecorded').text()).toBe('Working now - not recorded yet')
+  })
+
+  it('puts it in front of the page the store answered with', () => {
+    const wrapper = panel({
+      projects: [defaultProject({ id: 'mine:stored', name: 'stored' })],
+      mines: [boardOnly]
+    })
+
+    expect(wrapper.findAll('.card-name').map((card) => card.text())).toEqual(['scratch', 'stored'])
+  })
+
+  it('draws one card, not two, once the store row arrives', () => {
+    const wrapper = panel({
+      projects: [defaultProject({ id: 'mine:live', name: 'scratch' })],
+      mines: [boardOnly]
+    })
+
+    expect(wrapper.findAll('.card-name')).toHaveLength(1)
+    expect(wrapper.find('.card-unrecorded').exists()).toBe(false)
+  })
+
+  it('is not the empty state, because the list is not empty', () => {
+    const wrapper = panel({ projects: [], mines: [boardOnly] })
+
+    expect(wrapper.find('.panel-empty').exists()).toBe(false)
+  })
+
+  it('still says nothing is here when the board adds nothing either', () => {
+    expect(panel({ projects: [], mines: [] }).find('.panel-empty').exists()).toBe(true)
+  })
+})

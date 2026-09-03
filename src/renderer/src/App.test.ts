@@ -69,6 +69,9 @@ const NAV_MINES = `${NAV}[aria-label="Mines"]`
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
+    // Fire-and-forget, like hidePanel: the shell reports every click on itself
+    // so main can raise the window, and there is no verdict to render (#165).
+    raisePanel: vi.fn(),
     getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone.
@@ -1505,5 +1508,161 @@ describe('App add panel', () => {
 
     expect(wrapper.find('.add-panel').exists()).toBe(true)
     expect(wrapper.find('.launch-alert').text()).toBe('Claude Code is not installed.')
+  })
+})
+
+/**
+ * The third acceptance run's sixth correction (#165).
+ *
+ * With another program focused, clicking the panel left it BEHIND that program
+ * — alive, visible, receiving the click, and never raised. The platform's own
+ * click-to-front does not reliably apply to a frameless transparent window, so
+ * the shell reports the click and main raises the window itself.
+ *
+ * The rule is any click, pinned or not: pinning decides whether the panel STAYS
+ * above other windows, not whether a click may bring it there.
+ */
+describe('App raise on click (#165)', () => {
+  it('asks main to raise the window when the shell is pressed', async () => {
+    const { wrapper, api } = await mountOpenApp()
+
+    await wrapper.find('.shell').trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+
+  it('raises on a press ANYWHERE in the shell, not only on empty ground', async () => {
+    // The capture phase is what makes this true of every control on the panel:
+    // a button that stops propagation must not also stop the window rising.
+    const { wrapper, api } = await mountOpenApp()
+
+    await wrapper.find(NAV_MINES).trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+
+  it('raises while unpinned, which is the state the panel was found behind in', async () => {
+    const { wrapper, api } = await mountOpenApp({
+      getAlwaysOnTop: vi.fn().mockResolvedValue(false)
+    })
+
+    await wrapper.find('.shell').trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+
+  it('raises on the rail too, which is all there is to click when collapsed', async () => {
+    const { wrapper, api } = await mountApp()
+
+    await wrapper.find('.shell').trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+})
+
+/**
+ * The third acceptance run's seventh correction (#165).
+ *
+ * More than one dwarf could be selected at once, and since a click opens the
+ * message panel, that implied more than one panel. These pin the whole rule
+ * where the user meets it: exactly one selected sprite, exactly one panel, and
+ * selecting B clears A in one move.
+ */
+describe('App exclusive selection (#165)', () => {
+  const ONE = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'One',
+    status: 'working',
+    sessionId: 's1',
+    lastMessage: 'first'
+  }
+  const TWO = { ...ONE, id: 'claude:s2', sessionId: 's2', name: 'Two', lastMessage: 'second' }
+
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [ONE, TWO],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+    useDwarfKicking().clearAll()
+  })
+
+  async function openCrewedMine() {
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    return wrapper
+  }
+
+  /** Every sprite currently wearing the selection halo. */
+  function selectedSprites(wrapper: VueWrapper) {
+    return wrapper
+      .findAll('.dwarf-sprite')
+      .filter((sprite) => sprite.classes().includes('is-selected'))
+  }
+
+  /**
+   * The hit target of the dwarf with this name, by its accessible name.
+   *
+   * Never by DOM index: the scene paints its crew back to front, so the order
+   * the sprites appear in is a depth ordering and has nothing to do with the
+   * order the board listed them.
+   */
+  function hitFor(wrapper: VueWrapper, name: string) {
+    const hit = wrapper
+      .findAll('.dwarf-hit')
+      .find((candidate) => candidate.attributes('aria-label')?.startsWith(`Select ${name} `))
+    if (hit === undefined) throw new Error(`no dwarf named ${name} is on the floor`)
+    return hit
+  }
+
+  it('selects exactly one dwarf, and opens exactly one panel', async () => {
+    const wrapper = await openCrewedMine()
+
+    await hitFor(wrapper, 'One').trigger('click')
+    await flushPromises()
+
+    expect(selectedSprites(wrapper)).toHaveLength(1)
+    expect(wrapper.findAll('.message-panel')).toHaveLength(1)
+  })
+
+  it('clears the first dwarf when the second is selected, in one move', async () => {
+    const wrapper = await openCrewedMine()
+
+    await hitFor(wrapper, 'One').trigger('click')
+    await flushPromises()
+    await hitFor(wrapper, 'Two').trigger('click')
+    await flushPromises()
+
+    const selected = selectedSprites(wrapper)
+    expect(selected).toHaveLength(1)
+    expect(selected[0]!.text()).toContain('Two')
+    expect(wrapper.findAll('.message-panel')).toHaveLength(1)
+    expect(wrapper.get('.message-panel').text()).toContain('second')
+  })
+
+  it('leaves nobody selected and no panel open once the last one is closed', async () => {
+    const wrapper = await openCrewedMine()
+
+    await hitFor(wrapper, 'One').trigger('click')
+    await flushPromises()
+    await hitFor(wrapper, 'Two').trigger('click')
+    await flushPromises()
+    await wrapper.find('.panel-close').trigger('click')
+    await flushPromises()
+
+    expect(selectedSprites(wrapper)).toHaveLength(0)
+    expect(wrapper.findAll('.message-panel')).toHaveLength(0)
   })
 })

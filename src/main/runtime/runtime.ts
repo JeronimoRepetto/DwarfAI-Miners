@@ -36,6 +36,7 @@ import {
   collapseDuplicateMines,
   mergeDeclaredMines,
   stampMapSites,
+  stampUnrecorded,
   type DeclaredProject
 } from '../domain/aggregate'
 import { nullLedgerStore } from '../ledger/ledgerStore'
@@ -332,6 +333,25 @@ export class AgentRuntime {
    * next launch.
    */
   private readonly mapSites = new Map<string, number>()
+  /**
+   * Every project id the store holds a row for (#165), or null when the store
+   * has never answered.
+   *
+   * The join that makes the map and the Mines list one world: the map draws the
+   * board, the list draws store rows, and this is how main can say which board
+   * mines have no row behind them so the panel can list those too.
+   *
+   * REBUILT from the whole-table read `loadDeclared` already makes — no second
+   * query — and added to one id at a time as the observer writes, for exactly
+   * the reason `mapSites` is: a project the app has only just discovered would
+   * otherwise read as unrecorded for the rest of the session.
+   *
+   * Null and empty are different answers. Null is "no reading at all": no store
+   * configured, or a store that refused. An empty set is a store that answered
+   * and holds nothing. Only the second is grounds for calling a mine
+   * unrecorded — see stampUnrecorded.
+   */
+  private recorded: Set<string> | null = null
   private mines: Mine[] = []
   /**
    * Where a held session's own crew can be written to, rebuilt every poll by
@@ -505,6 +525,10 @@ export class AgentRuntime {
             // be after a restart.
             onRecorded: (record) => {
               if (record.mapSite !== null) this.mapSites.set(record.id, record.mapSite)
+              // The row now exists, so the mine is recorded from this poll on
+              // (#165). Only ever added here: a write proves one row, never the
+              // absence of the rest, so it cannot turn a null reading into a set.
+              this.recorded?.add(record.id)
             },
             onError: (message, detail) => console.warn(message, detail)
           })
@@ -561,7 +585,13 @@ export class AgentRuntime {
         // mineIdForPath id everything else here does (#136).
         const withMaterials = pollProfiler.measureSync('ledger', () =>
           this.ledger.observe(
-            collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
+            // Whether the store holds a row is stamped LAST, on the collapsed
+            // board (#165): the flag is per project id, and a mine that was
+            // still two entries a step earlier would carry it twice.
+            stampUnrecorded(
+              collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
+              this.recorded
+            ),
             now,
             confirmedTierOf
           )
@@ -714,6 +744,10 @@ export class AgentRuntime {
     for (const project of result.value) {
       if (project.mapSite !== null) this.mapSites.set(project.id, project.mapSite)
     }
+    // REPLACED rather than added to, unlike the placements above: this answers
+    // "which projects does the store hold", and a row that has gone must stop
+    // counting as one (#165). The read succeeded, so it is the whole truth.
+    this.recorded = new Set(result.value.map((project) => project.id))
     // Keeping the previous cache on a failure rather than emptying it: a
     // momentary lock must not sweep the user's mines off the board.
     this.declared = result.value

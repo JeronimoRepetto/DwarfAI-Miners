@@ -83,6 +83,16 @@ export function buildMainWindowOptions(
      */
     resizable: false,
     skipTaskbar: true,
+    /*
+     * Stated rather than left to Electron's default (#165). The third
+     * acceptance run found the shell sitting BEHIND whatever program had the
+     * foreground, alive and taking clicks but never raised, and `focusable` is
+     * the one option that would make `raisePanelWindow` below a no-op with
+     * nothing on screen to say so. A frameless panel invites exactly the kind
+     * of "it does not need focus" reasoning that sets this to false; it does
+     * need it, and now the test says so.
+     */
+    focusable: true,
     alwaysOnTop: input.alwaysOnTop,
     icon: input.iconPath,
     webPreferences: {
@@ -140,6 +150,61 @@ export interface UiScaleTarget {
 export function applyUiScale(target: UiScaleTarget, area: ScreenRect): number {
   target.setZoomFactor(uiScale(area))
   return target.getZoomFactor()
+}
+
+/**
+ * The slice of BrowserWindow a raise needs. Narrow for the reason the three
+ * above are: the whole of the decision is testable with a fake that records
+ * what was asked of it, in the order it was asked.
+ */
+export interface RaiseTarget {
+  isVisible: () => boolean
+  isMinimized: () => boolean
+  restore: () => void
+  show: () => void
+  moveTop: () => void
+  focus: () => void
+}
+
+/**
+ * Bring the shell to the front and give it focus (#165).
+ *
+ * ## Why this has to exist
+ *
+ * The third acceptance run found the panel sitting BEHIND whatever program had
+ * the foreground: alive, visible, receiving the click, and never raised. The
+ * shell is a frameless TRANSPARENT window — a layered window on Windows — which
+ * is the combination the platform's own click-to-front does not reliably apply,
+ * and nothing in the app compensated. Until this, the only `focus()` in the
+ * whole process was `showPanel`'s, so the sole way to raise the panel was to
+ * hide it and summon it again.
+ *
+ * The maintainer's rule is one sentence: a click anywhere on the shell raises
+ * and focuses it, pinned or not, like any normal window. Pinning is a separate
+ * question — it decides whether the panel STAYS above other windows, not
+ * whether a click may bring it there — so nothing here reads it.
+ *
+ * ## The order, and the one refusal
+ *
+ * `moveTop` then `focus`, because they are different asks: one is z-order and
+ * the other is keyboard focus, and a window focused underneath another is
+ * exactly the state that was photographed. A minimized window is restored
+ * first, or there is nothing to raise.
+ *
+ * A HIDDEN window is left hidden. Hidden is the tray state, and a click cannot
+ * have landed on a window nobody can see — so a stray call would otherwise
+ * become a way for the renderer to reopen the panel behind the user's back.
+ */
+export function raisePanelWindow(target: RaiseTarget): void {
+  if (!target.isVisible()) return
+  if (target.isMinimized()) target.restore()
+  target.moveTop()
+  target.focus()
+}
+
+/** Raise and focus the shell window, if there is one (see raisePanelWindow). */
+export function raisePanel(): void {
+  if (mainWindow !== null) raisePanelWindow(mainWindow)
 }
 
 /** The screen rectangle the panel may cover, on the display it is currently on. */
@@ -259,7 +324,10 @@ export function showPanel(): void {
   applyUiScale(mainWindow.webContents, area)
   applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout))
   mainWindow.show()
-  mainWindow.focus()
+  // Shown is not RAISED (#165): the same frameless-transparent window that a
+  // click does not bring forward can also come back underneath whatever had the
+  // foreground while it was hidden. One rule, one function, both entry points.
+  raisePanelWindow(mainWindow)
 }
 
 export function hidePanel(): void {

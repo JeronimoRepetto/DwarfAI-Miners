@@ -1,13 +1,17 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ScreenRect } from '../platform/screenArea'
 import {
   DESIGN_INTERIOR_WIDTH,
+  SHELL_CONTENT_INSET,
   interiorColumnWidth
 } from '../../renderer/src/lib/scene/sceneSizing'
 import {
   DESIGN_COMPOSITION_HEIGHT,
   DESIGN_SCREEN_HEIGHT,
   DESIGN_SECONDARY_WIDTH,
+  MAP_FRAME_INSET,
   MIN_WINDOW_WIDTH,
   RAIL_WIDTH,
   expandedWidth,
@@ -215,6 +219,71 @@ describe('the derived columns', () => {
   it('never squeezes the secondary column below the design’s own content width', () => {
     expect(secondaryColumnWidth(200)).toBe(DESIGN_SECONDARY_WIDTH)
     expect(secondaryColumnWidth(DESIGN_COMPOSITION_HEIGHT)).toBeGreaterThan(DESIGN_SECONDARY_WIDTH)
+  })
+
+  /**
+   * The third acceptance run's first correction (#165): the map painting sat
+   * with margins inside its column.
+   *
+   * The column followed the map's aspect against the WHOLE content height, but
+   * the painting never sees the whole of it — the design's map container spends
+   * 21px of padding and a 2px border on every side first. So the box the
+   * painting was actually drawn into was 46px shorter and 46px narrower than
+   * the one the width was derived for, its shape no longer matched the art, and
+   * `contain` letterboxed the difference. Measured in design pixels below,
+   * because the margin is a number and not an impression.
+   */
+  describe('the map column hugs its painting', () => {
+    /** The delivered map art, as `MAP_ART_SIZE` in renderer/src/lib/art.ts. */
+    const MAP_ART = { width: 1856, height: 2304 }
+
+    /** The box the painting is drawn into, inside the map container's own frame. */
+    function mapBox(windowHeight: number): { width: number; height: number } {
+      return {
+        width: secondaryColumnWidth(windowHeight) - MAP_FRAME_INSET,
+        height: windowHeight - SHELL_CONTENT_INSET - MAP_FRAME_INSET
+      }
+    }
+
+    /** What `object-fit: contain` leaves empty in that box, per axis, in design px. */
+    function letterbox(windowHeight: number): { x: number; y: number } {
+      const box = mapBox(windowHeight)
+      const scale = Math.min(box.width / MAP_ART.width, box.height / MAP_ART.height)
+      return {
+        x: box.width - MAP_ART.width * scale,
+        y: box.height - MAP_ART.height * scale
+      }
+    }
+
+    it('leaves the painting no margin at the design screen', () => {
+      // Was 11.3 design px of empty column above and below the map, on a box
+      // 1018 tall — the margin the acceptance run photographed. Sub-pixel is
+      // the whole of what integer column widths can leave behind.
+      const empty = letterbox(DESIGN_SCREEN_HEIGHT)
+      expect(empty.x).toBeLessThan(1)
+      expect(empty.y).toBeLessThan(1)
+    })
+
+    it('leaves it none at any height the fit rule governs', () => {
+      for (const height of [DESIGN_COMPOSITION_HEIGHT, 1032, 1392, 2160]) {
+        const empty = letterbox(height)
+        expect(empty.x).toBeLessThan(1)
+        expect(empty.y).toBeLessThan(1)
+      }
+    })
+
+    it('counts the same frame the stylesheet draws', () => {
+      // The inset is a copy of CSS main cannot read, so it is pinned to the
+      // tokens themselves: `.panel-frame.is-map` spends --space-map-pad on
+      // every side inside a --border-highlight border.
+      const css = readFileSync(
+        join(import.meta.dirname, '../../renderer/src/assets/design-tokens.css'),
+        'utf8'
+      )
+      const pad = Number(/--space-map-pad:\s*(\d+)px/.exec(css)?.[1])
+      const border = Number(/--border-highlight:\s*(\d+)px/.exec(css)?.[1])
+      expect(MAP_FRAME_INSET).toBe(2 * (pad + border))
+    })
   })
 
   it('spends the opened width on the design’s own chrome plus that column', () => {

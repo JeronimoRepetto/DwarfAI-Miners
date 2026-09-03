@@ -733,3 +733,54 @@ describe('MineScene selection', () => {
     expect(wrapper.find('.dwarf-sprite.is-selected').exists()).toBe(false)
   })
 })
+
+/**
+ * The third acceptance run's seventh correction (#165).
+ *
+ * More than one dwarf could be selected at once, and since a click opens the
+ * message panel, that implied more than one panel. Selection itself was already
+ * singular — App holds one id and DwarfSprite has no selected state of its own
+ * — so the leak was in the DRAWING: the scene lays out one sprite per crew
+ * ENTRY, and nothing guaranteed a crew held one entry per dwarf. Two entries
+ * for one dwarf both matched the one selected id, and both wore the halo.
+ */
+describe('MineScene single selection', () => {
+  it('draws one sprite per dwarf even when the crew lists one twice', () => {
+    const twice = defaultDwarf({ id: 'claude:s1', name: 'One' })
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [twice, { ...twice }] }) }
+    })
+
+    expect(wrapper.findAll('.dwarf-sprite')).toHaveLength(1)
+  })
+
+  it('marks exactly one sprite however often the selected dwarf is listed', () => {
+    const twice = defaultDwarf({ id: 'claude:s1', name: 'One' })
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({ dwarfs: [twice, { ...twice }, defaultDwarf({ id: 'claude:s2' })] }),
+        selectedId: 'claude:s1'
+      }
+    })
+
+    const selected = wrapper
+      .findAll('.dwarf-sprite')
+      .filter((sprite) => sprite.classes().includes('is-selected'))
+    expect(selected).toHaveLength(1)
+  })
+
+  it('keeps the FIRST listing of a dwarf, which is the one the board saw first', () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({
+          dwarfs: [
+            defaultDwarf({ id: 'claude:s1', name: 'First' }),
+            defaultDwarf({ id: 'claude:s1', name: 'Second' })
+          ]
+        })
+      }
+    })
+
+    expect(wrapper.get('.dwarf-sprite').text()).toContain('First')
+  })
+})

@@ -80,6 +80,23 @@ export const SHELL_CHROME_WIDTH = SHELL_FRAME_WIDTH + 8
  */
 const SHELL_CONTENT_INSET = 16
 
+/**
+ * What the map's own container spends before the painting sees any of its box,
+ * on each axis: the design's 21px padding and 2px border, twice over.
+ *
+ * A deliberate copy of `--space-map-pad` and `--border-highlight`, which main
+ * cannot read; `panelBounds.test.ts` pins it against the stylesheet itself.
+ *
+ * Counted here although `mineColumnWidth` deliberately does NOT count the
+ * interior frame's border (#153), and the difference is not an inconsistency:
+ * the mine column's width is set by `aspect-ratio` in the stylesheet, so main
+ * has to reserve exactly what CSS derives or the two disagree. Nothing derives
+ * the secondary column in CSS — it is `flex: 1` on whatever main gave the
+ * window — so main is the only author of that width and can reserve the frame
+ * that actually stands there (#165).
+ */
+export const MAP_FRAME_INSET = 2 * (21 + 2)
+
 /** The two paintings, as the ratios their columns are derived from. */
 const INTERIOR_ART_ASPECT = 1184 / 3622
 const MAP_ART_ASPECT = 1856 / 2304
@@ -114,9 +131,23 @@ export function mineColumnWidth(windowHeight: number): number {
  * screen and the two unavailable panels were drawn in, none of which is a map.
  * Above the floor the column follows the map's height, so the whole painting is
  * visible without a crop — which is the correction itself.
+ *
+ * The map's aspect is applied to the height the painting actually gets, not to
+ * the whole content height (#165). The first version derived the column as if
+ * the painting filled the column edge to edge; it does not, because the map
+ * container's 21px padding and 2px border stand between them. The box the
+ * painting was then drawn into was 46px shorter and 46px narrower than the one
+ * the width was derived for, so its shape no longer matched the art and
+ * `contain` letterboxed 11 design pixels of empty column above and below it.
+ * Deriving from the inner box and adding the frame back makes the column hug
+ * the painting, which is what the design's own container does.
  */
 export function secondaryColumnWidth(windowHeight: number): number {
-  return Math.max(DESIGN_SECONDARY_WIDTH, Math.round(contentHeight(windowHeight) * MAP_ART_ASPECT))
+  const paintingHeight = contentHeight(windowHeight) - MAP_FRAME_INSET
+  return Math.max(
+    DESIGN_SECONDARY_WIDTH,
+    Math.round(Math.max(0, paintingHeight) * MAP_ART_ASPECT) + MAP_FRAME_INSET
+  )
 }
 
 /** The whole panel with no mine held open, on a window this tall. */

@@ -1,4 +1,4 @@
-import type { MaterialTotals, Mine } from '../../shared/contracts'
+import type { MaterialTotals, Mine, ProjectSummary } from '../../shared/contracts'
 import type { ShellArea } from './lib/shell/shellNav'
 
 /** The five areas the shell's navigation stack selects (#90). */
@@ -227,4 +227,22 @@ export interface ViewState {
 
 export function defaultViewState(): ViewState {
   return { area: 'map', mineId: null }
+}
+
+/**
+ * One row of the Mines list (#165).
+ *
+ * The list used to be store rows and the map used to be the board, so a mine
+ * could stand on the map with no card beside it. They are one world now, and
+ * this is the row shape that carries the join: a card the store answered with,
+ * or one the panel built from a board mine main said the store has no row for.
+ *
+ * Renderer-local rather than a wire type, and deliberately so: the whole point
+ * is that an unrecorded row is NOT a project summary main sent — the fields it
+ * cannot back are absent, and `unrecorded` is what tells the card to say so.
+ * The board's own `Mine.unrecorded` is the wire half of the same fact.
+ */
+export interface BrowseRow extends ProjectSummary {
+  /** True when this row was built from the board because the store had none. */
+  unrecorded?: boolean
 }

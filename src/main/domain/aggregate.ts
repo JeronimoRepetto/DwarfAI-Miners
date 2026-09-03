@@ -139,6 +139,35 @@ export function stampMapSites(mines: Mine[], siteByMineId: ReadonlyMap<string, n
 }
 
 /**
+ * Mark every mine the projects store holds no row for (#165).
+ *
+ * A fourth composed step, for the reason `stampMapSites` is a third one: what
+ * the STORE knows is a remembered fact off disk, and aggregation is a
+ * projection of this poll's snapshots.
+ *
+ * The correction it exists for: the map draws the board and the Mines list
+ * draws store rows, so a mine could stand on the map with no card beside it —
+ * the third acceptance run photographed exactly that. They are one world, and
+ * this is the join. Three kinds of mine reach it honestly: one whose crew is
+ * only leaving or waiting, which the project observer deliberately does not
+ * count as a sighting; one in the poll or two before its first row is written;
+ * and a simulated valley, which never touches the store at all (#42).
+ *
+ * `recorded` is `null` when the store has never answered. That is not an empty
+ * store — it is no reading at all, and treating it as "none of these are
+ * recorded" would put the whole board in the list a second time. Nothing is
+ * stamped, and the panel goes on drawing what it always did.
+ *
+ * Absent means recorded, exactly like every other optional fact on the wire:
+ * only a mine main can positively say is missing carries the flag. The input is
+ * never mutated; stamped copies take its place.
+ */
+export function stampUnrecorded(mines: Mine[], recorded: ReadonlySet<string> | null): Mine[] {
+  if (recorded === null) return mines
+  return mines.map((mine) => (recorded.has(mine.id) ? mine : { ...mine, unrecorded: true }))
+}
+
+/**
  * One mine per project id, whatever the board was assembled from (#156).
  *
  * The second acceptance run photographed four markers over three projects. The
@@ -212,8 +241,21 @@ export function sumTokensObserved(mines: Mine[]): number {
   return mines.reduce((total, mine) => total + mine.tokensObserved, 0)
 }
 
+/**
+ * A path without the trailing separators a picker or a shell may hand over —
+ * unless that is the whole of it.
+ *
+ * The nameless mine of the third acceptance run (#165). A live session whose
+ * cwd is a filesystem root (`/`, and `\` on a UNC-rooted shell) is all
+ * separator: trimming leaves the empty string, which then has no last segment
+ * either, so the mine reached the panel with an empty path AND an empty name
+ * and the card drew nothing where a project belongs. A root is a real place a
+ * session can run, so it keeps its own characters; `C:\` still trims to `C:`,
+ * because there the drive letter is the segment.
+ */
 function trimTrailingSlashes(path: string): string {
-  return path.replace(/[\\/]+$/, '')
+  const trimmed = path.replace(/[\\/]+$/, '')
+  return trimmed === '' ? path : trimmed
 }
 
 function normalizeKey(path: string, platform: Platform): string {

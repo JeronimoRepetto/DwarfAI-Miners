@@ -64,6 +64,7 @@ import {
   hidePanel,
   markQuitting,
   panelLayout,
+  raisePanel,
   seedPanelEdge,
   setPanelLayout,
   showPanel,
@@ -89,6 +90,7 @@ function shortcutPlatform(): ShortcutPlatform {
 
 function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
+  ipcMain.removeAllListeners(IPC_CHANNELS.raisePanel)
   ipcMain.removeHandler(IPC_CHANNELS.getAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.getPanelLayout)
@@ -485,6 +487,9 @@ async function init(): Promise<void> {
   /** A dwarf this process cannot read at all — never "it has said nothing". */
   const noFeed: DwarfFeedResult = { readable: false, messages: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
+  // The shell reports every click on itself, because a frameless transparent
+  // window is not reliably raised by the platform's own click-to-front (#165).
+  ipcMain.on(IPC_CHANNELS.raisePanel, () => raisePanel())
   ipcMain.handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
   ipcMain.handle(IPC_CHANNELS.setAlwaysOnTop, async (_event, payload: unknown) => {
     // Boundary discipline as elsewhere: a malformed payload changes nothing

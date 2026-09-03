@@ -44,12 +44,33 @@ describe('projectNameForPath', () => {
     expect(projectNameForPath('')).toBe('')
   })
 
+  it('names a root by its own separator rather than by nothing (#165)', () => {
+    // The nameless mine of the third acceptance run. `/` is all separator, so
+    // trimming it leaves the empty string and there is no last segment left to
+    // take — the fallback has to reach the path AS GIVEN, not the trimmed one.
+    expect(projectNameForPath('/')).toBe('/')
+    expect(projectNameForPath('//')).toBe('//')
+    expect(projectNameForPath('\\')).toBe('\\')
+  })
+
+  it('still trims a drive root down to its drive', () => {
+    expect(projectNameForPath('C:\\')).toBe('C:')
+  })
+
   it('derives the same name aggregateMines gives the same path', () => {
     // The drift guard. aggregateMines keeps its own last-segment derivation
     // private, and a declared project has no snapshot to be named from — so if
     // the two ever disagreed, one project would show two names depending on
     // whether anyone happened to be working in it.
-    for (const path of ['C:\\code\\cafeteria', '/home/j/code/Cafetería-Ñandú', 'C:\\code']) {
+    // '\\' and 'C:\\' were added by #165: the drift matters most exactly where
+    // the derivation has no segment to take, which is where it went wrong.
+    for (const path of [
+      'C:\\code\\cafeteria',
+      '/home/j/code/Cafetería-Ñandú',
+      'C:\\code',
+      '\\',
+      'C:\\'
+    ]) {
       const [mine] = aggregateMines(
         [{ ...defaultProviderSnapshot(), cwd: path, updatedAt: 1 }],
         () => 'bronze',
