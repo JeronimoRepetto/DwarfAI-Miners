@@ -153,10 +153,11 @@ const resetModalOpen = ref(false)
   display: flex;
   flex-direction: column;
   gap: var(--space-settings);
-  /* The design draws nothing here (#142's unspecified placement); pushed to
-     the bottom of the scroll area so it reads as furniture, not a fourth
+  /* The design draws nothing here (#142's unspecified placement). No auto
+     margin of its own: DataBaseSection's already carries the bottom cluster
+     down (see its own comment), and this simply follows it in flow, reading
+     as furniture below the one destructive action rather than a fourth
      designed section. */
-  margin-top: auto;
 }
 .field-label {
   padding-top: var(--space-settings);

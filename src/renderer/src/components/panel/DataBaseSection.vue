@@ -22,6 +22,12 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   gap: var(--space-settings);
+  /* Verified visuals (settings-panel.png, settings-reset-metrics-section.png)
+     show Data Base sitting near the bottom of the panel, well below Position
+     rather than immediately after it — an auto top margin carries this
+     section (and SettingsPanel's own Application section right after it)
+     down together, absorbing the panel's leftover height. */
+  margin-top: auto;
 }
 .field-label {
   padding-top: var(--space-settings);
