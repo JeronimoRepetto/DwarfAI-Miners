@@ -62,8 +62,9 @@ the PDF's pages produces the wrong answer.
 The docs mark every gap explicitly as **Unspecified**: hover/focus/error/loading states, reduced
 motion, breakpoints, z-index, the shadow recipe behind "elevation 5", marker hex values. Those
 are product decisions — implement what is specified and surface the gap in the PR or issue,
-never fill it silently. `screens/launch.md` states the PDF defines **no** agent-launch screen;
-do not invent one for #86 out of this source.
+never fill it silently. The in-mine agent-launch flow, once a v1 gap, is now FULLY specified —
+`screens/launch.md` (v2 pages 22, 31-35) carries the Add Panel, its gates and the MessagePanel
+transition; read it before touching that flow rather than treating it as missing.
 
 ## Boundaries the rebuild does not get to break
 
