@@ -5,6 +5,7 @@ import {
   accrue,
   creditMaterial,
   emptyLedger,
+  knownMineTotals,
   ledgerTotals,
   mineTotals,
   observationsFrom,
@@ -319,6 +320,20 @@ describe('creditMaterial', () => {
 describe('mineTotals', () => {
   it('returns an empty breakdown for a mine that has never produced', () => {
     expect(mineTotals(emptyLedger(), 'mine:unknown')).toEqual(emptyMaterialTotals())
+  })
+})
+
+describe('knownMineTotals', () => {
+  it('returns undefined for a mine the ledger has no row for at all (#90)', () => {
+    // Unlike mineTotals(), which zero-fills for the same case: a browse spans
+    // projects nobody has ever mined, and the caller must be able to tell
+    // "never produced" from "produced and happens to total zero".
+    expect(knownMineTotals(emptyLedger(), 'mine:unknown')).toBeUndefined()
+  })
+
+  it('returns the mine breakdown exactly as persisted once it has one', () => {
+    const state = creditMaterial(emptyLedger(), 'mine:a', 'gold', 100)
+    expect(knownMineTotals(state, 'mine:a')).toEqual({ ...emptyMaterialTotals(), gold: 100 })
   })
 })
 
