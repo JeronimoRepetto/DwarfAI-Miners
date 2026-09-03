@@ -167,8 +167,14 @@ export function defaultDwarfQuestionState(): DwarfQuestionState {
   return { byDwarfId: {} }
 }
 
-/** Where the panel currently is: the isometric map, or inside one mine. */
-export type View = { kind: 'map' } | { kind: 'mine'; mineId: string }
+/**
+ * Where the panel currently is: the isometric map, the browse over every
+ * project the app remembers (#92), or inside one mine.
+ *
+ * 'mines' carries no state of its own — its filters and pages belong to
+ * useProjectBrowse — so unlike 'mine' it survives any change to the board.
+ */
+export type View = { kind: 'map' } | { kind: 'mines' } | { kind: 'mine'; mineId: string }
 
 /** Root state for the navigation store. */
 export interface ViewState {

@@ -3,12 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FeedModal from './components/panel/FeedModal.vue'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
+import MinesPanel from './components/browse/MinesPanel.vue'
 import ShortcutSettings from './components/panel/ShortcutSettings.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
 import { usePinnedWindow } from './composables/usePinnedWindow'
+import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { versionLabel, versionTitle } from './lib/appBuild'
@@ -16,7 +18,7 @@ import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
 
 const { state, setMines } = useMines()
-const { state: viewState, openMine, showMap, syncWithMines } = useView()
+const { state: viewState, openMine, showMap, showMines, syncWithMines } = useView()
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 const { state: kickingState, kick } = useDwarfKicking()
 const { state: questionState, answer: answerDwarfQuestion } = useDwarfQuestion()
@@ -46,6 +48,50 @@ const {
   record: recordShortcut,
   reset: resetShortcut
 } = useToggleShortcut()
+
+/**
+ * The browse over every project the app remembers (#92). App owns the
+ * composable — and therefore the IPC — for the same reason it owns the shortcut
+ * one: MinesPanel then stays presentational, and the honesty rules about what a
+ * refused query may render live in exactly one place.
+ */
+const {
+  filters: browseFilters,
+  projects,
+  loading: browseLoading,
+  error: browseError,
+  exhausted: browseExhausted,
+  adding: addingProject,
+  addError: addProjectError,
+  load: loadProjects,
+  loadMore: loadMoreProjects,
+  setSearch: setProjectSearch,
+  setTier: setProjectTier,
+  toggleDirection: toggleProjectOrder,
+  addProject
+} = useProjectBrowse()
+
+const minesOpen = computed(() => viewState.view.kind === 'mines')
+
+/**
+ * Every open reads the first page again: the list spans projects nobody is
+ * working, so nothing pushes it and a remembered page would age silently.
+ */
+function toggleMines(): void {
+  if (minesOpen.value) {
+    showMap()
+    return
+  }
+  showMines()
+  error.value = null
+  void loadProjects()
+}
+
+/** The browse and the board share one id scheme, so a card opens its mine directly. */
+function openFromBrowse(projectId: string): void {
+  openMine(projectId)
+  error.value = null
+}
 
 const settingsOpen = ref(false)
 
@@ -234,6 +280,29 @@ onBeforeUnmount(() => unsubscribe?.())
       </span>
       <div class="window-controls">
         <!--
+          Browse every project the app remembers (#92) — including the ones no
+          session is running, which is exactly what the map cannot show. A
+          toggle rather than a one-way door, because it is also the way back:
+          the full edge rail the design gives this is its own slice.
+        -->
+        <button
+          class="mines"
+          type="button"
+          aria-label="Browse mines"
+          :aria-pressed="minesOpen ? 'true' : 'false'"
+          title="Browse every project"
+          @click="toggleMines"
+        >
+          <!-- Mine entrance on the same 16x16 rect grid as the other icons. -->
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="6" y="4" width="4" height="2" fill="#a8703a" />
+            <rect x="4" y="6" width="8" height="2" fill="#a8703a" />
+            <rect x="2" y="8" width="12" height="7" fill="#a8703a" />
+            <rect x="6" y="10" width="4" height="5" fill="#3f2a14" />
+            <rect x="7" y="11" width="2" height="2" fill="#f4c76a" />
+          </svg>
+        </button>
+        <!--
           Settings (see #17). aria-expanded ties the gear to the panel it
           opens, and `is-broken` mirrors a shortcut the OS refused so the
           failure is visible without opening anything.
@@ -332,6 +401,25 @@ onBeforeUnmount(() => unsubscribe?.())
         @kick="kickDwarf"
         @answer-question="answerQuestion"
       />
+      <MinesPanel
+        v-else-if="minesOpen"
+        :projects="projects"
+        :mines="state.mines"
+        :search="browseFilters.search"
+        :tier="browseFilters.tier"
+        :direction="browseFilters.direction"
+        :loading="browseLoading"
+        :error="browseError"
+        :exhausted="browseExhausted"
+        :adding="addingProject"
+        :add-error="addProjectError"
+        @search="setProjectSearch"
+        @tier="setProjectTier"
+        @toggle-direction="toggleProjectOrder"
+        @load-more="loadMoreProjects"
+        @add="addProject"
+        @open="openFromBrowse"
+      />
       <MapView
         v-else
         :mines="state.mines"
@@ -398,6 +486,7 @@ onBeforeUnmount(() => unsubscribe?.())
 }
 /* Every titlebar button opts out of the frameless drag surface, or its
    clicks would start a window drag instead of reaching the handler. */
+.mines,
 .settings,
 .pin,
 .close {
@@ -413,6 +502,7 @@ onBeforeUnmount(() => unsubscribe?.())
   padding: 2px 8px;
   font-size: 22px;
 }
+.mines,
 .settings,
 .pin {
   display: flex;
@@ -421,6 +511,7 @@ onBeforeUnmount(() => unsubscribe?.())
   padding: 5px 7px;
   line-height: 0;
 }
+.mines svg,
 .settings svg,
 .pin svg {
   width: 16px;
@@ -443,12 +534,14 @@ onBeforeUnmount(() => unsubscribe?.())
 .pin[aria-pressed='false'] svg {
   opacity: 0.6;
 }
+.mines:hover,
 .settings:hover,
 .pin:hover,
 .close:hover {
   color: #fff;
   background: #4b3c28;
 }
+.mines:focus-visible,
 .settings:focus-visible,
 .pin:focus-visible,
 .close:focus-visible {
