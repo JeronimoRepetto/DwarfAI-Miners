@@ -12,30 +12,19 @@ import type { PanelEdge, PanelLayoutRequest } from '../domain/types'
 export const RAIL_WIDTH = 20
 
 /**
- * The gutter along the panel's free edge, holding the arrow that collapses it
- * back to the rail. The design gives the arrow itself as 20px wide.
- */
-const COLLAPSE_GUTTER = 20
-
-/**
- * The navigation column on the panel's outer edge: a 19px icon centred in the
- * frame's own margin, which the verified export draws at 37-38px.
- */
-const NAV_COLUMN_WIDTH = 38
-
-/**
- * The content column the secondary panel is drawn in.
+ * The whole panel with no mine held open.
  *
  * The design marks the panel's opening width **Unspecified**, so this is
- * derived, not transcribed: the verified `assets/shell/` exports are 1:1 with
- * the spec (the closed rail measures exactly 20px in the same set, and the mine
- * column exactly its stated 245px), and the no-mine export is 645px wide. Take
- * the gutter and the nav column off that and the content column is what is left.
+ * derived, not transcribed. The verified `assets/shell/` exports are 1:1 with
+ * the spec — the closed rail measures exactly its stated 20px in the same set,
+ * and the mine column exactly its stated 245px — and the export with no mine
+ * open is 645px wide.
+ *
+ * The renderer spends it: a 20px gutter for the collapse arrow, a 38px
+ * navigation column, and the secondary panel taking whatever is left. Only the
+ * total is main's business.
  */
-const CONTENT_COLUMN_WIDTH = 587
-
-/** The whole panel with no mine held open: the export's own 645px. */
-export const EXPANDED_WIDTH = COLLAPSE_GUTTER + CONTENT_COLUMN_WIDTH + NAV_COLUMN_WIDTH
+export const EXPANDED_WIDTH = 645
 
 /** The design's mine interior. */
 const MINE_INTERIOR_WIDTH = 245

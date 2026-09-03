@@ -32,12 +32,15 @@ export function usePanelLayout() {
   }
 
   /**
-   * Ask main to reshape the window. A second request while one is in flight is
-   * dropped — two racing resizes can land out of order and leave the shell drawn
-   * against a rectangle the window no longer has.
+   * Requests are SERIALIZED rather than dropped: two of them can land out of
+   * order and leave the shell drawn against a rectangle the window no longer
+   * has, but a dropped one leaves the window at a width nothing will correct.
+   * Both matter here — a resize is triggered by opening a mine as well as by
+   * pressing the rail, so the two can genuinely overlap.
    */
-  async function apply(request: PanelLayoutRequest): Promise<void> {
-    if (applying.value) return
+  let queue: Promise<void> = Promise.resolve()
+
+  async function send(request: PanelLayoutRequest): Promise<void> {
     applying.value = true
     try {
       layout.value = await window.api.setPanelLayout(request)
@@ -48,6 +51,12 @@ export function usePanelLayout() {
     } finally {
       applying.value = false
     }
+  }
+
+  /** Ask main to reshape the window, behind anything already in flight. */
+  async function apply(request: PanelLayoutRequest): Promise<void> {
+    queue = queue.then(() => send(request))
+    await queue
   }
 
   /** Open or collapse, keeping whichever mine column the shell currently needs. */

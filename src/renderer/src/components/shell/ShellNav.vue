@@ -62,11 +62,17 @@ const emit = defineEmits<{ select: [area: ShellArea] }>()
 </template>
 
 <style scoped>
+/*
+ * A 19px icon centred in the frame's outer margin, which the verified exports
+ * draw at 37-38px. main reserves the same column inside the expanded window's
+ * width; see EXPANDED_WIDTH in main/shell/panelBounds.ts.
+ */
 .shell-nav {
   display: flex;
   flex: none;
   flex-direction: column;
   align-items: center;
+  width: 38px;
   height: 100%;
 }
 .nav-mark {

@@ -75,21 +75,34 @@ describe('usePanelLayout', () => {
     expect(setPanelLayout).toHaveBeenCalledWith({ expanded: false, mineOpen: false })
   })
 
-  it('ignores a second request while one is still in flight', async () => {
-    // Two racing resizes could land out of order and leave the panel drawn
-    // against a rectangle the window no longer has.
+  it('queues a second request behind one still in flight rather than racing it', async () => {
+    // Two resizes can land out of order and leave the shell drawn against a
+    // rectangle the window no longer has. Dropping the second was worse: a
+    // resize is triggered by opening a mine as well as by pressing the rail,
+    // so the two genuinely overlap and a dropped one is never corrected.
     let release: (value: unknown) => void = () => undefined
-    const setPanelLayout = vi.fn().mockReturnValue(
-      new Promise((resolve) => {
-        release = resolve
-      })
-    )
+    const setPanelLayout = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve
+        })
+      )
+      .mockResolvedValue(CLOSED)
     stubApi({ setPanelLayout })
-    const { apply } = usePanelLayout()
+    const { layout, apply } = usePanelLayout()
     const first = apply({ expanded: true, mineOpen: false })
-    await apply({ expanded: false, mineOpen: false })
+    const second = apply({ expanded: false, mineOpen: false })
+    // One microtask is all the queue needs to start the first request; the
+    // second is still waiting behind it.
+    await Promise.resolve()
     expect(setPanelLayout).toHaveBeenCalledOnce()
+
     release(OPEN)
     await first
+    await second
+    expect(setPanelLayout).toHaveBeenCalledTimes(2)
+    // The last request is what the window ended on, not the first to answer.
+    expect(layout.value).toEqual(CLOSED)
   })
 })

@@ -1,4 +1,8 @@
 import type { MaterialTotals, Mine } from '../../shared/contracts'
+import type { ShellArea } from './lib/shell/shellNav'
+
+/** The five areas the shell's navigation stack selects (#90). */
+export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
@@ -171,19 +175,26 @@ export function defaultDwarfQuestionState(): DwarfQuestionState {
 }
 
 /**
- * Where the panel currently is: the isometric map, the browse over every
- * project the app remembers (#92), or inside one mine.
+ * Where the panel currently is: which of the five shell areas the navigation
+ * stack has selected, and which mine — if any — is held open beside it.
  *
- * 'mines' carries no state of its own — its filters and pages belong to
- * useProjectBrowse — so unlike 'mine' it survives any change to the board.
+ * The two are concurrent rather than exclusive (#90). That is the design's
+ * model, not a convenience: an opened mine stays visible while a secondary panel
+ * is inspected, and the verified exports prove exactly one mine beside exactly
+ * one secondary panel. It replaces a `View` union in which walking into a mine
+ * REPLACED the map, so coming back out meant losing where you were.
+ *
+ * `area` never becomes a mine, and `mineId` is never an area: a mine belongs to
+ * the board and can vanish under the panel, while the areas are fixed furniture
+ * — 'mines' in particular carries no state of its own, because its filters and
+ * pages belong to useProjectBrowse.
  */
-export type View = { kind: 'map' } | { kind: 'mines' } | { kind: 'mine'; mineId: string }
-
-/** Root state for the navigation store. */
 export interface ViewState {
-  view: View
+  area: ShellArea
+  /** The mine held open beside the secondary panel, or null when none is. */
+  mineId: string | null
 }
 
 export function defaultViewState(): ViewState {
-  return { view: { kind: 'map' } }
+  return { area: 'map', mineId: null }
 }

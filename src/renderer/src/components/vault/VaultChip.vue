@@ -89,21 +89,27 @@ onBeforeUnmount(() => clearTimeout(sparkleTimer))
 </template>
 
 <style scoped>
+/*
+ * The map's upper-right overlay in the redesign (#90) — the collected raw
+ * materials, exactly where `screens/map.md` puts them. Restyled to the design's
+ * own frame (12px radius, 2px #fae2b6, 10px pixel type) and nothing else: the
+ * per-material breakdown behind it is #22's rule and is untouched.
+ */
 .vault-chip {
   position: absolute;
   z-index: 5;
-  top: 10px;
-  right: 12px;
+  top: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--ink);
-  background: #15100be6;
-  box-shadow: 0 2px 10px #0008;
-  font-size: 11px;
+  border: var(--border-highlight);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
+  background: #0a0806e6;
+  box-shadow: var(--elevation-5);
+  font-size: var(--text-meta);
   white-space: nowrap;
 }
 .vault-chip.is-inline {
@@ -123,33 +129,30 @@ onBeforeUnmount(() => clearTimeout(sparkleTimer))
   user-select: none;
 }
 .vault-units {
-  font-weight: 700;
-  /* The lantern amber the old single ore count used, kept so the numbers still
-     read as the warm thing in the chip; the ore itself is coloured by paint. */
-  color: var(--lantern);
+  /* The amber the design gives titles and dividers, so the numbers stay the
+     warm thing in the chip; the ore itself is coloured by paint. */
+  color: var(--color-accent);
 }
 .vault-empty {
-  color: var(--ink-faint);
-  font-size: 10px;
+  color: var(--color-tooltip-text);
 }
 .vault-tokens {
-  color: var(--ink-faint);
-  font-size: 10px;
+  color: var(--color-tooltip-text);
 }
 .vault-chip.is-sparkling {
   animation: vault-sparkle 0.9s ease-out;
 }
 @keyframes vault-sparkle {
   0% {
-    box-shadow: 0 2px 10px #0008;
+    box-shadow: var(--elevation-5);
   }
   35% {
     box-shadow:
-      0 2px 10px #0008,
-      0 0 14px 2px var(--lantern-soft);
+      var(--elevation-5),
+      0 0 14px 2px var(--color-rail);
   }
   100% {
-    box-shadow: 0 2px 10px #0008;
+    box-shadow: var(--elevation-5);
   }
 }
 @media (prefers-reduced-motion: reduce) {
