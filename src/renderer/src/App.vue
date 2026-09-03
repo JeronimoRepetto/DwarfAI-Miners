@@ -6,8 +6,8 @@ import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import MinesPanel from './components/browse/MinesPanel.vue'
 import PanelFrame from './components/shell/PanelFrame.vue'
+import SettingsPanel from './components/panel/SettingsPanel.vue'
 import ShellNav from './components/shell/ShellNav.vue'
-import ShortcutSettings from './components/panel/ShortcutSettings.vue'
 import UnavailablePanel from './components/shell/UnavailablePanel.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -16,6 +16,7 @@ import { useMines } from './composables/useMines'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useProjectBrowse } from './composables/useProjectBrowse'
+import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { versionLabel, versionTitle } from './lib/appBuild'
@@ -36,7 +37,14 @@ const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
  * is drawn from `layout.edge`, and drawing it from a guess would point the user
  * off the screen.
  */
-const { layout, sync: syncLayout, apply: applyLayout, toggle: toggleLayout } = usePanelLayout()
+const {
+  layout,
+  applying: layoutApplying,
+  sync: syncLayout,
+  apply: applyLayout,
+  toggle: toggleLayout,
+  setEdge
+} = usePanelLayout()
 
 // The hover line explains what the CURRENT state does; the accessible name
 // stays stable and aria-pressed carries the state (see the pin button below).
@@ -62,6 +70,15 @@ const {
   record: recordShortcut,
   reset: resetShortcut
 } = useToggleShortcut()
+
+/**
+ * Settings' "Reset metrics" action (#138). Same reasoning as the shortcut
+ * surface above: App owns the composable and therefore the IPC, so
+ * SettingsPanel's reset modal stays presentational and the "render only what
+ * main verified" rule stays in exactly one place.
+ */
+const { resetting: metricsResetting, error: metricsResetError, reset: resetMetrics } =
+  useResetMetrics()
 
 /**
  * The browse over every project the app remembers (#92). App owns the
@@ -336,55 +353,36 @@ onBeforeUnmount(() => unsubscribe?.())
         </PanelFrame>
 
         <!--
-          Settings keeps the existing shortcut section inside the design's heavy
-          frame; the screen's own rebuild is a later slice. The pin and the
-          running version live here because the titlebar that carried them is
-          gone and the design gives neither a home of its own — a preference and
-          a build number belong with the other preferences rather than as
-          furniture on a 20px rail.
+          Settings, rebuilt to the design's own screen (#138): the heavy 4px
+          frame is PanelFrame's 'settings' variant, and SettingsPanel draws
+          everything specific to the screen — its title/divider, the
+          shortcut/position/Data-Base sections, and the Application section
+          #142 had nowhere else to put pin/hide/version.
         -->
         <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
-          <div class="settings-area">
-            <ShortcutSettings
-              :state="shortcutState"
-              :error="shortcutError"
-              :recording="shortcutRecording"
-              :applying="shortcutApplying"
-              @start-recording="startShortcutRecording"
-              @stop-recording="stopShortcutRecording"
-              @record="recordShortcut"
-              @reset="resetShortcut"
-              @close="showMap"
-            />
-            <div class="shell-preferences">
-              <button
-                class="pin"
-                type="button"
-                aria-label="Keep panel on top"
-                :aria-pressed="pinned ? 'true' : 'false'"
-                :title="pinTooltip"
-                @click="togglePinned"
-              >
-                Always on top
-              </button>
-              <!--
-                The titlebar's close button was the renderer's ONLY caller of
-                hidePanel, and the design has no window-close control: the
-                panel's way out of the user's way is collapsing to the rail.
-                Keeping it here relocates the capability rather than dropping
-                it — hiding also stays on the tray and the global shortcut.
-              -->
-              <button
-                class="hide-panel"
-                type="button"
-                title="Hide the panel; the shortcut or the tray brings it back"
-                @click="hidePanel"
-              >
-                Hide panel
-              </button>
-              <span v-if="versionText" class="version" :title="versionHint">{{ versionText }}</span>
-            </div>
-          </div>
+          <SettingsPanel
+            :shortcut-state="shortcutState"
+            :shortcut-error="shortcutError"
+            :shortcut-recording="shortcutRecording"
+            :shortcut-applying="shortcutApplying"
+            :edge="layout.edge"
+            :edge-applying="layoutApplying"
+            :pinned="pinned"
+            :pin-tooltip="pinTooltip"
+            :version-text="versionText"
+            :version-hint="versionHint"
+            :resetting="metricsResetting"
+            :reset-error="metricsResetError"
+            @start-recording="startShortcutRecording"
+            @stop-recording="stopShortcutRecording"
+            @record="recordShortcut"
+            @reset-shortcut="resetShortcut"
+            @close="showMap"
+            @select-edge="setEdge"
+            @toggle-pin="togglePinned"
+            @hide-panel="hidePanel"
+            @reset-confirm="resetMetrics"
+          />
         </PanelFrame>
 
         <PanelFrame v-else variant="settings">
@@ -513,43 +511,6 @@ onBeforeUnmount(() => unsubscribe?.())
 .close-mine:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
-}
-.settings-area {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-settings);
-  overflow: auto;
-}
-.shell-preferences {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-settings);
-  padding: var(--space-settings);
-}
-.pin,
-.hide-panel {
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-control);
-  font: inherit;
-  cursor: pointer;
-}
-.pin[aria-pressed='false'] {
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
-  background: var(--color-panel-deep);
-}
-.pin:focus-visible,
-.hide-panel:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-/* Quiet by construction: a monitor, not a control. */
-.version {
-  color: var(--color-accent);
 }
 .loading {
   display: flex;
