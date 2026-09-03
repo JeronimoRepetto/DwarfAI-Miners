@@ -159,7 +159,7 @@ The panel is an isometric idle-game with two views:
 **Map view (default).** An illustrated world seen from orbit, in one of four paintings chosen by
 your own clock — morning, day, sunset, night. Every project with an observed AI CLI session
 appears on one of the map's 74 spawn locations as a pulsing hexagon coloured by tier: Bronze
-(cyan), Cropper (orange-brown), Silver (grey), Gold (yellow), Uranium (green). A project is
+(cyan), Copper (orange-brown), Silver (grey), Gold (yellow), Uranium (green). A project is
 assigned a free location at random the first time the app sees it and that location is remembered,
 so a mine never moves — not between refreshes and not across restarts. Resting the pointer on a
 marker for a moment shows its tier, the project name and how many agents are working in it;

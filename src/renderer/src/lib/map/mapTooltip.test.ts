@@ -13,12 +13,13 @@ describe('mineTooltipCopy', () => {
   })
 
   /*
-    `Cropper` is the confirmed product label for the copper tier — the design
-    source says so outright and calls it deliberate, not a typo to correct. The
-    map is the second rebuilt surface to need it, after the browse cards.
+    AMENDED for #165: `Cropper` stood here as the "confirmed, deliberate"
+    product label from #90 until the maintainer reversed that ruling on
+    2026-09-03 — it was never meant to survive, and the English word is
+    `Copper`. This pins the reversed spelling; see presentation.ts for why.
   */
-  it('spells the copper tier Cropper, as every other rebuilt surface does', () => {
-    expect(mineTooltipCopy(defaultMine({ tier: 'copper' })).tier).toBe('Cropper - Mine')
+  it('spells the copper tier Copper, as every other rebuilt surface does', () => {
+    expect(mineTooltipCopy(defaultMine({ tier: 'copper' })).tier).toBe('Copper - Mine')
   })
 
   it('says zero rather than nothing for a mine with no crew', () => {

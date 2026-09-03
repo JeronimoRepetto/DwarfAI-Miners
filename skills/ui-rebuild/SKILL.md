@@ -43,10 +43,16 @@ from screenshots, existing code, memory or taste.
 Each of these is recorded in `foundations.md` with its reasoning. Re-deriving any of them from
 the PDF's pages produces the wrong answer.
 
-- Tier order is **Bronze, Cropper, Silver, Gold, Uranium**, with fixed non-overlapping
-  thresholds. Some PDF and Canva comparisons draw Cropper before Bronze; that ordering is
-  presentation, not product.
-- **`Cropper` is the confirmed UI label** for the Copper/Cobre tier. It is not a typo to fix.
+- Tier order is **Bronze, Copper, Silver, Gold, Uranium**, with fixed non-overlapping
+  thresholds. Some PDF and Canva comparisons draw the copper panel before Bronze; that ordering
+  is presentation, not product.
+- **`Copper` is the confirmed UI label** for the copper/Cobre tier — by maintainer ruling
+  (#165, 2026-09-03), REVERSING what this file used to pin here. This bullet used to call
+  `Cropper` the confirmed label and "not a typo to fix," on the design source's own claim that
+  the misspelling was intentional; the maintainer withdrew that claim outright — it was never
+  meant to survive, and the English word is `Copper`. `foundations.md`'s corrections table is
+  what the maintainer is amending to match this — read it as the thing that was wrong, never as
+  grounds for restoring `Cropper`.
 - `Rigth` in the PDF is a source typo. Ship `Right`.
 - Red rectangles in Canva exports are documentation callouts, never product UI.
 - UI copy is English. The PDF's Spanish is narration around the screens, not UI copy.
@@ -56,8 +62,9 @@ the PDF's pages produces the wrong answer.
 The docs mark every gap explicitly as **Unspecified**: hover/focus/error/loading states, reduced
 motion, breakpoints, z-index, the shadow recipe behind "elevation 5", marker hex values. Those
 are product decisions — implement what is specified and surface the gap in the PR or issue,
-never fill it silently. `screens/launch.md` states the PDF defines **no** agent-launch screen;
-do not invent one for #86 out of this source.
+never fill it silently. The in-mine agent-launch flow, once a v1 gap, is now FULLY specified —
+`screens/launch.md` (v2 pages 22, 31-35) carries the Add Panel, its gates and the MessagePanel
+transition; read it before touching that flow rather than treating it as missing.
 
 ## Boundaries the rebuild does not get to break
 
@@ -77,8 +84,11 @@ do not invent one for #86 out of this source.
 
 - Building a screen from a `references/pages/` render and shipping the comparison's tier order —
   the render is evidence of the source, not the resolved spec.
-- "Fixing" `Cropper` to `Copper` in copy, tests or fixtures, which then disagree with every
-  chip, card and tooltip the design names.
+- "Restoring" `Cropper` in copy, tests or fixtures because a stale doc, memory, or an earlier
+  revision of this very file called it the confirmed label — that ruling was reversed (#165).
+  The mirror-image mistake now trips the same trap: `Copper` is what every chip, card and
+  tooltip the panel actually shows, so reintroducing `Cropper` anywhere is what would disagree
+  with them.
 - Hardcoding `#d19831` and friends inline across components, so a palette correction becomes a
   repo-wide hunt instead of one token edit.
 - Treating a red callout rectangle in an export as a border or focus state to reproduce.

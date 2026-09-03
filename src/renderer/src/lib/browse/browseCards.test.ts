@@ -26,8 +26,11 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
 }
 
 describe('browseTierLabel', () => {
-  it("spells the copper tier 'Cropper', which is the confirmed product label", () => {
-    expect(browseTierLabel('copper')).toBe('Cropper')
+  // AMENDED for #165: the maintainer reversed the earlier "Cropper is
+  // confirmed and deliberate" ruling on 2026-09-03 — it was never meant to
+  // survive. This pinned 'Cropper'; it now pins the English word instead.
+  it("spells the copper tier 'Copper', as the maintainer ruled (#165)", () => {
+    expect(browseTierLabel('copper')).toBe('Copper')
   })
 
   it('names every other tier as the design writes it', () => {
@@ -35,6 +38,15 @@ describe('browseTierLabel', () => {
     expect(browseTierLabel('silver')).toBe('Silver')
     expect(browseTierLabel('gold')).toBe('Gold')
     expect(browseTierLabel('uranium')).toBe('Uranium')
+  })
+
+  // #165: the wire identifier was never 'Cropper' — it has always been the
+  // lowercase 'copper' MineTier value. Only the display label changed; this
+  // pins that the two are independent, so a future label correction never
+  // touches the wire spelling by accident.
+  it("keeps the wire tier spelled 'copper' regardless of what the label says", () => {
+    expect(MINE_TIERS).toContain('copper')
+    expect(cardTierFor(project({ weightBytes: 100 * 1024 }))).toBe('copper')
   })
 })
 
@@ -47,7 +59,7 @@ describe('TIER_CHIPS', () => {
     expect(TIER_CHIPS.map((chip) => chip.label)).toEqual([
       'All',
       'Bronze',
-      'Cropper',
+      'Copper',
       'Silver',
       'Gold',
       'Uranium'
