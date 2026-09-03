@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   mergeCloseNodes,
+  renumberComponent,
   simplifyPolyline,
   spliceDegreeTwoNodes,
   thinToSkeleton,
@@ -277,6 +278,79 @@ describe('spliceDegreeTwoNodes', () => {
     const result = spliceDegreeTwoNodes(nodes, edges)
     expect(result.nodes).toHaveLength(4) // node 1 has degree 3, stays
     expect(result.edges).toHaveLength(3)
+  })
+})
+
+describe('renumberComponent', () => {
+  /**
+   * The exact shape `spliceDegreeTwoNodes` produces once a chain has spliced
+   * away a pass-through node: a gap in the id sequence (1 is missing here),
+   * with the surviving nodes still in ascending order. This is issue #152's
+   * defect scenario, reduced to the minimum that reproduces it.
+   */
+  function gappedComponent() {
+    const nodes = [
+      { id: 0, x: 0, y: 0 },
+      { id: 2, x: 5, y: 0 },
+      { id: 5, x: 10, y: 0 }
+    ]
+    const edges = [
+      {
+        a: 0,
+        b: 2,
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 }
+        ]
+      },
+      {
+        a: 2,
+        b: 5,
+        points: [
+          { x: 5, y: 0 },
+          { x: 10, y: 0 }
+        ]
+      }
+    ]
+    return { nodes, edges }
+  }
+
+  it('renumbers nodes to sequential ids 0..n-1, keeping their order and position', () => {
+    const { nodes, edges } = gappedComponent()
+    const result = renumberComponent(nodes, edges)
+    expect(result.nodes).toEqual([
+      { id: 0, x: 0, y: 0 },
+      { id: 1, x: 5, y: 0 },
+      { id: 2, x: 10, y: 0 }
+    ])
+  })
+
+  it('rewrites every edge endpoint through the same map, not the pre-renumbering id', () => {
+    const { nodes, edges } = gappedComponent()
+    const result = renumberComponent(nodes, edges)
+    // Old ids 0, 2, 5 map to new ids 0, 1, 2 respectively — an edge that named
+    // old id 5 must come out naming new id 2, never the stale 5.
+    expect(result.edges).toEqual([
+      { from: 0, to: 1, points: edges[0].points },
+      { from: 1, to: 2, points: edges[1].points }
+    ])
+  })
+
+  /*
+   * The pin the issue actually asks for: taken as a pair, the renumbered
+   * nodes and edges must be internally consistent — every `from`/`to` names
+   * an id the node list actually has. This is the property #152 reports
+   * broken (Bronze's edges named ids up to 32 against 18 nodes) and the one
+   * `extract-map-coordinates.mjs`'s own regenerated dataset is pinned on.
+   */
+  it('never names an edge endpoint the renumbered node list does not have', () => {
+    const { nodes, edges } = gappedComponent()
+    const result = renumberComponent(nodes, edges)
+    const ids = new Set(result.nodes.map((n) => n.id))
+    for (const edge of result.edges) {
+      expect(ids.has(edge.from), `from ${edge.from}`).toBe(true)
+      expect(ids.has(edge.to), `to ${edge.to}`).toBe(true)
+    }
   })
 })
 
