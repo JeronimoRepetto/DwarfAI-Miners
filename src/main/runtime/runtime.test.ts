@@ -2674,7 +2674,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toEqual({ declared: true, mineId: mineIdForPath(ADOPTED) })
+    expect(result).toEqual({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
   })
 
   it('keeps a declared mine on the board with no crew, poll after poll', async () => {
@@ -2801,15 +2801,15 @@ describe('AgentRuntime declared mines (#85)', () => {
     expect(mines[0]!.dwarfs).toHaveLength(1)
   })
 
-  it('says why nothing happened when the user closes the picker', async () => {
+  it('says the picker was cancelled when the user closes it, with no reason to give (#127)', async () => {
+    // Backing out of the picker is a decision, not a fault: 'cancelled' says
+    // the whole thing on its own, so there is no string alongside it either.
     const runtime = declaredRuntime({ chooseDirectory: async () => null })
 
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result.declared).toBe(false)
-    expect(result.reason).not.toBe('')
-    expect(result.mineId).toBeUndefined()
+    expect(result).toEqual({ outcome: 'cancelled' })
   })
 
   it('says why nothing happened when the projects database refused to open', async () => {
@@ -2819,7 +2819,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     const undeclared = await runtime.undeclareMine('mine:whatever')
     runtime.stop()
 
-    expect(result).toMatchObject({ declared: false })
+    expect(result).toMatchObject({ outcome: 'failed' })
     expect(result.reason).toContain('projects database')
     expect(undeclared.outcome).toBe('failed')
     expect(undeclared.reason).toContain('projects database')
@@ -2843,7 +2843,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result.declared).toBe(false)
+    expect(result.outcome).toBe('failed')
     expect(result.reason).not.toBeUndefined()
   })
 
@@ -2857,7 +2857,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result.declared).toBe(false)
+    expect(result.outcome).toBe('failed')
     expect(result.reason).not.toBeUndefined()
   })
 

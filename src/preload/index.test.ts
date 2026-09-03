@@ -168,7 +168,7 @@ describe('preload app build contract', () => {
  */
 describe('preload declared-mine contract', () => {
   it('asks for a mine on the mine:declare channel with no payload at all', async () => {
-    const result = { declared: true, mineId: 'mine:c:\\x\\adopted' }
+    const result = { outcome: 'added', mineId: 'mine:c:\\x\\adopted' }
     invoke.mockResolvedValueOnce(result)
     await expect(api.declareMine()).resolves.toEqual(result)
     expect(invoke).toHaveBeenLastCalledWith('mine:declare')
@@ -177,7 +177,7 @@ describe('preload declared-mine contract', () => {
   it('hands back a refusal and its reason rather than flattening it to nothing', async () => {
     // A control that silently does nothing reads as broken; the panel needs the
     // reason main gave it.
-    const refused = { declared: false, reason: 'No folder was chosen.' }
+    const refused = { outcome: 'failed', reason: 'That folder could not be saved as a mine.' }
     invoke.mockResolvedValueOnce(refused)
     await expect(api.declareMine()).resolves.toEqual(refused)
   })

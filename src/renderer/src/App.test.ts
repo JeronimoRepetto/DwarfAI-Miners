@@ -45,7 +45,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
     // Adopting a folder (#85). Answers "cancelled" by default, the one verdict
     // that changes nothing, so only the tests about it see any effect.
-    declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' }),
+    declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -577,7 +577,7 @@ describe('App mines browse', () => {
       })
     const { wrapper } = await mountApp({
       queryProjects,
-      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
     })
     await wrapper.find('.titlebar .mines').trigger('click')
     await flushPromises()
@@ -600,9 +600,10 @@ describe('App mines browse', () => {
 
   it('states why a folder could not be added', async () => {
     const { wrapper } = await mountApp({
-      declareMine: vi
-        .fn()
-        .mockResolvedValue({ declared: false, reason: 'That folder could not be saved as a mine.' })
+      declareMine: vi.fn().mockResolvedValue({
+        outcome: 'failed',
+        reason: 'That folder could not be saved as a mine.'
+      })
     })
     await wrapper.find('.titlebar .mines').trigger('click')
     await flushPromises()
