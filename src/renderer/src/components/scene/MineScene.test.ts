@@ -621,17 +621,21 @@ describe('MineScene interior shell', () => {
   })
 
   /*
-    The Add action is where the design puts it and does nothing yet: the panel
-    it opens is #86. Rendered disabled with a title rather than as a live button
-    that emits into nothing — a control that answers a click with silence is a
-    worse lie than one that says it is not built.
+    AMENDED for #86, stated rather than passing unseen. This case was "draws the
+    Add action disabled, saying why, until its panel exists" and asserted
+    `disabled` plus a "not built yet" title. That panel now exists, so the
+    control is live and the assertion is its opposite; the aria-label it also
+    pinned is unchanged and still pinned below.
   */
-  it('draws the Add action disabled, saying why, until its panel exists', () => {
+  it('opens the launch panel from the round action at the lower right', async () => {
     const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
     const add = wrapper.get('.interior .add-agent')
-    expect(add.attributes('disabled')).toBeDefined()
-    expect(add.attributes('title')).toContain('not built yet')
+
+    expect(add.attributes('disabled')).toBeUndefined()
     expect(add.attributes('aria-label')).toBe('Launch an agent in this mine')
+
+    await add.trigger('click')
+    expect(wrapper.emitted('add')).toHaveLength(1)
   })
 
   it('keeps the mine name as the section own accessible name, with no header on screen', () => {
