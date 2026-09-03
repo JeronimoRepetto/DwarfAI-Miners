@@ -329,3 +329,51 @@ describe('MineCard level column placement', () => {
     expect(styleRule('.card-level')).not.toMatch(/flex:\s*1/)
   })
 })
+
+/**
+ * The third acceptance run's fourth correction (#165).
+ *
+ * ToryLib was declared and its card sat bare for the seconds the tier walk took
+ * — no tier, no entrance, no bar — and read as broken rather than as busy. (It
+ * landed correctly as uranium, and the 203 coal beside it was the historical
+ * backfill working exactly as designed.) The card now says which of the two it
+ * is, without claiming anything about the outcome.
+ */
+describe('MineCard while the mine is being measured', () => {
+  it('says the mine is being measured on a declared card with nothing measured', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ declared: true, name: 'ToryLib' }) }
+    })
+    expect(wrapper.get('.card-measuring').text()).toBe('Measuring the mine...')
+  })
+
+  it('still claims no tier, no entrance and no bar while it says so', () => {
+    // The line is a statement about the ABSENCE, not a substitute for the
+    // facts: #41's rule is intact and nothing here invents a provisional tier.
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ declared: true }) }
+    })
+    expect(wrapper.find('.card-tier').exists()).toBe(false)
+    expect(wrapper.find('.card-art').exists()).toBe(false)
+    expect(wrapper.find('.card-level').exists()).toBe(false)
+    expect(wrapper.attributes('data-tier')).toBeUndefined()
+  })
+
+  it('drops the line the moment a walk has anything to say', () => {
+    // Either fact ends the state, and they end it separately: a recorded tier
+    // with no weight still draws no bar (the bar reads the weight alone), and a
+    // weight with no recorded tier draws both the tier and the bar.
+    for (const measured of [{ knownTier: 'uranium' } as const, { weightBytes: 9000 * 1024 }]) {
+      const wrapper = mount(MineCard, {
+        props: { project: defaultProject({ declared: true, ...measured }) }
+      })
+      expect(wrapper.find('.card-measuring').exists()).toBe(false)
+      expect(wrapper.get('.card-tier').text()).toBe('Uranium mine -')
+    }
+  })
+
+  it('says nothing on a discovered card nobody promised a walk', () => {
+    const wrapper = mount(MineCard, { props: { project: defaultProject() } })
+    expect(wrapper.find('.card-measuring').exists()).toBe(false)
+  })
+})

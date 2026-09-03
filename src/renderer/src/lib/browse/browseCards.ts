@@ -80,6 +80,30 @@ function tierForWeightBytes(weightBytes: number): MineTier {
   return 'bronze'
 }
 
+/**
+ * Whether this card is a mine still being measured (#165).
+ *
+ * The third acceptance run's fourth correction. The maintainer declared a
+ * folder and its card sat bare for as long as the tier walk took — no tier, no
+ * entrance, no bar. Every one of those absences was right on its own (#41
+ * forbids claiming a tier nobody has measured), but three of them at once read
+ * as a broken card rather than as work in progress. This is the card saying
+ * which it is, and it says nothing about the outcome: it is the absence of a
+ * measurement plus the presence of a reason to expect one.
+ *
+ * Declared only. A discovered row has no walk promised to it, so an unmeasured
+ * one is a project nobody has looked at rather than one being looked at now —
+ * and "Measuring the mine..." on a card nothing is measuring would be exactly
+ * the invention the rest of this module refuses.
+ *
+ * Defined against `cardTierFor` rather than against the two fields, so the
+ * state exists exactly where the card has no tier to state and the two can
+ * never contradict each other.
+ */
+export function isMeasuring(project: ProjectSummary): boolean {
+  return project.declared && cardTierFor(project) === undefined
+}
+
 /** The tier to print on a card, or nothing at all — see cardTierFor. */
 export function cardTierLabel(project: ProjectSummary): string | undefined {
   const tier = cardTierFor(project)

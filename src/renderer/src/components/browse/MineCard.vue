@@ -5,6 +5,7 @@ import {
   cardArtFor,
   cardTierFor,
   cardTierLabel,
+  isMeasuring,
   nextLevelFor,
   type CardStatus
 } from '../../lib/browse/browseCards'
@@ -62,6 +63,16 @@ const resources = computed(() => vaultRows(props.project.materials))
  * nextLevelFor for what cur/max/ratio mean and why uranium prints no boundary.
  */
 const level = computed(() => nextLevelFor(props.project.weightBytes))
+
+/**
+ * Whether this card is a mine still being measured (#165) — see `isMeasuring`.
+ *
+ * Drawn where the level column would be, because that is the fact it stands in
+ * for: the bar is missing precisely because the walk has not finished. Mutually
+ * exclusive with the bar by construction, not by ordering — the state is
+ * defined as "the card has no tier to state", and a card with a bar has one.
+ */
+const measuring = computed(() => isMeasuring(props.project))
 
 /*
  * Only a project with a mine on the board can be entered: the interior of a
@@ -137,6 +148,15 @@ const enterable = computed(() => props.project.live)
           >
         </span>
       </span>
+      <!--
+        A mine the walk has not finished measuring (#165). It stands in the
+        level column because it stands in for the bar: a declared card with no
+        tier, no entrance and no bar read as broken rather than as busy, and
+        this says which it is without claiming anything about the outcome.
+      -->
+      <span v-else-if="measuring" class="card-measuring" role="status"
+        >Measuring the mine...</span
+      >
       <!--
         The mock's lower-right corner. Drawn only where the board proved the
         fact, and the row itself disappears when it proved neither — a pair of
@@ -343,6 +363,19 @@ button.card-body:focus-visible {
 }
 .level-label-value {
   color: var(--color-cream);
+}
+/*
+ * The measuring line takes the level column's own place and the level label's
+ * accent, so a card waiting on its walk has the same shape as one that has
+ * finished — the row does not reflow when the measurement lands (#165). One
+ * line, always, for the same reason .level-label is.
+ */
+.card-measuring {
+  grid-column: 3;
+  min-width: 0;
+  color: var(--color-accent);
+  font-size: var(--text-meta);
+  white-space: nowrap;
 }
 /*
  * The mock parks both markers against the card's lower-right corner, clear of

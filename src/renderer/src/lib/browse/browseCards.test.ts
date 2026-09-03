@@ -10,6 +10,7 @@ import {
   cardStatusFor,
   cardTierFor,
   cardTierLabel,
+  isMeasuring,
   nextLevelFor
 } from './browseCards'
 
@@ -347,5 +348,46 @@ describe('nextLevelFor', () => {
     const weightBytes = Math.round(99.6 * 1024)
     const progress = nextLevelFor(weightBytes)
     expect(progress).toEqual({ currentKb: 100, nextBoundaryKb: 100, ratio: 1 })
+  })
+})
+
+/**
+ * The third acceptance run's fourth correction (#165).
+ *
+ * The maintainer declared a folder and its card sat bare for the seconds — and
+ * on a big tree, minutes — the tier walk took: no tier, no entrance, no bar,
+ * nothing. Every one of those absences was correct on its own (#41 forbids
+ * claiming a tier nobody has measured), but together they read as a broken
+ * card rather than as a mine being measured. The card says which it is.
+ */
+describe('isMeasuring', () => {
+  it('says a declared project with nothing measured is being measured', () => {
+    expect(isMeasuring(project({ declared: true }))).toBe(true)
+  })
+
+  it('stops the moment the store records a walk’s verdict', () => {
+    expect(isMeasuring(project({ declared: true, knownTier: 'silver' }))).toBe(false)
+  })
+
+  it('stops on a weight alone, which is a measurement the card can already read', () => {
+    expect(isMeasuring(project({ declared: true, weightBytes: 4 * 1024 }))).toBe(false)
+  })
+
+  it('claims nothing about a project the user never declared', () => {
+    // A discovered row has no walk promised to it, so an unmeasured one is not
+    // a measurement in progress — it is a project nobody has looked at.
+    expect(isMeasuring(project())).toBe(false)
+  })
+
+  it('agrees with the tier the card would state, by construction', () => {
+    // The two are one reading: the state exists exactly where cardTierFor has
+    // nothing to say, and a card that drew both would contradict itself.
+    for (const summary of [
+      project({ declared: true }),
+      project({ declared: true, knownTier: 'gold' }),
+      project({ declared: true, weightBytes: 0 })
+    ]) {
+      expect(isMeasuring(summary)).toBe(cardTierFor(summary) === undefined)
+    }
   })
 })
