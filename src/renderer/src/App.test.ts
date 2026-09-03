@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
+import { useView } from './composables/useView'
 
 const DEFAULT_SHORTCUT = {
   accelerator: 'Control+Alt+Shift+P',
@@ -36,6 +37,12 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
     setToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
     getAppBuild: vi.fn().mockResolvedValue(DEFAULT_BUILD),
+    // The browse surface (#92). Answered empty by default: only the tests that
+    // are about the Mines panel care what comes back.
+    queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
+    // Adopting a folder (#85). Answers "cancelled" by default, the one verdict
+    // that changes nothing, so only the tests about it see any effect.
+    declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -54,6 +61,9 @@ describe('App titlebar pin control', () => {
     const { wrapper } = await mountApp()
     const buttons = wrapper.findAll('.titlebar button')
     expect(buttons.map((button) => button.classes())).toEqual([
+      // The browse entry point joined the row on the far side of the gear
+      // (#92); the pin still sits immediately left of close.
+      expect.arrayContaining(['mines']),
       expect.arrayContaining(['settings']),
       expect.arrayContaining(['pin']),
       expect.arrayContaining(['close'])
@@ -307,7 +317,8 @@ describe('App titlebar version', () => {
     // put it inside the no-drag region for no reason.
     const { wrapper } = await mountApp()
     expect(wrapper.find('.window-controls .version').exists()).toBe(false)
-    expect(wrapper.findAll('.titlebar button')).toHaveLength(3)
+    // Four since #92 added the browse entry point: mines, gear, pin, close.
+    expect(wrapper.findAll('.titlebar button')).toHaveLength(4)
   })
 
   it('prints nothing at all when main cannot be asked', async () => {
@@ -320,5 +331,194 @@ describe('App titlebar version', () => {
     expect(wrapper.find('.titlebar .version').exists()).toBe(false)
     // The rest of the titlebar is untouched by the failure.
     expect(wrapper.find('.titlebar .title').text()).toContain('DwarfAI-Miners')
+  })
+})
+
+/*
+ * The browse over every project the app remembers (#92). App owns the
+ * composable, and therefore the IPC, so MinesPanel stays presentational — the
+ * same split the settings surface uses.
+ */
+describe('App mines browse', () => {
+  // useView is a module singleton, so a test that navigates leaves the next one
+  // wherever it stopped. Only this block navigates; the reset stays with it.
+  beforeEach(() => useView().clear())
+  afterEach(() => useView().clear())
+
+  it('is a real keyboard-reachable button with a stable name and pressed state', async () => {
+    const { wrapper } = await mountApp()
+    const mines = wrapper.find('.titlebar .mines')
+    expect(mines.attributes('type')).toBe('button')
+    expect(mines.attributes('aria-label')).toBe('Browse mines')
+    expect(mines.attributes('aria-pressed')).toBe('false')
+  })
+
+  it('draws the entry point as inline pixel art, not text or emoji', async () => {
+    const { wrapper } = await mountApp()
+    const mines = wrapper.find('.titlebar .mines')
+    expect(mines.find('svg').exists()).toBe(true)
+    expect(mines.text()).toBe('')
+  })
+
+  it('shows the map until the browse is asked for', async () => {
+    const { wrapper } = await mountApp()
+    expect(wrapper.find('.mines-panel').exists()).toBe(false)
+    expect(wrapper.find('.map-view').exists()).toBe(true)
+  })
+
+  it('opens the browse and reads its first page', async () => {
+    const { wrapper, api } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mines-panel').exists()).toBe(true)
+    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(api.queryProjects).toHaveBeenCalledWith(
+      expect.objectContaining({ sortBy: 'addedAt', direction: 'desc', offset: 0 })
+    )
+  })
+
+  it('returns to the map when the entry point is pressed again', async () => {
+    const { wrapper } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.titlebar .mines').attributes('aria-pressed')).toBe('true')
+    await wrapper.find('.titlebar .mines').trigger('click')
+    expect(wrapper.find('.map-view').exists()).toBe(true)
+  })
+
+  it('renders a card for every project that was answered', async () => {
+    const { wrapper } = await mountApp({
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [
+          { id: 'a', path: 'a', name: 'Lalolanda', declared: false, addedAt: 1, live: false },
+          { id: 'b', path: 'b', name: 'Lalo-Test', declared: true, addedAt: 2, live: false }
+        ]
+      })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.mine-card')).toHaveLength(2)
+  })
+
+  it('sends the typed term straight through to main', async () => {
+    const { wrapper, api } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.search-field').setValue('lalo')
+    await flushPromises()
+    expect(api.queryProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ nameContains: 'lalo', offset: 0 })
+    )
+  })
+
+  it('enters the mine a live card names', async () => {
+    const { wrapper } = await mountApp({
+      getMines: vi.fn().mockResolvedValue({
+        mines: [
+          {
+            id: 'C:/dev/alpha',
+            path: 'C:/dev/alpha',
+            name: 'alpha',
+            tier: 'bronze',
+            dwarfs: [],
+            tokensObserved: 0,
+            updatedAt: 0
+          }
+        ],
+        tokensObserved: 0
+      }),
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [
+          {
+            id: 'C:/dev/alpha',
+            path: 'C:/dev/alpha',
+            name: 'alpha',
+            declared: false,
+            addedAt: 1,
+            live: true
+          }
+        ]
+      })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.mine-card button').trigger('click')
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+  })
+
+  it('asks main for a folder when the add control is pressed', async () => {
+    const { wrapper, api } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(api.declareMine).toHaveBeenCalledWith()
+  })
+
+  it('shows the adopted project without the panel being reopened', async () => {
+    const queryProjects = vi
+      .fn()
+      .mockResolvedValueOnce({ answered: true, projects: [] })
+      .mockResolvedValueOnce({
+        answered: true,
+        projects: [
+          {
+            id: 'C:/dev/alpha',
+            path: 'C:/dev/alpha',
+            name: 'alpha',
+            declared: true,
+            addedAt: 1,
+            live: true
+          }
+        ]
+      })
+    const { wrapper } = await mountApp({
+      queryProjects,
+      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.mine-card')).toHaveLength(0)
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.mine-card')).toHaveLength(1)
+  })
+
+  it('says nothing at all when the picker was closed without a choice', async () => {
+    const { wrapper } = await mountApp()
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.add-error').exists()).toBe(false)
+    // Still the invitation to add one, not a complaint about the last attempt.
+    expect(wrapper.get('.panel-empty').text()).toContain('Nothing here')
+  })
+
+  it('states why a folder could not be added', async () => {
+    const { wrapper } = await mountApp({
+      declareMine: vi
+        .fn()
+        .mockResolvedValue({ declared: false, reason: 'That folder could not be saved as a mine.' })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    await wrapper.find('.add-control').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.add-error').text()).toBe('That folder could not be saved as a mine.')
+  })
+
+  it('reports a refused browse as a failure, never as an empty list', async () => {
+    const { wrapper } = await mountApp({
+      queryProjects: vi
+        .fn()
+        .mockResolvedValue({ answered: false, projects: [], reason: 'The database is locked.' })
+    })
+    await wrapper.find('.titlebar .mines').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.panel-empty').exists()).toBe(false)
+    expect(wrapper.find('.panel-error').text()).toBe('The database is locked.')
   })
 })

@@ -1,0 +1,43 @@
+/*
+ * Named values from the interface redesign's foundations, declared once.
+ *
+ * This is the seed of that token set, not the whole palette: it carries only
+ * what the Mines panel uses, and each screen rebuilt after it adds the tokens
+ * it needs here rather than repeating a hex literal per component. A palette
+ * correction has to be one edit in this file, never a repo-wide hunt.
+ *
+ * Deliberately separate from theme.css, which is the ORIGINAL interface's
+ * palette (--bg-panel, --ink, --lantern and the per-tier mineral colors). The
+ * two coexist while the rebuild is partial: screens still on the old design
+ * keep reading theme.css, and nothing here overwrites a token they use.
+ */
+:root {
+  /* Mine cards, the search field surface, the panel body. */
+  --color-panel: #2b2119;
+  /* The deep ground the card list sits on. */
+  --color-panel-deep: #14100b;
+  /* Titles, dividers, active borders. */
+  --color-accent: #d19831;
+  /* Borders and primary light text. */
+  --color-cream: #fae2b6;
+  /* Enabled control background, and the border and text of an unselected chip. */
+  --color-control: #272015;
+
+  /* One radius across rails, panels, cards, inputs, buttons and dialogs. */
+  --radius-default: 12px;
+  --border-highlight: 2px solid var(--color-cream);
+  --border-active: 2px solid var(--color-accent);
+
+  /* Dense labels, controls and metadata. */
+  --text-meta: 10px;
+  /* Mine type and project name. */
+  --text-title: 19px;
+  /* Empty-state and modal headline. */
+  --text-headline: 24px;
+
+  --size-search-height: 30px;
+  --size-chip-height: 25px;
+  --size-card-height: 120px;
+  --size-card-art-width: 120px;
+  --size-card-art-height: 90px;
+}
