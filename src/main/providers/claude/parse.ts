@@ -102,6 +102,27 @@ export interface ClaudeTranscriptInfo {
    * across polls so a finished agent can never come back (see claudeProvider).
    */
   terminalAgentIds: string[]
+  /**
+   * The launch-time identity of every agent in this tail whose LATEST ending
+   * said `failed` and whose `async_launched` record shares the window (issue
+   * #179).
+   *
+   * Not a claim that any of them is running: they are terminal above and stay
+   * terminal, and this list is what it would TAKE to draw one again. Every
+   * notification carries Claude Code's own note that "the user can send it
+   * another message and resume it, so the same task-id may notify more than
+   * once", and a resume writes no second launch record — so an ending is
+   * "stopped for now", and the only evidence separating a resumed agent from a
+   * dead one is whether its own transcript is still being appended to. That is
+   * a file, so the verdict belongs to the provider; this only hands it the
+   * candidates.
+   *
+   * `completed` and `killed` are excluded on purpose. `killed` is the status
+   * whose omission was the original ghost dwarf, and a `completed` agent's own
+   * last write can legitimately land after its notification — neither has been
+   * observed resuming, so neither buys the relaxation.
+   */
+  failedAgents: ClaudeInFlightAgent[]
   pendingBackgroundAgentCount?: number
   /**
    * The latest usage block seen in this tail (input+output+cache tokens for
@@ -547,7 +568,11 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   let pendingBackgroundAgentCount: number | undefined
   let tokensObserved: number | undefined
   const launched = new Map<string, ClaudeInFlightAgent>()
-  const finished = new Set<string>()
+  // agentId -> the status of the LAST ending this tail carries for it. A
+  // retried agent notifies once per attempt (three `failed` blobs each in the
+  // session #179 was reported from), so only the last one describes the agent
+  // as this window leaves it; membership alone is what makes it terminal.
+  const finished = new Map<string, string>()
   // The same asked-then-resolved bookkeeping the launches above use, on the
   // tool's own ids. Insertion order is ask order, so the last survivor is the
   // latest open question (issue #94).
@@ -560,7 +585,8 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     for (const text of notificationStrings(line)) {
       for (const match of text.matchAll(TASK_NOTIFICATION_RE)) {
         const taskId = match[1]
-        if (taskId !== undefined) finished.add(taskId)
+        const status = match[2]
+        if (taskId !== undefined && status !== undefined) finished.set(taskId, status)
       }
     }
     if (line.type === 'assistant') {
@@ -600,7 +626,10 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     effort,
     lastAssistantText,
     inFlightAgents: [...launched.values()].filter((agent) => !finished.has(agent.agentId)),
-    terminalAgentIds: [...finished],
+    terminalAgentIds: [...finished.keys()],
+    failedAgents: [...launched.values()].filter(
+      (agent) => finished.get(agent.agentId) === 'failed'
+    ),
     pendingBackgroundAgentCount,
     tokensObserved,
     // Matched by id over the whole tail rather than by line order: a suffix read
@@ -610,19 +639,93 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
 }
 
 /**
- * The last `limit` human-readable messages of a transcript tail: typed user
- * prompts and assistant text replies. Tool results, task notifications and
- * meta lines are skipped.
+ * The element Claude Code wraps a cross-session message in, and the only part
+ * of that line a person wrote (issue #180).
+ *
+ * A message typed into the panel and delivered through the relay tier (issue
+ * #24) reaches the target session as a meta user line: Claude Code's own
+ * framing sentence, this element, and a trailing note explaining where it came
+ * from. All three are the harness's words except what is inside the element.
+ */
+const CROSS_SESSION_MESSAGE_RE = /<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/
+
+/**
+ * What one `user` line publishes to the feed, or undefined when it is not
+ * somebody speaking.
+ *
+ * The two skips it keeps — meta lines, and string content that opens with a
+ * tag — are what keep the harness's own prompts out. The relay envelope trips
+ * both, so it has to be recognized before them, and only from a line no tool
+ * wrote: tool output can print a whole transcript, envelopes and all, which is
+ * the same reason an ending is only ever read from the record Claude Code
+ * delivered it in (see notificationStrings).
+ */
+function userMessageText(line: Rec): string | undefined {
+  if (!isRecord(line.message)) return undefined
+  const content = asString(line.message.content)
+  if (content === undefined) return undefined
+  if (line.toolUseResult === undefined) {
+    const relayed = content.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
+    if (relayed !== undefined) return relayed === '' ? undefined : relayed
+  }
+  if (line.isMeta === true || content.startsWith('<')) return undefined
+  return content
+}
+
+/**
+ * The message a person sent into a turn that was already running, or undefined
+ * for every other attachment (issue #180).
+ *
+ * Such a message is never written as a `user` line at all: it is enqueued,
+ * materialised into the running turn as this `queued_command` attachment, and
+ * then removed as `absorbed_mid_turn`. Only the middle record is read, so one
+ * message cannot reach the panel three times.
+ *
+ * `origin.kind` is what separates a person from the harness, and exactly two
+ * of its values are somebody speaking. `human` is the message typed into this
+ * session's own TUI, and its prompt is the words themselves. `peer` is one
+ * relayed in from another session (issue #24) — the same envelope the meta
+ * user line above carries, only landing mid-turn — and the origin quotes the
+ * message on its own in `body`, with the envelope in the prompt saying it a
+ * second time. The body is preferred because it is the direct evidence;
+ * unwrapping the prompt is the fallback for an origin whose keys a later
+ * Claude Code spells differently. Every other kind — a task-notification's own
+ * queued prompt above all — stays out.
+ */
+function typedMidTurnPrompt(line: Rec): string | undefined {
+  const attachment = line.attachment
+  if (!isRecord(attachment) || attachment.type !== 'queued_command') return undefined
+  const origin = attachment.origin
+  if (!isRecord(origin)) return undefined
+  const prompt = asString(attachment.prompt)
+  if (origin.kind === 'human') {
+    const typed = prompt?.trim()
+    return typed === '' ? undefined : typed
+  }
+  if (origin.kind !== 'peer') return undefined
+  const body = asString(origin.body)?.trim()
+  if (body !== undefined && body !== '') return body
+  const relayed = prompt?.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
+  return relayed === undefined || relayed === '' ? undefined : relayed
+}
+
+/**
+ * The last `limit` human-readable messages of a transcript tail: everything a
+ * person typed, however it was delivered, and assistant text replies. Tool
+ * results, task notifications and the harness's own meta lines are skipped.
  */
 export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
   for (const line of jsonlObjects(tailText)) {
     const timestamp = asString(line.timestamp) ?? ''
-    if (line.type === 'user' && line.isMeta !== true && isRecord(line.message)) {
-      const content = line.message.content
-      if (typeof content === 'string' && !content.startsWith('<')) {
-        feed.push({ role: 'user', text: content, timestamp })
-      }
+    if (line.type === 'attachment') {
+      const typed = typedMidTurnPrompt(line)
+      if (typed !== undefined) feed.push({ role: 'user', text: typed, timestamp })
+      continue
+    }
+    if (line.type === 'user') {
+      const text = userMessageText(line)
+      if (text !== undefined) feed.push({ role: 'user', text, timestamp })
       continue
     }
     if (line.type === 'assistant') {

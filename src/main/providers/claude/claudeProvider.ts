@@ -97,6 +97,42 @@ const PROC_START_TOLERANCE_MS = 2_000
 /** What one (pid, procStart) probe concluded; 'unknown' means the guard stands aside. */
 type ProcStartVerdict = 'match' | 'mismatch' | 'unknown'
 
+/**
+ * What this provider knows about one agent that reached a terminal status
+ * (issue #179). Membership in terminalAgents is still the whole verdict; these
+ * fields exist so that a `failed` ending can be reopened by evidence, and by
+ * nothing weaker.
+ */
+interface EndedAgent {
+  /**
+   * When THIS provider first saw an ending for the agent — its own poll clock,
+   * deliberately NOT the notification's timestamp. The two answer different
+   * questions: a last line written a millisecond before the agent died is
+   * later than the ending it raced, while nothing that reaches disk before
+   * this app read the ending can be a resume. Only a write observed AFTER the
+   * fact proves the agent came back, so the clock that read the ending is the
+   * one to measure against. First observation wins — re-reading the same
+   * notification says nothing new about when the agent stopped.
+   */
+  seenAtMs: number
+  /**
+   * Only for a `failed` ending whose launch record shared a window: the
+   * session that saw it and the launch-time identity a redraw would need.
+   * Absent for every other status, so `completed` and `killed` have nothing to
+   * come back with, and the session id keeps the resume sweep from statting
+   * one session's agents against another session's project directory.
+   */
+  failedLaunch?: { sessionId: string; agent: ClaudeInFlightAgent }
+  /**
+   * Set once this agent's own transcript was seen written after `seenAtMs`
+   * while the parent's count still ran short. Remembered rather than
+   * re-derived per poll because the ending stays in the tail forever: without
+   * it, every later poll would re-bury the dwarf on the same old notification
+   * and re-provoke the deep read that found it.
+   */
+  resumed?: boolean
+}
+
 export interface ClaudeProviderOptions {
   fs: FsLike
   /**
@@ -259,15 +295,16 @@ export class ClaudeProvider implements Provider {
   private deliveryTargets: ReadonlyMap<string, TextDeliveryTarget> = new Map()
   /**
    * Every agent id ever seen reaching a terminal status, remembered for the
-   * life of the process.
+   * life of the process, with what this provider observed about that ending.
    *
    * A completion notification can scroll out of the transcript tail while the
    * `async_launched` record that started the agent is still inside it, and then
    * a finished agent looks in flight again forever — the ghost dwarf. Agent ids
-   * are globally unique, so one flat set is enough, and it only grows by one
-   * short string per agent actually launched on this machine.
+   * are globally unique, so one flat map is enough, and it grows by one small
+   * record per agent actually launched on this machine (a launch-time identity
+   * only for the one status a resume can follow — see EndedAgent).
    */
-  private readonly terminalAgents = new Set<string>()
+  private readonly terminalAgents = new Map<string, EndedAgent>()
   /**
    * Every agent id concluded to be over WITHOUT a terminal notification, by
    * either of the two proofs that do not need one: an idle parent that produced
@@ -520,7 +557,7 @@ export class ClaudeProvider implements Provider {
       info = pollProfiler.measureSync('cl.parse', () => parseClaudeTranscriptTail(tail))
     }
 
-    for (const agentId of info.terminalAgentIds) this.terminalAgents.add(agentId)
+    this.rememberEndings(info, session.sessionId)
     // Merge this tail's launches into the session's launch memory, then let
     // the two evictions prune it. Map.set keeps first-seen insertion order, so
     // the dwarf list stays stable across polls instead of reshuffling with
@@ -556,6 +593,7 @@ export class ClaudeProvider implements Provider {
     // this run read, so no amount of poll-to-poll memory can hold them.
     await this.recoverMissingLaunches({
       sessionId: session.sessionId,
+      projectDir,
       transcriptPath,
       transcriptBytes: transcriptStat?.size ?? 0,
       alreadyReadBytes: tailBytes,
@@ -731,9 +769,77 @@ export class ClaudeProvider implements Provider {
    * apart because only the first is a record Claude wrote, but every path that
    * could adopt a launch has to honour both — otherwise the deeper read that
    * finds an old `async_launched` record becomes a resurrection machine.
+   *
+   * A notification can be outlived: the blob says itself that the same task-id
+   * may notify again after a resume, so an ending this provider has since
+   * watched the agent write past no longer answers the question (issue #179).
+   * Silence never can be — an abandoned agent outranks everything here,
+   * because #40's proof is about the parent, not about who wrote last.
    */
   private hasEnded(agentId: string): boolean {
-    return this.terminalAgents.has(agentId) || this.abandonedAgents.has(agentId)
+    if (this.abandonedAgents.has(agentId)) return true
+    const ended = this.terminalAgents.get(agentId)
+    return ended !== undefined && ended.resumed !== true
+  }
+
+  /**
+   * Fold one tail's endings into the process-lifetime memory, keeping the
+   * first observation of each (see EndedAgent).
+   *
+   * The launch record only reaches this from a tail that carried both, which is
+   * why a wider read may fill in what a narrower one could not: the session
+   * #179 was reported from had its `async_launched` records inside the 4MB
+   * first-sight window and far outside the routine one.
+   */
+  private rememberEndings(info: ClaudeTranscriptInfo, sessionId: string): void {
+    const failed = new Map(info.failedAgents.map((agent) => [agent.agentId, agent]))
+    for (const agentId of info.terminalAgentIds) {
+      const agent = failed.get(agentId)
+      const failedLaunch = agent === undefined ? {} : { failedLaunch: { sessionId, agent } }
+      const known = this.terminalAgents.get(agentId)
+      if (known === undefined) {
+        this.terminalAgents.set(agentId, { seenAtMs: this.now(), ...failedLaunch })
+      } else if (known.failedLaunch === undefined && agent !== undefined) {
+        known.failedLaunch = { sessionId, agent }
+      }
+    }
+  }
+
+  /**
+   * Put back the agents this session's own count says are running and that
+   * their own transcripts prove came back (issue #179). Mutates `remembered`.
+   *
+   * A resume writes no second `async_launched` record, so nothing in the
+   * transcript can outrank the ending that hid the agent — the only evidence
+   * left is the agent writing again, and the count agreeing that somebody is.
+   * Both halves are required. The count alone is #36's business and names
+   * nobody; a write alone can be a tool finishing after its agent stopped.
+   *
+   * Cost is bounded twice: the caller only reaches this under a shortfall, and
+   * only this session's own `failed` endings carry a launch record to redraw
+   * from — one stat each, for agents that have not already been adopted or
+   * abandoned. Adoption stops at the reported count, which is a ceiling here as
+   * everywhere else: it says how many are running, never which.
+   */
+  private async adoptResumedAgents(options: {
+    sessionId: string
+    projectDir: string
+    reportedPending: number
+    remembered: Map<string, ClaudeInFlightAgent>
+  }): Promise<void> {
+    const { remembered } = options
+    for (const [agentId, ended] of this.terminalAgents) {
+      if (remembered.size >= options.reportedPending) return
+      if (ended.resumed === true || remembered.has(agentId)) continue
+      if (this.abandonedAgents.has(agentId)) continue
+      if (ended.failedLaunch?.sessionId !== options.sessionId) continue
+      const stat = await this.fs.stat(
+        subagentTranscriptPath(options.projectDir, options.sessionId, agentId)
+      )
+      if (stat === null || stat.mtimeMs <= ended.seenAtMs) continue
+      ended.resumed = true
+      remembered.set(agentId, ended.failedLaunch.agent)
+    }
   }
 
   /** Ended memory outranks launch memory everywhere; every path prunes with this. */
@@ -851,6 +957,7 @@ export class ClaudeProvider implements Provider {
    */
   private async recoverMissingLaunches(options: {
     sessionId: string
+    projectDir: string
     transcriptPath: string
     transcriptBytes: number
     alreadyReadBytes: number
@@ -863,6 +970,22 @@ export class ClaudeProvider implements Provider {
     // is over: forget it, or a later discrepancy reporting the same number
     // would be dismissed as this one and never chased.
     if (reportedPending === undefined || reportedPending <= remembered.size) {
+      this.unexplainedShortfalls.delete(sessionId)
+      return
+    }
+    // An agent that stopped once and came back is the cheapest explanation
+    // available — a stat apiece, no read at all — so it is tried first, and
+    // BEFORE the rate limit below (issue #179). That limit rations a 16MB read
+    // against one unchanging count; a resume can arrive at any tick long after
+    // the shortfall settled, and letting the limit swallow this sweep would
+    // hide exactly the case it was reported from.
+    await this.adoptResumedAgents({
+      sessionId,
+      projectDir: options.projectDir,
+      reportedPending,
+      remembered
+    })
+    if (remembered.size >= reportedPending) {
       this.unexplainedShortfalls.delete(sessionId)
       return
     }
@@ -883,7 +1006,7 @@ export class ClaudeProvider implements Provider {
       // read becomes a resurrection machine for the ghost dwarf that
       // terminalAgents exists to bury — and for the one abandoned by silence
       // (issue #40), whose launch record is exactly what this window reaches.
-      for (const agentId of deep.terminalAgentIds) this.terminalAgents.add(agentId)
+      this.rememberEndings(deep, sessionId)
       for (const agent of deep.inFlightAgents) {
         if (!this.hasEnded(agent.agentId)) remembered.set(agent.agentId, agent)
       }
@@ -984,7 +1107,7 @@ export class ClaudeProvider implements Provider {
         const deep = parseClaudeTranscriptTail(
           await this.fs.readTextTail(options.transcriptPath, RECOVERY_TAIL_BYTES)
         )
-        for (const agentId of deep.terminalAgentIds) this.terminalAgents.add(agentId)
+        this.rememberEndings(deep, sessionId)
         this.forgetEnded(remembered)
       }
     }
