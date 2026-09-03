@@ -644,7 +644,10 @@ export class ClaudeProvider implements Provider {
         ...(mainTokens !== undefined ? { tokensObserved: mainTokens } : {}),
         // The session transcript's own mtime — the foreman's proof of life,
         // and the same one pruneStaleLaunches weighs (issue #47).
-        ...this.silenceField(transcriptStat?.mtimeMs, now)
+        ...this.silenceField(transcriptStat?.mtimeMs, now),
+        // The same mtime, raw rather than aged (issue #183) — see
+        // transcriptUpdatedAtField for why an age cannot serve this job.
+        ...this.transcriptUpdatedAtField(transcriptStat?.mtimeMs)
       })
     }
     for (const agent of inFlightAgents) {
@@ -707,7 +710,8 @@ export class ClaudeProvider implements Provider {
         sessionId: session.sessionId,
         pid: session.pid,
         ...(workerTokens !== undefined ? { tokensObserved: workerTokens } : {}),
-        ...this.silenceField(subagentStat?.mtimeMs, now)
+        ...this.silenceField(subagentStat?.mtimeMs, now),
+        ...this.transcriptUpdatedAtField(subagentStat?.mtimeMs)
       })
     }
 
@@ -1039,6 +1043,26 @@ export class ClaudeProvider implements Provider {
   private silenceField(mtimeMs: number | undefined, now: number): { silentForMs?: number } {
     if (mtimeMs === undefined) return {}
     return { silentForMs: Math.max(0, now - mtimeMs) }
+  }
+
+  /**
+   * The same mtime published raw, for a caller that needs the tail to have
+   * MOVED rather than how long ago (issue #183).
+   *
+   * `silenceField` above turns this into an age, and an age is the wrong shape
+   * for that job: `now - mtimeMs` changes on every poll purely because the
+   * clock keeps advancing, whether or not this file was touched, so watching
+   * it would re-read a transcript on every idle poll — the renderer's own
+   * feed watch exists specifically to avoid that cost (see App.vue). The raw
+   * mtime changes only when a writer actually appends, and it does not care
+   * WHO wrote it — the panel's own #183 bug was exactly that `lastMessage`
+   * only ever reports the assistant's side.
+   *
+   * Same two-shape rule as `silenceField`: a missing file yields no key at
+   * all, never zero or some other value a real write could also produce.
+   */
+  private transcriptUpdatedAtField(mtimeMs: number | undefined): { transcriptUpdatedAt?: number } {
+    return mtimeMs === undefined ? {} : { transcriptUpdatedAt: mtimeMs }
   }
 
   /**

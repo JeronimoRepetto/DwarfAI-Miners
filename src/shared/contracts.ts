@@ -531,6 +531,24 @@ export interface Dwarf {
    */
   silentForMs?: number
   /**
+   * The transcript's own last-write time, in epoch ms (issue #183) — the raw
+   * mtime `silentForMs` turns into an age, published a second time for a
+   * caller that needs the tail to have MOVED rather than how long ago.
+   *
+   * `silentForMs` cannot serve that job: it is `now - mtimeMs`, so it changes
+   * on every poll purely because the clock keeps advancing, whether or not a
+   * writer ever touched the file. Watching it would re-read a transcript on
+   * every idle poll — the exact disk cost the renderer's feed watch exists to
+   * avoid (see App.vue). The raw mtime changes only when a writer actually
+   * appends, whoever that writer is — a human turn typed into the terminal
+   * included, which `lastMessage` alone cannot say because it only reports the
+   * ASSISTANT's side.
+   *
+   * Same absence rule as `silentForMs`: no such evidence is no key at all,
+   * never a value a real write could also have produced.
+   */
+  transcriptUpdatedAt?: number
+  /**
    * Whether anyone could be typing into this dwarf's session (issue #68), which
    * is what decides how long its silence above is given the benefit of the
    * doubt — see dwarfSilenceWindowMs.

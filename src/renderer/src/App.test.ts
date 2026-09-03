@@ -1294,6 +1294,167 @@ describe('App message panel', () => {
 })
 
 /**
+ * The feed for an observed dwarf used to refresh only when `lastMessage`
+ * changed — the assistant's own last text — so a human turn typed into the
+ * terminal, or sent from this panel, sat invisible until the agent next spoke
+ * (#183). Two remedies, smallest first: re-read on the panel's OWN successful
+ * send, and watch a second signal — `transcriptUpdatedAt`, the transcript's
+ * raw mtime — that moves for any writer, not only the assistant.
+ */
+describe('App feed refresh (#183)', () => {
+  const REFRESH_DWARF = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'Foreman',
+    status: 'working',
+    sessionId: 's1',
+    lastMessage: 'Halfway down the shaft',
+    textDelivery: 'terminal'
+  }
+
+  const HELD_REFRESH_DWARF = {
+    ...REFRESH_DWARF,
+    id: 'claude:s2',
+    sessionId: 's2',
+    conversation: [{ role: 'user', text: 'dig here', timestamp: 'then' }]
+  }
+
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [REFRESH_DWARF],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+  })
+
+  async function openRefreshDwarf(overrides: Record<string, unknown> = {}) {
+    const { wrapper, api } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      ...overrides
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  async function sendFromPanel(wrapper: VueWrapper, text: string) {
+    await wrapper.find('.panel-input').setValue(text)
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+  }
+
+  it("re-reads the feed once the panel's own send lands, without waiting for the agent to reply", async () => {
+    const { wrapper, api } = await openRefreshDwarf()
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    await sendFromPanel(wrapper, 'dig deeper')
+
+    expect(api.sendDwarfText).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      text: 'dig deeper',
+      pressEnter: true
+    })
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
+    expect(api.getDwarfFeed).toHaveBeenLastCalledWith('claude:s1')
+  })
+
+  it('does not re-read a failed delivery: nothing proves the tail moved', async () => {
+    const { wrapper, api } = await openRefreshDwarf({
+      sendDwarfText: vi.fn().mockResolvedValue({
+        delivered: false,
+        via: 'terminal',
+        error: 'The terminal would not come forward.'
+      })
+    })
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    await sendFromPanel(wrapper, 'dig deeper')
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+  })
+
+  it('never reads a transcript for a session it is holding, even from its own send', async () => {
+    // Held sessions carry their exchange first-hand on `conversation`; a
+    // delivered send must not open a second, second-hand channel for it.
+    const { wrapper, api } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({
+        mines: [{ ...MINE, dwarfs: [HELD_REFRESH_DWARF] }],
+        tokensObserved: 0
+      })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+
+    await sendFromPanel(wrapper, 'dig deeper')
+
+    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+  })
+
+  it('drops a delivered send’s refresh once the panel is no longer open on that dwarf', async () => {
+    // The relay can take seconds; the user is free to close the panel, or pick
+    // another dwarf, before it answers. A stale delivery must not fetch a feed
+    // nobody is looking at any more.
+    let resolveSend: (value: { delivered: boolean; via: string }) => void = () => {}
+    const sendDwarfText = vi.fn(
+      () =>
+        new Promise<{ delivered: boolean; via: string }>((resolve) => {
+          resolveSend = resolve
+        })
+    )
+    const { wrapper, api } = await openRefreshDwarf({ sendDwarfText })
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('.panel-input').setValue('dig deeper')
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    await wrapper.find('.panel-close').trigger('click')
+    resolveSend({ delivered: true, via: 'terminal' })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-reads when the transcript-movement signal changes, even when lastMessage does not', async () => {
+    const { api } = await openRefreshDwarf()
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({
+      mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
+      tokensObserved: 0
+    })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays put on an ordinary poll where neither signal moved', async () => {
+    const { api } = await openRefreshDwarf()
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [MINE], tokensObserved: 0 })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
  * The Add Panel, wired end to end (#86): the mine's Add action opens it in the
  * MessagePanel's own dock, submitting starts a held session in that mine's
  * folder, and the panel hands over to the MessagePanel when the dwarf it

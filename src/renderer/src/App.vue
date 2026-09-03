@@ -381,31 +381,63 @@ function closeMessages(): void {
 }
 
 /**
- * Read the selected dwarf's transcript tail, for a session this panel only
- * observes.
+ * (Re-)read the selected dwarf's transcript tail, for a session this panel
+ * only observes.
  *
+ * Bumps feedToken first, so an answer already in flight — from the watch
+ * below, or from an earlier call here — cannot land after a fresher one has
+ * started; only the newest token's answer is ever kept (issue #183: the
+ * panel's own send is now a second caller of this, beside the watch).
+ */
+async function readSelectedFeed(dwarfId: string): Promise<void> {
+  const token = ++feedToken
+  selectedFeed.value = undefined
+  try {
+    const result = await window.api.getDwarfFeed(dwarfId)
+    if (feedToken === token) selectedFeed.value = result
+  } catch {
+    // The bridge is the only source there is. Saying "no transcript this
+    // panel can read" is exactly what happened, and it is what the panel
+    // already knows how to draw.
+    if (feedToken === token) selectedFeed.value = { readable: false, messages: [] }
+  }
+}
+
+/**
  * Skipped for a held session: it carries its own first-hand exchange on every
  * snapshot, and reading its transcript would fetch the same words second-hand
- * and a turn behind. Re-read when that dwarf says something new rather than on
- * every poll, so an idle session costs no disk at all — `lastMessage` changing
- * IS the provider reporting that the tail moved.
+ * and a turn behind. Bumps feedToken without reading anything, so a read the
+ * watch had already started cannot land after the panel moved to a held
+ * session (or off a dwarf entirely).
+ */
+function skipSelectedFeed(): void {
+  feedToken++
+  selectedFeed.value = undefined
+}
+
+/**
+ * Read the selected dwarf's transcript tail, for a session this panel only
+ * OBSERVES. Re-read when either of two signals moves, rather than on every
+ * poll, so an idle session still costs no disk at all — and neither signal
+ * alone was enough (issue #183). `lastMessage` is the provider reporting the
+ * ASSISTANT spoke; it says nothing about a human turn typed into the terminal
+ * or sent from this very panel, which sat invisible until the agent next
+ * replied. `transcriptUpdatedAt` is the transcript's own raw mtime, and it
+ * moves for ANY writer — see Dwarf.transcriptUpdatedAt for why it has to be
+ * the raw mtime and not an age derived from it.
  */
 watch(
-  [openDwarfId, () => selectedDwarf.value?.lastMessage],
-  async ([dwarfId]) => {
-    const token = ++feedToken
-    selectedFeed.value = undefined
-    if (dwarfId === null) return
-    if (selectedDwarf.value?.conversation !== undefined) return
-    try {
-      const result = await window.api.getDwarfFeed(dwarfId)
-      if (feedToken === token) selectedFeed.value = result
-    } catch {
-      // The bridge is the only source there is. Saying "no transcript this
-      // panel can read" is exactly what happened, and it is what the panel
-      // already knows how to draw.
-      if (feedToken === token) selectedFeed.value = { readable: false, messages: [] }
+  [
+    openDwarfId,
+    () => selectedDwarf.value?.lastMessage,
+    () => selectedDwarf.value?.transcriptUpdatedAt
+  ],
+  ([dwarfId]) => {
+    if (dwarfId === null || selectedDwarf.value?.conversation !== undefined) {
+      skipSelectedFeed()
+      return
     }
+    void readSelectedFeed(dwarfId)
   },
   { immediate: true }
 )
@@ -459,7 +491,29 @@ async function activate(dwarf: Dwarf): Promise<void> {
  * rather than in a modal.
  */
 function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }): void {
-  void sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
+  void deliverText(dwarf, payload)
+}
+
+/**
+ * A delivered send is also a reason to re-read the feed (issue #183): the
+ * sending dwarf is always the one this panel has open, so the human's own
+ * words are evidence the tail moved, and waiting for `lastMessage` to catch up
+ * would mean waiting for the agent to speak next — the bug itself.
+ *
+ * Re-checked against the CURRENT selection rather than trusting the one
+ * captured before the await: the relay can take seconds, and the user is free
+ * to close the panel, or select someone else, while it is in flight. A stale
+ * delivery for a dwarf nobody has open any more has nothing left to refresh.
+ */
+async function deliverText(
+  dwarf: Dwarf,
+  payload: { text: string; pressEnter: boolean }
+): Promise<void> {
+  const delivered = await sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
+  if (!delivered) return
+  if (openDwarfId.value !== dwarf.id) return
+  if (selectedDwarf.value?.conversation !== undefined) return
+  void readSelectedFeed(dwarf.id)
 }
 
 /** Same reasoning as sendText: fire-and-observe, verdict lands on the dwarf itself. */
