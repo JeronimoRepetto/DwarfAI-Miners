@@ -531,7 +531,35 @@ export interface Mine {
    * whatever the ledger already accrued for the path attach to it.
    */
   declared?: boolean
+  /**
+   * Which of the world map's spawn locations this mine stands on (#136), from
+   * `1` to `MAP_SPAWN_SITE_COUNT`.
+   *
+   * A remembered fact, not a computed one: main reads it from the projects
+   * store, which chose it once, at random from the locations nobody held, and
+   * never moves it again. That is the whole reason it crosses the wire — the
+   * renderer could hash the id and get a stable position for free, but it would
+   * be a DIFFERENT position after any change to the hash or the site list, and
+   * the design says closing and reopening the app must not move a mine.
+   *
+   * Absent means nobody has placed this mine: a project that predates the
+   * column, one the store has not written yet, a valley whose locations are all
+   * taken, or a simulated one that never touches the store at all. The renderer
+   * places those itself, deterministically, and nothing is persisted.
+   */
+  mapSite?: number
 }
+
+/**
+ * How many spawn locations the world map defines (#136).
+ *
+ * The design fixes it at 74 and the extraction found exactly 74. It is here,
+ * rather than beside the coordinates, because both processes need it and only
+ * one of them needs where the locations ARE: main chooses a site id from this
+ * range and the renderer looks its coordinates up. `MAP_SPAWN_POINTS` in the
+ * renderer is checked against this number, so the two cannot drift.
+ */
+export const MAP_SPAWN_SITE_COUNT = 74
 
 /**
  * busy: a turn is actively running. waiting: the session is alive but provably
@@ -1006,6 +1034,13 @@ export interface ProjectSummary {
   lastProvider?: DwarfProvider
   /** Absent means the ledger has no row for this id — never zeros for a project nobody has mined (#90). */
   materials?: MaterialTotals
+  /**
+   * Where this project's mine stands on the world map (#136), or absent when
+   * nothing has placed it. The same stored number `Mine.mapSite` carries, off
+   * the same row — a browse and the map must never disagree about where a mine
+   * is.
+   */
+  mapSite?: number
   live: boolean
 }
 

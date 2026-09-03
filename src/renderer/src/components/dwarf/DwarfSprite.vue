@@ -12,6 +12,7 @@ import {
   SPRITE_FRAME_SIZE,
   backgroundSizePercent,
   framePositionPercent,
+  isGlowFrame,
   isImpactFrame,
   sequenceFrameAt,
   sequenceIsStill,
@@ -420,6 +421,25 @@ watch(
     if (strip !== undefined && isImpactFrame(strip, now.frame)) impactCount.value++
   }
 )
+
+/**
+ * The strike's own light (issue #74's last piece): a brief glow layered over
+ * the art's own sparks, on exactly the frames the SHEET names as bright — the
+ * same data-driven rule `isImpactFrame` follows above, and for the same
+ * reason: a pose name cannot survive the art swap, a declared frame can.
+ *
+ * Same guards as `impactCount`'s watcher (working, not mid-walk), plus one of
+ * its own: reduced motion never shows it, even where the held still frame
+ * happens to be a declared glow frame — a pulsing light is exactly the
+ * movement that preference asks to stop, not information it would strip.
+ */
+const strikeGlow = computed(() => {
+  if (reducedMotion.value) return false
+  if (props.dwarf.status !== 'working') return false
+  if (props.walking === true) return false
+  const strip = sheet.value
+  return strip !== undefined && isGlowFrame(strip, position.value.frame)
+})
 const ariaLabel = computed(
   () =>
     `Actions for ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
@@ -471,7 +491,12 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       @focus="showTooltip"
       @blur="hideTooltip"
     >
-      <span class="dwarf-frame" :style="frameStyle" aria-hidden="true"></span>
+      <span
+        class="dwarf-frame"
+        :class="{ 'is-strike-glow': strikeGlow }"
+        :style="frameStyle"
+        aria-hidden="true"
+      ></span>
       <!-- Debris off the rock face, one burst per pick hit (see impactCount). -->
       <span v-if="impactCount > 0" :key="impactCount" class="spark-burst" aria-hidden="true">
         <i v-for="n in SPARKS_PER_HIT" :key="n" class="spark" :style="{ '--spark': n }"></i>
@@ -596,6 +621,34 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 }
 .is-flipped .dwarf-frame {
   scale: -1 1;
+}
+/*
+ * The strike's own light (issue #74's last piece), toggled by `strikeGlow`
+ * on the sheet's own declared `glowFrames` — never a hardcoded frame number
+ * here. A pseudo-element rather than a template node, so nothing is added to
+ * the DOM per tick; `position: relative` on this one variant is a no-op for
+ * layout (no offsets follow it), it only gives the glow a box to sit inside.
+ * Placed on the pick-tip side of the frame — the same corner `.spark-burst`
+ * throws from, and mirrored the same way — so the light and the art's own
+ * sparks share one origin. Amber from the tier tokens every other glow in
+ * the panel already uses (see MineMound.vue), never a colour invented here;
+ * kept soft so the art's own sparks stay the protagonist.
+ */
+.dwarf-frame.is-strike-glow {
+  position: relative;
+}
+.dwarf-frame.is-strike-glow::after {
+  content: '';
+  position: absolute;
+  top: 18%;
+  left: 58%;
+  width: 44%;
+  height: 44%;
+  background: radial-gradient(circle, var(--tier-glow, #ffe29c) 0%, transparent 72%);
+  pointer-events: none;
+}
+.is-flipped .dwarf-frame.is-strike-glow::after {
+  left: -2%;
 }
 .is-activating {
   opacity: 0.55;
@@ -752,6 +805,10 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
  */
 @media (prefers-reduced-motion: reduce) {
   .spark-burst {
+    display: none;
+  }
+  /* Belt and suspenders alongside strikeGlow's own guard in script — see there. */
+  .dwarf-frame.is-strike-glow::after {
     display: none;
   }
   .zzz {

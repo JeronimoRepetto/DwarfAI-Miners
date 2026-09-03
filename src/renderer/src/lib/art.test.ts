@@ -4,10 +4,13 @@ import {
   ADD_ICON_SRC,
   CLOSE_ICON_SRC,
   DIALOG_ICON_SRC,
+  MAP_ART_SIZE,
+  MAP_BG_SRC,
   NUGGET_SRC,
   SLEEP_ICON_SRC,
   SORT_ICON_SRC
 } from './art'
+import { MAP_TIME_VARIANTS } from './map/mapTime'
 
 /*
  * art.ts resolves every painting to a bundled URL through explicit imports, so
@@ -36,6 +39,36 @@ describe('NUGGET_SRC', () => {
   it('gives each material its own painting rather than reusing one', () => {
     const sources = Object.values(NUGGET_SRC)
     expect(new Set(sources).size).toBe(sources.length)
+  })
+})
+
+/*
+ * The same gap the nugget table has, and one more: the four map paintings are
+ * keyed by a time-of-day variant, and three of the four committed files carry a
+ * typo in their own name (`sunerise`, `suneset`, `nigth`). An import typed one
+ * letter differently fails the build; a variant left out of the record does
+ * not, and would draw the map as a broken image for four hours a day.
+ */
+describe('MAP_BG_SRC', () => {
+  it('has a painting for every time-of-day variant', () => {
+    for (const variant of MAP_TIME_VARIANTS) {
+      expect(MAP_BG_SRC[variant], `no map art keyed for ${variant}`).toBeTruthy()
+    }
+  })
+
+  it('gives each variant its own painting rather than reusing one', () => {
+    const sources = Object.values(MAP_BG_SRC)
+    expect(new Set(sources).size).toBe(MAP_TIME_VARIANTS.length)
+  })
+
+  /*
+   * All four paintings are the same size, which is what lets one authored
+   * spawn point serve every variant — the design says so ("all time-of-day maps
+   * are symmetric, so the same stored coordinate applies across variants") and
+   * the four committed files agree, at 1856x2304 each.
+   */
+  it('states the pixel size the cover projection measures against', () => {
+    expect(MAP_ART_SIZE).toEqual({ width: 1856, height: 2304 })
   })
 })
 

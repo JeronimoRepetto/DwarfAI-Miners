@@ -64,18 +64,24 @@ describe('app database — the v1 to v2 upgrade (#93)', () => {
     seeded.close()
   }
 
-  it('adds the ledger tables and stamps v2 without touching the projects rows', async () => {
+  /*
+    These two asserted the literal stamp `2` while v2 was the newest schema.
+    #136 added v3, and a v1 database now walks BOTH steps in one open — so the
+    subject of each is unchanged and the expectation is the current version
+    rather than a number that has to be edited at every future bump.
+  */
+  it('adds the ledger tables and stamps up without touching the projects rows', async () => {
     const sqlite = new MemoryWritableSqlite()
     await seedVersion1(sqlite)
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(2)
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
     expect(tables(db)).toContain('materials')
     expect(db.all('SELECT id FROM projects')).toEqual([{ id: 'mine:a' }])
   })
 
-  it('is a no-op on a database already at v2', async () => {
+  it('is a no-op on a database already at the current version', async () => {
     const sqlite = new MemoryWritableSqlite()
     const first = await createAppDatabase({ filePath: DB, sqlite }).connect()
     first.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
@@ -86,7 +92,7 @@ describe('app database — the v1 to v2 upgrade (#93)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(2)
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
     expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
   })
 
@@ -112,6 +118,96 @@ describe('app database — the v1 to v2 upgrade (#93)', () => {
     // openLedgerStore reads this to know whether a database it cannot open has
     // ever held the ledger. It must not follow a later schema bump.
     expect(LEDGER_TABLES_SINCE).toBe(2)
+  })
+})
+
+describe('app database — the v2 to v3 upgrade (#136)', () => {
+  /** A database exactly as the v2 build left it: no map_site column anywhere. */
+  async function seedVersion2(sqlite: MemoryWritableSqlite): Promise<void> {
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        origin TEXT NOT NULL,
+        last_provider TEXT,
+        known_tier TEXT
+      );
+      CREATE TABLE materials (
+        mine_id TEXT NOT NULL,
+        material TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (mine_id, material)
+      );
+    `)
+    seeded.run(
+      `INSERT INTO projects (id, path, name, name_norm, added_at, last_opened_at, origin,
+       last_provider, known_tier) VALUES (?, ?, ?, ?, ?, ?, 'declared', NULL, 'gold')`,
+      ['mine:a', 'C:\\code\\forge', 'forge', 'forge', 10, 20]
+    )
+    seeded.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
+      'mine:a',
+      'gold',
+      7
+    ])
+    seeded.exec('PRAGMA user_version = 2')
+    seeded.close()
+  }
+
+  it('adds the map site column and stamps v3, keeping every row', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await seedVersion2(sqlite)
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(3)
+    expect(db.all('SELECT id, known_tier, map_site FROM projects')).toEqual([
+      { id: 'mine:a', known_tier: 'gold', map_site: null }
+    ])
+    expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
+  })
+
+  /*
+    A project the user already has gets no site out of the migration, and that
+    is the point: NULL means "nobody has placed this mine yet", which is what
+    lets the store hand it one on the next write instead of the migration
+    inventing 74 placements in a transaction that must not fail.
+  */
+  it('leaves existing projects unplaced rather than inventing a site for them', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await seedVersion2(sqlite)
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(db.all('SELECT map_site FROM projects')).toEqual([{ map_site: null }])
+  })
+
+  it('walks a v1 database through both upgrades in one open', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec('CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL)')
+    seeded.run('INSERT INTO projects (id, path) VALUES (?, ?)', ['mine:a', 'C:\\code\\forge'])
+    seeded.exec('PRAGMA user_version = 1')
+    seeded.close()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(tables(db)).toContain('materials')
+    expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: null }])
+  })
+
+  it('creates a fresh database with the column already there', async () => {
+    const sqlite = new MemoryWritableSqlite()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(db.all('SELECT map_site FROM projects')).toEqual([])
   })
 })
 

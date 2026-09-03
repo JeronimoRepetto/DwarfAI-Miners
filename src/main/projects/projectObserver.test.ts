@@ -221,3 +221,67 @@ describe('ProjectObserver', () => {
     expect(upsert).toHaveBeenCalledTimes(2)
   })
 })
+
+/**
+ * Reporting the written row back to whoever is watching (#136).
+ *
+ * The map needs to know where a newly discovered project's mine was placed, and
+ * the store is the only thing that knows — it chose the location during this
+ * write. Without this the panel would draw that mine at its own fallback
+ * position and then jump it to the persisted one on the next restart, which is
+ * exactly the moving mine the design forbids.
+ */
+describe('ProjectObserver — reporting what it wrote', () => {
+  it('hands back the row it just wrote, placement and all', async () => {
+    const projects = store()
+    const recorded: number[] = []
+    const observer = new ProjectObserver({
+      store: projects,
+      knownTierOf: measured,
+      onRecorded: (record) => {
+        if (record.mapSite !== null) recorded.push(record.mapSite)
+      }
+    })
+
+    await observer.observe([mine()], 1_000)
+
+    expect(recorded).toHaveLength(1)
+    const stored = await projects.get('mine:c:\\x\\proj')
+    expect(stored.ok && stored.value?.mapSite).toBe(recorded[0])
+  })
+
+  it('reports nothing for a poll it decided not to write', async () => {
+    const projects = store()
+    let calls = 0
+    const observer = new ProjectObserver({
+      store: projects,
+      knownTierOf: measured,
+      onRecorded: () => {
+        calls++
+      }
+    })
+
+    await observer.observe([mine()], 1_000)
+    await observer.observe([mine()], 1_500)
+
+    expect(calls).toBe(1)
+  })
+
+  it('reports nothing when the write was refused', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const projects = store(sqlite)
+    sqlite.failWith('locked')
+    let calls = 0
+    const observer = new ProjectObserver({
+      store: projects,
+      knownTierOf: measured,
+      onRecorded: () => {
+        calls++
+      }
+    })
+
+    await observer.observe([mine()], 1_000)
+
+    expect(calls).toBe(0)
+  })
+})

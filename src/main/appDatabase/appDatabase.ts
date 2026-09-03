@@ -39,8 +39,8 @@ import {
  */
 export const APP_DB_FILENAME = 'projects-v1.db'
 
-/** Stamped in PRAGMA user_version. v1 upgrades to it; anything above is refused. */
-export const APP_SCHEMA_VERSION = 2
+/** Stamped in PRAGMA user_version. Older versions walk up to it; above is refused. */
+export const APP_SCHEMA_VERSION = 3
 
 /**
  * The version the ledger's tables arrived in.
@@ -57,13 +57,16 @@ export const LEDGER_TABLES_SINCE = 2
 export class UnsupportedSchemaError extends Error {}
 
 /**
- * Schema v1 — the projects list, exactly as slice 1 created it.
+ * The projects list — slice 1's table, plus the column v3 added.
  *
  * added_at and last_opened_at are separate columns because #92 sorts by either,
  * and they answer different questions: one is provenance, the other recency.
  * name_norm is written by both INSERT paths (see projects/projectName.ts) so a
  * search never has to fold a column it is scanning. The three indexes are the
- * three orders #92 asked for; none of them is speculative.
+ * three orders #92 asked for; none of them is speculative — and map_site
+ * deliberately has none, since the only question asked of it is "which sites
+ * are taken", one scan of a table with one row per project the user has ever
+ * opened.
  */
 const CREATE_PROJECTS = `
 CREATE TABLE projects (
@@ -75,7 +78,8 @@ CREATE TABLE projects (
   last_opened_at INTEGER,
   origin TEXT NOT NULL,
   last_provider TEXT,
-  known_tier TEXT
+  known_tier TEXT,
+  map_site INTEGER
 );
 CREATE INDEX projects_name_norm ON projects (name_norm);
 CREATE INDEX projects_added_at ON projects (added_at);
@@ -120,6 +124,34 @@ CREATE TABLE ledger_meta (
   sessions INTEGER NOT NULL
 );
 `
+
+/**
+ * Schema v3 — where each project's mine stands on the world map (#136).
+ *
+ * One nullable integer, holding the id of one of the design's 74 spawn
+ * locations. Nullable because there are three honest ways to have no site: a
+ * project that predates this column, a project the store has not placed yet,
+ * and a valley with all 74 locations already taken. A zero or a -1 would make
+ * all three indistinguishable from location zero.
+ *
+ * No UNIQUE constraint, though two mines must never share a location. The
+ * uniqueness the design asks for is over LIVE projects and is enforced where
+ * the choice is made — a UNIQUE index would additionally make the 75th project
+ * a write FAILURE rather than a project drawn at a shared site, which is a
+ * database error raised over a cosmetic problem.
+ */
+const ADD_MAP_SITE = `ALTER TABLE projects ADD COLUMN map_site INTEGER`
+
+/**
+ * One step up from `from` to `from + 1`, applied in order and each in its own
+ * transaction — which is what lets a database that has fallen two versions
+ * behind catch up in one open without a crash ever leaving a stamp that does
+ * not describe the file.
+ */
+const UPGRADES: readonly { from: number; apply: (db: WritableSqliteDb) => void }[] = [
+  { from: 1, apply: (db) => db.exec(CREATE_LEDGER) },
+  { from: 2, apply: (db) => db.exec(ADD_MAP_SITE) }
+]
 
 export interface AppDatabase {
   /**
@@ -205,9 +237,10 @@ export function createAppDatabase(options: AppDatabaseOptions): AppDatabase {
  * Three cases, and the third is the one that matters:
  *
  * - **v0** (an empty file, or none) gets both tenants created from scratch.
- * - **v1** (a database slice 1 wrote) gets the ledger tables ADDED. Additive
- *   only: nothing existing is dropped, rewritten or reshaped, so the upgrade
- *   cannot lose a project even if it fails halfway.
+ * - **an older stamp** walks UP one version at a time through `UPGRADES` — a
+ *   v1 database gets the ledger tables and then the map-site column in the same
+ *   open. Every step is additive: nothing existing is dropped, rewritten or
+ *   reshaped, so an upgrade cannot lose a project even if it fails halfway.
  * - **anything else refuses**, leaving the file untouched. The JSON stores
  *   discard a document whose version they do not know (domain/ledger.ts:294-306)
  *   and that is right for a document the app rebuilds from what it observes
@@ -248,15 +281,18 @@ export function prepareAppSchema(db: WritableSqliteDb): void {
     return
   }
 
-  if (version === 1) {
-    // Plain CREATE, never CREATE TABLE IF NOT EXISTS: the transaction below is
-    // what makes a partial upgrade impossible, so a table already standing here
-    // means something this code did not write, and adopting it blind would hand
-    // the ledger columns it cannot count on.
-    inTransaction(db, () => {
-      db.exec(CREATE_LEDGER)
-      db.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION}`)
-    })
+  if (version >= 1 && version < APP_SCHEMA_VERSION) {
+    // Plain CREATE and plain ADD COLUMN, never IF NOT EXISTS: each transaction
+    // below is what makes a partial upgrade impossible, so a table or column
+    // already standing here means something this code did not write, and
+    // adopting it blind would hand a tenant a shape it cannot count on.
+    for (const upgrade of UPGRADES) {
+      if (upgrade.from < version) continue
+      inTransaction(db, () => {
+        upgrade.apply(db)
+        db.exec(`PRAGMA user_version = ${upgrade.from + 1}`)
+      })
+    }
     return
   }
 

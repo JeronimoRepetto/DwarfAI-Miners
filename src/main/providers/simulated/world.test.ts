@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Dwarf, ProviderSnapshot } from '../../domain/types'
+import { MAP_SPAWN_SITE_COUNT, type Dwarf, type ProviderSnapshot } from '../../domain/types'
 import { defaultSimulationConfig, type SimulationConfig } from '../../config/config'
 import { SHOWCASE_MINE_INDEX, simulatedMines, simulatedSnapshots } from './world'
 
@@ -14,8 +14,14 @@ const VEIN_ANCHORS = 4
 const REST_ANCHORS = 2
 const POST_ANCHORS = 1
 
-/** The 13 authored map sites of `mapSites.ts` — #20's overflow threshold. */
-const MAP_SITES = 13
+/**
+ * The world map's spawn locations. This was 13 — the hand-authored sites of
+ * `mapSites.ts`, which the default simulated valley deliberately OVERFLOWED so
+ * the crowded path was exercised (#20). The design's map has 74 (#136), so the
+ * relationship inverted rather than disappeared: the default valley now fits,
+ * and every simulated mine gets a spawn location of its own.
+ */
+const MAP_SITES = MAP_SPAWN_SITE_COUNT
 
 function config(overrides: Partial<SimulationConfig> = {}): SimulationConfig {
   return { ...defaultSimulationConfig(), ...overrides }
@@ -42,8 +48,16 @@ describe('simulatedMines', () => {
     expect(simulatedMines(config({ mines: 7 }))).toHaveLength(7)
   })
 
-  it('overflows the 13 authored map sites at the default settings (#20)', () => {
-    expect(defaultSimulationConfig().mines).toBeGreaterThan(MAP_SITES)
+  /*
+    The assertion this replaced said the default valley OVERFLOWS the map, which
+    was true of thirteen sites and is false of seventy-four. What is worth
+    pinning now is the other side of the same fact: every simulated mine can
+    have a spawn location to itself, so the demo never shows two mines sharing
+    one — and raising the default past 74 fails here loudly rather than quietly
+    stacking markers.
+  */
+  it('fits inside the map’s spawn locations at the default settings (#20, #136)', () => {
+    expect(defaultSimulationConfig().mines).toBeLessThanOrEqual(MAP_SITES)
   })
 
   it('gives every mine a distinct path and a non-empty display name', () => {

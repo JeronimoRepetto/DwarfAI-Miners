@@ -1,17 +1,22 @@
 /**
- * Deterministic placement of mines onto the authored dig sites of the map.
+ * Deterministic placement of things onto a numbered pool of spots.
  *
- * A mine's site is derived from a hash of its id, so positions stay stable
+ * A mine's spot is derived from a hash of its id, so positions stay stable
  * across data refreshes and app restarts without persisting anything.
  * Collisions are resolved by deterministic linear probing over the ids in
- * sorted order, which guarantees unique sites while mines fit on the map.
+ * sorted order, which guarantees unique spots while there are enough of them.
  *
- * This module owns only the *which mine goes where* question; the sites
- * themselves — and why their coordinates are what they are — live in
- * `mapSites.ts`, so the assignment logic never needs to know about the
- * painting it is placing mines on.
+ * The world map no longer uses this to decide where a mine LIVES — the projects
+ * store chooses that once and remembers it (#136) — but it is still what draws
+ * the ones nobody has placed: a simulated valley, which never writes to the
+ * store, and a project in the poll or two before its first row exists. The cave
+ * uses it for the same reason, to seat dwarfs on the anchors of a scene.
+ *
+ * This module owns only the *which one goes where* question. It knows nothing
+ * about the painting: the default pool size is the map's, because that is the
+ * larger of the two and the only caller that leaves it out.
  */
-import { MINE_SITES } from './map/mapSites'
+import { MAP_SPAWN_SITE_COUNT } from '../types'
 
 /** FNV-1a 32-bit hash: tiny, deterministic, well spread for path-like ids. */
 export function hashString(value: string): number {
@@ -24,7 +29,7 @@ export function hashString(value: string): number {
 }
 
 /**
- * Assign each mine id an authored-site index, in two passes so positions stay
+ * Assign each id a spot index, in two passes so positions stay
  * put: a mine whose hash-preferred site nobody else wants always keeps it (new
  * mines never displace it), then the contested rest probe forward from their
  * preferred site in sorted-id order (input order carries no meaning across
@@ -33,7 +38,7 @@ export function hashString(value: string): number {
  */
 export function assignSlots(
   mineIds: readonly string[],
-  slotCount: number = MINE_SITES.length
+  slotCount: number = MAP_SPAWN_SITE_COUNT
 ): Map<string, number> {
   const assigned = new Map<string, number>()
   if (slotCount <= 0) return assigned

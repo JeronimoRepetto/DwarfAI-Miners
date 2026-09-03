@@ -44,6 +44,26 @@
   /* Unselected question option background. */
   --color-question-dark: #13100a;
 
+  /*
+   * The five mine-marker colours (#136).
+   *
+   * The only values in this file that were not transcribed from a table: the
+   * design source names the families and says outright that the PDF carries no
+   * hex values, pointing at its verified marker export instead. So these were
+   * MEASURED off that export by `scripts/extract-map-markers.mjs` — the five
+   * flat-fill discs on the map, each read as its own exact RGB rather than as
+   * an average with the painting under it. They are product colours now, which
+   * is why they live here beside the transcribed ones rather than in a
+   * component. Keyed by the tier's CODE name: the design LABELS this second
+   * tier `Cropper`, which is UI copy (see presentation.ts) and not an
+   * identifier the type system knows.
+   */
+  --color-marker-bronze: #5ce1e6;
+  --color-marker-copper: #ba6336;
+  --color-marker-silver: #c7c7c7;
+  --color-marker-gold: #ffde59;
+  --color-marker-uranium: #00bf63;
+
   /* Dense labels, controls and metadata. */
   --text-meta: 10px;
   /* Confirmation helper copy. */
