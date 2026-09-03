@@ -19,6 +19,7 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
+import { INTERIOR_ART_SIZE } from './lib/art'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot, ShellArea } from './types'
@@ -151,6 +152,14 @@ function openFromBrowse(projectId: string): void {
 const build = ref<AppBuild | null>(null)
 const versionText = computed(() => (build.value === null ? null : versionLabel(build.value)))
 const versionHint = computed(() => (build.value === null ? '' : versionTitle(build.value)))
+
+/**
+ * The interior painting's own shape, published to CSS so the mine column can
+ * derive its width from the height the shell gives it (#153). Bound from
+ * `INTERIOR_ART_SIZE` rather than written into the stylesheet, so the column and
+ * the projection inside it cannot disagree about the painting.
+ */
+const interiorColumnAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -304,7 +313,11 @@ onBeforeUnmount(() => unsubscribe?.())
 </script>
 
 <template>
-  <div class="shell" :class="[`edge-${layout.edge}`, layout.expanded ? 'is-open' : 'is-closed']">
+  <div
+    class="shell"
+    :class="[`edge-${layout.edge}`, layout.expanded ? 'is-open' : 'is-closed']"
+    :style="{ '--interior-column-aspect': interiorColumnAspect }"
+  >
     <!--
       The rail and the collapse arrow are one control in one component, because
       they are one surface in the design: the same #f6b644, with the arrow
@@ -440,6 +453,16 @@ onBeforeUnmount(() => unsubscribe?.())
 .shell.edge-left {
   flex-direction: row-reverse;
 }
+/*
+ * The closed window is the platform's 32px floor rather than the design's 20px
+ * rail, because Windows will not make one narrower (#153, MIN_WINDOW_WIDTH in
+ * main/shell/panelBounds.ts). The rail itself is still 20px, held against the
+ * DOCKED side so both edges look the same: `flex-end` is the right of a `row`
+ * and the left of a `row-reverse`, which is exactly the docked side each time.
+ */
+.shell.is-closed {
+  justify-content: flex-end;
+}
 .shell.is-open {
   gap: var(--space-nav-gap);
   padding: var(--space-nav-gap);
@@ -459,19 +482,25 @@ onBeforeUnmount(() => unsubscribe?.())
   min-height: 0;
 }
 /*
- * The mine's own column, outboard of the navigation stack (see the exports):
- * the design's 245px interior and nothing else. It carried 32px more until
- * #137, for the header row and padding the old cave scene wrapped around
- * itself; the design's interior has no such chrome — the painting is the
- * screen, and the Close and Add actions float on top of it. main reserves the
- * same width in the window; see MINE_COLUMN_WIDTH in main/shell/panelBounds.ts.
+ * The mine's own column, outboard of the navigation stack (see the exports).
+ *
+ * Its width is DERIVED, not declared (#153): the painting is drawn at the full
+ * height of the shell's content area with its aspect preserved and nothing
+ * cropped, so `aspect-ratio` on a full-height column is the whole rule — the
+ * browser reads the height the flex row already gave it and answers with the
+ * width. The design's 245px is what that returns at the mock's own 768-tall
+ * composition; reserving 245 on a 1392-tall display is what made the interior
+ * read tiny. main reserves the same number in the window; see mineColumnWidth
+ * in main/shell/panelBounds.ts and interiorColumnWidth in lib/scene/sceneSizing.
  */
 .shell-mine {
   position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: var(--size-mine-interior-width);
+  width: auto;
+  height: 100%;
+  aspect-ratio: var(--interior-column-aspect);
   min-width: 0;
 }
 .shell-mine > .panel-frame {

@@ -278,12 +278,14 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   width: 100%;
   height: 100%;
   /*
-    Centred, which is what the design asks for and what mapProjection's crop
-    maths assumes. Not the old 50% 60%: that existed to bias the old painting's
-    crop toward its valley floor, and every spawn point here is measured against
-    the painting itself rather than against the box.
+    `contain`, not the `cover` screens/map.md asks for: the maintainer's first
+    acceptance run ruled that the whole painting must be visible with its aspect
+    preserved and no crop (#153), and the secondary column's own width is derived
+    from the display's height so that the height it is drawn at is the whole of
+    the one it is given (see secondaryColumnWidth in main/shell/panelBounds.ts).
+    Centred on both axes, which is what mapProjection's fit maths assumes.
   */
-  object-fit: cover;
+  object-fit: contain;
   object-position: 50% 50%;
   user-select: none;
 }

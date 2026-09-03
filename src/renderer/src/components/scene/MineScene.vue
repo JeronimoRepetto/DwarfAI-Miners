@@ -87,9 +87,11 @@ onMounted(() => {
     }
   }
   measure()
-  // The column is a fixed 245px but its HEIGHT is the display's, so the
-  // letterbox — and with it every projected point — changes between displays
-  // and whenever the shell is re-docked.
+  // Both of the column's dimensions come from the display now (#153): its
+  // height is the shell's, and its width is derived from that height at the
+  // painting's own aspect. So every projected point moves whenever the shell is
+  // re-docked or lands on another screen, and there is no authored size to fall
+  // back on beyond the first frame.
   if (typeof ResizeObserver === 'function') {
     boxObserver = new ResizeObserver(measure)
     boxObserver.observe(element)
