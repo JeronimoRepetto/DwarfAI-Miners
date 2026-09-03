@@ -1,9 +1,23 @@
-import { BrowserWindow, app, shell, type BrowserWindowConstructorOptions } from 'electron'
+import { BrowserWindow, app, screen, shell, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'node:path'
+import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../domain/types'
+import { currentPlatform } from '../platform/platform'
+import { panelScreenArea, type ScreenRect } from '../platform/screenArea'
+import { panelBounds } from './panelBounds'
 import { resolveResourcePath } from './resourcePaths'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
+
+/** The design names Right as the default side; the left/right choice is Settings' (a later slice). */
+const DEFAULT_PANEL_EDGE: PanelEdge = 'right'
+
+/**
+ * What the shell window currently IS. Held here because it is the window's own
+ * state: the renderer reads it back over the bridge rather than keeping a second
+ * copy that could disagree with the bounds Electron actually applied.
+ */
+let layout: PanelLayout = { edge: DEFAULT_PANEL_EDGE, expanded: false, mineOpen: false }
 
 /** Flip the close handler from "hide" to "really close" (called on before-quit). */
 export function markQuitting(): void {
@@ -40,46 +54,34 @@ export interface MainWindowOptionsInput {
   alwaysOnTop: boolean
   preloadPath: string
   iconPath: string
+  /** Where the closed rail hangs on the display it is docked to (see #90). */
+  bounds: ScreenRect
 }
-
-/**
- * The floor the panel may be dragged to (see #44).
- *
- * These are not taste. They are the smallest cave box in which every authored
- * anchor still lands inside the painting's `object-fit: cover` crop with a whole
- * sprite footprint of clearance, plus the chrome that surrounds that box —
- * derived from the art, the anchors and the cave's own declared min-height in
- * `renderer/src/lib/sceneSizing.ts` (SMALLEST_READABLE_CAVE_BOX, MIN_PANEL_SIZE).
- *
- * They are copied here rather than imported because renderer modules have no
- * business in the main bundle. `window.test.ts` imports that derivation and
- * holds these two numbers to it, so the copy cannot drift: re-author an anchor
- * or repaint the interior at another size and the test says so.
- *
- * Without them 460x600 was only ever a STARTING size on a `resizable: true`
- * window, and everything below the smallest shape the scene was drawn for was
- * undefined behaviour.
- */
-const MIN_PANEL_WIDTH = 276
-const MIN_PANEL_HEIGHT = 408
 
 /**
  * Pure options builder, split from createMainWindow so the creation-time
  * contract — the stored pin preference lands in `alwaysOnTop`, the frameless
- * floating-panel flags stay fixed — is testable without an Electron runtime.
+ * floating-panel flags stay fixed, the window opens as the closed rail — is
+ * testable without an Electron runtime.
  */
 export function buildMainWindowOptions(
   input: MainWindowOptionsInput
 ): BrowserWindowConstructorOptions {
   return {
-    width: 460,
-    height: 600,
-    minWidth: MIN_PANEL_WIDTH,
-    minHeight: MIN_PANEL_HEIGHT,
+    ...input.bounds,
     show: false,
     frame: false,
     transparent: true,
-    resizable: true,
+    /*
+     * The redesigned shell is DOCKED (#90): its rectangle is derived from the
+     * display and from whether the panel is open, so there is no size for a
+     * user to drag and nothing for a drag to mean. This replaces the
+     * minWidth/minHeight floor issue #44 added to the old free-floating panel;
+     * the guarantee that floor existed for — the cave never being drawn below
+     * the box its anchors were authored in — now lives in panelBounds.ts, which
+     * is where the cave's column is sized.
+     */
+    resizable: false,
     skipTaskbar: true,
     alwaysOnTop: input.alwaysOnTop,
     icon: input.iconPath,
@@ -92,10 +94,65 @@ export function buildMainWindowOptions(
   }
 }
 
+/**
+ * The slice of BrowserWindow the docked shell needs. Narrow for the same reason
+ * AlwaysOnTopTarget is: the read-back is what the renderer is told, so a test
+ * drives it with a fake that can refuse or adjust the move the way a window
+ * manager would.
+ */
+export interface PanelBoundsTarget {
+  setBounds: (bounds: ScreenRect) => void
+  getBounds: () => ScreenRect
+}
+
+/**
+ * Move the window and report where it ACTUALLY ended up. Same rule as
+ * applyAlwaysOnTop: Electron only forwards the request, and a compositor may
+ * place the window somewhere else — the renderer must be told what happened.
+ */
+export function applyPanelBounds(target: PanelBoundsTarget, bounds: ScreenRect): ScreenRect {
+  target.setBounds(bounds)
+  return target.getBounds()
+}
+
+/** The screen rectangle the panel may cover, on the display it is currently on. */
+function currentScreenArea(): ScreenRect {
+  const display =
+    mainWindow === null
+      ? screen.getPrimaryDisplay()
+      : screen.getDisplayMatching(mainWindow.getBounds())
+  return panelScreenArea(display, currentPlatform())
+}
+
+/** What the shell window is right now (see #90) — read, never requested. */
+export function panelLayout(): PanelLayout {
+  return { ...layout }
+}
+
+/**
+ * Apply a layout the renderer asked for and answer with what the window became.
+ *
+ * The edge is not requestable: it is main's until the Settings position control
+ * exists, so a request only ever moves the panel between closed, open, and open
+ * beside a mine.
+ */
+export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
+  layout = { edge: layout.edge, expanded: request.expanded, mineOpen: request.mineOpen }
+  if (mainWindow !== null) {
+    applyPanelBounds(mainWindow, panelBounds(currentScreenArea(), layout.edge, layout))
+  }
+  return panelLayout()
+}
+
 export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWindow {
   mainWindow = new BrowserWindow(
     buildMainWindowOptions({
       alwaysOnTop: options.alwaysOnTop,
+      bounds: panelBounds(
+        panelScreenArea(screen.getPrimaryDisplay(), currentPlatform()),
+        layout.edge,
+        layout
+      ),
       preloadPath: join(import.meta.dirname, '../preload/index.mjs'),
       // Windows and Linux use this for the taskbar/Alt-Tab icon; Electron
       // ignores it on macOS, where the app bundle's own icon applies instead
@@ -133,6 +190,10 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
 
 export function showPanel(): void {
   if (!mainWindow) return
+  // Re-derived on every show: a docked panel that was hidden across a
+  // resolution change, a docking event or a display being unplugged would
+  // otherwise come back sized for a screen that is no longer there.
+  applyPanelBounds(mainWindow, panelBounds(currentScreenArea(), layout.edge, layout))
   mainWindow.show()
   mainWindow.focus()
 }

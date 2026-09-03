@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { TIER_CHIPS, activeAgentsFor } from '../../lib/browse/browseCards'
 import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
 import MineCard from './MineCard.vue'
-import '../../assets/design-tokens.css'
 
 const props = defineProps<{
   projects: ProjectSummary[]

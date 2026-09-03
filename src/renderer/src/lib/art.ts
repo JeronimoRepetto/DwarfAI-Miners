@@ -7,6 +7,7 @@
  * build time instead of rendering as a broken image.
  */
 import type { DwarfRole, Material, MineTier } from '../types'
+import type { ShellArea } from './shell/shellNav'
 
 import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
 import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-long-idle-v2-Sheet.png'
@@ -35,6 +36,24 @@ import nuggetSilver from '../assets/art/nugget-silver.png'
 import nuggetUranium from '../assets/art/nugget-uranium.png'
 
 import mapBg from '../assets/art/concept/map-bg.jpg'
+import labArt from '../assets/art/lab/lab.jpg'
+import marketArt from '../assets/art/market/market.jpg'
+
+/*
+ * The shell's own icons, imported from `docs/assets/icons` — the path the
+ * design source names, and the only copy of them in the tree. They are drawn
+ * through a CSS mask rather than inlined, so the committed SVG stays byte-for-
+ * byte the designer's file while idle and selected take their colour from the
+ * design tokens.
+ */
+import iconLab from '../../../../docs/assets/icons/lab.svg?url'
+import iconMap from '../../../../docs/assets/icons/map.svg?url'
+import iconMarket from '../../../../docs/assets/icons/market.svg?url'
+import iconMine from '../../../../docs/assets/icons/mine.svg?url'
+import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
+import iconClose from '../../../../docs/assets/icons/close.svg?url'
+
+import trayIcon from '../../../../resources/tray-icon@2x.png'
 
 /**
  * One packed animation strip. `idle` is the only name every rank is required to
@@ -130,6 +149,34 @@ export const NUGGET_SRC: Record<NuggetMaterial, string> = {
 
 /** The moonlit valley the mounds stand on. */
 export const MAP_BG_SRC = mapBg
+
+/**
+ * The shell navigation icons, keyed by the area each one selects.
+ *
+ * Every file is the design's own SVG at the path the source names; nothing here
+ * is a substitute or a hand-drawn stand-in. Explicit imports for the same reason
+ * the paintings use them: a renamed icon fails the build rather than rendering
+ * as an empty 19px square nobody notices.
+ */
+export const SHELL_ICON_SRC: Record<ShellArea, string> = {
+  settings: iconSettings,
+  map: iconMap,
+  mines: iconMine,
+  lab: iconLab,
+  market: iconMarket
+}
+
+/** The design's own close glyph, used by the panel's round close control. */
+export const CLOSE_ICON_SRC = iconClose
+
+/** The app mark, centred at the top of the rail and of the navigation column. */
+export const TRAY_ICON_SRC = trayIcon
+
+/** The base images behind the two panels the design ships as unavailable. */
+export const UNAVAILABLE_ART_SRC = {
+  lab: labArt,
+  market: marketArt
+} as const
 
 let preloaded = false
 
