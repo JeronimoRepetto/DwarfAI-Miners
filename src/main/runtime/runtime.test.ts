@@ -18,6 +18,7 @@ import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
 import type { Provider } from '../providers/provider'
+import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
 import type {
   HeldAnswer,
   HeldSessionPort,
@@ -3331,6 +3332,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     reportSessionId: (index: number, sessionId: string) => void
     ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
     reportTelemetry: (index: number, update: HeldSessionTelemetryUpdate) => void
+    reportSubagent: (index: number, signal: HeldSessionSubagentSignal) => void
     reportMessage: (index: number, role: 'user' | 'assistant', text: string) => void
   } {
     const started: HeldSessionStartRequest[] = []
@@ -3359,6 +3361,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
           ]
         }),
       reportTelemetry: (index, update) => started[index]!.onTelemetry(update),
+      // #157: what the SDK loop forwards when the session's own stream says
+      // something about its crew.
+      reportSubagent: (index, signal) => started[index]!.onSubagent(signal),
       reportMessage: (index, role, text) => started[index]!.onMessage(role, text)
     }
   }
@@ -3621,6 +3626,155 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // that rather than being handed an empty choice.
     expect((await asked).answered).toBe(false)
     expect(port.closes()).toBe(1)
+  })
+
+  /*
+   * #157, end to end through the poll.
+   *
+   * The provider above reports ONE dwarf for sess-1 and can report no more: a
+   * held session's subagents run in the foreground, so its transcript carries
+   * no `async_launched` record for the tail parse to find (measured — see
+   * heldCrew.ts). Everything below therefore arrives from the stream, and these
+   * are the tests that hold the two halves together.
+   */
+  describe('the crew of a held session (#157)', () => {
+    const launched = (
+      taskId: string,
+      extra: Partial<Extract<HeldSessionSubagentSignal, { kind: 'task-started' }>> = {}
+    ): HeldSessionSubagentSignal => ({
+      kind: 'task-started',
+      taskId,
+      taskType: 'local_agent',
+      spawnDepth: 1,
+      ...extra
+    })
+
+    /** A held session in MINE_PATH, already stamped with the id the poll finds. */
+    async function heldMine(port: ReturnType<typeof heldPort>): Promise<AgentRuntime> {
+      const runtime = heldRuntime({
+        heldSessions: heldRegistry(port.port),
+        providers: [foremanProvider()]
+      })
+      await runtime.refresh()
+      await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+      port.reportSessionId(0, 'sess-1')
+      return runtime
+    }
+
+    function crewOf(runtime: AgentRuntime): { id: string; role: string }[] {
+      return runtime
+        .getMines()
+        .flatMap((mine) => mine.dwarfs)
+        .map((dwarf) => ({ id: dwarf.id, role: dwarf.role }))
+    }
+
+    it('shows the subagents the poll could never see, ranked by their own depth', async () => {
+      const port = heldPort()
+      const runtime = await heldMine(port)
+
+      port.reportSubagent(0, launched('a1', { toolUseId: 'toolu-1', description: 'Explorer' }))
+      port.reportSubagent(0, {
+        kind: 'tool-call',
+        toolUseId: 'toolu-2',
+        insideToolUseId: 'toolu-1'
+      })
+      port.reportSubagent(
+        0,
+        launched('a2', { toolUseId: 'toolu-2', spawnDepth: 2, description: 'Scout' })
+      )
+      await runtime.refresh()
+      runtime.stop()
+
+      expect(crewOf(runtime)).toEqual([
+        { id: 'claude:sess-1', role: 'foreman' },
+        { id: 'claude:sess-1:a1', role: 'worker' },
+        { id: 'claude:sess-1:a2', role: 'worker2' }
+      ])
+    })
+
+    it('digs alone until it coordinates, then keeps the rank it earned', async () => {
+      const port = heldPort()
+      const runtime = await heldMine(port)
+
+      await runtime.refresh()
+      expect(crewOf(runtime)).toEqual([{ id: 'claude:sess-1', role: 'worker' }])
+
+      port.reportSubagent(0, launched('a1'))
+      await runtime.refresh()
+      expect(crewOf(runtime)[0]!.role).toBe('foreman')
+
+      // The observed sessions' own rule: a session is the foreman whether or
+      // not it currently has agents out, so promotion does not reverse when the
+      // last one finishes. Both paths say the same thing about the same dwarf.
+      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1' })
+      await runtime.refresh()
+      runtime.stop()
+      // The rank alone: the finished subagent is still on the board, walking
+      // out on its grace window, which the case below is about.
+      expect(crewOf(runtime)[0]).toEqual({ id: 'claude:sess-1', role: 'foreman' })
+    })
+
+    it('walks a finished subagent out rather than blinking it off the board', async () => {
+      // The crew joins the snapshot BEFORE the lifecycle runs, which is the
+      // whole reason it is stamped where it is: a departing crew member gets
+      // the same grace window every other dwarf gets, and 'leaving' is what
+      // sends it to the nearest spawn point.
+      const port = heldPort()
+      const runtime = await heldMine(port)
+
+      port.reportSubagent(0, launched('a1'))
+      await runtime.refresh()
+      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1' })
+      await runtime.refresh()
+      runtime.stop()
+
+      const leaving = runtime
+        .getMines()
+        .flatMap((mine) => mine.dwarfs)
+        .find((dwarf) => dwarf.id === 'claude:sess-1:a1')
+      expect(leaving?.status).toBe('leaving')
+    })
+
+    it('offers a send on every crew member, routed through the tree above it', async () => {
+      const port = heldPort()
+      const runtime = await heldMine(port)
+
+      port.reportSubagent(0, launched('a1', { toolUseId: 'toolu-1', description: 'Explorer' }))
+      port.reportSubagent(0, {
+        kind: 'tool-call',
+        toolUseId: 'toolu-2',
+        insideToolUseId: 'toolu-1'
+      })
+      port.reportSubagent(
+        0,
+        launched('a2', { toolUseId: 'toolu-2', spawnDepth: 2, description: 'Scout' })
+      )
+      await runtime.refresh()
+      runtime.stop()
+
+      // No provider reports a channel for the session itself here, so the hops
+      // resolve to nothing — which is the honest answer and NOT what this pins.
+      // What it pins is that the crew is routed at all: every one of them
+      // carries a relay target, so resolve.ts has a chain to follow the moment
+      // the session has a channel of its own.
+      const dwarfs = runtime.getMines().flatMap((mine) => mine.dwarfs)
+      expect(dwarfs.map((dwarf) => dwarf.id)).toContain('claude:sess-1:a2')
+    })
+
+    it('leaves an observed session, which this panel does not hold, entirely alone', async () => {
+      const port = heldPort()
+      const runtime = heldRuntime({
+        heldSessions: heldRegistry(port.port),
+        providers: [foremanProvider()]
+      })
+      await runtime.refresh()
+      runtime.stop()
+
+      // Nothing launched, nothing held: the provider's own reading stands, rank
+      // included. A session this panel merely watches is never demoted by a
+      // stream it is not reading.
+      expect(crewOf(runtime)).toEqual([{ id: 'claude:sess-1', role: 'foreman' }])
+    })
   })
 })
 

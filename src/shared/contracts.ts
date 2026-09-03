@@ -181,7 +181,34 @@ export interface DwarfMcpServerStatus {
   status: McpConnectionStatus
 }
 
-export type DwarfRole = 'foreman' | 'worker'
+/**
+ * A dwarf's rank, which is TOPOLOGY read off the spawn tree and never a title
+ * anything scripted (#86, #157).
+ *
+ * Depth decides, and it is derived from what a provider actually observed on
+ * the poll that reports it:
+ *
+ * - `foreman` — the root of the tree, the session a human could address
+ *   directly. A root that has coordinated is a foreman whether or not it
+ *   currently has agents out: the rank is what it IS, not a headcount, and
+ *   deriving it from one made the same dwarf swap identity mid-session (see
+ *   claudeProvider).
+ * - `worker` — spawned by the root. Depth 1.
+ * - `worker2` — spawned by a WORKER, and recursively by anything below one.
+ *   Depth 2 and deeper, at every level: the tree keeps going, the rank does
+ *   not, because a fifth rank per level would be a drawing nobody could read.
+ *
+ * A depth this app could not establish falls to `worker`, never to `worker2`:
+ * being deeper is the stronger claim, and claiming it needs the proof. That is
+ * the same direction absence is read in everywhere else here — an absent
+ * pendingBackgroundAgentCount is not a count of zero.
+ *
+ * Rank is not attendance. Every rank below the root is headless BECAUSE it is
+ * spawned, which is the one thing rank proves and the reason it may shorten a
+ * silence window (see dwarfSilenceWindowKey); a root's keyboard is a separate
+ * fact carried by DwarfAttendance.
+ */
+export type DwarfRole = 'foreman' | 'worker' | 'worker2'
 
 /**
  * working: actively producing (busy). waiting: session alive but paused/awaiting
@@ -308,12 +335,18 @@ export const DWARF_SILENCE_WINDOW_MS: Record<'attended' | 'unattended', number> 
  * to the two numbers above, so the provider's staleness rule and the panel can
  * never disagree about which one a dwarf gets (issue #68).
  *
- * Role is still consulted, in one direction only: a WORKER is a spawned
- * subagent with no channel of its own, so topology there does not stand in for
- * the fact, it proves it — no human can be typing into something nothing
+ * Role is still consulted, in one direction only: ANY RANK BELOW THE ROOT is a
+ * spawned subagent with no channel of its own, so topology there does not stand
+ * in for the fact, it proves it — no human can be typing into something nothing
  * outside its parent can even address. Rank may therefore shorten the window
  * and may never lengthen it, which is why a provider claiming 'attended' about
  * a worker changes nothing.
+ *
+ * Said as "not a foreman" rather than as a list of the spawned ranks (#157):
+ * `worker2` is exactly as headless as a `worker` — it is spawned BY one — and a
+ * list would have had to be remembered here for it to stay true. A rank added
+ * later inherits the shorter window until it argues for the longer one, which
+ * is the safe direction: only a root can have a human in front of it.
  *
  * Everything else rests on attendance, and both unproven readings — 'unknown'
  * and the field being absent — keep the hour. The two errors are not
@@ -342,7 +375,7 @@ export function dwarfSilenceWindowKey(
   role: DwarfRole,
   attendance?: DwarfAttendance
 ): 'attended' | 'unattended' {
-  return role === 'worker' || attendance === 'unattended' ? 'unattended' : 'attended'
+  return role !== 'foreman' || attendance === 'unattended' ? 'unattended' : 'attended'
 }
 
 /**

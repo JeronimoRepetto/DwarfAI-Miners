@@ -54,6 +54,30 @@ describe('anchorKindFor', () => {
     expect(anchorKindFor('leaving', 'worker')).toBe('spawn')
     expect(anchorKindFor('leaving', 'foreman')).toBe('spawn')
   })
+
+  /*
+    #157's ruling on the new rank, pinned rather than left to fall out of a
+    ternary: a worker2 shares the WORKER's locations and the worker's whole
+    lifecycle. It digs at the same triangles, rests at them, and walks out of the
+    same spawn circles. No worker2 anchor kind was added and none should be —
+    the design's spatial map draws spawn circles, worker triangles and foreman
+    diamonds, and a fourth marker would need a re-authored interior to mean
+    anything.
+  */
+  it('works a worker2 at the same stations a worker uses, and out the same way', () => {
+    expect(anchorKindFor('working', 'worker2')).toBe('worker')
+    expect(anchorKindFor('waiting', 'worker2')).toBe('worker')
+    expect(anchorKindFor('leaving', 'worker2')).toBe('spawn')
+  })
+
+  it('gives the foreman diamond to the foreman alone', () => {
+    // The shape of the rule, not a list: one post per mine means one supervisor
+    // per mine in the art's own vocabulary, so a rank added later has to argue
+    // its way onto that diamond rather than land on it by default.
+    for (const role of ['worker', 'worker2'] satisfies DwarfRole[]) {
+      expect(anchorKindFor('working', role), role).not.toBe('foreman')
+    }
+  })
 })
 
 describe('assignScene', () => {

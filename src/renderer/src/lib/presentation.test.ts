@@ -220,6 +220,11 @@ describe('isDwarfSilent', () => {
     const betweenTheTwo = 45 * 60_000
     expect(isDwarfSilent('worker', betweenTheTwo)).toBe(true)
     expect(isDwarfSilent('foreman', betweenTheTwo)).toBe(false)
+    // #157: the panel judges a worker2 on the worker's half hour, because the
+    // provider's staleness rule does. The two reading the same silence through
+    // different windows is the disagreement these windows live on the wire to
+    // prevent, and a new rank is exactly where that drift would start.
+    expect(isDwarfSilent('worker2', betweenTheTwo)).toBe(true)
   })
 
   it('stays quiet about a provider that has no per-agent evidence at all', () => {

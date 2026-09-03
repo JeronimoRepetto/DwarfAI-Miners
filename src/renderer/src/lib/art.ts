@@ -15,6 +15,7 @@ import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-lon
 import foremanSleepingSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-sleeping-v2-Sheet.png'
 import foremanStartSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-strart-sleep-v2-Sheet.png'
 import workerIdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker-idle-v2-Sheet.png'
+import worker2IdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker2-idle-v2-Sheet.png'
 import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-start-working.png'
 import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
 import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
@@ -95,6 +96,11 @@ export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, st
  * idle): picked up once, swings on a loop, set down once on the way out.
  * Waiting and walking art still arrives later and drops in here the same
  * way — no branch anywhere else moves.
+ *
+ * The worker2's idle (#157) lives in the WORKER's directory because that is
+ * where the maintainer drew and delivered it; the path is the artist's filing,
+ * not a claim that the two ranks share art. They do not — each rank's `idle` is
+ * its own file, which is exactly what the fallback rule below depends on.
  */
 export const DWARF_SHEET_SRC = {
   worker: {
@@ -102,6 +108,12 @@ export const DWARF_SHEET_SRC = {
     'start-working': workerStartWorkingSheet,
     working: workerWorkingSheet,
     'end-working': workerEndWorkingSheet
+  },
+  // Idle alone, and that is the whole inventory a rank is required to have: a
+  // working worker2 plays its OWN idle until the working strip lands, never the
+  // worker's (see dwarfSheets.ts on why a rank never borrows across ranks).
+  worker2: {
+    idle: worker2IdleSheet
   },
   foreman: {
     idle: foremanIdleSheet,
@@ -316,9 +328,18 @@ export function maskImageValue(src: string): string {
  * art meant to stand in a cave, and the panel's portrait is a 100x100 framed
  * face. The user's file keeps its delivered name for the reason every other
  * asset here does.
+ *
+ * A `worker2` (#157) borrows the worker's face, and this is the one place a
+ * rank borrows across ranks: no worker2 portrait has been drawn, and a crew
+ * member two levels down is a dwarf the panel can be opened on, so the
+ * alternative was an `<img>` with no source at all. The sheets above stay
+ * strict — each rank owns its own `idle` there — because that art exists.
+ * Keeping this a TOTAL Record is what forced the decision rather than letting
+ * it arrive as a blank frame; the next rank will trip the same compiler error.
  */
 export const PORTRAIT_SRC: Record<DwarfRole, string> = {
   worker: workerFace,
+  worker2: workerFace,
   foreman: foremanFace
 }
 

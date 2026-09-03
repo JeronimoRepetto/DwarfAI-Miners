@@ -174,6 +174,53 @@ Fixed in `parse.ts` alone — the gates are untouched, because they are the nets
 
 Verified by replaying the shipped parser over all 366 real transcripts through the same 256 KiB windows the poller uses: **188 of 188 endings, zero missed, zero retired without evidence.** `__fixtures__/claude/notification-envelopes.jsonl` carries one scrubbed record of each envelope and each quotation — the bug survived earlier fixtures because every one of them had been written from the parser's assumptions rather than from a real record.
 
+#### Foreground subagents leave no launch record at all (2026-09-03, issue #157)
+
+A session started through the Agent SDK spawned two subagents, one of which spawned one of its
+own, and the panel drew none of them. The algorithm above is not wrong; it was never given
+anything to read.
+
+**Measured on one real SDK-hosted session, three subagents (depths 1, 1 and 2).** In the parent
+`.jsonl`: **zero** `async_launched` records, **zero** `<task-notification>` blobs and **no
+`pendingBackgroundAgentCount` line whatsoever** — the session wrote no `turn_duration` line at all.
+All three `subagents/agent-<id>.jsonl` transcripts and their `.meta.json` sidecars were written
+normally. **[V]**
+
+The difference is `is_backgrounded`. A backgrounded launch acks immediately with the
+`async_launched` result §1.4 tabulates; a **foreground** one blocks the spawning tool call and acks
+with the subagent's actual result, so nothing announces it on disk. Both are the same Agent tool.
+Counting tool calls against results in a recent ordinary session gives 40 `Agent` calls and 40
+`async_launched` records, so the backgrounded form is what an interactive session produces today
+— and an SDK-hosted one is not obliged to.
+
+So the transcript is silent about a foreground subagent, and by the count invariant that silence is
+not a report of zero. `sessionLaunch/heldCrew.ts` reads the SDK stream instead, where
+`task_started` carries `spawn_depth` outright.
+
+#### Depth is real, and the two records for one nested agent live in different files **[V]**
+
+Three findings from the same pass, over 321 `agent-*.meta.json` sidecars on one machine:
+
+- **`spawnDepth` above 1 is common:** 278 at depth 1, **32 at depth 2, 11 at depth 3**.
+  `session-topology-and-roles.md` §7 says neither provider "has been observed producing anything
+  below 1"; that is now false, and #157's `worker2` rank is what the panel draws them as.
+- **The sidecar carries `parentAgentId`** for a nested agent — a fifth key §1.4's list does not
+  name, present on the depth-2 sidecars and absent from the depth-1 ones.
+- **A nested agent's launch and its ending are written to different transcripts.** For one traced
+  depth-2 agent, the `async_launched` record sits only in the LAUNCHING worker's own
+  `subagents/agent-<parent>.jsonl`, while its `<task-notification>` arrives in the ROOT session's
+  transcript as the usual `queue-operation` pair. The asymmetry runs in the safe direction:
+  endings are visible session-wide (so `terminalAgents` already retires them), launches only where
+  they happened. `ClaudeProvider` reads each worker's tail but takes only `tokensObserved`,
+  `lastAssistantText` and `pendingQuestion` from it — its `inFlightAgents` are discarded, which is
+  why an OBSERVED session's depth-2 agents are still invisible today.
+
+**`pendingBackgroundAgentCount` counts the whole tree, not the direct children.** At one
+`turn_duration` line reporting `pending=3`, exactly three agents were live by launch/notification
+timestamps: two at depth 1 and **one at depth 2**. That is worth knowing before the count is
+reconciled against a crew — the provider believes only depth-1 launches, so a descendant is a
+standing, permanent contribution to the `unexplainedShortfalls` #36 chases.
+
 ### 1.5 Liveness — RUNNING session detection
 
 **Best signal: `~/.claude/sessions/<pid>.json`** **[V]** — one file per live interactive session:
