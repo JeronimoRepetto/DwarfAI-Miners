@@ -6,8 +6,14 @@
  * rather than an `import.meta.glob`, so a missing or renamed asset fails at
  * build time instead of rendering as a broken image.
  */
-import type { Material, MineTier } from '../types'
+import type { DwarfRole, Material, MineTier } from '../types'
 import type { DwarfFrame } from './presentation'
+
+import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
+import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-long-idle-v2-Sheet.png'
+import foremanSleepingSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-sleeping-v2-Sheet.png'
+import foremanStartSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-strart-sleep-v2-Sheet.png'
+import workerIdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker-idle-v2-Sheet.png'
 
 import dwarfForemanCheck from '../assets/art/concept/dwarf-foreman-check.png'
 import dwarfForemanIdle from '../assets/art/concept/dwarf-foreman-idle.png'
@@ -53,6 +59,40 @@ export const DWARF_FRAME_SRC: Record<DwarfFrame, string> = {
   'foreman-idle': dwarfForemanIdle,
   'foreman-check': dwarfForemanCheck
 }
+
+/**
+ * One packed animation strip. `idle` is the only name every rank is required to
+ * have, because it is what a rank with no drawing for a state falls back to —
+ * see dwarfSheets.ts, which is where that rule is spent.
+ */
+export type DwarfSheetName = 'idle' | 'start-sleep' | 'sleeping' | 'end-sleep'
+
+export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, string>>
+
+/**
+ * The hand-drawn dwarfs, one horizontal strip per animation (issues #74, #87).
+ *
+ * The filename `strart-sleep` is the ASSET's own typo, reproduced here exactly.
+ * Renaming a committed file to tidy a spelling is a separate change from
+ * teaching the panel to play it, and doing both at once makes neither
+ * reviewable.
+ *
+ * What is missing is the point of the shape: a worker has one sheet because one
+ * sheet has been drawn for him. Working, waiting and walking art arrives with
+ * #74 and drops in here as data — no branch anywhere else moves.
+ */
+export const DWARF_SHEET_SRC = {
+  worker: { idle: workerIdleSheet },
+  foreman: {
+    idle: foremanIdleSheet,
+    'start-sleep': foremanStartSleepSheet,
+    sleeping: foremanSleepingSheet,
+    'end-sleep': foremanEndSleepSheet
+  }
+  // `satisfies` rather than an annotation: the contract is checked, and each
+  // rank keeps the exact set of sheets it has, so reaching for one a rank has
+  // not been drawn is a type error rather than an undefined at runtime.
+} satisfies Record<DwarfRole, DwarfSheetSrc>
 
 /** Mine entrance on the map, one painting per tier. */
 export const MOUND_SRC: Record<MineTier, string> = {
