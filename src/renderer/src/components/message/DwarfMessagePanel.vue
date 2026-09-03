@@ -8,7 +8,7 @@ import {
   USER_PORTRAIT_SRC,
   maskImageValue
 } from '../../lib/art'
-import { buildActionBar } from '../../lib/delivery/actionBar'
+import { CONSOLE_HINT, buildActionBar } from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { conversationOf, latestText } from '../../lib/message/conversation'
 import {
@@ -263,12 +263,7 @@ watch(
         IS the control that focuses this session's console — which is where
         the old action bar's console icon went.
       -->
-      <button
-        class="panel-agent"
-        type="button"
-        :title="action('chat') ? `Focus this session's console.` : ''"
-        @click="emit('open-console')"
-      >
+      <button class="panel-agent" type="button" :title="CONSOLE_HINT" @click="emit('open-console')">
         {{ dwarf.name }}
       </button>
       <button
