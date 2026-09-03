@@ -54,8 +54,8 @@
    * flat-fill discs on the map, each read as its own exact RGB rather than as
    * an average with the painting under it. They are product colours now, which
    * is why they live here beside the transcribed ones rather than in a
-   * component. Keyed by the tier's CODE name: the design LABELS this second
-   * tier `Cropper`, which is UI copy (see presentation.ts) and not an
+   * component. Keyed by the tier's CODE name: the panel LABELS this second
+   * tier `Copper` (#165), which is UI copy (see presentation.ts) and not an
    * identifier the type system knows.
    */
   --color-marker-bronze: #5ce1e6;

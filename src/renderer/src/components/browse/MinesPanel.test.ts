@@ -91,12 +91,15 @@ describe('MinesPanel chrome', () => {
     expect(wrapper.emitted('search')).toEqual([['lalol']])
   })
 
+  // AMENDED for #165: the maintainer reversed the "Cropper is confirmed and
+  // deliberate" ruling on 2026-09-03. This chip read 'Cropper'; it now pins
+  // 'Copper' instead.
   it('offers one chip per tier, All first', () => {
     expect(
       panel()
         .findAll('.tier-chip')
         .map((chip) => chip.text())
-    ).toEqual(['All', 'Bronze', 'Cropper', 'Silver', 'Gold', 'Uranium'])
+    ).toEqual(['All', 'Bronze', 'Copper', 'Silver', 'Gold', 'Uranium'])
   })
 
   it('marks All selected when no tier is filtered', () => {

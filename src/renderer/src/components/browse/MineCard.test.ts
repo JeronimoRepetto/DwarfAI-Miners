@@ -6,11 +6,14 @@ import MineCard from './MineCard.vue'
 import cardSource from './MineCard.vue?raw'
 
 describe('MineCard naming', () => {
+  // AMENDED for #165: the maintainer reversed the "Cropper is confirmed and
+  // deliberate" ruling on 2026-09-03. This read 'Cropper mine -'; it now
+  // pins 'Copper mine -' instead.
   it('names the measured tier beside the project', () => {
     const wrapper = mount(MineCard, {
       props: { project: defaultProject({ knownTier: 'copper', name: 'Lalo-Test' }) }
     })
-    expect(wrapper.get('.card-tier').text()).toBe('Cropper mine -')
+    expect(wrapper.get('.card-tier').text()).toBe('Copper mine -')
     expect(wrapper.get('.card-name').text()).toBe('Lalo-Test')
   })
 
@@ -42,11 +45,13 @@ describe('MineCard naming', () => {
    * bar alignment: the level column starts after the art, so a card missing its
    * art started its bar in a different place from every neighbour.
    */
+  // AMENDED for #165: same reversal as above — 'Cropper mine -' pinned
+  // 'Copper mine -' instead.
   it('states the tier its measured weight puts it in, art and all', () => {
     const wrapper = mount(MineCard, {
       props: { project: defaultProject({ name: 'Galactic-CV', weightBytes: 331 * 1024 }) }
     })
-    expect(wrapper.get('.card-tier').text()).toBe('Cropper mine -')
+    expect(wrapper.get('.card-tier').text()).toBe('Copper mine -')
     expect(wrapper.get('.card-art').attributes('src')).toBeTruthy()
     expect(wrapper.find('.card-level').exists()).toBe(true)
     expect(wrapper.attributes('data-tier')).toBe('copper')

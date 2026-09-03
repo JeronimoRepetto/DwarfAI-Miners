@@ -43,20 +43,29 @@ export function tierLabel(tier: MineTier): string {
 /**
  * The tier names the REDESIGNED surfaces put on screen (#90).
  *
- * `Cropper` is the confirmed product label for the copper tier — the design
- * source says so outright and calls it deliberate, not a typo to correct.
+ * REVERSED (#165, 2026-09-03): this table spelled the copper tier `Cropper`
+ * from #90 until this correction, on the design source's own claim — since
+ * withdrawn — that the misspelling was confirmed and deliberate. The
+ * maintainer ruled the opposite: it was never meant to survive, and the
+ * English word is `Copper`. Do not "fix" this back to `Cropper` from
+ * `foundations.md`'s corrections table or any other stale doc — that table
+ * is itself what the maintainer is amending; it is the thing that was wrong,
+ * not evidence this table is.
  *
- * Kept apart from `tierLabel` above, which still spells it `Copper`, because
- * that one serves the cave and the parts of the panel the rebuild has not
- * reached yet: renaming a tier under a screen this change never looked at is
- * how a fixture and a chip end up disagreeing. It moved here from
+ * Kept apart from `tierLabel` above as two functions, not because the two
+ * spellings still differ — they no longer do — but because they serve
+ * different rebuild stages: `tierLabel` serves the cave and the parts of the
+ * panel the rebuild has not reached yet, this one the redesigned surfaces,
+ * and collapsing them would make a future screen-specific correction here
+ * reach back into a screen this table was never meant to answer for. It
+ * moved here from
  * `browse/browseCards.ts` when the map became the second rebuilt surface to
  * need it (#136); a cross-family import from map into browse would have been
  * the worse half of that choice.
  */
 const DESIGN_TIER_LABELS: Record<MineTier, string> = {
   bronze: 'Bronze',
-  copper: 'Cropper',
+  copper: 'Copper',
   silver: 'Silver',
   gold: 'Gold',
   uranium: 'Uranium'

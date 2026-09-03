@@ -36,6 +36,9 @@ describe('MineMarker', () => {
     nothing about either — accessibility is listed as needing definition — so
     the label carries what the tooltip carries, which is the most that is known.
   */
+  // AMENDED for #165: the maintainer reversed the "Cropper is confirmed and
+  // deliberate" ruling on 2026-09-03. This pinned 'Cropper'; it now pins
+  // 'Copper' instead.
   it('names the mine, its tier and its crew for anyone not using a pointer', () => {
     const wrapper = mount(MineMarker, {
       props: {
@@ -44,7 +47,7 @@ describe('MineMarker', () => {
     })
     const label = wrapper.get('button').attributes('aria-label')
     expect(label).toContain('forge')
-    expect(label).toContain('Cropper')
+    expect(label).toContain('Copper')
     expect(label).toContain('1')
   })
 

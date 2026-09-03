@@ -178,9 +178,11 @@ describe('design-tokens.css against the design foundations', () => {
 
   /**
    * The five marker colours the design source names only by family — "Bronze
-   * (cyan), Cropper (orange-brown), Silver (gray), Gold (yellow), Uranium
-   * (green)" — with `foundations.md` stating outright that the PDF gives no hex
-   * values and pointing at the verified Canva export instead.
+   * (cyan), Copper (orange-brown), Silver (gray), Gold (yellow), Uranium
+   * (green)" — Copper per the maintainer's #165 reversal, not the earlier
+   * "Cropper" this quote used to read — with `foundations.md` stating
+   * outright that the PDF gives no hex values and pointing at the verified
+   * Canva export instead.
    *
    * So unlike every value above, these are not transcribed from a table: they
    * were MEASURED off `assets/map/map-mine-markers.png` by
