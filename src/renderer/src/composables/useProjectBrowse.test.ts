@@ -293,12 +293,12 @@ describe('useProjectBrowse failures', () => {
   })
 })
 
-/* Adopting a folder from the panel (#85). */
+/* Adopting a folder from the panel (#85, #127). */
 describe('useProjectBrowse add project', () => {
   it('asks main to open the picker, naming no path', async () => {
     // The channel takes no payload on purpose: one that accepted a path would
     // be one that accepts any path.
-    const declareMine = vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+    const declareMine = vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
     stubApi({ queryProjects: vi.fn().mockResolvedValue(page(0)), declareMine })
     await useProjectBrowse().addProject()
     expect(declareMine).toHaveBeenCalledWith()
@@ -308,7 +308,7 @@ describe('useProjectBrowse add project', () => {
     const queryProjects = vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE))
     stubApi({
       queryProjects,
-      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
     })
     const { load, loadMore, addProject } = useProjectBrowse()
     await load()
@@ -321,7 +321,7 @@ describe('useProjectBrowse add project', () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubApi({
       queryProjects,
-      declareMine: vi.fn().mockResolvedValue({ declared: true, mineId: 'C:/dev/alpha' })
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
     })
     const { setTier, addProject } = useProjectBrowse()
     await setTier('gold')
@@ -332,7 +332,7 @@ describe('useProjectBrowse add project', () => {
   it('says nothing at all when the picker was closed without a choice', async () => {
     stubApi({
       queryProjects: vi.fn().mockResolvedValue(page(0)),
-      declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' })
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' })
     })
     const { addError, addProject } = useProjectBrowse()
     await addProject()
@@ -343,7 +343,7 @@ describe('useProjectBrowse add project', () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubApi({
       queryProjects,
-      declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'No folder was chosen.' })
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' })
     })
     const { load, addProject } = useProjectBrowse()
     await load()
@@ -355,9 +355,10 @@ describe('useProjectBrowse add project', () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubApi({
       queryProjects,
-      declareMine: vi
-        .fn()
-        .mockResolvedValue({ declared: false, reason: 'That folder could not be saved as a mine.' })
+      declareMine: vi.fn().mockResolvedValue({
+        outcome: 'failed',
+        reason: 'That folder could not be saved as a mine.'
+      })
     })
     const { addError, load, addProject } = useProjectBrowse()
     await load()
@@ -370,7 +371,7 @@ describe('useProjectBrowse add project', () => {
     // Two different facts: the list is fine and the folder was refused.
     stubApi({
       queryProjects: vi.fn().mockResolvedValue(page(2)),
-      declareMine: vi.fn().mockResolvedValue({ declared: false, reason: 'refused' })
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'failed', reason: 'refused' })
     })
     const { error, addError, projects, load, addProject } = useProjectBrowse()
     await load()
@@ -392,7 +393,7 @@ describe('useProjectBrowse add project', () => {
   })
 
   it('is busy for as long as the picker is open', async () => {
-    const pending = deferred<{ declared: boolean }>()
+    const pending = deferred<{ outcome: 'cancelled' }>()
     stubApi({
       queryProjects: vi.fn().mockResolvedValue(page(0)),
       declareMine: vi.fn().mockReturnValue(pending.promise)
@@ -400,7 +401,7 @@ describe('useProjectBrowse add project', () => {
     const { adding, addProject } = useProjectBrowse()
     const inFlight = addProject()
     expect(adding.value).toBe(true)
-    pending.release({ declared: false })
+    pending.release({ outcome: 'cancelled' })
     await inFlight
     expect(adding.value).toBe(false)
   })
@@ -408,14 +409,14 @@ describe('useProjectBrowse add project', () => {
   it('ignores a second press while the picker is still open', async () => {
     // The picker is modal in main; a second request would queue a second one
     // behind it for a click the user made before the first ever appeared.
-    const pending = deferred<{ declared: boolean }>()
+    const pending = deferred<{ outcome: 'cancelled' }>()
     const declareMine = vi.fn().mockReturnValue(pending.promise)
     stubApi({ queryProjects: vi.fn().mockResolvedValue(page(0)), declareMine })
     const { addProject } = useProjectBrowse()
     const first = addProject()
     await addProject()
     expect(declareMine).toHaveBeenCalledTimes(1)
-    pending.release({ declared: false })
+    pending.release({ outcome: 'cancelled' })
     await first
   })
 
@@ -424,8 +425,8 @@ describe('useProjectBrowse add project', () => {
       queryProjects: vi.fn().mockResolvedValue(page(0)),
       declareMine: vi
         .fn()
-        .mockResolvedValueOnce({ declared: false, reason: 'refused' })
-        .mockResolvedValueOnce({ declared: true, mineId: 'C:/dev/alpha' })
+        .mockResolvedValueOnce({ outcome: 'failed', reason: 'refused' })
+        .mockResolvedValueOnce({ outcome: 'added', mineId: 'C:/dev/alpha' })
     })
     const { addError, addProject } = useProjectBrowse()
     await addProject()

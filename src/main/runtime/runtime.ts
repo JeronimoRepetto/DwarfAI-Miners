@@ -83,7 +83,6 @@ const LAUNCH_FAILED = 'The agent could not be started.'
 const NO_PROJECT_STORE = "The projects database didn't open, so mines can't be added right now."
 const NO_PICKER = "This build can't open a folder picker."
 const PICKER_FAILED = 'The folder picker could not be opened.'
-const NO_FOLDER_CHOSEN = 'No folder was chosen.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
 const UNDECLARE_FAILED = 'That mine could not be removed.'
 const NOT_DECLARED = 'That mine is not one you added.'
@@ -586,22 +585,25 @@ export class AgentRuntime {
     const store = this.projects
     // Asked before the picker on purpose: making the user choose a folder and
     // then dropping it is worse than refusing before they start.
-    if (store === null) return { declared: false, reason: NO_PROJECT_STORE }
-    if (this.chooseDirectory === null) return { declared: false, reason: NO_PICKER }
+    if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
+    if (this.chooseDirectory === null) return { outcome: 'failed', reason: NO_PICKER }
 
     let path: string | null
     try {
       path = await this.chooseDirectory()
     } catch (error) {
       console.warn('[projects] The folder picker failed', error)
-      return { declared: false, reason: PICKER_FAILED }
+      return { outcome: 'failed', reason: PICKER_FAILED }
     }
-    if (path === null || path.trim() === '') return { declared: false, reason: NO_FOLDER_CHOSEN }
+    // Backing out of the picker is a decision, not a fault (#127): 'outcome'
+    // says the whole thing on its own, so unlike the four returns above this
+    // one carries no reason — there is nothing left for a string to add.
+    if (path === null || path.trim() === '') return { outcome: 'cancelled' }
 
     const result = await store.declare({ path, at: this.now() })
     if (!result.ok) {
       console.warn(`[projects] Could not add a mine (${result.failure}):`, result.message)
-      return { declared: false, reason: DECLARE_FAILED }
+      return { outcome: 'failed', reason: DECLARE_FAILED }
     }
 
     await this.loadDeclared()
@@ -613,7 +615,7 @@ export class AgentRuntime {
     // interval came round. The user has just spent seconds in a folder picker;
     // one scan is not the cost worth saving here.
     await this.refresh()
-    return { declared: true, mineId: result.value.id }
+    return { outcome: 'added', mineId: result.value.id }
   }
 
   /**

@@ -135,7 +135,7 @@ export function useProjectBrowse() {
       // Null for an adopted folder AND for a closed picker: the list is the
       // feedback for the first, and backing out is not a fault to report.
       addError.value = declareFailureNotice(result)
-      if (result.declared) await load()
+      if (result.outcome === 'added') await load()
     } catch {
       addError.value = UNREACHABLE
     } finally {

@@ -781,22 +781,26 @@ export interface AppBuild {
 }
 
 /**
- * Verdict of asking main to adopt a folder as a mine (#85).
+ * Verdict of asking main to adopt a folder as a mine (#85, #127).
  *
  * There is no request payload: the OS folder picker is opened in MAIN, so the
- * renderer asks and never names a path. A refusal always says why — a cancelled
- * picker, a projects database that will not open — because a control that
- * silently does nothing is indistinguishable from a broken one.
+ * renderer asks and never names a path. `outcome` is the discriminator its
+ * sibling below already has, and it is why 'cancelled' is not 'failed': the
+ * user backing out of the picker is a decision, not a fault, and a control
+ * that silently does nothing on a FAULT is broken — but one that does nothing
+ * because the user changed their mind is working exactly as asked. Before this,
+ * both arrived as `{ declared: false, reason: string }` and the only thing
+ * telling them apart was matching an exact English sentence on the wire.
  */
 export interface MineDeclareResult {
-  declared: boolean
+  outcome: 'added' | 'cancelled' | 'failed'
   /**
    * The mine that now exists, when one does — the SAME id aggregation and the
    * ledger use for that path, never a second scheme. The mine itself arrives on
    * the next minesUpdated like every other change.
    */
   mineId?: string
-  /** Why nothing was added; absent exactly when `declared` is true. */
+  /** Why the declare failed; absent except when `outcome` is 'failed' — a cancel needs none, `outcome` already says so. */
   reason?: string
 }
 

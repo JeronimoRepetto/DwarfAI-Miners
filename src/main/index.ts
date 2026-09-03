@@ -531,7 +531,7 @@ async function init(): Promise<void> {
   // and none to validate. Both refusals below are what a runtime that never
   // came up would say, phrased for the panel rather than left silent.
   const notDeclared: MineDeclareResult = {
-    declared: false,
+    outcome: 'failed',
     reason: 'The panel is still starting up.'
   }
   const notUndeclared: MineUndeclareResult = {
