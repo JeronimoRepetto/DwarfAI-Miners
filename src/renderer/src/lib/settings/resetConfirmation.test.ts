@@ -17,9 +17,12 @@ describe('isValidResetConfirmation', () => {
     expect(isValidResetConfirmation(value)).toBe(true)
   })
 
-  it.each([' yes', 'yes ', '  Yes  '])('accepts %s with surrounding whitespace trimmed', (value) => {
-    expect(isValidResetConfirmation(value)).toBe(true)
-  })
+  it.each([' yes', 'yes ', '  Yes  '])(
+    'accepts %s with surrounding whitespace trimmed',
+    (value) => {
+      expect(isValidResetConfirmation(value)).toBe(true)
+    }
+  )
 
   it('rejects the empty string', () => {
     expect(isValidResetConfirmation('')).toBe(false)
@@ -29,7 +32,10 @@ describe('isValidResetConfirmation', () => {
     expect(isValidResetConfirmation('   ')).toBe(false)
   })
 
-  it.each(['ye', 'yess', 'no', 'y', 'yes please'])('rejects anything but exactly "yes" (%s)', (value) => {
-    expect(isValidResetConfirmation(value)).toBe(false)
-  })
+  it.each(['ye', 'yess', 'no', 'y', 'yes please'])(
+    'rejects anything but exactly "yes" (%s)',
+    (value) => {
+      expect(isValidResetConfirmation(value)).toBe(false)
+    }
+  )
 })

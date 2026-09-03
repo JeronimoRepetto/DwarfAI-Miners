@@ -381,9 +381,9 @@ describe('preload panel-layout contract (#90, #138)', () => {
     // window manager could not honor, must reach the renderer as a fact.
     const actual = { edge: 'right', expanded: true, mineOpen: true }
     invoke.mockResolvedValueOnce(actual)
-    await expect(api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })).resolves.toEqual(
-      actual
-    )
+    await expect(
+      api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+    ).resolves.toEqual(actual)
   })
 })
 
@@ -397,7 +397,10 @@ describe('preload metrics-reset contract (#138)', () => {
   })
 
   it('hands back a refusal and its reason rather than flattening it to nothing', async () => {
-    const refused = { outcome: 'failed', reason: 'The metrics could not be reset. Nothing was deleted.' }
+    const refused = {
+      outcome: 'failed',
+      reason: 'The metrics could not be reset. Nothing was deleted.'
+    }
     invoke.mockResolvedValueOnce(refused)
     await expect(api.resetMetrics()).resolves.toEqual(refused)
   })

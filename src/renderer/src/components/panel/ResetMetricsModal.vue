@@ -42,20 +42,10 @@ onMounted(() => inputRef.value?.focus())
 </script>
 
 <template>
-  <div
-    class="reset-modal"
-    role="dialog"
-    :aria-labelledby="titleId"
-    @keydown.escape="emit('close')"
-  >
+  <div class="reset-modal" role="dialog" :aria-labelledby="titleId" @keydown.escape="emit('close')">
     <header class="modal-head">
       <h2 :id="titleId" class="modal-title">Reset metrics</h2>
-      <button
-        class="modal-close"
-        type="button"
-        aria-label="Close"
-        @click="emit('close')"
-      >
+      <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
         &times;
       </button>
     </header>
@@ -70,12 +60,7 @@ onMounted(() => inputRef.value?.focus())
       @keydown.enter="onConfirm"
     />
     <p v-if="error" class="modal-error" role="alert">{{ error }}</p>
-    <button
-      class="modal-confirm"
-      type="button"
-      :disabled="!canConfirm"
-      @click="onConfirm"
-    >
+    <button class="modal-confirm" type="button" :disabled="!canConfirm" @click="onConfirm">
       Confirm
     </button>
   </div>

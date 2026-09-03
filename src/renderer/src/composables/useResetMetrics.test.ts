@@ -52,9 +52,7 @@ describe('useResetMetrics', () => {
 
   it('resolves false and carries the reason on a refusal', async () => {
     stubApi({
-      resetMetrics: vi
-        .fn()
-        .mockResolvedValue({ outcome: 'failed', reason: 'Nothing was deleted.' })
+      resetMetrics: vi.fn().mockResolvedValue({ outcome: 'failed', reason: 'Nothing was deleted.' })
     })
     const { error, reset } = useResetMetrics()
     await expect(reset()).resolves.toBe(false)

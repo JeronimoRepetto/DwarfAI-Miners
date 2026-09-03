@@ -20,7 +20,12 @@ import SettingsPanel from './SettingsPanel.vue'
  * this screen that ever needs to know it.
  */
 function shortcutState(overrides: Partial<ShortcutState> = {}): ShortcutState {
-  return { accelerator: DEFAULT_TOGGLE_ACCELERATOR, registered: true, platform: 'win32', ...overrides }
+  return {
+    accelerator: DEFAULT_TOGGLE_ACCELERATOR,
+    registered: true,
+    platform: 'win32',
+    ...overrides
+  }
 }
 
 function render(props: Record<string, unknown> = {}) {

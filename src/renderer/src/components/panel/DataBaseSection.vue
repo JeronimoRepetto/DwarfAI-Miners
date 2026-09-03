@@ -13,9 +13,7 @@ const emit = defineEmits<{
 <template>
   <section class="data-base-settings">
     <span class="field-label">Data Base</span>
-    <button class="reset-metrics" type="button" @click="emit('open-reset')">
-      Reset metrics
-    </button>
+    <button class="reset-metrics" type="button" @click="emit('open-reset')">Reset metrics</button>
   </section>
 </template>
 

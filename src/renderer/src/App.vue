@@ -77,8 +77,11 @@ const {
  * SettingsPanel's reset modal stays presentational and the "render only what
  * main verified" rule stays in exactly one place.
  */
-const { resetting: metricsResetting, error: metricsResetError, reset: resetMetrics } =
-  useResetMetrics()
+const {
+  resetting: metricsResetting,
+  error: metricsResetError,
+  reset: resetMetrics
+} = useResetMetrics()
 
 /**
  * The browse over every project the app remembers (#92). App owns the

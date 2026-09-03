@@ -502,8 +502,13 @@ async function init(): Promise<void> {
     // one, and an unrecognised value is treated exactly like an absent one —
     // the rail toggle and the mine-open resize must never nudge the docked
     // side by accident.
-    const requestedEdge: PanelEdge | undefined = edge === 'left' || edge === 'right' ? edge : undefined
-    const result = setPanelLayout({ expanded, mineOpen, ...(requestedEdge ? { edge: requestedEdge } : {}) })
+    const requestedEdge: PanelEdge | undefined =
+      edge === 'left' || edge === 'right' ? edge : undefined
+    const result = setPanelLayout({
+      expanded,
+      mineOpen,
+      ...(requestedEdge ? { edge: requestedEdge } : {})
+    })
     if (requestedEdge !== undefined) {
       try {
         // Persist what the window actually ended up on, not the request —
