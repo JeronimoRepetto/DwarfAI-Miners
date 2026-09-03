@@ -77,3 +77,40 @@ export function activeAgentsFor(
   if (!project.live) return undefined
   return mines.find((mine) => mine.id === project.id)?.dwarfs.length
 }
+
+/** The two markers a card can raise in its lower-right corner. */
+export interface CardStatus {
+  /** An agent on this project has asked its user something nothing has answered. */
+  asking: boolean
+  /** An agent on this project is resting rather than working. */
+  resting: boolean
+}
+
+/**
+ * What a card says about its crew beyond how many there are, or nothing at all.
+ *
+ * Joined off the board exactly as activeAgentsFor is, and absent for exactly
+ * the same reasons: a project that is not live, or one whose mine the panel's
+ * snapshot does not carry yet, is an absence of evidence. Two false markers
+ * would be a claim about a crew nobody has looked at.
+ *
+ * Neither fact is derived here. `asking` is the provider's own structured
+ * record of an ask (see Dwarf.pendingQuestion) — the same field the message
+ * panel answers from, and never prose that reads like a question. `resting` is
+ * `status === 'waiting'`, which is precisely what floats the `z z z` over a
+ * dwarf in DwarfSprite. Both markers therefore mean on a card exactly what
+ * they already mean inside the mine, which is the whole point of reading them
+ * from the same two places rather than inventing a browse-only rule.
+ */
+export function cardStatusFor(
+  project: ProjectSummary,
+  mines: readonly Mine[]
+): CardStatus | undefined {
+  if (!project.live) return undefined
+  const mine = mines.find((candidate) => candidate.id === project.id)
+  if (mine === undefined) return undefined
+  return {
+    asking: mine.dwarfs.some((dwarf) => dwarf.pendingQuestion !== undefined),
+    resting: mine.dwarfs.some((dwarf) => dwarf.status === 'waiting')
+  }
+}

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { cardArtFor, cardTierLabel } from '../../lib/browse/browseCards'
+import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC } from '../../lib/art'
+import { cardArtFor, cardTierLabel, type CardStatus } from '../../lib/browse/browseCards'
+import { orePileLabel } from '../../lib/presentation'
+import { formatUnits, vaultRows } from '../../lib/vault/vault'
 import type { ProjectSummary } from '../../types'
 
 const props = defineProps<{
@@ -11,12 +14,33 @@ const props = defineProps<{
    * because "Active agents: 0" is a claim and a missing count is not one.
    */
   activeAgents?: number
+  /**
+   * What the board says about this crew beyond its size, or undefined when the
+   * panel could back no fact — see cardStatusFor(). Undefined draws no markers
+   * at all, for the same reason an absent count prints no line.
+   */
+  status?: CardStatus
 }>()
 
 const emit = defineEmits<{ open: [projectId: string] }>()
 
 const tierLabel = computed(() => cardTierLabel(props.project))
 const art = computed(() => cardArtFor(props.project))
+
+/**
+ * What this project has actually mined, one pile per material (#135, #139).
+ *
+ * Read through the vault's own `vaultRows` rather than off `project.materials`
+ * directly, so the card cannot become a second answer to "how much ore is
+ * this": the grain size per material, the poorest-first order and the rule
+ * that a pile short of one whole nugget is not shown all stay in one module
+ * (see lib/vault/vault.ts and #22). The card's job is the shape of the row.
+ *
+ * Empty means no row is drawn at all. That covers both a project the ledger
+ * has never had a row for — `materials` absent, which is "never mined" and not
+ * "mined zero" — and a row that exists but holds nothing yet.
+ */
+const resources = computed(() => vaultRows(props.project.materials))
 
 /*
  * Only a project with a mine on the board can be entered: the interior of a
@@ -41,9 +65,70 @@ const enterable = computed(() => props.project.live)
           <span v-if="tierLabel" class="card-tier">{{ tierLabel }} mine -</span>
           <span class="card-name">{{ project.name }}</span>
         </span>
+        <!--
+          One capsule holding one entry per material, each with the painting
+          and the compact count the vault chip draws. Aria-hidden throughout
+          and named in words on the hover line, exactly as the chip does it —
+          a screen reader gets the sentence, not five loose numbers.
+        -->
+        <span v-if="resources.length" class="card-resources">
+          <span
+            v-for="row in resources"
+            :key="row.material"
+            class="card-resource"
+            :data-material="row.material"
+            :title="orePileLabel(row.material, row.tokens)"
+          >
+            <img
+              class="resource-nugget"
+              :src="NUGGET_SRC[row.material]"
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
+            <span class="resource-count">{{ formatUnits(row.units) }}</span>
+          </span>
+        </span>
+        <!--
+          `Active Agents` with the capital the MOCK draws. Both markdown
+          sources write it lowercase; the maintainer ruled the mock is the
+          visual truth for this panel, so the copy follows the picture.
+        -->
         <span v-if="activeAgents !== undefined" class="card-agents"
-          >Active agents: {{ activeAgents }}</span
+          >Active Agents: {{ activeAgents }}</span
         >
+      </span>
+      <!--
+        SEAM FOR #140. The mock draws a second column here, right of the text
+        and vertically centred: a progress bar and `Next level: <cur>/<max>`
+        (Uranium may read `infinite`). It is not drawn yet because the browse
+        row carries no level — ProjectSummary has no such field, and #140 is
+        what puts one on the wire. Nothing is stubbed on purpose: a bar with an
+        invented denominator is the one thing worse than no bar, and every
+        other absence on this card already renders as nothing at all.
+
+        When the field lands, add the column between .card-text and
+        .card-status, and give .card-body its second flex child.
+      -->
+      <!--
+        The mock's lower-right corner. Drawn only where the board proved the
+        fact, and the row itself disappears when it proved neither — a pair of
+        empty corners would read as "checked, nothing to report" on a project
+        nobody has looked at.
+      -->
+      <span v-if="status?.asking || status?.resting" class="card-status">
+        <span
+          v-if="status.asking"
+          class="status-glyph status-asking"
+          :style="{ '--status-icon': `url(${DIALOG_ICON_SRC})` }"
+          title="An agent here is waiting on an answer"
+        ></span>
+        <span
+          v-if="status.resting"
+          class="status-glyph status-resting"
+          :style="{ '--status-icon': `url(${SLEEP_ICON_SRC})` }"
+          title="An agent here is resting"
+        ></span>
       </span>
     </component>
   </li>
@@ -58,6 +143,8 @@ const enterable = computed(() => props.project.live)
   background: var(--color-panel);
 }
 .card-body {
+  /* The corner markers hang off this box rather than off the text column. */
+  position: relative;
   display: flex;
   gap: 10px;
   align-items: center;
@@ -112,8 +199,77 @@ button.card-body:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * The mock draws the resources as ONE dark capsule holding every material,
+ * not as one pill each. Its ground samples as #181410, which the foundations
+ * table does not name; the panel's own #14100b is the nearest named value and
+ * is what is used, rather than minting a token the design source has no word
+ * for. Fully rounded ends are the capsule's own shape and not the shared 12px
+ * radius, which on a 16px-high strip would not close the ends at all.
+ */
+.card-resources {
+  display: flex;
+  align-self: start;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-control);
+  border-radius: 999px;
+  background: var(--color-panel-deep);
+}
+.card-resource {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.resource-nugget {
+  display: block;
+  width: 11px;
+  height: auto;
+  /* Pixel art: no blur between the source pixels when it is scaled. */
+  image-rendering: pixelated;
+  user-select: none;
+}
+/* The amber the design gives every figure; the ore itself is coloured by paint. */
+.resource-count {
+  color: var(--color-accent);
+  font-size: var(--text-meta);
+}
 .card-agents {
   color: var(--color-cream);
   font-size: var(--text-meta);
+}
+/*
+ * The mock parks both markers against the card's lower-right corner, clear of
+ * the text column — `margin-top: auto` inside the flex row would only push
+ * them down, so the row is placed against the card itself.
+ */
+.card-status {
+  position: absolute;
+  right: var(--space-settings);
+  bottom: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+/*
+ * Both glyphs are the designer's own SVGs through a mask. The mock draws them
+ * in accent amber; the component table's cream/white rule is about the status
+ * icons INSIDE a mine, where a worker and a foreman have to be told apart, and
+ * a card names no single dwarf to tell apart.
+ */
+.status-glyph {
+  display: block;
+  background: var(--color-accent);
+  mask: var(--status-icon) center / contain no-repeat;
+}
+.status-asking {
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+/* The source gives the sleep marker its own, smaller size. */
+.status-resting {
+  width: var(--size-sleep-icon);
+  height: var(--size-sleep-icon);
 }
 </style>

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { MATERIALS } from '../types'
-import { NUGGET_SRC } from './art'
+import {
+  ADD_ICON_SRC,
+  CLOSE_ICON_SRC,
+  DIALOG_ICON_SRC,
+  NUGGET_SRC,
+  SLEEP_ICON_SRC,
+  SORT_ICON_SRC
+} from './art'
 
 /*
  * art.ts resolves every painting to a bundled URL through explicit imports, so
@@ -28,6 +35,28 @@ describe('NUGGET_SRC', () => {
 
   it('gives each material its own painting rather than reusing one', () => {
     const sources = Object.values(NUGGET_SRC)
+    expect(new Set(sources).size).toBe(sources.length)
+  })
+})
+
+/*
+ * The Mines panel's own glyphs (#135). Same reasoning as SHELL_ICON_SRC: they
+ * are the designer's committed SVGs at the path the source names, resolved
+ * through explicit imports so a renamed file fails the build instead of
+ * rendering as an empty masked square nobody notices.
+ */
+describe('browse and status icons', () => {
+  it.each([
+    ['SORT_ICON_SRC', SORT_ICON_SRC],
+    ['ADD_ICON_SRC', ADD_ICON_SRC],
+    ['DIALOG_ICON_SRC', DIALOG_ICON_SRC],
+    ['SLEEP_ICON_SRC', SLEEP_ICON_SRC]
+  ])('resolves %s to a bundled url', (_name, src) => {
+    expect(src).toBeTruthy()
+  })
+
+  it('gives each glyph its own file rather than reusing one', () => {
+    const sources = [SORT_ICON_SRC, ADD_ICON_SRC, DIALOG_ICON_SRC, SLEEP_ICON_SRC, CLOSE_ICON_SRC]
     expect(new Set(sources).size).toBe(sources.length)
   })
 })

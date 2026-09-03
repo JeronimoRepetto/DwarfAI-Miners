@@ -55,6 +55,10 @@ import iconMarket from '../../../../docs/assets/icons/market.svg?url'
 import iconMine from '../../../../docs/assets/icons/mine.svg?url'
 import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
+import iconAdd from '../../../../docs/assets/icons/add.svg?url'
+import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
+import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
+import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 
 import trayIcon from '../../../../resources/tray-icon@2x.png'
 
@@ -178,6 +182,26 @@ export const SHELL_ICON_SRC: Record<ShellArea, string> = {
 
 /** The design's own close glyph, used by the panel's round close control. */
 export const CLOSE_ICON_SRC = iconClose
+
+/**
+ * The Mines panel's own glyphs (#135), from the same `docs/assets/icons`
+ * directory the design source names for every other icon.
+ *
+ * `filter.svg` is the file behind BOTH readings of the control the browse
+ * screen draws beside the search field: the source calls it the date-sort
+ * control in prose and the file is named for a filter, and they are one glyph
+ * and one button. It is imported under the name of what it DOES here rather
+ * than the file's own, so the panel never grows a second sort affordance.
+ *
+ * Every one of these is drawn through a CSS mask, exactly as the shell icons
+ * are, so the committed SVG keeps the designer's bytes while the colour comes
+ * from the tokens — which matters more here than on the rail, because the mock
+ * draws the message bubble in accent amber and the file's own fill is cream.
+ */
+export const SORT_ICON_SRC = iconFilter
+export const ADD_ICON_SRC = iconAdd
+export const DIALOG_ICON_SRC = iconDialog
+export const SLEEP_ICON_SRC = iconSleep
 
 /** The app mark, centred at the top of the rail and of the navigation column. */
 export const TRAY_ICON_SRC = trayIcon
