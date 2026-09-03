@@ -10,6 +10,7 @@ import type { Provider } from '../provider'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import {
   extractCodexFeed,
+  isCodexArtifactStorageCwd,
   parseCodexRolloutContext,
   parseCodexRolloutHead,
   parseCodexRolloutTail,
@@ -504,6 +505,13 @@ export class CodexProvider implements Provider {
 
     const sessionId = thread?.threadId ?? rollout!.head.sessionId
     const cwd = thread?.cwd ?? rollout!.head.cwd
+    // Codex's own artifact-storage path is never a project (issue #166): a
+    // session Codex itself never bound to a real workspace folder records
+    // that storage path as its cwd, and there is no other field to recover
+    // the real one from — laundering it would invent the exact phantom
+    // project the issue reports. Dropped here, before any feed/queue side
+    // effect is recorded, exactly like a rollout with no session_meta at all.
+    if (isCodexArtifactStorageCwd(cwd)) return null
     // Growth since the previous scan means the rollout is being appended to
     // right now, which is a running turn even when the tail read cannot prove it.
     const busy = (rollout?.info.busy ?? false) || context.grew
