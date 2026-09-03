@@ -30,9 +30,15 @@ vi.mock('../../lib/sprite/dwarfSequence', async (importOriginal) => {
 /** The real inventory, so a test that substitutes it can put it back. */
 const realDwarfClips = vi.mocked(dwarfClips).getMockImplementation()!
 
-/** The sheet a sprite is drawing from, e.g. "dwarf-worker-idle-v2-Sheet". */
+/**
+ * The sheet a sprite is drawing from, e.g. "dwarf-worker-idle-v2-Sheet".
+ *
+ * Read off the ROOT rather than the frame: the strip's URL is set once where it
+ * inherits from, so that the per-frame write stays one short percentage (see
+ * DwarfSprite's frameStyle).
+ */
 function sheetOf(wrapper: ReturnType<typeof mount>): string {
-  const style = wrapper.find('.dwarf-frame').attributes('style') ?? ''
+  const style = wrapper.attributes('style') ?? ''
   const url = /--sheet-image:\s*url\(([^)]*)\)/.exec(style)?.[1] ?? ''
   return (
     url
@@ -118,8 +124,19 @@ describe('DwarfSprite', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
     })
-    const style = wrapper.find('.dwarf-frame').attributes('style') ?? ''
+    const style = wrapper.attributes('style') ?? ''
     expect(style).toContain(`--sheet-size: ${DWARF_SHEETS.worker.idle.frames * 100}% 100%`)
+  })
+
+  it('writes only the frame position on the element it redraws ten times a second', () => {
+    // Vite inlines a sheet under 4 KB as a base64 data URI, so four of the five
+    // strips are kilobytes of string. Vue rewrites every declaration in a bound
+    // style object on each patch, and a crowded valley (#42) would be rewriting
+    // all of it continuously — so the strip sits on the root and inherits.
+    const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+    const frame = wrapper.find('.dwarf-frame').attributes('style') ?? ''
+    expect(frame).toMatch(/^--sheet-position:[^;]*;?$/)
+    expect(frame).not.toContain('--sheet-image')
   })
 
   it('applies the animation class for its status', () => {

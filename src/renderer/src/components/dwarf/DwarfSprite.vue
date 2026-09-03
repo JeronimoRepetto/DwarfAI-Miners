@@ -333,19 +333,25 @@ watch(
 onBeforeUnmount(stopCycle)
 
 /**
- * The strip, scaled to one sprite box per frame, and slid to show exactly one
- * of them. Percentages rather than pixels so the arithmetic survives both
- * scales the drawing is under — the scene's own and the per-depth one — neither
- * of which lands on a whole multiple of a 36px frame.
+ * Which frame of the strip is showing, as the percentage the CSS slides by.
+ *
+ * ONLY the position lives on this element, and that is deliberate. Vue rewrites
+ * every declaration in a bound style object on each patch, so anything sitting
+ * beside this gets re-set ten times a second per dwarf. The strip's URL is the
+ * thing that must not: Vite inlines a sheet under 4 KB as a base64 data URI, so
+ * four of the five are several kilobytes of string, and a crowded valley (#42)
+ * would be rewriting all of it continuously. It rides on the root instead,
+ * where it changes only when the dwarf changes what it is doing, and inherits
+ * down — which is what custom properties are for.
+ *
+ * Percentages rather than pixels so the arithmetic survives both scales the
+ * drawing is under — the scene's own and the per-depth one — neither of which
+ * lands on a whole multiple of a 36px frame.
  */
 const frameStyle = computed(() => {
   const strip = sheet.value
   if (strip === undefined) return undefined
-  return {
-    '--sheet-image': `url(${strip.src})`,
-    '--sheet-size': `${backgroundSizePercent(strip)}% 100%`,
-    '--sheet-position': `${framePositionPercent(position.value.frame, strip.frames)}% 0`
-  }
+  return { '--sheet-position': `${framePositionPercent(position.value.frame, strip.frames)}% 0` }
 })
 
 const isForeman = computed(() => props.dwarf.role === 'foreman')
@@ -368,11 +374,16 @@ const rootClasses = computed(() => [
   }
 ])
 // The walk-out lasts exactly as long as the runtime keeps a leaving dwarf.
-// `--frame-aspect` carries the authored frame box so the CSS never repeats it.
+// `--frame-aspect` carries the authored frame box so the CSS never repeats it,
+// and the strip rides here rather than on the frame so that the only thing
+// rewritten ten times a second is the one short percentage (see frameStyle).
 const exitStyle = computed(() => ({
   '--exit-ms': `${LEAVING_EXIT_MS}ms`,
   '--depth-scale': String(props.depthScale ?? 1),
-  '--frame-aspect': `${SPRITE_FRAME_SIZE.width} / ${SPRITE_FRAME_SIZE.height}`
+  '--frame-aspect': `${SPRITE_FRAME_SIZE.width} / ${SPRITE_FRAME_SIZE.height}`,
+  '--sheet-image': sheet.value === undefined ? 'none' : `url(${sheet.value.src})`,
+  '--sheet-size':
+    sheet.value === undefined ? '100% 100%' : `${backgroundSizePercent(sheet.value)}% 100%`
 }))
 
 /**
