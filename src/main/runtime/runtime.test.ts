@@ -2964,9 +2964,42 @@ describe('AgentRuntime project queries (#92)', () => {
         addedAt: 4_000,
         lastOpenedAt: 4_000,
         lastProvider: 'codex',
+        // The store places every project it writes on one of the map's 74
+        // spawn locations (#136), so the wire shape carries one. Which one is a
+        // random draw and is asserted by identity in the next test, not here.
+        mapSite: expect.any(Number),
         live: false
       }
     ])
+  })
+
+  it('carries the map placement the store chose, so a browse and the map agree (#136)', async () => {
+    const projects = queryStore()
+    const written = await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const runtime = queryRuntime({ projects })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(written.ok && written.value.mapSite).toBeGreaterThan(0)
+    expect(result.projects[0]!.mapSite).toBe(written.ok ? written.value.mapSite : null)
+  })
+
+  it('says nothing about placement for a project nobody has placed (#136)', async () => {
+    // The v2-to-v3 migration leaves existing projects unplaced on purpose, and
+    // absent must reach the panel as absent: a zero would be site zero.
+    const sqlite = new MemoryWritableSqlite()
+    const projects = queryStore(sqlite)
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const db = await sqlite.open('C:\\userData\\projects-v1.db')
+    db.run('UPDATE projects SET map_site = NULL')
+    db.close()
+    const runtime = queryRuntime({ projects })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect('mapSite' in result.projects[0]!).toBe(false)
   })
 
   it('joins a project row against its persisted material breakdown by id (#90)', async () => {
@@ -3375,5 +3408,159 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // that rather than being handed an empty choice.
     expect((await asked).answered).toBe(false)
     expect(port.closes()).toBe(1)
+  })
+})
+
+/**
+ * Where each mine stands on the world map, carried from the store to the panel
+ * (#136).
+ *
+ * The design's rule is one sentence — "persist the assigned location so closing
+ * and reopening DwarfAI-Miners does not move a mine" — and these are the two
+ * joints where it can be dropped: the board assembled from the store on launch,
+ * and the board assembled a moment after a project the app had never seen was
+ * first written.
+ */
+describe('AgentRuntime map placement (#136)', () => {
+  const WALKED = 'C:\\X\\Walked'
+
+  function placementStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  /** A provider reporting one working session in `cwd`, every scan. */
+  function busyProvider(cwd: string): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude' as const,
+          sessionId: 'session-1',
+          cwd,
+          status: 'busy' as const,
+          updatedAt: 7,
+          dwarfs: [
+            {
+              id: 'claude:session-1',
+              provider: 'claude' as const,
+              role: 'foreman' as const,
+              name: 'foreman',
+              status: 'working' as const,
+              sessionId: 'session-1'
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function placementRuntime(options: {
+    projects?: ProjectsStore | null
+    providers?: Provider[]
+  }): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: options.providers ?? [],
+      projects: options.projects === undefined ? placementStore() : options.projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  it('draws a declared mine at the location the store remembers', async () => {
+    const projects = placementStore()
+    const declared = await projects.declare({ path: WALKED, at: 1 })
+    const runtime = placementRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(declared.ok && declared.value.mapSite).toBeGreaterThan(0)
+    expect(mines[0]!.mapSite).toBe(declared.ok ? declared.value.mapSite : null)
+  })
+
+  it('keeps a mine at the same location across a restart', async () => {
+    // The whole requirement, end to end: a second runtime over the same
+    // database publishes the same location without anything asking it to.
+    const sqlite = new MemoryWritableSqlite()
+    const first = placementRuntime({ projects: placementStore(sqlite) })
+    await placementStore(sqlite).declare({ path: WALKED, at: 1 })
+    await first.loadDeclared()
+    await first.refresh()
+    const before = first.getMines()[0]!.mapSite
+    first.stop()
+
+    const second = placementRuntime({ projects: placementStore(sqlite) })
+    await second.loadDeclared()
+    await second.refresh()
+    const after = second.getMines()[0]!.mapSite
+    second.stop()
+
+    expect(before).toBeGreaterThan(0)
+    expect(after).toBe(before)
+  })
+
+  /*
+    A project discovered from a running session is placed by the write the
+    observer makes during the poll that first sees it. Without the observer
+    reporting that row back, the panel would draw the mine at its own fallback
+    position and move it on the next launch — the one thing the design forbids.
+  */
+  it('places a mine the app has only just discovered, without waiting for a restart', async () => {
+    const projects = placementStore()
+    const runtime = placementRuntime({ projects, providers: [busyProvider(WALKED)] })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    const stored = await projects.get(mineIdForPath(WALKED))
+    expect(mines[0]!.mapSite).toBe(stored.ok ? stored.value?.mapSite : null)
+    expect(mines[0]!.mapSite).toBeGreaterThan(0)
+  })
+
+  it('leaves a mine unplaced when there is no store to remember one', async () => {
+    // Absent, not zero: the panel places these itself, deterministically.
+    const runtime = placementRuntime({ projects: null, providers: [busyProvider(WALKED)] })
+
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect('mapSite' in mines[0]!).toBe(false)
+  })
+
+  it('places no simulated mine and writes no placement for one (#42)', async () => {
+    // The demo gate already drops the store for the whole simulated run, so
+    // this is what that costs and what it must keep costing: an invented valley
+    // gets no persisted locations, the panel places its mines itself, and the
+    // real table is untouched by a run whose whole point is that it is a demo.
+    const projects = placementStore()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      home: 'C:\\Users\\test',
+      fs: new FakeFs(),
+      sqlite: { openReadOnly: async () => null },
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      projects,
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines.length).toBeGreaterThan(0)
+    expect(mines.every((mine) => !('mapSite' in mine))).toBe(true)
+    const stored = await projects.list()
+    expect(stored.ok && stored.value).toEqual([])
   })
 })
