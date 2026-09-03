@@ -152,8 +152,16 @@ function markerPercent(mine: Mine): { x: number; y: number } {
   )
 }
 
-/** Half the marker's hit box, so a clamped marker sits fully inside the map. */
-const MARKER_HALF_PX = 11
+/**
+ * Half the marker's widest DRAWN extent, so a clamped marker sits fully inside
+ * the map — its light included.
+ *
+ * It was half the 22px hit box until #156 gave the marker a real pulsing light:
+ * a 30px bloom at rest and 37.5px at the top of its beat, which is what decides
+ * the margin now. Only a marker already being clamped moves at all, and it moves
+ * so that the light the clamp exists to protect is not the part that gets cut.
+ */
+const MARKER_HALF_PX = 19
 
 function markerStyle(mine: Mine): Record<string, string> {
   const point = markerPercent(mine)
