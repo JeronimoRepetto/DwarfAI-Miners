@@ -1,6 +1,11 @@
 import { redactSecrets } from '../domain/redactSecrets'
-import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
-import type { DwarfQuestion, DwarfQuestionOption, Mine } from '../domain/types'
+import { isMcpConnectionStatus, MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import type {
+  DwarfMcpServerStatus,
+  DwarfQuestion,
+  DwarfQuestionOption,
+  Mine
+} from '../domain/types'
 
 /**
  * A session the panel STARTED and still HOLDS, as opposed to one it merely
@@ -22,6 +27,11 @@ import type { DwarfQuestion, DwarfQuestionOption, Mine } from '../domain/types'
  * strings the agent itself wrote. The SDK lives behind HeldSessionPort, in
  * sdkHeldSession.ts, and nothing here imports it — the same seam the relay and
  * the launch runner keep, for the same reason: no unit test may spawn an agent.
+ *
+ * A second, smaller thing lives here since issue #96: the same held stream
+ * carries model, MCP status and running cost on messages this app was already
+ * reading for the ask loop above, and this module is where those get narrowed
+ * onto the wire too — see HeldSessionTelemetryUpdate and stampHeldTelemetry.
  */
 
 /** One question inside an ask, exactly as the agent worded it — never redacted. */
@@ -74,6 +84,61 @@ export interface HeldSessionHandle {
   send(text: string): boolean
 }
 
+/**
+ * One MCP server as a held session's own `init` message named it, before
+ * validation against the closed status enum (issue #96) — the SDK types this
+ * field's `status` as a plain `string`, so what arrives here is exactly that,
+ * unvalidated. See `heldTelemetryToWire`, which is where it is checked.
+ */
+export interface HeldSessionMcpServer {
+  name: string
+  status: string
+}
+
+/**
+ * The four token counts issue #96's spike actually exercised, off a `result`
+ * message's `usage` field — not the full Anthropic Messages API `Usage` shape,
+ * which also carries a cache-creation TTL breakdown, per-iteration entries,
+ * fallback-credit and inference-geo detail no caller here needs. Narrower on
+ * purpose: this is registry-only bookkeeping (see HeldSessionTelemetryUpdate),
+ * never stamped to the wire, so there is nothing to keep it in step with.
+ */
+export interface HeldSessionUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheCreationInputTokens: number
+  cacheReadInputTokens: number
+}
+
+/**
+ * What a held session's own protocol messages reported about itself, as
+ * sdkHeldSession.ts's message loop reads them off `init` and `result` (issue
+ * #96) — never anything this app inferred or computed. Every field is
+ * independently optional because `init` and `result` are two different
+ * message types read at two different points of the same turn: an `init`
+ * update carries `model`/`effort`/`mcpServers`/`claudeCodeVersion` and a
+ * `result` update carries `totalCostUsd`/`usage`, and a field one update
+ * omits leaves whatever the registry already recorded alone — the same
+ * "arrives late, kept until then" reasoning `recordSessionId` already
+ * follows for the session id itself.
+ *
+ * `totalCostUsd` and `usage` are the RUNNING TOTAL as of the latest message,
+ * not a per-turn delta: the SDK's own doc comment on `total_cost_usd` says so
+ * ("each result carries the running total so far, so read the latest result
+ * rather than summing across results"), confirmed live by issue #96's spike.
+ * So a later update REPLACES these two fields rather than adding to them —
+ * which is also just what a plain merge already does, and is exactly why the
+ * registry may not fold turns together by summing.
+ */
+export interface HeldSessionTelemetryUpdate {
+  model?: string
+  effort?: string
+  mcpServers?: HeldSessionMcpServer[]
+  claudeCodeVersion?: string
+  totalCostUsd?: number
+  usage?: HeldSessionUsage
+}
+
 /** What the port needs to start one held session. */
 export interface HeldSessionStartRequest {
   /**
@@ -92,6 +157,12 @@ export interface HeldSessionStartRequest {
   maxTurns?: number
   /** The CLI reporting the session id it chose, once it does. */
   onSessionId: (sessionId: string) => void
+  /**
+   * The CLI's own `init`/`result` fields, forwarded live as the message loop
+   * reads them (issue #96) — called once per message that carries any of
+   * them, never batched or delayed.
+   */
+  onTelemetry: (update: HeldSessionTelemetryUpdate) => void
   /**
    * An `AskUserQuestion` reached the permission callback. The agent's tool call
    * stays BLOCKED until this resolves, which is the whole mechanism: there is
@@ -333,6 +404,86 @@ export function stampHeldQuestions(mines: Mine[], stateOf: HeldQuestionLookup): 
       const cleared = { ...dwarf }
       delete cleared.pendingQuestion
       return cleared
+    })
+  }))
+}
+
+/**
+ * Turn what the registry accumulated off a held session's own `init`/`result`
+ * messages into exactly the shape `Dwarf` admits (issue #96) — the same kind
+ * of narrowing `askToWireQuestion` does for an ask, and for the same reason:
+ * the SDK's own message types are wider than what this app puts on the wire.
+ *
+ * `usage` never appears in the result: it stays registry-only bookkeeping for
+ * this slice (see HeldSessionTelemetryUpdate), and the minimal wire vocabulary
+ * issue #96 draws has no field for it yet. An MCP entry whose status this
+ * build's closed enum does not recognise is dropped rather than passed on —
+ * the CLI's own `init` message types `status` as a plain string, so this is
+ * the boundary-validation `isMineTier`/`isDwarfProvider` already hold, applied
+ * to a field arriving from the same untrusted-shape direction.
+ */
+export function heldTelemetryToWire(telemetry: HeldSessionTelemetryUpdate): {
+  model?: string
+  effort?: string
+  mcpServers?: DwarfMcpServerStatus[]
+  totalCostUsd?: number
+} {
+  const mcpServers = telemetry.mcpServers?.filter((server): server is DwarfMcpServerStatus =>
+    isMcpConnectionStatus(server.status)
+  )
+  return {
+    ...(telemetry.model === undefined ? {} : { model: telemetry.model }),
+    ...(telemetry.effort === undefined ? {} : { effort: telemetry.effort }),
+    ...(mcpServers === undefined ? {} : { mcpServers }),
+    ...(telemetry.totalCostUsd === undefined ? {} : { totalCostUsd: telemetry.totalCostUsd })
+  }
+}
+
+/**
+ * What the panel is told about a held session's own self-reported telemetry
+ * (issue #96) — the same `{held}`-discriminated shape HeldQuestionState uses,
+ * for the same reason: `held: false` leaves whatever a session's own provider
+ * derived untouched, and `held: true` is this panel's own complete word on it.
+ *
+ * Unlike a question, there is no "held true, but clear it" case here: a held
+ * session's self-reports only ever accumulate (a later `model` supersedes an
+ * earlier one; nothing un-reports a model once the CLI has named one), so
+ * `held: true` with every field absent is simply "nothing has arrived yet",
+ * not a fact to stamp over what a session's own provider already read.
+ */
+export type HeldTelemetryState =
+  { held: false } | ({ held: true } & ReturnType<typeof heldTelemetryToWire>)
+
+export type HeldTelemetryLookup = (sessionId: string) => HeldTelemetryState
+
+/**
+ * Copy `mines` with each held session's own self-reported telemetry stamped
+ * onto its foreman (issue #96) — the same shape `stampHeldQuestions` follows,
+ * for the same reasons: only a session this panel HOLDS has any of this to
+ * report, and only the foreman, never a worker sharing its session id (a
+ * Claude worker carries its foreman's `sessionId`, so keying on the id alone
+ * would copy one session's telemetry onto every subagent in it).
+ *
+ * Each field is stamped independently, superseding whatever a tail-derived
+ * read already put there (an observed Claude session's `model` comes from its
+ * transcript tail too) — but only when the held state actually carries a
+ * value: an absent field here is "not reported yet", never "unset", so it
+ * leaves the dwarf's existing value alone rather than clearing it.
+ */
+export function stampHeldTelemetry(mines: Mine[], stateOf: HeldTelemetryLookup): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      if (dwarf.role !== 'foreman') return dwarf
+      const state = stateOf(dwarf.sessionId)
+      if (!state.held) return dwarf
+      return {
+        ...dwarf,
+        ...(state.model === undefined ? {} : { model: state.model }),
+        ...(state.effort === undefined ? {} : { effort: state.effort }),
+        ...(state.mcpServers === undefined ? {} : { mcpServers: state.mcpServers }),
+        ...(state.totalCostUsd === undefined ? {} : { totalCostUsd: state.totalCostUsd })
+      }
     })
   }))
 }

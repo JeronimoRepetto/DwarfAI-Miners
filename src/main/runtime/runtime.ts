@@ -36,7 +36,7 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
-import { stampHeldQuestions } from '../sessionLaunch/heldSession'
+import { stampHeldQuestions, stampHeldTelemetry } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
@@ -519,8 +519,17 @@ export class AgentRuntime {
         // derived, and supersedes it for held sessions only — including
         // clearing it, because for those the held stream is the complete truth
         // and the tail's version is the post-hoc one. See stampHeldQuestions.
-        const published = stampHeldQuestions(delivered, (sessionId) =>
+        const withQuestions = stampHeldQuestions(delivered, (sessionId) =>
           this.heldSessions.questionState(sessionId)
+        )
+        // What a session the panel HOLDS has reported about itself, live
+        // (issue #96) — model, MCP status and running cost, off the same
+        // init/result messages the ask loop above already reads. Same
+        // supersession rule: only a held session has any of this, so an
+        // observed session's own tail-derived read (model, above all) stands
+        // untouched. See stampHeldTelemetry.
+        const published = stampHeldTelemetry(withQuestions, (sessionId) =>
+          this.heldSessions.telemetryState(sessionId)
         )
         this.mines = published
         pollProfiler.count(

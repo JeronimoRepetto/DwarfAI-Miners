@@ -21,7 +21,8 @@ import type { Provider } from '../providers/provider'
 import type {
   HeldAnswer,
   HeldSessionPort,
-  HeldSessionStartRequest
+  HeldSessionStartRequest,
+  HeldSessionTelemetryUpdate
 } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
@@ -3208,6 +3209,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     closes: () => number
     reportSessionId: (index: number, sessionId: string) => void
     ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
+    reportTelemetry: (index: number, update: HeldSessionTelemetryUpdate) => void
   } {
     const started: HeldSessionStartRequest[] = []
     let closed = 0
@@ -3233,7 +3235,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
               options: [{ label: 'Green' }, { label: 'Red' }]
             }
           ]
-        })
+        }),
+      reportTelemetry: (index, update) => started[index]!.onTelemetry(update)
     }
   }
 
@@ -3378,6 +3381,32 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
     expect(runtime.getMines()[0]!.dwarfs[0]!.pendingQuestion).toBeUndefined()
+    runtime.stop()
+  })
+
+  it("stamps a held session's own self-reported telemetry on its foreman (#96)", async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    // Nothing to stamp before the session even starts.
+    expect(runtime.getMines()[0]!.dwarfs[0]!.model).toBeUndefined()
+
+    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, {
+      model: 'claude-haiku-4-5',
+      mcpServers: [{ name: 'codegraph', status: 'connected' }]
+    })
+    port.reportTelemetry(0, { totalCostUsd: 0.0697689 })
+    await runtime.refresh()
+
+    const dwarf = runtime.getMines()[0]!.dwarfs[0]!
+    expect(dwarf.model).toBe('claude-haiku-4-5')
+    expect(dwarf.mcpServers).toEqual([{ name: 'codegraph', status: 'connected' }])
+    expect(dwarf.totalCostUsd).toBe(0.0697689)
     runtime.stop()
   })
 

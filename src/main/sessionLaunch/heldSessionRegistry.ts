@@ -2,6 +2,7 @@ import type { DwarfQuestionAnswerResult, HeldSessionLaunchResult } from '../doma
 import type { CliDetector } from '../platform/cliDetection'
 import {
   askToWireQuestion,
+  heldTelemetryToWire,
   parseAskUserQuestion,
   prepareHeldPrompt,
   resolveAnswers,
@@ -9,7 +10,9 @@ import {
   type HeldAsk,
   type HeldQuestionState,
   type HeldSessionHandle,
-  type HeldSessionPort
+  type HeldSessionPort,
+  type HeldSessionTelemetryUpdate,
+  type HeldTelemetryState
 } from './heldSession'
 
 /**
@@ -90,6 +93,12 @@ interface HeldRecord {
    * latest, and any of them can be answered by naming its id.
    */
   openAsks: Map<string, OpenAsk>
+  /**
+   * Every `init`/`result` field this session's own message loop has reported
+   * so far, merged as it arrives (issue #96). Starts empty rather than
+   * undefined, so a merge never has to branch on "nothing reported yet".
+   */
+  telemetry: HeldSessionTelemetryUpdate
 }
 
 export interface HeldSessionRegistryOptions {
@@ -170,10 +179,11 @@ export class HeldSessionRegistry {
         ...(this.model === undefined ? {} : { model: this.model }),
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
+        onTelemetry: (update) => this.recordTelemetry(key, update),
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
         onEnd: (reason) => this.finish(key, reason)
       })
-      this.held.set(key, { mineId: request.mineId, handle, openAsks: new Map() })
+      this.held.set(key, { mineId: request.mineId, handle, openAsks: new Map(), telemetry: {} })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
       return { launched: true }
@@ -200,6 +210,19 @@ export class HeldSessionRegistry {
     const latest = [...record.openAsks.values()].pop()
     if (latest === undefined) return { held: true }
     return { held: true, question: askToWireQuestion(latest.ask, latest.askedAt) }
+  }
+
+  /**
+   * What the panel should be told about this session's own self-reported
+   * telemetry (issue #96) — `held: false` for a session this panel does not
+   * hold, which leaves whatever that session's own provider derived (an
+   * observed Claude session's transcript-tail `model`, above all) alone. See
+   * HeldTelemetryState and stampHeldTelemetry.
+   */
+  telemetryState(sessionId: string): HeldTelemetryState {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { held: false }
+    return { held: true, ...heldTelemetryToWire(record.telemetry) }
   }
 
   /**
@@ -276,6 +299,20 @@ export class HeldSessionRegistry {
     const record = this.held.get(key)
     if (record === undefined || sessionId === '') return
     record.sessionId = sessionId
+  }
+
+  /**
+   * Merge one `init`/`result` update onto whatever this session has already
+   * reported (issue #96). A plain merge, deliberately: every field in
+   * HeldSessionTelemetryUpdate is documented as "a later value replaces the
+   * one before it", including `totalCostUsd` and `usage`, whose RUNNING TOTAL
+   * semantics make replacement the correct read — summing would double-count
+   * the same cumulative figure across turns.
+   */
+  private recordTelemetry(key: number, update: HeldSessionTelemetryUpdate): void {
+    const record = this.held.get(key)
+    if (record === undefined) return
+    record.telemetry = { ...record.telemetry, ...update }
   }
 
   /**

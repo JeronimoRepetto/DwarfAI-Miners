@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import { HeldSessionRegistry } from './heldSessionRegistry'
-import type { HeldAnswer, HeldSessionPort, HeldSessionStartRequest } from './heldSession'
+import type {
+  HeldAnswer,
+  HeldSessionPort,
+  HeldSessionStartRequest,
+  HeldSessionTelemetryUpdate
+} from './heldSession'
 
 const HOME = '/home/j'
 const CLAUDE = '/home/j/.local/bin/claude'
@@ -73,6 +78,11 @@ class FakePort {
 
   end(index: number, reason = 'the turn finished'): void {
     this.started[index]!.onEnd(reason)
+  }
+
+  /** The CLI's own init/result fields, arriving off the message loop (issue #96). */
+  reportTelemetry(index: number, update: HeldSessionTelemetryUpdate): void {
+    this.started[index]!.onTelemetry(update)
   }
 }
 
@@ -213,6 +223,136 @@ describe('HeldSessionRegistry questions', () => {
     expect(registry.questionState('sess-1')).toMatchObject({
       question: { toolUseId: 'toolu_first' }
     })
+  })
+})
+
+/*
+ * Issue #96. The held-session loop already reads `session_id` off `init` and
+ * discards `model`, `mcp_servers`, `effort` and `claude_code_version` on the
+ * same message, and never inspects a `result` message at all — so
+ * `total_cost_usd`/`usage` never reach the registry either. These pin the fix:
+ * the registry keeps what `onTelemetry` reports, using the same "arrives
+ * late, kept until then" idiom `recordSessionId` already follows.
+ */
+describe('HeldSessionRegistry telemetry (#96)', () => {
+  it('reports not-held for a session this panel does not hold, so a tail-derived read stands', () => {
+    const registry = registryOver(new FakePort())
+    expect(registry.telemetryState('sess-nobody')).toEqual({ held: false })
+  })
+
+  it('holds a session with nothing reported yet as held, with no field set', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    expect(registry.telemetryState('sess-1')).toEqual({ held: true })
+  })
+
+  it("keeps model, effort, mcpServers and claudeCodeVersion off the session's own init", async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, {
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      mcpServers: [
+        { name: 'codegraph', status: 'connected' },
+        { name: 'claude-ai-proxy', status: 'needs-auth' }
+      ],
+      claudeCodeVersion: '2.1.259'
+    })
+
+    expect(registry.telemetryState('sess-1')).toEqual({
+      held: true,
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      mcpServers: [
+        { name: 'codegraph', status: 'connected' },
+        { name: 'claude-ai-proxy', status: 'needs-auth' }
+      ]
+      // claudeCodeVersion is registry bookkeeping, not part of the minimal
+      // wire vocabulary issue #96 draws — see heldTelemetryToWire.
+    })
+  })
+
+  it("keeps the session's running totalCostUsd off its result message", async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, { totalCostUsd: 0.0123 })
+
+    expect(registry.telemetryState('sess-1')).toEqual({ held: true, totalCostUsd: 0.0123 })
+  })
+
+  it("replaces totalCostUsd with the LATEST turn's running total, never sums turns together", async () => {
+    // The SDK's own doc comment on total_cost_usd: "each result carries the
+    // running total so far, so read the latest result rather than summing
+    // across results" — confirmed live by issue #96's spike (the structured
+    // usage call's own running total matched the same turn's plain
+    // total_cost_usd exactly). Summing here would silently double-count.
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, { totalCostUsd: 0.03 })
+    port.reportTelemetry(0, { totalCostUsd: 0.0697689 })
+
+    expect(registry.telemetryState('sess-1')).toEqual({ held: true, totalCostUsd: 0.0697689 })
+  })
+
+  it('keeps a later init update from erasing an earlier field it did not carry', async () => {
+    // A turn's init and result are two different partial updates; a field one
+    // omits must not blank out what an earlier update already recorded.
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+    port.reportTelemetry(0, { totalCostUsd: 0.01 })
+
+    expect(registry.telemetryState('sess-1')).toEqual({
+      held: true,
+      model: 'claude-haiku-4-5',
+      totalCostUsd: 0.01
+    })
+  })
+
+  it('drops an MCP server whose status this build does not recognise', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, {
+      mcpServers: [
+        { name: 'codegraph', status: 'connected' },
+        { name: 'future-server', status: 'reconnecting' }
+      ]
+    })
+
+    expect(registry.telemetryState('sess-1')).toEqual({
+      held: true,
+      mcpServers: [{ name: 'codegraph', status: 'connected' }]
+    })
+  })
+
+  it('discards telemetry once the session ends, exactly as it discards open asks', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+
+    port.end(0)
+
+    expect(registry.telemetryState('sess-1')).toEqual({ held: false })
   })
 })
 

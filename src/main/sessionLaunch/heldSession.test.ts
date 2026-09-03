@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { defaultDwarf, defaultMine, type Mine } from '../domain/types'
 import {
   askToWireQuestion,
+  heldTelemetryToWire,
   parseAskUserQuestion,
   resolveAnswers,
   stampHeldQuestions,
-  type HeldAsk
+  stampHeldTelemetry,
+  type HeldAsk,
+  type HeldSessionTelemetryUpdate,
+  type HeldTelemetryState
 } from './heldSession'
 
 const ASKED_AT = '2026-09-02T07:00:00.000Z'
@@ -304,5 +308,141 @@ describe('stampHeldQuestions', () => {
   it("never stamps a worker, which shares its foreman's session id", () => {
     const stamped = stampHeldQuestions(board(), () => ({ held: true, question }))
     expect(stamped[0]!.dwarfs[1]!.pendingQuestion).toBeUndefined()
+  })
+})
+
+/*
+ * Issue #96. `heldTelemetryToWire` is the same kind of narrowing
+ * `askToWireQuestion` does for an ask: it takes what the registry
+ * accumulated off the SDK's own `init`/`result` messages and turns it into
+ * exactly the wire shape `Dwarf` admits — validating `mcp_servers[].status`
+ * against the closed enum along the way, since the CLI's own message types
+ * that field as a plain string (see MCP_CONNECTION_STATUSES in contracts.ts).
+ */
+describe('heldTelemetryToWire', () => {
+  it('carries model, effort and totalCostUsd straight through when present', () => {
+    const telemetry: HeldSessionTelemetryUpdate = {
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      totalCostUsd: 0.0697689
+    }
+    expect(heldTelemetryToWire(telemetry)).toEqual({
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      totalCostUsd: 0.0697689
+    })
+  })
+
+  it('omits every field the telemetry never reported', () => {
+    expect(heldTelemetryToWire({})).toEqual({})
+  })
+
+  it('keeps every MCP server whose status the closed enum recognises', () => {
+    const telemetry: HeldSessionTelemetryUpdate = {
+      mcpServers: [
+        { name: 'codegraph', status: 'connected' },
+        { name: 'claude-ai-proxy', status: 'needs-auth' }
+      ]
+    }
+    expect(heldTelemetryToWire(telemetry).mcpServers).toEqual([
+      { name: 'codegraph', status: 'connected' },
+      { name: 'claude-ai-proxy', status: 'needs-auth' }
+    ])
+  })
+
+  it('drops a server whose status this build does not recognise, keeping the rest', () => {
+    // The CLI's own `init` message types `status` as a plain string, so a
+    // future value outside the five the SDK's typed surface promises must
+    // read as "not this enum" rather than being passed on as a guess — the
+    // same discipline isMineTier/isDwarfProvider already hold.
+    const telemetry: HeldSessionTelemetryUpdate = {
+      mcpServers: [
+        { name: 'codegraph', status: 'connected' },
+        { name: 'future-server', status: 'reconnecting' }
+      ]
+    }
+    expect(heldTelemetryToWire(telemetry).mcpServers).toEqual([
+      { name: 'codegraph', status: 'connected' }
+    ])
+  })
+
+  it('never puts usage on the wire: it is registry-only for this slice', () => {
+    // Issue #96 draws the minimal wire vocabulary deliberately narrow — usage
+    // (token-level detail) stays on the held session record, never stamped to
+    // the panel, so 'usage' must not leak through even though it travels
+    // alongside totalCostUsd on the same result message.
+    const telemetry: HeldSessionTelemetryUpdate = {
+      totalCostUsd: 1,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheCreationInputTokens: 3,
+        cacheReadInputTokens: 4
+      }
+    }
+    expect('usage' in heldTelemetryToWire(telemetry)).toBe(false)
+  })
+})
+
+describe('stampHeldTelemetry', () => {
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'foreman-1', role: 'foreman', sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'worker-1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  const state: HeldTelemetryState = {
+    held: true,
+    model: 'claude-haiku-4-5',
+    effort: 'low',
+    mcpServers: [{ name: 'codegraph', status: 'connected' }],
+    totalCostUsd: 0.07
+  }
+
+  it("stamps the held session's own self-reported telemetry onto its foreman", () => {
+    const stamped = stampHeldTelemetry(board(), () => state)
+    expect(stamped[0]!.dwarfs[0]!).toMatchObject({
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      mcpServers: [{ name: 'codegraph', status: 'connected' }],
+      totalCostUsd: 0.07
+    })
+  })
+
+  it("never stamps a worker, which shares its foreman's session id", () => {
+    const stamped = stampHeldTelemetry(board(), () => state)
+    expect(stamped[0]!.dwarfs[1]!.model).toBeUndefined()
+    expect(stamped[0]!.dwarfs[1]!.totalCostUsd).toBeUndefined()
+  })
+
+  it('leaves a session this panel does not hold exactly as its provider reported it', () => {
+    const mines = board()
+    mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, model: 'tail-derived-model' }
+    const stamped = stampHeldTelemetry(mines, () => ({ held: false }))
+    expect(stamped[0]!.dwarfs[0]!.model).toBe('tail-derived-model')
+  })
+
+  it('leaves every field untouched while a held session has reported nothing yet', () => {
+    // held:true with an otherwise-empty state is the honest reading between
+    // launch and the first init message — nothing to stamp, and nothing to
+    // clear, unlike a resolved question.
+    const mines = board()
+    mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, model: 'tail-derived-model' }
+    const stamped = stampHeldTelemetry(mines, () => ({ held: true }))
+    expect(stamped[0]!.dwarfs[0]!.model).toBe('tail-derived-model')
+  })
+
+  it("supersedes a tail-derived model once the held session's own init reports one", () => {
+    const mines = board()
+    mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, model: 'tail-derived-model' }
+    const stamped = stampHeldTelemetry(mines, () => ({ held: true, model: 'claude-sonnet-5' }))
+    expect(stamped[0]!.dwarfs[0]!.model).toBe('claude-sonnet-5')
   })
 })
