@@ -130,8 +130,35 @@ const spriteMargin = computed(() => spriteMarginPercent(boxSize.value, INTERIOR_
 /** The painting's own shape, so the column's frame and the projection agree. */
 const interiorAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
 
+/**
+ * The crew this scene draws: one entry per dwarf id (#165).
+ *
+ * The third acceptance run found more than one dwarf selected at once, which —
+ * since a click opens the message panel — implied more than one panel.
+ * Selection was already singular: App holds ONE id and DwarfSprite has no
+ * selected state of its own. The leak was here. The scene lays out one sprite
+ * per crew ENTRY, and nothing guaranteed the crew held one entry per dwarf; the
+ * board is assembled from four sources plus a held session's own stamped crew,
+ * and two of them naming one session puts it in the list twice. Both entries
+ * then matched the one selected id and both wore the halo.
+ *
+ * The FIRST listing wins, which is the one the board saw first, so a dwarf does
+ * not change appearance depending on which source spoke last. Everything the
+ * scene does per dwarf reads this rather than the raw list — the layout, the
+ * slots, the bubble board, the two delivery observers and the idle state — so
+ * "one sprite per dwarf" is one rule in one place rather than five.
+ */
+const crew = computed(() => {
+  const seen = new Set<string>()
+  return props.mine.dwarfs.filter((dwarf) => {
+    if (seen.has(dwarf.id)) return false
+    seen.add(dwarf.id)
+    return true
+  })
+})
+
 const layout = computed(() => sceneLayout(props.mine.tier))
-const placements = computed(() => assignScene(props.mine.dwarfs, layout.value))
+const placements = computed(() => assignScene(crew.value, layout.value))
 
 /**
  * Reduced motion is answered by placing everyone statically rather than by
@@ -188,7 +215,7 @@ interface SceneSlot {
 const slots = computed<SceneSlot[]>(() => {
   const box = boxSize.value
   const result: SceneSlot[] = []
-  for (const dwarf of props.mine.dwarfs) {
+  for (const dwarf of crew.value) {
     const placement = placements.value.get(dwarf.id)
     if (!placement) continue
     const walk = reducedMotion.value ? undefined : walkState.value.get(dwarf.id)
@@ -240,7 +267,7 @@ const { observe: observeSends } = useDwarfMessaging()
 const { observe: observeKicks } = useDwarfKicking()
 
 watch(
-  () => props.mine.dwarfs,
+  crew,
   (dwarfs) => {
     board.sync(dwarfs)
     observeSends(dwarfs)
@@ -273,7 +300,7 @@ onBeforeUnmount(() => {
       <img class="interior-art" :src="interiorSrc" alt="" aria-hidden="true" draggable="false" />
 
       <!-- idle mine: nobody on the corridors -->
-      <div v-if="mine.dwarfs.length === 0" class="mine-idle">
+      <div v-if="crew.length === 0" class="mine-idle">
         <p>Nobody is working this mine yet.</p>
       </div>
 
