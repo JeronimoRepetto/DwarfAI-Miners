@@ -7,6 +7,7 @@ import {
   OBSERVED_NOTE,
   HELD_NOTE,
   READING_NOTE,
+  authorOf,
   conversationOf,
   latestText
 } from './conversation'
@@ -107,6 +108,55 @@ describe('conversationOf', () => {
     expect(conversationOf(defaultDwarf({ conversation: HELD })).messages[0]!.key).toBe(
       conversationOf(defaultDwarf({ conversation: HELD })).messages[0]!.key
     )
+  })
+})
+
+/**
+ * WHOSE words a row is (#175). The wire names the issuer of a `user` turn no
+ * human typed; what that does to the row is decided here, not in the panel.
+ */
+describe('conversationOf attribution', () => {
+  const ISSUED = [
+    {
+      role: 'user' as const,
+      text: 'survey the seam',
+      timestamp: 't0',
+      issuer: { role: 'foreman' as const, name: 'coordinator' }
+    },
+    { role: 'assistant' as const, text: 'On my way.', timestamp: 't1' }
+  ]
+
+  it("draws an issued prompt as an agent row rather than the user's", () => {
+    const shown = conversationOf(defaultDwarf(), { readable: true, messages: ISSUED })
+    expect(shown.messages.map((message) => message.from)).toEqual(['agent', 'agent'])
+  })
+
+  it('carries the issuer through, so the row can be drawn as who wrote it', () => {
+    const shown = conversationOf(defaultDwarf(), { readable: true, messages: ISSUED })
+    expect(shown.messages[0]!.issuer).toEqual({ role: 'foreman', name: 'coordinator' })
+    expect(shown.messages[1]!.issuer).toBeUndefined()
+  })
+
+  it("leaves an unissued user turn as the human's, which is what absent means", () => {
+    const shown = conversationOf(defaultDwarf({ conversation: HELD }))
+    expect(shown.messages.map((message) => message.from)).toEqual(['user', 'agent'])
+    expect(shown.messages[0]!.issuer).toBeUndefined()
+  })
+})
+
+describe('authorOf', () => {
+  const dwarf = defaultDwarf({ role: 'worker', name: 'survey the seam' })
+
+  it('answers with the issuer when one was named', () => {
+    const issuer = { role: 'foreman' as const, name: 'coordinator' }
+    expect(authorOf({ from: 'agent', text: 'x', key: 'k', issuer }, dwarf)).toEqual(issuer)
+  })
+
+  it('answers with the dwarf itself when nobody else was named', () => {
+    expect(authorOf({ from: 'agent', text: 'x', key: 'k' }, dwarf)).toEqual({
+      role: 'worker',
+      name: 'survey the seam'
+    })
   })
 })
 

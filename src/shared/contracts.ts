@@ -776,10 +776,40 @@ export interface ProviderSnapshot {
   updatedAt: number
 }
 
+/**
+ * WHO issued one message, when it was not the human (#175).
+ *
+ * An agent's prompt to the agent it launches is written down exactly as a
+ * human's is — the same `user` record in the same transcript — so authorship
+ * was being read off a message's POSITION rather than off any evidence, and
+ * the panel drew a coordinator's instruction to its worker under the user's
+ * own face.
+ *
+ * A field beside the role rather than a third value inside it. `role` is what
+ * every consumer switches on to say which HALF of an exchange a message is, and
+ * a third value would make every one of those switches wrong until it was
+ * widened — for a message that is not a third KIND at all, only a `user` turn
+ * with its author named. So ABSENT MEANS THE HUMAN, and it has to: every
+ * message already on the wire and every line an observed session's transcript
+ * yields carries no issuer and keeps meaning precisely what it meant.
+ *
+ * Rank and name both, because both are how this app draws an agent — the rank
+ * picks the portrait and the name is who the instruction came from.
+ */
+export interface MessageIssuer {
+  role: DwarfRole
+  name: string
+}
+
 export interface FeedMessage {
   role: 'user' | 'assistant'
   text: string
   timestamp: string
+  /**
+   * Who issued a `user` turn that no human typed (#175). Absent is the
+   * ordinary case and means the human — see MessageIssuer.
+   */
+  issuer?: MessageIssuer
 }
 
 /**

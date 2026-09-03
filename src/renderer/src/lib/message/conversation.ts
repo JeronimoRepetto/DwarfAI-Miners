@@ -1,4 +1,4 @@
-import type { Dwarf, DwarfFeedResult, FeedMessage } from '../../types'
+import type { Dwarf, DwarfFeedResult, FeedMessage, MessageIssuer } from '../../types'
 
 /**
  * What the message panel may honestly draw for one dwarf (#159).
@@ -34,6 +34,11 @@ export interface PanelMessage {
   text: string
   /** A stable list key: the wire carries no message id, so position and time make one. */
   key: string
+  /**
+   * Who wrote it, when the wire named an agent rather than the human (#175).
+   * Absent means whichever side `from` says: the human, or this dwarf itself.
+   */
+  issuer?: MessageIssuer
 }
 
 export interface PanelConversation {
@@ -51,8 +56,18 @@ export const NO_TRANSCRIPT_NOTE = 'This session keeps no transcript this panel c
 
 function toPanel(messages: readonly FeedMessage[]): PanelMessage[] {
   return messages.map((message, index) => {
-    const from = message.role === 'assistant' ? 'agent' : 'user'
-    return { from, text: message.text, key: `${from}-${index}-${message.timestamp}` }
+    // An issuer is an AGENT naming itself as the author, so the row is an agent
+    // row whatever half of the exchange the wire's `role` calls it (#175). The
+    // two say different things: `role` is which turn this is, and the issuer is
+    // who took it — a coordinator's instruction to its worker is the worker's
+    // user turn and was never the user's.
+    const from = message.role === 'assistant' || message.issuer !== undefined ? 'agent' : 'user'
+    return {
+      from,
+      text: message.text,
+      key: `${from}-${index}-${message.timestamp}`,
+      ...(message.issuer === undefined ? {} : { issuer: message.issuer })
+    }
   })
 }
 
@@ -94,6 +109,25 @@ export function conversationOf(
     messages: [],
     note: feed.readable ? NOTHING_SAID_NOTE : NO_TRANSCRIPT_NOTE
   }
+}
+
+/**
+ * Whose face and name one row is drawn with (#175).
+ *
+ * The panel draws a dwarf's own portrait against what it said, and that reading
+ * only holds while the only agent in a conversation is the dwarf whose panel it
+ * is. It is not: the prompt that STARTED an agent-launched session was written
+ * by the agent above it, and drawing it as this dwarf would be the same error
+ * one rank along from drawing it as the human.
+ *
+ * Here rather than in the component for the reason the whole module is: who
+ * authored what is a decision, and the panel is thin.
+ */
+export function authorOf(
+  message: PanelMessage,
+  dwarf: Pick<Dwarf, 'role' | 'name'>
+): MessageIssuer {
+  return message.issuer ?? { role: dwarf.role, name: dwarf.name }
 }
 
 /**

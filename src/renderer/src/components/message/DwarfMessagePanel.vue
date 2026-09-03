@@ -10,7 +10,7 @@ import {
 } from '../../lib/art'
 import { CONSOLE_HINT, buildActionBar } from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
-import { conversationOf, latestText } from '../../lib/message/conversation'
+import { authorOf, conversationOf, latestText } from '../../lib/message/conversation'
 import {
   MESSAGE_PANEL_MAX_HEIGHT,
   clampPanelHeight,
@@ -106,7 +106,17 @@ const canReceive = computed(() => props.dwarf.textDelivery !== undefined)
 const isSending = computed(() => props.sendState?.phase === 'sending')
 const isKicking = computed(() => props.kickState?.phase === 'kicking')
 
-const agentPortrait = computed(() => PORTRAIT_SRC[props.dwarf.role])
+/*
+ * Each row with the agent it belongs to already resolved (#175). Usually this
+ * dwarf, and for a prompt another agent issued the agent that issued it — which
+ * `authorOf` decides, like everything else about who said what here.
+ */
+const rows = computed(() =>
+  conversation.value.messages.map((message) => ({
+    ...message,
+    author: authorOf(message, props.dwarf)
+  }))
+)
 
 /**
  * The success lines say whether the action was merely handed over or actually
@@ -298,16 +308,24 @@ watch(
     >
       <p v-if="conversation.messages.length === 0" class="panel-empty">{{ conversation.note }}</p>
       <article
-        v-for="entry in conversation.messages"
+        v-for="entry in rows"
         :key="entry.key"
         class="message"
         :class="entry.from === 'agent' ? 'is-agent' : 'is-user'"
       >
+        <!--
+          Whose face this is, from lib/message/conversation (#175). A prompt an
+          agent issued is drawn as that agent — its rank picks the portrait and
+          its name is the alt text and the tooltip, because the design draws no
+          per-message label and inventing chrome the source does not specify is
+          the one thing `ui-rebuild` refuses.
+        -->
         <img
           v-if="entry.from === 'agent'"
           class="portrait"
-          :src="agentPortrait"
-          :alt="`${dwarf.name}, ${dwarf.role}`"
+          :src="PORTRAIT_SRC[entry.author.role]"
+          :alt="`${entry.author.name}, ${entry.author.role}`"
+          :title="`${entry.author.name}, ${entry.author.role}`"
           draggable="false"
         />
         <p class="bubble">{{ entry.text }}</p>

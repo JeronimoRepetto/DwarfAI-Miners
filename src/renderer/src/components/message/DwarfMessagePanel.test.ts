@@ -95,6 +95,48 @@ describe('DwarfMessagePanel shape', () => {
     expect(foreman.find('.message.is-agent .portrait').attributes('src')).toContain('foreman')
   })
 
+  it('draws the launching agent against a prompt that agent issued', async () => {
+    // #175: a worker's first message came from the foreman that spawned it, and
+    // the panel was drawing the user's own face against it. The portrait is the
+    // rank and the alt text is the name — the design draws no per-message
+    // label, and inventing one is what `ui-rebuild` forbids.
+    const wrapper = panel({
+      dwarf: defaultDwarf({ role: 'worker', name: 'survey the seam', conversation: undefined }),
+      feed: {
+        readable: true,
+        messages: [
+          {
+            role: 'user',
+            text: 'survey the seam',
+            timestamp: 't0',
+            issuer: { role: 'foreman', name: 'coordinator' }
+          },
+          { role: 'assistant', text: 'On my way.', timestamp: 't1' }
+        ]
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const portraits = wrapper.findAll('.message .portrait')
+    expect(portraits[0]!.attributes('src')).toContain('foreman')
+    expect(portraits[0]!.attributes('alt')).toBe('coordinator, foreman')
+    // The reply is still the dwarf speaking for itself.
+    expect(portraits[1]!.attributes('src')).toContain('worker-face')
+    expect(portraits[1]!.attributes('alt')).toBe('survey the seam, worker')
+  })
+
+  it("keeps the user's own face on a launch the human typed", async () => {
+    // The other half of #175, and the case the design's launch flow draws: a
+    // session the panel launched opens with the user's submitted prompt, and no
+    // issuer is what says so.
+    const wrapper = panel({
+      dwarf: defaultDwarf({ role: 'foreman', name: 'coordinator', conversation: HELD })
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.message.is-user .portrait').attributes('alt')).toBe('You')
+  })
+
   it('start-aligns the agent and end-aligns the user, as the design does', () => {
     const messages = panel().findAll('.message')
     expect(messages[0]!.classes()).toContain('is-user')
