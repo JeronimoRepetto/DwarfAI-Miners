@@ -29,7 +29,10 @@ import { SPRITE_FRAME_SIZE } from './spriteSheet'
  * here — which is where the mirror should have been caught.
  */
 
-const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
+// Amended by #157: 'worker2' joined DwarfRole. Its idle sheet arrived with the
+// same correction already applied, and this is what proves that rather than
+// trusting it — a rank left off this list is a rank whose art nobody measured.
+const ROLES: readonly DwarfRole[] = ['worker', 'foreman', 'worker2']
 
 /**
  * The repository root. A png import resolves to a root-relative path in the test

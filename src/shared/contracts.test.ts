@@ -140,10 +140,32 @@ describe('dwarfSilenceWindowMs', () => {
     expect(dwarfSilenceWindowMs('worker', 'unknown')).toBe(DWARF_SILENCE_WINDOW_MS.unattended)
     expect(dwarfSilenceWindowMs('worker', 'attended')).toBe(DWARF_SILENCE_WINDOW_MS.unattended)
   })
+
+  it('judges a worker2 on the same half hour a worker gets (#157)', () => {
+    // The maintainer's own wire note for the new rank: a worker2 is as headless
+    // as a worker. It is spawned by one, so the proof above applies to it
+    // WORD FOR WORD — nothing outside its parent session can address it either,
+    // and being one level deeper cannot put a keyboard in front of it.
+    expect(dwarfSilenceWindowMs('worker2')).toBe(DWARF_SILENCE_WINDOW_MS.unattended)
+    expect(dwarfSilenceWindowMs('worker2', 'unknown')).toBe(DWARF_SILENCE_WINDOW_MS.unattended)
+    expect(dwarfSilenceWindowMs('worker2', 'attended')).toBe(DWARF_SILENCE_WINDOW_MS.unattended)
+  })
+
+  it('gives the hour to no rank but the foreman', () => {
+    // The shape of the rule rather than a list of its members: a fourth rank
+    // added later must state its own case here, and until it does it inherits
+    // the shorter window rather than the generous one. Only a root can have a
+    // human in front of it, and only a foreman is a root.
+    for (const role of ['worker', 'worker2'] satisfies DwarfRole[]) {
+      expect(dwarfSilenceWindowMs(role, 'attended')).toBe(DWARF_SILENCE_WINDOW_MS.unattended)
+    }
+  })
 })
 
 describe('dwarfSilenceWindowKey', () => {
-  const ROLES: DwarfRole[] = ['foreman', 'worker']
+  // Amended by #157: 'worker2' joined the union, and a list written by hand is
+  // exactly the kind that silently stops covering it.
+  const ROLES: DwarfRole[] = ['foreman', 'worker', 'worker2']
   const ATTENDANCE: (DwarfAttendance | undefined)[] = [
     'attended',
     'unattended',
@@ -169,6 +191,7 @@ describe('dwarfSilenceWindowKey', () => {
     expect(dwarfSilenceWindowKey('foreman', 'unattended')).toBe('unattended')
     expect(dwarfSilenceWindowKey('foreman', 'unknown')).toBe('attended')
     expect(dwarfSilenceWindowKey('worker', 'attended')).toBe('unattended')
+    expect(dwarfSilenceWindowKey('worker2', 'attended')).toBe('unattended')
   })
 })
 

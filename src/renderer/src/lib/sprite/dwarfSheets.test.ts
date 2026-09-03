@@ -5,7 +5,9 @@ import type { DwarfRole } from '../../types'
 import { DWARF_SHEETS } from './dwarfSheets'
 import { SPRITE_FRAME_SIZE, type SpriteSheet } from './spriteSheet'
 
-const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
+// Amended by #157: 'worker2' joined DwarfRole, and a hand-written list is
+// exactly the kind that stops covering a rank without anything going red.
+const ROLES: readonly DwarfRole[] = ['worker', 'foreman', 'worker2']
 
 /**
  * The repository root. A png import resolves to a root-relative path in the
@@ -87,8 +89,33 @@ describe('DWARF_SHEETS', () => {
   it('gives each rank its own drawing rather than sharing one', () => {
     // The foreman walked like a miner because WALK_ANIMATION was a single
     // shared constant (#74). A per-role record is what dissolves that, so the
-    // two ranks having distinct art is the property worth holding.
+    // ranks having distinct art is the property worth holding.
     expect(DWARF_SHEETS.foreman.idle.src).not.toBe(DWARF_SHEETS.worker.idle.src)
+    // #157's art update superseded the interim "worker2 reuses the worker's
+    // sheets": it idles in its OWN skin from day one, and this is what stops a
+    // future edit quietly pointing it back at the worker's strip.
+    expect(DWARF_SHEETS.worker2.idle.src).not.toBe(DWARF_SHEETS.worker.idle.src)
+    expect(DWARF_SHEETS.worker2.idle.src).not.toBe(DWARF_SHEETS.foreman.idle.src)
+  })
+
+  describe('the worker2 (#157)', () => {
+    it('has its own six-frame idle and nothing else drawn yet', () => {
+      // The maintainer's art note: the idle sheet landed, the WORKING sheet is
+      // still pending. Stated out loud rather than left to be inferred from an
+      // absence — when the working strip arrives THIS is the expectation that
+      // changes, and the sequence picks it up as data with no branch moving.
+      expect(Object.keys(DWARF_SHEETS.worker2)).toEqual(['idle'])
+      expect(DWARF_SHEETS.worker2.idle.frames).toBe(6)
+    })
+
+    it('falls back to its own idle for every state it has no sheet for', () => {
+      // The engine's rule, spent here on the rank that needs it most: a working
+      // worker2 plays its idle, never the WORKER's working strip. Borrowing
+      // across ranks is how the foreman ended up walking like a miner (#74).
+      for (const name of ['working', 'start-working', 'end-working', 'sleeping'] as const) {
+        expect(DWARF_SHEETS.worker2[name], name).toBeUndefined()
+      }
+    })
   })
 
   it('plays every sheet at the tempo its own preview GIF was exported at', () => {

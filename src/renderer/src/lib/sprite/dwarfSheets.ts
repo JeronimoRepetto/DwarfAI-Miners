@@ -68,6 +68,23 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
     },
     'end-working': { src: DWARF_SHEET_SRC.worker['end-working'], frames: 6, frameMs: FRAME_MS }
   },
+  /*
+   * The new rank (#157), and the smallest inventory this table admits: an idle
+   * and nothing else. Six frames of 36x38, read off the PNG header, and 100ms
+   * apiece read off the six Graphic Control Extension blocks of the preview GIF
+   * committed beside it — the same cadence every other sheet here was exported
+   * at, verified rather than assumed from the pattern.
+   *
+   * Its WORKING sheet has not been drawn. So a worker2 swinging at a rock plays
+   * this idle, by the rule at the top of this file: a rank falls back to its own
+   * idle, never to another rank's art. That is why the interim "reuse the
+   * worker's sheets" was superseded — a worker2 wearing a worker's skin is the
+   * borrowing that rule exists to forbid, and the maintainer's own art landed
+   * before it could happen.
+   */
+  worker2: {
+    idle: { src: DWARF_SHEET_SRC.worker2.idle, frames: 6, frameMs: FRAME_MS }
+  },
   foreman: {
     // The long idle: 28 frames, which is nearly three seconds before it repeats
     // and is why a foreman standing at his post does not read as a loop at all.
