@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OTHER_CHOICE } from '../lib/launch/launchState'
-import { OTHER_NOT_BUILT } from '../lib/launch/providerChips'
+import { OTHER_NOT_LAUNCHABLE } from '../lib/launch/providerChips'
 import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
@@ -181,7 +181,7 @@ describe('submitting a launch', () => {
     await launch.submit()
 
     expect(api.launchHeldSession).not.toHaveBeenCalled()
-    expect(launch.state.value.error).toBe(OTHER_NOT_BUILT)
+    expect(launch.state.value.error).toBe(OTHER_NOT_LAUNCHABLE)
   })
 
   it('refuses a detected provider it cannot start, repeating main’s reason', async () => {

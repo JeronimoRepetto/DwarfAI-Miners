@@ -16,17 +16,32 @@ import { OTHER_CHOICE, type LaunchChoice } from './launchState'
 export const OTHER_CHIP_LABEL = 'Other'
 
 /**
- * Why a custom command cannot be started.
+ * Why a custom command is not started — the ruling, not a gap (#168).
  *
- * Not a limit of this panel: neither launch channel takes one. `launchAgent`
- * and `launchHeldSession` both carry a mine and a prompt and resolve the CLI
- * themselves, so there is nowhere for a user's command to go. The chip is still
- * drawn where the design draws it, and the gate it opens still works, because
- * hiding it would be answering an unanswered product question by deletion —
- * but Enter says this instead of doing nothing.
+ * This used to say "cannot be started yet", which was honest while neither
+ * launch channel took a provider and there was nowhere for a user's command to
+ * go. #168 built that somewhere, and the answer is still no. The reason has
+ * nothing to do with the wire, which could carry a command string tomorrow:
+ *
+ * A launched command of the user's own writes no session store. Every dwarf on
+ * the board is read out of one — Claude's transcripts, Codex's rollout files —
+ * so a custom process is one the poll can never find, and the panel would sit
+ * in its spawning state waiting for an arrival that cannot happen. Drawing it
+ * anyway would need a third way of noticing a session, which is the second
+ * observation path #86 refuses.
+ *
+ * `launchState.ts` reached this from the other side already: `OTHER_CHOICE` is
+ * kept out of `DwarfProvider` because that union is who OBSERVED a dwarf, and
+ * no observation ever comes back saying 'other'.
+ *
+ * The chip stays where the design draws it and its gate still works — hiding it
+ * would answer a product question by deletion. Enter says this instead.
+ *
+ * The full ruling, including what would change it, is docs/custom-launch-command.md.
  */
-export const OTHER_NOT_BUILT =
-  'A launch command of your own cannot be started yet — the panel starts a detected provider.'
+export const OTHER_NOT_LAUNCHABLE =
+  'A launch command of your own would start a process no dwarf could ever be drawn from — ' +
+  'the panel observes agents through their own session files.'
 
 /** Why a chip for something detection has since stopped reporting cannot be started. */
 export const NOT_DETECTED = 'That provider is no longer detected on this machine.'
@@ -84,7 +99,7 @@ export function launchRefusal(
   chosen: LaunchChoice | null
 ): string | null {
   if (chosen === null) return null
-  if (chosen === OTHER_CHOICE) return OTHER_NOT_BUILT
+  if (chosen === OTHER_CHOICE) return OTHER_NOT_LAUNCHABLE
   const entry = providers.find((option) => option.provider === chosen)
   if (entry === undefined || !entry.installed) return NOT_DETECTED
   if (entry.launchable) return null

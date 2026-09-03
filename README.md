@@ -485,6 +485,8 @@ privately.
   shaped the design.
 - [`docs/simulated-provider.md`](docs/simulated-provider.md) — the development-only simulated
   valley: seeing the panel under load without launching real agents (`DWARFAI_SIMULATE=1`).
+- [`docs/custom-launch-command.md`](docs/custom-launch-command.md) — why the Add Panel's
+  **Other** chip refuses to run a command of your own, and what would change that.
 - [`LICENSE`](LICENSE) — MIT, code and artwork alike.
 
 ## Support the project
