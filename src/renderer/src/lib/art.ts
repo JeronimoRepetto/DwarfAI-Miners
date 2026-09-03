@@ -61,6 +61,7 @@ import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
 import iconAdd from '../../../../docs/assets/icons/add.svg?url'
 import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
+import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.svg?url'
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 
@@ -248,6 +249,45 @@ export const SORT_ICON_SRC = iconFilter
 export const ADD_ICON_SRC = iconAdd
 export const DIALOG_ICON_SRC = iconDialog
 export const SLEEP_ICON_SRC = iconSleep
+
+/**
+ * The question-put-to-the-user glyph (#153), and the one icon in this file that
+ * is NOT drawn through a mask.
+ *
+ * `components.md` gives the other status icons a colour and marks this one
+ * **Unspecified**, so the designer's own file decides: an alert octagon painted
+ * `#ff0000` with the exclamation cut out of it, which is what the design's mine
+ * mock shows. Recolouring it would be filling a gap the source deliberately
+ * left, so it is rendered as an ordinary image and the gap stays visible.
+ */
+export const IMPORTANT_DIALOG_ICON_SRC = iconImportantDialog
+
+/**
+ * One committed glyph as a CSS value a `mask` can actually be drawn with.
+ *
+ * ## Why this exists (#153)
+ *
+ * Every icon in the shipped app rendered as a solid coloured square, and it was
+ * one character. These SVGs are all under 4 KB, so the bundler inlines each as a
+ * `data:image/svg+xml,...` URI — and its encoder rewrites the file's own double
+ * quotes to single ones, so the URI arrives full of `'`. The components wrote
+ * the mask as a bare `url(<that>)`, and **a CSS url-token may not contain a
+ * quote**: the parser produces a bad-url-token, the custom property carrying it
+ * is discarded, `var(--nav-icon)` never resolves, the whole `mask` shorthand
+ * falls back to `none`, and the `background` underneath paints the full box.
+ * Nothing errors and nothing warns; the glyph is simply a block.
+ *
+ * The dev server hands out `/@fs/...` paths with no quotes in them, which is why
+ * the icons looked right until somebody ran a build.
+ *
+ * So the url is quoted here, once, and any double quote in the source is
+ * percent-encoded so a future encoder cannot break out of the quoting the same
+ * way the apostrophes broke out of none. Every masked glyph in the renderer
+ * goes through this rather than interpolating a `url()` of its own.
+ */
+export function maskImageValue(src: string): string {
+  return `url("${src.replaceAll('"', '%22')}")`
+}
 
 /** The app mark, centred at the top of the rail and of the navigation column. */
 export const TRAY_ICON_SRC = trayIcon

@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { RAIL_WIDTH } from './panelBounds'
+import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
 import {
   applyAlwaysOnTop,
   applyPanelBounds,
+  applyUiScale,
   buildMainWindowOptions,
   panelLayout,
   seedPanelEdge,
   setPanelLayout,
   type AlwaysOnTopTarget,
-  type PanelBoundsTarget
+  type PanelBoundsTarget,
+  type UiScaleTarget
 } from './window'
 
 /**
@@ -47,6 +49,55 @@ describe('applyAlwaysOnTop', () => {
   it('reports the REAL state, never the wish, when the platform refuses the change', () => {
     const { target } = fakeWindow({ honorsChanges: false, initial: false })
     expect(applyAlwaysOnTop(target, true)).toBe(false)
+  })
+})
+
+/**
+ * The shell as a 1080-designed surface scaled onto the display (#153).
+ *
+ * Same read-back rule as the pin and the bounds: Electron forwards the request
+ * and the answer is what the page ACTUALLY got, because a zoom the renderer
+ * refused would leave main computing a window for a surface that is not there.
+ */
+function fakeZoomTarget(options: { honorsChanges?: boolean } = {}) {
+  let real = 1
+  const calls: number[] = []
+  const target: UiScaleTarget = {
+    setZoomFactor: (factor) => {
+      calls.push(factor)
+      if (options.honorsChanges !== false) real = factor
+    },
+    getZoomFactor: () => real
+  }
+  return { target, calls }
+}
+
+describe('applyUiScale', () => {
+  it('zooms the page by the display’s own height against the design world', () => {
+    const { target, calls } = fakeZoomTarget()
+    const area = { x: 0, y: 0, width: 3840, height: 2160 }
+    expect(applyUiScale(target, area)).toBe(2)
+    expect(calls).toEqual([2])
+  })
+
+  it('leaves a display that IS the design world at 1, so nothing is resampled', () => {
+    const { target } = fakeZoomTarget()
+    expect(applyUiScale(target, { x: 0, y: 0, width: 1920, height: DESIGN_SCREEN_HEIGHT })).toBe(1)
+  })
+
+  it('applies the same continuous factor the window’s own width is derived from', () => {
+    const { target, calls } = fakeZoomTarget()
+    const twoK = { x: 0, y: 0, width: 2560, height: 1392 }
+    applyUiScale(target, twoK)
+    // The panel's physical width and the renderer's zoom have to come from one
+    // number: if they ever disagree the columns main reserved stop matching the
+    // columns the renderer draws, which is invisible until something clips.
+    expect(calls).toEqual([uiScale(twoK)])
+  })
+
+  it('reports the REAL factor, never the wish, when the page refuses it', () => {
+    const { target } = fakeZoomTarget({ honorsChanges: false })
+    expect(applyUiScale(target, { x: 0, y: 0, width: 3840, height: 2160 })).toBe(1)
   })
 })
 

@@ -2,12 +2,18 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDwarfKicking } from '../../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
-import { ADD_ICON_SRC, CLOSE_ICON_SRC, INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
+import {
+  ADD_ICON_SRC,
+  CLOSE_ICON_SRC,
+  INTERIOR_ART_SIZE,
+  INTERIOR_SRC,
+  maskImageValue
+} from '../../lib/art'
 import { createBubbleBoard } from '../../lib/overlay/bubbles'
 import { assignScene } from '../../lib/scene/sceneAssignment'
 import { clampToBox, projectToBox } from '../../lib/scene/sceneGeometry'
 import { INTERIOR_ROUTE, routeBetween } from '../../lib/scene/interiorRoute'
-import { depthOrder, sceneLayout, type ScenePoint } from '../../lib/scene/sceneLayout'
+import { depthOrder, nearestSpawn, sceneLayout, type ScenePoint } from '../../lib/scene/sceneLayout'
 import { createWalkBoard, prefersReducedMotion, type WalkState } from '../../lib/scene/sceneMotion'
 import {
   AUTHORED_INTERIOR_BOX,
@@ -87,9 +93,11 @@ onMounted(() => {
     }
   }
   measure()
-  // The column is a fixed 245px but its HEIGHT is the display's, so the
-  // letterbox — and with it every projected point — changes between displays
-  // and whenever the shell is re-docked.
+  // Both of the column's dimensions come from the display now (#153): its
+  // height is the shell's, and its width is derived from that height at the
+  // painting's own aspect. So every projected point moves whenever the shell is
+  // re-docked or lands on another screen, and there is no authored size to fall
+  // back on beyond the first frame.
   if (typeof ResizeObserver === 'function') {
     boxObserver = new ResizeObserver(measure)
     boxObserver.observe(element)
@@ -136,7 +144,17 @@ watch(
     for (const [id, placement] of next) targets.set(id, placement.point)
     // The board asks for a route only when a target has actually moved, so the
     // two-second poll does not re-plan the whole crew's journeys every tick.
-    walkBoard.sync(targets, (from, to) => routeBetween(INTERIOR_ROUTE, from, to))
+    //
+    // The third argument is #153's eleventh correction: a dwarf that turns up
+    // after the mine was opened is an ARRIVAL, and it comes in at the nearest
+    // entrance and walks its route to its station rather than materialising on
+    // it. The crew that was already at work when the mine opened is placed —
+    // the board draws that line itself, on the first sync.
+    walkBoard.sync(
+      targets,
+      (from, to) => routeBetween(INTERIOR_ROUTE, from, to),
+      (target) => nearestSpawn(layout.value, target)
+    )
   },
   { immediate: true }
 )
@@ -299,8 +317,7 @@ onBeforeUnmount(() => {
         merged figure: materials do not convert into one another (#22).
       -->
       <VaultChip
-        class="interior-vault"
-        variant="inline"
+        variant="strip"
         :tokens-observed="mine.tokensObserved"
         :materials="mine.materials"
       />
@@ -311,7 +328,7 @@ onBeforeUnmount(() => {
       <button class="close-mine" type="button" aria-label="Close mine" @click="emit('back')">
         <span
           class="action-glyph"
-          :style="{ '--action-icon': `url(${CLOSE_ICON_SRC})` }"
+          :style="{ '--action-icon': maskImageValue(CLOSE_ICON_SRC) }"
           aria-hidden="true"
         ></span>
       </button>
@@ -333,7 +350,7 @@ onBeforeUnmount(() => {
       >
         <span
           class="action-glyph"
-          :style="{ '--action-icon': `url(${ADD_ICON_SRC})` }"
+          :style="{ '--action-icon': maskImageValue(ADD_ICON_SRC) }"
           aria-hidden="true"
         ></span>
       </button>
@@ -452,19 +469,15 @@ onBeforeUnmount(() => {
     transition: none;
   }
 }
-/* The materials strip along the interior's bottom edge, as the export draws it. */
-.interior-vault {
-  position: absolute;
-  z-index: 6;
-  right: 8px;
-  bottom: 6px;
-  left: 8px;
-  justify-content: center;
-  padding: 2px 6px;
-  border: 0;
-  border-radius: 999px;
-  background: #0a0806cc;
-}
+/*
+ * The materials strip has no rule here at all any more (#153). It used to be
+ * placed from out here and lost the specificity race against
+ * `.vault-chip.is-inline { position: static }` inside the component — two
+ * classes to one — so the strip fell into normal flow and floated at the
+ * interior's TOP instead of sitting along its bottom edge. The chip's `strip`
+ * variant places itself now, which is the only arrangement that cannot be lost
+ * to a selector somebody else writes.
+ */
 /*
  * The two round actions the design floats on the interior: Close at the top
  * right, Add at the lower right. Both are drawn through a CSS mask from the

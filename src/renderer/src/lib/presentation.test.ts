@@ -91,9 +91,25 @@ describe('isSpriteFlipped', () => {
   })
 })
 
+/*
+ * AMENDED for #153's tenth correction. This asserted 16 seconds, chosen to fill
+ * the runtime's own 20-second grace window — and the maintainer watched a dwarf
+ * reach its exit and then stand there, because the fade held full opacity for
+ * the first 85% of that window and only faded over the last 2.4 seconds.
+ *
+ * The two are no longer the same clock. How long a departed session stays in the
+ * board is main's business (`dwarfLeaveGraceS`, still 20s); how long its dwarf
+ * takes to leave the screen is the panel's, and it is now prompt.
+ */
 describe('LEAVING_EXIT_MS', () => {
-  it('matches the runtime grace window a leaving dwarf has to walk out', () => {
-    expect(LEAVING_EXIT_MS).toBe(16_000)
+  it('takes a leaving dwarf off the screen promptly', () => {
+    expect(LEAVING_EXIT_MS).toBe(1_200)
+  })
+
+  it('is far shorter than the grace window it used to fill', () => {
+    // 20 seconds is `dwarfLeaveGraceS` in main/config — the runtime keeps the
+    // dwarf that long, and the panel must not make the user watch it.
+    expect(LEAVING_EXIT_MS).toBeLessThan(20_000 / 4)
   })
 })
 

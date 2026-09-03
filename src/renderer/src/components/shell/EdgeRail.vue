@@ -26,7 +26,14 @@ const emit = defineEmits<{ toggle: [] }>()
 
 const direction = computed(() => arrowDirection(props.edge, props.expanded))
 
-const label = computed(() => (props.expanded ? 'Collapse the panel' : 'Open DwarfAI-Miners'))
+/*
+ * What this control does, since #153: it closes the SECONDARY panel, and a mine
+ * held open beside it stays open — the design's own mine mock is exactly that
+ * state. Collapsing the whole shell back into the rail is the app mark's job,
+ * at the top of the navigation stack. The name has to stop promising the bigger
+ * action, because the arrow no longer takes it.
+ */
+const label = computed(() => (props.expanded ? 'Close this panel' : 'Open DwarfAI-Miners'))
 </script>
 
 <template>

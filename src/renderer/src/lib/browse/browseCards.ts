@@ -35,20 +35,61 @@ export const TIER_CHIPS: readonly TierChip[] = [
 ]
 
 /**
- * The tier to print on a card, or nothing at all.
+ * The tier a card may state, or nothing at all.
  *
- * `knownTier` is absent until a walk has measured one, and absent means
- * unmeasured rather than bronze (#41). A card states a measurement or it states
- * nothing — the provisional bronze `tierOf()` hands the map is for DRAWING a
- * mound, and a label is a claim.
+ * ## Why this is a derivation and not just a field (#153)
+ *
+ * A declared folder's card drew the level bar with no tier and no art beside it,
+ * and the cause was a join. The bar reads `weightBytes`, which the tier walk's
+ * own cache publishes for anything it has ever weighed; the label and the
+ * painting read `knownTier`, which the projects store only fills while a mine is
+ * actually being WORKED. So a card could say how far a mine had climbed while
+ * refusing to say which tier it was climbing in — half a fact, which reads as a
+ * bug rather than as restraint.
+ *
+ * A measured weight IS a classification: it is the same number `tierForBytes`
+ * classifies in main, against the same canonical table. So the weight answers
+ * when the store has not. `knownTier` still wins where it exists — it is the
+ * store's own record of a walk's verdict, and a derivation must never overrule
+ * one — and absence still claims nothing at all, which is #41's rule intact:
+ * `tierOf()`'s provisional bronze is for DRAWING a mound, never for stating a
+ * fact on a card.
  */
-export function cardTierLabel(project: ProjectSummary): string | undefined {
-  return project.knownTier === undefined ? undefined : browseTierLabel(project.knownTier)
+export function cardTierFor(project: ProjectSummary): MineTier | undefined {
+  if (project.knownTier !== undefined) return project.knownTier
+  if (project.weightBytes === undefined) return undefined
+  return tierForWeightBytes(project.weightBytes)
 }
 
-/** The entrance painting of the measured tier; no painting for an unmeasured project. */
+/**
+ * The canonical classification of a byte weight.
+ *
+ * Mirrors `tierForBytes` in main/tier/tierService.ts — the same bracket order
+ * and the same `>=` comparisons against the same shared table — so the two stay
+ * one honest reading of one measurement rather than two classifications that
+ * could disagree about the same folder. `nextBoundaryKbFor` below already
+ * mirrors it for the bar's denominator; this is the tier that bar is climbing
+ * out of, and keeping both here means the card has exactly one source.
+ */
+function tierForWeightBytes(weightBytes: number): MineTier {
+  const { copperKb, silverKb, goldKb, uraniumKb } = TIER_WEIGHT_THRESHOLDS_KB
+  if (weightBytes >= uraniumKb * BYTES_PER_KB) return 'uranium'
+  if (weightBytes >= goldKb * BYTES_PER_KB) return 'gold'
+  if (weightBytes >= silverKb * BYTES_PER_KB) return 'silver'
+  if (weightBytes >= copperKb * BYTES_PER_KB) return 'copper'
+  return 'bronze'
+}
+
+/** The tier to print on a card, or nothing at all — see cardTierFor. */
+export function cardTierLabel(project: ProjectSummary): string | undefined {
+  const tier = cardTierFor(project)
+  return tier === undefined ? undefined : browseTierLabel(tier)
+}
+
+/** The entrance painting of that tier; no painting for a project nobody has weighed. */
 export function cardArtFor(project: ProjectSummary): string | undefined {
-  return project.knownTier === undefined ? undefined : MOUND_SRC[project.knownTier]
+  const tier = cardTierFor(project)
+  return tier === undefined ? undefined : MOUND_SRC[tier]
 }
 
 /**

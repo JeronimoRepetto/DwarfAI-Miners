@@ -61,6 +61,7 @@ import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SOURCE = join(REPO_ROOT, 'docs', 'mine-interior-features.json')
+const FACING = join(REPO_ROOT, 'docs', 'mine-interior-facing.json')
 const TARGET = join(REPO_ROOT, 'src', 'renderer', 'src', 'lib', 'scene', 'interiorMap.ts')
 
 /**
@@ -211,12 +212,103 @@ export function spliceStub(rawNetwork, rawStub) {
   return { nodes, edges, bridgeSpan: best.span }
 }
 
+/**
+ * How close to a corridor is "standing on it", in painting pixels.
+ *
+ * A station whose nearest corridor point is directly above or below it has no
+ * side to turn away from, and 12px is under one screen pixel at the design's own
+ * column — far below anything a viewer could see.
+ */
+const FACING_EPSILON_PX = 12
+
+/** Where on the segment `a`-`b` the foot of the perpendicular from `p` falls, 0-1. */
+function projectOntoSegment(p, a, b) {
+  // In painting pixels, so the projection is a real perpendicular rather than
+  // one skewed by the art's 1:3 shape.
+  const ax = (a.x / 100) * PAINTING_SIZE.width
+  const ay = (a.y / 100) * PAINTING_SIZE.height
+  const bx = (b.x / 100) * PAINTING_SIZE.width
+  const by = (b.y / 100) * PAINTING_SIZE.height
+  const px = (p.x / 100) * PAINTING_SIZE.width
+  const py = (p.y / 100) * PAINTING_SIZE.height
+  const dx = bx - ax
+  const dy = by - ay
+  const squared = dx * dx + dy * dy
+  if (squared === 0) return 0
+  return Math.min(Math.max(((px - ax) * dx + (py - ay) * dy) / squared, 0), 1)
+}
+
+/**
+ * The closest point on the whole corridor network to `point`, in image percent.
+ *
+ * Segments rather than junctions, for the reason `interiorRoute.nearestOnRoute`
+ * gives at render time: a station halfway along a gallery attaches to the
+ * gallery beside it, not to the stairs at its end.
+ */
+function nearestOnEdges(point, edges) {
+  let best
+  for (const edge of edges) {
+    for (let index = 0; index + 1 < edge.points.length; index++) {
+      const a = edge.points[index]
+      const b = edge.points[index + 1]
+      const t = projectOntoSegment(point, a, b)
+      const on = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+      const span = distance(point, on)
+      if (!best || span < best.span) best = { point: on, span }
+    }
+  }
+  return best
+}
+
+/**
+ * Which way a dwarf standing here faces, derived from the corridors around it.
+ *
+ * The maintainer's rule: a dwarf faces the WALL it is picking. A workstation is
+ * marked BESIDE a corridor — the dwarf steps off the path and turns to the rock
+ * — so the rock is on the side away from the nearest corridor point, and that is
+ * the whole derivation. Distances are painting pixels, never percent, for the
+ * reason the header already gives about this art's 1:3 shape.
+ *
+ * A station standing ON its corridor has no side to read; it falls back to
+ * `x > 50`, the "face the middle of the shaft" rule that used to decide every
+ * station. That rule is a coincidence rather than a principle — it agrees with
+ * the maintainer's authored sheet on five of eighteen workers — so it survives
+ * only where there is genuinely nothing better to say.
+ */
+export function facingFromRoute(station, edges) {
+  const near = nearestOnEdges(station, edges)
+  if (!near) return station.x > 50
+  const dx = ((near.point.x - station.x) / 100) * PAINTING_SIZE.width
+  if (Math.abs(dx) < FACING_EPSILON_PX) return station.x > 50
+  // The corridor is to the right, so the rock the dwarf works is to the left.
+  return dx > 0
+}
+
+/**
+ * The facing this station actually ships with: the authored one if the
+ * maintainer drew an arrow on it, the derivation otherwise.
+ *
+ * An authored value WINS outright and is never averaged with anything: an arrow
+ * drawn on the art is evidence, and the derivation is an inference from a
+ * corridor mask. A value the sheet spells wrong throws rather than falling back,
+ * because silently deriving where an override was intended is the one failure
+ * that would look exactly like the override working.
+ */
+export function stationFacing(station, edges, overrides) {
+  const authored = overrides[station.id]
+  if (authored === undefined) return facingFromRoute(station, edges)
+  if (authored === 'left') return true
+  if (authored === 'right') return false
+  throw new Error(`authored facing for ${station.id} is neither 'left' nor 'right': ${authored}`)
+}
+
 function formatPoint(point) {
   return `{ x: ${point.x}, y: ${point.y} }`
 }
 
 async function build() {
   const source = JSON.parse(readFileSync(SOURCE, 'utf8'))
+  const overrides = JSON.parse(readFileSync(FACING, 'utf8')).facing ?? {}
 
   const stations = []
   for (const kind of STATION_KINDS) {
@@ -227,13 +319,25 @@ async function build() {
 
   const route = spliceStub(source.paths.network, source.paths.stub)
 
+  // An authored facing for a station that does not exist is a typo that would
+  // otherwise do nothing at all, quietly — the sheet is transcribed by hand.
+  for (const id of Object.keys(overrides)) {
+    if (!stations.some((station) => station.id === id)) {
+      throw new Error(`authored facing names ${id}, which is not a station in the extraction`)
+    }
+  }
+  for (const station of stations) {
+    station.facesLeft = stationFacing(station, route.edges, overrides)
+  }
+
   const lines = []
   lines.push(`/**
  * The mine interior's logical map: every place a dwarf can stand, and every
  * corridor between them, in percent of the painting.
  *
  * GENERATED by \`node scripts/build-interior-map.mjs\` from
- * \`docs/mine-interior-features.json\` — never edit the coordinates by hand.
+ * \`docs/mine-interior-features.json\` and \`docs/mine-interior-facing.json\` —
+ * never edit the coordinates or the facings by hand.
  * That script's header carries the whole argument: why the extracted dataset's
  * own percentages are NOT these ones, how the panel's art box was measured, and
  * why one topology serves all five tiers. Read it before changing a number.
@@ -270,6 +374,20 @@ export type InteriorStationKind = 'spawn' | 'worker' | 'foreman' | 'ladder' | 'r
 export interface InteriorStation extends InteriorPoint {
   id: string
   kind: InteriorStationKind
+  /**
+   * Whether a dwarf standing here faces left. The art is painted facing right.
+   *
+   * DATA, never re-derived at render time (#153): the maintainer authored an
+   * arrow on every workstation across all five tier panels, and
+   * \`docs/mine-interior-facing.json\` is that sheet transcribed. Stations the
+   * sheet does not author — the three foreman spots and the corridor features —
+   * take the generator's own derivation instead: a station sits beside a
+   * corridor and turns AWAY from it, into the rock it is picking.
+   *
+   * What this replaces is \`facesLeft = x > 50\`, "face the middle of the shaft",
+   * which agreed with the authored sheet on five of the eighteen workers.
+   */
+  facesLeft: boolean
 }
 
 /** A junction or endpoint of the passable-path network. */
@@ -332,7 +450,8 @@ export const PANEL_ART_BOX = {
 export const INTERIOR_STATIONS: readonly InteriorStation[] = [`)
   for (const station of stations) {
     lines.push(
-      `  { id: '${station.id}', kind: '${station.kind}', x: ${station.x}, y: ${station.y} },`
+      `  { id: '${station.id}', kind: '${station.kind}', x: ${station.x}, y: ${station.y},` +
+        ` facesLeft: ${station.facesLeft} },`
     )
   }
   lines.push(`]

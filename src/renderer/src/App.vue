@@ -19,6 +19,7 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
+import { INTERIOR_ART_SIZE } from './lib/art'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot, ShellArea } from './types'
@@ -152,6 +153,14 @@ const build = ref<AppBuild | null>(null)
 const versionText = computed(() => (build.value === null ? null : versionLabel(build.value)))
 const versionHint = computed(() => (build.value === null ? '' : versionTitle(build.value)))
 
+/**
+ * The interior painting's own shape, published to CSS so the mine column can
+ * derive its width from the height the shell gives it (#153). Bound from
+ * `INTERIOR_ART_SIZE` rather than written into the stylesheet, so the column and
+ * the projection inside it cannot disagree about the painting.
+ */
+const interiorColumnAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
+
 const loading = ref(true)
 const error = ref<string | null>(null)
 const activating = ref<string | null>(null)
@@ -167,17 +176,39 @@ const currentMine = computed<Mine | undefined>(() =>
  * The mine column is width the WINDOW has to be given before anything can be
  * drawn into it, so opening or closing a mine reshapes the shell. Serialized in
  * usePanelLayout behind whatever the rail is doing, because the two overlap.
+ *
+ * The secondary panel is left exactly as it is (#153): the two columns are
+ * independent now, so a mine opening beside a closed secondary must not reopen
+ * it, and a mine closing while the secondary is closed leaves the rail.
  */
 watch(
   () => viewState.mineId !== null,
   (mineOpen) => {
-    if (!layout.value.expanded) return
-    void applyLayout({ expanded: true, mineOpen })
+    // Collapsed into the rail: nothing is drawn, and a mine opened behind it
+    // must not pop the window back out.
+    if (!layout.value.expanded && !layout.value.mineOpen) return
+    void applyLayout({ expanded: layout.value.expanded, mineOpen })
   }
 )
 
-function toggleShell(): void {
+/**
+ * The rail's arrow (#153): it closes the SECONDARY panel and leaves a mine held
+ * open beside it standing — the design's own mine mock is exactly that state.
+ * With no mine open there is nothing left to show, so it lands on the rail.
+ */
+function toggleSecondary(): void {
   void toggleLayout(viewState.mineId !== null)
+}
+
+/**
+ * The app mark above the navigation stack: the whole shell back into the rail.
+ *
+ * Which mine is open is NOT forgotten — `useView` keeps it, so the next press of
+ * the arrow brings the interior back with the panel. The layout says what is
+ * drawn, never what the user last chose.
+ */
+function collapseShell(): void {
+  void applyLayout({ expanded: false, mineOpen: false })
 }
 
 function hidePanel(): void {
@@ -304,16 +335,20 @@ onBeforeUnmount(() => unsubscribe?.())
 </script>
 
 <template>
-  <div class="shell" :class="[`edge-${layout.edge}`, layout.expanded ? 'is-open' : 'is-closed']">
+  <div
+    class="shell"
+    :class="[`edge-${layout.edge}`, layout.expanded ? 'is-open' : 'is-closed']"
+    :style="{ '--interior-column-aspect': interiorColumnAspect }"
+  >
     <!--
       The rail and the collapse arrow are one control in one component, because
       they are one surface in the design: the same #f6b644, with the arrow
       turned round.
     -->
-    <EdgeRail :edge="layout.edge" :expanded="layout.expanded" @toggle="toggleShell" />
+    <EdgeRail :edge="layout.edge" :expanded="layout.expanded" @toggle="toggleSecondary" />
 
-    <template v-if="layout.expanded">
-      <div class="shell-secondary">
+    <template v-if="layout.expanded || layout.mineOpen">
+      <div v-if="layout.expanded" class="shell-secondary">
         <!--
           The map container from the design: 21px padding on every side, a 2px
           #fae2b6 border and elevation 5, with the collected-materials totals
@@ -394,16 +429,32 @@ onBeforeUnmount(() => unsubscribe?.())
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
       </div>
 
-      <ShellNav :area="viewState.area" :broken="shortcutBroken" @select="selectArea" />
+      <ShellNav
+        :area="viewState.area"
+        :broken="shortcutBroken"
+        @select="selectArea"
+        @collapse="collapseShell"
+      />
 
       <!--
-        One mine beside one secondary panel: the concurrent model the design's
-        exports prove, and no more than that — the source warns in as many words
-        against assuming arbitrary multi-panel stacking.
+        One mine beside AT MOST one secondary panel: the concurrent model the
+        design's exports prove, and no more than that — the source warns in as
+        many words against assuming arbitrary multi-panel stacking. The column
+        follows the view's own open mine, as it always has; what main's
+        `mineOpen` decides is whether this whole block is drawn, so the app mark
+        can collapse the shell without the view forgetting its mine (#153).
       -->
       <div v-if="currentMine" class="shell-mine">
         <PanelFrame>
+          <!--
+            Keyed by the mine, so switching from one to another is a fresh
+            scene rather than the same one handed different dwarfs (#153). The
+            walk board tells an arrival from the opening crew by which snapshot
+            it first saw them, and a reused board would parade a whole new
+            crew across the interior every time the user changed mine.
+          -->
           <MineScene
+            :key="currentMine.id"
             :mine="currentMine"
             :activating-id="activating"
             :send-states="messagingState.byDwarfId"
@@ -440,6 +491,16 @@ onBeforeUnmount(() => unsubscribe?.())
 .shell.edge-left {
   flex-direction: row-reverse;
 }
+/*
+ * The closed window is the platform's 32px floor rather than the design's 20px
+ * rail, because Windows will not make one narrower (#153, MIN_WINDOW_WIDTH in
+ * main/shell/panelBounds.ts). The rail itself is still 20px, held against the
+ * DOCKED side so both edges look the same: `flex-end` is the right of a `row`
+ * and the left of a `row-reverse`, which is exactly the docked side each time.
+ */
+.shell.is-closed {
+  justify-content: flex-end;
+}
 .shell.is-open {
   gap: var(--space-nav-gap);
   padding: var(--space-nav-gap);
@@ -459,19 +520,25 @@ onBeforeUnmount(() => unsubscribe?.())
   min-height: 0;
 }
 /*
- * The mine's own column, outboard of the navigation stack (see the exports):
- * the design's 245px interior and nothing else. It carried 32px more until
- * #137, for the header row and padding the old cave scene wrapped around
- * itself; the design's interior has no such chrome — the painting is the
- * screen, and the Close and Add actions float on top of it. main reserves the
- * same width in the window; see MINE_COLUMN_WIDTH in main/shell/panelBounds.ts.
+ * The mine's own column, outboard of the navigation stack (see the exports).
+ *
+ * Its width is DERIVED, not declared (#153): the painting is drawn at the full
+ * height of the shell's content area with its aspect preserved and nothing
+ * cropped, so `aspect-ratio` on a full-height column is the whole rule — the
+ * browser reads the height the flex row already gave it and answers with the
+ * width. The design's 245px is what that returns at the mock's own 768-tall
+ * composition; reserving 245 on a 1392-tall display is what made the interior
+ * read tiny. main reserves the same number in the window; see mineColumnWidth
+ * in main/shell/panelBounds.ts and interiorColumnWidth in lib/scene/sceneSizing.
  */
 .shell-mine {
   position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: var(--size-mine-interior-width);
+  width: auto;
+  height: 100%;
+  aspect-ratio: var(--interior-column-aspect);
   min-width: 0;
 }
 .shell-mine > .panel-frame {

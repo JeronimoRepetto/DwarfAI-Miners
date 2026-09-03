@@ -27,6 +27,7 @@
  */
 import type { MineTier } from '../../types'
 import { INTERIOR_STATIONS, type InteriorPoint } from './interiorMap'
+import { paintingDistance } from './interiorRoute'
 
 /** A point on the painting, in percent of the painting's own canvas. */
 export type ScenePoint = InteriorPoint
@@ -52,11 +53,13 @@ export interface SceneAnchor extends ScenePoint {
   /**
    * Whether a dwarf parked here faces left. The art is painted facing right.
    *
-   * Derived rather than authored, because the extraction carries no facing and
-   * inventing 24 of them by hand would be 24 chances to be wrong: a dwarf faces
-   * the middle of the shaft, so one on the right-hand wall turns to face it.
-   * That is the reading the design's own frames support — every worker in the
-   * mock is swinging at the rock behind him, and the rock is outboard.
+   * READ from the map, never decided here (#153). It used to be derived — "a
+   * dwarf faces the middle of the shaft, so one on the right-hand wall turns to
+   * face it" — and the maintainer's acceptance run found that wrong for thirteen
+   * of the eighteen worker stations: a dwarf faces the WALL it is picking, and
+   * which wall that is depends on the rock, not on which half of the painting
+   * the station sits in. They then authored an arrow on every workstation across
+   * all five tier panels, and `interiorMap.ts` carries the transcription.
    */
   facesLeft: boolean
 }
@@ -84,7 +87,7 @@ const [FIRST_ANCHOR, ...REST_ANCHORS] = INTERIOR_STATIONS.filter((station) =>
   kind: station.kind as SceneAnchorKind,
   x: station.x,
   y: station.y,
-  facesLeft: station.x > 50
+  facesLeft: station.facesLeft
 }))
 if (!FIRST_ANCHOR) throw new Error('the interior map carries no workstation a dwarf can occupy')
 const INTERIOR_ANCHORS: readonly [SceneAnchor, ...SceneAnchor[]] = [FIRST_ANCHOR, ...REST_ANCHORS]
@@ -123,6 +126,32 @@ export function anchorPool(
 ): readonly [SceneAnchor, ...SceneAnchor[]] {
   const [first, ...rest] = anchorsOfKind(layout, kind)
   return first ? [first, ...rest] : layout.anchors
+}
+
+/**
+ * The spawn point a dwarf arriving for this station comes in at (#153).
+ *
+ * The nearest one, in PAINTING PIXELS — the interior is three times taller than
+ * it is wide, so a percent-space hypotenuse would send a dwarf working the top
+ * gallery in through the entrance pool at the bottom because it happens to be
+ * closer in y. Distances are the corridor module's, for exactly that reason.
+ *
+ * The design does not say which of the three entrances an agent uses; it says
+ * only that a launched worker "appears at an available spawn point". Nearest is
+ * the reading that makes the walk mean something — a dwarf coming in for the
+ * ceiling gallery uses the top entrance, not a trek up the whole tower.
+ */
+export function nearestSpawn(layout: SceneLayout, point: ScenePoint): SceneAnchor {
+  const spawns = anchorPool(layout, 'spawn')
+  let best = spawns[0]
+  let bestSpan = paintingDistance(point, best)
+  for (const spawn of spawns) {
+    const span = paintingDistance(point, spawn)
+    if (span >= bestSpan) continue
+    best = spawn
+    bestSpan = span
+  }
+  return best
 }
 
 function clamp(value: number, min: number, max: number): number {

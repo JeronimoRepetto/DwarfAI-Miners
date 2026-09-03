@@ -32,6 +32,37 @@ describe('MineCard naming', () => {
     const wrapper = mount(MineCard, { props: { project: defaultProject() } })
     expect(wrapper.find('.card-art').exists()).toBe(false)
   })
+
+  /*
+   * #153's seventh correction, as the maintainer met it: a declared folder's
+   * card showed the level bar and nothing else — no tier, no art — because the
+   * bar joins from the tier walk's weight and the tier joined from a store field
+   * only a WORKED mine fills. The card is one row again, and that is also the
+   * bar alignment: the level column starts after the art, so a card missing its
+   * art started its bar in a different place from every neighbour.
+   */
+  it('states the tier its measured weight puts it in, art and all', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ name: 'Galactic-CV', weightBytes: 331 * 1024 }) }
+    })
+    expect(wrapper.get('.card-tier').text()).toBe('Cropper mine -')
+    expect(wrapper.get('.card-art').attributes('src')).toBeTruthy()
+    expect(wrapper.find('.card-level').exists()).toBe(true)
+    expect(wrapper.attributes('data-tier')).toBe('copper')
+  })
+
+  it('draws the same row whether the tier was recorded or derived', () => {
+    const recorded = mount(MineCard, {
+      props: { project: defaultProject({ knownTier: 'copper', weightBytes: 331 * 1024 }) }
+    })
+    const derived = mount(MineCard, {
+      props: { project: defaultProject({ weightBytes: 331 * 1024 }) }
+    })
+    expect(derived.get('.card-art').attributes('src')).toBe(
+      recorded.get('.card-art').attributes('src')
+    )
+    expect(derived.get('.card-tier').text()).toBe(recorded.get('.card-tier').text())
+  })
 })
 
 /*

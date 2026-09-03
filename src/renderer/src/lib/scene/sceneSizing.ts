@@ -53,8 +53,48 @@ import { SPRITE_FRAME_SIZE } from '../sprite/spriteSheet'
  */
 export const INTERIOR_FIT: ImageFit = 'contain'
 
-/** The design's interior column, from `--size-mine-interior-width`. */
+/**
+ * The design's interior column, from `--size-mine-interior-width`.
+ *
+ * Since #153 this is a REFERENCE rather than the column's width: it is the one
+ * number the sprite scale is calibrated against (see DWARF_PAINTING_HEIGHT
+ * below), and the value the derivation reproduces at the mock's own height. The
+ * column the shell actually draws is `interiorColumnWidth` below.
+ */
 export const DESIGN_INTERIOR_WIDTH = 245
+
+/**
+ * How much of the window's height the shell spends before a painting sees any
+ * of it: the 8px padding `App.vue` puts around the open shell, top and bottom.
+ *
+ * A deliberate copy of that stylesheet's `--space-nav-gap`, kept here because
+ * main has to reserve the width this height derives and cannot read CSS. The
+ * frame's own 2px border is NOT counted: the painting is drawn `contain` inside
+ * it, so the four pixels it costs letterbox rather than crop, and counting them
+ * would make the column disagree with the `aspect-ratio` the stylesheet sets.
+ */
+export const SHELL_CONTENT_INSET = 16
+
+/**
+ * How wide the mine column is on a window this tall (#153).
+ *
+ * The maintainer's acceptance ruling, evaluated: the painting is drawn at the
+ * FULL HEIGHT of the shell's content area with its aspect preserved and nothing
+ * cropped, so the width follows the height. The design's 245 is what this
+ * returns at the mock's own 768-tall composition — it was never a constant, and
+ * treating it as one is what made the interior read tiny on a 1392-tall display.
+ *
+ * Whole pixels, because main reserves the same number in the window and Electron
+ * bounds take nothing else; `panelBounds.test.ts` holds the two derivations
+ * equal at every height.
+ */
+export function interiorColumnWidth(windowHeightPx: number): number {
+  const content = windowHeightPx - SHELL_CONTENT_INSET
+  return Math.max(
+    0,
+    Math.round((content * INTERIOR_PAINTING_SIZE.width) / INTERIOR_PAINTING_SIZE.height)
+  )
+}
 
 /**
  * The interior box the design's own frame produces: 245px wide at the

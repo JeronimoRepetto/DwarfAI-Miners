@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ADD_ICON_SRC, SORT_ICON_SRC } from '../../lib/art'
+import { ADD_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
 import MineCard from './MineCard.vue'
@@ -109,7 +109,7 @@ onBeforeUnmount(stopWatching)
       >
         <span
           class="control-glyph"
-          :style="{ '--control-icon': `url(${SORT_ICON_SRC})` }"
+          :style="{ '--control-icon': maskImageValue(SORT_ICON_SRC) }"
           aria-hidden="true"
         ></span>
       </button>
@@ -133,7 +133,7 @@ onBeforeUnmount(stopWatching)
         -->
         <span
           class="control-glyph"
-          :style="{ '--control-icon': `url(${ADD_ICON_SRC})` }"
+          :style="{ '--control-icon': maskImageValue(ADD_ICON_SRC) }"
           aria-hidden="true"
         ></span>
       </button>

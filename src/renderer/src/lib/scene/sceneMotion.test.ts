@@ -191,15 +191,92 @@ describe('createWalkBoard', () => {
   }
 
   /*
-    A dwarf appearing for the first time materialises at its spot. Walking it in
-    from wherever the board happened to have nothing would be a sprint across
-    the mine every time a session connects.
+    AMENDED for #153's eleventh correction. This case read "does not walk a dwarf
+    that has only just appeared" and covered BOTH openings at once: the first
+    snapshot of a mine already full of agents, and a session that connects while
+    somebody is watching. The maintainer ruled they are different — an arrival
+    must enter through a spawn point and WALK to its station — and the first
+    reading is exactly why it must not become "walk everybody in", because a mine
+    opened with five agents at work would parade all five across it.
+
+    So the FIRST sync still materialises everyone where they belong, and it keeps
+    this case; the arrivals it now excludes are covered directly below.
   */
-  it('does not walk a dwarf that has only just appeared', () => {
+  it('does not walk the crew that was already at work when the mine opened', () => {
     const seen = watch()
     seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
     expect(seen.walking('a')).toBe(false)
     expect(seen.at('a')).toEqual({ x: 36, y: 70 })
+  })
+
+  /*
+   * #153's eleventh correction: "a new dwarf materialized at its workstation.
+   * Arrivals must enter via a spawn point and WALK to their station."
+   *
+   * The rule that makes both halves true is which SNAPSHOT the dwarf first
+   * appeared in. The first one is the board being opened — everyone in it was
+   * already working before anybody looked, and walking them in would be a lie
+   * about five sessions at once. Everything after it is a genuine arrival.
+   */
+  describe('arrivals', () => {
+    const SPAWN = { x: 44, y: 22 }
+    const STATION = { x: 80, y: 80 }
+    const spawnAt = (): ScenePoint => SPAWN
+
+    it('starts an arrival at the spawn point and walks it to its station', () => {
+      const seen = watch()
+      seen.board.sync(targets({ a: STATION }), straight, spawnAt)
+      // The opening crew: still placed, not walked.
+      expect(seen.walking('a')).toBe(false)
+
+      seen.board.sync(targets({ a: STATION, b: STATION }), straight, spawnAt)
+      expect(seen.walking('b')).toBe(true)
+      // Mid-walk it is heading for the station, having left the spawn behind.
+      expect(seen.at('b')).toEqual(STATION)
+      expect(seen.walking('a')).toBe(false)
+    })
+
+    it('leaves the arrival standing at its station once it gets there', () => {
+      const seen = watch()
+      seen.board.sync(targets({}), straight, spawnAt)
+      seen.board.sync(targets({ b: STATION }), straight, spawnAt)
+      expect(seen.walking('b')).toBe(true)
+      vi.advanceTimersByTime(MAX_WALK_MS)
+      expect(seen.walking('b')).toBe(false)
+      expect(seen.at('b')).toEqual(STATION)
+    })
+
+    it('walks an arrival along the ROUTE, not through the rock', () => {
+      const seen = watch()
+      const corner = { x: 44, y: 80 }
+      const viaCorner = (from: ScenePoint, to: ScenePoint): readonly ScenePoint[] => [
+        from,
+        corner,
+        to
+      ]
+      seen.board.sync(targets({}), viaCorner, spawnAt)
+      seen.board.sync(targets({ b: STATION }), viaCorner, spawnAt)
+      // The first leg ends at the corridor's corner, not at the station.
+      expect(seen.at('b')).toEqual(corner)
+    })
+
+    it('places an arrival outright when nothing tells it where to come in', () => {
+      // No spawn provider is the sprite-on-its-own case, and the honest answer
+      // there is the old one: appear where you belong.
+      const seen = watch()
+      seen.board.sync(targets({}), straight)
+      seen.board.sync(targets({ b: STATION }), straight)
+      expect(seen.walking('b')).toBe(false)
+      expect(seen.at('b')).toEqual(STATION)
+    })
+
+    it('walks a dwarf back in that left and came back', () => {
+      const seen = watch()
+      seen.board.sync(targets({ a: STATION }), straight, spawnAt)
+      seen.board.sync(targets({}), straight, spawnAt)
+      seen.board.sync(targets({ a: STATION }), straight, spawnAt)
+      expect(seen.walking('a')).toBe(true)
+    })
   })
 
   it('walks a dwarf whose spot moved, and stops it on arrival', () => {

@@ -910,9 +910,19 @@ export type PanelEdge = 'left' | 'right'
  * `mineOpen` is here because it changes the WINDOW: the design keeps an open
  * mine beside one secondary panel, and that second column is width the window
  * has to be given before the renderer can draw into it.
+ *
+ * The two booleans are INDEPENDENT since #153, and that is the whole of the
+ * maintainer's fifth acceptance correction. `expanded` says whether the
+ * SECONDARY panel — map, mines, settings, lab, market — is drawn; `mineOpen`
+ * says whether the mine column is. The rail's arrow toggles the first and leaves
+ * the second alone, the app mark above the navigation stack clears both, and the
+ * interior's own round close clears only the mine. All four combinations are
+ * real: neither is the closed rail, both is the design's concurrent model, and
+ * a mine with no secondary beside it is the mine mock's own composition.
  */
 export interface PanelLayout {
   edge: PanelEdge
+  /** Whether the SECONDARY panel is drawn — never "the shell is open at all". */
   expanded: boolean
   mineOpen: boolean
 }

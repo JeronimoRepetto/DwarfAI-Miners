@@ -8,8 +8,19 @@ import type { MaterialTotals } from '../../types'
 
 /**
  * Vault/treasure counter: the per-material breakdown plus a compact token
- * count. `floating` (default) self-positions in a corner (the map view);
- * `inline` sits as a normal flex item (the mine-interior header).
+ * count.
+ *
+ * ## The two variants, and why each places ITSELF (#153)
+ *
+ * `floating` (default) is the map's upper-right overlay; `strip` is the mine
+ * interior's, along the bottom edge of the painting. Both place themselves, and
+ * that is the correction: the interior used to pass an `inline` variant that
+ * declared `position: static` and then position the chip from OUTSIDE — and
+ * `.vault-chip.is-inline`, two classes with a scope attribute, out-specified
+ * MineScene's own one-class `.interior-vault`. The strip fell back into normal
+ * flow and floated at the interior's TOP, which is what the maintainer saw. A
+ * component that declines to place itself and leaves its owner to try is a
+ * specificity race nobody wins twice.
  *
  * The breakdown is one labelled entry PER MATERIAL and never a single combined
  * figure. That is the whole point of #22: materials do not convert into one
@@ -31,7 +42,7 @@ const props = withDefaults(
      * — a snapshot published before the ledger loaded simply has no vault yet.
      */
     materials?: MaterialTotals
-    variant?: 'floating' | 'inline'
+    variant?: 'floating' | 'strip'
   }>(),
   { materials: undefined, variant: 'floating' }
 )
@@ -63,7 +74,7 @@ onBeforeUnmount(() => clearTimeout(sparkleTimer))
 <template>
   <div
     class="vault-chip"
-    :class="{ 'is-inline': variant === 'inline', 'is-sparkling': sparkling }"
+    :class="[`is-${variant}`, { 'is-sparkling': sparkling }]"
     :title="label"
     :aria-label="label"
   >
@@ -98,8 +109,6 @@ onBeforeUnmount(() => clearTimeout(sparkleTimer))
 .vault-chip {
   position: absolute;
   z-index: 5;
-  top: 0;
-  right: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -112,9 +121,26 @@ onBeforeUnmount(() => clearTimeout(sparkleTimer))
   font-size: var(--text-meta);
   white-space: nowrap;
 }
-.vault-chip.is-inline {
-  position: static;
-  flex: none;
+/* The map's own upper-right overlay, where screens/map.md puts the totals. */
+.vault-chip.is-floating {
+  top: 0;
+  right: 0;
+}
+/*
+ * The mine interior's own strip, along the BOTTOM edge of the painting exactly
+ * where the design's mine export draws it (#153) — a centred capsule rather than
+ * a corner chip, with fully rounded ends the shared 12px radius would not close
+ * on a strip this short.
+ */
+.vault-chip.is-strip {
+  right: 8px;
+  bottom: 6px;
+  left: 8px;
+  justify-content: center;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #0a0806cc;
 }
 .vault-material {
   display: flex;

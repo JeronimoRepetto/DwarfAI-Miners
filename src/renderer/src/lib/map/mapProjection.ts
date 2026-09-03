@@ -19,18 +19,30 @@
  * designer put it on or it does not, and box percent would slide all 74 of them
  * the moment the panel stopped being the shape they were authored at.
  *
+ * ## No crop, since #153
+ *
+ * `screens/map.md` asks for `object-fit: cover`, and the maintainer's first
+ * acceptance run overruled it in as many words: "the whole painting must be
+ * visible, aspect preserved, no crop — full height of the shell content area,
+ * width follows". So the map is fitted the way the mine interior already is —
+ * `contain`, centred — and the secondary column's own width is derived from the
+ * display's height (see `secondaryColumnWidth` in main/shell/panelBounds.ts) so
+ * that the height the painting is drawn at is the whole of the one it is given.
+ * Where a display cannot give the column that width, `contain` letterboxes
+ * rather than crops, because losing a spawn point off the edge is the failure
+ * this correction exists to end.
+ *
  * ## Why not sceneGeometry
  *
  * The cave already does this arithmetic, and this is deliberately a second copy
- * rather than a shared one. `sceneGeometry.visibleImageRect` pins the crop to
- * the BOTTOM of the painting, because the cave floor the dwarfs stand on is
- * painted in the lowest band and must never be what gets cropped. The map is
- * `object-position: 50% 50%` — the design says a centred image — so its crop is
- * symmetric on both axes. Generalising one function over both would put the
- * map's anchor inside the cave's module, and the whole point of the coordinate
- * rule is that a reader is never in doubt which space they are standing in.
- * `components/` and `lib/` already carry `map`, `scene` and `vault` as parallel
- * families for the same reason (see src/README.md).
+ * rather than a shared one. The two now agree on the fit, but they do not agree
+ * on what they are for: this module is authored against the map painting and
+ * consumed by `MapView`, `sceneGeometry` against the interior tower. Generalising
+ * one function over both would put the map's coordinates inside the cave's
+ * module, and the whole point of the coordinate rule is that a reader is never
+ * in doubt which space they are standing in. `components/` and `lib/` already
+ * carry `map`, `scene` and `vault` as parallel families for the same reason
+ * (see src/README.md).
  */
 
 /** A rendered box, in CSS pixels. Only its ratio matters to the maths below. */
@@ -45,78 +57,78 @@ export interface MapPoint {
   y: number
 }
 
-/** The sub-rectangle of the painting that survives the crop, in image percent. */
-export interface MapImageRect {
+/** The rectangle the painting occupies, in the BOX's own percent space. */
+export interface MapDrawnRect {
   x0: number
   y0: number
   x1: number
   y1: number
 }
 
-const WHOLE_PAINTING: MapImageRect = { x0: 0, y0: 0, x1: 100, y1: 100 }
+const WHOLE_BOX: MapDrawnRect = { x0: 0, y0: 0, x1: 100, y1: 100 }
 
 function unmeasured(box: MapBoxSize, image: MapBoxSize): boolean {
   return box.width <= 0 || box.height <= 0 || image.width <= 0 || image.height <= 0
 }
 
 /**
- * Which part of the painting a box actually shows under
- * `object-fit: cover; object-position: 50% 50%`.
+ * How much bigger or smaller than life the painting is drawn in this box —
+ * whichever axis `contain` had to shrink further, so the whole painting fits.
  *
- * `cover` scales the art until it covers the box, so exactly one axis overflows.
- * A box wider than the painting's ratio keeps the full width and loses equal
- * bands of sky and foreground; a narrower box keeps the full height and loses
- * equal margins on the left and right. Both are symmetric, which is the whole
- * difference from the cave.
- *
- * An unmeasured box — the first render, before a ResizeObserver has reported —
- * reports the whole painting, which makes projection the identity and leaves the
- * authored coordinates in charge until a real measurement arrives.
+ * Zero for an unmeasured box, so a caller can test it as falsy rather than
+ * guarding against Infinity.
  */
-export function visibleMapRect(box: MapBoxSize, image: MapBoxSize): MapImageRect {
-  if (unmeasured(box, image)) return { ...WHOLE_PAINTING }
-  const imageAspect = image.width / image.height
-  const boxAspect = box.width / box.height
-  if (boxAspect >= imageAspect) {
-    // Scaled to the box's width: the surviving slice of height is centred.
-    const halfHeight = 50 * (imageAspect / boxAspect)
-    return { x0: 0, y0: 50 - halfHeight, x1: 100, y1: 50 + halfHeight }
-  }
-  // Scaled to the box's height: the surviving slice of width is centred.
-  const halfWidth = 50 * (boxAspect / imageAspect)
-  return { x0: 50 - halfWidth, y0: 0, x1: 50 + halfWidth, y1: 100 }
+export function mapFitScale(box: MapBoxSize, image: MapBoxSize): number {
+  if (unmeasured(box, image)) return 0
+  return Math.min(box.width / image.width, box.height / image.height)
 }
 
 /**
- * How much bigger than life the painting is drawn in this box — whichever axis
- * `cover` had to magnify more. Zero for an unmeasured box, so a caller can test
- * it as falsy rather than guarding against Infinity.
+ * Where the painting is drawn inside its box, under
+ * `object-fit: contain; object-position: 50% 50%`.
+ *
+ * `contain` scales the art until it fits BOTH axes, so exactly one axis is
+ * spent in full and the other letterboxes symmetrically. A box wider than the
+ * painting's ratio spends its whole height — the acceptance ruling's own words —
+ * and leaves equal margins left and right; a narrower one spends its whole width
+ * and leaves equal bands above and below.
+ *
+ * An unmeasured box — the first render, before a ResizeObserver has reported —
+ * reports the whole box, which makes projection the identity and leaves the
+ * authored coordinates in charge until a real measurement arrives.
  */
-export function coverScaleOf(box: MapBoxSize, image: MapBoxSize): number {
-  if (unmeasured(box, image)) return 0
-  return Math.max(box.width / image.width, box.height / image.height)
+export function drawnMapRect(box: MapBoxSize, image: MapBoxSize): MapDrawnRect {
+  const scale = mapFitScale(box, image)
+  if (scale <= 0) return { ...WHOLE_BOX }
+  const width = ((image.width * scale) / box.width) * 100
+  const height = ((image.height * scale) / box.height) * 100
+  return {
+    x0: (100 - width) / 2,
+    y0: (100 - height) / 2,
+    x1: (100 + width) / 2,
+    y1: (100 + height) / 2
+  }
 }
 
 /**
  * Project a point authored in image percent into the box's own percent space.
  *
- * Deliberately un-clamped, exactly as the cave's projection is: a point the crop
- * removed comes back outside 0-100, so a caller can tell "off the visible
- * painting" from "at the edge of it". `clampToMapBox` is the separate decision.
+ * Nothing can leave the box any more: under `contain` the whole painting is
+ * drawn, so every authored point lands inside 0-100 at every shape. That is the
+ * correction (#153), and it is why the "off the visible painting" reading this
+ * used to support is gone. `clampToMapBox` stays for a different reason — the
+ * marker's own half-width, which can still hang over an edge.
  */
 export function projectToMapBox(point: MapPoint, box: MapBoxSize, image: MapBoxSize): MapPoint {
-  // Returned untouched rather than run through the whole-painting rect, which
-  // is the same answer but not the same number: dividing by 100 and multiplying
-  // by 100 moves 31.92 to 31.920000000000005, and the first render is exactly
-  // when a marker's position is compared against the authored value.
+  // Returned untouched rather than run through the whole-box rect, which is the
+  // same answer but not the same number: dividing by 100 and multiplying by 100
+  // moves 31.92 to 31.920000000000005, and the first render is exactly when a
+  // marker's position is compared against the authored value.
   if (unmeasured(box, image)) return { x: point.x, y: point.y }
-  const rect = visibleMapRect(box, image)
-  const width = rect.x1 - rect.x0
-  const height = rect.y1 - rect.y0
-  if (width <= 0 || height <= 0) return { x: point.x, y: point.y }
+  const rect = drawnMapRect(box, image)
   return {
-    x: ((point.x - rect.x0) / width) * 100,
-    y: ((point.y - rect.y0) / height) * 100
+    x: rect.x0 + (point.x / 100) * (rect.x1 - rect.x0),
+    y: rect.y0 + (point.y / 100) * (rect.y1 - rect.y0)
   }
 }
 
@@ -124,13 +136,11 @@ export function projectToMapBox(point: MapPoint, box: MapBoxSize, image: MapBoxS
  * Hold a projected point inside the box, leaving a margin for the marker's own
  * width and height.
  *
- * The design's own map container is exactly the painting's ratio, so nothing is
- * ever cropped there and it says nothing about this case. Ours is resizable, so
- * this is a decision: a mine whose spawn point the crop removed is drawn at the
- * edge of the panel rather than vanishing off it — the same answer the cave
- * already gives a dwarf whose rock got cropped away. A marker held at the edge
- * is in the wrong place and readable; a marker off the edge is a live project
- * the user cannot see.
+ * Nothing is cropped since #153, so no spawn point can leave the box on its
+ * own. What can still hang over an edge is the MARKER: it is 22px of hit box
+ * centred on a point that may sit at image x 3.4 or 96.8, so half of it would
+ * be off the panel. A marker held at the edge is a pixel or two out of place and
+ * readable; a marker off the edge is a live project the user cannot see.
  */
 export function clampToMapBox(point: MapPoint, marginX: number, marginY: number): MapPoint {
   return {

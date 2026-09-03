@@ -22,8 +22,8 @@ import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneM
 import { computeTooltipPlacement } from '../../lib/overlay/tooltip'
 import type { Dwarf, DwarfAnswerState, DwarfKickState, DwarfSendState } from '../../types'
 import DwarfActionBar from './DwarfActionBar.vue'
+import DwarfStatusIcons from './DwarfStatusIcons.vue'
 import DwarfTooltip from './DwarfTooltip.vue'
-import SpeechBubble from './SpeechBubble.vue'
 
 const props = defineProps<{
   dwarf: Dwarf
@@ -205,6 +205,20 @@ watch(
 const bubbleLabel = computed(() => `Read the full message from ${props.dwarf.name}`)
 
 /**
+ * Whether anything at all floats over this dwarf (#153).
+ *
+ * The three glyphs answer three different questions — is it talking, has it
+ * asked its user something, is it resting — so the row mounts when any of them
+ * does, rather than only when there is a message the way the balloon did.
+ */
+const hasStatusIcon = computed(
+  () =>
+    Boolean(props.bubbleText) ||
+    props.dwarf.pendingQuestion !== undefined ||
+    props.dwarf.status === 'waiting'
+)
+
+/**
  * Row 0 (no prop, or the sole occupant of an anchor) renders no style at all,
  * so the DOM for a lone bubble is byte-for-byte what it was before #43 —
  * only a dwarf actually sharing a rock gets the extra custom property that
@@ -383,7 +397,14 @@ const rootClasses = computed(() => [
      */
     'is-flipped':
       props.anchored === true ? props.facesLeft === true : isSpriteFlipped(props.dwarf.status),
-    'is-anchored': props.anchored === true
+    'is-anchored': props.anchored === true,
+    /*
+     * The design's red halo (#153). Selection IS the action bar being open —
+     * one click, one selected dwarf — so there is no second piece of state to
+     * keep in step with it, and nothing here touches the animation: the source
+     * says outright that a selected dwarf keeps moving and working.
+     */
+    'is-selected': barOpen.value
   }
 ])
 // The walk-out lasts exactly as long as the runtime keeps a leaving dwarf.
@@ -457,11 +478,20 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 
 <template>
   <div class="dwarf-sprite" :class="rootClasses" :style="exitStyle">
-    <SpeechBubble
-      v-if="bubbleText"
+    <!--
+      The design's three status icons (#153), where the parchment balloon used
+      to be. Mounted whenever any of them applies rather than only on a message,
+      because the sleep and question glyphs are states of the dwarf and not of
+      what it last said.
+    -->
+    <DwarfStatusIcons
+      v-if="hasStatusIcon"
       class="bubble-holder"
       :style="bubbleLiftStyle"
-      :text="bubbleText"
+      :role="dwarf.role"
+      :talking="Boolean(bubbleText)"
+      :asking="dwarf.pendingQuestion !== undefined"
+      :resting="dwarf.status === 'waiting'"
       :expand-label="bubbleLabel"
       :expanded="bubbleExpanded"
       @expand="toggleBubble"
@@ -501,13 +531,6 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       <span v-if="impactCount > 0" :key="impactCount" class="spark-burst" aria-hidden="true">
         <i v-for="n in SPARKS_PER_HIT" :key="n" class="spark" :style="{ '--spark': n }"></i>
       </span>
-      <span
-        class="provider-dot"
-        :class="`provider-${dwarf.provider}`"
-        :title="dwarf.provider"
-        aria-hidden="true"
-      ></span>
-      <span v-if="dwarf.status === 'waiting'" class="zzz" aria-hidden="true">z z z</span>
       <span
         v-if="sendMarker"
         class="send-result"
@@ -665,40 +688,41 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 }
 
 /*
- * The art is painted, not tinted: the provider gets its own small badge so the
- * palette of the drawing survives.
+ * WHAT WENT FROM OVER THE SPRITE (#153).
+ *
+ * `.provider-dot` and its two tints painted a provider-coloured bead on every
+ * dwarf. It was never in the design, it said nothing the tooltip does not — that
+ * prints `<role> · <provider>` on hover and focus, and the sprite's accessible
+ * name carries it too — and the maintainer ruled the sprite renders clean.
+ *
+ * `.zzz` and its `zzz-float` keyframes typed `z z z` over a resting dwarf. The
+ * design has its own 15px sleep glyph, and it is drawn in DwarfStatusIcons with
+ * the other two.
+ *
+ * ── The red halo on the selected dwarf ──────────────────────────────────────
+ *
+ * `screens/mine.md`: clicking a dwarf "marks the selected dwarf with a red halo"
+ * and "does NOT pause it; it continues moving and working". So this is a ring
+ * around the sprite and nothing else — no state the animation reads, no branch
+ * anywhere near the frame timer. Drawn on the whole sprite rather than on the
+ * hit box so the name under it is inside the ring too.
+ *
+ * The source does not name the red. `--danger-line` is the one red the app
+ * already declares, and inventing a second would leave two.
  */
-.provider-dot {
-  position: absolute;
-  right: 10px;
-  bottom: 4px;
-  width: 9px;
-  height: 9px;
-  border: 1px solid #000000a6;
-  border-radius: 50%;
-  background: var(--provider-tint, #b9aa91);
-  box-shadow: 0 0 6px var(--provider-tint, #b9aa91);
+.is-selected .dwarf-frame {
+  filter: drop-shadow(0 4px 5px #000a) drop-shadow(0 0 3px var(--danger-line))
+    drop-shadow(0 0 7px var(--danger-line));
 }
-.provider-claude {
-  --provider-tint: #d97757;
+.is-selected .dwarf-name {
+  color: var(--danger-line);
 }
-.provider-codex {
-  --provider-tint: #cfd4d9;
-}
-
-/* waiting: Zzz drifting up off the resting pose */
-.zzz {
-  position: absolute;
-  top: -6px;
-  right: -2px;
-  color: var(--ink-dim);
-  font-size: 11px;
-  font-style: italic;
-  letter-spacing: 0.12em;
-  line-height: 1;
-  pointer-events: none;
-  animation: zzz-float 3.2s ease-in-out infinite;
-}
+/*
+ * A viewer who asked for less movement still gets the halo — it is the thing
+ * that says which dwarf is selected, which is information rather than
+ * decoration. What they do not get is it pulsing, which is why there is no
+ * animation here to switch off.
+ */
 
 /* leaving: walks toward the exit and fades within the runtime grace window */
 .is-leaving {
@@ -743,39 +767,26 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   rotate: calc(var(--spark, 1) * 38deg - 76deg);
 }
 
-@keyframes zzz-float {
-  0% {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  30% {
-    opacity: 0.9;
-  }
-  70% {
-    opacity: 0;
-    transform: translateY(-9px);
-  }
-  100% {
-    opacity: 0;
-  }
-}
+/*
+ * Both of these used to hold full opacity until 85% of a sixteen-second window
+ * and fade over what was left, which is why a dwarf that had reached its exit
+ * stood there (#153). They fade the whole way now, over a window short enough to
+ * read as leaving rather than as lingering — see LEAVING_EXIT_MS. The slide
+ * shortened with it: 480px in 1.2s would be a sprint.
+ */
 @keyframes walk-out {
   0% {
     opacity: 1;
     translate: 0 0;
   }
-  85% {
-    opacity: 1;
-  }
   100% {
     opacity: 0;
-    translate: -480px 0;
+    translate: -60px 0;
   }
 }
-/* The same grace window as walk-out, minus the slide the scene now owns. */
+/* The same window as walk-out, minus the slide the scene now owns. */
 @keyframes exit-fade {
-  0%,
-  85% {
+  0% {
     opacity: 1;
   }
   100% {
@@ -810,10 +821,6 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   /* Belt and suspenders alongside strikeGlow's own guard in script — see there. */
   .dwarf-frame.is-strike-glow::after {
     display: none;
-  }
-  .zzz {
-    animation: none;
-    opacity: 0.9;
   }
   .is-leaving,
   .is-anchored.is-leaving {

@@ -9,6 +9,8 @@ import {
   DESIGN_INTERIOR_WIDTH,
   DWARF_PAINTING_HEIGHT,
   INTERIOR_FIT,
+  SHELL_CONTENT_INSET,
+  interiorColumnWidth,
   spriteFootprintPx,
   spriteHeightPx,
   spriteMarginPercent
@@ -164,6 +166,40 @@ describe('DWARF_PAINTING_HEIGHT', () => {
     // --size-mine-interior-width in assets/design-tokens.css, and the 245px
     // screens/mine.md states in as many words.
     expect(DESIGN_INTERIOR_WIDTH).toBe(245)
+  })
+})
+
+/*
+ * The one fit rule (#153): the interior painting is drawn at the FULL HEIGHT of
+ * the shell's content area with its aspect preserved, so the column's width is
+ * derived from the window's height rather than fixed at the design's 245. main
+ * reserves the same width in the window — `panelBounds.test.ts` holds the two
+ * derivations equal, which is why this one is exported rather than inlined into
+ * the stylesheet.
+ */
+describe('interiorColumnWidth', () => {
+  it('is the painting’s own aspect applied to the height the shell leaves', () => {
+    for (const windowHeight of [600, 768, 1032, 1392, 2160]) {
+      const content = windowHeight - SHELL_CONTENT_INSET
+      expect(interiorColumnWidth(windowHeight)).toBe(
+        Math.round((content * INTERIOR_PAINTING_SIZE.width) / INTERIOR_PAINTING_SIZE.height)
+      )
+    }
+  })
+
+  it('reproduces the design’s own 245px column at the design’s own 768-tall composition', () => {
+    // 245 was never a constant: it is this rule read off the mock's own height,
+    // which is why the design's number is checked here instead of copied.
+    expect(interiorColumnWidth(768)).toBeCloseTo(DESIGN_INTERIOR_WIDTH, -0.5)
+  })
+
+  it('grows with the display rather than staying the mock’s width on a taller one', () => {
+    expect(interiorColumnWidth(1392)).toBeGreaterThan(interiorColumnWidth(768))
+  })
+
+  it('never returns a negative column for a window shorter than its own chrome', () => {
+    expect(interiorColumnWidth(0)).toBe(0)
+    expect(interiorColumnWidth(SHELL_CONTENT_INSET - 4)).toBe(0)
   })
 })
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC } from '../../lib/art'
+import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC, maskImageValue } from '../../lib/art'
 import {
   cardArtFor,
+  cardTierFor,
   cardTierLabel,
   nextLevelFor,
   type CardStatus
@@ -29,6 +30,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{ open: [projectId: string] }>()
 
+/**
+ * The one tier this card states, however it was arrived at (#153) — see
+ * `cardTierFor`. Read three times over: `data-tier` carries the tier palette
+ * from theme.css, the heading names it, and the art paints its entrance. All
+ * three take the same answer, because a card cannot be gold in its painting and
+ * untiered in its colours.
+ */
+const tier = computed(() => cardTierFor(props.project))
 const tierLabel = computed(() => cardTierLabel(props.project))
 const art = computed(() => cardArtFor(props.project))
 
@@ -63,7 +72,7 @@ const enterable = computed(() => props.project.live)
 </script>
 
 <template>
-  <li class="mine-card" :data-tier="project.knownTier">
+  <li class="mine-card" :data-tier="tier">
     <component
       :is="enterable ? 'button' : 'div'"
       class="card-body"
@@ -138,13 +147,13 @@ const enterable = computed(() => props.project.live)
         <span
           v-if="status.asking"
           class="status-glyph status-asking"
-          :style="{ '--status-icon': `url(${DIALOG_ICON_SRC})` }"
+          :style="{ '--status-icon': maskImageValue(DIALOG_ICON_SRC) }"
           title="An agent here is waiting on an answer"
         ></span>
         <span
           v-if="status.resting"
           class="status-glyph status-resting"
-          :style="{ '--status-icon': `url(${SLEEP_ICON_SRC})` }"
+          :style="{ '--status-icon': maskImageValue(SLEEP_ICON_SRC) }"
           title="An agent here is resting"
         ></span>
       </span>

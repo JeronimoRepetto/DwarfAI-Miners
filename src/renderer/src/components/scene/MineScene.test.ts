@@ -44,7 +44,7 @@ describe('MineScene', () => {
     const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 25_000 }) } })
     // `.vault-ore` — every token at one flat rate — went with #22; the chip now
     // breaks the vault down per material and keeps this compact token gauge.
-    expect(wrapper.get('.interior-vault .vault-tokens').text()).toBe('25K')
+    expect(wrapper.get('.vault-chip .vault-tokens').text()).toBe('25K')
   })
 
   /*
@@ -62,10 +62,81 @@ describe('MineScene', () => {
       }
     })
     expect(
-      wrapper
-        .findAll('.interior-vault .vault-material')
-        .map((row) => row.attributes('data-material'))
+      wrapper.findAll('.vault-chip .vault-material').map((row) => row.attributes('data-material'))
     ).toEqual(['coal', 'copper', 'silver'])
+  })
+
+  /*
+   * #153's twelfth correction. The strip rendered as loose nugget images
+   * floating at the interior's TOP, and it was a specificity race: the chip's
+   * own `.vault-chip.is-inline { position: static }` — two classes plus a scope
+   * attribute — beat this scene's one-class `.interior-vault { position:
+   * absolute; bottom: 6px }`, so the strip fell back into normal flow and landed
+   * at the top-left of the first positioned ancestor. The chip places itself
+   * now, and this scene asks for the variant rather than for a class it then has
+   * to out-specify.
+   */
+  it('asks the vault for its own bottom-edge strip rather than placing one', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 1 }) } })
+    const chip = wrapper.get('.vault-chip')
+    expect(chip.classes()).toContain('is-strip')
+    expect(chip.classes()).not.toContain('is-floating')
+    // Nothing left out here to lose a specificity race with.
+    expect(wrapper.find('.interior-vault').exists()).toBe(false)
+  })
+
+  it('keeps the strip inside the interior, so it follows the painting’s frame', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 1 }) } })
+    expect(wrapper.find('.interior > .vault-chip').exists()).toBe(true)
+  })
+
+  /*
+   * #153's eleventh correction, end to end: "a new dwarf materialized at its
+   * workstation. Arrivals must enter via a spawn point and WALK to their
+   * station." The board draws the line between the two cases by which snapshot
+   * a dwarf first appeared in (see lib/scene/sceneMotion.ts); this is the check
+   * that the scene actually hands it a spawn point to come in at.
+   */
+  describe('arrivals', () => {
+    /** The walk duration the scene put on this dwarf's slot, in ms. */
+    function walkMsOf(wrapper: ReturnType<typeof mount>, id: string): string {
+      const slot = wrapper
+        .findAll('.scene-slot')
+        .find((candidate) => candidate.get('.dwarf-name').text() === id)
+      if (!slot) throw new Error(`no rendered slot for ${id}`)
+      return (slot.element as HTMLElement).style.getPropertyValue('--walk-ms')
+    }
+
+    const first = defaultDwarf({ id: 'first', name: 'first', status: 'working' })
+    const later = defaultDwarf({ id: 'later', name: 'later', status: 'working' })
+
+    it('places the crew that was already working when the mine opened', async () => {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [first] }) } })
+      await wrapper.vm.$nextTick()
+      expect(walkMsOf(wrapper, 'first')).toBe('0ms')
+    })
+
+    it('walks in a dwarf that turns up in a later snapshot', async () => {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [first] }) } })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+      await wrapper.vm.$nextTick()
+      expect(walkMsOf(wrapper, 'later')).not.toBe('0ms')
+    })
+
+    it('leaves an arrival in place for a viewer who asked for less movement', async () => {
+      const matchMedia = vi.fn().mockReturnValue({ matches: true })
+      vi.stubGlobal('matchMedia', matchMedia)
+      try {
+        const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [first] }) } })
+        await wrapper.vm.$nextTick()
+        await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+        await wrapper.vm.$nextTick()
+        expect(walkMsOf(wrapper, 'later')).toBe('0ms')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
   })
 
   it('pauses the bubble auto-hide while expanded and resumes it on close', async () => {
@@ -76,20 +147,20 @@ describe('MineScene', () => {
       })
       const wrapper = mount(MineScene, { props: { mine } })
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.speech-bubble').exists()).toBe(true)
+      expect(wrapper.find('.status-dialog').exists()).toBe(true)
 
       // Expanding holds the bubble on the board: far past the TTL it must remain.
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
       vi.advanceTimersByTime(BUBBLE_TTL_MS * 5)
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.speech-bubble').exists()).toBe(true)
+      expect(wrapper.find('.status-dialog').exists()).toBe(true)
 
       // Closing releases it with a fresh full TTL, after which it hides normally.
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await wrapper.vm.$nextTick()
       vi.advanceTimersByTime(BUBBLE_TTL_MS)
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.speech-bubble').exists()).toBe(false)
+      expect(wrapper.find('.status-dialog').exists()).toBe(false)
     } finally {
       vi.useRealTimers()
     }

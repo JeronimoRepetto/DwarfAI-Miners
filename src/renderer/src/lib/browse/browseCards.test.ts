@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import type { ProjectSummary } from '../../types'
-import { MINE_TIERS } from '../../types'
+import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 import {
   TIER_CHIPS,
   activeAgentsFor,
   browseTierLabel,
   cardArtFor,
   cardStatusFor,
+  cardTierFor,
   cardTierLabel,
   nextLevelFor
 } from './browseCards'
@@ -58,14 +59,72 @@ describe('TIER_CHIPS', () => {
   })
 })
 
+/*
+ * #153's seventh correction. A declared folder's card drew the level bar and no
+ * tier and no art, and the reason was a join: the bar reads `weightBytes`, which
+ * the tier walk's own cache publishes for anything it has weighed, while the
+ * label and the painting read `knownTier`, which the projects store only fills
+ * while a mine is actually being WORKED. So a card could state how far the mine
+ * had climbed without being willing to say which tier it was in.
+ *
+ * A measured weight IS a classification — it is the very number `tierForBytes`
+ * classifies in main — so the card derives the tier from it rather than printing
+ * half the fact. Absence still claims nothing: no weight, no tier, no art.
+ */
+describe('cardTierFor', () => {
+  it('prefers the tier a walk actually recorded', () => {
+    // Even where the weight would say otherwise: `knownTier` is the store's own
+    // record of a classification, and a derivation must never overrule it.
+    expect(cardTierFor(project({ knownTier: 'gold', weightBytes: 1 }))).toBe('gold')
+  })
+
+  it('classifies a measured weight the store has no tier for', () => {
+    const kb = 1024
+    expect(cardTierFor(project({ weightBytes: 0 }))).toBe('bronze')
+    expect(cardTierFor(project({ weightBytes: 99 * kb }))).toBe('bronze')
+    expect(cardTierFor(project({ weightBytes: 100 * kb }))).toBe('copper')
+    expect(cardTierFor(project({ weightBytes: 500 * kb }))).toBe('silver')
+    expect(cardTierFor(project({ weightBytes: 2048 * kb }))).toBe('gold')
+    expect(cardTierFor(project({ weightBytes: 8192 * kb }))).toBe('uranium')
+    expect(cardTierFor(project({ weightBytes: 99_999 * kb }))).toBe('uranium')
+  })
+
+  it('reads the boundaries exactly as main’s own tierForBytes does', () => {
+    // The two are one classification of one measurement, so the >= comparisons
+    // and the bracket order have to match tierForBytes in main/tier/tierService.
+    const { copperKb, silverKb, goldKb, uraniumKb } = TIER_WEIGHT_THRESHOLDS_KB
+    for (const [kb, tier] of [
+      [copperKb - 1, 'bronze'],
+      [copperKb, 'copper'],
+      [silverKb - 1, 'copper'],
+      [silverKb, 'silver'],
+      [goldKb - 1, 'silver'],
+      [goldKb, 'gold'],
+      [uraniumKb - 1, 'gold'],
+      [uraniumKb, 'uranium']
+    ] as const) {
+      expect(cardTierFor(project({ weightBytes: kb * 1024 })), `${kb}KB`).toBe(tier)
+    }
+  })
+
+  it('claims nothing at all for a project no walk has weighed', () => {
+    expect(cardTierFor(project())).toBeUndefined()
+  })
+})
+
 describe('cardTierLabel', () => {
   it('names the tier a walk has measured', () => {
     expect(cardTierLabel(project({ knownTier: 'gold' }))).toBe('Gold')
   })
 
+  it('names the tier the measured weight puts this project in', () => {
+    expect(cardTierLabel(project({ weightBytes: 600 * 1024 }))).toBe('Silver')
+  })
+
   it('claims no tier for a project nobody has measured yet', () => {
     // tierOf()'s provisional bronze is for drawing a mound, never for stating
-    // a fact on a card (#41): an unmeasured project reads as unmeasured.
+    // a fact on a card (#41): an unmeasured project reads as unmeasured. What
+    // changed with #153 is only what counts as measured — a weight does.
     expect(cardTierLabel(project())).toBeUndefined()
   })
 })
@@ -75,6 +134,15 @@ describe('cardArtFor', () => {
     expect(cardArtFor(project({ knownTier: 'uranium' }))).toBeTruthy()
     expect(cardArtFor(project({ knownTier: 'uranium' }))).not.toBe(
       cardArtFor(project({ knownTier: 'bronze' }))
+    )
+  })
+
+  it('paints the entrance the weight classifies when the store has no tier', () => {
+    // The same painting either way round, so a card that derived its tier and
+    // one that was told it are the same card — which is what puts the art
+    // column back and lines the level bar up with its neighbours again.
+    expect(cardArtFor(project({ weightBytes: 3000 * 1024 }))).toBe(
+      cardArtFor(project({ knownTier: 'gold' }))
     )
   })
 
