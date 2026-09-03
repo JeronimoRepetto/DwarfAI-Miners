@@ -181,6 +181,43 @@ describe('MineCard status markers', () => {
   })
 })
 
+/*
+ * The seam #135's rebuild left, closed now that ProjectSummary carries
+ * weightBytes (#140, #90). What cur/max/ratio mean is nextLevelFor's own
+ * contract (browseCards.test.ts); the card's job is only drawing it.
+ */
+describe('MineCard level bar', () => {
+  it('draws the bar and label once a walk has weighed the project', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ weightBytes: 80 * 1024 }) }
+    })
+    expect(wrapper.find('.card-level').exists()).toBe(true)
+    expect(wrapper.get('.level-label-text').text()).toBe('Next level:')
+    expect(wrapper.get('.level-label-value').text()).toBe('80/100')
+  })
+
+  it('sizes the fill to the bracket ratio', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ weightBytes: 235 * 1024 }) }
+    })
+    expect(wrapper.get('.level-fill').attributes('style')).toContain(`width: ${(235 / 500) * 100}%`)
+  })
+
+  it('prints infinite for a mine with no further tier to climb toward', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ weightBytes: 10975 * 1024 }) }
+    })
+    expect(wrapper.get('.level-label-value').text()).toBe('10975/infinite')
+  })
+
+  it('draws no bar and no label for a project no walk has weighed yet', () => {
+    // Absence over invention (#90): an invented denominator would be worse
+    // than the silence every other unmeasured field on this card already is.
+    const wrapper = mount(MineCard, { props: { project: defaultProject() } })
+    expect(wrapper.find('.card-level').exists()).toBe(false)
+  })
+})
+
 describe('MineCard action', () => {
   it('opens the mine of a live project', async () => {
     const wrapper = mount(MineCard, {
