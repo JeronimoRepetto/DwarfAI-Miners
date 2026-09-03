@@ -1,4 +1,9 @@
-import { DWARF_PROVIDERS, type DwarfProvider, type MineTier } from '../domain/types'
+import {
+  DWARF_PROVIDERS,
+  TIER_WEIGHT_THRESHOLDS_KB,
+  type DwarfProvider,
+  type MineTier
+} from '../domain/types'
 import type { TierThresholds } from '../tier/tierService'
 
 /**
@@ -108,7 +113,12 @@ export interface AppConfig {
   dwarfLeaveGraceS: number
   /** How long a computed project tier stays cached, in seconds. */
   tierCacheTtlS: number
-  /** Source-byte-weight (KB) thresholds at which a mine upgrades to the next tier. */
+  /**
+   * Source-byte-weight (KB) thresholds at which a mine upgrades to the next
+   * tier. Defaults to `TIER_WEIGHT_THRESHOLDS_KB` (src/shared/contracts.ts),
+   * the same table the renderer reads (#140); `TIER_COPPER_KB` and its three
+   * siblings, or the userData config file, can move it per install.
+   */
   tierThresholds: TierThresholds
   /**
    * Model the one-shot `claude -p` relay runs on when delivering a message to
@@ -134,7 +144,12 @@ export function defaultConfig(): AppConfig {
     livenessWindowS: 90,
     dwarfLeaveGraceS: 20,
     tierCacheTtlS: 600,
-    tierThresholds: { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 },
+    // Spread rather than referenced directly: this function must hand back a
+    // FRESH object on every call (see the sibling 'fresh object' test below),
+    // and TIER_WEIGHT_THRESHOLDS_KB is the one shared constant the renderer
+    // reads too (#140) — copying it here keeps both promises at once instead
+    // of a second hand-typed literal that could drift from the renderer's.
+    tierThresholds: { ...TIER_WEIGHT_THRESHOLDS_KB },
     sendTextRelayModel: 'haiku',
     sendTextTimeoutS: 60,
     hooksPort: 47821,

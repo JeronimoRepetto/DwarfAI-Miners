@@ -2925,6 +2925,7 @@ describe('AgentRuntime project queries (#92)', () => {
     projects?: ProjectsStore | null
     providers?: Provider[]
     ledger?: MaterialLedger
+    tiers?: TierService
   }): AgentRuntime {
     return new AgentRuntime({
       // A zero grace window for the reason the #85 block uses one: a crew that
@@ -2934,6 +2935,7 @@ describe('AgentRuntime project queries (#92)', () => {
       providers: options.providers ?? [],
       projects: options.projects === undefined ? queryStore() : options.projects,
       ledger: options.ledger,
+      tiers: options.tiers,
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -2994,6 +2996,38 @@ describe('AgentRuntime project queries (#92)', () => {
 
     // Absent, not a breakdown of zeros: the ledger has never heard of this id.
     expect(project).not.toHaveProperty('materials')
+  })
+
+  it('joins a project row against its measured source weight, the same way materials joins (#140)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const fs = new FakeFs()
+    fs.addFile(`${WORKED}\\a.ts`, 'a'.repeat(500))
+    const tiers = new TierService({ fs, thresholds: defaultConfig().tierThresholds, ttlS: 600 })
+    // Walk finished before the query, exactly as vaultRuntime() settles its
+    // own TierService before handing it to the runtime — a query never
+    // triggers or waits on a walk itself.
+    tiers.tierOf(WORKED)
+    await tiers.settle()
+    const runtime = queryRuntime({ projects, tiers })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    expect(project?.weightBytes).toBe(500)
+  })
+
+  it('leaves weightBytes absent for a project no walk has measured yet (#140)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    // No injected TierService, so the runtime's own has never walked WORKED.
+    const runtime = queryRuntime({ projects })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    // Absent, not an invented 0: the same #41 discipline knownTier uses.
+    expect(project).not.toHaveProperty('weightBytes')
   })
 
   it('joins materials the same way for a live project and a crewless one (#90)', async () => {
