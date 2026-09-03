@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { TRAY_ICON_SRC } from '../../lib/art'
+import type { ShellComposition } from '../../lib/shell/composition'
 import { arrowDirection } from '../../lib/shell/shellNav'
 import type { PanelEdge } from '../../types'
 
@@ -19,12 +20,27 @@ import type { PanelEdge } from '../../types'
  */
 const props = defineProps<{
   edge: PanelEdge
-  expanded: boolean
+  /**
+   * Which of the shell's three compositions is on screen (#156).
+   *
+   * It used to be handed `expanded` and to work the rest out for itself, which
+   * it cannot: whether it is the whole shell depends on whether the navigation
+   * stack is drawn beside it, and with a mine held open beyond a closed
+   * secondary panel it is. That produced two app marks on one edge, one of them
+   * floating in the gap where the amber ground had also stopped being painted.
+   */
+  composition: ShellComposition
 }>()
 
 const emit = defineEmits<{ toggle: [] }>()
 
-const direction = computed(() => arrowDirection(props.edge, props.expanded))
+/** True only while this rail IS the whole shell: nothing else is drawn. */
+const isRail = computed(() => props.composition === 'rail')
+
+/** The SECONDARY panel's state, which is the only thing the arrow reports. */
+const expanded = computed(() => props.composition === 'pages')
+
+const direction = computed(() => arrowDirection(props.edge, expanded.value))
 
 /*
  * What this control does, since #153: it closes the SECONDARY panel, and a mine
@@ -33,13 +49,13 @@ const direction = computed(() => arrowDirection(props.edge, props.expanded))
  * at the top of the navigation stack. The name has to stop promising the bigger
  * action, because the arrow no longer takes it.
  */
-const label = computed(() => (props.expanded ? 'Close this panel' : 'Open DwarfAI-Miners'))
+const label = computed(() => (expanded.value ? 'Close this panel' : 'Open DwarfAI-Miners'))
 </script>
 
 <template>
   <button
     class="edge-rail"
-    :class="[expanded ? 'is-open' : 'is-closed', `edge-${edge}`]"
+    :class="[isRail ? 'is-rail' : 'is-page', `edge-${edge}`]"
     type="button"
     :aria-label="label"
     :aria-expanded="expanded ? 'true' : 'false'"
@@ -48,10 +64,11 @@ const label = computed(() => (props.expanded ? 'Close this panel' : 'Open DwarfA
     <!--
       The app mark sits at the TOP of the rail, not at its centre: the arrow
       owns the centre, and page 1 of the design source draws them that way on
-      both edges. Once the panel is open the mark belongs at the top of the
-      navigation column instead, so it is handed over rather than drawn twice.
+      both edges. The moment the navigation column is on screen the mark belongs
+      at the top of THAT instead, so it is handed over rather than drawn twice —
+      which is what the mine-only composition used to do (#156).
     -->
-    <img v-if="!expanded" class="rail-mark" :src="TRAY_ICON_SRC" alt="" draggable="false" />
+    <img v-if="isRail" class="rail-mark" :src="TRAY_ICON_SRC" alt="" draggable="false" />
     <span class="rail-arrow" :class="`points-${direction}`" aria-hidden="true"></span>
   </button>
 </template>
@@ -70,7 +87,12 @@ const label = computed(() => (props.expanded ? 'Close this panel' : 'Open DwarfA
   background: transparent;
   cursor: pointer;
 }
-.edge-rail.is-closed {
+/*
+ * Painted only while this rail IS the whole shell. Once a page is drawn beside
+ * it the shell paints one amber ground under everything, and a second rounded,
+ * shadowed surface inside that one reads as a seam rather than as a rail (#156).
+ */
+.edge-rail.is-rail {
   border-radius: var(--radius-default);
   background: var(--color-rail);
   box-shadow: var(--elevation-5);
