@@ -2669,13 +2669,36 @@ describe('AgentRuntime declared mines (#85)', () => {
     return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
   }
 
+  /*
+   * AMENDED for #156's seventh correction. The verdict was asserted as the WHOLE
+   * object, and it now carries the adopted row as well — the panel has to be
+   * able to put that card on screen itself, because re-declaring a folder the
+   * store already knows leaves it wherever it already sat in the date order.
+   * The subject is unchanged: which id the verdict names.
+   */
   it('adopts the folder the picker returned and reports the id the ledger uses', async () => {
     const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
 
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toEqual({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
+    expect(result.reason).toBeUndefined()
+  })
+
+  it('names the project it adopted, shaped exactly as the browse lists one', async () => {
+    // Shaped by the same toSummary a query answers with, so the card the panel
+    // draws from this verdict is the card it would have drawn from a page.
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.project).toMatchObject({
+      id: mineIdForPath(ADOPTED),
+      path: ADOPTED,
+      declared: true
+    })
   })
 
   it('keeps a declared mine on the board with no crew, poll after poll', async () => {

@@ -992,6 +992,22 @@ export interface MineDeclareResult {
    * the next minesUpdated like every other change.
    */
   mineId?: string
+  /**
+   * The adopted project as the browse would list it, when the store answered
+   * with one (#156).
+   *
+   * The panel reloads its first page after an adopt, and that reload cannot be
+   * relied on to contain the new card: a project keeps the date it was first
+   * seen, so RE-declaring a folder the store already holds leaves it wherever it
+   * already sat in the order — pages down, or off the end. An Add that reports
+   * success and changes nothing on screen is indistinguishable from a broken
+   * one, so the row travels with the verdict and the panel puts it on the list
+   * itself when the reload did not.
+   *
+   * Absent when there is nothing to name: a cancelled picker, a refusal, or a
+   * store that could not read the row back.
+   */
+  project?: ProjectSummary
   /** Why the declare failed; absent except when `outcome` is 'failed' — a cancel needs none, `outcome` already says so. */
   reason?: string
 }

@@ -121,10 +121,27 @@ export function useProjectBrowse() {
    * the picker is modal in main, and queueing another behind it would reopen it
    * for a click made before the first one ever appeared.
    *
-   * On success the list is read again through the ordinary first-page path, so
-   * the new project appears under whatever filters are showing rather than
-   * through a second, parallel refresh that could drift from it. The map needs
-   * nothing from here: it picks the mine up on its next poll.
+   * ## Showing what was just added (#156)
+   *
+   * An Add that succeeds MUST show the card it just made. The maintainer added
+   * a folder during the acceptance run and no card appeared, and the list was
+   * behaving exactly as written: the reload kept the filters showing, a tier
+   * chip was selected, and a folder nobody has walked has no measured tier — so
+   * it matches no tier chip at all (see browseQuery.ts, "All is the only chip it
+   * appears under"). The search box hides a new folder the same way.
+   *
+   * So the filters go back to their defaults. The add is the user's most recent
+   * instruction; a filter they set a moment earlier is not a reason to hide the
+   * thing they just asked for, and a button that reports success while the list
+   * does not change is indistinguishable from one that is broken.
+   *
+   * Clearing the filters does not reach the other half of it: re-declaring a
+   * folder the store already holds keeps the date it was first seen, so it stays
+   * wherever it already sat and can be pages down. Main names the project it
+   * adopted, and it goes to the head of the list when the reload did not bring
+   * it. An older main that names none still reloads, and behaves as before.
+   *
+   * The map needs nothing from here: it picks the mine up on its next poll.
    */
   async function addProject(): Promise<void> {
     if (adding.value) return
@@ -135,7 +152,18 @@ export function useProjectBrowse() {
       // Null for an adopted folder AND for a closed picker: the list is the
       // feedback for the first, and backing out is not a fault to report.
       addError.value = declareFailureNotice(result)
-      if (result.outcome === 'added') await load()
+      if (result.outcome !== 'added') return
+      filters.value = defaultBrowseFilters()
+      await load()
+      const added = result.project
+      if (added === undefined) return
+      // Prepended rather than sorted in: the list is ordered by when a project
+      // was ADDED, and this one was not added just now — it was re-declared. It
+      // sits at the top because it is what the user just asked about, and the
+      // next ordinary read puts it back in date order.
+      if (!projects.value.some((project) => project.id === added.id)) {
+        projects.value = [added, ...projects.value]
+      }
     } catch {
       addError.value = UNREACHABLE
     } finally {
