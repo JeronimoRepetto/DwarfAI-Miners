@@ -179,19 +179,31 @@ describe('the route network', () => {
   })
 
   /*
-   * The committed extraction renumbers each component's nodes but leaves its
-   * edge endpoints on the ids the skeleton graph carried BEFORE that
-   * renumbering, so taken literally not one edge in it points at a node that
-   * exists. This is the pin on the repair: it is stated as the thing the
-   * dataset does, so a future re-extraction that fixes it upstream fails here
-   * and gets the now-pointless repair deleted rather than silently double-
-   * applied.
+   * REMOVED for #152 (was: 'needs the endpoint repair, because the extraction
+   * own edge ids name no node'). The extraction used to renumber each
+   * component's nodes to 0..n-1 but leave `edges[].from`/`to` on the ids the
+   * skeleton graph carried BEFORE that renumbering, so taken literally not
+   * one edge pointed at a node that existed — that removed case pinned
+   * exactly this, so a future re-extraction that fixed it upstream would fail
+   * here and get the endpoint repair it used to name in
+   * `scripts/build-interior-map.mjs` (`reindexComponent` + `assertEndpoints`,
+   * now also deleted) removed rather than double-applied.
+   *
+   * It is fixed at the source now: `scripts/mapCoords/skeleton.mjs`'s
+   * `renumberComponent` rewrites every edge endpoint through the same map
+   * that renumbers its nodes, pinned directly by its own tests in
+   * `scripts/mapCoords/skeleton.test.mjs`. The case below restates the
+   * property the removed one proved FALSE, now proved TRUE, straight off the
+   * committed extraction and covering the stub the removed case did not.
    */
-  it('needs the endpoint repair, because the extraction own edge ids name no node', () => {
-    const nodeIds = new Set(FEATURES.paths.network.nodes.map((node) => node.id))
-    const endpoints = new Set(FEATURES.paths.network.edges.flatMap((edge) => [edge.from, edge.to]))
-    expect(endpoints.size).toBe(nodeIds.size)
-    expect([...endpoints].some((id) => !nodeIds.has(id))).toBe(true)
+  it('names an existing node at both ends of every edge, straight off the extraction', () => {
+    for (const component of [FEATURES.paths.network, FEATURES.paths.stub]) {
+      const nodeIds = new Set(component.nodes.map((node) => node.id))
+      for (const edge of component.edges) {
+        expect(nodeIds.has(edge.from), `from ${edge.from}`).toBe(true)
+        expect(nodeIds.has(edge.to), `to ${edge.to}`).toBe(true)
+      }
+    }
   })
 
   /*

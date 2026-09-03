@@ -50,6 +50,7 @@ import {
   traceSkeletonGraph,
   mergeCloseNodes,
   spliceDegreeTwoNodes,
+  renumberComponent,
   simplifyPolyline
 } from './mapCoords/skeleton.mjs'
 
@@ -290,6 +291,7 @@ function extractRouteComponent(bitmap, mask, blob, panelBox) {
   const graph = traceSkeletonGraph(skeleton, bw, bh)
   const merged = mergeCloseNodes(graph.nodes, graph.edges, 6)
   const spliced = spliceDegreeTwoNodes(merged.nodes, merged.edges)
+  const renumbered = renumberComponent(spliced.nodes, spliced.edges)
 
   const toLocal = (x, y) => {
     const gx = bx + x - panelBox.x
@@ -300,12 +302,12 @@ function extractRouteComponent(bitmap, mask, blob, panelBox) {
     }
   }
 
-  const nodes = spliced.nodes.map((n, i) => ({ id: i, ...toLocal(n.x, n.y) }))
-  const edges = spliced.edges.map((e) => {
+  const nodes = renumbered.nodes.map((n) => ({ id: n.id, ...toLocal(n.x, n.y) }))
+  const edges = renumbered.edges.map((e) => {
     const simplified = simplifyPolyline(e.points, 1.5)
     return {
-      from: e.a,
-      to: e.b,
+      from: e.from,
+      to: e.to,
       points: simplified.map((p) => toLocal(p.x, p.y))
     }
   })
