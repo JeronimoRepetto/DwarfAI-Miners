@@ -19,6 +19,10 @@ import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-wo
 import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
 import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
 
+import foremanFace from '../assets/art/dwarf-foreman/dwarf-foreman-face.jpg'
+import workerFace from '../assets/art/dwarf-worker/dwarf-worker-face.jpg'
+import userFace from '../assets/art/user/Gemini_Generated_Image_r35k1hr35k1hr35k.jpg'
+
 import interiorBronze from '../assets/art/inside-mines/inside-bronze-mine.jpg'
 import interiorCopper from '../assets/art/inside-mines/inside-cropper-mine.jpg'
 import interiorGold from '../assets/art/inside-mines/inside-gold-mine.jpg'
@@ -64,6 +68,8 @@ import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
 import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.svg?url'
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
+import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
+import iconKick from '../../../../docs/assets/icons/klck.svg?url'
 
 import trayIcon from '../../../../resources/tray-icon@2x.png'
 
@@ -245,6 +251,18 @@ export const CLOSE_ICON_SRC = iconClose
  * from the tokens — which matters more here than on the rail, because the mock
  * draws the message bubble in accent amber and the file's own fill is cream.
  */
+/**
+ * The message panel's own two controls (#159), from the same design directory.
+ *
+ * `klck.svg` is spelled that way in the delivered file, and it is imported
+ * under what it DOES rather than under the file's own name — the same
+ * treatment `filter.svg` gets above, and for the same reason the three
+ * misspelled map paintings keep their filenames: renaming a committed asset to
+ * tidy a spelling is a separate change from wiring it up.
+ */
+export const KICK_ICON_SRC = iconKick
+export const BOOST_ICON_SRC = iconBoost
+
 export const SORT_ICON_SRC = iconFilter
 export const ADD_ICON_SRC = iconAdd
 export const DIALOG_ICON_SRC = iconDialog
@@ -288,6 +306,23 @@ export const IMPORTANT_DIALOG_ICON_SRC = iconImportantDialog
 export function maskImageValue(src: string): string {
   return `url("${src.replaceAll('"', '%22')}")`
 }
+
+/**
+ * The faces in the message panel (#159), at the paths `screens/mine.md` names:
+ * `dwarf-worker/dwarf-worker-face.jpg`, `dwarf-foreman/dwarf-foreman-face.jpg`
+ * and the user portrait under `assets/art/user`.
+ *
+ * Painted portraits rather than the sprite sheets: a sprite is 34x36 of pixel
+ * art meant to stand in a cave, and the panel's portrait is a 100x100 framed
+ * face. The user's file keeps its delivered name for the reason every other
+ * asset here does.
+ */
+export const PORTRAIT_SRC: Record<DwarfRole, string> = {
+  worker: workerFace,
+  foreman: foremanFace
+}
+
+export const USER_PORTRAIT_SRC = userFace
 
 /** The app mark, centred at the top of the rail and of the navigation column. */
 export const TRAY_ICON_SRC = trayIcon
