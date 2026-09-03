@@ -58,6 +58,8 @@ import {
   createMainWindow,
   hidePanel,
   markQuitting,
+  panelLayout,
+  setPanelLayout,
   showPanel,
   togglePanel
 } from './shell/window'
@@ -83,6 +85,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
   ipcMain.removeHandler(IPC_CHANNELS.getAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
+  ipcMain.removeHandler(IPC_CHANNELS.getPanelLayout)
+  ipcMain.removeHandler(IPC_CHANNELS.setPanelLayout)
   ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
@@ -466,6 +470,19 @@ async function init(): Promise<void> {
       console.warn('[pin] Failed to persist the always-on-top preference:', error)
     }
     return real
+  })
+  // The docked shell's own shape (#90). Both channels answer with what the
+  // window IS after the move, never the request: main derives the rectangle
+  // from the display, so a screen that could not hold the whole composition has
+  // to reach the renderer as a fact.
+  ipcMain.handle(IPC_CHANNELS.getPanelLayout, () => panelLayout())
+  ipcMain.handle(IPC_CHANNELS.setPanelLayout, (_event, payload: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload moves nothing and
+    // the caller still gets the real layout back.
+    if (typeof payload !== 'object' || payload === null) return panelLayout()
+    const { expanded, mineOpen } = payload as Record<string, unknown>
+    if (typeof expanded !== 'boolean' || typeof mineOpen !== 'boolean') return panelLayout()
+    return setPanelLayout({ expanded, mineOpen })
   })
   ipcMain.handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
   ipcMain.handle(IPC_CHANNELS.setToggleShortcut, async (_event, payload: unknown) => {

@@ -15,6 +15,8 @@ import type {
   MineDeclareResult,
   MinesSnapshot,
   MineUndeclareResult,
+  PanelLayout,
+  PanelLayoutRequest,
   ProjectQuery,
   ProjectQueryResult,
   ShortcutState
@@ -33,6 +35,15 @@ export interface DwarfAiMinersApi {
    * renderer must render this verdict, never the wish.
    */
   setAlwaysOnTop: (pinned: boolean) => Promise<boolean>
+  /** What the docked shell IS: its edge, and whether it is open (see #90). */
+  getPanelLayout: () => Promise<PanelLayout>
+  /**
+   * Open, collapse, or make room for a mine beside the secondary panel (#90).
+   * Resolves with the REAL layout after main moved the window, which is what the
+   * rail's arrow and the shell's columns are drawn from — a display too narrow
+   * for the whole composition answers with what it could actually give.
+   */
+  setPanelLayout: (request: PanelLayoutRequest) => Promise<PanelLayout>
   /** The panel toggle's REAL state, including a startup registration failure (see #17). */
   getToggleShortcut: () => Promise<ShortcutState>
   /**
@@ -127,6 +138,15 @@ const api: DwarfAiMinersApi = {
   // `pinned === true` collapses any non-boolean to false BEFORE it crosses the
   // bridge, so main's boundary validation only ever sees a clean boolean.
   setAlwaysOnTop: (pinned) => ipcRenderer.invoke(IPC_CHANNELS.setAlwaysOnTop, pinned === true),
+  getPanelLayout: () => ipcRenderer.invoke(IPC_CHANNELS.getPanelLayout),
+  // Same discipline as setAlwaysOnTop: both flags are collapsed to real
+  // booleans BEFORE they cross, so main's boundary check reasons about a clean
+  // shape and never about what a renderer happened to put in the object.
+  setPanelLayout: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setPanelLayout, {
+      expanded: request?.expanded === true,
+      mineOpen: request?.mineOpen === true
+    }),
   getToggleShortcut: () => ipcRenderer.invoke(IPC_CHANNELS.getToggleShortcut),
   // Same discipline as setAlwaysOnTop: collapse anything that is not a string
   // BEFORE it crosses, so main's boundary check only reasons about a string.
