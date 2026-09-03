@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { SHELL_ICON_SRC, TRAY_ICON_SRC } from '../../lib/art'
+import { SHELL_ICON_SRC, TRAY_ICON_SRC, maskImageValue } from '../../lib/art'
 import { SHELL_NAV, type ShellArea } from '../../lib/shell/shellNav'
 
 /**
@@ -53,7 +53,7 @@ const emit = defineEmits<{ select: [area: ShellArea] }>()
         -->
         <span
           class="nav-icon"
-          :style="{ '--nav-icon': `url(${SHELL_ICON_SRC[item.area]})` }"
+          :style="{ '--nav-icon': maskImageValue(SHELL_ICON_SRC[item.area]) }"
           aria-hidden="true"
         ></span>
       </button>

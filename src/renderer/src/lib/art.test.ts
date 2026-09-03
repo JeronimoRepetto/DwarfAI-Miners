@@ -7,8 +7,10 @@ import {
   MAP_ART_SIZE,
   MAP_BG_SRC,
   NUGGET_SRC,
+  SHELL_ICON_SRC,
   SLEEP_ICON_SRC,
-  SORT_ICON_SRC
+  SORT_ICON_SRC,
+  maskImageValue
 } from './art'
 import { MAP_TIME_VARIANTS } from './map/mapTime'
 
@@ -91,5 +93,59 @@ describe('browse and status icons', () => {
   it('gives each glyph its own file rather than reusing one', () => {
     const sources = [SORT_ICON_SRC, ADD_ICON_SRC, DIALOG_ICON_SRC, SLEEP_ICON_SRC, CLOSE_ICON_SRC]
     expect(new Set(sources).size).toBe(sources.length)
+  })
+})
+
+/*
+ * #153's fourth correction, and the whole reason every icon in the shipped app
+ * rendered as a solid square (#153).
+ *
+ * Every one of these SVGs is under 4 KB, so the bundler INLINES it as a
+ * `data:image/svg+xml,...` URI — and its encoder rewrites the file's double
+ * quotes to single ones, so the URI arrives full of `'`. The components then
+ * built the mask value as a bare `url(<that>)`. A CSS url-token may not contain
+ * a quote of either kind: the parser produces a bad-url-token, the custom
+ * property holding it is thrown away, `var(--nav-icon)` never resolves, the
+ * whole `mask` shorthand is invalid, and the element paints its background as a
+ * flat 19px square. Nothing errors; it just looks like a block.
+ *
+ * The development server hands out `/@fs/...` paths with no quotes in them,
+ * which is why this only ever showed in a built app and why the icons looked
+ * fine right up to the acceptance run.
+ */
+describe('maskImageValue', () => {
+  it('quotes the url, so a data URI full of apostrophes still parses', () => {
+    const inlined = "data:image/svg+xml,%3csvg%20xmlns='http://www.w3.org/2000/svg'%3e%3c/svg%3e"
+    expect(maskImageValue(inlined)).toBe(`url("${inlined}")`)
+  })
+
+  it('leaves an ordinary dev-server path alone but for the quoting', () => {
+    expect(maskImageValue('/@fs/C:/app/docs/assets/icons/map.svg')).toBe(
+      'url("/@fs/C:/app/docs/assets/icons/map.svg")'
+    )
+  })
+
+  it('escapes a double quote rather than letting it close the url early', () => {
+    // No encoder produces one today, and a value that could break out of its
+    // own quoting would fail exactly the way the apostrophes already did.
+    expect(maskImageValue('a"b.svg')).toBe('url("a%22b.svg")')
+  })
+
+  it('produces a value every committed glyph can actually be drawn with', () => {
+    const every = [
+      ...Object.values(SHELL_ICON_SRC),
+      SORT_ICON_SRC,
+      ADD_ICON_SRC,
+      DIALOG_ICON_SRC,
+      SLEEP_ICON_SRC,
+      CLOSE_ICON_SRC
+    ]
+    for (const src of every) {
+      const value = maskImageValue(src)
+      expect(value.startsWith('url("')).toBe(true)
+      expect(value.endsWith('")')).toBe(true)
+      // The only double quotes are the two the wrapper itself put there.
+      expect(value.split('"').length - 1).toBe(2)
+    }
   })
 })

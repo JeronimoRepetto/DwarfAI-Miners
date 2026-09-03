@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC } from '../../lib/art'
+import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC, maskImageValue } from '../../lib/art'
 import {
   cardArtFor,
   cardTierLabel,
@@ -138,13 +138,13 @@ const enterable = computed(() => props.project.live)
         <span
           v-if="status.asking"
           class="status-glyph status-asking"
-          :style="{ '--status-icon': `url(${DIALOG_ICON_SRC})` }"
+          :style="{ '--status-icon': maskImageValue(DIALOG_ICON_SRC) }"
           title="An agent here is waiting on an answer"
         ></span>
         <span
           v-if="status.resting"
           class="status-glyph status-resting"
-          :style="{ '--status-icon': `url(${SLEEP_ICON_SRC})` }"
+          :style="{ '--status-icon': maskImageValue(SLEEP_ICON_SRC) }"
           title="An agent here is resting"
         ></span>
       </span>

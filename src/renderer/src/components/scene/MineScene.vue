@@ -2,7 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDwarfKicking } from '../../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
-import { ADD_ICON_SRC, CLOSE_ICON_SRC, INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
+import {
+  ADD_ICON_SRC,
+  CLOSE_ICON_SRC,
+  INTERIOR_ART_SIZE,
+  INTERIOR_SRC,
+  maskImageValue
+} from '../../lib/art'
 import { createBubbleBoard } from '../../lib/overlay/bubbles'
 import { assignScene } from '../../lib/scene/sceneAssignment'
 import { clampToBox, projectToBox } from '../../lib/scene/sceneGeometry'
@@ -313,7 +319,7 @@ onBeforeUnmount(() => {
       <button class="close-mine" type="button" aria-label="Close mine" @click="emit('back')">
         <span
           class="action-glyph"
-          :style="{ '--action-icon': `url(${CLOSE_ICON_SRC})` }"
+          :style="{ '--action-icon': maskImageValue(CLOSE_ICON_SRC) }"
           aria-hidden="true"
         ></span>
       </button>
@@ -335,7 +341,7 @@ onBeforeUnmount(() => {
       >
         <span
           class="action-glyph"
-          :style="{ '--action-icon': `url(${ADD_ICON_SRC})` }"
+          :style="{ '--action-icon': maskImageValue(ADD_ICON_SRC) }"
           aria-hidden="true"
         ></span>
       </button>
