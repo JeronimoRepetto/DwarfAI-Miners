@@ -1,0 +1,106 @@
+import type { Dwarf, DwarfFeedResult, FeedMessage } from '../../types'
+
+/**
+ * What the message panel may honestly draw for one dwarf (#159).
+ *
+ * The hard part of the panel is not the bubbles, it is that "the
+ * conversation" means a different thing per session type — and the design
+ * draws one surface for all of them. So the decision of WHAT is on screen, and
+ * of what the panel claims it is, is made here rather than in the component:
+ * a session type with nothing to show gets an empty state, never an invented
+ * exchange (the capability-matrix discipline of
+ * `docs/question-capture-evaluation.md`).
+ *
+ * Two sources, and the difference between them is a difference in evidence:
+ *
+ * - **held** — `Dwarf.conversation`: the words this app itself watched go by
+ *   on a stream it is holding. First-hand, and complete for as far back as the
+ *   retention bound reaches.
+ * - **observed** — the provider's own bounded transcript tail (`DwarfFeedResult`,
+ *   read on demand), or failing that the `lastMessage` every poll already
+ *   carries. Second-hand and one write behind: a session writes its transcript
+ *   when it feels like it, so this is the latest ACTIVITY rather than a live
+ *   exchange, and the panel says so.
+ *
+ * A held session usually has both — the poll finds its transcript on disk like
+ * any other — and the first-hand reading wins.
+ */
+
+export type ConversationSource = 'held' | 'observed' | 'none'
+
+/** One bubble. `agent`/`user` rather than the wire's `assistant`, because the panel draws dwarfs. */
+export interface PanelMessage {
+  from: 'agent' | 'user'
+  text: string
+  /** A stable list key: the wire carries no message id, so position and time make one. */
+  key: string
+}
+
+export interface PanelConversation {
+  source: ConversationSource
+  messages: PanelMessage[]
+  /** One line saying what these messages ARE — never decoration, and never absent. */
+  note: string
+}
+
+export const HELD_NOTE = 'This panel is holding this session — the exchange as it happened.'
+export const OBSERVED_NOTE = "Latest activity, read from this session's own transcript."
+export const READING_NOTE = "Reading this session's latest activity..."
+export const NOTHING_SAID_NOTE = 'Nothing has been said in this session yet.'
+export const NO_TRANSCRIPT_NOTE = 'This session keeps no transcript this panel can read.'
+
+function toPanel(messages: readonly FeedMessage[]): PanelMessage[] {
+  return messages.map((message, index) => {
+    const from = message.role === 'assistant' ? 'agent' : 'user'
+    return { from, text: message.text, key: `${from}-${index}-${message.timestamp}` }
+  })
+}
+
+/** The `lastMessage` every poll carries, as the one bubble it is — or nothing. */
+function fromLastMessage(lastMessage: string | undefined): FeedMessage[] {
+  if (lastMessage === undefined || lastMessage.trim() === '') return []
+  // No timestamp on the wire for this one: the poll says what was last said,
+  // never when. An empty string is the honest stand-in, and it is only ever
+  // spent on a list key.
+  return [{ role: 'assistant', text: lastMessage, timestamp: '' }]
+}
+
+/**
+ * Resolve what to draw for `dwarf`, given whatever transcript read has come
+ * back for it — `undefined` while one is still in flight, which is its own
+ * answer rather than an empty one.
+ */
+export function conversationOf(
+  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
+  feed?: DwarfFeedResult
+): PanelConversation {
+  if (dwarf.conversation !== undefined && dwarf.conversation.length > 0) {
+    return { source: 'held', messages: toPanel(dwarf.conversation), note: HELD_NOTE }
+  }
+
+  const tail = feed !== undefined && feed.messages.length > 0 ? feed.messages : []
+  const messages = tail.length > 0 ? tail : fromLastMessage(dwarf.lastMessage)
+  if (messages.length > 0) {
+    return { source: 'observed', messages: toPanel(messages), note: OBSERVED_NOTE }
+  }
+
+  // Three ways to have nothing, and they are three different statements. The
+  // panel prints whichever one is true rather than one blank line for all of
+  // them: "still reading" becomes something, "said nothing yet" may, and "no
+  // transcript at all" never will.
+  if (feed === undefined) return { source: 'none', messages: [], note: READING_NOTE }
+  return {
+    source: 'none',
+    messages: [],
+    note: feed.readable ? NOTHING_SAID_NOTE : NO_TRANSCRIPT_NOTE
+  }
+}
+
+/**
+ * The text the panel's opening height is derived from: the LATEST message,
+ * whichever source it came from (see screens/mine.md). Empty when nothing was
+ * said, which is what opens the panel at its floor.
+ */
+export function latestText(conversation: PanelConversation): string {
+  return conversation.messages.at(-1)?.text ?? ''
+}
