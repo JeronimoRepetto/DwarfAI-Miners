@@ -2,6 +2,7 @@ import {
   accrue,
   creditMaterial,
   emptyLedger,
+  knownMineTotals,
   ledgerTotals,
   mineTotals,
   observationsFrom,
@@ -108,6 +109,17 @@ export class MaterialLedger {
   /** The whole vault, every mine the ledger knows — including crewless ones. */
   totals(): MaterialTotals {
     return ledgerTotals(this.ledger)
+  }
+
+  /**
+   * This mine's breakdown exactly as persisted, or undefined when the ledger
+   * has no row for it — a project browse spans mines with no crew and no
+   * history at all (#90), and those must read as absent rather than as a
+   * zeroed breakdown invented for a project nobody has ever mined. Unlike
+   * observe(), which zero-fills every mine on THIS poll's board by design.
+   */
+  knownMineTotals(mineId: string): MaterialTotals | undefined {
+    return knownMineTotals(this.ledger, mineId)
   }
 
   /** The exact state a save would write; for the backfill marker and tests. */

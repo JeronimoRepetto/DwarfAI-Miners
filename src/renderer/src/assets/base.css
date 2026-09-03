@@ -16,12 +16,12 @@ body {
   box-sizing: border-box;
 }
 
+/*
+ * The design's Pixel UI family reaches every screen from here, so a component
+ * mounted inside the shell inherits it instead of declaring its own.
+ */
 body {
-  font-family:
-    'Segoe UI',
-    system-ui,
-    -apple-system,
-    sans-serif;
+  font-family: var(--font-pixel);
   user-select: none;
   -webkit-user-select: none;
 }

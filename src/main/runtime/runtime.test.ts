@@ -2924,6 +2924,7 @@ describe('AgentRuntime project queries (#92)', () => {
   function queryRuntime(options: {
     projects?: ProjectsStore | null
     providers?: Provider[]
+    ledger?: MaterialLedger
   }): AgentRuntime {
     return new AgentRuntime({
       // A zero grace window for the reason the #85 block uses one: a crew that
@@ -2932,6 +2933,7 @@ describe('AgentRuntime project queries (#92)', () => {
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? queryStore() : options.projects,
+      ledger: options.ledger,
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -2965,6 +2967,58 @@ describe('AgentRuntime project queries (#92)', () => {
         live: false
       }
     ])
+  })
+
+  it('joins a project row against its persisted material breakdown by id (#90)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal(mineIdForPath(WORKED), 9_000)
+    const runtime = queryRuntime({ projects, ledger })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    expect(project?.materials).toEqual({ ...emptyMaterialTotals(), coal: 9_000 })
+  })
+
+  it('leaves materials absent for a project the ledger has no row for at all (#90)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    // No credit, and the default ledger the helper builds is empty.
+    const runtime = queryRuntime({ projects })
+
+    const [project] = (await runtime.queryProjects(newest)).projects
+    runtime.stop()
+
+    // Absent, not a breakdown of zeros: the ledger has never heard of this id.
+    expect(project).not.toHaveProperty('materials')
+  })
+
+  it('joins materials the same way for a live project and a crewless one (#90)', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    await projects.upsertObserved({ path: ADOPTED, at: 1_000 })
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal(mineIdForPath(WORKED), 2_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED), 5_000)
+    const { provider, setWorking } = toggleProvider(WORKED)
+    setWorking(true)
+    const runtime = queryRuntime({ projects, providers: [provider], ledger })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    const worked = result.projects.find((project) => project.path === WORKED)
+    const adopted = result.projects.find((project) => project.path === ADOPTED)
+    expect(worked?.live).toBe(true)
+    expect(worked?.materials?.coal).toBe(2_000)
+    expect(adopted?.live).toBe(false)
+    expect(adopted?.materials?.coal).toBe(5_000)
   })
 
   it('leaves an unmeasured tier absent rather than reporting bronze (#41)', async () => {

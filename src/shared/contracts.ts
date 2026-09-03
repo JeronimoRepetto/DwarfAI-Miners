@@ -751,6 +751,45 @@ export interface ShortcutState {
 }
 
 /**
+ * Which screen edge the shell is docked to (#90). The design allows exactly
+ * left or right, and names Right as the default.
+ */
+export type PanelEdge = 'left' | 'right'
+
+/**
+ * What the shell window IS, read back from the BrowserWindow after main applied
+ * it — never what the click asked for.
+ *
+ * The same honesty rule the pin surface has, for the same reason: main derives
+ * the panel's bounds from the display it is on, so a display too narrow for the
+ * expanded panel, or an edge the user has not chosen, must reach the renderer as
+ * a fact rather than being assumed by whoever pressed the arrow. The rail draws
+ * its arrow from `edge`, so a panel drawn against the wrong edge would point the
+ * user off the screen.
+ *
+ * `mineOpen` is here because it changes the WINDOW: the design keeps an open
+ * mine beside one secondary panel, and that second column is width the window
+ * has to be given before the renderer can draw into it.
+ */
+export interface PanelLayout {
+  edge: PanelEdge
+  expanded: boolean
+  mineOpen: boolean
+}
+
+/**
+ * What the panel asks the shell window to become (#90).
+ *
+ * `edge` is deliberately absent: the design puts the left/right choice in the
+ * Settings position control, which is its own slice. Until that exists the edge
+ * is main's, and the renderer can only ever read it back.
+ */
+export interface PanelLayoutRequest {
+  expanded: boolean
+  mineOpen: boolean
+}
+
+/**
  * Which build of the app is running (see #79) — the number, and which of the
  * two builds that can be on one machine is speaking.
  *
@@ -872,6 +911,26 @@ export interface ProjectQuery {
  * `knownTier` is absent until a walk has measured one, and absent means
  * unmeasured rather than bronze (#41). `lastOpenedAt` is absent for a project
  * the user declared and no agent has been seen in: declaring is not opening.
+ *
+ * `materials` is this project's persisted per-material breakdown (#90),
+ * joined by the SAME id — `mineIdForPath`, see `id` below — the material
+ * ledger already keys every mine by. It is absent exactly when the ledger
+ * holds no row for this id at all, never a breakdown of zeros invented for a
+ * project nobody has ever mined — the same absent-means-unmeasured
+ * discipline `knownTier` uses (#41).
+ *
+ * There is deliberately no tier-PROGRESS figure alongside it. The tier a
+ * project is ON is classified from its SOURCE-CODE BYTE WEIGHT against the
+ * canonical thresholds the design source fixes (100/500/2048/8192 KB — see
+ * `TierThresholds` and `AppConfig.tierThresholds`'s default in
+ * main/config/config.ts), never from mined tokens: they are two unrelated
+ * axes, exactly as the materials themselves never convert into one another.
+ * `main/tier/tierService.ts` does not even keep the raw byte weight once it
+ * has classified a tier (`refresh()`'s cache entry keeps only the tier and
+ * when it was computed), so no per-project "current weight" figure exists
+ * anywhere today to pair with those thresholds. Pairing `materials`'s token
+ * totals against them instead would misrepresent progress on an axis they
+ * were never measured on.
  */
 export interface ProjectSummary {
   /** mineIdForPath — the same id the board and the ledger use, never a second scheme. */
@@ -884,6 +943,8 @@ export interface ProjectSummary {
   addedAt: number
   lastOpenedAt?: number
   lastProvider?: DwarfProvider
+  /** Absent means the ledger has no row for this id — never zeros for a project nobody has mined (#90). */
+  materials?: MaterialTotals
   live: boolean
 }
 
@@ -912,6 +973,14 @@ export const IPC_CHANNELS = {
    */
   getAlwaysOnTop: 'panel:getAlwaysOnTop',
   setAlwaysOnTop: 'panel:setAlwaysOnTop',
+  /**
+   * The docked shell's own shape, see #90. Both channels answer with the REAL
+   * PanelLayout after main moved the window, for the same reason the pin
+   * channels do: the bounds are derived from the display, so a request the
+   * display cannot satisfy must come back as what actually happened.
+   */
+  getPanelLayout: 'panel:layout:get',
+  setPanelLayout: 'panel:layout:set',
   /**
    * User-configurable panel toggle, see #17. Both channels answer with the
    * REAL ShortcutState after the registration attempt — never the requested

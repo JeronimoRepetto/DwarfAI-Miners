@@ -1,43 +1,105 @@
 /*
- * Named values from the interface redesign's foundations, declared once.
+ * The interface redesign's foundations, declared once (#90).
  *
- * This is the seed of that token set, not the whole palette: it carries only
- * what the Mines panel uses, and each screen rebuilt after it adds the tokens
- * it needs here rather than repeating a hex literal per component. A palette
- * correction has to be one edit in this file, never a repo-wide hunt.
+ * Every value here is transcribed from `docs/dwarfai-miners-design/
+ * foundations.md`, under the token names that file itself suggests, so the two
+ * can be read side by side. A palette or metric correction is one edit in this
+ * file, never a repo-wide hunt — and `designTokens.test.ts` beside it holds the
+ * transcription to the source table.
  *
- * Deliberately separate from theme.css, which is the ORIGINAL interface's
- * palette (--bg-panel, --ink, --lantern and the per-tier mineral colors). The
- * two coexist while the rebuild is partial: screens still on the old design
- * keep reading theme.css, and nothing here overwrites a token they use.
+ * This is the ONLY home for a design-source value. `theme.css` carries what is
+ * left of the ORIGINAL interface's palette (--bg-panel, --ink, --lantern and the
+ * per-tier mineral colours) and declares nothing that appears here; the same
+ * test fails if any custom property is declared in both.
  */
 :root {
-  /* Mine cards, the search field surface, the panel body. */
-  --color-panel: #2b2119;
-  /* The deep ground the card list sits on. */
-  --color-panel-deep: #14100b;
-  /* Titles, dividers, active borders. */
-  --color-accent: #d19831;
-  /* Borders and primary light text. */
+  /*
+   * Typography. The source names `Tiny5` as the Pixel UI family and leaves the
+   * fallback stack Unspecified; the stack is ours, because a font that failed
+   * to load must still leave a 10px label readable rather than handing the
+   * choice to whatever the platform picked first.
+   */
+  --font-pixel: 'Tiny5', 'Segoe UI', system-ui, sans-serif;
+
+  /* Closed edge rail. */
+  --color-rail: #f6b644;
+  /* Selected navigation icon, borders, primary light text, modal border. */
   --color-cream: #fae2b6;
+  /* Unselected shell navigation icons. */
+  --color-nav-idle: #110c07;
+  /* Settings/popup base background and disabled control background. */
+  --color-panel-deep: #14100b;
+  /* Mine cards, mine tooltip, message panel. */
+  --color-panel: #2b2119;
   /* Enabled control background, and the border and text of an unselected chip. */
   --color-control: #272015;
+  /* Titles, dividers, active borders, selected question background. */
+  --color-accent: #d19831;
+  /* Mine tooltip copy. */
+  --color-tooltip-text: #f7dcaf;
+  /* Message input surface and foreman message icon. */
+  --color-white: #ffffff;
+  /* Lab/Market overlay and text-panel overlay, always at 50% opacity. */
+  --color-black: #000000;
+  /* Unselected question option background. */
+  --color-question-dark: #13100a;
+
+  /* Dense labels, controls and metadata. */
+  --text-meta: 10px;
+  /* Confirmation helper copy. */
+  --text-helper: 12px;
+  /* Settings section labels. */
+  --text-section: 14px;
+  /* Settings title, mine type and project name. */
+  --text-title: 19px;
+  /* Modal and empty-state headline. */
+  --text-headline: 24px;
 
   /* One radius across rails, panels, cards, inputs, buttons and dialogs. */
   --radius-default: 12px;
   --border-highlight: 2px solid var(--color-cream);
+  /* Settings, the unavailable panels and the reset modal. */
+  --border-heavy: 4px solid var(--color-cream);
   --border-active: 2px solid var(--color-accent);
+  /*
+   * The source names elevation `5` for the rail, the map, the tooltip and the
+   * message panel, and gives no shadow formula — so this recipe is a decision,
+   * not a transcription (see the PR for #90). Deliberately modest: the panel
+   * floats over a desktop, and a heavy drop shadow around a 20px rail reads as
+   * a smudge rather than as depth.
+   */
+  --elevation-5: 0 4px 14px #00000073;
 
-  /* Dense labels, controls and metadata. */
-  --text-meta: 10px;
-  /* Mine type and project name. */
-  --text-title: 19px;
-  /* Empty-state and modal headline. */
-  --text-headline: 24px;
+  /* Gap between vertically stacked shell navigation buttons. */
+  --space-nav-gap: 8px;
+  /* Settings panel margin and common top padding inside settings sections. */
+  --space-settings: 10px;
+  /* Reset modal outer margin. */
+  --space-modal-margin: 12px;
+  /* Map padding on every side. */
+  --space-map-pad: 21px;
 
+  /* The closed rail, spanning the usable screen height. */
+  --size-rail-width: 20px;
+  /* Tray/app icon and every shell navigation SVG. */
+  --size-icon: 19px;
+  /* Mine map marker, a hexagon with a pulsing light. */
+  --size-marker-width: 10px;
+  /* Sleep/idle dwarf status icon; the other status icons use --size-icon. */
+  --size-sleep-icon: 15px;
   --size-search-height: 30px;
   --size-chip-height: 25px;
+  --size-shortcut-height: 42px;
   --size-card-height: 120px;
   --size-card-art-width: 120px;
   --size-card-art-height: 90px;
+  /* Dwarf/user portrait in the message UI. */
+  --size-portrait: 100px;
+  --size-tooltip-width: 170px;
+  --size-tooltip-height: 60px;
+  --size-mine-interior-width: 245px;
+  /* Lab and Market. */
+  --size-feature-panel-width: 487px;
+  --size-message-panel-width: 990px;
+  --size-message-input-width: 865px;
 }

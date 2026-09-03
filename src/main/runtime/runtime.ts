@@ -677,19 +677,27 @@ export class AgentRuntime {
     const onBoard = new Set(this.mines.map((mine) => mine.id))
     return {
       answered: true,
-      projects: result.value.map((project) => ({
-        id: project.id,
-        path: project.path,
-        name: project.name,
-        declared: project.origin === 'declared',
-        // Absent, never null and never a placeholder: the wire says "nobody has
-        // measured this" by saying nothing at all (#41).
-        ...(project.knownTier === null ? {} : { knownTier: project.knownTier }),
-        addedAt: project.addedAt,
-        ...(project.lastOpenedAt === null ? {} : { lastOpenedAt: project.lastOpenedAt }),
-        ...(project.lastProvider === null ? {} : { lastProvider: project.lastProvider }),
-        live: onBoard.has(project.id)
-      }))
+      projects: result.value.map((project) => {
+        // O(1) per row off the ledger already held in memory (#90) — no query,
+        // same id scheme (mineIdForPath) the board and the ledger both key by.
+        const materials = this.ledger.knownMineTotals(project.id)
+        return {
+          id: project.id,
+          path: project.path,
+          name: project.name,
+          declared: project.origin === 'declared',
+          // Absent, never null and never a placeholder: the wire says "nobody has
+          // measured this" by saying nothing at all (#41).
+          ...(project.knownTier === null ? {} : { knownTier: project.knownTier }),
+          addedAt: project.addedAt,
+          ...(project.lastOpenedAt === null ? {} : { lastOpenedAt: project.lastOpenedAt }),
+          ...(project.lastProvider === null ? {} : { lastProvider: project.lastProvider }),
+          // Absent exactly when the ledger has no row for this id — never an
+          // invented zero breakdown for a project the vault has not mined.
+          ...(materials === undefined ? {} : { materials }),
+          live: onBoard.has(project.id)
+        }
+      })
     }
   }
 

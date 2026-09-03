@@ -186,7 +186,7 @@ adding a file. This is the index — one line per group, so you can tell what a 
 <!-- END GENERATED: main-tree -->
 
 - **`renderer/src/`** — `components/` is thin and decides nothing, `lib/` is the framework-agnostic
-  logic, and the two share the family names `map`, `scene` and `vault` on purpose. `composables/`
+  logic, and the two share the family names `shell`, `map`, `scene` and `vault` on purpose. `composables/`
   is the Vue-bound state; `types.ts` is this process's barrel onto `contracts.ts`.
 
 **Where the next file goes:** name a directory for the subject it is about, never for the kind of

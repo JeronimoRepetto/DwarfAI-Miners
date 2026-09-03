@@ -21,17 +21,11 @@
   --parchment-line: #ad9772;
   --parchment-ink: #33261a;
   /*
-   * The design source's own palette, under its own names, so a corrected hex is
-   * one edit here rather than a hunt through components. Only the four the
-   * agent-question flow needs are declared; the rest arrive with the screens
-   * that use them. `--color-panel` is the message-panel brown and is a
-   * different colour from `--bg-panel` above, which the source calls
-   * "panel deep".
+   * The four design-source colours the agent-question flow needs used to be
+   * declared here as well as in design-tokens.css. They now live only there,
+   * which is the whole point of that file: two declarations of one corrected hex
+   * would have left the cascade deciding which screen got it (#90).
    */
-  --color-accent: #d19831;
-  --color-cream: #fae2b6;
-  --color-panel: #2b2119;
-  --color-question-dark: #13100a;
 }
 
 /* Earthy brown */

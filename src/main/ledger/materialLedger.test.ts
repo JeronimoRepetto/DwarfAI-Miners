@@ -243,6 +243,30 @@ describe('MaterialLedger.creditCoal', () => {
   })
 })
 
+describe('MaterialLedger.knownMineTotals', () => {
+  it('answers undefined for a mine the ledger has no row for (#90)', async () => {
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+    expect(ledger.knownMineTotals('mine:never-mined')).toBeUndefined()
+  })
+
+  it('answers the mine breakdown exactly as persisted once it has one', async () => {
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 9_000)
+    expect(ledger.knownMineTotals('mine:a')?.coal).toBe(9_000)
+  })
+
+  it('never zero-fills a crewless mine nobody has mined, unlike observe()', async () => {
+    // The distinction #90 needs: observe() stamps every LIVE mine with a
+    // zero-filled breakdown by design, but a browse spans crewless projects
+    // this poll never saw at all, and those must read as absent.
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+    expect(ledger.knownMineTotals('mine:crewless')).toBeUndefined()
+  })
+})
+
 describe('MaterialLedger.state', () => {
   it('exposes exactly what would be written, for the store to serialize', async () => {
     const ledger = new MaterialLedger({ store: fakeStore() })

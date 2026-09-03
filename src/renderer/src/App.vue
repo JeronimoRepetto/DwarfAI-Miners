@@ -1,28 +1,42 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import EdgeRail from './components/shell/EdgeRail.vue'
 import FeedModal from './components/panel/FeedModal.vue'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import MinesPanel from './components/browse/MinesPanel.vue'
+import PanelFrame from './components/shell/PanelFrame.vue'
+import ShellNav from './components/shell/ShellNav.vue'
 import ShortcutSettings from './components/panel/ShortcutSettings.vue'
+import UnavailablePanel from './components/shell/UnavailablePanel.vue'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
+import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { versionLabel, versionTitle } from './lib/appBuild'
+import { CLOSE_ICON_SRC } from './lib/art'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
-import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot } from './types'
+import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot, ShellArea } from './types'
 
 const { state, setMines } = useMines()
-const { state: viewState, openMine, showMap, showMines, syncWithMines } = useView()
+const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 const { state: kickingState, kick } = useDwarfKicking()
 const { state: questionState, answer: answerDwarfQuestion } = useDwarfQuestion()
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
+
+/**
+ * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
+ * because the window's rectangle is derived from the display: the rail's arrow
+ * is drawn from `layout.edge`, and drawing it from a guess would point the user
+ * off the screen.
+ */
+const { layout, sync: syncLayout, apply: applyLayout, toggle: toggleLayout } = usePanelLayout()
 
 // The hover line explains what the CURRENT state does; the accessible name
 // stays stable and aria-pressed carries the state (see the pin button below).
@@ -71,20 +85,31 @@ const {
   addProject
 } = useProjectBrowse()
 
-const minesOpen = computed(() => viewState.view.kind === 'mines')
+/**
+ * A shortcut the OS refused is flagged on the navigation stack's Settings
+ * button, without anything being opened: a failure the user only meets after
+ * opening settings is a failure they never look for. It was flagged on the old
+ * titlebar's gear, which the design replaced.
+ */
+const shortcutBroken = computed(
+  () => shortcutState.value !== null && !shortcutState.value.registered
+)
 
 /**
- * Every open reads the first page again: the list spans projects nobody is
- * working, so nothing pushes it and a remembered page would age silently.
+ * Selecting an area never closes the mine held open beside it — that is the
+ * design's concurrent model, and it is the whole reason the two are separate
+ * pieces of state.
+ *
+ * Every open reads the browse's first page again: the list spans projects
+ * nobody is working, so nothing pushes it and a remembered page would age
+ * silently. Leaving the recorder listening across a switch would capture
+ * keystrokes the next time settings came back.
  */
-function toggleMines(): void {
-  if (minesOpen.value) {
-    showMap()
-    return
-  }
-  showMines()
+function selectArea(area: ShellArea): void {
+  if (viewState.area === 'settings' && area !== 'settings') stopShortcutRecording()
+  showArea(area)
   error.value = null
-  void loadProjects()
+  if (area === 'mines') void loadProjects()
 }
 
 /** The browse and the board share one id scheme, so a card opens its mine directly. */
@@ -93,39 +118,13 @@ function openFromBrowse(projectId: string): void {
   error.value = null
 }
 
-const settingsOpen = ref(false)
-
-/**
- * A shortcut the OS refused is flagged on the CLOSED gear too: a failure the
- * user only meets after opening settings is a failure they never look for.
- */
-const shortcutBroken = computed(
-  () => shortcutState.value !== null && !shortcutState.value.registered
-)
-
-const settingsTooltip = computed(() =>
-  shortcutBroken.value ? 'Shortcut unavailable - click to change it' : 'Settings'
-)
-
-function toggleSettings(): void {
-  settingsOpen.value = !settingsOpen.value
-  // Closing while the recorder is listening would leave it capturing
-  // keystrokes the next time the panel opens.
-  if (!settingsOpen.value) stopShortcutRecording()
-}
-
-function closeSettings(): void {
-  settingsOpen.value = false
-  stopShortcutRecording()
-}
-
 /**
  * Which build is running (see #79). Read from main once on mount, because a
  * version cannot change under a live process — there is nothing to keep in
  * step and nothing to subscribe to.
  *
  * Null until it arrives, and null forever if the read fails, in which case the
- * titlebar prints nothing at all. That is deliberate: a placeholder like
+ * settings panel prints nothing at all. That is deliberate: a placeholder like
  * "unknown" would be furniture for a case that means the bridge itself is
  * down, and inventing a version where the real one belongs is the one failure
  * this whole feature exists to prevent.
@@ -141,10 +140,26 @@ const feed = ref<FeedMessage[]>([])
 const feedFor = ref<string | null>(null)
 let unsubscribe: (() => void) | undefined
 
-const currentMine = computed<Mine | undefined>(() => {
-  const view = viewState.view
-  return view.kind === 'mine' ? state.mines.find((mine) => mine.id === view.mineId) : undefined
-})
+const currentMine = computed<Mine | undefined>(() =>
+  viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
+)
+
+/**
+ * The mine column is width the WINDOW has to be given before anything can be
+ * drawn into it, so opening or closing a mine reshapes the shell. Serialized in
+ * usePanelLayout behind whatever the rail is doing, because the two overlap.
+ */
+watch(
+  () => viewState.mineId !== null,
+  (mineOpen) => {
+    if (!layout.value.expanded) return
+    void applyLayout({ expanded: true, mineOpen })
+  }
+)
+
+function toggleShell(): void {
+  void toggleLayout(viewState.mineId !== null)
+}
 
 function hidePanel(): void {
   window.api.hidePanel()
@@ -179,7 +194,7 @@ async function loadBuild(): Promise<void> {
     build.value = await window.api.getAppBuild()
   } catch {
     // Main is the only source there is, so there is nothing to fall back on
-    // and nothing worth guessing: the titlebar stays as it was.
+    // and nothing worth guessing: the settings panel stays as it was.
   }
 }
 
@@ -188,8 +203,8 @@ function enterMine(mineId: string): void {
   error.value = null
 }
 
-function backToMap(): void {
-  showMap()
+function leaveMine(): void {
+  closeMine()
   error.value = null
 }
 
@@ -254,11 +269,14 @@ function answerQuestion(dwarf: Dwarf, label: string): void {
 
 onMounted(() => {
   void load()
+  // Adopts the window's REAL shape: which edge it is docked to decides which
+  // way the rail's arrow points, and the renderer never chose it.
+  void syncLayout()
   // The button's initial "pinned" guess matches main's default; this adopts
   // the real BrowserWindow state (the user may have unpinned on a past run).
   void syncPinned()
   // Reads the accelerator AND whether it actually registered, so a startup
-  // failure can be flagged on the gear before anyone opens settings.
+  // failure can be flagged on the Settings button before anyone opens it.
   void syncShortcut()
   void loadBuild()
   unsubscribe = window.api.onMinesUpdated(update)
@@ -267,306 +285,279 @@ onBeforeUnmount(() => unsubscribe?.())
 </script>
 
 <template>
-  <div class="panel">
-    <header class="titlebar">
-      <span class="title">
-        <i aria-hidden="true"></i>DwarfAI-Miners
+  <div class="shell" :class="[`edge-${layout.edge}`, layout.expanded ? 'is-open' : 'is-closed']">
+    <!--
+      The rail and the collapse arrow are one control in one component, because
+      they are one surface in the design: the same #f6b644, with the arrow
+      turned round.
+    -->
+    <EdgeRail :edge="layout.edge" :expanded="layout.expanded" @toggle="toggleShell" />
+
+    <template v-if="layout.expanded">
+      <div class="shell-secondary">
         <!--
-          The running version (see #79). A label, not a control: it stays out
-          of .window-controls so nothing about it invites a click, and out of
-          the no-drag region so the whole name still drags the panel.
+          The map container from the design: 21px padding on every side, a 2px
+          #fae2b6 border and elevation 5, with the collected-materials totals
+          overlaid in its upper-right corner (VaultChip, inside MapView).
         -->
-        <span v-if="versionText" class="version" :title="versionHint">{{ versionText }}</span>
-      </span>
-      <div class="window-controls">
+        <PanelFrame v-if="viewState.area === 'map'" variant="map">
+          <div v-if="loading" class="loading" role="status">
+            <span class="spinner" aria-hidden="true"></span>
+            <p>Scanning the hills for active agents...</p>
+          </div>
+          <MapView
+            v-else
+            :mines="state.mines"
+            :tokens-observed="state.tokensObserved"
+            :materials="state.materials"
+            @open="enterMine"
+          />
+        </PanelFrame>
+
+        <PanelFrame v-else-if="viewState.area === 'mines'">
+          <MinesPanel
+            :projects="projects"
+            :mines="state.mines"
+            :search="browseFilters.search"
+            :tier="browseFilters.tier"
+            :direction="browseFilters.direction"
+            :loading="browseLoading"
+            :error="browseError"
+            :exhausted="browseExhausted"
+            :adding="addingProject"
+            :add-error="addProjectError"
+            @search="setProjectSearch"
+            @tier="setProjectTier"
+            @toggle-direction="toggleProjectOrder"
+            @load-more="loadMoreProjects"
+            @add="addProject"
+            @open="openFromBrowse"
+          />
+        </PanelFrame>
+
         <!--
-          Browse every project the app remembers (#92) — including the ones no
-          session is running, which is exactly what the map cannot show. A
-          toggle rather than a one-way door, because it is also the way back:
-          the full edge rail the design gives this is its own slice.
+          Settings keeps the existing shortcut section inside the design's heavy
+          frame; the screen's own rebuild is a later slice. The pin and the
+          running version live here because the titlebar that carried them is
+          gone and the design gives neither a home of its own — a preference and
+          a build number belong with the other preferences rather than as
+          furniture on a 20px rail.
         -->
-        <button
-          class="mines"
-          type="button"
-          aria-label="Browse mines"
-          :aria-pressed="minesOpen ? 'true' : 'false'"
-          title="Browse every project"
-          @click="toggleMines"
-        >
-          <!-- Mine entrance on the same 16x16 rect grid as the other icons. -->
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="6" y="4" width="4" height="2" fill="#a8703a" />
-            <rect x="4" y="6" width="8" height="2" fill="#a8703a" />
-            <rect x="2" y="8" width="12" height="7" fill="#a8703a" />
-            <rect x="6" y="10" width="4" height="5" fill="#3f2a14" />
-            <rect x="7" y="11" width="2" height="2" fill="#f4c76a" />
-          </svg>
-        </button>
-        <!--
-          Settings (see #17). aria-expanded ties the gear to the panel it
-          opens, and `is-broken` mirrors a shortcut the OS refused so the
-          failure is visible without opening anything.
-        -->
-        <button
-          class="settings"
-          :class="{ 'is-broken': shortcutBroken }"
-          type="button"
-          aria-label="Settings"
-          :aria-expanded="settingsOpen ? 'true' : 'false'"
-          :title="settingsTooltip"
-          @click="toggleSettings"
-        >
-          <!-- Pixel-art cog on the same 16x16 rect grid as the other icons. -->
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="6" y="1" width="4" height="2" fill="#a8703a" />
-            <rect x="6" y="13" width="4" height="2" fill="#a8703a" />
-            <rect x="1" y="6" width="2" height="4" fill="#a8703a" />
-            <rect x="13" y="6" width="2" height="4" fill="#a8703a" />
-            <rect x="3" y="3" width="2" height="2" fill="#a8703a" />
-            <rect x="11" y="3" width="2" height="2" fill="#a8703a" />
-            <rect x="3" y="11" width="2" height="2" fill="#a8703a" />
-            <rect x="11" y="11" width="2" height="2" fill="#a8703a" />
-            <rect x="4" y="4" width="8" height="8" fill="#f4c76a" />
-            <rect x="6" y="6" width="4" height="4" fill="#3f2a14" />
-            <!-- Warning pip: the same red the error notices use. -->
-            <rect v-if="shortcutBroken" x="12" y="0" width="4" height="3" fill="#e07a5f" />
-          </svg>
-        </button>
-        <!--
-          Pin toggle (see #35): stable accessible name + aria-pressed for the
-          state, tooltip explaining what the current state does. `pinned` only
-          ever reflects the real BrowserWindow state handed back over IPC (see
-          usePinnedWindow), so a declined or failed toggle can never paint an
-          always-on-top the window does not have.
-        -->
-        <button
-          class="pin"
-          type="button"
-          aria-label="Keep panel on top"
-          :aria-pressed="pinned ? 'true' : 'false'"
-          :title="pinTooltip"
-          @click="togglePinned"
-        >
-          <!-- Pixel-art pushpins on the same 16x16 rect grid as the dwarf
-               action bar icons (see DwarfActionBar.vue), crispEdges via CSS. -->
-          <svg v-if="pinned" viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="6" y="1" width="4" height="2" fill="#ffe29c" />
-            <rect x="5" y="3" width="6" height="4" fill="#f4c76a" />
-            <rect x="4" y="7" width="8" height="2" fill="#a8703a" />
-            <rect x="7" y="9" width="2" height="4" fill="#6b5a44" />
-            <rect x="7" y="13" width="2" height="2" fill="#3f2a14" />
-          </svg>
-          <svg v-else viewBox="0 0 16 16" aria-hidden="true">
-            <!-- Tilted pin, needle free of the ground: nothing is held down. -->
-            <rect x="10" y="1" width="4" height="2" fill="#8a7a5e" />
-            <rect x="9" y="3" width="5" height="3" fill="#6b5a44" />
-            <rect x="8" y="6" width="3" height="2" fill="#4b3c28" />
-            <rect x="6" y="8" width="2" height="2" fill="#4b3c28" />
-            <rect x="4" y="10" width="2" height="2" fill="#4b3c28" />
-            <rect x="2" y="12" width="2" height="2" fill="#3f2a14" />
-          </svg>
-        </button>
-        <button class="close" type="button" aria-label="Hide panel" @click="hidePanel">
-          &times;
+        <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
+          <div class="settings-area">
+            <ShortcutSettings
+              :state="shortcutState"
+              :error="shortcutError"
+              :recording="shortcutRecording"
+              :applying="shortcutApplying"
+              @start-recording="startShortcutRecording"
+              @stop-recording="stopShortcutRecording"
+              @record="recordShortcut"
+              @reset="resetShortcut"
+              @close="showMap"
+            />
+            <div class="shell-preferences">
+              <button
+                class="pin"
+                type="button"
+                aria-label="Keep panel on top"
+                :aria-pressed="pinned ? 'true' : 'false'"
+                :title="pinTooltip"
+                @click="togglePinned"
+              >
+                Always on top
+              </button>
+              <!--
+                The titlebar's close button was the renderer's ONLY caller of
+                hidePanel, and the design has no window-close control: the
+                panel's way out of the user's way is collapsing to the rail.
+                Keeping it here relocates the capability rather than dropping
+                it — hiding also stays on the tray and the global shortcut.
+              -->
+              <button
+                class="hide-panel"
+                type="button"
+                title="Hide the panel; the shortcut or the tray brings it back"
+                @click="hidePanel"
+              >
+                Hide panel
+              </button>
+              <span v-if="versionText" class="version" :title="versionHint">{{ versionText }}</span>
+            </div>
+          </div>
+        </PanelFrame>
+
+        <PanelFrame v-else variant="settings">
+          <UnavailablePanel :feature="viewState.area === 'lab' ? 'lab' : 'market'" />
+        </PanelFrame>
+
+        <p v-if="error" class="notice" role="alert">{{ error }}</p>
+      </div>
+
+      <ShellNav :area="viewState.area" :broken="shortcutBroken" @select="selectArea" />
+
+      <!--
+        One mine beside one secondary panel: the concurrent model the design's
+        exports prove, and no more than that — the source warns in as many words
+        against assuming arbitrary multi-panel stacking.
+      -->
+      <div v-if="currentMine" class="shell-mine">
+        <PanelFrame>
+          <MineScene
+            :mine="currentMine"
+            :activating-id="activating"
+            :send-states="messagingState.byDwarfId"
+            :kick-states="kickingState.byDwarfId"
+            :answer-states="questionState.byDwarfId"
+            @back="leaveMine"
+            @activate="activate"
+            @send-text="sendText"
+            @kick="kickDwarf"
+            @answer-question="answerQuestion"
+          />
+        </PanelFrame>
+        <button class="close-mine" type="button" aria-label="Close mine" @click="leaveMine">
+          <span
+            class="close-glyph"
+            :style="{ '--close-icon': `url(${CLOSE_ICON_SRC})` }"
+            aria-hidden="true"
+          ></span>
         </button>
       </div>
-    </header>
-    <ShortcutSettings
-      v-if="settingsOpen"
-      :state="shortcutState"
-      :error="shortcutError"
-      :recording="shortcutRecording"
-      :applying="shortcutApplying"
-      @start-recording="startShortcutRecording"
-      @stop-recording="stopShortcutRecording"
-      @record="recordShortcut"
-      @reset="resetShortcut"
-      @close="closeSettings"
-    />
-    <main class="content">
-      <div v-if="loading" class="loading" role="status">
-        <span class="spinner" aria-hidden="true"></span>
-        <p>Scanning the hills for active agents...</p>
-      </div>
-      <MineScene
-        v-else-if="currentMine"
-        :mine="currentMine"
-        :activating-id="activating"
-        :send-states="messagingState.byDwarfId"
-        :kick-states="kickingState.byDwarfId"
-        :answer-states="questionState.byDwarfId"
-        @back="backToMap"
-        @activate="activate"
-        @send-text="sendText"
-        @kick="kickDwarf"
-        @answer-question="answerQuestion"
-      />
-      <MinesPanel
-        v-else-if="minesOpen"
-        :projects="projects"
-        :mines="state.mines"
-        :search="browseFilters.search"
-        :tier="browseFilters.tier"
-        :direction="browseFilters.direction"
-        :loading="browseLoading"
-        :error="browseError"
-        :exhausted="browseExhausted"
-        :adding="addingProject"
-        :add-error="addProjectError"
-        @search="setProjectSearch"
-        @tier="setProjectTier"
-        @toggle-direction="toggleProjectOrder"
-        @load-more="loadMoreProjects"
-        @add="addProject"
-        @open="openFromBrowse"
-      />
-      <MapView
-        v-else
-        :mines="state.mines"
-        :tokens-observed="state.tokensObserved"
-        :materials="state.materials"
-        @open="enterMine"
-      />
-      <p v-if="error" class="notice" role="alert">{{ error }}</p>
-    </main>
+    </template>
+
     <FeedModal v-if="feedFor" :title="feedFor" :messages="feed" @close="closeFeed" />
   </div>
 </template>
 
 <style scoped>
-.panel {
-  position: relative;
+/*
+ * The shell is the whole window: a docked strip whose columns run from its free
+ * edge to the screen edge it hangs on. A left-docked panel is the same DOM in
+ * the other direction, which is what `row-reverse` buys — one order to reason
+ * about, mirrored once.
+ */
+.shell {
   display: flex;
-  flex-direction: column;
   height: 100vh;
   overflow: hidden;
-  color: var(--ink);
-  background: var(--bg-panel);
-  border: 1px solid var(--line-strong);
-  border-radius: 14px;
+  color: var(--color-cream);
+  font-size: var(--text-meta);
 }
-.titlebar {
+.shell.edge-left {
+  flex-direction: row-reverse;
+}
+.shell.is-open {
+  gap: var(--space-nav-gap);
+  padding: var(--space-nav-gap);
+  border-radius: var(--radius-default);
+  background: var(--color-rail);
+  box-shadow: var(--elevation-5);
+}
+.shell-secondary {
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  -webkit-app-region: drag;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
-.title {
+.shell-secondary > * {
+  flex: 1;
+  min-height: 0;
+}
+/* The mine's own column, outboard of the navigation stack (see the exports). */
+/*
+ * The design's 245px mine interior, plus the 32px of chrome MineScene still
+ * wraps around the cave (its padding and header row) — the interior's own
+ * rebuild is a later slice, and until it lands the cave needs that much more
+ * column to be drawn at the width the design gives it. main reserves the same
+ * width in the window; see MINE_COLUMN_WIDTH in main/shell/panelBounds.ts.
+ */
+.shell-mine {
+  position: relative;
   display: flex;
-  gap: 8px;
-  align-items: center;
-  font-weight: 700;
-  font-size: 14px;
-  letter-spacing: 0.04em;
+  flex: none;
+  flex-direction: column;
+  width: calc(var(--size-mine-interior-width) + 32px);
+  min-width: 0;
 }
-/* Quiet by construction: the faintest ink in the palette, normal weight
-   against the title's bold, and small enough to read as a footnote to the name
-   rather than a second heading. This is a monitor — the version is there for
-   the moment somebody asks, and must not draw the eye for the rest of it. */
-.version {
-  color: var(--ink-faint);
-  font-weight: 400;
-  font-size: 11px;
-  letter-spacing: normal;
+.shell-mine > .panel-frame {
+  flex: 1;
+  min-height: 0;
 }
-.title i {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--lantern);
-  transform: rotate(45deg);
-  box-shadow: 0 0 10px var(--lantern);
-}
-.window-controls {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-}
-/* Every titlebar button opts out of the frameless drag surface, or its
-   clicks would start a window drag instead of reaching the handler. */
-.mines,
-.settings,
-.pin,
-.close {
-  -webkit-app-region: no-drag;
-  border: 0;
-  border-radius: 7px;
-  color: var(--ink-dim);
-  cursor: pointer;
-  background: transparent;
-  font: inherit;
-}
-.close {
-  padding: 2px 8px;
-  font-size: 22px;
-}
-.mines,
-.settings,
-.pin {
+/*
+ * The design's round close, at the mine panel's top-right corner. It closes the
+ * MINE, never the window — the panel's own way out is the rail.
+ */
+.close-mine {
+  position: absolute;
+  z-index: 6;
+  top: var(--space-settings);
+  right: var(--space-settings);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 5px 7px;
-  line-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
 }
-.mines svg,
-.settings svg,
-.pin svg {
-  width: 16px;
-  height: 16px;
-  /* Blocky pixel look, matching the action-bar icons: no anti-aliasing
-     between the rect "pixels". */
-  shape-rendering: crispEdges;
+.close-glyph {
+  display: block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  background: var(--color-cream);
+  mask: var(--close-icon) center / contain no-repeat;
 }
-/* The gear dims until it has something to say, so a broken shortcut is the
-   thing that catches the eye rather than the settings entry point itself. */
-.settings svg {
-  opacity: 0.75;
-}
-.settings.is-broken svg,
-.settings:hover svg {
-  opacity: 1;
-}
-/* The unpinned glyph dims like a disabled action-bar icon: still clickable,
-   but visually "off" next to the lit pinned pin. */
-.pin[aria-pressed='false'] svg {
-  opacity: 0.6;
-}
-.mines:hover,
-.settings:hover,
-.pin:hover,
-.close:hover {
-  color: #fff;
-  background: #4b3c28;
-}
-.mines:focus-visible,
-.settings:focus-visible,
-.pin:focus-visible,
-.close:focus-visible {
-  outline: 2px solid #ffe29c;
+.close-mine:focus-visible {
+  outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }
-.content {
-  position: relative;
+.settings-area {
   display: flex;
-  flex: 1;
   flex-direction: column;
-  min-height: 0;
+  gap: var(--space-settings);
   overflow: auto;
 }
-.content > * {
-  flex: 1;
+.shell-preferences {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-settings);
+  padding: var(--space-settings);
+}
+.pin,
+.hide-panel {
+  padding: 6px var(--space-settings);
+  border: var(--border-active);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
+  background: var(--color-control);
+  font: inherit;
+  cursor: pointer;
+}
+.pin[aria-pressed='false'] {
+  border: 2px solid var(--color-control);
+  color: var(--color-control);
+  background: var(--color-panel-deep);
+}
+.pin:focus-visible,
+.hide-panel:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
+}
+/* Quiet by construction: a monitor, not a control. */
+.version {
+  color: var(--color-accent);
 }
 .loading {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  color: var(--ink-dim);
-  font-size: 13px;
+  gap: var(--space-settings);
+  color: var(--color-tooltip-text);
 }
 .loading p {
   margin: 0;
@@ -574,25 +565,24 @@ onBeforeUnmount(() => unsubscribe?.())
 .spinner {
   width: 25px;
   height: 25px;
-  border: 3px solid #655139;
-  border-top-color: #f4c76a;
+  border: 3px solid var(--color-control);
+  border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 .notice {
   position: absolute;
   z-index: 90;
-  right: 14px;
-  bottom: 12px;
-  left: 14px;
+  right: var(--space-modal-margin);
+  bottom: var(--space-modal-margin);
+  left: var(--space-modal-margin);
   flex: none;
   margin: 0;
-  padding: 9px 10px;
+  padding: 9px var(--space-settings);
   border-left: 3px solid var(--danger-line);
-  border-radius: 4px;
+  border-radius: var(--radius-default);
   color: var(--danger-ink);
   background: var(--danger-bg);
-  font-size: 12px;
 }
 @keyframes spin {
   to {

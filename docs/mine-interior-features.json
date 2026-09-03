@@ -1,0 +1,1731 @@
+{
+  "_meta": {
+    "sourceImages": {
+      "workPoints": "mine-interior-work-points.png",
+      "passablePaths": "mine-interior-passable-paths.png"
+    },
+    "sourceImagePixelSize": {
+      "width": 910,
+      "height": 579
+    },
+    "panelsInSource": 5,
+    "panelLabelsLeftToRight": ["Cropper", "Bronze", "Silver", "Gold", "Uranium"],
+    "extractedPanel": "Bronze",
+    "extractedPanelIndex": 1,
+    "panelPixelSize": {
+      "width": 182,
+      "height": 579
+    },
+    "extractedAt": "2026-09-03",
+    "extractor": "scripts/extract-map-coordinates.mjs",
+    "convention": "image-percent of ONE tier panel (the extractedPanel above): xPercent/yPercent are each point's position as a percentage of that single panel's own pixel box, origin top-left. This is the same *kind* of convention sceneLayout.ts uses for the real portrait painting (percent of the image, projected to the rendered box via sceneGeometry.projectToBox — see .claude/rules/coordinates.md) but NOT the same pixel space: this panel is a 182x579 crop from a 5-panel comparison sheet. INTERIOR_ART_SIZE (src/renderer/src/lib/art.ts) currently points sceneLayout.ts at a 1289x1600 painting that is a DIFFERENT, older concept piece, not this mockup's art — the matching production painting (verified visually, same composition, no annotations) is src/renderer/src/assets/art/inside-mines/inside-<tier>-mine.jpg, 1184x3622, not yet wired into any component. Re-anchor against that file (renaming the two that carry typos: inside-cropper-mine..jpg, insiede-uranium-mine.jpg) before authoring sceneLayout.ts anchors from these numbers — see docs/map-coordinates.md §4.",
+    "markerColors": {
+      "spawn": "rgb(255, 49, 49)",
+      "worker": "rgb(81, 112, 255)",
+      "foreman": "rgb(255, 117, 31)",
+      "ladder": "rgb(140, 82, 255)",
+      "ramp": "rgb(255, 0, 176)"
+    },
+    "routeColor": "rgb(166, 166, 166)",
+    "counts": {
+      "spawn": {
+        "totalFound": 15,
+        "perPanel": {
+          "Cropper": 3,
+          "Bronze": 3,
+          "Silver": 3,
+          "Gold": 3,
+          "Uranium": 3
+        }
+      },
+      "worker": {
+        "totalFound": 90,
+        "perPanel": {
+          "Cropper": 18,
+          "Bronze": 18,
+          "Silver": 18,
+          "Gold": 18,
+          "Uranium": 18
+        }
+      },
+      "foreman": {
+        "totalFound": 15,
+        "perPanel": {
+          "Cropper": 3,
+          "Bronze": 3,
+          "Silver": 3,
+          "Gold": 3,
+          "Uranium": 3
+        }
+      },
+      "ladder": {
+        "totalFound": 25,
+        "perPanel": {
+          "Cropper": 5,
+          "Bronze": 5,
+          "Silver": 5,
+          "Gold": 5,
+          "Uranium": 5
+        }
+      },
+      "ramp": {
+        "totalFound": 20,
+        "perPanel": {
+          "Cropper": 4,
+          "Bronze": 4,
+          "Silver": 4,
+          "Gold": 4,
+          "Uranium": 4
+        }
+      }
+    }
+  },
+  "markers": {
+    "spawn": [
+      {
+        "id": 1,
+        "pixel": {
+          "x": 80.37,
+          "y": 152.79
+        },
+        "xPercent": 44.16,
+        "yPercent": 26.39,
+        "blobSizePx": 290
+      },
+      {
+        "id": 2,
+        "pixel": {
+          "x": 18.03,
+          "y": 233.01
+        },
+        "xPercent": 9.91,
+        "yPercent": 40.24,
+        "blobSizePx": 294
+      },
+      {
+        "id": 3,
+        "pixel": {
+          "x": 70.4,
+          "y": 525.44
+        },
+        "xPercent": 38.68,
+        "yPercent": 90.75,
+        "blobSizePx": 295
+      }
+    ],
+    "worker": [
+      {
+        "id": 1,
+        "pixel": {
+          "x": 79,
+          "y": 84.32
+        },
+        "xPercent": 43.41,
+        "yPercent": 14.56,
+        "blobSizePx": 198
+      },
+      {
+        "id": 2,
+        "pixel": {
+          "x": 107.03,
+          "y": 90.08
+        },
+        "xPercent": 58.81,
+        "yPercent": 15.56,
+        "blobSizePx": 213
+      },
+      {
+        "id": 3,
+        "pixel": {
+          "x": 25.77,
+          "y": 111.03
+        },
+        "xPercent": 14.16,
+        "yPercent": 19.18,
+        "blobSizePx": 212
+      },
+      {
+        "id": 4,
+        "pixel": {
+          "x": 152.7,
+          "y": 115.01
+        },
+        "xPercent": 83.9,
+        "yPercent": 19.86,
+        "blobSizePx": 215
+      },
+      {
+        "id": 5,
+        "pixel": {
+          "x": 111.33,
+          "y": 166.15
+        },
+        "xPercent": 61.17,
+        "yPercent": 28.7,
+        "blobSizePx": 210
+      },
+      {
+        "id": 6,
+        "pixel": {
+          "x": 56.11,
+          "y": 220.3
+        },
+        "xPercent": 30.83,
+        "yPercent": 38.05,
+        "blobSizePx": 198
+      },
+      {
+        "id": 7,
+        "pixel": {
+          "x": 25.82,
+          "y": 262.15
+        },
+        "xPercent": 14.18,
+        "yPercent": 45.28,
+        "blobSizePx": 206
+      },
+      {
+        "id": 8,
+        "pixel": {
+          "x": 149.04,
+          "y": 314.32
+        },
+        "xPercent": 81.89,
+        "yPercent": 54.29,
+        "blobSizePx": 199
+      },
+      {
+        "id": 9,
+        "pixel": {
+          "x": 52.44,
+          "y": 321.04
+        },
+        "xPercent": 28.81,
+        "yPercent": 55.45,
+        "blobSizePx": 215
+      },
+      {
+        "id": 10,
+        "pixel": {
+          "x": 29.52,
+          "y": 334.27
+        },
+        "xPercent": 16.22,
+        "yPercent": 57.73,
+        "blobSizePx": 199
+      },
+      {
+        "id": 11,
+        "pixel": {
+          "x": 119.13,
+          "y": 390.04
+        },
+        "xPercent": 65.45,
+        "yPercent": 67.36,
+        "blobSizePx": 214
+      },
+      {
+        "id": 12,
+        "pixel": {
+          "x": 87.42,
+          "y": 406.16
+        },
+        "xPercent": 48.03,
+        "yPercent": 70.15,
+        "blobSizePx": 209
+      },
+      {
+        "id": 13,
+        "pixel": {
+          "x": 149.07,
+          "y": 412.06
+        },
+        "xPercent": 81.91,
+        "yPercent": 71.17,
+        "blobSizePx": 212
+      },
+      {
+        "id": 14,
+        "pixel": {
+          "x": 25.81,
+          "y": 416.09
+        },
+        "xPercent": 14.18,
+        "yPercent": 71.86,
+        "blobSizePx": 208
+      },
+      {
+        "id": 15,
+        "pixel": {
+          "x": 40.93,
+          "y": 488.06
+        },
+        "xPercent": 22.49,
+        "yPercent": 84.29,
+        "blobSizePx": 212
+      },
+      {
+        "id": 16,
+        "pixel": {
+          "x": 134.18,
+          "y": 492.06
+        },
+        "xPercent": 73.73,
+        "yPercent": 84.98,
+        "blobSizePx": 212
+      },
+      {
+        "id": 17,
+        "pixel": {
+          "x": 91.87,
+          "y": 529.04
+        },
+        "xPercent": 50.48,
+        "yPercent": 91.37,
+        "blobSizePx": 214
+      },
+      {
+        "id": 18,
+        "pixel": {
+          "x": 122.81,
+          "y": 534.39
+        },
+        "xPercent": 67.48,
+        "yPercent": 92.3,
+        "blobSizePx": 197
+      }
+    ],
+    "foreman": [
+      {
+        "id": 1,
+        "pixel": {
+          "x": 102.45,
+          "y": 291
+        },
+        "xPercent": 56.29,
+        "yPercent": 50.26,
+        "blobSizePx": 199
+      },
+      {
+        "id": 2,
+        "pixel": {
+          "x": 122.76,
+          "y": 298.24
+        },
+        "xPercent": 67.45,
+        "yPercent": 51.51,
+        "blobSizePx": 190
+      },
+      {
+        "id": 3,
+        "pixel": {
+          "x": 111.5,
+          "y": 317.5
+        },
+        "xPercent": 61.26,
+        "yPercent": 54.84,
+        "blobSizePx": 180
+      }
+    ],
+    "ladder": [
+      {
+        "id": 1,
+        "pixel": {
+          "x": 145.55,
+          "y": 168
+        },
+        "xPercent": 79.97,
+        "yPercent": 29.02,
+        "blobSizePx": 288
+      },
+      {
+        "id": 2,
+        "pixel": {
+          "x": 39.54,
+          "y": 174.67
+        },
+        "xPercent": 21.72,
+        "yPercent": 30.17,
+        "blobSizePx": 279
+      },
+      {
+        "id": 3,
+        "pixel": {
+          "x": 145.61,
+          "y": 253.66
+        },
+        "xPercent": 80.01,
+        "yPercent": 43.81,
+        "blobSizePx": 280
+      },
+      {
+        "id": 4,
+        "pixel": {
+          "x": 145.5,
+          "y": 376.5
+        },
+        "xPercent": 79.95,
+        "yPercent": 65.03,
+        "blobSizePx": 280
+      },
+      {
+        "id": 5,
+        "pixel": {
+          "x": 147.5,
+          "y": 463.61
+        },
+        "xPercent": 81.04,
+        "yPercent": 80.07,
+        "blobSizePx": 273
+      }
+    ],
+    "ramp": [
+      {
+        "id": 1,
+        "pixel": {
+          "x": 87.5,
+          "y": 213.05
+        },
+        "xPercent": 48.08,
+        "yPercent": 36.8,
+        "blobSizePx": 396
+      },
+      {
+        "id": 2,
+        "pixel": {
+          "x": 75.47,
+          "y": 291.2
+        },
+        "xPercent": 41.47,
+        "yPercent": 50.29,
+        "blobSizePx": 393
+      },
+      {
+        "id": 3,
+        "pixel": {
+          "x": 64.53,
+          "y": 371.25
+        },
+        "xPercent": 35.45,
+        "yPercent": 64.12,
+        "blobSizePx": 395
+      },
+      {
+        "id": 4,
+        "pixel": {
+          "x": 56.54,
+          "y": 458.14
+        },
+        "xPercent": 31.06,
+        "yPercent": 79.13,
+        "blobSizePx": 396
+      }
+    ]
+  },
+  "paths": {
+    "network": {
+      "nodes": [
+        {
+          "id": 0,
+          "pixel": {
+            "x": 82,
+            "y": 155
+          },
+          "xPercent": 45.05,
+          "yPercent": 26.77
+        },
+        {
+          "id": 1,
+          "pixel": {
+            "x": 119.25,
+            "y": 173
+          },
+          "xPercent": 65.52,
+          "yPercent": 29.88
+        },
+        {
+          "id": 2,
+          "pixel": {
+            "x": 144.75,
+            "y": 188
+          },
+          "xPercent": 79.53,
+          "yPercent": 32.47
+        },
+        {
+          "id": 3,
+          "pixel": {
+            "x": 40.25,
+            "y": 243
+          },
+          "xPercent": 22.12,
+          "yPercent": 41.97
+        },
+        {
+          "id": 4,
+          "pixel": {
+            "x": 14,
+            "y": 243
+          },
+          "xPercent": 7.69,
+          "yPercent": 41.97
+        },
+        {
+          "id": 5,
+          "pixel": {
+            "x": 42.86,
+            "y": 251.71
+          },
+          "xPercent": 23.55,
+          "yPercent": 43.47
+        },
+        {
+          "id": 6,
+          "pixel": {
+            "x": 142.25,
+            "y": 305.75
+          },
+          "xPercent": 78.16,
+          "yPercent": 52.81
+        },
+        {
+          "id": 7,
+          "pixel": {
+            "x": 119,
+            "y": 319.75
+          },
+          "xPercent": 65.38,
+          "yPercent": 55.22
+        },
+        {
+          "id": 8,
+          "pixel": {
+            "x": 143.67,
+            "y": 323.33
+          },
+          "xPercent": 78.94,
+          "yPercent": 55.84
+        },
+        {
+          "id": 9,
+          "pixel": {
+            "x": 29,
+            "y": 328
+          },
+          "xPercent": 15.93,
+          "yPercent": 56.65
+        },
+        {
+          "id": 10,
+          "pixel": {
+            "x": 145.25,
+            "y": 332
+          },
+          "xPercent": 79.81,
+          "yPercent": 57.34
+        },
+        {
+          "id": 11,
+          "pixel": {
+            "x": 164,
+            "y": 333
+          },
+          "xPercent": 90.11,
+          "yPercent": 57.51
+        },
+        {
+          "id": 12,
+          "pixel": {
+            "x": 43.38,
+            "y": 401.88
+          },
+          "xPercent": 23.83,
+          "yPercent": 69.41
+        },
+        {
+          "id": 13,
+          "pixel": {
+            "x": 114.6,
+            "y": 404
+          },
+          "xPercent": 62.97,
+          "yPercent": 69.78
+        },
+        {
+          "id": 14,
+          "pixel": {
+            "x": 156,
+            "y": 416
+          },
+          "xPercent": 85.71,
+          "yPercent": 71.85
+        },
+        {
+          "id": 15,
+          "pixel": {
+            "x": 146.8,
+            "y": 417.8
+          },
+          "xPercent": 80.66,
+          "yPercent": 72.16
+        },
+        {
+          "id": 16,
+          "pixel": {
+            "x": 42,
+            "y": 482
+          },
+          "xPercent": 23.08,
+          "yPercent": 83.25
+        },
+        {
+          "id": 17,
+          "pixel": {
+            "x": 136,
+            "y": 491
+          },
+          "xPercent": 74.73,
+          "yPercent": 84.8
+        }
+      ],
+      "edges": [
+        {
+          "from": 4,
+          "to": 5,
+          "points": [
+            {
+              "pixel": {
+                "x": 120,
+                "y": 173
+              },
+              "xPercent": 65.93,
+              "yPercent": 29.88
+            },
+            {
+              "pixel": {
+                "x": 128,
+                "y": 173
+              },
+              "xPercent": 70.33,
+              "yPercent": 29.88
+            },
+            {
+              "pixel": {
+                "x": 131,
+                "y": 176
+              },
+              "xPercent": 71.98,
+              "yPercent": 30.4
+            },
+            {
+              "pixel": {
+                "x": 134,
+                "y": 187
+              },
+              "xPercent": 73.63,
+              "yPercent": 32.3
+            },
+            {
+              "pixel": {
+                "x": 144,
+                "y": 188
+              },
+              "xPercent": 79.12,
+              "yPercent": 32.47
+            }
+          ]
+        },
+        {
+          "from": 5,
+          "to": 11,
+          "points": [
+            {
+              "pixel": {
+                "x": 145,
+                "y": 189
+              },
+              "xPercent": 79.67,
+              "yPercent": 32.64
+            },
+            {
+              "pixel": {
+                "x": 144,
+                "y": 304
+              },
+              "xPercent": 79.12,
+              "yPercent": 52.5
+            }
+          ]
+        },
+        {
+          "from": 8,
+          "to": 9,
+          "points": [
+            {
+              "pixel": {
+                "x": 14,
+                "y": 243
+              },
+              "xPercent": 7.69,
+              "yPercent": 41.97
+            },
+            {
+              "pixel": {
+                "x": 26,
+                "y": 243
+              },
+              "xPercent": 14.29,
+              "yPercent": 41.97
+            },
+            {
+              "pixel": {
+                "x": 32,
+                "y": 252
+              },
+              "xPercent": 17.58,
+              "yPercent": 43.52
+            },
+            {
+              "pixel": {
+                "x": 41,
+                "y": 251
+              },
+              "xPercent": 22.53,
+              "yPercent": 43.35
+            }
+          ]
+        },
+        {
+          "from": 6,
+          "to": 9,
+          "points": [
+            {
+              "pixel": {
+                "x": 40,
+                "y": 244
+              },
+              "xPercent": 21.98,
+              "yPercent": 42.14
+            },
+            {
+              "pixel": {
+                "x": 41,
+                "y": 250
+              },
+              "xPercent": 22.53,
+              "yPercent": 43.18
+            }
+          ]
+        },
+        {
+          "from": 11,
+          "to": 15,
+          "points": [
+            {
+              "pixel": {
+                "x": 144,
+                "y": 305
+              },
+              "xPercent": 79.12,
+              "yPercent": 52.68
+            },
+            {
+              "pixel": {
+                "x": 144,
+                "y": 323
+              },
+              "xPercent": 79.12,
+              "yPercent": 55.79
+            }
+          ]
+        },
+        {
+          "from": 13,
+          "to": 15,
+          "points": [
+            {
+              "pixel": {
+                "x": 120,
+                "y": 320
+              },
+              "xPercent": 65.93,
+              "yPercent": 55.27
+            },
+            {
+              "pixel": {
+                "x": 139,
+                "y": 320
+              },
+              "xPercent": 76.37,
+              "yPercent": 55.27
+            },
+            {
+              "pixel": {
+                "x": 143,
+                "y": 323
+              },
+              "xPercent": 78.57,
+              "yPercent": 55.79
+            }
+          ]
+        },
+        {
+          "from": 15,
+          "to": 18,
+          "points": [
+            {
+              "pixel": {
+                "x": 144,
+                "y": 324
+              },
+              "xPercent": 79.12,
+              "yPercent": 55.96
+            },
+            {
+              "pixel": {
+                "x": 145,
+                "y": 331
+              },
+              "xPercent": 79.67,
+              "yPercent": 57.17
+            }
+          ]
+        },
+        {
+          "from": 18,
+          "to": 19,
+          "points": [
+            {
+              "pixel": {
+                "x": 146,
+                "y": 332
+              },
+              "xPercent": 80.22,
+              "yPercent": 57.34
+            },
+            {
+              "pixel": {
+                "x": 164,
+                "y": 333
+              },
+              "xPercent": 90.11,
+              "yPercent": 57.51
+            }
+          ]
+        },
+        {
+          "from": 18,
+          "to": 22,
+          "points": [
+            {
+              "pixel": {
+                "x": 145,
+                "y": 333
+              },
+              "xPercent": 79.67,
+              "yPercent": 57.51
+            },
+            {
+              "pixel": {
+                "x": 145,
+                "y": 389
+              },
+              "xPercent": 79.67,
+              "yPercent": 67.18
+            },
+            {
+              "pixel": {
+                "x": 143,
+                "y": 391
+              },
+              "xPercent": 78.57,
+              "yPercent": 67.53
+            },
+            {
+              "pixel": {
+                "x": 121,
+                "y": 392
+              },
+              "xPercent": 66.48,
+              "yPercent": 67.7
+            },
+            {
+              "pixel": {
+                "x": 116,
+                "y": 396
+              },
+              "xPercent": 63.74,
+              "yPercent": 68.39
+            },
+            {
+              "pixel": {
+                "x": 115,
+                "y": 403
+              },
+              "xPercent": 63.19,
+              "yPercent": 69.6
+            }
+          ]
+        },
+        {
+          "from": 26,
+          "to": 28,
+          "points": [
+            {
+              "pixel": {
+                "x": 156,
+                "y": 416
+              },
+              "xPercent": 85.71,
+              "yPercent": 71.85
+            },
+            {
+              "pixel": {
+                "x": 148,
+                "y": 417
+              },
+              "xPercent": 81.32,
+              "yPercent": 72.02
+            }
+          ]
+        },
+        {
+          "from": 28,
+          "to": 32,
+          "points": [
+            {
+              "pixel": {
+                "x": 146,
+                "y": 419
+              },
+              "xPercent": 80.22,
+              "yPercent": 72.37
+            },
+            {
+              "pixel": {
+                "x": 145,
+                "y": 488
+              },
+              "xPercent": 79.67,
+              "yPercent": 84.28
+            },
+            {
+              "pixel": {
+                "x": 142,
+                "y": 491
+              },
+              "xPercent": 78.02,
+              "yPercent": 84.8
+            },
+            {
+              "pixel": {
+                "x": 136,
+                "y": 491
+              },
+              "xPercent": 74.73,
+              "yPercent": 84.8
+            }
+          ]
+        },
+        {
+          "from": 21,
+          "to": 30,
+          "points": [
+            {
+              "pixel": {
+                "x": 41,
+                "y": 404
+              },
+              "xPercent": 22.53,
+              "yPercent": 69.78
+            },
+            {
+              "pixel": {
+                "x": 32,
+                "y": 405
+              },
+              "xPercent": 17.58,
+              "yPercent": 69.95
+            },
+            {
+              "pixel": {
+                "x": 28,
+                "y": 409
+              },
+              "xPercent": 15.38,
+              "yPercent": 70.64
+            },
+            {
+              "pixel": {
+                "x": 27,
+                "y": 416
+              },
+              "xPercent": 14.84,
+              "yPercent": 71.85
+            },
+            {
+              "pixel": {
+                "x": 28,
+                "y": 418
+              },
+              "xPercent": 15.38,
+              "yPercent": 72.19
+            },
+            {
+              "pixel": {
+                "x": 39,
+                "y": 419
+              },
+              "xPercent": 21.43,
+              "yPercent": 72.37
+            },
+            {
+              "pixel": {
+                "x": 44,
+                "y": 425
+              },
+              "xPercent": 24.18,
+              "yPercent": 73.4
+            },
+            {
+              "pixel": {
+                "x": 45,
+                "y": 434
+              },
+              "xPercent": 24.73,
+              "yPercent": 74.96
+            },
+            {
+              "pixel": {
+                "x": 55,
+                "y": 438
+              },
+              "xPercent": 30.22,
+              "yPercent": 75.65
+            },
+            {
+              "pixel": {
+                "x": 57,
+                "y": 441
+              },
+              "xPercent": 31.32,
+              "yPercent": 76.17
+            },
+            {
+              "pixel": {
+                "x": 57,
+                "y": 477
+              },
+              "xPercent": 31.32,
+              "yPercent": 82.38
+            },
+            {
+              "pixel": {
+                "x": 52,
+                "y": 482
+              },
+              "xPercent": 28.57,
+              "yPercent": 83.25
+            },
+            {
+              "pixel": {
+                "x": 42,
+                "y": 482
+              },
+              "xPercent": 23.08,
+              "yPercent": 83.25
+            }
+          ]
+        },
+        {
+          "from": 21,
+          "to": 22,
+          "points": [
+            {
+              "pixel": {
+                "x": 46,
+                "y": 400
+              },
+              "xPercent": 25.27,
+              "yPercent": 69.08
+            },
+            {
+              "pixel": {
+                "x": 52,
+                "y": 407
+              },
+              "xPercent": 28.57,
+              "yPercent": 70.29
+            },
+            {
+              "pixel": {
+                "x": 61,
+                "y": 411
+              },
+              "xPercent": 33.52,
+              "yPercent": 70.98
+            },
+            {
+              "pixel": {
+                "x": 107,
+                "y": 411
+              },
+              "xPercent": 58.79,
+              "yPercent": 70.98
+            },
+            {
+              "pixel": {
+                "x": 113,
+                "y": 405
+              },
+              "xPercent": 62.09,
+              "yPercent": 69.95
+            }
+          ]
+        },
+        {
+          "from": 22,
+          "to": 28,
+          "points": [
+            {
+              "pixel": {
+                "x": 116,
+                "y": 404
+              },
+              "xPercent": 63.74,
+              "yPercent": 69.78
+            },
+            {
+              "pixel": {
+                "x": 130,
+                "y": 404
+              },
+              "xPercent": 71.43,
+              "yPercent": 69.78
+            },
+            {
+              "pixel": {
+                "x": 134,
+                "y": 408
+              },
+              "xPercent": 73.63,
+              "yPercent": 70.47
+            },
+            {
+              "pixel": {
+                "x": 136,
+                "y": 415
+              },
+              "xPercent": 74.73,
+              "yPercent": 71.68
+            },
+            {
+              "pixel": {
+                "x": 147,
+                "y": 417
+              },
+              "xPercent": 80.77,
+              "yPercent": 72.02
+            }
+          ]
+        },
+        {
+          "from": 13,
+          "to": 21,
+          "points": [
+            {
+              "pixel": {
+                "x": 118,
+                "y": 320
+              },
+              "xPercent": 64.84,
+              "yPercent": 55.27
+            },
+            {
+              "pixel": {
+                "x": 110,
+                "y": 324
+              },
+              "xPercent": 60.44,
+              "yPercent": 55.96
+            },
+            {
+              "pixel": {
+                "x": 106,
+                "y": 333
+              },
+              "xPercent": 58.24,
+              "yPercent": 57.51
+            },
+            {
+              "pixel": {
+                "x": 92,
+                "y": 335
+              },
+              "xPercent": 50.55,
+              "yPercent": 57.86
+            },
+            {
+              "pixel": {
+                "x": 87,
+                "y": 347
+              },
+              "xPercent": 47.8,
+              "yPercent": 59.93
+            },
+            {
+              "pixel": {
+                "x": 78,
+                "y": 350
+              },
+              "xPercent": 42.86,
+              "yPercent": 60.45
+            },
+            {
+              "pixel": {
+                "x": 74,
+                "y": 355
+              },
+              "xPercent": 40.66,
+              "yPercent": 61.31
+            },
+            {
+              "pixel": {
+                "x": 74,
+                "y": 360
+              },
+              "xPercent": 40.66,
+              "yPercent": 62.18
+            },
+            {
+              "pixel": {
+                "x": 65,
+                "y": 366
+              },
+              "xPercent": 35.71,
+              "yPercent": 63.21
+            },
+            {
+              "pixel": {
+                "x": 63,
+                "y": 374
+              },
+              "xPercent": 34.62,
+              "yPercent": 64.59
+            },
+            {
+              "pixel": {
+                "x": 51,
+                "y": 377
+              },
+              "xPercent": 28.02,
+              "yPercent": 65.11
+            },
+            {
+              "pixel": {
+                "x": 47,
+                "y": 381
+              },
+              "xPercent": 25.82,
+              "yPercent": 65.8
+            },
+            {
+              "pixel": {
+                "x": 45,
+                "y": 399
+              },
+              "xPercent": 24.73,
+              "yPercent": 68.91
+            }
+          ]
+        },
+        {
+          "from": 9,
+          "to": 17,
+          "points": [
+            {
+              "pixel": {
+                "x": 45,
+                "y": 253
+              },
+              "xPercent": 24.73,
+              "yPercent": 43.7
+            },
+            {
+              "pixel": {
+                "x": 51,
+                "y": 254
+              },
+              "xPercent": 28.02,
+              "yPercent": 43.87
+            },
+            {
+              "pixel": {
+                "x": 57,
+                "y": 259
+              },
+              "xPercent": 31.32,
+              "yPercent": 44.73
+            },
+            {
+              "pixel": {
+                "x": 58,
+                "y": 274
+              },
+              "xPercent": 31.87,
+              "yPercent": 47.32
+            },
+            {
+              "pixel": {
+                "x": 72,
+                "y": 281
+              },
+              "xPercent": 39.56,
+              "yPercent": 48.53
+            },
+            {
+              "pixel": {
+                "x": 75,
+                "y": 292
+              },
+              "xPercent": 41.21,
+              "yPercent": 50.43
+            },
+            {
+              "pixel": {
+                "x": 79,
+                "y": 296
+              },
+              "xPercent": 43.41,
+              "yPercent": 51.12
+            },
+            {
+              "pixel": {
+                "x": 91,
+                "y": 297
+              },
+              "xPercent": 50,
+              "yPercent": 51.3
+            },
+            {
+              "pixel": {
+                "x": 98,
+                "y": 303
+              },
+              "xPercent": 53.85,
+              "yPercent": 52.33
+            },
+            {
+              "pixel": {
+                "x": 100,
+                "y": 315
+              },
+              "xPercent": 54.95,
+              "yPercent": 54.4
+            },
+            {
+              "pixel": {
+                "x": 98,
+                "y": 320
+              },
+              "xPercent": 53.85,
+              "yPercent": 55.27
+            },
+            {
+              "pixel": {
+                "x": 87,
+                "y": 328
+              },
+              "xPercent": 47.8,
+              "yPercent": 56.65
+            },
+            {
+              "pixel": {
+                "x": 29,
+                "y": 328
+              },
+              "xPercent": 15.93,
+              "yPercent": 56.65
+            }
+          ]
+        },
+        {
+          "from": 11,
+          "to": 13,
+          "points": [
+            {
+              "pixel": {
+                "x": 140,
+                "y": 307
+              },
+              "xPercent": 76.92,
+              "yPercent": 53.02
+            },
+            {
+              "pixel": {
+                "x": 135,
+                "y": 310
+              },
+              "xPercent": 74.18,
+              "yPercent": 53.54
+            },
+            {
+              "pixel": {
+                "x": 123,
+                "y": 310
+              },
+              "xPercent": 67.58,
+              "yPercent": 53.54
+            },
+            {
+              "pixel": {
+                "x": 119,
+                "y": 314
+              },
+              "xPercent": 65.38,
+              "yPercent": 54.23
+            },
+            {
+              "pixel": {
+                "x": 119,
+                "y": 319
+              },
+              "xPercent": 65.38,
+              "yPercent": 55.09
+            }
+          ]
+        },
+        {
+          "from": 4,
+          "to": 6,
+          "points": [
+            {
+              "pixel": {
+                "x": 119,
+                "y": 174
+              },
+              "xPercent": 65.38,
+              "yPercent": 30.05
+            },
+            {
+              "pixel": {
+                "x": 116,
+                "y": 179
+              },
+              "xPercent": 63.74,
+              "yPercent": 30.92
+            },
+            {
+              "pixel": {
+                "x": 105,
+                "y": 184
+              },
+              "xPercent": 57.69,
+              "yPercent": 31.78
+            },
+            {
+              "pixel": {
+                "x": 104,
+                "y": 195
+              },
+              "xPercent": 57.14,
+              "yPercent": 33.68
+            },
+            {
+              "pixel": {
+                "x": 100,
+                "y": 201
+              },
+              "xPercent": 54.95,
+              "yPercent": 34.72
+            },
+            {
+              "pixel": {
+                "x": 88,
+                "y": 204
+              },
+              "xPercent": 48.35,
+              "yPercent": 35.23
+            },
+            {
+              "pixel": {
+                "x": 81,
+                "y": 210
+              },
+              "xPercent": 44.51,
+              "yPercent": 36.27
+            },
+            {
+              "pixel": {
+                "x": 80,
+                "y": 227
+              },
+              "xPercent": 43.96,
+              "yPercent": 39.21
+            },
+            {
+              "pixel": {
+                "x": 77,
+                "y": 234
+              },
+              "xPercent": 42.31,
+              "yPercent": 40.41
+            },
+            {
+              "pixel": {
+                "x": 71,
+                "y": 240
+              },
+              "xPercent": 39.01,
+              "yPercent": 41.45
+            },
+            {
+              "pixel": {
+                "x": 63,
+                "y": 243
+              },
+              "xPercent": 34.62,
+              "yPercent": 41.97
+            },
+            {
+              "pixel": {
+                "x": 41,
+                "y": 243
+              },
+              "xPercent": 22.53,
+              "yPercent": 41.97
+            }
+          ]
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "points": [
+            {
+              "pixel": {
+                "x": 82,
+                "y": 155
+              },
+              "xPercent": 45.05,
+              "yPercent": 26.77
+            },
+            {
+              "pixel": {
+                "x": 102,
+                "y": 155
+              },
+              "xPercent": 56.04,
+              "yPercent": 26.77
+            },
+            {
+              "pixel": {
+                "x": 105,
+                "y": 161
+              },
+              "xPercent": 57.69,
+              "yPercent": 27.81
+            },
+            {
+              "pixel": {
+                "x": 114,
+                "y": 162
+              },
+              "xPercent": 62.64,
+              "yPercent": 27.98
+            },
+            {
+              "pixel": {
+                "x": 118,
+                "y": 166
+              },
+              "xPercent": 64.84,
+              "yPercent": 28.67
+            },
+            {
+              "pixel": {
+                "x": 119,
+                "y": 172
+              },
+              "xPercent": 65.38,
+              "yPercent": 29.71
+            }
+          ]
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "points": [
+            {
+              "pixel": {
+                "x": 145,
+                "y": 187
+              },
+              "xPercent": 79.67,
+              "yPercent": 32.3
+            },
+            {
+              "pixel": {
+                "x": 145,
+                "y": 113
+              },
+              "xPercent": 79.67,
+              "yPercent": 19.52
+            },
+            {
+              "pixel": {
+                "x": 137,
+                "y": 100
+              },
+              "xPercent": 75.27,
+              "yPercent": 17.27
+            },
+            {
+              "pixel": {
+                "x": 131,
+                "y": 96
+              },
+              "xPercent": 71.98,
+              "yPercent": 16.58
+            },
+            {
+              "pixel": {
+                "x": 120,
+                "y": 94
+              },
+              "xPercent": 65.93,
+              "yPercent": 16.23
+            },
+            {
+              "pixel": {
+                "x": 65,
+                "y": 94
+              },
+              "xPercent": 35.71,
+              "yPercent": 16.23
+            },
+            {
+              "pixel": {
+                "x": 53,
+                "y": 97
+              },
+              "xPercent": 29.12,
+              "yPercent": 16.75
+            },
+            {
+              "pixel": {
+                "x": 44,
+                "y": 105
+              },
+              "xPercent": 24.18,
+              "yPercent": 18.13
+            },
+            {
+              "pixel": {
+                "x": 40,
+                "y": 116
+              },
+              "xPercent": 21.98,
+              "yPercent": 20.03
+            },
+            {
+              "pixel": {
+                "x": 40,
+                "y": 242
+              },
+              "xPercent": 21.98,
+              "yPercent": 41.8
+            }
+          ]
+        }
+      ],
+      "skeletonPixelCount": 1487
+    },
+    "stub": {
+      "nodes": [
+        {
+          "id": 0,
+          "pixel": {
+            "x": 116,
+            "y": 541
+          },
+          "xPercent": 63.74,
+          "yPercent": 93.44
+        },
+        {
+          "id": 1,
+          "pixel": {
+            "x": 80,
+            "y": 555
+          },
+          "xPercent": 43.96,
+          "yPercent": 95.85
+        }
+      ],
+      "edges": [
+        {
+          "from": 4,
+          "to": 2,
+          "points": [
+            {
+              "pixel": {
+                "x": 80,
+                "y": 555
+              },
+              "xPercent": 43.96,
+              "yPercent": 95.85
+            },
+            {
+              "pixel": {
+                "x": 79,
+                "y": 548
+              },
+              "xPercent": 43.41,
+              "yPercent": 94.65
+            },
+            {
+              "pixel": {
+                "x": 70,
+                "y": 543
+              },
+              "xPercent": 38.46,
+              "yPercent": 93.78
+            },
+            {
+              "pixel": {
+                "x": 69,
+                "y": 535
+              },
+              "xPercent": 37.91,
+              "yPercent": 92.4
+            },
+            {
+              "pixel": {
+                "x": 89,
+                "y": 535
+              },
+              "xPercent": 48.9,
+              "yPercent": 92.4
+            },
+            {
+              "pixel": {
+                "x": 95,
+                "y": 541
+              },
+              "xPercent": 52.2,
+              "yPercent": 93.44
+            },
+            {
+              "pixel": {
+                "x": 116,
+                "y": 541
+              },
+              "xPercent": 63.74,
+              "yPercent": 93.44
+            }
+          ]
+        }
+      ],
+      "skeletonPixelCount": 82
+    }
+  }
+}
