@@ -771,15 +771,114 @@ describe('DwarfSprite pick sparks', () => {
     }
   })
 
-  it('throws none off the sheets actually drawn, none of which claims a hit', () => {
-    // The honest state of the panel today, and the reason the three tests above
-    // have to substitute a sheet: an idle loop that threw debris would be a
-    // dwarf standing still in a shower of rock.
+  it('throws none off the idle loop, which still claims no hit', () => {
+    // The idle sheet is what every rank falls back to and has never drawn a
+    // swing — a dwarf standing at ease must never throw debris. (Previously
+    // this test covered a REAL working dwarf too, back when no sheet at all
+    // declared a hit; #74 below gives `working` its own strike frame, so
+    // that half of the claim moved to the test that follows.)
     const wrapper = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+      props: { dwarf: defaultDwarf({ status: 'waiting' }), anchored: true }
     })
     vi.advanceTimersByTime(10_000)
     expect(wrapper.find('.spark-burst').exists()).toBe(false)
+  })
+
+  it('throws sparks off the real working sheet now that #74 declares its strike', async () => {
+    // The stub above exists because no sheet used to claim a hit; the
+    // worker's own working sheet now does (index 4, the artist's frame 5 —
+    // see dwarfSheets.test.ts), so the genuine, unstubbed dwarfClips must
+    // reach the same burst without a substitute.
+    //
+    // A single, exact jump rather than a long `advanceTimersByTime`: Vue
+    // coalesces a watcher across a synchronous run of interval callbacks
+    // down to one job reflecting the FINAL elapsed value, so a coarse
+    // advance can sail straight past the one frame that matters and land
+    // somewhere else in the loop's other ten frames. 300ms clears the
+    // 3-frame start-working transition; +400ms lands exactly on index 4 of
+    // the working loop behind it (see dwarfSequence.ts).
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(700)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.spark-burst').exists()).toBe(true)
+  })
+})
+
+/*
+ * The strike's own light (#74's last piece): a brief glow the sprite adds
+ * beside the art's own sparks, keyed off the sheet's own glowFrames exactly
+ * the way the burst above is keyed off impactFrames — declared data, never a
+ * frame number written into the component.
+ */
+describe('DwarfSprite strike glow', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
+  })
+
+  /** Mirrors the artist's map: index 4-5 are the two brightest, 6-8 disperse. */
+  function stubGlowSwing(): void {
+    vi.mocked(dwarfClips).mockReturnValue([
+      loopOf({
+        src: '/glow-swing.png',
+        frames: 9,
+        frameMs: 100,
+        impactFrames: [4],
+        glowFrames: [4, 5]
+      })
+    ])
+  }
+
+  it('lights the strike and its brightest echo, index 4 and 5', async () => {
+    stubGlowSwing()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(400) // frame 4
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
+
+    vi.advanceTimersByTime(100) // frame 5
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
+  })
+
+  it('leaves the dispersal frames glow-free — the art carries 6-8 alone', async () => {
+    stubGlowSwing()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(600) // frame 6
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+
+    vi.advanceTimersByTime(200) // frame 8
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+  })
+
+  it('never glows a dwarf still walking to the vein', async () => {
+    stubGlowSwing()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
+    })
+    vi.advanceTimersByTime(400)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+  })
+
+  it('lights the real working sheet too, not only a stub', async () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    // 300ms clears the 3-frame start-working transition; +400ms lands on
+    // index 4 of the working loop behind it (see dwarfSequence.ts).
+    vi.advanceTimersByTime(700)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
   })
 })
 
@@ -1065,6 +1164,7 @@ describe('DwarfSprite with reduced motion', () => {
   afterEach(() => {
     vi.useRealTimers()
     Reflect.deleteProperty(window, 'matchMedia')
+    vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
   })
 
   /**
@@ -1218,5 +1318,26 @@ describe('DwarfSprite with reduced motion', () => {
 
     wrapper.unmount()
     expect(media.listenerCount).toBe(0)
+  })
+
+  /*
+   * The strike glow's own guard (#74): a pulsing light is exactly the
+   * movement this preference asks to stop, so it must never appear — not
+   * even by the coincidence of the held still frame landing on a declared
+   * glow frame.
+   */
+  it('never lights the strike glow, even on a still frame the artist marked bright', () => {
+    stubReducedMotion(true)
+    // Built so the held STILL frame (the loop's last, see stillFrameOf) IS
+    // itself the declared glow frame — proving the refusal is explicit
+    // rather than a lucky accident of which frame a loop settles on.
+    vi.mocked(dwarfClips).mockReturnValue([
+      loopOf({ src: '/glow-swing.png', frames: 6, frameMs: 100, glowFrames: [5] })
+    ])
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    expect(framePercentOf(wrapper)).toBe(100) // held on frame 5 of 6 — the glow frame
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
   })
 })
