@@ -102,12 +102,20 @@ describe('DwarfSprite', () => {
     expect(wrapper.find('.status-sleep').exists()).toBe(true)
   })
 
-  it('mirrors a leaving dwarf toward the exit', () => {
+  /*
+   * AMENDED for #156's twelfth correction. This asserted that a leaving dwarf
+   * was MIRRORED, on the strength of a sentence carried since #131 flagged it
+   * as unconfirmed: "the art is painted facing right". It is painted facing
+   * LEFT — measured off the committed sheets in lib/sprite/sheetFacing.test.ts
+   * — and the exit slide runs left, so a leaver reaches the exit by being drawn
+   * exactly as painted. The subject is unchanged: which way a leaver faces.
+   */
+  it('leaves a leaving dwarf unmirrored, because the art already faces the exit', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'leaving' }) }
     })
     expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
-    expect(wrapper.classes()).toContain('is-flipped')
+    expect(wrapper.classes()).not.toContain('is-flipped')
   })
 
   it('does not mirror a dwarf that is staying put', () => {
@@ -789,18 +797,38 @@ describe('DwarfSprite in the scene', () => {
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
   })
 
-  it('faces the rock the scene put it at, not the direction the old rule assumed', () => {
+  /*
+   * AMENDED for #156's twelfth correction, and this is the case that would have
+   * caught it. It asserted that a station facing LEFT mirrors the sprite, which
+   * is only true of art painted facing right. The sheets are painted facing
+   * LEFT, so a station facing left is drawn as painted and it is a station
+   * facing RIGHT that has to be mirrored. Every dwarf in the mine rendered in a
+   * mirror until this turned round. Subject unchanged: the scene's station
+   * decides the facing, not the status.
+   */
+  it('draws a dwarf facing left as painted, and mirrors only one facing right', () => {
     const facingLeft = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, facesLeft: true }
     })
-    expect(facingLeft.classes()).toContain('is-flipped')
+    expect(facingLeft.classes()).not.toContain('is-flipped')
 
+    const facingRight = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, facesLeft: false }
+    })
+    expect(facingRight.classes()).toContain('is-flipped')
+  })
+
+  it('lets the station override the status, for a leaver as much as a worker', () => {
     // A leaving dwarf used to be mirrored unconditionally; the exit is painted
     // at the centre of the gallery, so the scene decides instead.
     const leavingRight = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'leaving' }), anchored: true, facesLeft: false }
     })
-    expect(leavingRight.classes()).not.toContain('is-flipped')
+    expect(leavingRight.classes()).toContain('is-flipped')
+    const leavingLeft = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'leaving' }), anchored: true, facesLeft: true }
+    })
+    expect(leavingLeft.classes()).not.toContain('is-flipped')
   })
 
   it('stands down its own walk-out slide once the scene owns its position', () => {
@@ -1458,5 +1486,65 @@ describe('DwarfSprite with reduced motion', () => {
     })
     expect(framePercentOf(wrapper)).toBe(100) // held on frame 5 of 6 — the glow frame
     expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+  })
+})
+
+/*
+ * Which side of the frame the pick lands on (#156).
+ *
+ * The sheets are painted facing LEFT — measured off the committed art in
+ * lib/sprite/sheetFacing.test.ts — so the strike falls on the LEFT of an
+ * unmirrored frame and on the right of a mirrored one. Both the debris and the
+ * strike's own light were placed the other way round, under the same wrong
+ * assumption that turned the whole mine's facing into a mirror: the default
+ * threw sparks off the dwarf's back, and mirroring moved them to his back on
+ * the other side.
+ */
+describe('DwarfSprite strike side', () => {
+  /**
+   * The body of one CSS rule, found by plain search rather than by a regex the
+   * selector would have to be escaped into: every selector here carries a `.`
+   * and one carries a `::`.
+   */
+  function styleRule(selector: string): string {
+    const at = spriteSource.indexOf('\n' + selector + ' {')
+    if (at === -1) throw new Error(`no ${selector} rule in DwarfSprite.vue`)
+    const open = spriteSource.indexOf('{', at)
+    const close = spriteSource.indexOf('}', open)
+    return spriteSource.slice(open + 1, close)
+  }
+
+  /** The `left` percentage a rule places its box at. */
+  function leftPercent(selector: string): number {
+    const value = /left:\s*(-?[\d.]+)%/.exec(styleRule(selector))?.[1]
+    if (value === undefined) throw new Error(`no left percentage in ${selector}`)
+    return Number(value)
+  }
+
+  it('throws the debris off the pick side of the art as painted, which is the left', () => {
+    expect(leftPercent('.spark-burst')).toBeLessThan(50)
+  })
+
+  it('throws it off the other side once the dwarf is mirrored to face right', () => {
+    expect(leftPercent('.is-flipped .spark-burst')).toBeGreaterThan(50)
+  })
+
+  /**
+   * Where the glow's box is CENTRED, which is what a round gradient reads as.
+   * Its width is declared once on the base rule; the mirrored rule moves only
+   * the left edge.
+   */
+  function glowCentrePercent(selector: string): number {
+    const base = styleRule('.dwarf-frame.is-strike-glow::after')
+    const width = /width:\s*([\d.]+)%/.exec(base)?.[1]
+    if (width === undefined) throw new Error('no width percentage on the strike glow')
+    return leftPercent(selector) + Number(width) / 2
+  }
+
+  it('lights the strike on the same side the debris leaves from, in both facings', () => {
+    // One origin, said twice: a glow on the pick side and sparks off the
+    // dwarf's back would read as two different events.
+    expect(glowCentrePercent('.dwarf-frame.is-strike-glow::after')).toBeLessThan(50)
+    expect(glowCentrePercent('.is-flipped .dwarf-frame.is-strike-glow::after')).toBeGreaterThan(50)
   })
 })

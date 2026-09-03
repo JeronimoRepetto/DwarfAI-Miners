@@ -7,7 +7,6 @@ import {
   LEAVING_EXIT_MS,
   describeSilence,
   isDwarfSilent,
-  isSpriteFlipped,
   materialLabel,
   orePileLabel,
   statusAnimationClass,
@@ -83,13 +82,17 @@ describe('BUBBLE_MAX_CHARS', () => {
  * drawn for a silent dwarf yet, so nothing currently selects a picture.
  */
 
-describe('isSpriteFlipped', () => {
-  it('mirrors only a leaving dwarf, because the art faces right and the exit is left', () => {
-    expect(isSpriteFlipped('leaving')).toBe(true)
-    expect(isSpriteFlipped('working')).toBe(false)
-    expect(isSpriteFlipped('waiting')).toBe(false)
-  })
-})
+/*
+ * REMOVED HERE: the one `isSpriteFlipped` case (#156).
+ *
+ * It asserted that a leaving dwarf is mirrored "because the art faces right and
+ * the exit is left". The art faces LEFT — measured off the committed sheets,
+ * which is the coverage that replaces this one, in
+ * lib/sprite/sheetFacing.test.ts — so a leaver reaches the exit drawn exactly as
+ * painted and the function had no case left to decide. The mirror is now the
+ * scene's own facing, pinned in DwarfSprite.test.ts ("draws a dwarf facing left
+ * as painted, and mirrors only one facing right").
+ */
 
 /*
  * AMENDED for #153's tenth correction. This asserted 16 seconds, chosen to fill

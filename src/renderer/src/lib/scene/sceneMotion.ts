@@ -101,9 +101,11 @@ export function pathLegs(path: readonly ScenePoint[]): readonly WalkLeg[] {
 }
 
 /**
- * Which way to mirror the sprite. The art is painted facing right, so this is
- * what turns a dwarf to face where it is going — and, once it has arrived and
- * there is no travel direction left to read, to face what its anchor faces.
+ * Which way a walking dwarf faces: where it is going — and, once it has arrived
+ * and there is no travel direction left to read, whatever its anchor faces.
+ *
+ * The facing itself, never the mirror. The sheets are painted facing LEFT
+ * (#156), so DwarfSprite mirrors the ones this answers `false` for.
  */
 export function walkFacesLeft(from: ScenePoint, to: ScenePoint, parkedFacesLeft: boolean): boolean {
   const dx = ((to.x - from.x) / 100) * PAINTING_WIDTH

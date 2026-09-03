@@ -42,7 +42,13 @@ export interface InteriorStation extends InteriorPoint {
   id: string
   kind: InteriorStationKind
   /**
-   * Whether a dwarf standing here faces left. The art is painted facing right.
+   * Whether a dwarf standing here faces left.
+   *
+   * The sheets are PAINTED FACING LEFT (#156), so this value is the facing
+   * itself and never the mirror: the renderer mirrors a station facing right.
+   * The claim used to be the other way round, unverified since #131 flagged it,
+   * and the whole mine rendered mirrored on the strength of it — the art is
+   * measured now, in lib/sprite/sheetFacing.test.ts.
    *
    * DATA, never re-derived at render time (#153): the maintainer authored an
    * arrow on every workstation across all five tier panels, and

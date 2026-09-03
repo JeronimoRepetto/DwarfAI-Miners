@@ -6,7 +6,7 @@ import {
   kickMarker as kickMarkerFor,
   sendMarker as sendMarkerFor
 } from '../../lib/delivery/deliveryVerdict'
-import { LEAVING_EXIT_MS, isSpriteFlipped, statusAnimationClass } from '../../lib/presentation'
+import { LEAVING_EXIT_MS, statusAnimationClass } from '../../lib/presentation'
 import { dwarfClips, isAwaitingAnswer, stillFrameOf } from '../../lib/sprite/dwarfSequence'
 import {
   SPRITE_FRAME_SIZE,
@@ -395,8 +395,22 @@ const rootClasses = computed(() => [
      * because Vue casts an absent boolean prop to `false` — so `facesLeft`
      * alone cannot tell "the scene says face right" from "no scene here".
      */
-    'is-flipped':
-      props.anchored === true ? props.facesLeft === true : isSpriteFlipped(props.dwarf.status),
+    /*
+     * THE SHEETS ARE PAINTED FACING LEFT (#156), so `is-flipped` means "facing
+     * RIGHT" and a dwarf facing left is drawn exactly as painted.
+     *
+     * It was the other way round until the second acceptance run, on the
+     * strength of a sentence #131 flagged as unconfirmed and nobody checked.
+     * Every station's facing was authored, transcribed and read correctly, and
+     * the whole mine still rendered in a mirror. The art is measured rather than
+     * assumed now, in lib/sprite/sheetFacing.test.ts: the helmet lamp's beam
+     * sits left of the dwarf on every waking sheet, and a lamp shines where its
+     * wearer looks.
+     *
+     * Outside the scene there is nothing to face but the way the art is
+     * painted — including a leaver, whose exit slide runs left too.
+     */
+    'is-flipped': props.anchored === true && props.facesLeft !== true,
     'is-anchored': props.anchored === true,
     /*
      * The design's red halo (#153). Selection IS the action bar being open —
@@ -664,14 +678,15 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   content: '';
   position: absolute;
   top: 18%;
-  left: 58%;
+  /* The pick side of the art AS PAINTED, which is the left of the frame (#156). */
+  left: -2%;
   width: 44%;
   height: 44%;
   background: radial-gradient(circle, var(--tier-glow, #ffe29c) 0%, transparent 72%);
   pointer-events: none;
 }
 .is-flipped .dwarf-frame.is-strike-glow::after {
-  left: -2%;
+  left: 58%;
 }
 .is-activating {
   opacity: 0.55;
@@ -741,18 +756,19 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 /*
  * working: debris thrown off the rock on the down-stroke of the swing. Sized
  * and coloured off the tier so gold sparks gold, and thrown from the pick head
- * — up and forward of the dwarf, mirrored with it when it faces left.
+ * — up and forward of the dwarf, mirrored with it when it faces right (#156).
  */
 .spark-burst {
   position: absolute;
   top: 26%;
-  left: 68%;
+  /* Same side as the strike's own light: the pick side of the art as painted. */
+  left: 32%;
   width: 0;
   height: 0;
   pointer-events: none;
 }
 .is-flipped .spark-burst {
-  left: 32%;
+  left: 68%;
 }
 .spark {
   position: absolute;
