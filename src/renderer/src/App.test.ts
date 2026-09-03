@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import MapView from './components/map/MapView.vue'
+import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
@@ -104,6 +105,14 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // Settings' "Reset metrics" action (#138). Answered as a no-op success by
     // default; only the tests about it care what main actually did.
     resetMetrics: vi.fn().mockResolvedValue({ outcome: 'reset' }),
+    // The launch surface (#86). Both are AWAITED, so both resolve their real
+    // shape for the reason stated at length above. Claude detected and
+    // launchable is the ordinary machine; a launch answers "started", the
+    // verdict that says a session began and claims no dwarf.
+    listAgentProviders: vi.fn().mockResolvedValue({
+      providers: [{ provider: 'claude', installed: true, launchable: true }]
+    }),
+    launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -1278,5 +1287,222 @@ describe('App message panel', () => {
     await flushPromises()
 
     expect(wrapper.find('.message-panel').exists()).toBe(false)
+  })
+})
+
+/**
+ * The Add Panel, wired end to end (#86): the mine's Add action opens it in the
+ * MessagePanel's own dock, submitting starts a held session in that mine's
+ * folder, and the panel hands over to the MessagePanel when the dwarf it
+ * started turns up on an ordinary poll.
+ */
+describe('App add panel', () => {
+  const MINE = {
+    id: 'mine:c:\\x\\anvil',
+    path: 'C:\\x\\anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  const OTHER_DWARF = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'Foreman',
+    status: 'working',
+    sessionId: 's1',
+    lastMessage: 'Halfway down the shaft'
+  }
+
+  /** The dwarf a launch of `prompt` leaves behind: held, and seeded with it. */
+  function launchedDwarf(prompt: string) {
+    return {
+      id: 'claude:s9',
+      provider: 'claude',
+      role: 'foreman',
+      name: 'Newcomer',
+      status: 'working',
+      sessionId: 's9',
+      conversation: [{ role: 'user', text: prompt, timestamp: 'then' }]
+    }
+  }
+
+  beforeEach(() => {
+    useView().clear()
+    // Module-scope singleton, exactly as the view and the delivery stores are:
+    // a test that opened the panel would leave it open in the next one.
+    useAgentLaunch().close()
+  })
+
+  async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
+    const { wrapper, api } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      ...overrides
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  async function openAddPanel(overrides: Record<string, unknown> = {}) {
+    const mounted = await openMineWith([], overrides)
+    await mounted.wrapper.find('.add-agent').trigger('click')
+    await flushPromises()
+    return mounted
+  }
+
+  async function submitPrompt(wrapper: VueWrapper, prompt: string) {
+    await wrapper.findAll('.provider-chip')[0]!.trigger('click')
+    await wrapper.find('.launch-input').setValue(prompt)
+    await wrapper.find('.launch-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+  }
+
+  function pushSnapshot(api: Record<string, ReturnType<typeof vi.fn>>, dwarfs: unknown[]) {
+    const push = api.onMinesUpdated!.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 })
+  }
+
+  it('opens the Add Panel from the mine own action, mine still standing', async () => {
+    const { wrapper } = await openMineWith([])
+    expect(wrapper.find('.add-panel').exists()).toBe(false)
+
+    await wrapper.find('.add-agent').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
+  })
+
+  it('asks main which providers this machine has when it opens', async () => {
+    const { api, wrapper } = await openAddPanel()
+
+    expect(api.listAgentProviders).toHaveBeenCalled()
+    expect(wrapper.findAll('.provider-chip').map((chip) => chip.text())).toEqual([
+      'claude',
+      'Other'
+    ])
+  })
+
+  /*
+   * The design docks both panels in the same slot — the transition is one
+   * replacing the other — so they cannot both be there. Opening either closes
+   * the other rather than stacking two surfaces in one place.
+   */
+  it('takes the dock from an open MessagePanel', async () => {
+    const { wrapper } = await openMineWith([OTHER_DWARF])
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+
+    await wrapper.find('.add-agent').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find('.message-panel').exists()).toBe(false)
+  })
+
+  it('gives the dock back when a dwarf is selected instead', async () => {
+    const { wrapper } = await openMineWith([OTHER_DWARF])
+    await wrapper.find('.add-agent').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.add-panel').exists()).toBe(false)
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+  })
+
+  it('closes from its own close control', async () => {
+    const { wrapper } = await openAddPanel()
+
+    await wrapper.find('.launch-close').trigger('click')
+
+    expect(wrapper.find('.add-panel').exists()).toBe(false)
+  })
+
+  it('starts a held session in the mine it was opened from', async () => {
+    const { wrapper, api } = await openAddPanel()
+
+    await submitPrompt(wrapper, 'dig the east gallery')
+
+    expect(api.launchHeldSession).toHaveBeenCalledWith({
+      mineId: MINE.id,
+      prompt: 'dig the east gallery'
+    })
+  })
+
+  /*
+   * The verdict says a session STARTED and claims no dwarf, so the panel
+   * acknowledges from the verdict and waits — it must not look like nothing
+   * happened for the two seconds before the poll finds the session.
+   */
+  it('acknowledges the launch and keeps the prompt on screen while it spawns', async () => {
+    const { wrapper } = await openAddPanel()
+
+    await submitPrompt(wrapper, 'dig the east gallery')
+
+    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find('.launch-first-message').text()).toBe('dig the east gallery')
+  })
+
+  it('hands the dock to the MessagePanel when the launched dwarf arrives', async () => {
+    const { wrapper, api } = await openAddPanel()
+    await submitPrompt(wrapper, 'dig the east gallery')
+
+    pushSnapshot(api, [launchedDwarf('dig the east gallery')])
+    await flushPromises()
+
+    expect(wrapper.find('.add-panel').exists()).toBe(false)
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(wrapper.find('.panel-agent').text()).toBe('Newcomer')
+  })
+
+  /*
+   * The reconciliation. The held registry seeds the new session's conversation
+   * with the prompt this panel sent, so the MessagePanel already draws it —
+   * prepending a second copy here would show the user's own first words twice,
+   * and the copy that survives is main's record rather than this panel's
+   * optimism about it.
+   */
+  it('shows the first message exactly once after the transition', async () => {
+    const { wrapper, api } = await openAddPanel()
+    await submitPrompt(wrapper, 'dig the east gallery')
+
+    pushSnapshot(api, [launchedDwarf('dig the east gallery')])
+    await flushPromises()
+
+    const said = wrapper
+      .findAll('.message .bubble')
+      .filter((bubble) => bubble.text() === 'dig the east gallery')
+    expect(said).toHaveLength(1)
+  })
+
+  it('keeps waiting while only an unrelated session turns up', async () => {
+    const { wrapper, api } = await openAddPanel()
+    await submitPrompt(wrapper, 'dig the east gallery')
+
+    pushSnapshot(api, [OTHER_DWARF])
+    await flushPromises()
+
+    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find('.message-panel').exists()).toBe(false)
+  })
+
+  it('stays open with main own reason when the launch is refused', async () => {
+    const { wrapper } = await openAddPanel({
+      launchHeldSession: vi
+        .fn()
+        .mockResolvedValue({ launched: false, error: 'Claude Code is not installed.' })
+    })
+
+    await submitPrompt(wrapper, 'dig the east gallery')
+
+    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find('.launch-alert').text()).toBe('Claude Code is not installed.')
   })
 })

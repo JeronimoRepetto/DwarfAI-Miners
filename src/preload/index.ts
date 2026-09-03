@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentLaunchRequest,
   AgentLaunchResult,
+  AgentProviderList,
   AppBuild,
   DwarfActivation,
   DwarfFeedResult,
@@ -81,6 +82,16 @@ export interface DwarfAiMinersApi {
    * poll interval away, so the panel must acknowledge from this and not wait.
    */
   launchAgent: (request: AgentLaunchRequest) => Promise<AgentLaunchResult>
+  /**
+   * Which agent CLIs this machine has, and which of them the panel can start
+   * (#86). Asked when the Add Panel opens: what is installed is not board
+   * state, so it is pulled rather than pushed with the poll.
+   *
+   * No argument, by design — the question is about this machine and main is the
+   * only side that can answer it. No path ever comes back either; see
+   * AgentProviderOption for why that stops at the wire.
+   */
+  listAgentProviders: () => Promise<AgentProviderList>
   /**
    * Report that a kicked agent was SEEN stopping, so main retires the dwarf
    * (see #46). One-way by design: there is no verdict to wait for, because the
@@ -210,6 +221,9 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : ''),
   getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild),
   declareMine: () => ipcRenderer.invoke(IPC_CHANNELS.declareMine),
+  // No payload to coerce: the question is "what does this machine have", and
+  // there is nothing about it for a caller to name.
+  listAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.listAgentProviders),
   // Same discipline as retireDwarf: collapse anything that is not a string
   // BEFORE it crosses, so main's boundary check only reasons about one.
   undeclareMine: (mineId) =>

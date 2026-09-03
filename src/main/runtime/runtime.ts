@@ -3,11 +3,14 @@ import { join } from 'node:path'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
+import { agentProviderList } from '../domain/launchProviders'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import {
+  DWARF_PROVIDERS,
   MAX_DWARF_TEXT_CHARS,
   type AgentLaunchRequest,
   type AgentLaunchResult,
+  type AgentProviderList,
   type DwarfActivation,
   type DwarfFeedResult,
   type DwarfKickRequest,
@@ -38,6 +41,7 @@ import {
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
+import type { CliDetector } from '../platform/cliDetection'
 import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
 import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
@@ -274,6 +278,8 @@ export class AgentRuntime {
   private readonly launchSession: SessionLauncher
   /** Sessions this panel started and still holds (#86, #94). */
   private readonly heldSessions: HeldSessionRegistry
+  /** Which agent CLIs this machine has (#91), asked when the Add Panel opens. */
+  private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
   private readonly simulated: boolean
   /** Shared by the lifecycle grace window and the delivery stage timings. */
@@ -398,6 +404,7 @@ export class AgentRuntime {
     // Model and turn ceiling are deliberately left to the CLI's own defaults —
     // guessing either would bake an answer into a wire contract before the
     // question is settled, and it would have meant a config value (#95).
+    this.cliDetector = platform.cliDetector
     this.heldSessions =
       options.heldSessions ??
       new HeldSessionRegistry({
@@ -1130,6 +1137,26 @@ export class AgentRuntime {
         error: 'The message could not be delivered.'
       }
     }
+  }
+
+  /**
+   * Which providers the Add Panel may offer, and which of them it may start
+   * (#86, over detection's #91).
+   *
+   * Asked when the panel opens rather than pushed with the board: what is
+   * installed on a machine is not board state, and it changes when somebody
+   * installs a CLI rather than every two seconds. Detection caches behind its
+   * own TTL, so reopening the panel costs a map lookup and not a disk walk.
+   *
+   * The verdict is shaped by the pure rule in domain/launchProviders, which is
+   * also where the reason nothing from the detector's own explanation crosses
+   * the wire is written down.
+   */
+  async listAgentProviders(): Promise<AgentProviderList> {
+    const detections = await Promise.all(
+      DWARF_PROVIDERS.map((provider) => this.cliDetector.detect(provider))
+    )
+    return agentProviderList(detections)
   }
 
   /**

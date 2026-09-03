@@ -53,6 +53,8 @@ const emit = defineEmits<{
   back: []
   /** A dwarf was clicked; the message panel above decides what that opens (#159). */
   select: [dwarf: Dwarf]
+  /** The Add action was used; the shell above opens the Add Panel in its dock (#86). */
+  add: []
 }>()
 
 /*
@@ -343,18 +345,17 @@ onBeforeUnmount(() => {
 
       <!--
         The design's Add action, lower-right, which opens the in-mine Add Panel
-        (components.md, "Mine Add action"). That panel is #86 and does not exist
-        yet, so the control is rendered where the design puts it and DISABLED,
-        with a title that says why. Deliberately not a live button that emits
-        into nothing: a control that answers a click with silence is a worse lie
-        than one that says it is not built.
+        (components.md, "Mine Add action"). It emits and decides nothing: the
+        panel docks at the bottom of the SHELL, beside this column rather than
+        inside it, so App owns whether it is open exactly as it owns whether the
+        MessagePanel is — the two share one dock.
       -->
       <button
         class="add-agent"
         type="button"
-        disabled
         aria-label="Launch an agent in this mine"
-        title="Launching an agent from inside the mine is not built yet"
+        title="Launch an agent in this mine"
+        @click="emit('add')"
       >
         <span
           class="action-glyph"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AddPanel from './components/launch/AddPanel.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapView from './components/map/MapView.vue'
@@ -9,6 +10,7 @@ import PanelFrame from './components/shell/PanelFrame.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import ShellNav from './components/shell/ShellNav.vue'
 import UnavailablePanel from './components/shell/UnavailablePanel.vue'
+import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
@@ -30,6 +32,31 @@ const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines 
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 const { state: kickingState, kick } = useDwarfKicking()
 const { state: questionState, answer: answerDwarfQuestion } = useDwarfQuestion()
+
+/**
+ * Launching an agent from inside a mine (#86). App owns this composable — and
+ * therefore the bridge — for the reason it owns every other one, and it owns
+ * the DOCK: the Add Panel and the MessagePanel share one slot at the bottom of
+ * the shell, which is the design's own transition (submitting replaces one with
+ * the other), so which of them is drawn cannot be decided by either.
+ */
+const {
+  state: launchState,
+  mineId: launchMineId,
+  chips: launchChips,
+  phase: launchPhase,
+  enabled: launchEnabled,
+  placeholder: launchPlaceholder,
+  refusal: launchRefusal,
+  open: openLaunchPanel,
+  close: closeLaunchPanel,
+  choose: chooseProvider,
+  setCommand: setLaunchCommand,
+  commit: commitLaunchCommand,
+  setPrompt: setLaunchPrompt,
+  submit: submitLaunch,
+  observe: observeLaunch
+} = useAgentLaunch()
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
 /**
@@ -189,6 +216,19 @@ let unsubscribe: (() => void) | undefined
 const selectedDwarfId = ref<string | null>(null)
 
 /**
+ * The dwarf the message panel is actually open on: the one that was clicked, or
+ * the one a launch turned out to have started (#86).
+ *
+ * DERIVED rather than assigned, and that is the whole point. The design's
+ * transition is the Add Panel being replaced by the MessagePanel on the new
+ * dwarf, which reads like a moment to react to — but a handover carried out by
+ * a watcher is a handover that can be missed, and the launch state is a shared
+ * singleton that more than one mounted App can be watching. Reading it is a
+ * statement that stays true however many times it is read.
+ */
+const openDwarfId = computed(() => launchState.value.launchedDwarfId ?? selectedDwarfId.value)
+
+/**
  * The transcript read for the selected dwarf, for a session this panel only
  * OBSERVES. `undefined` means the read has not come back — which the panel
  * says out loud rather than drawing as an empty conversation.
@@ -237,6 +277,9 @@ function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   loading.value = false
   syncWithMines(snapshot.mines.map((mine) => mine.id))
+  // A launch in flight is watching for its own dwarf, which arrives on an
+  // ordinary poll like every other session's — this is that poll.
+  observeLaunch(snapshot.mines)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
@@ -277,18 +320,46 @@ function leaveMine(): void {
 }
 
 const selectedDwarf = computed<Dwarf | undefined>(() =>
-  selectedDwarfId.value === null
+  openDwarfId.value === null
     ? undefined
-    : currentMine.value?.dwarfs.find((dwarf) => dwarf.id === selectedDwarfId.value)
+    : currentMine.value?.dwarfs.find((dwarf) => dwarf.id === openDwarfId.value)
 )
 
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
 function selectDwarf(dwarf: Dwarf): void {
+  // The two panels share one dock, so opening this one puts the other away.
+  // Deliberately not the launch's own `close()` half-way through a spawn: a
+  // selection during one abandons the handover, which is the user saying they
+  // would rather look at something else, and the session is unaffected.
+  closeLaunchPanel()
   selectedDwarfId.value = selectedDwarfId.value === dwarf.id ? null : dwarf.id
 }
 
+/**
+ * The mine's Add action (#86).
+ *
+ * Re-opening the panel already open on this mine is left alone rather than
+ * treated as a toggle: `open()` starts a fresh panel, so a second click would
+ * silently discard a prompt somebody was half-way through typing. The panel has
+ * its own close, and Escape.
+ */
+function openLaunch(mineId: string): void {
+  if (launchMineId.value === mineId && launchPhase.value !== 'closed') return
+  selectedDwarfId.value = null
+  void openLaunchPanel(mineId)
+}
+
+/**
+ * Close the message panel — including one a launch handed over.
+ *
+ * The launch is closed too, because until it is, `openDwarfId` still reads its
+ * adopted dwarf and the panel would reopen on the next render. Closing it is
+ * also the honest act: the handover is what the launch was still holding, and
+ * the session itself is untouched either way.
+ */
 function closeMessages(): void {
   selectedDwarfId.value = null
+  closeLaunchPanel()
 }
 
 /**
@@ -302,7 +373,7 @@ function closeMessages(): void {
  * IS the provider reporting that the tail moved.
  */
 watch(
-  [selectedDwarfId, () => selectedDwarf.value?.lastMessage],
+  [openDwarfId, () => selectedDwarf.value?.lastMessage],
   async ([dwarfId]) => {
     const token = ++feedToken
     selectedFeed.value = undefined
@@ -327,9 +398,13 @@ watch(
  * exist, so this follows the snapshot rather than guessing.
  */
 watch(
-  () => selectedDwarfId.value !== null && selectedDwarf.value === undefined,
+  () => openDwarfId.value !== null && selectedDwarf.value === undefined,
   (gone) => {
-    if (gone) selectedDwarfId.value = null
+    if (!gone) return
+    selectedDwarfId.value = null
+    // A launch whose adopted dwarf has left the board is over too, or its id
+    // would keep reopening a panel onto a session that is no longer there.
+    if (launchState.value.launchedDwarfId !== null) closeLaunchPanel()
   }
 )
 
@@ -535,25 +610,50 @@ onBeforeUnmount(() => unsubscribe?.())
             :activating-id="activating"
             :send-states="messagingState.byDwarfId"
             :kick-states="kickingState.byDwarfId"
-            :selected-id="selectedDwarfId"
+            :selected-id="openDwarfId"
             @back="leaveMine"
             @select="selectDwarf"
+            @add="openLaunch(currentMine.id)"
           />
         </PanelFrame>
       </div>
     </template>
 
     <!--
-      The design's MessagePanel, docked along the bottom (#159). Keyed by
-      dwarf, so selecting another one is a fresh panel: its opening height
-      derives from the latest message and is taken once per open, which only
-      holds if reopening is a genuine remount.
+      ONE dock, two panels (#86, #159). The design's own transition is the Add
+      Panel being REPLACED by the MessagePanel in the same place, so they share
+      this slot rather than each having one — which is also why opening either
+      puts the other away, in App and not in either component.
 
       Held against the shell's FREE edge — the side away from the screen edge
       the window is docked to — which is where the design's own
       mine-and-message mock puts it relative to the mine.
     -->
-    <div v-if="selectedDwarf" class="message-dock">
+    <div v-if="launchPhase !== 'closed' && launchPhase !== 'message-panel'" class="message-dock">
+      <AddPanel
+        :chips="launchChips"
+        :phase="launchPhase"
+        :enabled="launchEnabled"
+        :placeholder="launchPlaceholder"
+        :command="launchState.command"
+        :prompt="launchState.prompt"
+        :refusal="launchRefusal"
+        :error="launchState.error"
+        @choose="chooseProvider"
+        @command="setLaunchCommand"
+        @commit="commitLaunchCommand"
+        @prompt="setLaunchPrompt"
+        @submit="submitLaunch"
+        @close="closeLaunchPanel"
+      />
+    </div>
+
+    <!--
+      Keyed by dwarf, so selecting another one is a fresh panel: its opening
+      height derives from the latest message and is taken once per open, which
+      only holds if reopening is a genuine remount.
+    -->
+    <div v-else-if="selectedDwarf" class="message-dock">
       <DwarfMessagePanel
         :key="selectedDwarf.id"
         :dwarf="selectedDwarf"

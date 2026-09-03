@@ -1,0 +1,223 @@
+import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../../types'
+
+/**
+ * The Add Panel's gates, as `screens/launch.md` states them (#86).
+ *
+ * The source writes the whole flow as a state model, and this is that model
+ * rather than a translation of it: the phase names below are the document's
+ * own words, so a rule can be read against the paragraph it came from without
+ * a glossary in between. What the panel then DRAWS for each phase is the
+ * component's business; what is enabled, what is refused, and what a refusal
+ * did to the user's typing is decided here.
+ *
+ * The source marks several neighbouring questions **Unspecified** and warns
+ * against inventing answers for them. Where one of those had to be settled to
+ * have a working gate at all — editing a committed command, a prompt of pure
+ * whitespace, what a provider switch keeps — the reading taken is the narrowest
+ * one the stated rules already imply, and it is written down at the function
+ * that takes it. Nothing else is added.
+ */
+
+/**
+ * The always-present chip, which is not a provider: it stands for a launch
+ * command the user supplies. Kept out of `DwarfProvider` deliberately — that
+ * union is who OBSERVED a dwarf, and no observation ever comes back saying
+ * 'other'.
+ */
+export const OTHER_CHOICE = 'other'
+export type LaunchChoice = DwarfProvider | typeof OTHER_CHOICE
+
+/** The source's own state names, in the source's own order. */
+export type LaunchPhase =
+  | 'closed'
+  | 'provider-selection'
+  | 'known-provider-ready'
+  | 'other-command-required'
+  | 'other-command-committed'
+  | 'prompt-ready'
+  | 'submitted-spawning'
+  | 'message-panel'
+
+/** The three pieces of copy the source specifies for this panel, verbatim. */
+export const COMPOSER_DISABLED_PLACEHOLDER = 'Select your Dwarf supplier'
+export const COMPOSER_ENABLED_PLACEHOLDER = 'Write here...'
+export const COMMAND_PLACEHOLDER = 'Say your command...'
+
+export interface LaunchState {
+  open: boolean
+  choice: LaunchChoice | null
+  /** What is in the custom-command box right now, exactly as typed. */
+  command: string
+  /** The command Enter committed, or '' while none is. */
+  committedCommand: string
+  /** The composer's text, exactly as typed — trimming happens on the way out. */
+  prompt: string
+  /** True from the moment Enter submits until a dwarf is adopted or main refuses. */
+  submitting: boolean
+  /** The dwarf the launched session turned out to be, once one is identified. */
+  launchedDwarfId: string | null
+  /** Main's reason for refusing the last launch, or null. */
+  error: string | null
+}
+
+export function closedLaunch(): LaunchState {
+  return {
+    open: false,
+    choice: null,
+    command: '',
+    committedCommand: '',
+    prompt: '',
+    submitting: false,
+    launchedDwarfId: null,
+    error: null
+  }
+}
+
+/** Opening is always a fresh panel: nothing about a past launch is carried in. */
+export function openLaunch(_state: LaunchState): LaunchState {
+  return { ...closedLaunch(), open: true }
+}
+
+/** And closing forgets it again, which is what makes the two symmetrical. */
+export function closeLaunch(_state: LaunchState): LaunchState {
+  return closedLaunch()
+}
+
+/**
+ * Choose a chip.
+ *
+ * The prompt survives, because "provider-switch data retention" is Unspecified
+ * and discarding somebody's typing is the one reading that costs them work.
+ * The command does not: it belongs to Other, and a commit still standing behind
+ * a known provider would be a gate passed by a choice nobody is on.
+ */
+export function chooseProvider(state: LaunchState, choice: LaunchChoice): LaunchState {
+  return {
+    ...state,
+    choice,
+    command: choice === OTHER_CHOICE ? state.command : '',
+    committedCommand: choice === OTHER_CHOICE ? state.committedCommand : '',
+    // The refusal was about the choice that has just changed, so it no longer
+    // describes anything on screen.
+    error: null
+  }
+}
+
+/**
+ * Type into the custom-command box.
+ *
+ * Editing takes the commit with it. "Whether the command can be edited after it
+ * is committed" is Unspecified; the gate that IS stated — enabled needs a
+ * non-empty command committed with `Enter` — reads most simply as a check on
+ * what is in the box now, so an edit re-opens it until Enter closes it again.
+ */
+export function typeCommand(state: LaunchState, text: string): LaunchState {
+  return { ...state, command: text, committedCommand: '' }
+}
+
+/** Enter in the command box. A box with nothing in it commits nothing. */
+export function commitCommand(state: LaunchState): LaunchState {
+  const command = state.command.trim()
+  if (command === '') return state
+  return { ...state, committedCommand: command, error: null }
+}
+
+export function typePrompt(state: LaunchState, text: string): LaunchState {
+  return { ...state, prompt: text }
+}
+
+/**
+ * The prompt as it will reach the session: trimmed and capped exactly as
+ * `prepareHeldPrompt` and `prepareLaunchPrompt` do it in main.
+ *
+ * Reproduced rather than approximated, because this string has a second job.
+ * The held registry seeds the new session's conversation with it, so it is also
+ * how the panel recognises which arriving dwarf is the one it just started —
+ * see the adoption rule in useAgentLaunch. A near-copy would identify nobody.
+ */
+export function launchPrompt(state: LaunchState): string {
+  return state.prompt.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+}
+
+/** The custom command as it would be run: trimmed, for the same reason. */
+export function launchCommand(state: LaunchState): string {
+  return state.committedCommand
+}
+
+/**
+ * Whether the gate the composer is behind is open.
+ *
+ * Two ways through, and the source draws them as two: a known provider opens it
+ * outright, Other opens it only once a command is committed.
+ */
+export function composerEnabled(state: LaunchState): boolean {
+  if (!state.open || state.choice === null) return false
+  if (state.choice === OTHER_CHOICE) return state.committedCommand !== ''
+  return true
+}
+
+/**
+ * Where the panel is, in the source's own vocabulary.
+ *
+ * Derived rather than stored: every phase is a reading of the fields above, and
+ * a phase kept alongside them would be a second copy of the same truth to hold
+ * in step. The order of the tests is the order the model moves in.
+ */
+export function launchPhase(state: LaunchState): LaunchPhase {
+  if (!state.open) return 'closed'
+  if (state.launchedDwarfId !== null) return 'message-panel'
+  if (state.submitting) return 'submitted-spawning'
+  if (state.choice === null) return 'provider-selection'
+  if (!composerEnabled(state)) return 'other-command-required'
+  // A prompt of pure whitespace is not a prompt. Unspecified in the source, but
+  // main has already answered it for itself: both launch paths trim before
+  // testing for empty and refuse with "Type a prompt first." Offering an Enter
+  // that main will refuse would be the panel disagreeing with its own engine.
+  if (launchPrompt(state) !== '') return 'prompt-ready'
+  return state.choice === OTHER_CHOICE ? 'other-command-committed' : 'known-provider-ready'
+}
+
+export function composerPlaceholder(state: LaunchState): string {
+  return composerEnabled(state) ? COMPOSER_ENABLED_PLACEHOLDER : COMPOSER_DISABLED_PLACEHOLDER
+}
+
+/** Enter in the composer, and the only door into a launch. */
+export function canSubmit(state: LaunchState): boolean {
+  return launchPhase(state) === 'prompt-ready'
+}
+
+/**
+ * The launch has been asked for.
+ *
+ * The prompt is deliberately left standing rather than cleared: it is what the
+ * panel shows as the conversation's first message while the session starts, and
+ * it is what a refusal hands back for a retry.
+ */
+export function submitStarted(state: LaunchState): LaunchState {
+  if (!canSubmit(state)) return state
+  return { ...state, submitting: true, error: null }
+}
+
+/**
+ * Main refused, and said why.
+ *
+ * Back to the Add state it submitted from, with everything the user typed still
+ * there. #86 asks a failed launch for a reason rather than a silent no-op, and
+ * a panel that also swallowed the prompt would be charging them for main's
+ * answer twice.
+ */
+export function submitRefused(state: LaunchState, reason: string): LaunchState {
+  return { ...state, submitting: false, error: reason }
+}
+
+/**
+ * The arriving dwarf has been identified as this launch's own.
+ *
+ * Only ever while a launch is in flight: adopting outside one would let an
+ * unrelated session that happened to start elsewhere take over a panel nobody
+ * launched from.
+ */
+export function adoptLaunchedDwarf(state: LaunchState, dwarfId: string): LaunchState {
+  if (!state.submitting) return state
+  return { ...state, submitting: false, launchedDwarfId: dwarfId, error: null }
+}

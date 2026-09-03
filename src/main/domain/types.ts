@@ -13,6 +13,8 @@
 export type {
   AgentLaunchRequest,
   AgentLaunchResult,
+  AgentProviderList,
+  AgentProviderOption,
   Dwarf,
   DwarfActivation,
   DwarfAttendance,
