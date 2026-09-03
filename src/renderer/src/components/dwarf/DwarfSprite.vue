@@ -737,8 +737,26 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
  * already declares, and inventing a second would leave two.
  */
 .is-selected .dwarf-frame {
-  filter: drop-shadow(0 4px 5px #000a) drop-shadow(0 0 3px var(--danger-line))
-    drop-shadow(0 0 7px var(--danger-line));
+  /*
+   * #156's eleventh correction. #153 drew this as two stacked drop-shadows at
+   * 3px and 7px, and the acceptance run called the outline too thick and too
+   * loud. The maintainer's ruling is a thinner outline with the red moved ONTO
+   * the dwarf, at about half strength.
+   *
+   * The tint is a filter on the frame because that is the only place one can
+   * reach this art at all: the sprite is a background image scrolled a frame at
+   * a time, so there is no element to paint over and no pixel to recolour.
+   * `sepia()` takes its strength as an amount, which is what makes "about half"
+   * expressible at all in a filter chain; the hue rotation carries its warm
+   * brown round to the red the design asks for, and the saturation keeps it from
+   * reading as rust. The base shadow is repeated because `filter` REPLACES —
+   * dropping it would lift a selected dwarf off the rock the others stand on.
+   *
+   * Nothing here animates, which is the whole reason the reduced-motion note
+   * below has nothing to switch off.
+   */
+  filter: drop-shadow(0 4px 5px #000a) drop-shadow(0 0 2px var(--danger-line)) sepia(0.5)
+    hue-rotate(-30deg) saturate(1.6);
 }
 .is-selected .dwarf-name {
   color: var(--danger-line);

@@ -1607,3 +1607,62 @@ describe('DwarfSprite departure fade', () => {
     expect(() => styleRule('.is-anchored.is-leaving')).toThrow()
   })
 })
+
+/*
+ * How a selected dwarf is marked (#156).
+ *
+ * #153 drew the design's red halo as two stacked drop-shadows in `--danger-line`
+ * at 3px and 7px, and the acceptance run reports the outline as too thick and
+ * too loud. The maintainer's ruling: a thinner outline, and the red moved ONTO
+ * the sprite as a tint at about half strength.
+ *
+ * `screens/mine.md`'s own constraint survives intact — selection does not pause
+ * the dwarf, it keeps moving and working — and so does the reduced-motion one:
+ * there is no animation in any of this to switch off, which is why a viewer who
+ * asked for less movement still gets the whole marker.
+ */
+describe('DwarfSprite selection styling', () => {
+  function styleRule(selector: string): string {
+    const at = spriteSource.indexOf('\n' + selector + ' {')
+    if (at === -1) throw new Error(`no ${selector} rule in DwarfSprite.vue`)
+    const open = spriteSource.indexOf('{', at)
+    const close = spriteSource.indexOf('}', open)
+    return spriteSource.slice(open + 1, close)
+  }
+
+  /** Every drop-shadow blur radius the selected frame declares, in px. */
+  function selectedOutlineBlurs(): number[] {
+    const rule = styleRule('.is-selected .dwarf-frame')
+    return [...rule.matchAll(/drop-shadow\([^)]*?(\d+(?:\.\d+)?)px\s+var\(--danger-line\)/g)].map(
+      (match) => Number(match[1])
+    )
+  }
+
+  it('draws one outline rather than a stack of them', () => {
+    expect(selectedOutlineBlurs()).toHaveLength(1)
+  })
+
+  it('draws it thinner than the halo the acceptance run called too thick', () => {
+    // #153's was 3px and 7px stacked.
+    expect(Math.max(...selectedOutlineBlurs())).toBeLessThan(3)
+  })
+
+  it('tints the sprite itself, at about half strength', () => {
+    // A filter on the frame, which is the one place a tint can reach pixel art
+    // drawn as a background image. `sepia()` takes its strength as an amount,
+    // so half of it is what "about 50%" means in a filter chain.
+    const rule = styleRule('.is-selected .dwarf-frame')
+    expect(rule).toMatch(/sepia\(0?\.5\)/)
+    expect(rule).toMatch(/hue-rotate\(/)
+  })
+
+  it('keeps the shadow the sprite is always drawn with', () => {
+    // `filter` replaces rather than adds: dropping the base shadow here would
+    // lift a selected dwarf off the rock every other dwarf stands on.
+    expect(styleRule('.is-selected .dwarf-frame')).toMatch(/drop-shadow\(0 4px 5px/)
+  })
+
+  it('animates nothing, so a viewer who asked for less movement keeps the marker', () => {
+    expect(styleRule('.is-selected .dwarf-frame')).not.toMatch(/animation:/)
+  })
+})
