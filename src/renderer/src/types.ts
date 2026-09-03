@@ -6,6 +6,8 @@ export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
+  AgentProviderList,
+  AgentProviderOption,
   AppBuild,
   Dwarf,
   DwarfActivation,

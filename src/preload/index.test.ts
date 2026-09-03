@@ -405,3 +405,29 @@ describe('preload metrics-reset contract (#138)', () => {
     await expect(api.resetMetrics()).resolves.toEqual(refused)
   })
 })
+
+describe('preload provider-availability contract (#86)', () => {
+  it('asks on the agent:providers channel with no payload at all', async () => {
+    // Nothing to send: the question is about this machine, and main is the
+    // only side that can answer it.
+    invoke.mockResolvedValueOnce({ providers: [] })
+    await expect(api.listAgentProviders()).resolves.toEqual({ providers: [] })
+    expect(invoke).toHaveBeenLastCalledWith('agent:providers')
+  })
+
+  it("hands back main's verdict untouched, refusals and reasons included", async () => {
+    const answered = {
+      providers: [
+        { provider: 'claude', installed: true, launchable: true },
+        {
+          provider: 'codex',
+          installed: true,
+          launchable: false,
+          reason: 'Only Claude can be started from the panel today.'
+        }
+      ]
+    }
+    invoke.mockResolvedValueOnce(answered)
+    await expect(api.listAgentProviders()).resolves.toEqual(answered)
+  })
+})

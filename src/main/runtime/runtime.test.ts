@@ -3982,3 +3982,65 @@ describe('AgentRuntime map placement (#136)', () => {
     expect(stored.ok && stored.value?.origin).toBe('declared')
   })
 })
+
+/*
+ * Which providers the Add Panel may offer (#86). The runtime's part is small on
+ * purpose — it asks detection, and hands the answer to the pure rule in
+ * domain/launchProviders (tested there). What these pin is the wiring: that the
+ * real detector is consulted, and that nothing it says about this machine's
+ * filesystem is published.
+ */
+describe('AgentRuntime provider availability (#86)', () => {
+  const HOME = '/home/j'
+  const CLAUDE_BIN = '/home/j/.local/bin/claude'
+
+  function runtimeSeeing(installed: readonly string[]) {
+    const fs = new FakeFs()
+    for (const path of installed) fs.addFile(path, '#!/bin/sh\n')
+    const adapters: PlatformAdapters = {
+      platform: 'linux',
+      focusPid: async () => false,
+      launchTranscriptViewer: async () => false,
+      viewerScriptPath: '/viewer.mjs',
+      textDelivery: {
+        sendToConsole: async () => ({ delivered: true }),
+        relayToClaudeSession: async () => ({ delivered: true }),
+        sendInterrupt: async () => ({ delivered: true })
+      },
+      processProbe: {
+        isCodexProcessRunning: async () => false,
+        processStartTimeMs: async () => null
+      },
+      cliDetector: createCliDetector({ home: HOME, platform: 'linux', fs, env: {} })
+    }
+    return new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      fs: new FakeFs(),
+      home: HOME,
+      platformAdapters: adapters,
+      onMinesUpdated: vi.fn()
+    })
+  }
+
+  it('reports a CLI it can find as installed and launchable', async () => {
+    const list = await runtimeSeeing([CLAUDE_BIN]).listAgentProviders()
+
+    const claude = list.providers.find((entry) => entry.provider === 'claude')
+    expect(claude).toEqual({ provider: 'claude', installed: true, launchable: true })
+  })
+
+  it('reports a CLI it cannot find rather than dropping it from the list', async () => {
+    const list = await runtimeSeeing([]).listAgentProviders()
+
+    expect(list.providers.map((entry) => entry.provider)).toContain('codex')
+    expect(list.providers.every((entry) => !entry.installed)).toBe(true)
+  })
+
+  it('publishes no path from this machine, however the detector explains itself', async () => {
+    const list = await runtimeSeeing([CLAUDE_BIN]).listAgentProviders()
+
+    expect(JSON.stringify(list)).not.toContain(HOME)
+    expect(JSON.stringify(list)).not.toContain('.local')
+  })
+})
