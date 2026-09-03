@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DWARF_PROVIDERS } from '../domain/types'
+import { DWARF_PROVIDERS, TIER_WEIGHT_THRESHOLDS_KB } from '../domain/types'
 import {
   SIMULATION_ENV_VAR,
   cliOverridesFrom,
@@ -46,6 +46,14 @@ describe('defaultConfig', () => {
     expect(defaultConfig().providers.claude.configDirs).not.toBe(
       defaultConfig().providers.claude.configDirs
     )
+  })
+
+  // #140: the renderer derives Next-level cur/max from TIER_WEIGHT_THRESHOLDS_KB
+  // (src/shared/contracts.ts), which only holds an honest answer if main's own
+  // default is drawn from that same table rather than a second hand-typed copy
+  // that could drift from it.
+  it('draws its tier boundaries from the one shared constant, not a duplicated literal', () => {
+    expect(defaultConfig().tierThresholds).toEqual(TIER_WEIGHT_THRESHOLDS_KB)
   })
 })
 

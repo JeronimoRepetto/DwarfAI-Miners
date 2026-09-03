@@ -210,6 +210,98 @@ describe('TierService', () => {
   })
 })
 
+// #140: the walk already computes each project's raw byte weight to classify
+// its tier, then threw the number away — so a card wanting "current weight
+// toward the next tier" had nothing to show. knownWeightBytesOf keeps the
+// SAME measurement the cached tier was classified from, behind the SAME
+// known-vs-provisional gate knownTierOf already enforces (#41): a byte count
+// exists only where a walk actually produced one, and a stale count is still
+// a real measurement. There is deliberately no bronze-style placeholder
+// accessor for weight — nothing today needs to draw a guessed number, so
+// there is nothing to protect against.
+describe('TierService weight (#140)', () => {
+  let fake: FakeFs
+  let clock: { now: number }
+  const PROJECT = 'C:\\Users\\j\\Desktop\\Proj'
+  const SERVICE_THRESHOLDS: TierThresholds = {
+    copperKb: 1,
+    silverKb: 5,
+    goldKb: 20,
+    uraniumKb: 100
+  }
+
+  function makeService(): TierService {
+    return new TierService({
+      fs: fake,
+      thresholds: SERVICE_THRESHOLDS,
+      ttlS: 600,
+      now: () => clock.now
+    })
+  }
+
+  beforeEach(() => {
+    fake = new FakeFs()
+    clock = { now: 1_000_000 }
+    fake.addFile(`${PROJECT}\\src\\a.ts`, 'a'.repeat(2000))
+  })
+
+  it('reports no known weight while the first walk is pending, then the measured byte total', async () => {
+    const service = makeService()
+    expect(service.knownWeightBytesOf(PROJECT)).toBeUndefined()
+    await service.settle()
+    expect(service.knownWeightBytesOf(PROJECT)).toBe(2000)
+  })
+
+  it('keeps the raw byte weight beside the tier it derived from it', async () => {
+    const service = makeService()
+    service.tierOf(PROJECT)
+    await service.settle()
+    // The exact bytes sumSourceBytes counted, not a KB-rounded or re-derived
+    // figure: the cache keeps the SAME number tierForBytes classified.
+    expect(service.knownWeightBytesOf(PROJECT)).toBe(2000)
+    expect(service.knownTierOf(PROJECT)).toBe('copper')
+  })
+
+  it('caches the computed weight within the TTL', async () => {
+    const service = makeService()
+    service.tierOf(PROJECT)
+    await service.settle()
+    fake.addFile(`${PROJECT}\\src\\b.ts`, 'b'.repeat(3200))
+    clock.now += 599_000
+    expect(service.knownWeightBytesOf(PROJECT)).toBe(2000)
+  })
+
+  it('treats a stale cached weight as known while it refreshes in the background', async () => {
+    const service = makeService()
+    service.tierOf(PROJECT)
+    await service.settle()
+    fake.addFile(`${PROJECT}\\src\\b.ts`, 'b'.repeat(3200))
+    clock.now += 601_000
+    // Stale is still a measurement, mirroring knownTierOf's own stale case.
+    expect(service.knownWeightBytesOf(PROJECT)).toBe(2000)
+    await service.settle()
+    expect(service.knownWeightBytesOf(PROJECT)).toBe(5200)
+  })
+
+  it('tells a computed zero weight apart from a pending one', async () => {
+    // The weight equivalent of "tells a computed bronze apart from a pending
+    // one": a project with no source at all still gets a real measurement of
+    // 0, and that 0 must read as known rather than looking like the absent
+    // case above.
+    const service = makeService()
+    expect(service.knownWeightBytesOf('C:\\nope')).toBeUndefined()
+    await service.settle()
+    expect(service.knownWeightBytesOf('C:\\nope')).toBe(0)
+  })
+
+  it('treats paths case-insensitively (win32 semantics)', async () => {
+    const service = makeService()
+    service.tierOf(PROJECT)
+    await service.settle()
+    expect(service.knownWeightBytesOf(PROJECT.toUpperCase())).toBe(2000)
+  })
+})
+
 // #39: bundled and duplicated files inflated a mine's tier. One real project
 // measured 15 976 KB across 362 files, of which 14 MB was six byte-identical
 // copies of one 2.3 MB bundled player-script.js — 87% of the mine's weight,

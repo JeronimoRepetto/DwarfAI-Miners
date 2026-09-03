@@ -41,6 +41,16 @@ export interface SpriteSheet {
    * answer while the only sheets drawn are idles (issue #74).
    */
   readonly impactFrames?: readonly number[]
+  /**
+   * The frames bright enough to earn the sprite's own strike glow, layered
+   * over the art rather than instead of it (issue #74). A SEPARATE claim from
+   * `impactFrames` above: the hit that throws debris is one frame, but a swing
+   * can draw several frames of brightness around it — declaring all of them
+   * an impact would retrigger the whole spark burst on each one, which reads
+   * as continuous debris rather than a single hit. A sheet that names none
+   * glows never, the same honest default `impactFrames` uses.
+   */
+  readonly glowFrames?: readonly number[]
 }
 
 /** Whether a clip runs for ever or plays out and hands over. */
@@ -92,6 +102,11 @@ export function backgroundSizePercent(sheet: SpriteSheet): number {
 /** Whether this frame is the moment the tool hits the rock. */
 export function isImpactFrame(sheet: SpriteSheet, index: number): boolean {
   return sheet.impactFrames?.includes(index) === true
+}
+
+/** Whether this frame is bright enough to draw the sprite's own strike glow. */
+export function isGlowFrame(sheet: SpriteSheet, index: number): boolean {
+  return sheet.glowFrames?.includes(index) === true
 }
 
 /**

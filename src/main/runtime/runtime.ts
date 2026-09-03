@@ -266,6 +266,14 @@ export class AgentRuntime {
   private readonly lifecycle: DwarfLifecycleTracker
   /** Null whenever the projects database will not open, or a demo is running. */
   private readonly projects: ProjectsStore | null
+  /**
+   * Complexity-tier authority, held onto past the constructor so queryProjects
+   * can join a project's measured byte weight the same live way it joins
+   * materials off the ledger (#140) — read on demand, never persisted to the
+   * projects store the way `knownTier` is. A query never triggers or waits on
+   * a walk; it reads whatever this service already has cached.
+   */
+  private readonly tiers: TierService
   /** Writes a row per observed project, throttled (#93); null without a store. */
   private readonly projectObserver: ProjectObserver | null
   /**
@@ -415,6 +423,7 @@ export class AgentRuntime {
         thresholds: options.config.tierThresholds,
         ttlS: options.config.tierCacheTtlS
       })
+    this.tiers = tiers
     /*
      * Who decides what a mine is made of.
      *
@@ -683,7 +692,11 @@ export class AgentRuntime {
    * question, because a browse spans a table with no bound on its length and
    * reading it into this process to trim it would use none of the indexes it
    * was given. What this method adds is the one fact the database deliberately
-   * does not hold — whether each project is on the board RIGHT NOW.
+   * does not hold — whether each project is on the board RIGHT NOW — plus two
+   * joins against state that lives outside the projects table entirely:
+   * `materials` off the ledger and `weightBytes` off TierService's own cache
+   * (#140), both read live rather than persisted here, and both absent rather
+   * than a placeholder for a project neither has measured yet.
    *
    * `live` is poll-truth, stamped as the answer is assembled and never stored.
    * Two readings of `false` are worth separating: a project that is remembered
@@ -714,6 +727,11 @@ export class AgentRuntime {
         // O(1) per row off the ledger already held in memory (#90) — no query,
         // same id scheme (mineIdForPath) the board and the ledger both key by.
         const materials = this.ledger.knownMineTotals(project.id)
+        // Same live-join shape as materials, off TierService's own cache
+        // instead of the ledger — keyed by PATH, the same key tierOf/
+        // knownTierOf use, never mineIdForPath (#140). Absent exactly when no
+        // walk has measured this path yet; a stale measurement still counts.
+        const weightBytes = this.tiers.knownWeightBytesOf(project.path)
         return {
           id: project.id,
           path: project.path,
@@ -722,6 +740,7 @@ export class AgentRuntime {
           // Absent, never null and never a placeholder: the wire says "nobody has
           // measured this" by saying nothing at all (#41).
           ...(project.knownTier === null ? {} : { knownTier: project.knownTier }),
+          ...(weightBytes === undefined ? {} : { weightBytes }),
           addedAt: project.addedAt,
           ...(project.lastOpenedAt === null ? {} : { lastOpenedAt: project.lastOpenedAt }),
           ...(project.lastProvider === null ? {} : { lastProvider: project.lastProvider }),

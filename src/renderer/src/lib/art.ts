@@ -15,6 +15,9 @@ import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-lon
 import foremanSleepingSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-sleeping-v2-Sheet.png'
 import foremanStartSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-strart-sleep-v2-Sheet.png'
 import workerIdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker-idle-v2-Sheet.png'
+import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-start-working.png'
+import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
+import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
 
 import interiorBronze from '../assets/art/concept/interior-bronze.jpg'
 import interiorCopper from '../assets/art/concept/interior-copper.jpg'
@@ -56,6 +59,10 @@ import iconMarket from '../../../../docs/assets/icons/market.svg?url'
 import iconMine from '../../../../docs/assets/icons/mine.svg?url'
 import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
+import iconAdd from '../../../../docs/assets/icons/add.svg?url'
+import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
+import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
+import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 
 import trayIcon from '../../../../resources/tray-icon@2x.png'
 
@@ -64,7 +71,8 @@ import trayIcon from '../../../../resources/tray-icon@2x.png'
  * have, because it is what a rank with no drawing for a state falls back to —
  * see dwarfSheets.ts, which is where that rule is spent.
  */
-export type DwarfSheetName = 'idle' | 'start-sleep' | 'sleeping' | 'end-sleep'
+export type DwarfSheetName =
+  'idle' | 'start-sleep' | 'sleeping' | 'end-sleep' | 'start-working' | 'working' | 'end-working'
 
 export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, string>>
 
@@ -76,12 +84,18 @@ export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, st
  * teaching the panel to play it, and doing both at once makes neither
  * reviewable.
  *
- * What is missing is the point of the shape: a worker has one sheet because one
- * sheet has been drawn for him. Working, waiting and walking art arrives with
- * #74 and drops in here as data — no branch anywhere else moves.
+ * A worker now has its working sequence too (#74's first delivery beyond
+ * idle): picked up once, swings on a loop, set down once on the way out.
+ * Waiting and walking art still arrives later and drops in here the same
+ * way — no branch anywhere else moves.
  */
 export const DWARF_SHEET_SRC = {
-  worker: { idle: workerIdleSheet },
+  worker: {
+    idle: workerIdleSheet,
+    'start-working': workerStartWorkingSheet,
+    working: workerWorkingSheet,
+    'end-working': workerEndWorkingSheet
+  },
   foreman: {
     idle: foremanIdleSheet,
     'start-sleep': foremanStartSleepSheet,
@@ -204,6 +218,26 @@ export const SHELL_ICON_SRC: Record<ShellArea, string> = {
 /** The design's own close glyph, used by the panel's round close control. */
 export const CLOSE_ICON_SRC = iconClose
 
+/**
+ * The Mines panel's own glyphs (#135), from the same `docs/assets/icons`
+ * directory the design source names for every other icon.
+ *
+ * `filter.svg` is the file behind BOTH readings of the control the browse
+ * screen draws beside the search field: the source calls it the date-sort
+ * control in prose and the file is named for a filter, and they are one glyph
+ * and one button. It is imported under the name of what it DOES here rather
+ * than the file's own, so the panel never grows a second sort affordance.
+ *
+ * Every one of these is drawn through a CSS mask, exactly as the shell icons
+ * are, so the committed SVG keeps the designer's bytes while the colour comes
+ * from the tokens — which matters more here than on the rail, because the mock
+ * draws the message bubble in accent amber and the file's own fill is cream.
+ */
+export const SORT_ICON_SRC = iconFilter
+export const ADD_ICON_SRC = iconAdd
+export const DIALOG_ICON_SRC = iconDialog
+export const SLEEP_ICON_SRC = iconSleep
+
 /** The app mark, centred at the top of the rail and of the navigation column. */
 export const TRAY_ICON_SRC = trayIcon
 
@@ -220,9 +254,10 @@ let preloaded = false
  * animation does not draw against an empty box. Safe to call from every
  * DwarfSprite instance; only the first call does any work.
  *
- * Cheaper than it was, and by more than the count suggests: five files instead
- * of nine, and each of them a handful of kilobytes of pixel art rather than a
- * ~195 KB painted pose (see docs/animation-loops.md).
+ * Cheaper than it was, and by more than the count suggests: eight files
+ * (five before #74's working strips) instead of nine, and each of them a
+ * handful of kilobytes of pixel art rather than a ~195 KB painted pose (see
+ * docs/animation-loops.md).
  */
 export function preloadDwarfArt(): void {
   if (preloaded || typeof Image === 'undefined') return

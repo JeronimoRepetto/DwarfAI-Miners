@@ -271,10 +271,19 @@ export interface TierServiceOptions {
 interface CacheEntry {
   tier: MineTier
   computedAt: number
+  /**
+   * The raw byte total sumSourceBytes() counted on the walk that produced
+   * `tier` — the SAME number tierForBytes() classified, not a re-derived or
+   * KB-rounded figure (#140). Bytes, because that is the unit the walk itself
+   * produces; `thresholds` stays in KB (see TierThresholds), so a consumer
+   * comparing the two converts once rather than this cache silently doing it.
+   */
+  weightBytes: number
 }
 
 /**
- * One cache read: the tier to use, and whether a walk actually produced it.
+ * One cache read: the tier and byte weight to use, and whether a walk
+ * actually produced them.
  *
  * A stale entry still counts as computed — it is a real measurement, just an
  * older one. Only a path no walk has ever finished is unknown.
@@ -282,6 +291,8 @@ interface CacheEntry {
 interface TierReading {
   tier: MineTier
   computed: boolean
+  /** The measured byte weight; present exactly when `computed` is true. */
+  weightBytes?: number
 }
 
 /**
@@ -290,10 +301,13 @@ interface TierReading {
  * cache in the background when stale. Paths are compared case-insensitively
  * (win32 semantics).
  *
- * Two accessors, because "bronze" alone cannot say whether it was measured
- * (#41): tierOf() is for DRAWING, where something has to be on screen for the
- * first frame; knownTierOf() is for anything that seals a value with a tier,
- * where a placeholder would become a permanent lie.
+ * Two tier accessors, because "bronze" alone cannot say whether it was
+ * measured (#41): tierOf() is for DRAWING, where something has to be on
+ * screen for the first frame; knownTierOf() is for anything that seals a
+ * value with a tier, where a placeholder would become a permanent lie.
+ * knownWeightBytesOf() carries the same discipline for the raw byte weight
+ * the walk classified that tier from (#140) — it has no tierOf-style
+ * placeholder twin, because nothing draws a guessed byte count.
  */
 export class TierService {
   private readonly fs: FsLike
@@ -343,9 +357,25 @@ export class TierService {
   }
 
   /**
-   * The one cache read behind both accessors, so knownTierOf schedules the
-   * same background walk tierOf does. A passive read would let a mine nobody
-   * happens to be drawing stay unknown — and therefore unaccrued — forever.
+   * The raw source-byte weight a walk measured for this path — undefined
+   * while the first one is still running, exactly like knownTierOf (#140,
+   * #41). There is no tierOf-style provisional accessor here: nothing draws a
+   * guessed byte count, so there is nothing a placeholder would need to serve.
+   *
+   * A stale cached weight still counts as known, same as a stale tier — see
+   * `read()`. Pairs with knownTierOf: both come off the SAME cache entry, so
+   * a weight and the tier reported beside it always come from the same walk.
+   */
+  knownWeightBytesOf(path: string): number | undefined {
+    const reading = this.read(path)
+    return reading.computed ? reading.weightBytes : undefined
+  }
+
+  /**
+   * The one cache read behind all three accessors, so knownTierOf and
+   * knownWeightBytesOf schedule the same background walk tierOf does. A
+   * passive read would let a mine nobody happens to be drawing stay unknown —
+   * and therefore unaccrued — forever.
    */
   private read(path: string): TierReading {
     const key = path.toLowerCase()
@@ -358,7 +388,11 @@ export class TierService {
         refresh.finally(() => this.inFlight.delete(key))
       )
     }
-    return { tier: cached?.tier ?? 'bronze', computed: cached !== undefined }
+    return {
+      tier: cached?.tier ?? 'bronze',
+      computed: cached !== undefined,
+      weightBytes: cached?.weightBytes
+    }
   }
 
   /** Resolves when every in-flight walk has finished (poller drain + tests). */
@@ -384,6 +418,10 @@ export class TierService {
     // tier in force when it was observed (#22), so material already mined
     // keeps its old-tier identity. Recomputing the tier here only decides
     // which tier newly observed mining from this point forward falls under.
-    this.cache.set(key, { tier: tierForBytes(totalBytes, this.thresholds), computedAt: this.now() })
+    this.cache.set(key, {
+      tier: tierForBytes(totalBytes, this.thresholds),
+      computedAt: this.now(),
+      weightBytes: totalBytes
+    })
   }
 }

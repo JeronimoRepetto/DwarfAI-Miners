@@ -117,21 +117,78 @@ describe('DWARF_SHEETS', () => {
     })
   })
 
-  /*
-   * What has NOT been drawn, stated out loud so that nobody has to infer it
-   * from an absence. #74 delivers working, waiting and walking art later; when
-   * it lands these expectations are the ones that change, and the sequence
-   * picks the new sheets up as data.
-   */
-  it('has no working, waiting or walking art for a worker yet', () => {
-    expect(Object.keys(DWARF_SHEETS.worker)).toEqual(['idle'])
+  describe('the worker starting to work', () => {
+    it('has a start, a loop and an end, which is what makes it a transition', () => {
+      expect(DWARF_SHEETS.worker['start-working']?.frames).toBe(3)
+      expect(DWARF_SHEETS.worker.working?.frames).toBe(11)
+      expect(DWARF_SHEETS.worker['end-working']?.frames).toBe(6)
+    })
+
+    // No "adds up to the preview" pin here, unlike the foreman's sleep above:
+    // dwarf-worker-working-v2.gif's Graphic Control Extension blocks measure
+    // 60 frames at a uniform 100ms, not 3 + 11 + 6 = 20 — the preview loops
+    // the swing several times to show it repeating rather than encoding the
+    // three parts once each, so frame count is not evidence of ordering here.
   })
 
-  it('claims no impact frame anywhere, because no swing has been drawn', () => {
-    // Sparks fire off a declared impact and nowhere else. An idle sheet that
-    // claimed one would throw debris off a dwarf standing still.
+  /*
+   * What has NOT been drawn, stated out loud so that nobody has to infer it
+   * from an absence. #74 delivers waiting and walking art later; when it
+   * lands this expectation is the one that changes, and the sequence picks
+   * the new sheets up as data.
+   */
+  it('has working art for a worker now, but still no waiting or walking art (#74)', () => {
+    expect(Object.keys(DWARF_SHEETS.worker)).toEqual([
+      'idle',
+      'start-working',
+      'working',
+      'end-working'
+    ])
+  })
+
+  /*
+   * The strike is now picked (#74), so the blanket "no sheet claims one" this
+   * replaces is no longer true of `worker/working` — it stayed true of every
+   * OTHER sheet, which the tests below still pin.
+   */
+  describe('the worker striking the rock', () => {
+    it("declares the strike at the artist's frame 5, converted to index 4", () => {
+      // The maintainer's own frame map is 1-indexed off the preview GIF; every
+      // index in this codebase is 0-indexed, so frame 5 (the swing landing,
+      // first spark centered on the pick's tip) becomes index 4. Sparks fire
+      // off exactly this one frame and nowhere else — the pre-migration
+      // `isPickImpact` this restores marked only the down-stroke a hit,
+      // warning that more would read as "a permanent glow ... rather than
+      // impacts" (see presentation.ts before #87's sheet migration).
+      expect(DWARF_SHEETS.worker.working?.impactFrames).toEqual([4])
+    })
+
+    it("glows only the artist's two brightest frames, 5-6 (index 4-5), never the dispersal", () => {
+      // Frames 7-9 (index 6-8) disperse and fade in the art alone (maintainer's
+      // design call) — a separate declaration from impactFrames above,
+      // because retriggering the debris burst across all five spark frames
+      // is exactly the "permanent glow" the old single-hit comment warned
+      // against, not a light on the strike.
+      expect(DWARF_SHEETS.worker.working?.glowFrames).toEqual([4, 5])
+    })
+  })
+
+  it('leaves the foreman untouched — he has no swing to glow or spark', () => {
+    for (const name of Object.keys(DWARF_SHEETS.foreman) as (keyof typeof DWARF_SHEETS.foreman)[]) {
+      const sheet = DWARF_SHEETS.foreman[name]
+      expect(sheet?.impactFrames, name).toBeUndefined()
+      expect(sheet?.glowFrames, name).toBeUndefined()
+    }
+  })
+
+  it('claims no impact or glow frame on any other worker sheet either', () => {
+    // An idle, start-working or end-working sheet that claimed one would
+    // throw debris (or glow) off a dwarf standing still, mid pick-up, or
+    // setting the pick back down.
     for (const { where, sheet } of everySheet()) {
+      if (where === 'worker/working') continue
       expect(sheet.impactFrames, where).toBeUndefined()
+      expect(sheet.glowFrames, where).toBeUndefined()
     }
   })
 })

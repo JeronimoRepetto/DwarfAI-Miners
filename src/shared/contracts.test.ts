@@ -3,6 +3,7 @@ import type { DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
 import {
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
+  TIER_WEIGHT_THRESHOLDS_KB,
   dwarfSilenceWindowKey,
   dwarfSilenceWindowMs,
   isDwarfProvider
@@ -129,5 +130,27 @@ describe('dwarfSilenceWindowKey', () => {
     expect(dwarfSilenceWindowKey('foreman', 'unattended')).toBe('unattended')
     expect(dwarfSilenceWindowKey('foreman', 'unknown')).toBe('attended')
     expect(dwarfSilenceWindowKey('worker', 'attended')).toBe('unattended')
+  })
+})
+
+/*
+ * Issue #140. The renderer has no import path onto main/config/config.ts —
+ * main and renderer are separate JS realms, and only this shared module and
+ * the IPC wire cross between them — so the canonical KB boundaries the design
+ * source fixes (foundations.md) have to live somewhere both sides can read
+ * them without the renderer hand-typing four numbers that could drift from
+ * main's. This pins the one copy both processes are meant to share.
+ */
+describe('TIER_WEIGHT_THRESHOLDS_KB', () => {
+  it('names the documented KB boundaries, in ascending order', () => {
+    expect(TIER_WEIGHT_THRESHOLDS_KB).toEqual({
+      copperKb: 100,
+      silverKb: 500,
+      goldKb: 2048,
+      uraniumKb: 8192
+    })
+    expect(TIER_WEIGHT_THRESHOLDS_KB.copperKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.silverKb)
+    expect(TIER_WEIGHT_THRESHOLDS_KB.silverKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.goldKb)
+    expect(TIER_WEIGHT_THRESHOLDS_KB.goldKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.uraniumKb)
   })
 })

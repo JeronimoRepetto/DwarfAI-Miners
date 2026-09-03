@@ -123,16 +123,44 @@ describe('MinesPanel chrome', () => {
     expect(wrapper.emitted('tier')).toEqual([[null]])
   })
 
+  /*
+   * AMENDED for #135: the two date-order tests below asserted the control's
+   * TEXT ('Newest first' / 'Oldest first'). The design draws this control as
+   * the `filter.svg` glyph and nothing else, so the wording moved to the hover
+   * line — the accessible name stays stable and the title carries the state,
+   * the same split App.vue's pin button uses. Nothing was dropped: both
+   * directions are still pinned, one assertion lower down.
+   */
   it('flips the date order from one labelled button', async () => {
     const wrapper = panel({ direction: 'desc' })
     const sort = wrapper.get('.sort-control')
-    expect(sort.text()).toBe('Newest first')
+    expect(sort.attributes('title')).toBe('Newest first')
     await sort.trigger('click')
     expect(wrapper.emitted('toggle-direction')).toHaveLength(1)
   })
 
   it('says which way the list runs once it is flipped', () => {
-    expect(panel({ direction: 'asc' }).get('.sort-control').text()).toBe('Oldest first')
+    expect(panel({ direction: 'asc' }).get('.sort-control').attributes('title')).toBe(
+      'Oldest first'
+    )
+  })
+
+  /* The header row the mock draws: title, search field, then two icons (#135). */
+  it('draws the date order as the designer glyph rather than as words', () => {
+    const sort = panel().get('.sort-control')
+    expect(sort.text()).toBe('')
+    expect(sort.get('.control-glyph').attributes('style')).toContain('--control-icon')
+  })
+
+  it('keeps a stable accessible name on the date order while the hover line moves', () => {
+    expect(panel({ direction: 'asc' }).get('.sort-control').attributes('aria-label')).toBe(
+      'Order by date added'
+    )
+  })
+
+  it('rules the header off from the list the way the mock does', () => {
+    expect(panel().find('.panel-header').classes()).toContain('panel-header')
+    expect(panel().find('.header-divider').exists()).toBe(true)
   })
 })
 
@@ -154,7 +182,30 @@ describe('MinesPanel list', () => {
         })
       ]
     })
-    expect(wrapper.get('.card-agents').text()).toBe('Active agents: 2')
+    // AMENDED for #135: the mock capitalizes it — see the note in MineCard.test.ts.
+    expect(wrapper.get('.card-agents').text()).toBe('Active Agents: 2')
+  })
+
+  /* The markers are joined off the same board the crew count comes from (#135). */
+  it('raises a card marker from the board rather than from the row', () => {
+    const wrapper = panel({
+      projects: [defaultProject({ id: 'C:/dev/alpha', live: true })],
+      mines: [
+        defaultMine({
+          id: 'C:/dev/alpha',
+          dwarfs: [defaultDwarf({ id: '1', status: 'waiting' })]
+        })
+      ]
+    })
+    expect(wrapper.find('.status-resting').exists()).toBe(true)
+  })
+
+  it('raises no marker for a project the board does not carry', () => {
+    const wrapper = panel({
+      projects: [defaultProject({ id: 'C:/dev/alpha', live: true })],
+      mines: []
+    })
+    expect(wrapper.find('.card-status').exists()).toBe(false)
   })
 
   it('opens the mine a live card names', async () => {
@@ -253,9 +304,15 @@ describe('MinesPanel add control', () => {
     expect(add.attributes('aria-label')).toBe('Add a project')
   })
 
-  it('draws the control as inline pixel art, not text or emoji', () => {
+  /*
+   * AMENDED for #135: this asserted a hand-drawn inline <svg>, which the design
+   * replaces with the designer's own `add.svg` drawn through a mask. The claim
+   * it protects is unchanged and still asserted — the control is art, never
+   * text or an emoji.
+   */
+  it('draws the control as the designer glyph, not text or emoji', () => {
     const add = panel().get('.add-control')
-    expect(add.find('svg').exists()).toBe(true)
+    expect(add.get('.control-glyph').attributes('style')).toContain('--control-icon')
     expect(add.text()).toBe('')
   })
 

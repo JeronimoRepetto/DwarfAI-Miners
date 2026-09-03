@@ -66,6 +66,7 @@ export {
   MAP_SPAWN_SITE_COUNT,
   MAX_DWARF_TEXT_CHARS,
   MINE_TIERS,
+  TIER_WEIGHT_THRESHOLDS_KB,
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowKey,
   isDwarfProvider,

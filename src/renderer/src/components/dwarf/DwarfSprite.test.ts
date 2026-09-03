@@ -68,14 +68,15 @@ const WORKER_IDLE = sheetName(DWARF_SHEETS.worker.idle.src)
 const FOREMAN_IDLE = sheetName(DWARF_SHEETS.foreman.idle.src)
 
 describe('DwarfSprite', () => {
-  it('plays the worker sheet while a worker is working', () => {
-    // Was `dwarf-pick-1` until the hand-drawn sheets landed. The swing has not
-    // been drawn as a strip yet (#74), so a worker idles at the rock — the
-    // deliberate honest mapping, not an oversight. See dwarfSequence.ts.
+  it('plays the worker into its swing when work starts', () => {
+    // #74 lands the working strips: a worker no longer idles at the rock.
+    // Freshly working plays the start-working transition first — there is
+    // nothing to interrupt on a first render, mirroring how a foreman that
+    // arrives already asked still falls asleep. See dwarfSequence.ts.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
     })
-    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
     expect(framePercentOf(wrapper)).toBe(0)
   })
 
@@ -125,7 +126,10 @@ describe('DwarfSprite', () => {
       props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
     })
     const style = wrapper.attributes('style') ?? ''
-    expect(style).toContain(`--sheet-size: ${DWARF_SHEETS.worker.idle.frames * 100}% 100%`)
+    // A freshly-working worker is on start-working (see above), not idle.
+    expect(style).toContain(
+      `--sheet-size: ${DWARF_SHEETS.worker['start-working']!.frames * 100}% 100%`
+    )
   })
 
   it('writes only the frame position on the element it redraws ten times a second', () => {
@@ -499,9 +503,12 @@ describe('DwarfSprite', () => {
     afterEach(() => vi.useRealTimers())
 
     it('steps one frame along the strip per frame hold', async () => {
+      // 'waiting' (not 'working'), so the strip under test is still the plain
+      // idle loop now that working has its own start-working sheet — this
+      // test is about the stepping mechanism, not any one sheet's frame count.
       const { frames, frameMs } = DWARF_SHEETS.worker.idle
       const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status: 'working' }) }
+        props: { dwarf: defaultDwarf({ status: 'waiting' }) }
       })
       expect(framePercentOf(wrapper)).toBe(0)
       vi.advanceTimersByTime(frameMs)
@@ -513,9 +520,10 @@ describe('DwarfSprite', () => {
     })
 
     it('wraps back to the head of the strip at the end of a loop', async () => {
+      // Same reasoning as above: 'waiting' keeps this on the idle loop.
       const { frames, frameMs } = DWARF_SHEETS.worker.idle
       const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status: 'working' }) }
+        props: { dwarf: defaultDwarf({ status: 'waiting' }) }
       })
       vi.advanceTimersByTime(frames * frameMs)
       await wrapper.vm.$nextTick()
@@ -647,20 +655,28 @@ describe('DwarfSprite in the scene', () => {
     // slid across the cave on the retired painted frames would be the only
     // AI-painted thing left on screen. Style consistency over motion fidelity,
     // chosen deliberately — the crossing itself is unchanged, MineScene still
-    // walks him there.
-    for (const status of ['working', 'waiting'] as const) {
-      const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status }), anchored: true, walking: true }
-      })
-      expect(sheetOf(wrapper), status).toBe(WORKER_IDLE)
-    }
+    // walks him there. `walking` is a scene prop, not a sequence input: the
+    // STATUS still decides the sheet, so a worker already `working` while
+    // crossing the floor now plays its working sequence rather than idling —
+    // only `waiting`, still undrawn, falls back to idle.
+    const working = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
+    })
+    expect(sheetOf(working)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
+
+    const waiting = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'waiting' }), anchored: true, walking: true }
+    })
+    expect(sheetOf(waiting)).toBe(WORKER_IDLE)
   })
 
   it('drops back into its own loop the moment it arrives', () => {
+    // Arrived and working now means the working sequence, not idle — see the
+    // note above on `walking` being a scene prop rather than a sequence input.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: false }
     })
-    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
   })
 
   it('faces the rock the scene put it at, not the direction the old rule assumed', () => {
@@ -755,15 +771,114 @@ describe('DwarfSprite pick sparks', () => {
     }
   })
 
-  it('throws none off the sheets actually drawn, none of which claims a hit', () => {
-    // The honest state of the panel today, and the reason the three tests above
-    // have to substitute a sheet: an idle loop that threw debris would be a
-    // dwarf standing still in a shower of rock.
+  it('throws none off the idle loop, which still claims no hit', () => {
+    // The idle sheet is what every rank falls back to and has never drawn a
+    // swing — a dwarf standing at ease must never throw debris. (Previously
+    // this test covered a REAL working dwarf too, back when no sheet at all
+    // declared a hit; #74 below gives `working` its own strike frame, so
+    // that half of the claim moved to the test that follows.)
     const wrapper = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+      props: { dwarf: defaultDwarf({ status: 'waiting' }), anchored: true }
     })
     vi.advanceTimersByTime(10_000)
     expect(wrapper.find('.spark-burst').exists()).toBe(false)
+  })
+
+  it('throws sparks off the real working sheet now that #74 declares its strike', async () => {
+    // The stub above exists because no sheet used to claim a hit; the
+    // worker's own working sheet now does (index 4, the artist's frame 5 —
+    // see dwarfSheets.test.ts), so the genuine, unstubbed dwarfClips must
+    // reach the same burst without a substitute.
+    //
+    // A single, exact jump rather than a long `advanceTimersByTime`: Vue
+    // coalesces a watcher across a synchronous run of interval callbacks
+    // down to one job reflecting the FINAL elapsed value, so a coarse
+    // advance can sail straight past the one frame that matters and land
+    // somewhere else in the loop's other ten frames. 300ms clears the
+    // 3-frame start-working transition; +400ms lands exactly on index 4 of
+    // the working loop behind it (see dwarfSequence.ts).
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(700)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.spark-burst').exists()).toBe(true)
+  })
+})
+
+/*
+ * The strike's own light (#74's last piece): a brief glow the sprite adds
+ * beside the art's own sparks, keyed off the sheet's own glowFrames exactly
+ * the way the burst above is keyed off impactFrames — declared data, never a
+ * frame number written into the component.
+ */
+describe('DwarfSprite strike glow', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
+  })
+
+  /** Mirrors the artist's map: index 4-5 are the two brightest, 6-8 disperse. */
+  function stubGlowSwing(): void {
+    vi.mocked(dwarfClips).mockReturnValue([
+      loopOf({
+        src: '/glow-swing.png',
+        frames: 9,
+        frameMs: 100,
+        impactFrames: [4],
+        glowFrames: [4, 5]
+      })
+    ])
+  }
+
+  it('lights the strike and its brightest echo, index 4 and 5', async () => {
+    stubGlowSwing()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(400) // frame 4
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
+
+    vi.advanceTimersByTime(100) // frame 5
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
+  })
+
+  it('leaves the dispersal frames glow-free — the art carries 6-8 alone', async () => {
+    stubGlowSwing()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    vi.advanceTimersByTime(600) // frame 6
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+
+    vi.advanceTimersByTime(200) // frame 8
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+  })
+
+  it('never glows a dwarf still walking to the vein', async () => {
+    stubGlowSwing()
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
+    })
+    vi.advanceTimersByTime(400)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
+  })
+
+  it('lights the real working sheet too, not only a stub', async () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    // 300ms clears the 3-frame start-working transition; +400ms lands on
+    // index 4 of the working loop behind it (see dwarfSequence.ts).
+    vi.advanceTimersByTime(700)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
   })
 })
 
@@ -981,17 +1096,23 @@ describe('DwarfSprite sleep indicator', () => {
   })
 
   /*
-   * REPLACED: this used to hold that resting started no timer at all, because
-   * rest was a single pose. The worker's idle strip is six frames, so resting
-   * costs a timer again. What is worth pinning instead is that the overlay is
-   * still the only thing claiming sleep — a second indicator is what #72 came
-   * to remove, and the foreman's sleep sheets are the first art since that
-   * could reintroduce one.
+   * REPLACED twice now. First: this used to hold that resting started no
+   * timer at all, because rest was a single pose — the worker's idle strip is
+   * six frames, so resting costs a timer again. Second, with #74's working
+   * art: resting and working used to draw identically (both idle, neither
+   * drawn); working now has its own sequence, so the comparison inverts. What
+   * stays pinned throughout is the invariant that motivated the test: the
+   * overlay is still the only thing claiming SLEEP for a worker — a second
+   * sleep indicator is what #72 came to remove, and the foreman's sleep
+   * sheets are the first art since that could reintroduce one. A worker
+   * resting still has no rest sheet of its own and still idles.
    */
-  it('does not draw a worker asleep, leaving the overlay the only claim', () => {
+  it('does not draw a worker asleep, though working no longer matches resting', () => {
     const resting = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
     const working = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
-    expect(sheetOf(resting)).toBe(sheetOf(working))
+    expect(sheetOf(resting)).toBe(WORKER_IDLE)
+    expect(sheetOf(working)).not.toBe(WORKER_IDLE)
+    expect(sheetOf(resting)).not.toBe(sheetOf(working))
   })
 
   it('draws a foreman actually asleep when a person was asked, and says so once', async () => {
@@ -1043,6 +1164,7 @@ describe('DwarfSprite with reduced motion', () => {
   afterEach(() => {
     vi.useRealTimers()
     Reflect.deleteProperty(window, 'matchMedia')
+    vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
   })
 
   /**
@@ -1196,5 +1318,26 @@ describe('DwarfSprite with reduced motion', () => {
 
     wrapper.unmount()
     expect(media.listenerCount).toBe(0)
+  })
+
+  /*
+   * The strike glow's own guard (#74): a pulsing light is exactly the
+   * movement this preference asks to stop, so it must never appear — not
+   * even by the coincidence of the held still frame landing on a declared
+   * glow frame.
+   */
+  it('never lights the strike glow, even on a still frame the artist marked bright', () => {
+    stubReducedMotion(true)
+    // Built so the held STILL frame (the loop's last, see stillFrameOf) IS
+    // itself the declared glow frame — proving the refusal is explicit
+    // rather than a lucky accident of which frame a loop settles on.
+    vi.mocked(dwarfClips).mockReturnValue([
+      loopOf({ src: '/glow-swing.png', frames: 6, frameMs: 100, glowFrames: [5] })
+    ])
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
+    })
+    expect(framePercentOf(wrapper)).toBe(100) // held on frame 5 of 6 — the glow frame
+    expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
   })
 })
