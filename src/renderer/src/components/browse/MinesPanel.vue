@@ -307,10 +307,16 @@ onBeforeUnmount(stopWatching)
   color: var(--color-cream);
   background: var(--color-panel);
 }
+/*
+ * The list region is the panel's one scroll area, and it owns all the height
+ * the header and chips do not — which is what lets the empty-state message
+ * sit in the middle of it rather than under the chips.
+ */
 .panel-list {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
-  /* The card list is the one scroll area of this screen. */
   overflow-y: auto;
 }
 .card-list {
@@ -320,9 +326,14 @@ onBeforeUnmount(stopWatching)
   margin: 0;
   padding: 0;
 }
+/*
+ * The two-line invitation, centred in the empty list the way the export draws
+ * it. `24px #fae2b6` is the one empty state the design source specifies
+ * outright (screens/browse.md), wording included.
+ */
 .panel-empty {
-  margin: 0;
-  padding: 40px 10px;
+  margin: auto 0;
+  padding: 0 10px;
   color: var(--color-cream);
   font-size: var(--text-headline);
   line-height: 1.4;

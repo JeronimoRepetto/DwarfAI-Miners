@@ -99,6 +99,18 @@ const enterable = computed(() => props.project.live)
         >
       </span>
       <!--
+        SEAM FOR #140. The mock draws a second column here, right of the text
+        and vertically centred: a progress bar and `Next level: <cur>/<max>`
+        (Uranium may read `infinite`). It is not drawn yet because the browse
+        row carries no level — ProjectSummary has no such field, and #140 is
+        what puts one on the wire. Nothing is stubbed on purpose: a bar with an
+        invented denominator is the one thing worse than no bar, and every
+        other absence on this card already renders as nothing at all.
+
+        When the field lands, add the column between .card-text and
+        .card-status, and give .card-body its second flex child.
+      -->
+      <!--
         The mock's lower-right corner. Drawn only where the board proved the
         fact, and the row itself disappears when it proved neither — a pair of
         empty corners would read as "checked, nothing to report" on a project
