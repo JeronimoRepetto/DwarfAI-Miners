@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { ADD_ICON_SRC, SORT_ICON_SRC } from '../../lib/art'
 import { TIER_CHIPS, activeAgentsFor } from '../../lib/browse/browseCards'
 import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
 import MineCard from './MineCard.vue'
@@ -93,13 +94,24 @@ onBeforeUnmount(stopWatching)
         aria-label="Search mines by name"
         @input="emit('search', ($event.target as HTMLInputElement).value)"
       />
+      <!--
+        The design draws this control as the `filter.svg` glyph and no words at
+        all, so the direction moved to the hover line: the accessible name has
+        to stay stable for anyone navigating by it, and the title is what says
+        which way the list currently runs (the same split the pin button uses).
+      -->
       <button
         class="sort-control"
         type="button"
         aria-label="Order by date added"
+        :title="sortLabel"
         @click="emit('toggle-direction')"
       >
-        {{ sortLabel }}
+        <span
+          class="control-glyph"
+          :style="{ '--control-icon': `url(${SORT_ICON_SRC})` }"
+          aria-hidden="true"
+        ></span>
       </button>
       <!--
         Adopt a folder as a mine (#85). Main opens the OS picker itself, so
@@ -114,13 +126,20 @@ onBeforeUnmount(stopWatching)
         :disabled="adding"
         @click="emit('add')"
       >
-        <!-- Plus on the same rect grid as the titlebar icons. -->
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="7" y="3" width="2" height="10" fill="currentColor" />
-          <rect x="3" y="7" width="10" height="2" fill="currentColor" />
-        </svg>
+        <!--
+          `add.svg` is a filled disc with the plus cut OUT of it, so the mask
+          paints the disc amber and the notch lets the ground through — which
+          is exactly the round + the mock draws, with no second shape of ours.
+        -->
+        <span
+          class="control-glyph"
+          :style="{ '--control-icon': `url(${ADD_ICON_SRC})` }"
+          aria-hidden="true"
+        ></span>
       </button>
     </header>
+    <!-- The accent rule the mock draws under the header, above the chips. -->
+    <div class="header-divider" aria-hidden="true"></div>
     <div class="tier-chips" role="group" aria-label="Filter by mine type">
       <button
         v-for="chip in TIER_CHIPS"
@@ -186,10 +205,16 @@ onBeforeUnmount(stopWatching)
   gap: 10px;
   align-items: center;
 }
+/*
+ * The mock sets the title at the same size as a card's tier and name, which the
+ * source table gives as 19px — measured off the export, the two rows of pixels
+ * are the same height. It is deliberately NOT the 24px headline: that size
+ * belongs to the modal and empty-state copy, and this panel draws both.
+ */
 .panel-title {
   margin: 0;
   color: var(--color-accent);
-  font-size: var(--text-headline);
+  font-size: var(--text-title);
   font-weight: 400;
   line-height: 1;
 }
@@ -206,41 +231,54 @@ onBeforeUnmount(stopWatching)
   font: inherit;
   font-size: var(--text-meta);
 }
-/* The shared enabled-control model: accent border on the control surface. */
+/*
+ * Both header controls are bare glyphs in the mock — no border, no surface, no
+ * hit-target box drawn around them. They sit at the shell's icon size, which is
+ * the one the source gives every SVG in `docs/assets/icons`.
+ */
 .sort-control,
 .add-control {
-  flex: none;
-  height: var(--size-search-height);
-  padding: 0 10px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  cursor: pointer;
-  background: var(--color-control);
-  font: inherit;
-  font-size: var(--text-meta);
-}
-.add-control {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: var(--size-search-height);
   padding: 0;
-  line-height: 0;
+  border: 0;
+  cursor: pointer;
+  background: none;
 }
-.add-control svg {
-  width: 12px;
-  height: 12px;
-  /* Blocky pixel look, matching the titlebar icons. */
-  shape-rendering: crispEdges;
+.control-glyph {
+  display: block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  background: var(--color-accent);
+  mask: var(--control-icon) center / contain no-repeat;
 }
-/* The disabled model from the same source: the deep surface, and the control
-   colour carrying both the border and the glyph. */
+/*
+ * The disabled model the source gives every other control: the glyph drops to
+ * the control colour, which on this ground reads as switched off rather than
+ * as missing.
+ */
 .add-control:disabled {
-  border-color: var(--color-control);
-  color: var(--color-control);
   cursor: default;
-  background: var(--color-panel-deep);
+}
+.add-control:disabled .control-glyph {
+  background: var(--color-control);
+}
+.sort-control:focus-visible,
+.add-control:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
+}
+/*
+ * The rule under the header row. 2px is the weight every other line in the
+ * source carries; the source names no divider height for this screen, so the
+ * shared border weight is what it borrows rather than a number of its own.
+ */
+.header-divider {
+  flex: none;
+  height: 2px;
+  background: var(--color-accent);
 }
 .tier-chips {
   display: flex;
@@ -258,9 +296,15 @@ onBeforeUnmount(stopWatching)
   font: inherit;
   font-size: var(--text-meta);
 }
+/*
+ * The selected chip also carries the card surface behind it in the mock, which
+ * the component table leaves out — sampled off the export, the ground under
+ * `All` is #2b2119 and under every other chip it is the panel's own #14100b.
+ */
 .tier-chip.is-selected {
   border-color: var(--color-accent);
   color: var(--color-cream);
+  background: var(--color-panel);
 }
 .panel-list {
   flex: 1;
