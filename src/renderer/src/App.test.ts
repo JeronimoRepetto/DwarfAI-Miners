@@ -3,6 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import MapView from './components/map/MapView.vue'
+import { useDwarfKicking } from './composables/useDwarfKicking'
+import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useView } from './composables/useView'
 
@@ -39,18 +41,46 @@ const NAV_MINES = `${NAV}[aria-label="Mines"]`
  * surface, the shortcut surface for the settings panel, the build surface for
  * the version and the answer surface for a dwarf's pending question, so every
  * member must exist even in tests that only look at the rail.
+ *
+ * ## Every member that is AWAITED must resolve its real shape
+ *
+ * A bare `vi.fn()` resolves `undefined`, and the delivery stores read their
+ * verdict off the result the moment it lands:
+ *
+ *     try { result = await window.api.sendDwarfText(...) } catch { ... }
+ *     const next = { phase: result.delivered ? ... }   // OUTSIDE the try
+ *
+ * The `catch` is deliberately only around the await — it means "the panel lost
+ * contact with the app", not "whatever came back was garbage" — so an
+ * `undefined` result throws one line later, past it. And because App fires
+ * these and does not await them (`void sendDwarfText(...)`, so the panel stays
+ * usable while a relay takes seconds), the throw becomes an UNHANDLED
+ * REJECTION that lands after the test has already passed. Vitest reports it as
+ * `Errors 1 error` and exits 1 with every test green; whether the process
+ * lives long enough to report it at all is a matter of timing, so it passed
+ * locally and went red in CI.
+ *
+ * So the rule for this stub: anything the app awaits resolves the shape its
+ * contract declares, and anything fire-and-forget with no return (`retireDwarf`
+ * is `ipcRenderer.send`) is a plain spy. The same discipline
+ * MineScene.test.ts's own stub states in as many words.
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
     getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
-    activateDwarf: vi.fn(),
+    // Answers "a window was focused", the verdict that leaves the panel alone.
+    activateDwarf: vi.fn().mockResolvedValue({ focused: true, openedTerminal: false, feed: [] }),
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
-    sendDwarfText: vi.fn(),
-    kickDwarf: vi.fn(),
+    sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    // A promoted kick retires its dwarf through this (#46). Stubbed rather
+    // than made optional in the composable: a missing member should fail a
+    // test loudly, not be swallowed at every call site.
+    retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
@@ -1119,6 +1149,11 @@ describe('App message panel', () => {
 
   beforeEach(() => {
     useView().clear()
+    // Both delivery stores are module-scope singletons that hold a verdict for
+    // a minute while they watch for a reaction, so a test that sent or kicked
+    // would leave its marker sitting in the next test's panel.
+    useDwarfMessaging().clearAll()
+    useDwarfKicking().clearAll()
   })
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
@@ -1203,6 +1238,32 @@ describe('App message panel', () => {
       text: 'dig deeper',
       pressEnter: true
     })
+    // The verdict has to LAND, not just be asked for. Asserting it is what
+    // makes a stub that resolves the wrong shape fail this test outright,
+    // instead of rejecting into the void after it has already passed: the send
+    // is fire-and-forget, so nothing else in the app would ever notice.
+    expect(wrapper.find('.panel-status').text()).toContain('Handed over via terminal')
+  })
+
+  it('kicks through the panel, and the verdict lands where it was asked for', async () => {
+    const { wrapper, api } = await openMineWith([
+      {
+        ...OBSERVED_DWARF,
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      }
+    ])
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    // Arm, then fire — the confirmation the old action bar carried.
+    await wrapper.find('.control-kick').trigger('click')
+    await wrapper.find('.control-kick').trigger('click')
+    await flushPromises()
+
+    expect(api.kickDwarf).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
+    // Handed over, never "reacted": only a session SEEN stopping earns that.
+    expect(wrapper.find('.panel-status').text()).toContain('Kick handed over via terminal')
+    expect(wrapper.find('.panel-status').text()).not.toContain('the session reacted')
   })
 
   it('drops the panel when its dwarf walks out of the mine', async () => {
