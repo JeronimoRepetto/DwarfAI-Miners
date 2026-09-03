@@ -135,6 +135,39 @@ export function defaultDwarfKickingState(): DwarfKickingState {
 }
 
 /**
+ * What the panel shows about one answer to an agent's question (issue #125).
+ *
+ * Deliberately NOT the two-phase shape DwarfSendState and DwarfKickState carry.
+ * Those infer a reaction from later snapshots because a relay can offer no
+ * better evidence; a held session can. 'answered' means main released the
+ * agent's own blocked tool call with this choice — the causal event itself, not
+ * a guess about behaviour after the fact — so there is nothing left to watch
+ * for and no weaker second phase to promote to. It stays as narrow as
+ * `delivered` in what it claims: the agent was handed the choice, never what it
+ * then did with it.
+ *
+ * `toolUseId` is what the verdict is ABOUT. A verdict outlives nothing: the ask
+ * it names is the only one it may be shown against, so a new question never
+ * inherits the last one's answer.
+ */
+export interface DwarfAnswerState {
+  phase: 'answering' | 'answered' | 'refused'
+  /** The ask this verdict belongs to. */
+  toolUseId: string
+  /** Why main refused it, shown in the panel. */
+  error?: string
+}
+
+/** Root state for the dwarf-question store, keyed by dwarf id. */
+export interface DwarfQuestionState {
+  byDwarfId: Record<string, DwarfAnswerState>
+}
+
+export function defaultDwarfQuestionState(): DwarfQuestionState {
+  return { byDwarfId: {} }
+}
+
+/**
  * Where the panel currently is: the isometric map, the browse over every
  * project the app remembers (#92), or inside one mine.
  *

@@ -274,3 +274,66 @@ describe('DwarfActionBar boost', () => {
     expect(wrapper.find('.slot-boost .icon-tip').text()).toContain('medium')
   })
 })
+
+/**
+ * Answering what the agent asked (#125). The question is the reason the dwarf
+ * was clicked, so it sits above the icons rather than behind the chat toggle —
+ * and a dwarf with nothing outstanding keeps exactly the bar it always had.
+ */
+describe('DwarfActionBar pending question', () => {
+  const pendingQuestion = {
+    toolUseId: 'toolu_01',
+    question: 'Which database should the importer write to?',
+    multiSelect: false,
+    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+  }
+
+  function asking(props: Record<string, unknown> = {}) {
+    return bar({ dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion }), ...props })
+  }
+
+  it('shows no question surface for a dwarf with nothing outstanding', () => {
+    expect(bar().find('.question-card').exists()).toBe(false)
+  })
+
+  it('puts the question above the actions, without waiting for the chat toggle', () => {
+    const wrapper = asking()
+    expect(wrapper.find('.question-card .question-text').text()).toBe(
+      'Which database should the importer write to?'
+    )
+    const children = [...wrapper.find('.action-bar').element.children]
+    expect(children[0]?.classList.contains('question-card')).toBe(true)
+  })
+
+  it('forwards the chosen option once Enter confirms it', async () => {
+    const wrapper = asking()
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('answer')).toEqual([['SQLite']])
+  })
+
+  it('routes a free-form reply through the ordinary message path, not the ask', async () => {
+    // The answer channel takes back only the agent's own words; anything else
+    // is a message like any other.
+    const wrapper = asking()
+    await wrapper.find('.freeform-input').setValue('neither, keep the file store')
+    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toEqual([
+      [{ text: 'neither, keep the file store', pressEnter: true }]
+    ])
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it("hands main's refusal down to the card so the panel can explain itself", () => {
+    const wrapper = asking({
+      answerState: {
+        phase: 'refused',
+        toolUseId: 'toolu_01',
+        error: 'That session is not one this panel is holding.'
+      }
+    })
+    expect(wrapper.find('.answer-error').text()).toBe(
+      'That session is not one this panel is holding.'
+    )
+  })
+})

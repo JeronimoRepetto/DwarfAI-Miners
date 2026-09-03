@@ -18,7 +18,7 @@ import {
 } from '../../lib/presentation'
 import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { computeTooltipPlacement } from '../../lib/overlay/tooltip'
-import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
+import type { Dwarf, DwarfAnswerState, DwarfKickState, DwarfSendState } from '../../types'
 import DwarfActionBar from './DwarfActionBar.vue'
 import DwarfTooltip from './DwarfTooltip.vue'
 import SpeechBubble from './SpeechBubble.vue'
@@ -36,6 +36,8 @@ const props = defineProps<{
   activating?: boolean
   sendState?: DwarfSendState
   kickState?: DwarfKickState
+  /** The verdict of the last answer given for this dwarf (see DwarfQuestionCard). */
+  answerState?: DwarfAnswerState
   /*
    * The scene props (issue #19). All optional, and all falling back to the
    * behaviour the sprite had before the cave became walkable, so a sprite
@@ -59,6 +61,8 @@ const emit = defineEmits<{
   activate: []
   'send-text': [payload: { text: string; pressEnter: boolean }]
   kick: []
+  /** One of the agent's own option labels, answering its outstanding ask. */
+  answer: [label: string]
   /** The user expanded the bubble: the owner must pause its auto-hide (board.hold). */
   'bubble-hold': []
   /** The expanded bubble closed: the owner resumes auto-hide with a fresh TTL (board.release). */
@@ -121,6 +125,12 @@ function openConsole(): void {
 function sendText(payload: { text: string; pressEnter: boolean }): void {
   // The bar stays open so the delivery verdict has somewhere to land.
   emit('send-text', payload)
+}
+
+function answer(label: string): void {
+  // Same reasoning as sendText, and one more: closing the bar would take the
+  // question with it, and only main's next snapshot may drop that.
+  emit('answer', label)
 }
 
 function kick(): void {
@@ -455,9 +465,11 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       :dwarf="dwarf"
       :send-state="sendState"
       :kick-state="kickState"
+      :answer-state="answerState"
       @open-console="openConsole"
       @send="sendText"
       @kick="kick"
+      @answer="answer"
       @close="closeBar"
     />
   </div>

@@ -5,9 +5,11 @@ import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdi
 import {
   MAX_DWARF_TEXT_CHARS,
   type Dwarf,
+  type DwarfAnswerState,
   type DwarfKickState,
   type DwarfSendState
 } from '../../types'
+import DwarfQuestionCard from './DwarfQuestionCard.vue'
 
 /**
  * The icon action bar that opens when a dwarf is clicked (see #27): a compact
@@ -17,12 +19,19 @@ import {
  * renders and dispatches. Chat unfolds the same composer the menu carried,
  * attached below the row, so the send flow (Enter convention, char cap,
  * verdicts) is unchanged.
+ *
+ * An outstanding question (#125) sits ABOVE the icons and is not behind the
+ * chat toggle: it is the reason the dwarf was clicked, and a card the user has
+ * to go looking for is one an agent waits on. A dwarf carrying none gets the
+ * bar exactly as it was.
  */
 
 const props = defineProps<{
   dwarf: Dwarf
   sendState?: DwarfSendState
   kickState?: DwarfKickState
+  /** The verdict of the last answer given for this dwarf (see DwarfQuestionCard). */
+  answerState?: DwarfAnswerState
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +39,8 @@ const emit = defineEmits<{
   send: [payload: { text: string; pressEnter: boolean }]
   kick: []
   close: []
+  /** One of the agent's own option labels, once Enter confirmed it. */
+  answer: [label: string]
 }>()
 
 const composing = ref(false)
@@ -106,6 +117,18 @@ function onInputKeydown(event: KeyboardEvent): void {
 
 <template>
   <div class="action-bar" @keydown.escape="emit('close')" @click.stop>
+    <!--
+      A free-form reply to a question leaves on the ordinary message channel:
+      the answer channel takes back only the agent's own words, so anything the
+      user writes is a message like any other.
+    -->
+    <DwarfQuestionCard
+      v-if="dwarf.pendingQuestion"
+      :question="dwarf.pendingQuestion"
+      :answer-state="answerState"
+      @answer="emit('answer', $event)"
+      @send-text="emit('send', $event)"
+    />
     <div class="icon-row" role="toolbar" :aria-label="`Actions for ${dwarf.name}`">
       <span
         v-for="action in actions"

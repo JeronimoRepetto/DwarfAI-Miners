@@ -2,6 +2,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
+import MapView from './components/map/MapView.vue'
+import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useView } from './composables/useView'
 
 const DEFAULT_SHORTCUT = {
@@ -20,9 +22,9 @@ const DEFAULT_BUILD = { version: '1.2.3', packaged: true }
 /**
  * Full window.api stub: App touches the mines surface on mount (load + push
  * subscription), the pin surface for the titlebar control, the shortcut
- * surface for the settings panel and the build surface for the version beside
- * the title, so every member must exist even in tests that only look at the
- * titlebar.
+ * surface for the settings panel, the build surface for the version beside
+ * the title and the answer surface for a dwarf's pending question, so every
+ * member must exist even in tests that only look at the titlebar.
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
@@ -32,6 +34,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     activateDwarf: vi.fn(),
     sendDwarfText: vi.fn(),
     kickDwarf: vi.fn(),
+    answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
     getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
@@ -331,6 +334,104 @@ describe('App titlebar version', () => {
     expect(wrapper.find('.titlebar .version').exists()).toBe(false)
     // The rest of the titlebar is untouched by the failure.
     expect(wrapper.find('.titlebar .title').text()).toContain('DwarfAI-Miners')
+  })
+})
+
+/**
+ * The whole answer loop through the real components (#125): a question reaches
+ * the panel on a snapshot, an option is chosen inside the mine, and Enter
+ * releases the agent's blocked ask over the bridge.
+ */
+describe('App answering an agent question', () => {
+  const PENDING_QUESTION = {
+    toolUseId: 'toolu_01',
+    question: 'Which database should the importer write to?',
+    multiSelect: false,
+    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+  }
+
+  const ASKING_MINE = {
+    id: 'mine:c:\\x\\importer',
+    path: 'C:\\x\\importer',
+    name: 'importer',
+    tier: 'bronze',
+    dwarfs: [
+      {
+        id: 'claude:s1',
+        provider: 'claude',
+        role: 'foreman',
+        name: 'Foreman',
+        status: 'waiting',
+        sessionId: 's1',
+        pendingQuestion: PENDING_QUESTION
+      }
+    ],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => {
+    // Both stores are module-scope singletons, so a test that walked into a
+    // mine would leave the next one already there, with no map to click.
+    useDwarfQuestion().clearAll()
+    useView().showMap()
+  })
+
+  /** Mount, walk into the asking mine, and open that dwarf's action bar. */
+  async function openAskingDwarf(overrides: Record<string, unknown> = {}) {
+    const { wrapper, api } = await mountApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [ASKING_MINE], tokensObserved: 0 }),
+      ...overrides
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', ASKING_MINE.id)
+    await flushPromises()
+    await wrapper.find('.dwarf-hit').trigger('click')
+    return { wrapper, api }
+  }
+
+  it('answers the ask with the agent’s own words, over the answer channel', async () => {
+    const { wrapper, api } = await openAskingDwarf()
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Which database should the importer write to?': 'SQLite' }
+    })
+    // Free text is a different channel; answering must not have used it.
+    expect(api.sendDwarfText).not.toHaveBeenCalled()
+  })
+
+  it('leaves the question standing after the answer was released', async () => {
+    // Only main's next snapshot may drop a pendingQuestion. Clearing it here
+    // would claim the ask was closed on the panel's own say-so.
+    const { wrapper } = await openAskingDwarf()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(wrapper.find('.question-card .question-text').text()).toBe(
+      'Which database should the importer write to?'
+    )
+    expect(wrapper.find('.answer-ok').exists()).toBe(true)
+  })
+
+  it('shows main’s reason when the answer was refused', async () => {
+    const { wrapper } = await openAskingDwarf({
+      answerDwarfQuestion: vi.fn().mockResolvedValue({
+        answered: false,
+        error: 'That session is not one this panel is holding.'
+      })
+    })
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(wrapper.find('.answer-error').text()).toBe(
+      'That session is not one this panel is holding.'
+    )
   })
 })
 

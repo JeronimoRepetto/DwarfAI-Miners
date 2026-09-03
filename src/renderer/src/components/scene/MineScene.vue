@@ -27,7 +27,7 @@ import {
   spriteMarginPercent
 } from '../../lib/scene/sceneSizing'
 import { vaultRows } from '../../lib/vault/vault'
-import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../../types'
+import type { Dwarf, DwarfAnswerState, DwarfKickState, DwarfSendState, Mine } from '../../types'
 import DwarfSprite from '../dwarf/DwarfSprite.vue'
 import NuggetPile from '../vault/NuggetPile.vue'
 import VaultChip from '../vault/VaultChip.vue'
@@ -39,6 +39,8 @@ const props = defineProps<{
   sendStates?: Record<string, DwarfSendState>
   /** Kick state per dwarf id, so each sprite can show its own kick verdict. */
   kickStates?: Record<string, DwarfKickState>
+  /** Answer state per dwarf id, so each sprite can show its own question verdict. */
+  answerStates?: Record<string, DwarfAnswerState>
 }>()
 
 const emit = defineEmits<{
@@ -46,6 +48,8 @@ const emit = defineEmits<{
   activate: [dwarf: Dwarf]
   'send-text': [dwarf: Dwarf, payload: { text: string; pressEnter: boolean }]
   kick: [dwarf: Dwarf]
+  /** One of the agent's own option labels, answering that dwarf's outstanding ask (#125). */
+  'answer-question': [dwarf: Dwarf, label: string]
 }>()
 
 const interiorSrc = computed(() => INTERIOR_SRC[props.mine.tier])
@@ -366,6 +370,7 @@ onBeforeUnmount(() => {
             :activating="activatingId === slot.dwarf.id"
             :send-state="sendStates?.[slot.dwarf.id]"
             :kick-state="kickStates?.[slot.dwarf.id]"
+            :answer-state="answerStates?.[slot.dwarf.id]"
             anchored
             :walking="slot.walking"
             :faces-left="slot.facesLeft"
@@ -373,6 +378,7 @@ onBeforeUnmount(() => {
             @activate="emit('activate', slot.dwarf)"
             @send-text="emit('send-text', slot.dwarf, $event)"
             @kick="emit('kick', slot.dwarf)"
+            @answer="emit('answer-question', slot.dwarf, $event)"
             @bubble-hold="board.hold(slot.dwarf.id)"
             @bubble-release="board.release(slot.dwarf.id)"
           />
