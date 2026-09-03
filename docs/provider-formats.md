@@ -157,7 +157,7 @@ Fixed in two layers (`parse.ts`, `claudeProvider.ts`):
 1. `killed` joined `completed`/`failed` in `TASK_NOTIFICATION_RE`.
 2. `parseClaudeTranscriptTail` now also returns `terminalAgentIds` — every id seen reaching a terminal status in this tail, **whether or not its launch record is still in the window**. `ClaudeProvider` accumulates those into a process-lifetime `Set` and filters in-flight agents through it, so an agent that has ever been seen finishing can never re-enter the crew. Agent ids are globally unique 17-hex-char strings, so one flat set covers all sessions and grows by one short string per agent actually launched.
 
-Since the sidecar files carry no completion state (§1.4), the task-notification plus that memory **is** the authority. Known trade-off: the `<note>` above says a killed agent can be resumed and would notify again; a resumed agent stays hidden until the app restarts. A ghost that never leaves is the worse failure, so this is the deliberate choice.
+Since the sidecar files carry no completion state (§1.4), the task-notification plus that memory **is** the authority. Known trade-off, and it held until #179 below: the `<note>` above says a resumed agent notifies again, and a resumed agent stayed hidden for the life of the process. A ghost that never leaves is the worse failure, so that was the deliberate choice.
 
 #### Ghost dwarfs again — the envelope, not the verdict (2026-08-30, issue #64)
 
@@ -220,6 +220,41 @@ Three findings from the same pass, over 321 `agent-*.meta.json` sidecars on one 
 timestamps: two at depth 1 and **one at depth 2**. That is worth knowing before the count is
 reconciled against a crew — the provider believes only depth-1 launches, so a descendant is a
 standing, permanent contribution to the `unexplainedShortfalls` #36 chases.
+
+#### An ending is "stopped for now" — a resumed agent (2026-09-03, issue #179)
+
+Two background agents died on a provider rate limit (three `failed` notifications each, one per
+retry), the orchestrator resumed both with `SendMessage` to the same agent ids, both
+`subagents/agent-<id>.jsonl` files resumed growing and the parent's next `turn_duration` line
+reported `pendingBackgroundAgentCount: 2` — and the panel drew the foreman alone. Replaying
+`parseClaudeTranscriptTail` over that transcript at 256 KB and at 4 MB returned
+`inFlightAgents: []` both times, with the `async_launched` records well inside the 4 MB window.
+**[V]**
+
+The `<note>` on every notification said this would happen: _"The user can send it another message
+and resume it, so the same task-id may notify more than once."_ **A resume writes no second
+`async_launched` record**, so nothing the transcript contains can outrank the ending, and the
+`terminalAgents` memory that #64 relies on keeps the id retired for the life of the process.
+
+What separates a resumed agent from a dead one is not in the parent transcript at all — it is
+whether the agent's own `subagents/agent-<id>.jsonl` is still being appended to. So the rule takes
+three pieces of evidence and no fewer:
+
+1. the agent's **latest** ending said `failed` (`parseClaudeTranscriptTail` reports those, with
+   their launch records, as `failedAgents`; `completed` and `killed` stay hard-terminal, the first
+   because a finished agent's last write can legitimately land after its notification, the second
+   because it is the status whose omission was the original ghost dwarf);
+2. that agent's own transcript was written **after this app observed the ending** — the poll clock,
+   not the notification's timestamp, so a final line racing the ending by a millisecond is not
+   mistaken for a return; and
+3. the parent's `pendingBackgroundAgentCount` exceeds the crew, i.e. Claude Code itself says
+   somebody is running.
+
+The sweep costs one `stat` per failed agent and runs only while the count is short (it sits ahead
+of #36's rate limit, since a resume can arrive at any tick long after the shortfall settled).
+Known limit, and the reason the count still binds: a **second** ending after a resume is
+byte-identical to the first, so a resumed agent that finishes leaves by the ordinary exits — a
+count of zero, the #45 ceiling, or #40's silence — rather than on its own notification.
 
 ### 1.5 Liveness — RUNNING session detection
 

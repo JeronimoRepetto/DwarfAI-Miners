@@ -102,6 +102,27 @@ export interface ClaudeTranscriptInfo {
    * across polls so a finished agent can never come back (see claudeProvider).
    */
   terminalAgentIds: string[]
+  /**
+   * The launch-time identity of every agent in this tail whose LATEST ending
+   * said `failed` and whose `async_launched` record shares the window (issue
+   * #179).
+   *
+   * Not a claim that any of them is running: they are terminal above and stay
+   * terminal, and this list is what it would TAKE to draw one again. Every
+   * notification carries Claude Code's own note that "the user can send it
+   * another message and resume it, so the same task-id may notify more than
+   * once", and a resume writes no second launch record — so an ending is
+   * "stopped for now", and the only evidence separating a resumed agent from a
+   * dead one is whether its own transcript is still being appended to. That is
+   * a file, so the verdict belongs to the provider; this only hands it the
+   * candidates.
+   *
+   * `completed` and `killed` are excluded on purpose. `killed` is the status
+   * whose omission was the original ghost dwarf, and a `completed` agent's own
+   * last write can legitimately land after its notification — neither has been
+   * observed resuming, so neither buys the relaxation.
+   */
+  failedAgents: ClaudeInFlightAgent[]
   pendingBackgroundAgentCount?: number
   /**
    * The latest usage block seen in this tail (input+output+cache tokens for
@@ -547,7 +568,11 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   let pendingBackgroundAgentCount: number | undefined
   let tokensObserved: number | undefined
   const launched = new Map<string, ClaudeInFlightAgent>()
-  const finished = new Set<string>()
+  // agentId -> the status of the LAST ending this tail carries for it. A
+  // retried agent notifies once per attempt (three `failed` blobs each in the
+  // session #179 was reported from), so only the last one describes the agent
+  // as this window leaves it; membership alone is what makes it terminal.
+  const finished = new Map<string, string>()
   // The same asked-then-resolved bookkeeping the launches above use, on the
   // tool's own ids. Insertion order is ask order, so the last survivor is the
   // latest open question (issue #94).
@@ -560,7 +585,8 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     for (const text of notificationStrings(line)) {
       for (const match of text.matchAll(TASK_NOTIFICATION_RE)) {
         const taskId = match[1]
-        if (taskId !== undefined) finished.add(taskId)
+        const status = match[2]
+        if (taskId !== undefined && status !== undefined) finished.set(taskId, status)
       }
     }
     if (line.type === 'assistant') {
@@ -600,7 +626,10 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     effort,
     lastAssistantText,
     inFlightAgents: [...launched.values()].filter((agent) => !finished.has(agent.agentId)),
-    terminalAgentIds: [...finished],
+    terminalAgentIds: [...finished.keys()],
+    failedAgents: [...launched.values()].filter(
+      (agent) => finished.get(agent.agentId) === 'failed'
+    ),
     pendingBackgroundAgentCount,
     tokensObserved,
     // Matched by id over the whole tail rather than by line order: a suffix read

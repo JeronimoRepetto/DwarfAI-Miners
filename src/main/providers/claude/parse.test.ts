@@ -296,6 +296,7 @@ describe('parseClaudeTranscriptTail', () => {
       lastAssistantText: undefined,
       inFlightAgents: [],
       terminalAgentIds: [],
+      failedAgents: [],
       pendingBackgroundAgentCount: undefined,
       tokensObserved: undefined
     })
@@ -461,6 +462,68 @@ describe('parseClaudeTranscriptTail notification nested in a content block', () 
         }
       }) + '\n'
     expect(parseClaudeTranscriptTail(line).terminalAgentIds).toEqual(['a0000000000000001'])
+  })
+})
+
+/**
+ * Issue #179. Every notification carries Claude Code's own note that "the user
+ * can send it another message and resume it, so the same task-id may notify
+ * more than once" — so an ending is "stopped for now", and a resume writes no
+ * second `async_launched` record for anything to outrank the first one with.
+ *
+ * The parser cannot tell a resumed agent from a dead one: only the agent's own
+ * transcript can, and reading files is the provider's job. All this reports is
+ * the launch-time identity of an agent whose LATEST ending said `failed`, which
+ * is what it would take to draw that agent again. Nothing here makes anybody
+ * in flight — `terminalAgentIds` and `inFlightAgents` are unchanged by it.
+ */
+describe('parseClaudeTranscriptTail failed agents (issue #179)', () => {
+  it('names an agent whose launch record and failed ending share the tail', () => {
+    const parsed = parseClaudeTranscriptTail(
+      launchLine('agentx') + notificationLine('agentx', 'failed')
+    )
+    expect(parsed.failedAgents).toEqual([
+      { agentId: 'agentx', description: 'd', resolvedModel: undefined }
+    ])
+    // The ending still stands: this field is evidence for a later question, not
+    // a verdict, and the agent is out of the crew exactly as it was before.
+    expect(parsed.inFlightAgents).toEqual([])
+    expect(parsed.terminalAgentIds).toEqual(['agentx'])
+  })
+
+  it.each(['completed', 'killed'])('names nobody for a %s ending', (status) => {
+    // Only `failed` is claimed, and deliberately: `killed` is the status whose
+    // omission was the original ghost dwarf, and a `completed` agent's last
+    // write can legitimately land after its notification. Neither has been
+    // observed resuming, so neither buys the relaxation.
+    const parsed = parseClaudeTranscriptTail(
+      launchLine('agentx') + notificationLine('agentx', status)
+    )
+    expect(parsed.failedAgents).toEqual([])
+  })
+
+  it('names nobody once a later ending superseded the failure', () => {
+    // Three failures then a completion is one agent retried and finished. The
+    // last ending in the tail is the one that describes the agent now.
+    const tail =
+      launchLine('agentx') +
+      notificationLine('agentx', 'failed') +
+      notificationLine('agentx', 'completed')
+    expect(parseClaudeTranscriptTail(tail).failedAgents).toEqual([])
+  })
+
+  it('still names an agent whose failure is the latest of several endings', () => {
+    const tail =
+      launchLine('agentx') +
+      notificationLine('agentx', 'completed') +
+      notificationLine('agentx', 'failed')
+    expect(parseClaudeTranscriptTail(tail).failedAgents.map((a) => a.agentId)).toEqual(['agentx'])
+  })
+
+  it('names nobody when the failed agent has no launch record in this window', () => {
+    // Without the launch record there is no description, no model and no proof
+    // this window ever saw the agent start — nothing to draw, so nothing said.
+    expect(parseClaudeTranscriptTail(notificationLine('agentx', 'failed')).failedAgents).toEqual([])
   })
 })
 

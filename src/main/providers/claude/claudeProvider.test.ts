@@ -1392,6 +1392,181 @@ describe('ClaudeProvider', () => {
         expect(deepReads()).toBe(0)
       })
     })
+
+    /**
+     * Regression (issue #179): the fifth reading of the same count, and the
+     * first one that can put an agent BACK. Observed live — two background
+     * agents died on a provider rate limit (three `failed` notifications each,
+     * one per retry), the orchestrator resumed both with SendMessage, both
+     * `subagents/agent-<id>.jsonl` files resumed growing and the parent's next
+     * `turn_duration` line reported 2 pending, while the panel drew the foreman
+     * alone. A resume writes no second `async_launched` record, so nothing
+     * could outrank the ending and every candidate was already filtered.
+     *
+     * Every notification carries Claude Code's own note that the same task-id
+     * may notify more than once, so a `failed` ending means "stopped for now".
+     * Three things together, and no fewer, put the dwarf back: that ending, the
+     * agent's OWN transcript written after this provider saw it, and a count
+     * that exceeds the survivors. The middle one is measured against the poll
+     * clock rather than the transcript's own timestamp on purpose — a last line
+     * written a millisecond before the agent died is not a resume, and only a
+     * write this app watched arrive after the fact proves anything.
+     */
+    describe('resumed agents (issue #179)', () => {
+      const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+      /** The fixture's own launch record for the agent these tests resume. */
+      const liveLaunch = parentLines[7]! + '\n'
+
+      let clock = 100_000
+
+      function resumeProvider(options: { idle?: boolean } = {}): ClaudeProvider {
+        if (options.idle === true) {
+          fake.addFile(
+            `${ROOT1}\\sessions\\32896.json`,
+            JSON.stringify({ ...JSON.parse(sessionEntry), status: 'idle' }),
+            1_000
+          )
+        }
+        return new ClaudeProvider({
+          fs: fake,
+          roots: [ROOT1],
+          isPidAlive: (pid) => alivePids.has(pid),
+          now: () => clock,
+          foremanSilenceMs: 60_000,
+          workerSilenceMs: 30_000
+        })
+      }
+
+      /** The parent transcript as it stands after the agent stopped once. */
+      function stoppedOnce(status: string, pending: number): string {
+        return liveLaunch + queuedNotification(LIVE_AGENT, status) + turnDuration(pending)
+      }
+
+      /** The agent's own transcript, last written at `mtimeMs`. */
+      function subagentWrittenAt(mtimeMs: number): void {
+        fake.addFile(SUBAGENT, subagentTranscript, mtimeMs)
+      }
+
+      beforeEach(() => {
+        clock = 100_000
+        fake.addFile(TRANSCRIPT, stoppedOnce('failed', 1), 100_000)
+        subagentWrittenAt(43_000)
+      })
+
+      it('draws a failed agent again once its own transcript is written after the ending', async () => {
+        const provider = resumeProvider()
+        // Poll one: the agent has stopped and written nothing since. The count
+        // says one is pending, but a headcount is not an identity and nothing
+        // here separates this agent from a dead one.
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
+
+        // The orchestrator resumes it. No new launch record is written — the
+        // agent's own transcript growing again is the whole signal.
+        clock = 110_000
+        subagentWrittenAt(105_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        // Redrawn as a full citizen with its launch-time identity, addressable
+        // through its foreman like any other worker.
+        expect(second[0]!.dwarfs[1]).toMatchObject({
+          role: 'worker',
+          name: 'Placeholder agent task',
+          model: 'claude-fable-5',
+          status: 'working'
+        })
+        expect(provider.textDelivery(WORKER_ID)).toEqual({
+          kind: 'foreman-relay',
+          foremanDwarfId: MAIN_ID,
+          workerName: 'Placeholder agent task'
+        })
+      })
+
+      it('keeps the resumed worker on later polls, though the ending is still in the tail', async () => {
+        // The failed notification never leaves the window, so a provider that
+        // re-buried the agent on every ending it re-read would flicker the
+        // dwarf in and out every 2s tick.
+        const provider = resumeProvider()
+        await provider.scan()
+        clock = 110_000
+        subagentWrittenAt(105_000)
+        await provider.scan()
+
+        for (const poll of [3, 4]) {
+          clock += 10_000
+          const snapshots = await provider.scan()
+          expect(
+            snapshots[0]!.dwarfs.map((d) => d.id),
+            `poll ${poll}`
+          ).toEqual([MAIN_ID, WORKER_ID])
+        }
+      })
+
+      it('leaves a failed agent gone while its own transcript has not been written since', async () => {
+        const provider = resumeProvider()
+        await provider.scan()
+
+        // The count still reports one pending — that alone is #36's business
+        // and it has no launch record to recover. Silence from the agent itself
+        // is the absence of a resume, and the crew stays what is proven.
+        clock = 200_000
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
+      })
+
+      it('leaves a failed agent gone when the count does not exceed the crew', async () => {
+        // The agent is writing again, but Claude Code says nothing is pending,
+        // and the count binds in both directions. Without it a stray write —
+        // an unflushed buffer, a tool finishing after the ending — would be
+        // enough to invent a worker.
+        fake.addFile(TRANSCRIPT, stoppedOnce('failed', 0), 100_000)
+        const provider = resumeProvider()
+        await provider.scan()
+
+        clock = 110_000
+        subagentWrittenAt(105_000)
+        const second = await provider.scan()
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
+      })
+
+      it.each(['completed', 'killed'])(
+        'never draws a %s agent again however busy its transcript stays',
+        async (status) => {
+          // THE guard on the relaxation. `killed` is the status whose omission
+          // was the original ghost dwarf (#64), and a completed agent's last
+          // write can land after its own notification. Only `failed` — the
+          // status Claude's own note says a resume follows — is reopened.
+          fake.addFile(TRANSCRIPT, stoppedOnce(status, 1), 100_000)
+          const provider = resumeProvider()
+          await provider.scan()
+
+          clock = 110_000
+          subagentWrittenAt(105_000)
+          const second = await provider.scan()
+          expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
+        }
+      )
+
+      it('still lets an idle parent close a resumed agent, and keeps it closed', async () => {
+        // #40 is untouched by any of this: a resumed agent is an ordinary
+        // remembered launch, and an idle parent that has proved nothing is
+        // running still takes it. What it must not do is come back on the next
+        // write — an abandoned agent outranks every other memory here.
+        const provider = resumeProvider({ idle: true })
+        await provider.scan()
+        clock = 110_000
+        subagentWrittenAt(105_000)
+        expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
+
+        // Both windows elapse with neither transcript written.
+        clock = 300_000
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+
+        clock = 310_000
+        subagentWrittenAt(305_000)
+        expect((await provider.scan())[0]!.dwarfs).toEqual([])
+      })
+    })
   })
 
   it('maps an idle session to a snapshot with no dwarfs', async () => {
