@@ -574,6 +574,31 @@ export interface DwarfActivation {
  */
 export const MAX_DWARF_TEXT_CHARS = 4000
 
+/**
+ * KB boundaries at which a mine's SOURCE-CODE BYTE WEIGHT crosses into the
+ * next tier — the design source's canonical thresholds
+ * (`docs/dwarfai-miners-design/foundations.md`), and the same figures
+ * `TierThresholds`'s default carries in `main/config/config.ts` (#140).
+ *
+ * That default type is main-only (`main/tier/tierService.ts`) and reachable
+ * from a packaged install's userData config file, so `TIER_COPPER_KB` and its
+ * three siblings CAN move it per install (see the `config-layering` skill).
+ * Nothing today ships that live, possibly-tuned figure to the renderer over
+ * IPC — only this shared default does — so a renderer deriving `cur/max` from
+ * `ProjectSummary.weightBytes` against this table reads the shipped default,
+ * not a running override. Widening the wire with a live copy of
+ * `AppConfig.tierThresholds` is the way to close that gap; this table is
+ * deliberately not that, and exists so `main/config/config.ts`'s own default
+ * and the renderer read the SAME four numbers instead of each hand-typing a
+ * copy that could drift.
+ */
+export const TIER_WEIGHT_THRESHOLDS_KB = {
+  copperKb: 100,
+  silverKb: 500,
+  goldKb: 2048,
+  uraniumKb: 8192
+}
+
 /** One message the panel wants handed to a dwarf's live session. */
 export interface DwarfTextRequest {
   dwarfId: string
@@ -919,18 +944,23 @@ export interface ProjectQuery {
  * project nobody has ever mined — the same absent-means-unmeasured
  * discipline `knownTier` uses (#41).
  *
- * There is deliberately no tier-PROGRESS figure alongside it. The tier a
- * project is ON is classified from its SOURCE-CODE BYTE WEIGHT against the
- * canonical thresholds the design source fixes (100/500/2048/8192 KB — see
- * `TierThresholds` and `AppConfig.tierThresholds`'s default in
- * main/config/config.ts), never from mined tokens: they are two unrelated
- * axes, exactly as the materials themselves never convert into one another.
- * `main/tier/tierService.ts` does not even keep the raw byte weight once it
- * has classified a tier (`refresh()`'s cache entry keeps only the tier and
- * when it was computed), so no per-project "current weight" figure exists
- * anywhere today to pair with those thresholds. Pairing `materials`'s token
- * totals against them instead would misrepresent progress on an axis they
- * were never measured on.
+ * `weightBytes` is the tier-PROGRESS figure `knownTier` alone cannot give
+ * (#140): the raw SOURCE-CODE BYTE WEIGHT `main/tier/tierService.ts` measured
+ * — in BYTES, the unit its walk actually produces, never mined tokens, which
+ * are a wholly unrelated axis exactly as the materials themselves never
+ * convert into one another. Same absent-means-unmeasured discipline as
+ * `knownTier`: absent until a walk has measured this path, present (a stale
+ * measurement counts) once one has, never an invented 0. It is joined LIVE
+ * off `TierService`'s own cache, by PATH — the same key `tierOf`/
+ * `knownTierOf` use — never persisted as a projects-store column the way
+ * `knownTier` is.
+ *
+ * The renderer derives `cur/max` for the design's `Next level: <cur>/<max>`
+ * (screens/browse.md) by comparing `weightBytes` against
+ * `TIER_WEIGHT_THRESHOLDS_KB` below (× 1024 for the KB-to-byte conversion,
+ * since that table is in KB and this field is in bytes) — the SAME canonical
+ * boundaries `knownTier` was classified from, so the two stay one honest
+ * reading of one measurement rather than two figures that could disagree.
  */
 export interface ProjectSummary {
   /** mineIdForPath — the same id the board and the ledger use, never a second scheme. */
@@ -940,6 +970,8 @@ export interface ProjectSummary {
   /** True when the user adopted this folder (#85); false when it was discovered. */
   declared: boolean
   knownTier?: MineTier
+  /** See the field-group comment above; absent exactly when no walk has measured this path. */
+  weightBytes?: number
   addedAt: number
   lastOpenedAt?: number
   lastProvider?: DwarfProvider
