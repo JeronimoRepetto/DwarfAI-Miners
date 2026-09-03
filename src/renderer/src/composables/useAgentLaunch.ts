@@ -12,6 +12,7 @@ import {
   launchPhase,
   launchPrompt,
   openLaunch,
+  startedDetached,
   submitRefused,
   submitStarted,
   typeCommand,
@@ -22,6 +23,7 @@ import {
   type LaunchState
 } from '../lib/launch/launchState'
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
+import { HELDABLE_PROVIDERS } from '../types'
 import type { AgentProviderOption, Mine } from '../types'
 
 /**
@@ -156,15 +158,24 @@ export function useAgentLaunch(): AgentLaunch {
     if (provider === null || provider === OTHER_CHOICE) return
 
     const prompt = launchPrompt(state.value)
+    const held = HELDABLE_PROVIDERS.includes(provider)
     state.value = submitStarted(state.value)
     try {
-      const result = await window.api.launchHeldSession({ mineId: mineId.value, provider, prompt })
-      // A verdict of `launched: true` says a session STARTED and nothing more.
-      // The panel stays on spawning until the dwarf itself turns up, because
-      // adopting one here would mean inventing it.
+      const result = held
+        ? await window.api.launchHeldSession({ mineId: mineId.value, provider, prompt })
+        : await window.api.launchAgent({ mineId: mineId.value, provider, prompt })
+
+      // A verdict of `launched: true` says a session STARTED and nothing more,
+      // on either channel. What differs is what can be done with that fact.
       if (!result.launched) {
         state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
+        return
       }
+      // A held launch waits: its dwarf will arrive carrying the prompt this
+      // panel sent, which is the receipt `observe` recognises. A detached one
+      // never will — a conversation is held-sessions-only — so the panel stops
+      // here and says so rather than watching for something that cannot come.
+      if (!held) state.value = startedDetached(state.value)
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }

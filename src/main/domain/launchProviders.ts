@@ -23,18 +23,31 @@ export interface CliPresence {
 }
 
 /**
- * The providers a launch can be started for today.
+ * The providers a launch can be started for.
  *
- * Claude and nothing else, because both launch paths resolve exactly one CLI:
- * `HeldSessionRegistry.launch` detects `'claude'`, and so does
- * `launchClaudeSession`. Widening this is widening THEM — it is not a list to
- * grow on its own, and a second name here would be a chip that answers Enter
- * with a session nobody starts.
+ * The rule this list is under has not changed, only its contents (#168):
+ * widening it is widening the ENGINE, never the other way round. A name here
+ * that no launch path answers is a chip that responds to Enter with a session
+ * nobody starts.
+ *
+ * Both names earn their place differently, and the difference is real rather
+ * than cosmetic. Claude can be HELD — an Agent SDK stream the panel keeps, so
+ * its words reach a MessagePanel live. Codex can only be DETACHED: it has no
+ * held-session engine in this app, so `codex exec` is started in the mine's
+ * folder and let go of, and its dwarf arrives when the poll reads Codex's own
+ * rollout storage. Both are launches; only one can be watched. `launchable`
+ * answers the first question and deliberately not the second — what the panel
+ * does with each is the renderer's, and it is where that difference is drawn.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex']
 
 /**
  * What a detected provider with no launch path says for itself.
+ *
+ * Nothing in this build currently reaches it — every detected provider is
+ * launchable since #168 — and it is kept rather than deleted because the
+ * condition it answers still exists: the moment `DWARF_PROVIDERS` gains a third
+ * name, that provider is detected and not launchable until someone builds it.
  *
  * Fixed copy this app wrote, which is the whole reason it is safe to publish:
  * the detector's own reasons name `~/.local/bin` and, for a configured
@@ -42,7 +55,7 @@ export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
  * at the wire (docs/privacy.md, #59) — the panel never needs them, because the
  * only thing it can act on is that the launch is not built.
  */
-export const NOT_LAUNCHABLE = 'Only Claude can be started from the panel today.'
+export const NOT_LAUNCHABLE = 'That agent cannot be started from the panel yet.'
 
 /**
  * Every known provider, in the contract's own order.

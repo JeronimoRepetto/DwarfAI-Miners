@@ -8,11 +8,17 @@ import { useAgentLaunch } from './useAgentLaunch'
 
 const MINE = 'mine-1'
 const CLAUDE = { provider: 'claude' as const, installed: true, launchable: true }
-const CODEX = {
+/*
+ * Codex became launchable in #168 — as a DETACHED session, not a held one, and
+ * that difference is the whole of what the routing below has to get right.
+ */
+const CODEX = { provider: 'codex' as const, installed: true, launchable: true }
+/** A provider a future build detects but has no launch path for. */
+const UNBUILT = {
   provider: 'codex' as const,
   installed: true,
   launchable: false,
-  reason: 'Only Claude can be started from the panel today.'
+  reason: 'That agent cannot be started from the panel yet.'
 }
 
 /**
@@ -25,6 +31,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, CODEX] }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
+    launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -185,7 +192,7 @@ describe('submitting a launch', () => {
   })
 
   it('refuses a detected provider it cannot start, repeating main’s reason', async () => {
-    const api = stubApi()
+    const api = stubApi({ listAgentProviders: vi.fn().mockResolvedValue({ providers: [UNBUILT] }) })
     const launch = useAgentLaunch()
     await launch.open(MINE)
     launch.choose('codex')
@@ -194,7 +201,105 @@ describe('submitting a launch', () => {
     await launch.submit()
 
     expect(api.launchHeldSession).not.toHaveBeenCalled()
-    expect(launch.state.value.error).toBe(CODEX.reason)
+    expect(api.launchAgent).not.toHaveBeenCalled()
+    expect(launch.state.value.error).toBe(UNBUILT.reason)
+  })
+})
+
+/*
+ * Which channel a chip goes down (#168).
+ *
+ * Two launch modes exist and they are not interchangeable. The HELD one keeps
+ * an Agent SDK stream, which is the only thing that gives the panel words, so
+ * it is the one the design's MessagePanel hand-over needs. The DETACHED one
+ * starts a process and lets go. Claude can be either; Codex has no
+ * held-session engine in this app, so it can only ever be detached.
+ *
+ * Routing by what the provider can honestly do is the point. Sending Codex
+ * down the held channel would earn a refusal from main — correct, but it would
+ * mean the panel offering a chip whose only outcome is an error.
+ */
+describe('routing a launch to the channel its provider can actually use', () => {
+  async function ready(provider: 'claude' | 'codex', overrides: Record<string, unknown> = {}) {
+    const api = stubApi(overrides)
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose(provider)
+    launch.setPrompt('  dig the east gallery  ')
+    return { api, launch }
+  }
+
+  it('holds a Claude session, because only a held one can be watched', async () => {
+    const { api } = await ready('claude')
+    await useAgentLaunch().submit()
+
+    expect(api.launchHeldSession).toHaveBeenCalledOnce()
+    expect(api.launchAgent).not.toHaveBeenCalled()
+  })
+
+  it('starts Codex detached, naming the provider on the wire', async () => {
+    const { api, launch } = await ready('codex')
+
+    await launch.submit()
+
+    expect(api.launchAgent).toHaveBeenCalledWith({
+      mineId: MINE,
+      provider: 'codex',
+      prompt: 'dig the east gallery'
+    })
+    expect(api.launchHeldSession).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The honest end for a launch nothing can watch. `launchedDwarfIn` matches an
+   * arriving dwarf by the first message of its conversation, and a conversation
+   * is held-sessions-only — so no Codex dwarf can ever carry the receipt, and
+   * waiting for one would be the panel pretending to look.
+   */
+  it('stops on started-detached instead of waiting for a dwarf it cannot recognise', async () => {
+    const { launch } = await ready('codex')
+
+    await launch.submit()
+
+    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.state.value.launchedDwarfId).toBeNull()
+    expect(launch.state.value.error).toBeNull()
+  })
+
+  it('never adopts a dwarf for a detached launch, however well its words match', async () => {
+    const { launch } = await ready('codex')
+    await launch.submit()
+
+    launch.observe([mineWith([heldDwarf('codex:sess-9', 'dig the east gallery')])])
+
+    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.state.value.launchedDwarfId).toBeNull()
+  })
+
+  it('carries a refused detached launch back with main’s own reason', async () => {
+    const { launch } = await ready('codex', {
+      launchAgent: vi.fn().mockResolvedValue({
+        launched: false,
+        provider: 'codex',
+        error: 'Codex CLI is not installed on this machine.'
+      })
+    })
+
+    await launch.submit()
+
+    expect(launch.phase.value).toBe('prompt-ready')
+    expect(launch.state.value.error).toBe('Codex CLI is not installed on this machine.')
+  })
+
+  it('says the bridge is down for a detached launch too', async () => {
+    const { launch } = await ready('codex', {
+      launchAgent: vi.fn().mockRejectedValue(new Error('bridge down'))
+    })
+
+    await launch.submit()
+
+    expect(launch.phase.value).toBe('prompt-ready')
+    expect(launch.state.value.error).toBeTruthy()
   })
 })
 

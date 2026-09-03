@@ -135,6 +135,26 @@ export function isDwarfProvider(value: unknown): value is DwarfProvider {
 }
 
 /**
+ * The providers a session can be HELD for — kept open by this app, over the
+ * provider's own Agent SDK stream (#168).
+ *
+ * On the wire because both processes act on it and must not disagree: the
+ * renderer reads it to choose which launch channel a chip goes down, and the
+ * held registry enforces it. Two copies of this list would be two answers to
+ * "can this provider be watched", and the panel would eventually offer a chip
+ * whose only outcome is a refusal from the other side.
+ *
+ * Claude alone, and this is a capability rather than a preference: holding a
+ * session IS that stream, and Codex has no held-session engine in this app —
+ * `docs/command-surface-evaluation.md` records it, and the question-capture
+ * matrix marks the `codex exec` row No for live capture and No for answering.
+ * A provider missing here can still be LAUNCHED; it is started detached and
+ * discovered by the ordinary poll, which is a real launch and simply not a
+ * watched one.
+ */
+export const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+
+/**
  * Every connection state the Agent SDK reports for one MCP server (issue
  * #96), read verbatim off a held session's own `init` message.
  *

@@ -62,6 +62,18 @@ const emit = defineEmits<{
 }>()
 
 const spawning = computed(() => props.phase === 'submitted-spawning')
+/**
+ * A launch that started and is not being watched (#168).
+ *
+ * Drawn like the spawning view — the chips and the composer go, the submitted
+ * prompt stays — but its note says something different, because the panel is
+ * not looking for anything. A detached session leaves no held conversation, so
+ * no dwarf can ever be matched to this launch; it simply appears in the mine
+ * when the poll next reads the provider's own storage.
+ */
+const detached = computed(() => props.phase === 'started-detached')
+/** Both end states replace the Add controls with the prompt that was sent. */
+const launched = computed(() => spawning.value || detached.value)
 const showCommand = computed(() =>
   props.chips.some((chip) => chip.choice === OTHER_CHOICE && chip.state === 'selected')
 )
@@ -117,7 +129,7 @@ function onCommandKeydown(event: KeyboardEvent): void {
       Other export draws them: the command appears beside the chips rather than
       under them, so choosing Other grows the row instead of moving it.
     -->
-    <div v-if="!spawning" class="launch-choices">
+    <div v-if="!launched" class="launch-choices">
       <button
         v-for="chip in chips"
         :key="chip.choice"
@@ -149,7 +161,7 @@ function onCommandKeydown(event: KeyboardEvent): void {
       main's own record of the same words (the held session was seeded with
       them), so it is shown once and by whoever can prove it.
     -->
-    <div v-if="spawning" class="launch-spawning">
+    <div v-if="launched" class="launch-spawning">
       <article class="message is-user">
         <p class="launch-first-message bubble">{{ prompt }}</p>
         <img class="portrait" :src="USER_PORTRAIT_SRC" alt="You" draggable="false" />
@@ -179,6 +191,17 @@ function onCommandKeydown(event: KeyboardEvent): void {
     <p v-if="error" class="launch-alert" role="alert">{{ error }}</p>
     <p v-else-if="spawning" class="launch-note" role="status">
       Starting the session. Its dwarf appears in the mine as soon as the panel finds it.
+    </p>
+    <!--
+      Deliberately NOT the line above. That one promises the panel will find it,
+      which is a promise only a held session can keep: the panel recognises its
+      own launch by the first message of a conversation, and nothing but a held
+      stream carries one. This session started and is not being watched, so the
+      copy says what is true — it will turn up in the mine on an ordinary poll,
+      like a session somebody else started.
+    -->
+    <p v-else-if="detached" class="launch-note" role="status">
+      The session started. Its dwarf joins the mine on the next sweep.
     </p>
     <p v-else-if="refusal" class="launch-note" role="status">{{ refusal }}</p>
   </section>

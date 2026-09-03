@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  LAUNCHABLE_PROVIDERS,
-  NOT_LAUNCHABLE,
-  agentProviderList,
-  type CliPresence
-} from './launchProviders'
+import { DWARF_PROVIDERS } from './types'
+import { LAUNCHABLE_PROVIDERS, agentProviderList, type CliPresence } from './launchProviders'
 
 const found = (cli: 'claude' | 'codex'): CliPresence => ({ cli, installed: true })
 const missing = (cli: 'claude' | 'codex', reason: string): CliPresence => ({
@@ -27,11 +23,16 @@ describe('agentProviderList', () => {
     expect(claude).toEqual({ provider: 'claude', installed: true, launchable: true })
   })
 
-  it('states why a detected provider the engine cannot start yet is refused', () => {
+  /*
+   * #168 gave Codex a launch path — a detached `codex exec` in the mine's
+   * folder, discovered afterwards by the poll — so the chip that used to refuse
+   * now starts something. It carries no refusal reason for the same purpose the
+   * Claude one carries none: there is nothing left to explain.
+   */
+  it('marks a detected Codex launchable now that the engine can start it', () => {
     const [, codex] = agentProviderList([found('claude'), found('codex')]).providers
 
-    expect(codex?.launchable).toBe(false)
-    expect(codex?.reason).toBe(NOT_LAUNCHABLE)
+    expect(codex).toEqual({ provider: 'codex', installed: true, launchable: true })
   })
 
   it('never calls an absent CLI launchable, even one the engine drives', () => {
@@ -63,7 +64,25 @@ describe('agentProviderList', () => {
     expect(backwards).toEqual(forwards)
   })
 
-  it('names Claude as the only provider a launch can be started for today', () => {
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude'])
+  it('names every provider a launch can actually be started for (#168)', () => {
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex'])
+  })
+
+  /*
+   * The invariant that survived the widening: this list is not free to grow on
+   * its own. Every name in it must be one the engine has a verified invocation
+   * for, or the chip answers Enter with a session nobody starts.
+   */
+  it('never names a provider this build does not have', () => {
+    for (const provider of LAUNCHABLE_PROVIDERS) {
+      expect(DWARF_PROVIDERS).toContain(provider)
+    }
+  })
+
+  it('still refuses an absent Codex, detected or not', () => {
+    const [, codex] = agentProviderList([found('claude'), missing('codex', 'nowhere')]).providers
+
+    expect(codex?.installed).toBe(false)
+    expect(codex?.launchable).toBe(false)
   })
 })

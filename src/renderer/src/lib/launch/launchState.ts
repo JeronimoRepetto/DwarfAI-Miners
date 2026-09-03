@@ -27,7 +27,23 @@ import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../../types'
 export const OTHER_CHOICE = 'other'
 export type LaunchChoice = DwarfProvider | typeof OTHER_CHOICE
 
-/** The source's own state names, in the source's own order. */
+/**
+ * The source's own state names, in the source's own order — plus one.
+ *
+ * `started-detached` is not in the source, and it is the only addition here.
+ * The source's flow ends in `message-panel`, and that hand-over needs a session
+ * the panel HOLDS: `launchedDwarfIn` recognises the launched dwarf by the first
+ * message of its conversation, and `Dwarf.conversation` is documented as
+ * held-sessions-only "because nothing else this app runs hands it a
+ * conversation live". Codex has no held-session engine in this app (#168), so a
+ * Codex launch leaves no such receipt and no dwarf can ever be matched to it.
+ *
+ * The alternative was to leave such a launch sitting in `submitted-spawning`,
+ * which would be the panel claiming to look for something it knows cannot
+ * arrive. So the flow gains an honest terminal state instead: the session
+ * started, the panel is not watching it, and its dwarf turns up in the mine on
+ * an ordinary poll like any other.
+ */
 export type LaunchPhase =
   | 'closed'
   | 'provider-selection'
@@ -36,6 +52,7 @@ export type LaunchPhase =
   | 'other-command-committed'
   | 'prompt-ready'
   | 'submitted-spawning'
+  | 'started-detached'
   | 'message-panel'
 
 /** The three pieces of copy the source specifies for this panel, verbatim. */
@@ -54,6 +71,12 @@ export interface LaunchState {
   prompt: string
   /** True from the moment Enter submits until a dwarf is adopted or main refuses. */
   submitting: boolean
+  /**
+   * True once a launch the panel cannot watch has started (#168) — see
+   * `startedDetached`. Distinct from `launchedDwarfId` on purpose: this says a
+   * session exists, and says nothing at all about which dwarf it becomes.
+   */
+  detached: boolean
   /** The dwarf the launched session turned out to be, once one is identified. */
   launchedDwarfId: string | null
   /** Main's reason for refusing the last launch, or null. */
@@ -68,6 +91,7 @@ export function closedLaunch(): LaunchState {
     committedCommand: '',
     prompt: '',
     submitting: false,
+    detached: false,
     launchedDwarfId: null,
     error: null
   }
@@ -166,6 +190,10 @@ export function composerEnabled(state: LaunchState): boolean {
 export function launchPhase(state: LaunchState): LaunchPhase {
   if (!state.open) return 'closed'
   if (state.launchedDwarfId !== null) return 'message-panel'
+  // Ahead of `submitting`, which `startedDetached` has already cleared, and
+  // ahead of every Add state, because this launch really did happen: dropping
+  // back to a composer would invite a second one.
+  if (state.detached) return 'started-detached'
   if (state.submitting) return 'submitted-spawning'
   if (state.choice === null) return 'provider-selection'
   if (!composerEnabled(state)) return 'other-command-required'
@@ -208,6 +236,28 @@ export function submitStarted(state: LaunchState): LaunchState {
  */
 export function submitRefused(state: LaunchState, reason: string): LaunchState {
   return { ...state, submitting: false, error: reason }
+}
+
+/**
+ * A launch started that this panel cannot watch (#168).
+ *
+ * The honest end of a DETACHED launch. `adoptLaunchedDwarf` cannot ever be
+ * reached for one: it needs a dwarf whose first conversation message is the
+ * prompt this panel sent, and only a HELD session carries a conversation at
+ * all. So rather than wait in `submitted-spawning` for a receipt that does not
+ * exist, the panel stops and says what it actually knows — a session started,
+ * and its dwarf will appear in the mine on an ordinary poll.
+ *
+ * No dwarf id is invented and none is guessed at by timing. That is the same
+ * refusal `launchedDwarfIn` is built on: "the dwarf that was not here a moment
+ * ago" would adopt whatever happened to start next.
+ *
+ * Only ever while a launch is in flight, exactly as adoption is, so a panel
+ * nobody submitted from cannot fall into this state.
+ */
+export function startedDetached(state: LaunchState): LaunchState {
+  if (!state.submitting) return state
+  return { ...state, submitting: false, detached: true, error: null }
 }
 
 /**

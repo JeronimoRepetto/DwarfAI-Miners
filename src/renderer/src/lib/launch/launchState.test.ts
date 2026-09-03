@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+// #168 additions are asserted in their own describe at the foot of this file.
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
 import {
   COMPOSER_DISABLED_PLACEHOLDER,
@@ -16,6 +17,7 @@ import {
   launchPrompt,
   openLaunch,
   submitRefused,
+  startedDetached,
   submitStarted,
   typeCommand,
   typePrompt
@@ -200,5 +202,50 @@ describe('submitting, and what comes back', () => {
 
     expect(stray.launchedDwarfId).toBeNull()
     expect(launchPhase(stray)).toBe('prompt-ready')
+  })
+})
+
+/*
+ * A launch the panel cannot watch (#168).
+ *
+ * Every phase the design's model ends in leads to `message-panel`, and that
+ * hand-over needs a HELD conversation: `launchedDwarfIn` recognises the
+ * launched dwarf by its first message, and `Dwarf.conversation` is documented
+ * as held-sessions-only, "because nothing else this app runs hands it a
+ * conversation live". Codex has no held-session engine, so a Codex launch can
+ * never produce that receipt — no amount of waiting turns one up.
+ *
+ * So the model gains one state the source does not have, because the source's
+ * flow assumes a session the panel holds. The alternative was to leave the
+ * panel spinning in `submitted-spawning` forever, which would be the panel
+ * claiming to be looking for something it knows cannot arrive.
+ */
+describe('a launch that started but cannot be watched', () => {
+  const started = () => startedDetached(submitStarted(chooseProvider(withPrompt(), 'codex')))
+  const withPrompt = () => typePrompt(chooseProvider(opened(), 'codex'), 'dig here')
+
+  it('leaves the spawning state instead of waiting for a dwarf that cannot arrive', () => {
+    expect(launchPhase(started())).toBe('started-detached')
+    expect(started().submitting).toBe(false)
+  })
+
+  it('claims no dwarf, because the panel has no receipt to recognise one by', () => {
+    expect(started().launchedDwarfId).toBeNull()
+  })
+
+  it('is not an error state: the session really did start', () => {
+    expect(started().error).toBeNull()
+  })
+
+  it('only ever follows a submit, so nothing enters it on its own', () => {
+    // Same guard adoptLaunchedDwarf holds, for the same reason: a panel nobody
+    // launched from must not be taken over by something that started elsewhere.
+    const stray = startedDetached(withPrompt())
+
+    expect(launchPhase(stray)).toBe('prompt-ready')
+  })
+
+  it('is forgotten when the panel closes, like every other launch state', () => {
+    expect(launchPhase(closeLaunch(started()))).toBe('closed')
   })
 })

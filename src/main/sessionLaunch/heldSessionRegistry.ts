@@ -1,3 +1,4 @@
+import { HELDABLE_PROVIDERS } from '../domain/types'
 import type {
   DwarfProvider,
   DwarfQuestionAnswerResult,
@@ -73,17 +74,11 @@ import {
  * (see contracts.ts on why the windows differ by who can answer).
  */
 
-/**
- * The providers this registry can actually HOLD (#168).
- *
- * Claude and nothing else, and this is not a list that grows on its own:
- * holding a session means an Agent SDK stream that yields messages and takes
- * answers back, and `docs/command-surface-evaluation.md` records that "Codex
- * has no held-session engine in this app (no equivalent of `sdkHeldSession.ts`
- * exists for it)". A second name here without a stream behind it would be a
- * launch that resolves as started and then never says a word.
- */
-const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+/* The list this enforces lives on the wire (`HELDABLE_PROVIDERS` in
+ * contracts.ts), because the renderer reads the same one to decide which launch
+ * channel a chip goes down. A local copy would be a second answer to "can this
+ * provider be watched", and the panel would eventually offer a chip whose only
+ * outcome is a refusal from here. */
 
 /** Refusals, phrased for the panel. */
 const EMPTY_PROMPT = 'Type a prompt first.'

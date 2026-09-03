@@ -235,3 +235,51 @@ describe('while the session is starting', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 })
+
+/*
+ * The end of a launch this panel cannot watch (#168).
+ *
+ * A detached launch — Codex's only shape, because it has no held-session engine
+ * in this app — leaves no receipt for `launchedDwarfIn` to match, so no
+ * MessagePanel hand-over is coming. The panel therefore has to say what it
+ * actually knows and stop, rather than sitting in the spawning view watching
+ * for an arrival it knows cannot happen.
+ */
+describe('after a session the panel cannot watch has started', () => {
+  function detached() {
+    return panel({
+      chosen: 'codex',
+      phase: 'started-detached',
+      enabled: true,
+      prompt: 'dig the east gallery'
+    })
+  }
+
+  it('says the session started and where its dwarf will turn up', () => {
+    const note = detached().get('.launch-note').text()
+
+    expect(note).toBeTruthy()
+    expect(note.toLowerCase()).toContain('mine')
+  })
+
+  it('never claims the panel is still looking for it', () => {
+    // The spawning copy promises the panel will find it. That promise cannot be
+    // kept for a detached launch, so this state must not borrow the wording.
+    expect(detached().get('.launch-note').text().toLowerCase()).not.toContain('as soon as')
+  })
+
+  it('takes the composer away, so the same prompt is not sent twice', () => {
+    const wrapper = detached()
+
+    expect(wrapper.find('.launch-input').exists()).toBe(false)
+    expect(wrapper.find('.provider-chip').exists()).toBe(false)
+  })
+
+  it('can be closed, which is the only way out of it', async () => {
+    const wrapper = detached()
+
+    await wrapper.get('.launch-close').trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+})
