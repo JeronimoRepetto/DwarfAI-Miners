@@ -305,7 +305,8 @@ closed.
   every dwarf statically instead of walking them, zeroing walk durations.
 - `DwarfSprite` hides the spark bursts, stills the drifting `z z z`, and replaces the walk-out with
   a plain dim.
-- `MineMound` and `VaultChip` still their own pulses.
+- `MineMarker` holds its pulsing light steady rather than removing it, and `VaultChip` stills its
+  own pulse.
 
 **The sprite's frame timer is consulted by none of it.** `prefersReducedMotion()` is never read in
 `DwarfSprite`, and the `setInterval` that swaps paintings runs identically either way. So a viewer

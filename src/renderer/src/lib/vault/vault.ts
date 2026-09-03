@@ -99,6 +99,14 @@ export function vaultRows(totals: MaterialTotals | undefined): VaultRow[] {
  * freshly promoted to a new tier, for instance, before it has mined anything
  * at that tier's own grain size yet. The badge hides rather than show a "0"
  * for a pile that, at this material, is not there.
+ *
+ * NOTHING CALLS THIS TODAY. Its only caller was the map's ore badge, which went
+ * with `MineMound.vue` in #136 — the design's map draws a 10px marker and a
+ * tooltip carrying tier, name and agent count, and no ore figure at all. It is
+ * left standing rather than deleted because the design's mine CARD does list
+ * "collected resources" per mine (`components.md`), which is the next surface to
+ * be rebuilt and the same question this answers. If that slice lands without
+ * needing it, delete it and the four tests below it.
  */
 export function currentMaterialRow(
   totals: MaterialTotals | undefined,

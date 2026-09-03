@@ -12,6 +12,7 @@ import {
 } from '../appDatabase/appDatabase'
 import { mineIdForPath } from '../domain/aggregate'
 import {
+  MAP_SPAWN_SITE_COUNT,
   isDwarfProvider,
   isMineTier,
   type DwarfProvider,
@@ -19,6 +20,7 @@ import {
   type ProjectQuery
 } from '../domain/types'
 import { currentPlatform, type Platform } from '../platform/platform'
+import { chooseMapSite } from './mapSite'
 import { normalizeProjectName, projectNameForPath } from './projectName'
 import { buildProjectQuery } from './projectQuery'
 
@@ -77,6 +79,17 @@ export interface ProjectRecord {
    * an observation carrying none leaves whatever was measured before intact.
    */
   knownTier: MineTier | null
+  /**
+   * Which of the world map's spawn locations this project's mine stands on
+   * (#136), chosen once and never changed.
+   *
+   * null is a real state with four causes, all of them "nobody has placed this
+   * mine": a row written before the column existed, one whose first write has
+   * not happened yet, a valley whose 74 locations are all taken, and a site id
+   * this build does not recognise. The panel draws all four the same way — it
+   * places the mine itself, and nothing is written.
+   */
+  mapSite: number | null
 }
 
 /** One sighting of a project: a session was seen working in it. */
@@ -151,27 +164,35 @@ export interface ProjectsStore {
  * directory uses, and what keeps a store constructible without a caller having
  * to assemble the database first.
  */
-export type ProjectsStoreOptions =
+export type ProjectsStoreOptions = (
   | {
       /** The one app database, shared with the material ledger. */
       database: AppDatabase
-      /** Injected so the win32 id rules are assertable on any host. */
-      platform?: Platform
     }
   | {
       /** Full path of the database file (under userData in production). */
       filePath: string
       /** Injected for tests; defaults to the real node:sqlite driver. */
       sqlite?: WritableSqliteLike
-      platform?: Platform
     }
+) & {
+  /** Injected so the win32 id rules are assertable on any host. */
+  platform?: Platform
+  /**
+   * Where the map placement's randomness comes from; defaults to Math.random.
+   * Injected for the reason every clock in this repository is — a placement
+   * nobody can reproduce is a placement nobody can test.
+   */
+  random?: () => number
+}
 
 const COLUMNS =
-  'id, path, name, name_norm, added_at, last_opened_at, origin, last_provider, known_tier'
+  'id, path, name, name_norm, added_at, last_opened_at, origin, last_provider, known_tier, map_site'
 
 export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStore {
   const database = 'database' in options ? options.database : createAppDatabase(options)
   const platform = options.platform ?? currentPlatform()
+  const random = options.random ?? Math.random
 
   /**
    * Run one unit of work against the database, turning any failure into an
@@ -199,6 +220,25 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
     return row === undefined ? null : toRecord(row)
   }
 
+  /**
+   * A spawn location nobody holds, for a project about to be written.
+   *
+   * Asked on every write, including one for a project that already stands
+   * somewhere — the INSERT's COALESCE throws the answer away in that case, and
+   * one scan of a small table is cheaper than a second round trip to find out
+   * whether it was needed. What matters is that the taken set is read inside
+   * the same unit of work that writes, so two projects arriving in the same
+   * poll cannot both be told a location is free.
+   */
+  function freeSite(db: WritableSqliteDb): number | null {
+    const taken = new Set<number>()
+    for (const row of db.all('SELECT map_site FROM projects WHERE map_site IS NOT NULL')) {
+      const site = asNumber(row.map_site)
+      if (site !== null) taken.add(site)
+    }
+    return chooseMapSite(taken, random)
+  }
+
   return {
     async declare(declaration) {
       const id = mineIdForPath(declaration.path, platform)
@@ -207,15 +247,18 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
         // Declaring a project that is already known upgrades its origin and
         // refreshes how it is spelled, but touches neither date: it was first
         // seen when it was first seen, and declaring it is not opening it.
+        // map_site is COALESCEd from the row's OWN value first, so a mine the
+        // user re-adds stays exactly where it has always stood (#136).
         db.run(
           `INSERT INTO projects (${COLUMNS})
-           VALUES (?, ?, ?, ?, ?, NULL, 'declared', NULL, NULL)
+           VALUES (?, ?, ?, ?, ?, NULL, 'declared', NULL, NULL, ?)
            ON CONFLICT(id) DO UPDATE SET
              path = excluded.path,
              name = excluded.name,
              name_norm = excluded.name_norm,
-             origin = 'declared'`,
-          [id, declaration.path, name, normalizeProjectName(name), declaration.at]
+             origin = 'declared',
+             map_site = COALESCE(projects.map_site, excluded.map_site)`,
+          [id, declaration.path, name, normalizeProjectName(name), declaration.at, freeSite(db)]
         )
         return required(readOne(db, id))
       })
@@ -230,16 +273,22 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
         // project was first seen. last_opened_at only ever moves forward, so a
         // snapshot that arrives late cannot rewind the recency #92 sorts by,
         // and COALESCE keeps a measured tier that this sighting did not carry.
+        //
+        // map_site takes the row's OWN value first, the opposite way round from
+        // the two COALESCEs above it: a mine that has been placed never moves,
+        // and one that has not — a project migrated in from v2, or one placed
+        // when every location was taken — is placed by this write (#136).
         db.run(
           `INSERT INTO projects (${COLUMNS})
-           VALUES (?, ?, ?, ?, ?, ?, 'discovered', ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, 'discovered', ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              path = excluded.path,
              name = excluded.name,
              name_norm = excluded.name_norm,
              last_opened_at = MAX(COALESCE(projects.last_opened_at, 0), excluded.last_opened_at),
              last_provider = COALESCE(excluded.last_provider, projects.last_provider),
-             known_tier = COALESCE(excluded.known_tier, projects.known_tier)`,
+             known_tier = COALESCE(excluded.known_tier, projects.known_tier),
+             map_site = COALESCE(projects.map_site, excluded.map_site)`,
           [
             id,
             observation.path,
@@ -248,7 +297,8 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
             observation.at,
             observation.at,
             observation.provider ?? null,
-            observation.knownTier ?? null
+            observation.knownTier ?? null,
+            freeSite(db)
           ]
         )
         return required(readOne(db, id))
@@ -334,8 +384,19 @@ function toRecord(row: SqliteRow): ProjectRecord {
     lastProvider: provider !== null && isDwarfProvider(provider) ? provider : null,
     // Checked against the shared tier list, so a value this build does not
     // recognise reads as unmeasured rather than as a guess.
-    knownTier: tier !== null && isMineTier(tier) ? tier : null
+    knownTier: tier !== null && isMineTier(tier) ? tier : null,
+    // Same discipline for the map location: a site id this build has no place
+    // for — a hand-edited row, or one written by a build with a larger map —
+    // reads as unplaced rather than being drawn somewhere arbitrary.
+    mapSite: asMapSite(row.map_site)
   }
+}
+
+/** A stored site id, or null when it is not one this build's map has. */
+function asMapSite(value: unknown): number | null {
+  const site = asNumber(value)
+  if (site === null || !Number.isInteger(site)) return null
+  return site >= 1 && site <= MAP_SPAWN_SITE_COUNT ? site : null
 }
 
 function asText(value: unknown): string | null {

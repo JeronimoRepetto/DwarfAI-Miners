@@ -40,6 +40,32 @@ export function tierLabel(tier: MineTier): string {
   return materialLabel(tier)
 }
 
+/**
+ * The tier names the REDESIGNED surfaces put on screen (#90).
+ *
+ * `Cropper` is the confirmed product label for the copper tier — the design
+ * source says so outright and calls it deliberate, not a typo to correct.
+ *
+ * Kept apart from `tierLabel` above, which still spells it `Copper`, because
+ * that one serves the cave and the parts of the panel the rebuild has not
+ * reached yet: renaming a tier under a screen this change never looked at is
+ * how a fixture and a chip end up disagreeing. It moved here from
+ * `browse/browseCards.ts` when the map became the second rebuilt surface to
+ * need it (#136); a cross-family import from map into browse would have been
+ * the worse half of that choice.
+ */
+const DESIGN_TIER_LABELS: Record<MineTier, string> = {
+  bronze: 'Bronze',
+  copper: 'Cropper',
+  silver: 'Silver',
+  gold: 'Gold',
+  uranium: 'Uranium'
+}
+
+export function designTierLabel(tier: MineTier): string {
+  return DESIGN_TIER_LABELS[tier]
+}
+
 /** Character budget for speech bubbles (truncated with an ellipsis). */
 export const BUBBLE_MAX_CHARS = 70
 

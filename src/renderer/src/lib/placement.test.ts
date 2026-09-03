@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MINE_SITES } from './map/mapSites'
+import { MAP_SPAWN_SITE_COUNT } from '../types'
 import { assignSlots, hashString } from './placement'
 
 const IDS = [
@@ -42,12 +42,12 @@ describe('assignSlots', () => {
     expect(slots.size).toBe(IDS.length)
     for (const index of slots.values()) {
       expect(index).toBeGreaterThanOrEqual(0)
-      expect(index).toBeLessThan(MINE_SITES.length)
+      expect(index).toBeLessThan(MAP_SPAWN_SITE_COUNT)
     }
   })
 
   it('produces no collisions while mines fit on the authored sites', () => {
-    const limit = Math.min(IDS.length, MINE_SITES.length)
+    const limit = Math.min(IDS.length, MAP_SPAWN_SITE_COUNT)
     for (let count = 1; count <= limit; count++) {
       const slots = assignSlots(IDS.slice(0, count))
       expect(new Set(slots.values()).size).toBe(count)
@@ -65,7 +65,7 @@ describe('assignSlots', () => {
 
   it('keeps a mine on its hash-preferred site when nothing contests it', () => {
     const slots = assignSlots(IDS)
-    const preferred = new Map(IDS.map((id) => [id, hashString(id) % MINE_SITES.length]))
+    const preferred = new Map(IDS.map((id) => [id, hashString(id) % MAP_SPAWN_SITE_COUNT]))
     const contested = new Set<number>()
     const seen = new Set<number>()
     for (const index of preferred.values()) {
@@ -84,7 +84,7 @@ describe('assignSlots', () => {
     expect(slots.size).toBe(many.length)
     for (const index of slots.values()) {
       expect(index).toBeGreaterThanOrEqual(0)
-      expect(index).toBeLessThan(MINE_SITES.length)
+      expect(index).toBeLessThan(MAP_SPAWN_SITE_COUNT)
     }
   })
 
