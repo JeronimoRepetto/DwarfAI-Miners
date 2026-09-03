@@ -11,6 +11,37 @@ import { defaultDwarf } from '../../testing/factories'
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
 
+/*
+ * WHERE DwarfActionBar's TESTS WENT (#159).
+ *
+ * The interim icon bar (#27) died here and this file is where its behaviours
+ * are now pinned: the console action, Escape, the whole send path (Enter,
+ * Shift+Enter, the blank refusal, the char cap, the channel hint, the in-flight
+ * lock, the two-phase verdict), the whole kick path (arm-then-fire, the
+ * channel-specific refusals, the in-flight lock, the verdict) and Boost's
+ * disabled reason with its per-provider effort label.
+ *
+ * Three of its behaviours went with the bar rather than moving, and none of
+ * them silently:
+ *
+ * - **The `pressEnter` checkbox** ("Press Enter in the session") and its test.
+ *   `screens/mine.md` says Enter sends and the panel it draws carries no second
+ *   control to say otherwise, so a message now always arrives with the
+ *   session's own Enter. A console-delivered line can no longer be typed
+ *   without submitting it.
+ * - **The chat toggle** and its two tests (hide until clicked, collapse on a
+ *   second click). The design's panel has no toggle: the input is the surface.
+ * - **The disarm-on-chat-open test**, whose gesture no longer exists. A
+ *   half-confirmed kick is still cleared when the panel moves to another
+ *   dwarf, which is the case that survived.
+ *
+ * The bar's four shape tests (icon order, inline pixel art, aria-labels, the
+ * hover tooltip) described a surface that no longer exists; this file's own
+ * shape tests describe the one that replaced it. `lib/delivery/actionBar.ts`
+ * and its tests are untouched — the capability model outlived the component
+ * that rendered it, and the panel reads the same entries.
+ */
+
 const LONG_REPLY = 'x'.repeat(600)
 
 const HELD = [
@@ -291,6 +322,31 @@ describe('DwarfMessagePanel controls', () => {
     expect(wrapper.find('.control-kick').attributes('title')).toContain("can't be canceled yet")
   })
 
+  it('disables kick when the dwarf carries no capability matrix at all', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ capabilities: undefined }) })
+    expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
+  })
+
+  it('names what kicking THIS channel actually does, rather than one generic promise', () => {
+    const relay = panel({
+      dwarf: defaultDwarf({
+        capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+      })
+    })
+    expect(relay.find('.control-kick').attributes('title')).toBe(
+      'Asks the agent to stop — it decides how.'
+    )
+  })
+
+  it('locks the kick control while a kick is in flight', async () => {
+    const wrapper = panel({ dwarf: kickable, kickState: { phase: 'kicking' } })
+    const control = wrapper.find('.control-kick')
+    expect(control.attributes('disabled')).toBeDefined()
+    expect(control.attributes('aria-label')).toBe('Kicking...')
+    await control.trigger('click')
+    expect(wrapper.emitted('kick')).toBeUndefined()
+  })
+
   it('shows the kick verdict, keeping handed over apart from reacted', () => {
     const wrapper = panel({
       dwarf: kickable,
@@ -311,6 +367,11 @@ describe('DwarfMessagePanel controls', () => {
       "No provider supports changing a running session's effort yet."
     )
     expect(boost.attributes('title')).toContain('Extra high')
+  })
+
+  it('passes a Codex reasoning_effort value through as it was reported', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ provider: 'codex', effort: 'medium' }) })
+    expect(wrapper.find('.control-boost').attributes('title')).toContain('medium')
   })
 
   it('closes on the close control and on Escape', async () => {
