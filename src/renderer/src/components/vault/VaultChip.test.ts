@@ -56,9 +56,26 @@ describe('VaultChip', () => {
     expect(wrapper.get('.vault-chip').classes()).not.toContain('is-sparkling')
   })
 
-  it('renders inline (no floating position) when variant is inline', () => {
-    const wrapper = mount(VaultChip, { props: { tokensObserved: 1_000, variant: 'inline' } })
-    expect(wrapper.get('.vault-chip').classes()).toContain('is-inline')
+  /*
+   * AMENDED for #153's twelfth correction. This case named the `inline` variant,
+   * which is gone: the mine interior passed it and then positioned the chip from
+   * OUTSIDE, and `.vault-chip.is-inline { position: static }` — two classes plus
+   * a scope attribute — out-specified MineScene's own one-class `.interior-vault
+   * { position: absolute }`. The strip fell back into normal flow and floated at
+   * the interior's TOP, which is exactly what the maintainer saw. A variant that
+   * refuses to place itself and leaves its owner to try is the defect; `strip`
+   * places itself, and the case below asserts that instead.
+   */
+  it('places itself along the bottom edge when variant is strip', () => {
+    const wrapper = mount(VaultChip, { props: { tokensObserved: 1_000, variant: 'strip' } })
+    expect(wrapper.get('.vault-chip').classes()).toContain('is-strip')
+    expect(wrapper.get('.vault-chip').classes()).not.toContain('is-floating')
+  })
+
+  it('leaves the map’s own corner chip floating', () => {
+    const wrapper = mount(VaultChip, { props: { tokensObserved: 1_000 } })
+    expect(wrapper.get('.vault-chip').classes()).toContain('is-floating')
+    expect(wrapper.get('.vault-chip').classes()).not.toContain('is-strip')
   })
 })
 

@@ -44,7 +44,7 @@ describe('MineScene', () => {
     const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 25_000 }) } })
     // `.vault-ore` — every token at one flat rate — went with #22; the chip now
     // breaks the vault down per material and keeps this compact token gauge.
-    expect(wrapper.get('.interior-vault .vault-tokens').text()).toBe('25K')
+    expect(wrapper.get('.vault-chip .vault-tokens').text()).toBe('25K')
   })
 
   /*
@@ -62,10 +62,32 @@ describe('MineScene', () => {
       }
     })
     expect(
-      wrapper
-        .findAll('.interior-vault .vault-material')
-        .map((row) => row.attributes('data-material'))
+      wrapper.findAll('.vault-chip .vault-material').map((row) => row.attributes('data-material'))
     ).toEqual(['coal', 'copper', 'silver'])
+  })
+
+  /*
+   * #153's twelfth correction. The strip rendered as loose nugget images
+   * floating at the interior's TOP, and it was a specificity race: the chip's
+   * own `.vault-chip.is-inline { position: static }` — two classes plus a scope
+   * attribute — beat this scene's one-class `.interior-vault { position:
+   * absolute; bottom: 6px }`, so the strip fell back into normal flow and landed
+   * at the top-left of the first positioned ancestor. The chip places itself
+   * now, and this scene asks for the variant rather than for a class it then has
+   * to out-specify.
+   */
+  it('asks the vault for its own bottom-edge strip rather than placing one', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 1 }) } })
+    const chip = wrapper.get('.vault-chip')
+    expect(chip.classes()).toContain('is-strip')
+    expect(chip.classes()).not.toContain('is-floating')
+    // Nothing left out here to lose a specificity race with.
+    expect(wrapper.find('.interior-vault').exists()).toBe(false)
+  })
+
+  it('keeps the strip inside the interior, so it follows the painting’s frame', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 1 }) } })
+    expect(wrapper.find('.interior > .vault-chip').exists()).toBe(true)
   })
 
   it('pauses the bubble auto-hide while expanded and resumes it on close', async () => {

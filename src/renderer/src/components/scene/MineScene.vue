@@ -307,8 +307,7 @@ onBeforeUnmount(() => {
         merged figure: materials do not convert into one another (#22).
       -->
       <VaultChip
-        class="interior-vault"
-        variant="inline"
+        variant="strip"
         :tokens-observed="mine.tokensObserved"
         :materials="mine.materials"
       />
@@ -460,19 +459,15 @@ onBeforeUnmount(() => {
     transition: none;
   }
 }
-/* The materials strip along the interior's bottom edge, as the export draws it. */
-.interior-vault {
-  position: absolute;
-  z-index: 6;
-  right: 8px;
-  bottom: 6px;
-  left: 8px;
-  justify-content: center;
-  padding: 2px 6px;
-  border: 0;
-  border-radius: 999px;
-  background: #0a0806cc;
-}
+/*
+ * The materials strip has no rule here at all any more (#153). It used to be
+ * placed from out here and lost the specificity race against
+ * `.vault-chip.is-inline { position: static }` inside the component — two
+ * classes to one — so the strip fell into normal flow and floated at the
+ * interior's TOP instead of sitting along its bottom edge. The chip's `strip`
+ * variant places itself now, which is the only arrangement that cannot be lost
+ * to a selector somebody else writes.
+ */
 /*
  * The two round actions the design floats on the interior: Close at the top
  * right, Add at the lower right. Both are drawn through a CSS mask from the
