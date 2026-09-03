@@ -652,3 +652,79 @@ describe('projects store — where the mine stands on the map (#136)', () => {
     expect(value(await store.get(placed.id))!.mapSite).toBeNull()
   })
 })
+
+/*
+ * A TIER WALK IS A MEASUREMENT, wherever it happened (#156).
+ *
+ * The acceptance run filtered the browse by Cropper and got nothing, while two
+ * cards on screen said Cropper. Display and filter were classifying by two
+ * different rules: a card derives its tier from the weight the walk measured
+ * (#155's cardTierFor), and the SQL filter reads `known_tier`, which only the
+ * observer writes and only for a mine somebody is WORKING. A folder the user
+ * declared and never opened therefore carried NULL forever, however many times
+ * it had been walked.
+ *
+ * The column takes the measurement now, from any project the walk has weighed.
+ * It stays #41-clean because only knownTierOf ever reaches it — a walk that has
+ * not finished writes nothing at all — and it stays #92-clean because a
+ * measurement is not a sighting: nothing here moves `last_opened_at`, so
+ * declaring a folder still is not opening it.
+ */
+describe('projects store — recording a measured tier (#156)', () => {
+  it('writes the tier onto a project the store already knows', async () => {
+    const { store } = newStore()
+    const declared = value(await store.declare({ path: PATH, at: 1_000 }))
+    expect(declared.knownTier).toBeNull()
+
+    const measured = value(await store.recordMeasuredTier({ path: PATH, knownTier: 'copper' }))
+
+    expect(measured?.knownTier).toBe('copper')
+    expect(value(await store.get(declared.id))!.knownTier).toBe('copper')
+  })
+
+  it('leaves a declaration a declaration: measuring is not opening', async () => {
+    const { store } = newStore()
+    const declared = value(await store.declare({ path: PATH, at: 1_000 }))
+
+    await store.recordMeasuredTier({ path: PATH, knownTier: 'gold' })
+
+    const after = value(await store.get(declared.id))!
+    expect(after.lastOpenedAt).toBeNull()
+    expect(after.origin).toBe('declared')
+    expect(after.addedAt).toBe(1_000)
+    expect(after.lastProvider).toBeNull()
+  })
+
+  it('keeps the location the project already stands on', async () => {
+    const { store } = newStore()
+    const declared = value(await store.declare({ path: PATH, at: 1_000 }))
+
+    await store.recordMeasuredTier({ path: PATH, knownTier: 'silver' })
+
+    expect(value(await store.get(declared.id))!.mapSite).toBe(declared.mapSite)
+  })
+
+  it('takes a re-walk’s newer verdict, because the card already shows it', async () => {
+    // A project that grew past a threshold classifies differently, and the card
+    // says so the moment the walk does. The column has to agree or the filter
+    // goes back to disagreeing with the display.
+    const { store } = newStore()
+    await store.declare({ path: PATH, at: 1_000 })
+    await store.recordMeasuredTier({ path: PATH, knownTier: 'copper' })
+
+    const grown = value(await store.recordMeasuredTier({ path: PATH, knownTier: 'gold' }))
+
+    expect(grown?.knownTier).toBe('gold')
+  })
+
+  it('creates nothing for a folder the store has never been shown', async () => {
+    // A measurement is not how a project enters the list. Declaring and being
+    // seen worked in are the only two ways in, and both are somebody's action.
+    const { store } = newStore()
+
+    const missing = value(await store.recordMeasuredTier({ path: OTHER, knownTier: 'gold' }))
+
+    expect(missing).toBeNull()
+    expect(value(await store.list())).toEqual([])
+  })
+})

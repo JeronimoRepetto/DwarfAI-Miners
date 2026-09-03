@@ -85,9 +85,16 @@ export class ProjectObserver {
    */
   async observe(mines: readonly Mine[], now: number): Promise<void> {
     for (const mine of mines) {
-      if (!isBeingWorked(mine)) continue
       const provider = soleProviderOf(mine)
       const knownTier = this.knownTierOf(mine)
+      // A walk is a MEASUREMENT and it is worth the same whether or not anybody
+      // is in the mine (#156). The sighting rules below still refuse this mine —
+      // it has not been opened — but its tier goes in, so the browse's SQL
+      // filter classifies by the same walk the card's own label derives from.
+      if (!isBeingWorked(mine)) {
+        await this.measure(mine, knownTier)
+        continue
+      }
       if (!this.isDue(mine.id, now, provider, knownTier)) continue
 
       // Stamped BEFORE the write and left alone afterwards, refusal included.
@@ -116,6 +123,37 @@ export class ProjectObserver {
       } catch (error) {
         this.onError(`[projects] Could not record ${mine.name}:`, error)
       }
+    }
+  }
+
+  /**
+   * Write the walk's verdict for a project nobody is working (#156).
+   *
+   * Throttled by the VERDICT rather than by the clock, which is the honest
+   * window for this one: a measurement changes when a folder crosses a
+   * threshold and at no other time, so "once per answer" is already at most a
+   * handful of writes for the life of the process. The recency stamp is the
+   * field that changes on every poll and it is not written here at all.
+   *
+   * The recorded write is remembered under `at: 0`, so a crew that later arrives
+   * in this mine is recorded as a sighting on the very next poll instead of
+   * waiting out a window it never spent.
+   */
+  private async measure(mine: Mine, knownTier: MineTier | undefined): Promise<void> {
+    if (knownTier === undefined) return
+    const last = this.lastWrites.get(mine.id)
+    if (last !== undefined && last.knownTier === knownTier) return
+    this.lastWrites.set(mine.id, { at: last?.at ?? 0, provider: last?.provider, knownTier })
+    try {
+      const result = await this.store.recordMeasuredTier({ path: mine.path, knownTier })
+      if (!result.ok) {
+        this.onError(
+          `[projects] Could not measure ${mine.name} (${result.failure}):`,
+          result.message
+        )
+      }
+    } catch (error) {
+      this.onError(`[projects] Could not measure ${mine.name}:`, error)
     }
   }
 

@@ -3791,4 +3791,44 @@ describe('AgentRuntime map placement (#136)', () => {
     expect(leaving[0]!.dwarfs).toMatchObject([{ status: 'leaving' }])
     expect(leaving[0]!.mapSite).toBe(placed)
   })
+
+  /*
+   * The link the two unit suites either side of it cannot see (#156): the
+   * observer only ever measures the mines the runtime hands it, so the board it
+   * is given has to be the WHOLE board — crewless declared projects included.
+   * Hand it the worked mines alone and the store's tier column goes back to
+   * being NULL for exactly the projects whose cards state a tier, which is the
+   * disagreement the browse filter was reported for.
+   */
+  it('measures a declared project nobody is working, so the filter can find it', async () => {
+    const projects = placementStore()
+    await projects.declare({ path: WALKED, at: 1 })
+    // Its own runtime rather than placementRuntime's, for the FakeFs: the tier
+    // walk is what has to produce a verdict here, and it must weigh an
+    // in-memory folder rather than whatever the host happens to have.
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [],
+      fs: new FakeFs(),
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+
+    await runtime.loadDeclared()
+    // Polled more than once on purpose: the first board SCHEDULES the walk in
+    // the background, so a later poll is the one that has a verdict to record.
+    for (let poll = 0; poll < 4; poll++) {
+      await runtime.refresh()
+      await runtime.settleProjects()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    const stored = await projects.get(mineIdForPath(WALKED))
+    runtime.stop()
+
+    expect(stored.ok && stored.value?.knownTier).not.toBeNull()
+    // Still added rather than opened: measuring is not working (#92).
+    expect(stored.ok && stored.value?.lastOpenedAt).toBeNull()
+    expect(stored.ok && stored.value?.origin).toBe('declared')
+  })
 })
