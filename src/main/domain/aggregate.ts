@@ -212,8 +212,21 @@ export function sumTokensObserved(mines: Mine[]): number {
   return mines.reduce((total, mine) => total + mine.tokensObserved, 0)
 }
 
+/**
+ * A path without the trailing separators a picker or a shell may hand over —
+ * unless that is the whole of it.
+ *
+ * The nameless mine of the third acceptance run (#165). A live session whose
+ * cwd is a filesystem root (`/`, and `\` on a UNC-rooted shell) is all
+ * separator: trimming leaves the empty string, which then has no last segment
+ * either, so the mine reached the panel with an empty path AND an empty name
+ * and the card drew nothing where a project belongs. A root is a real place a
+ * session can run, so it keeps its own characters; `C:\` still trims to `C:`,
+ * because there the drive letter is the segment.
+ */
 function trimTrailingSlashes(path: string): string {
-  return path.replace(/[\\/]+$/, '')
+  const trimmed = path.replace(/[\\/]+$/, '')
+  return trimmed === '' ? path : trimmed
 }
 
 function normalizeKey(path: string, platform: Platform): string {

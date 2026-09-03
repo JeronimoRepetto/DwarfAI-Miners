@@ -20,7 +20,11 @@
 export function projectNameForPath(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, '')
   const segments = trimmed.split(/[\\/]/).filter((segment) => segment !== '')
-  return segments[segments.length - 1] ?? trimmed
+  // The path AS GIVEN, never the trimmed one, when no segment survives (#165):
+  // a root is all separator, so trimming empties it and the fallback would hand
+  // the store an empty name — the nameless bronze mine of the third acceptance
+  // run. A drive root still trims to `C:`, which is a segment and a real name.
+  return segments[segments.length - 1] ?? path
 }
 
 /**

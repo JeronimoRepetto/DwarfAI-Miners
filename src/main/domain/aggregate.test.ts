@@ -474,3 +474,35 @@ describe('collapseDuplicateMines', () => {
     expect(first.dwarfs).toHaveLength(1)
   })
 })
+
+/**
+ * The nameless mine of the third acceptance run (#165).
+ *
+ * A bronze mine with no name at all reached the panel, and it was not in the
+ * projects store — every stored row carries a name. It was board-side: a live
+ * session whose cwd is the filesystem root. Trimming the trailing separator off
+ * `/` leaves the empty string, which has no last segment either, so both the
+ * path and the name came out empty and the card drew nothing where a project
+ * belongs.
+ */
+describe('a mine whose cwd is a root', () => {
+  it('names a POSIX-root session by its path rather than by nothing', () => {
+    const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd: '/' })], tierOf, 'linux')
+    expect(mine!.name).toBe('/')
+    expect(mine!.path).toBe('/')
+  })
+
+  it('names a Windows drive root by the drive', () => {
+    const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd: 'C:\\' })], tierOf, 'win32')
+    expect(mine!.name).toBe('C:')
+    expect(mine!.path).toBe('C:')
+  })
+
+  it('never hands the board an empty name for a cwd that is only separators', () => {
+    for (const cwd of ['/', '//', '\\', '\\\\']) {
+      const [mine] = aggregateMines([snapshot({ sessionId: 's1', cwd })], tierOf, 'linux')
+      expect(mine!.name).not.toBe('')
+      expect(mine!.path).not.toBe('')
+    }
+  })
+})
