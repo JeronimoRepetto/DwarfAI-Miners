@@ -872,6 +872,26 @@ export interface ProjectQuery {
  * `knownTier` is absent until a walk has measured one, and absent means
  * unmeasured rather than bronze (#41). `lastOpenedAt` is absent for a project
  * the user declared and no agent has been seen in: declaring is not opening.
+ *
+ * `materials` is this project's persisted per-material breakdown (#90),
+ * joined by the SAME id — `mineIdForPath`, see `id` below — the material
+ * ledger already keys every mine by. It is absent exactly when the ledger
+ * holds no row for this id at all, never a breakdown of zeros invented for a
+ * project nobody has ever mined — the same absent-means-unmeasured
+ * discipline `knownTier` uses (#41).
+ *
+ * There is deliberately no tier-PROGRESS figure alongside it. The tier a
+ * project is ON is classified from its SOURCE-CODE BYTE WEIGHT against the
+ * canonical thresholds the design source fixes (100/500/2048/8192 KB — see
+ * `TierThresholds` and `AppConfig.tierThresholds`'s default in
+ * main/config/config.ts), never from mined tokens: they are two unrelated
+ * axes, exactly as the materials themselves never convert into one another.
+ * `main/tier/tierService.ts` does not even keep the raw byte weight once it
+ * has classified a tier (`refresh()`'s cache entry keeps only the tier and
+ * when it was computed), so no per-project "current weight" figure exists
+ * anywhere today to pair with those thresholds. Pairing `materials`'s token
+ * totals against them instead would misrepresent progress on an axis they
+ * were never measured on.
  */
 export interface ProjectSummary {
   /** mineIdForPath — the same id the board and the ledger use, never a second scheme. */
@@ -884,6 +904,8 @@ export interface ProjectSummary {
   addedAt: number
   lastOpenedAt?: number
   lastProvider?: DwarfProvider
+  /** Absent means the ledger has no row for this id — never zeros for a project nobody has mined (#90). */
+  materials?: MaterialTotals
   live: boolean
 }
 

@@ -91,6 +91,23 @@ export function mineTotals(state: LedgerState, mineId: string): MaterialTotals {
 }
 
 /**
+ * This mine's breakdown exactly as persisted, or undefined when the ledger
+ * has no row for it at all — never the zero-filled placeholder mineTotals()
+ * returns for the same case (#90).
+ *
+ * Mirrors knownTierOf()'s undefined-means-unmeasured discipline (#41): a
+ * project browse spans mines nobody has ever mined, and a caller answering it
+ * must be able to tell "never produced" from "produced and happens to total
+ * zero". In practice a row can never actually BE all zero — accrue() only
+ * ever writes a positive delta — but the caller should not have to know that
+ * invariant to stay honest, so this checks presence directly rather than
+ * inferring it from the values.
+ */
+export function knownMineTotals(state: LedgerState, mineId: string): MaterialTotals | undefined {
+  return state.mines[mineId]
+}
+
+/**
  * The whole vault: every mine the ledger has ever recorded, summed.
  *
  * Deliberately not limited to mines with a live crew — the coal backfill
