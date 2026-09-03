@@ -139,6 +139,35 @@ export function stampMapSites(mines: Mine[], siteByMineId: ReadonlyMap<string, n
 }
 
 /**
+ * Mark every mine the projects store holds no row for (#165).
+ *
+ * A fourth composed step, for the reason `stampMapSites` is a third one: what
+ * the STORE knows is a remembered fact off disk, and aggregation is a
+ * projection of this poll's snapshots.
+ *
+ * The correction it exists for: the map draws the board and the Mines list
+ * draws store rows, so a mine could stand on the map with no card beside it —
+ * the third acceptance run photographed exactly that. They are one world, and
+ * this is the join. Three kinds of mine reach it honestly: one whose crew is
+ * only leaving or waiting, which the project observer deliberately does not
+ * count as a sighting; one in the poll or two before its first row is written;
+ * and a simulated valley, which never touches the store at all (#42).
+ *
+ * `recorded` is `null` when the store has never answered. That is not an empty
+ * store — it is no reading at all, and treating it as "none of these are
+ * recorded" would put the whole board in the list a second time. Nothing is
+ * stamped, and the panel goes on drawing what it always did.
+ *
+ * Absent means recorded, exactly like every other optional fact on the wire:
+ * only a mine main can positively say is missing carries the flag. The input is
+ * never mutated; stamped copies take its place.
+ */
+export function stampUnrecorded(mines: Mine[], recorded: ReadonlySet<string> | null): Mine[] {
+  if (recorded === null) return mines
+  return mines.map((mine) => (recorded.has(mine.id) ? mine : { ...mine, unrecorded: true }))
+}
+
+/**
  * One mine per project id, whatever the board was assembled from (#156).
  *
  * The second acceptance run photographed four markers over three projects. The

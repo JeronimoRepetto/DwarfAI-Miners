@@ -5,6 +5,7 @@ import {
   mergeDeclaredMines,
   mineIdForPath,
   stampMapSites,
+  stampUnrecorded,
   sumTokensObserved
 } from './aggregate'
 import {
@@ -504,5 +505,47 @@ describe('a mine whose cwd is a root', () => {
       expect(mine!.name).not.toBe('')
       expect(mine!.path).not.toBe('')
     }
+  })
+})
+
+/**
+ * One world for the map and the list (#165).
+ *
+ * The map draws the board; the Mines list draws store rows. A mine that reached
+ * the board with no row behind it therefore appeared on the map with no card,
+ * and the third acceptance run photographed the gap. The stamp is what lets the
+ * list surface it: a mine main can positively say the store has no row for.
+ */
+describe('stampUnrecorded', () => {
+  const mineOf = (overrides: Partial<ReturnType<typeof defaultMine>>) => ({
+    ...defaultMine(),
+    ...overrides
+  })
+  const board = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
+
+  it('marks the mines the store has no row for', () => {
+    const stamped = stampUnrecorded(board, new Set(['mine:a']))
+    expect(stamped.map((mine) => mine.unrecorded)).toEqual([undefined, true])
+  })
+
+  it('says nothing at all about a mine the store does hold', () => {
+    // Absent rather than false, like every other optional fact on the wire:
+    // the panel asks whether the flag is there, never what it says.
+    const stamped = stampUnrecorded(board, new Set(['mine:a', 'mine:b']))
+    expect(stamped[0]!.unrecorded).toBeUndefined()
+    expect(stamped[1]!.unrecorded).toBeUndefined()
+  })
+
+  it('stamps nothing when the store has never answered', () => {
+    // A store that answered nothing has recorded nothing AND knows nothing.
+    // Reading that as "none of them are recorded" would put the whole board in
+    // the list a second time — a simulated valley above all (#42).
+    expect(stampUnrecorded(board, null)).toBe(board)
+  })
+
+  it('never mutates the board it was given', () => {
+    const original = mineOf({ id: 'mine:a' })
+    stampUnrecorded([original], new Set<string>())
+    expect(original.unrecorded).toBeUndefined()
   })
 })

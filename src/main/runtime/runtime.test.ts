@@ -4198,3 +4198,127 @@ describe('AgentRuntime provider availability (#86)', () => {
     expect(JSON.stringify(list)).not.toContain('.local')
   })
 })
+
+/*
+ * One world for the map and the list (#165).
+ *
+ * The map draws the BOARD and the Mines panel draws STORE ROWS, so the two can
+ * disagree: the third acceptance run photographed a mine standing on the map
+ * with no card beside it. The join is a stamp on the board — a mine main can
+ * positively say the store has no row for — and the panel surfaces those in the
+ * list itself, so every mine on the map has a list identity.
+ *
+ * The mine that produced the report is the first case below: the project
+ * observer deliberately records only a project with a WORKING crew, so a mine
+ * whose crew is resting has been on the board for as long as the session has
+ * and has never been written.
+ */
+describe('AgentRuntime board-and-list coherence (#165)', () => {
+  const RESTING = 'C:\\X\\Resting'
+  const WORKED = 'C:\\X\\Worked'
+
+  function coherenceStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
+    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+  }
+
+  /** One session in `cwd` whose single dwarf is in `status`. */
+  function providerIn(cwd: string, status: 'working' | 'waiting'): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude' as const,
+          sessionId: `session-${cwd}`,
+          cwd,
+          status: status === 'working' ? ('busy' as const) : ('idle' as const),
+          updatedAt: 7,
+          dwarfs: [
+            {
+              id: `claude:${cwd}`,
+              provider: 'claude' as const,
+              role: 'foreman' as const,
+              name: 'foreman',
+              status,
+              sessionId: `session-${cwd}`
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function coherenceRuntime(options: {
+    projects?: ProjectsStore | null
+    providers?: Provider[]
+  }): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: options.providers ?? [],
+      projects: options.projects === undefined ? coherenceStore() : options.projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  it('marks a live mine the store has no row for', async () => {
+    // A resting crew is not a sighting the observer records, so this mine is on
+    // the map and has never reached the projects table.
+    const runtime = coherenceRuntime({ providers: [providerIn(RESTING, 'waiting')] })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    await runtime.settleProjects()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.unrecorded).toBe(true)
+  })
+
+  it('says nothing about a mine once its row exists', async () => {
+    const projects = coherenceStore()
+    const runtime = coherenceRuntime({ projects, providers: [providerIn(WORKED, 'working')] })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    await runtime.settleProjects()
+    // The second poll reads the row the first one wrote.
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect('unrecorded' in mines[0]!).toBe(false)
+  })
+
+  it('marks a declared mine as recorded, because declaring it wrote its row', async () => {
+    const projects = coherenceStore()
+    await projects.declare({ path: WORKED, at: 1 })
+    const runtime = coherenceRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect('unrecorded' in mines[0]!).toBe(false)
+  })
+
+  it('claims nothing at all when there is no store to have recorded anything', async () => {
+    // No reading is not an empty store. Stamping the whole board unrecorded
+    // here would list every mine twice — a simulated valley above all (#42).
+    const runtime = coherenceRuntime({
+      projects: null,
+      providers: [providerIn(RESTING, 'waiting')]
+    })
+
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect('unrecorded' in mines[0]!).toBe(false)
+  })
+})

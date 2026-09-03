@@ -686,6 +686,27 @@ export interface Mine {
    * places those itself, deterministically, and nothing is persisted.
    */
   mapSite?: number
+  /**
+   * True when the projects store holds no row for this mine (#165).
+   *
+   * The map draws the BOARD and the Mines list draws STORE ROWS, so the two
+   * could disagree: a mine reached the board with no card beside it and the
+   * third acceptance run photographed the gap. They are one world, and this is
+   * the fact that joins them — the list surfaces every board mine the store has
+   * no row for, built from the board itself and marked as unrecorded, so no
+   * mine on the map is missing from the list.
+   *
+   * Three kinds reach here, and none of them is an error: a mine whose crew is
+   * only leaving or waiting, which the observer deliberately does not count as
+   * a sighting; a project in the poll or two before its first row is written;
+   * and a simulated valley, which never touches the store at all (#42).
+   *
+   * ABSENT IS NOT FALSE. It means main could not say — a store that has never
+   * answered has recorded nothing and knows nothing, and stamping every mine
+   * unrecorded on that reading would put the whole board in the list twice
+   * over. Only a mine main can positively say is missing carries this.
+   */
+  unrecorded?: boolean
 }
 
 /**

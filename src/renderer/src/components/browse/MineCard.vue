@@ -27,6 +27,17 @@ const props = defineProps<{
    * at all, for the same reason an absent count prints no line.
    */
   status?: CardStatus
+  /**
+   * True when this card was built from the BOARD because the projects store
+   * holds no row for it (#165) — see lib/browse/boardRows.ts.
+   *
+   * The card says so out loud rather than passing the row off as a stored
+   * project: everything a store row carries and this one cannot — a tier, a
+   * weight, a vault, the date it was added — is missing for a reason, and a
+   * card that stayed silent about it would look like a broken stored project
+   * instead of an honest live one.
+   */
+  unrecorded?: boolean
 }>()
 
 const emit = defineEmits<{ open: [projectId: string] }>()
@@ -154,9 +165,13 @@ const enterable = computed(() => props.project.live)
         tier, no entrance and no bar read as broken rather than as busy, and
         this says which it is without claiming anything about the outcome.
       -->
-      <span v-else-if="measuring" class="card-measuring" role="status"
-        >Measuring the mine...</span
-      >
+      <span v-else-if="measuring" class="card-measuring" role="status">Measuring the mine...</span>
+      <!--
+        A mine on the board that the projects store has no row for (#165). It
+        takes the same column for the same reason: it is why there is no bar,
+        no tier and no vault beside the name.
+      -->
+      <span v-else-if="unrecorded" class="card-unrecorded">Working now - not recorded yet</span>
       <!--
         The mock's lower-right corner. Drawn only where the board proved the
         fact, and the row itself disappears when it proved neither — a pair of
@@ -370,12 +385,20 @@ button.card-body:focus-visible {
  * finished — the row does not reflow when the measurement lands (#165). One
  * line, always, for the same reason .level-label is.
  */
-.card-measuring {
+.card-measuring,
+.card-unrecorded {
   grid-column: 3;
   min-width: 0;
   color: var(--color-accent);
   font-size: var(--text-meta);
   white-space: nowrap;
+}
+/*
+ * Quieter than the measuring line: a mine being measured is about to become a
+ * full card, and one the store has no row for may simply never be.
+ */
+.card-unrecorded {
+  color: var(--color-tooltip-text);
 }
 /*
  * The mock parks both markers against the card's lower-right corner, clear of
