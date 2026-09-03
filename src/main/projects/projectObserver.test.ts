@@ -285,3 +285,107 @@ describe('ProjectObserver — reporting what it wrote', () => {
     expect(calls).toBe(0)
   })
 })
+
+/*
+ * A CREWLESS PROJECT IS STILL MEASURED (#156).
+ *
+ * The observer's rule — record only a mine somebody is working — is what keeps
+ * "added" and "opened" apart, and it stays. What it must not also decide is
+ * whether a MEASUREMENT is worth keeping: the walk weighed the folder either
+ * way, the card already classifies from that weight, and the SQL tier filter
+ * reads the column. Leaving the column NULL for every project nobody had opened
+ * is what made the browse's Cropper filter miss the two cards saying Cropper.
+ */
+describe('ProjectObserver measuring a crewless project (#156)', () => {
+  const declared = (overrides: Partial<Mine> = {}): Mine =>
+    mine({ dwarfs: [], declared: true, ...overrides })
+
+  it('records the tier a walk measured for a project nobody is working', async () => {
+    const projects = store()
+    await projects.declare({ path: 'C:\\X\\Proj', at: 500 })
+    const observer = new ProjectObserver({ store: projects, knownTierOf: measured })
+
+    await observer.observe([declared()], 1_000)
+
+    const result = await projects.get('mine:c:\\x\\proj')
+    expect(result.ok && result.value?.knownTier).toBe('gold')
+  })
+
+  it('does not call that an opening: declaring is still not working', async () => {
+    const projects = store()
+    await projects.declare({ path: 'C:\\X\\Proj', at: 500 })
+    const observer = new ProjectObserver({ store: projects, knownTierOf: measured })
+
+    await observer.observe([declared()], 1_000)
+
+    const result = await projects.get('mine:c:\\x\\proj')
+    expect(result.ok && result.value?.lastOpenedAt).toBeNull()
+    expect(result.ok && result.value?.origin).toBe('declared')
+  })
+
+  it('writes nothing at all while the walk is still running', async () => {
+    // #41 intact: the provisional bronze never reaches the column, whether or
+    // not anybody is in the mine.
+    const projects = store()
+    await projects.declare({ path: 'C:\\X\\Proj', at: 500 })
+    const observer = new ProjectObserver({ store: projects, knownTierOf: unwalked })
+
+    await observer.observe([declared({ tier: 'bronze' })], 1_000)
+
+    const result = await projects.get('mine:c:\\x\\proj')
+    expect(result.ok && result.value?.knownTier).toBeNull()
+  })
+
+  it('brings a project the store has never seen into it no other way', async () => {
+    // A simulated valley's mines are not folders on anybody's disk (#42), and a
+    // measurement must not be a second door into the user's project list.
+    const projects = store()
+    const observer = new ProjectObserver({ store: projects, knownTierOf: measured })
+
+    await observer.observe([declared()], 1_000)
+
+    const listed = await projects.list()
+    expect(listed.ok && listed.value).toEqual([])
+  })
+
+  it('writes once per verdict rather than once per poll', async () => {
+    const projects = store()
+    await projects.declare({ path: 'C:\\X\\Proj', at: 500 })
+    const spy = vi.spyOn(projects, 'recordMeasuredTier')
+    const observer = new ProjectObserver({ store: projects, knownTierOf: measured })
+
+    await observer.observe([declared()], 1_000)
+    await observer.observe([declared()], 3_000)
+    await observer.observe([declared()], 5_000)
+
+    expect(spy).toHaveBeenCalledOnce()
+  })
+
+  it('records the new verdict when a re-walk changes its mind', async () => {
+    const projects = store()
+    await projects.declare({ path: 'C:\\X\\Proj', at: 500 })
+    let tier: MineTier = 'copper'
+    const observer = new ProjectObserver({ store: projects, knownTierOf: () => tier })
+
+    await observer.observe([declared()], 1_000)
+    tier = 'gold'
+    await observer.observe([declared()], 2_000)
+
+    const result = await projects.get('mine:c:\\x\\proj')
+    expect(result.ok && result.value?.knownTier).toBe('gold')
+  })
+
+  it('still refuses to record a mine whose whole crew is walking out', async () => {
+    // A departure is not a sighting, and that is unchanged — but the walk still
+    // measured the folder, so the tier is recorded and the stamp is not.
+    const projects = store()
+    await projects.declare({ path: 'C:\\X\\Proj', at: 500 })
+    const observer = new ProjectObserver({ store: projects, knownTierOf: measured })
+
+    await observer.observe([mine({ dwarfs: [worker({ status: 'leaving' })] })], 1_000)
+
+    const result = await projects.get('mine:c:\\x\\proj')
+    expect(result.ok && result.value?.lastOpenedAt).toBeNull()
+    expect(result.ok && result.value?.knownTier).toBe('gold')
+  })
+})

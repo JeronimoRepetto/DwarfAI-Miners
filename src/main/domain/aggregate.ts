@@ -139,6 +139,53 @@ export function stampMapSites(mines: Mine[], siteByMineId: ReadonlyMap<string, n
 }
 
 /**
+ * One mine per project id, whatever the board was assembled from (#156).
+ *
+ * The second acceptance run photographed four markers over three projects. The
+ * board is assembled from four sources — the provider snapshots, the projects
+ * the user declared, the placement stamp, and the lifecycle tracker's memory of
+ * a session that has just ended — and every one of them derives its id through
+ * `mineIdForPath`. So two mines that reach the same board under one id ARE one
+ * project, and drawing both is never right: the map keys its markers by mine id
+ * and places an unplaced mine itself, so a double shows up as one project
+ * standing in two places at once.
+ *
+ * The last step of the assembly rather than a fifth rule inside each join: an
+ * invariant checked where the whole board is in one list cannot be broken by the
+ * next join somebody adds.
+ *
+ * A MERGE, never a pick. Dropping the second mine would take a live agent off
+ * the board, which is a worse failure than the double it fixes — so the crews
+ * are concatenated (a dwarf that reached the board twice is still listed once),
+ * the observed tokens are summed because they are counted per dwarf, and the
+ * facts only one side is likely to carry — a persisted location, a declaration —
+ * survive from whichever side has them. The input is never mutated, and a board
+ * with nothing to collapse comes back as itself.
+ */
+export function collapseDuplicateMines(mines: Mine[]): Mine[] {
+  const byId = new Map<string, Mine>()
+  for (const mine of mines) {
+    const seen = byId.get(mine.id)
+    if (seen === undefined) {
+      byId.set(mine.id, mine)
+      continue
+    }
+    const dwarfIds = new Set(seen.dwarfs.map((dwarf) => dwarf.id))
+    byId.set(mine.id, {
+      ...seen,
+      dwarfs: [...seen.dwarfs, ...mine.dwarfs.filter((dwarf) => !dwarfIds.has(dwarf.id))],
+      tokensObserved: seen.tokensObserved + mine.tokensObserved,
+      updatedAt: Math.max(seen.updatedAt, mine.updatedAt),
+      ...(seen.mapSite === undefined && mine.mapSite !== undefined
+        ? { mapSite: mine.mapSite }
+        : {}),
+      ...(seen.declared === true || mine.declared === true ? { declared: true } : {})
+    })
+  }
+  return byId.size === mines.length ? mines : [...byId.values()]
+}
+
+/**
  * The mine id for one project path, using the same platform-aware
  * normalization aggregateMines groups by.
  *

@@ -31,6 +31,12 @@ const label = computed(() => {
 <template>
   <div class="mine-marker" :data-tier="mine.tier">
     <button class="marker-hit" type="button" :aria-label="label" @click="emit('open', mine.id)">
+      <!--
+        The light comes FIRST so it sits behind the hexagon without either of
+        them needing a z-index: both children share one grid cell, so the
+        painter's order is the stacking order.
+      -->
+      <span class="marker-light" aria-hidden="true"></span>
       <span class="marker-hex" aria-hidden="true"></span>
     </button>
   </div>
@@ -81,6 +87,16 @@ const label = computed(() => {
   cursor: pointer;
   background: transparent;
 }
+/*
+  Light and hexagon occupy the SAME cell rather than stacking into two grid
+  rows, so the light is centred on the marker instead of sitting under it. The
+  light is allowed to overflow the 22px hit box — it is 30px across at rest and
+  wider at the top of its beat, and MapView's edge clamp is derived from that
+  drawn size rather than from the button (see MARKER_HALF_PX there).
+*/
+.marker-hit > * {
+  grid-area: 1 / 1;
+}
 .marker-hit:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
@@ -93,10 +109,33 @@ const label = computed(() => {
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
   background: var(--marker-colour);
   /*
-    The "pulsing light" the design asks for, as a halo around the hexagon rather
-    than a change to the hexagon itself: the shape identifies a mine and the
+    A steady bloom on the shape itself, so a marker reads as lit even at the
+    bottom of the beat. It never animates: the shape identifies a mine and the
     colour identifies its tier, so neither may be what flickers.
   */
+  filter: drop-shadow(0 0 3px var(--marker-colour));
+}
+/*
+  THE PULSING LIGHT (#156), and why #149's did not read as one.
+
+  It animated one property: the BLUR RADIUS of a drop-shadow painted in the
+  marker's own colour, sweeping 2px to 7px around a 10px opaque hexagon of that
+  same colour. Nothing got brighter, nothing got bigger, and nothing changed
+  opacity — over a painted map, a few pixels of softer edge is not light, and
+  the acceptance run reports a flat dot that is hard to find.
+
+  So the light is a thing of its own: a radial bloom three times the marker's
+  width, breathing in BRIGHTNESS and SIZE behind a hexagon that still never
+  flickers. Those are the two properties an emitted light actually changes, and
+  they are the two a compositor can animate without repainting the map under it.
+*/
+.marker-light {
+  width: calc(var(--size-marker-width) * 3);
+  height: calc(var(--size-marker-width) * 3);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--marker-colour) 0%, transparent 70%);
+  /* Inert: the hexagon's button is what a pointer is meant to find. */
+  pointer-events: none;
   animation: marker-pulse 2.4s ease-in-out infinite;
 }
 .marker-hit:hover .marker-hex {
@@ -105,10 +144,12 @@ const label = computed(() => {
 @keyframes marker-pulse {
   0%,
   100% {
-    filter: drop-shadow(0 0 2px var(--marker-colour));
+    opacity: 0.35;
+    scale: 0.75;
   }
   50% {
-    filter: drop-shadow(0 0 7px var(--marker-colour));
+    opacity: 0.85;
+    scale: 1.25;
   }
 }
 /*
@@ -118,9 +159,10 @@ const label = computed(() => {
   no light at all would read as a different kind of marker.
 */
 @media (prefers-reduced-motion: reduce) {
-  .marker-hex {
+  .marker-light {
     animation: none;
-    filter: drop-shadow(0 0 4px var(--marker-colour));
+    opacity: 0.6;
+    scale: 1;
   }
   .marker-hit:hover .marker-hex {
     scale: 1;

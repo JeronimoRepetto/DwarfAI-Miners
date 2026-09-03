@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   aggregateMines,
+  collapseDuplicateMines,
   mergeDeclaredMines,
   mineIdForPath,
   stampMapSites,
@@ -386,5 +387,90 @@ describe('stampMapSites', () => {
     const mine = { ...defaultMine(), id: mineIdForPath(path, 'win32'), path }
     const stamped = stampMapSites([mine], new Map([[mineIdForPath(path, 'win32'), 55]]))
     expect(stamped[0]!.mapSite).toBe(55)
+  })
+})
+
+/*
+ * ONE MINE PER PROJECT, whatever the board was assembled from (#156).
+ *
+ * The acceptance run photographed four markers over three projects. The board
+ * is assembled from four sources — the provider snapshots, the projects the
+ * user declared, the placement stamp and the lifecycle tracker's memory of a
+ * session that has just ended — and every one of them derives its id through
+ * `mineIdForPath`. So two mines that reach the same board under one id ARE one
+ * project, and drawing both is never right: the map keys its markers by mine
+ * id, and the panel places an unplaced mine itself, so the double shows up as
+ * the same project standing in two places.
+ *
+ * Enforced once, at the end of the assembly, rather than audited across four
+ * joins forever. Collapsing is a MERGE and never a pick: dropping the second
+ * mine would take a live agent off the board, which is a worse failure than the
+ * double it fixes.
+ */
+describe('collapseDuplicateMines', () => {
+  function mineOf(overrides: Partial<ReturnType<typeof defaultMine>>) {
+    return { ...defaultMine(), ...overrides }
+  }
+
+  it('leaves a board with nothing to collapse exactly as it is', () => {
+    const mines = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
+    expect(collapseDuplicateMines(mines)).toBe(mines)
+  })
+
+  it('publishes one mine per id', () => {
+    const mines = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
+    expect(collapseDuplicateMines(mines).map((mine) => mine.id)).toEqual(['mine:a', 'mine:b'])
+  })
+
+  it('keeps every dwarf both of them carried', () => {
+    const collapsed = collapseDuplicateMines([
+      mineOf({ id: 'mine:a', dwarfs: [{ ...defaultDwarf(), id: 'claude:1' }] }),
+      mineOf({ id: 'mine:a', dwarfs: [{ ...defaultDwarf(), id: 'codex:2' }] })
+    ])
+    expect(collapsed[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual(['claude:1', 'codex:2'])
+  })
+
+  it('never lists one dwarf twice, however many mines carried it', () => {
+    // The lifecycle tracker rebuilds a vanished mine from what it remembers, so
+    // the same departing dwarf can reach the board from two directions.
+    const leaving = { ...defaultDwarf(), id: 'claude:1', status: 'leaving' as const }
+    const collapsed = collapseDuplicateMines([
+      mineOf({ id: 'mine:a', dwarfs: [leaving] }),
+      mineOf({ id: 'mine:a', dwarfs: [leaving] })
+    ])
+    expect(collapsed[0]!.dwarfs).toHaveLength(1)
+  })
+
+  it('adds up what each of them observed, because the tokens are per dwarf', () => {
+    const collapsed = collapseDuplicateMines([
+      mineOf({ id: 'mine:a', tokensObserved: 30 }),
+      mineOf({ id: 'mine:a', tokensObserved: 12 })
+    ])
+    expect(collapsed[0]!.tokensObserved).toBe(42)
+  })
+
+  it('keeps the most recent activity, which is what the board sorts by', () => {
+    const collapsed = collapseDuplicateMines([
+      mineOf({ id: 'mine:a', updatedAt: 10 }),
+      mineOf({ id: 'mine:a', updatedAt: 90 })
+    ])
+    expect(collapsed[0]!.updatedAt).toBe(90)
+  })
+
+  it('keeps a location and a declaration either of them carried', () => {
+    // The two facts a duplicate is most likely to be missing: the placement
+    // stamp joins by id, and the declaration merge only marks the mine it found.
+    const collapsed = collapseDuplicateMines([
+      mineOf({ id: 'mine:a', mapSite: 71 }),
+      mineOf({ id: 'mine:a', declared: true })
+    ])
+    expect(collapsed[0]!.mapSite).toBe(71)
+    expect(collapsed[0]!.declared).toBe(true)
+  })
+
+  it('never mutates the board it was given', () => {
+    const first = mineOf({ id: 'mine:a', dwarfs: [{ ...defaultDwarf(), id: 'claude:1' }] })
+    collapseDuplicateMines([first, mineOf({ id: 'mine:a' })])
+    expect(first.dwarfs).toHaveLength(1)
   })
 })

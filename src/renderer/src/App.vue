@@ -20,6 +20,7 @@ import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { INTERIOR_ART_SIZE } from './lib/art'
+import { shellComposition } from './lib/shell/composition'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot, ShellArea } from './types'
@@ -45,6 +46,18 @@ const {
   toggle: toggleLayout,
   setEdge
 } = usePanelLayout()
+
+/**
+ * Which of the book's three compositions is on screen (#156).
+ *
+ * Named once, here, and handed to everything that has to know — the shell's own
+ * ground and padding, and the rail. Read from `expanded` alone, the mine-only
+ * composition was indistinguishable from the collapsed rail, which is what left
+ * a void between the navigation column and the mine, took the amber frame with
+ * it, grew the interior into padding that was no longer reserved, and put a
+ * second app mark in the gap. See lib/shell/composition.ts.
+ */
+const composition = computed(() => shellComposition(layout.value))
 
 // The hover line explains what the CURRENT state does; the accessible name
 // stays stable and aria-pressed carries the state (see the pin button below).
@@ -200,17 +213,6 @@ function toggleSecondary(): void {
   void toggleLayout(viewState.mineId !== null)
 }
 
-/**
- * The app mark above the navigation stack: the whole shell back into the rail.
- *
- * Which mine is open is NOT forgotten — `useView` keeps it, so the next press of
- * the arrow brings the interior back with the panel. The layout says what is
- * drawn, never what the user last chose.
- */
-function collapseShell(): void {
-  void applyLayout({ expanded: false, mineOpen: false })
-}
-
 function hidePanel(): void {
   window.api.hidePanel()
 }
@@ -337,7 +339,7 @@ onBeforeUnmount(() => unsubscribe?.())
 <template>
   <div
     class="shell"
-    :class="[`edge-${layout.edge}`, layout.expanded ? 'is-open' : 'is-closed']"
+    :class="[`edge-${layout.edge}`, `is-${composition}`]"
     :style="{ '--interior-column-aspect': interiorColumnAspect }"
   >
     <!--
@@ -345,7 +347,7 @@ onBeforeUnmount(() => unsubscribe?.())
       they are one surface in the design: the same #f6b644, with the arrow
       turned round.
     -->
-    <EdgeRail :edge="layout.edge" :expanded="layout.expanded" @toggle="toggleSecondary" />
+    <EdgeRail :edge="layout.edge" :composition="composition" @toggle="toggleSecondary" />
 
     <template v-if="layout.expanded || layout.mineOpen">
       <div v-if="layout.expanded" class="shell-secondary">
@@ -429,11 +431,17 @@ onBeforeUnmount(() => unsubscribe?.())
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
       </div>
 
+      <!--
+        The app mark hides the WINDOW (#156), which is the same hidePanel the
+        global shortcut and Settings' own hide control already ask for. The
+        layout is deliberately untouched: the panel that comes back is the one
+        that went away, mine and page and all.
+      -->
       <ShellNav
         :area="viewState.area"
         :broken="shortcutBroken"
         @select="selectArea"
-        @collapse="collapseShell"
+        @hide="hidePanel"
       />
 
       <!--
@@ -456,6 +464,7 @@ onBeforeUnmount(() => unsubscribe?.())
           <MineScene
             :key="currentMine.id"
             :mine="currentMine"
+            :arrived="state.arrived"
             :activating-id="activating"
             :send-states="messagingState.byDwarfId"
             :kick-states="kickingState.byDwarfId"
@@ -498,10 +507,22 @@ onBeforeUnmount(() => unsubscribe?.())
  * DOCKED side so both edges look the same: `flex-end` is the right of a `row`
  * and the left of a `row-reverse`, which is exactly the docked side each time.
  */
-.shell.is-closed {
+.shell.is-rail {
   justify-content: flex-end;
 }
-.shell.is-open {
+/*
+ * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,
+ * the 8px padding, the radius and the shadow belong to any composition that has
+ * something in it, not only to the one with a secondary panel.
+ *
+ * The padding is load-bearing rather than decoration. main reserves it in the
+ * window (SHELL_FRAME_WIDTH in main/shell/panelBounds.ts) and the mine column's
+ * width is derived from the height it leaves, so a composition that skipped it
+ * left the window 8px wider than the columns it drew — the void the acceptance
+ * run photographed — and grew the painting into the difference.
+ */
+.shell.is-mine,
+.shell.is-pages {
   gap: var(--space-nav-gap);
   padding: var(--space-nav-gap);
   border-radius: var(--radius-default);

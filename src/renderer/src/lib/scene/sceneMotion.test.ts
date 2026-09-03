@@ -236,6 +236,44 @@ describe('createWalkBoard', () => {
       expect(seen.walking('a')).toBe(false)
     })
 
+    /*
+     * #156's ninth correction, and the case the first-snapshot rule alone can
+     * never get right.
+     *
+     * A mine with no crew is not on the board at all, so its interior is not
+     * mounted and this board does not exist. Launch the first agent and the
+     * scene mounts WITH that agent already in it — which the rule above reads as
+     * "was already at work before anybody looked", and the maintainer watched
+     * his foreman materialise on the spot. The second launch walked, because by
+     * then the board had been alive to see the mine empty.
+     *
+     * So the exemption is per-DWARF-SET rather than per-first-sync: the panel
+     * has been polling all along and knows which dwarfs were not on the previous
+     * snapshot, and one of those is an arrival whenever this board first sees
+     * it. A crew that was on the board before the panel opened its mine is not.
+     */
+    it('walks in a dwarf the panel reports as newly arrived, even on the first sync', () => {
+      const seen = watch()
+      seen.board.sync(targets({ b: STATION }), straight, spawnAt, new Set(['b']))
+      expect(seen.walking('b')).toBe(true)
+    })
+
+    it('still places the opening crew when the panel reports no arrival', () => {
+      // Switching from one mine to another mounts a fresh board over a crew
+      // that has been at work for hours; nothing about that is an arrival.
+      const seen = watch()
+      seen.board.sync(targets({ a: STATION }), straight, spawnAt, new Set())
+      expect(seen.walking('a')).toBe(false)
+    })
+
+    it('places the rest of a crew that arrived beside one newcomer', () => {
+      const seen = watch()
+      seen.board.sync(targets({ a: STATION, b: SPAWN }), straight, spawnAt, new Set(['b']))
+      expect(seen.walking('a')).toBe(false)
+      expect(seen.walking('b')).toBe(false) // already standing on its own spawn
+      expect(seen.at('a')).toEqual(STATION)
+    })
+
     it('leaves the arrival standing at its station once it gets there', () => {
       const seen = watch()
       seen.board.sync(targets({}), straight, spawnAt)

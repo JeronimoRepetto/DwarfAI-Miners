@@ -317,16 +317,90 @@ describe('useProjectBrowse add project', () => {
     expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
   })
 
-  it('refreshes under the filters that are showing, not a fresh set', async () => {
+  /*
+   * AMENDED for #156's seventh correction, and this case IS the reproduction.
+   *
+   * It asserted that the reload after an adopt kept the filters showing, which
+   * is why the maintainer added a folder during the acceptance run and no card
+   * appeared: he had a tier chip selected — the same run that reported the
+   * Cropper filter — and a folder nobody has walked has no measured tier, so it
+   * matches no tier chip at all. `browseQuery.ts` says so in as many words:
+   * "All is the only chip it appears under". The search box does the same thing
+   * to a folder whose name does not contain what was typed.
+   *
+   * The maintainer's ruling: an Add that succeeds must show the card it just
+   * made. The add is the user's most recent instruction, a filter set a moment
+   * earlier is not a reason to hide the thing they just asked for, and a button
+   * that reports success while the list does not change is indistinguishable
+   * from one that is broken. The subject is unchanged: what the reload after an
+   * adopt asks for.
+   */
+  it('clears the filters, so the folder just added is on the list it reloads', async () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubApi({
       queryProjects,
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
     })
-    const { setTier, addProject } = useProjectBrowse()
+    const { filters, setTier, setSearch, addProject } = useProjectBrowse()
+    await setTier('gold')
+    await setSearch('smel')
+    await addProject()
+    const asked = queryProjects.mock.lastCall![0] as Record<string, unknown>
+    expect(asked.tier).toBeUndefined()
+    expect(asked.nameContains).toBeUndefined()
+    expect(filters.value).toEqual({ search: '', tier: null, direction: 'desc' })
+  })
+
+  it('keeps the filters when the picker was closed without a choice', async () => {
+    // Backing out changed nothing, so nothing the user set should change either.
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' })
+    })
+    const { filters, setTier, addProject } = useProjectBrowse()
     await setTier('gold')
     await addProject()
-    expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ tier: 'gold' }))
+    expect(filters.value.tier).toBe('gold')
+  })
+
+  /*
+   * The other half of #156's seventh correction: re-declaring a folder the
+   * store already holds. Clearing the filters does not reach that one — the
+   * project keeps the date it was first seen, so it stays wherever it already
+   * sat in the order and can be pages down. Main names the project it adopted,
+   * and the panel makes sure that card is on screen.
+   */
+  it('surfaces a folder that was already known, wherever it sat in the list', async () => {
+    const known = defaultProject({ id: 'mine:c:/dev/known', name: 'known' })
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: known.id, project: known })
+    })
+    const { projects, addProject } = useProjectBrowse()
+    await addProject()
+    expect(projects.value[0]).toMatchObject({ id: known.id })
+  })
+
+  it('never lists the adopted folder twice when the reload already has it', async () => {
+    const known = defaultProject({ id: 'p0', name: 'p0' })
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(3)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: known.id, project: known })
+    })
+    const { projects, addProject } = useProjectBrowse()
+    await addProject()
+    expect(projects.value.filter((project) => project.id === known.id)).toHaveLength(1)
+  })
+
+  it('still reloads when main names no project, which older builds do not send', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(2))
+    stubApi({
+      queryProjects,
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
+    })
+    const { projects, addProject } = useProjectBrowse()
+    await addProject()
+    expect(projects.value).toHaveLength(2)
   })
 
   it('says nothing at all when the picker was closed without a choice', async () => {

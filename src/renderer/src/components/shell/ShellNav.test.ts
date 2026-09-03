@@ -52,25 +52,32 @@ describe('ShellNav', () => {
   })
 
   /*
-   * #153's fifth correction. The mark was a decoration and the rail's arrow
-   * collapsed the whole shell; the maintainer's ruling swaps them — the arrow
-   * closes only the secondary panel, and the app mark is what puts the whole
-   * thing back in the rail.
+   * AMENDED for #156's second correction. #153 made the mark the control that
+   * collapsed the whole shell into the rail; the maintainer's ruling now is that
+   * it HIDES the window outright, exactly as the global shortcut does. The two
+   * other controls keep the jobs #153 gave them — the arrow closes the left
+   * page, the interior's round close closes the right one — so collapsing into
+   * the rail is still reachable, and this control stops being a third way to do
+   * something the arrow already does.
+   *
+   * Both cases kept their subject: the mark is still a real button that decides
+   * nothing itself. What changed is which action it names and asks for.
    */
-  it('makes the app mark the control that collapses the whole shell', () => {
+  it('makes the app mark the control that hides the window', () => {
     const nav = mountNav()
     const mark = nav.find('.nav-mark')
     expect(mark.element.tagName).toBe('BUTTON')
     expect(mark.attributes('type')).toBe('button')
-    expect(mark.attributes('aria-label')).toMatch(/collapse/i)
+    expect(mark.attributes('aria-label')).toMatch(/hide/i)
+    expect(mark.attributes('aria-label')).not.toMatch(/collapse/i)
   })
 
-  it('asks to be collapsed, and collapses nothing itself', () => {
+  it('asks to be hidden, and hides nothing itself', () => {
     // Same rule the rail already keeps: the window is main's, so this reports
-    // the press and renders whatever layout comes back.
+    // the press and lets main answer for the window.
     const nav = mountNav()
     nav.find('.nav-mark').trigger('click')
-    expect(nav.emitted('collapse')).toHaveLength(1)
+    expect(nav.emitted('hide')).toHaveLength(1)
     expect(nav.emitted('select')).toBeUndefined()
   })
 

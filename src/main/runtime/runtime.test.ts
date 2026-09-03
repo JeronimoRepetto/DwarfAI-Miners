@@ -2669,13 +2669,36 @@ describe('AgentRuntime declared mines (#85)', () => {
     return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
   }
 
+  /*
+   * AMENDED for #156's seventh correction. The verdict was asserted as the WHOLE
+   * object, and it now carries the adopted row as well — the panel has to be
+   * able to put that card on screen itself, because re-declaring a folder the
+   * store already knows leaves it wherever it already sat in the date order.
+   * The subject is unchanged: which id the verdict names.
+   */
   it('adopts the folder the picker returned and reports the id the ledger uses', async () => {
     const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
 
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toEqual({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
+    expect(result.reason).toBeUndefined()
+  })
+
+  it('names the project it adopted, shaped exactly as the browse lists one', async () => {
+    // Shaped by the same toSummary a query answers with, so the card the panel
+    // draws from this verdict is the card it would have drawn from a page.
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.project).toMatchObject({
+      id: mineIdForPath(ADOPTED),
+      path: ADOPTED,
+      declared: true
+    })
   })
 
   it('keeps a declared mine on the board with no crew, poll after poll', async () => {
@@ -3725,5 +3748,110 @@ describe('AgentRuntime map placement (#136)', () => {
     expect(mines.every((mine) => !('mapSite' in mine))).toBe(true)
     const stored = await projects.list()
     expect(stored.ok && stored.value).toEqual([])
+  })
+
+  /*
+   * The third joint, and the one the second acceptance run found (#156).
+   *
+   * The board is assembled in four steps and the placement stamp was the third
+   * of them, with the lifecycle tracker running AFTER it. That tracker is the
+   * one step that can put a mine on the board which was not on it a moment
+   * before: when the last session in a project ends, the whole mine leaves the
+   * provider's snapshot, and the tracker rebuilds it from what it remembers so
+   * the departing dwarf has somewhere to walk out of. Rebuilt after the stamp,
+   * that mine carried no location at all — so for the length of the grace
+   * window the panel fell back to placing it itself, and one project stood in
+   * two different places on the map within a second of each other.
+   */
+  it('keeps a mine where the store put it while its last session walks out', async () => {
+    let now = 0
+    const working = {
+      id: 'claude:session-1',
+      provider: 'claude' as const,
+      role: 'foreman' as const,
+      name: 'foreman',
+      status: 'working' as const,
+      sessionId: 'session-1'
+    }
+    const busy = [
+      {
+        provider: 'claude' as const,
+        sessionId: 'session-1',
+        cwd: WALKED,
+        status: 'busy' as const,
+        updatedAt: 1,
+        dwarfs: [working]
+      }
+    ]
+    // Twice: the location is chosen by the write the observer makes during the
+    // first poll, so the SECOND is the first board that carries it.
+    const scan = vi
+      .fn<Provider['scan']>()
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValue([])
+    const projects = placementStore()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+    await runtime.refresh()
+    const placed = runtime.getMines()[0]!.mapSite
+
+    now = 1_000
+    await runtime.refresh()
+    const leaving = runtime.getMines()
+    runtime.stop()
+
+    expect(placed).toBeGreaterThan(0)
+    expect(leaving).toHaveLength(1)
+    expect(leaving[0]!.dwarfs).toMatchObject([{ status: 'leaving' }])
+    expect(leaving[0]!.mapSite).toBe(placed)
+  })
+
+  /*
+   * The link the two unit suites either side of it cannot see (#156): the
+   * observer only ever measures the mines the runtime hands it, so the board it
+   * is given has to be the WHOLE board — crewless declared projects included.
+   * Hand it the worked mines alone and the store's tier column goes back to
+   * being NULL for exactly the projects whose cards state a tier, which is the
+   * disagreement the browse filter was reported for.
+   */
+  it('measures a declared project nobody is working, so the filter can find it', async () => {
+    const projects = placementStore()
+    await projects.declare({ path: WALKED, at: 1 })
+    // Its own runtime rather than placementRuntime's, for the FakeFs: the tier
+    // walk is what has to produce a verdict here, and it must weigh an
+    // in-memory folder rather than whatever the host happens to have.
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [],
+      fs: new FakeFs(),
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+
+    await runtime.loadDeclared()
+    // Polled more than once on purpose: the first board SCHEDULES the walk in
+    // the background, so a later poll is the one that has a verdict to record.
+    for (let poll = 0; poll < 4; poll++) {
+      await runtime.refresh()
+      await runtime.settleProjects()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    const stored = await projects.get(mineIdForPath(WALKED))
+    runtime.stop()
+
+    expect(stored.ok && stored.value?.knownTier).not.toBeNull()
+    // Still added rather than opened: measuring is not working (#92).
+    expect(stored.ok && stored.value?.lastOpenedAt).toBeNull()
+    expect(stored.ok && stored.value?.origin).toBe('declared')
   })
 })

@@ -108,6 +108,13 @@ export interface ProjectDeclaration {
   at: number
 }
 
+/** One verdict from a tier walk, for a project that already exists (#156). */
+export interface ProjectMeasurement {
+  path: string
+  /** From knownTierOf() only — a walk still running has measured nothing. */
+  knownTier: MineTier
+}
+
 /**
  * What removing a declaration did (#85).
  *
@@ -139,6 +146,24 @@ export interface ProjectsStore {
   declare(declaration: ProjectDeclaration): Promise<ProjectsResult<ProjectRecord>>
   /** Record a sighting; creates the project as discovered when it is new. */
   upsertObserved(observation: ProjectObservation): Promise<ProjectsResult<ProjectRecord>>
+  /**
+   * Record the tier a walk MEASURED, for a project the store already holds
+   * (#156).
+   *
+   * Separate from `upsertObserved` because a measurement is not a sighting.
+   * The browse's tier filter reads `known_tier` in SQL while a card classifies
+   * from the weight the same walk produced, so a folder the user declared and
+   * never opened carried NULL forever and the filter missed the very cards that
+   * named its tier. The walk weighs a folder whether or not anybody is in it,
+   * and this is where that verdict lands.
+   *
+   * It writes ONE column. `last_opened_at`, `origin` and `last_provider` are
+   * untouched, so declaring a folder is still not opening it (#92), and it
+   * creates nothing: a project enters this list by being declared or by being
+   * seen worked in, and a measurement must not become a third door. Answers
+   * null for a path the store has never been shown.
+   */
+  recordMeasuredTier(measurement: ProjectMeasurement): Promise<ProjectsResult<ProjectRecord | null>>
   /** Undo a declaration. Never touches a project that was only ever discovered. */
   removeDeclared(id: string): Promise<ProjectsResult<ProjectRemoval>>
   get(id: string): Promise<ProjectsResult<ProjectRecord | null>>
@@ -302,6 +327,19 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
           ]
         )
         return required(readOne(db, id))
+      })
+    },
+
+    async recordMeasuredTier(measurement) {
+      const id = mineIdForPath(measurement.path, platform)
+      return withDb((db) => {
+        // UPDATE and not an upsert: see the interface. A re-walk's newer verdict
+        // replaces the older one rather than COALESCEing behind it — the card
+        // already shows the new classification the moment the walk produces it,
+        // and a column that kept the first answer forever is exactly the
+        // disagreement this method exists to end.
+        db.run('UPDATE projects SET known_tier = ? WHERE id = ?', [measurement.knownTier, id])
+        return readOne(db, id)
       })
     },
 

@@ -169,10 +169,30 @@ const enterable = computed(() => props.project.live)
   border-radius: var(--radius-default);
   background: var(--color-panel);
 }
+/*
+ * THREE DECLARED TRACKS, and every child placed in one by name (#156).
+ *
+ * It was a flex row, so the level column began wherever the text column
+ * happened to stop — and that is whatever its longest line needs. Measured over
+ * four cards in a real build, the same column started 348px, 339px and 634px
+ * from its card's left edge, and was missing from the fourth. A card with no
+ * painting slid its text into the painting's place and took everything after it
+ * along.
+ *
+ * A track holds whether or not anything is in it, which is the whole point: a
+ * project with no painting and a project nobody has walked both leave a gap
+ * rather than closing the row up.
+ *
+ * The two flexible tracks share what is left equally rather than one taking
+ * what the other did not want. No new pixel constant: the design source names a
+ * card height and a painting width and no third width, and half of the rest is
+ * within a few pixels of what the flex row was already giving the text.
+ */
 .card-body {
   /* The corner markers hang off this box rather than off the text column. */
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--size-card-art-width) minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   box-sizing: border-box;
@@ -194,8 +214,8 @@ button.card-body:focus-visible {
   border-radius: var(--radius-default);
 }
 .card-art {
-  flex: none;
-  width: var(--size-card-art-width);
+  grid-column: 1;
+  width: 100%;
   height: var(--size-card-art-height);
   object-fit: contain;
   /* Pixel art: no blur between the source pixels when it is scaled. */
@@ -203,6 +223,7 @@ button.card-body:focus-visible {
   user-select: none;
 }
 .card-text {
+  grid-column: 2;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -267,14 +288,15 @@ button.card-body:focus-visible {
   font-size: var(--text-meta);
 }
 /*
- * The mock's second column (#90): `flex: 1` gives it the row's remaining
- * width so the bar resizes with the card rather than being pinned to the
- * mock's own fixed screenshot width. Both children stay flush to this
- * column's own left edge, matching the mock, rather than being centred.
+ * The mock's second column (#90): its own declared track, so the bar resizes
+ * with the card rather than being pinned to the mock's own fixed screenshot
+ * width — and, since #156, so it begins in the same place on every card rather
+ * than wherever the text column happened to stop. Both children stay flush to
+ * this column's own left edge, matching the mock, rather than being centred.
  */
 .card-level {
+  grid-column: 3;
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
@@ -302,6 +324,12 @@ button.card-body:focus-visible {
   display: flex;
   gap: 4px;
   font-size: var(--text-meta);
+  /*
+    One line, always (#156). Wrapped, this label makes the column taller, and a
+    taller column centred in a fixed-height card starts higher than the one on
+    the card above it.
+  */
+  white-space: nowrap;
 }
 /*
  * Sampled off the mock's own pixels (#90): the `Next level:` label prints in

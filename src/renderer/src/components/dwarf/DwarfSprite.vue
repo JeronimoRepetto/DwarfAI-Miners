@@ -6,7 +6,7 @@ import {
   kickMarker as kickMarkerFor,
   sendMarker as sendMarkerFor
 } from '../../lib/delivery/deliveryVerdict'
-import { LEAVING_EXIT_MS, isSpriteFlipped, statusAnimationClass } from '../../lib/presentation'
+import { LEAVING_EXIT_MS, statusAnimationClass } from '../../lib/presentation'
 import { dwarfClips, isAwaitingAnswer, stillFrameOf } from '../../lib/sprite/dwarfSequence'
 import {
   SPRITE_FRAME_SIZE,
@@ -395,9 +395,34 @@ const rootClasses = computed(() => [
      * because Vue casts an absent boolean prop to `false` — so `facesLeft`
      * alone cannot tell "the scene says face right" from "no scene here".
      */
-    'is-flipped':
-      props.anchored === true ? props.facesLeft === true : isSpriteFlipped(props.dwarf.status),
+    /*
+     * THE SHEETS ARE PAINTED FACING LEFT (#156), so `is-flipped` means "facing
+     * RIGHT" and a dwarf facing left is drawn exactly as painted.
+     *
+     * It was the other way round until the second acceptance run, on the
+     * strength of a sentence #131 flagged as unconfirmed and nobody checked.
+     * Every station's facing was authored, transcribed and read correctly, and
+     * the whole mine still rendered in a mirror. The art is measured rather than
+     * assumed now, in lib/sprite/sheetFacing.test.ts: the helmet lamp's beam
+     * sits left of the dwarf on every waking sheet, and a lamp shines where its
+     * wearer looks.
+     *
+     * Outside the scene there is nothing to face but the way the art is
+     * painted — including a leaver, whose exit slide runs left too.
+     */
+    'is-flipped': props.anchored === true && props.facesLeft !== true,
     'is-anchored': props.anchored === true,
+    /*
+     * ARRIVED at the way out (#156). A departure disappears when it REACHES the
+     * nearest spawn point, never on a clock: the fade used to start the moment
+     * the status turned 'leaving' and run for a fixed window while the scene was
+     * still walking the dwarf there, so anything further out than that window
+     * faded mid-route — which the maintainer watched happen to a foreman. The
+     * runtime's grace window still caps how long a departure may take; what it
+     * does not do is decide when the fade begins.
+     */
+    'is-departed':
+      props.anchored === true && props.dwarf.status === 'leaving' && props.walking !== true,
     /*
      * The design's red halo (#153). Selection IS the action bar being open —
      * one click, one selected dwarf — so there is no second piece of state to
@@ -664,14 +689,15 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   content: '';
   position: absolute;
   top: 18%;
-  left: 58%;
+  /* The pick side of the art AS PAINTED, which is the left of the frame (#156). */
+  left: -2%;
   width: 44%;
   height: 44%;
   background: radial-gradient(circle, var(--tier-glow, #ffe29c) 0%, transparent 72%);
   pointer-events: none;
 }
 .is-flipped .dwarf-frame.is-strike-glow::after {
-  left: -2%;
+  left: 58%;
 }
 .is-activating {
   opacity: 0.55;
@@ -711,8 +737,26 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
  * already declares, and inventing a second would leave two.
  */
 .is-selected .dwarf-frame {
-  filter: drop-shadow(0 4px 5px #000a) drop-shadow(0 0 3px var(--danger-line))
-    drop-shadow(0 0 7px var(--danger-line));
+  /*
+   * #156's eleventh correction. #153 drew this as two stacked drop-shadows at
+   * 3px and 7px, and the acceptance run called the outline too thick and too
+   * loud. The maintainer's ruling is a thinner outline with the red moved ONTO
+   * the dwarf, at about half strength.
+   *
+   * The tint is a filter on the frame because that is the only place one can
+   * reach this art at all: the sprite is a background image scrolled a frame at
+   * a time, so there is no element to paint over and no pixel to recolour.
+   * `sepia()` takes its strength as an amount, which is what makes "about half"
+   * expressible at all in a filter chain; the hue rotation carries its warm
+   * brown round to the red the design asks for, and the saturation keeps it from
+   * reading as rust. The base shadow is repeated because `filter` REPLACES —
+   * dropping it would lift a selected dwarf off the rock the others stand on.
+   *
+   * Nothing here animates, which is the whole reason the reduced-motion note
+   * below has nothing to switch off.
+   */
+  filter: drop-shadow(0 4px 5px #000a) drop-shadow(0 0 2px var(--danger-line)) sepia(0.5)
+    hue-rotate(-30deg) saturate(1.6);
 }
 .is-selected .dwarf-name {
   color: var(--danger-line);
@@ -732,27 +776,30 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 /*
  * Inside the scene the dwarf is already being walked to the painted exit by
  * MineScene, so the blind leftward slide would double the movement and drag it
- * through the rock wall. Only the fade survives, on the same timing.
+ * through the rock wall. Only the fade survives — and it is keyed on having
+ * ARRIVED rather than on having been told to leave (#156), so a dwarf still on
+ * its way out is at full strength the whole way and goes at the exit itself.
  */
-.is-anchored.is-leaving {
+.is-anchored.is-departed {
   animation: exit-fade var(--exit-ms, 16000ms) linear forwards;
 }
 
 /*
  * working: debris thrown off the rock on the down-stroke of the swing. Sized
  * and coloured off the tier so gold sparks gold, and thrown from the pick head
- * — up and forward of the dwarf, mirrored with it when it faces left.
+ * — up and forward of the dwarf, mirrored with it when it faces right (#156).
  */
 .spark-burst {
   position: absolute;
   top: 26%;
-  left: 68%;
+  /* Same side as the strike's own light: the pick side of the art as painted. */
+  left: 32%;
   width: 0;
   height: 0;
   pointer-events: none;
 }
 .is-flipped .spark-burst {
-  left: 32%;
+  left: 68%;
 }
 .spark {
   position: absolute;

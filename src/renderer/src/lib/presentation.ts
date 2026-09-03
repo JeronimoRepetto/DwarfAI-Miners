@@ -103,8 +103,8 @@ export const LEAVING_EXIT_MS = 1_200
  * Two things stayed behind on purpose. `isDwarfSilent` below is a rule about
  * the provider's windows rather than about drawing, and is unchanged — what
  * changed is that no sheet has been drawn for a silent dwarf yet, so nothing
- * currently selects a picture from it (#74 will). And `statusAnimationClass`,
- * `isSpriteFlipped` and `LEAVING_EXIT_MS` never named a frame at all.
+ * currently selects a picture from it (#74 will). And `statusAnimationClass`
+ * and `LEAVING_EXIT_MS` never named a frame at all.
  */
 
 /**
@@ -197,10 +197,17 @@ export function vaultLabel(totals: MaterialTotals | undefined, tokensObserved: n
   return `Vault: ${mined}. ${formatTokens(tokensObserved)} tokens observed.`
 }
 
-/**
- * Whether the sprite has to be mirrored. The art is painted facing right and
- * the scene exit is to the left, so only a leaving dwarf gets flipped.
+/*
+ * REMOVED HERE: `isSpriteFlipped(status)` (#156).
+ *
+ * It mirrored a leaving dwarf and nothing else, on the strength of a sentence
+ * carried since #131 flagged it as unconfirmed — "the art is painted facing
+ * right". The art is painted facing LEFT, which is measured off the committed
+ * sheets in lib/sprite/sheetFacing.test.ts, and the exit slide runs left. So a
+ * leaver reaches the exit by being drawn exactly as painted, every other status
+ * was already drawn that way, and there was no case left for this to decide.
+ *
+ * What replaces it is the scene's own facing, which DwarfSprite already had:
+ * `facesLeft` from the station a dwarf stands at, or from the leg it is walking.
+ * The mirror lives beside it, in the one component that draws a sprite.
  */
-export function isSpriteFlipped(status: DwarfStatus): boolean {
-  return status === 'leaving'
-}

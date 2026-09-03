@@ -966,25 +966,77 @@ describe('App concurrent mine', () => {
     expect(wrapper.find('.shell-nav').exists()).toBe(true)
   })
 
-  it('collapses the whole shell from the app mark, mine and all', async () => {
-    const { wrapper, api } = await openMine()
-    await wrapper.find('.nav-mark').trigger('click')
+  /*
+   * #156's first correction, and the reason the shell now says which of the
+   * BOOK's compositions it is in rather than reading `expanded` alone.
+   *
+   * Closing the left page beside an open mine left the shell classified as the
+   * bare rail: no amber ground, no padding, no radius and no shadow, so a void
+   * opened where the navigation column stood, the interior grew into the eight
+   * pixels of padding that were no longer there, and the mine's frame vanished.
+   */
+  it('keeps the shell’s own frame when only the mine is left', async () => {
+    const { wrapper } = await openMine()
+    await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
-    expect(wrapper.find('.map-view').exists()).toBe(false)
-    expect(wrapper.find('.shell-nav').exists()).toBe(false)
-    expect(wrapper.find('.edge-rail').exists()).toBe(true)
+    const shell = wrapper.find('.shell')
+    expect(shell.classes()).toContain('is-mine')
+    expect(shell.classes()).not.toContain('is-rail')
   })
 
-  it('brings the mine back with the panel, because collapsing forgets nothing', async () => {
+  it('is the bare rail only when neither page is drawn', async () => {
+    const { wrapper } = await openMine()
+    expect(wrapper.find('.shell').classes()).toContain('is-pages')
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    await wrapper.find('.close-mine').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.shell').classes()).toContain('is-rail')
+  })
+
+  /*
+   * The second app icon the acceptance run found floating in that void: the rail
+   * drew the mark whenever the secondary panel was closed, and the navigation
+   * stack drew its own whenever the stack was on screen. Both were true at once
+   * in the mine-only composition.
+   */
+  it('draws the app mark exactly once, in every composition', async () => {
+    const { wrapper } = await openMine()
+    const marks = (): number => wrapper.findAll('.rail-mark, .nav-mark-art').length
+    expect(marks()).toBe(1)
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(marks()).toBe(1)
+    await wrapper.find('.close-mine').trigger('click')
+    await flushPromises()
+    expect(marks()).toBe(1)
+  })
+
+  /*
+   * AMENDED for #156's second correction. Both cases were written for #153's
+   * ruling, where the app mark collapsed the whole shell into the rail. The
+   * maintainer's ruling now is that it HIDES the window — the same action the
+   * global shortcut takes — and the layout is left exactly as it stands, so
+   * whatever was drawn is what comes back. Each case kept its subject: what the
+   * mark does, and what it must not forget.
+   */
+  it('hides the whole window from the app mark, mine and all', async () => {
+    const { wrapper, api } = await openMine()
+    const beforeMark = api.setPanelLayout.mock.calls.length
+    await wrapper.find('.nav-mark').trigger('click')
+    await flushPromises()
+    expect(api.hidePanel).toHaveBeenCalledOnce()
+    // The window went away; the panel it will come back as did not change.
+    expect(api.setPanelLayout.mock.calls.length).toBe(beforeMark)
+  })
+
+  it('leaves the mine and the page standing, because hiding forgets nothing', async () => {
     const { wrapper } = await openMine()
     await wrapper.find('.nav-mark').trigger('click')
     await flushPromises()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.shell-nav').exists()).toBe(true)
   })
 
   it('lands on the rail when the last mine closes with the panel already closed', async () => {

@@ -51,7 +51,9 @@ export interface SceneAnchor extends ScenePoint {
   id: string
   kind: SceneAnchorKind
   /**
-   * Whether a dwarf parked here faces left. The art is painted facing right.
+   * Whether a dwarf parked here faces left — the facing itself, never the
+   * mirror. The sheets are painted facing LEFT (#156), so it is a dwarf facing
+   * RIGHT that DwarfSprite mirrors.
    *
    * READ from the map, never decided here (#153). It used to be derived — "a
    * dwarf faces the middle of the shaft, so one on the right-hand wall turns to

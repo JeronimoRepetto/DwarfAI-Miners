@@ -25,15 +25,21 @@ import {
   type MineUndeclareResult,
   type ProjectQuery,
   type ProjectQueryResult,
+  type ProjectSummary,
   type TextDeliveryChannel
 } from '../domain/types'
-import { mergeDeclaredMines, stampMapSites, type DeclaredProject } from '../domain/aggregate'
+import {
+  collapseDuplicateMines,
+  mergeDeclaredMines,
+  stampMapSites,
+  type DeclaredProject
+} from '../domain/aggregate'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
 import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
 import { ProjectObserver } from '../projects/projectObserver'
-import type { ProjectsStore } from '../projects/projectsStore'
+import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
 import { stampHeldQuestions, stampHeldTelemetry } from '../sessionLaunch/heldSession'
@@ -488,13 +494,7 @@ export class AgentRuntime {
         // snapshots alone. Merged before the lifecycle and the ledger see it,
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
-        // Placement is stamped on last, over both halves of the board: where a
-        // mine STANDS is a remembered fact off the projects store, and it joins
-        // by the same mineIdForPath id everything else here does (#136).
-        const mines = stampMapSites(
-          mergeDeclaredMines(rawMines, this.declared, tierOf),
-          this.mapSites
-        )
+        const mines = mergeDeclaredMines(rawMines, this.declared, tierOf)
         // Accrual happens on the lifecycle's output, which is exactly what
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
@@ -505,8 +505,24 @@ export class AgentRuntime {
         // project's first walk finishes. The vault waits for a measured tier
         // (#41) — mine.path is the very string aggregateMines handed to
         // tierOf, so this asks about exactly the mine in hand.
+        //
+        // Placement and the one-mine-per-project invariant are stamped LAST, on
+        // the lifecycle's own output (#156). The tracker is the one step that
+        // can put a mine on the board which was not on it a moment before: when
+        // the last session in a project ends, the whole mine leaves the
+        // snapshot and the tracker rebuilds it so the departing dwarf has
+        // somewhere to walk out of. Stamped before that, as it was, the rebuilt
+        // mine carried no location at all — so for the length of the grace
+        // window the panel placed it itself, and one project stood in two
+        // different places on the map within a second. Where a mine STANDS is a
+        // remembered fact off the projects store, and it joins by the same
+        // mineIdForPath id everything else here does (#136).
         const withMaterials = pollProfiler.measureSync('ledger', () =>
-          this.ledger.observe(lifecycle.apply(mines), now, confirmedTierOf)
+          this.ledger.observe(
+            collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
+            now,
+            confirmedTierOf
+          )
         )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
@@ -691,7 +707,19 @@ export class AgentRuntime {
     // interval came round. The user has just spent seconds in a folder picker;
     // one scan is not the cost worth saving here.
     await this.refresh()
-    return { outcome: 'added', mineId: result.value.id }
+    // The row travels with the verdict (#156). The panel reloads its first page
+    // after an adopt, and that reload cannot be relied on to hold the new card:
+    // a project keeps the date it was FIRST seen, so re-declaring a folder the
+    // store already knows leaves it exactly where it already sat in the order.
+    // Shaped by the same toSummary the browse itself answers with, so the card
+    // the panel draws from this is the card it would have drawn from a query.
+    // Read after the refresh above, so `live` is stamped from the board this
+    // declaration is now on.
+    return {
+      outcome: 'added',
+      mineId: result.value.id,
+      project: this.toSummary(result.value, new Set(this.mines.map((mine) => mine.id)))
+    }
   }
 
   /**
@@ -757,36 +785,46 @@ export class AgentRuntime {
     const onBoard = new Set(this.mines.map((mine) => mine.id))
     return {
       answered: true,
-      projects: result.value.map((project) => {
-        // O(1) per row off the ledger already held in memory (#90) — no query,
-        // same id scheme (mineIdForPath) the board and the ledger both key by.
-        const materials = this.ledger.knownMineTotals(project.id)
-        // Same live-join shape as materials, off TierService's own cache
-        // instead of the ledger — keyed by PATH, the same key tierOf/
-        // knownTierOf use, never mineIdForPath (#140). Absent exactly when no
-        // walk has measured this path yet; a stale measurement still counts.
-        const weightBytes = this.tiers.knownWeightBytesOf(project.path)
-        return {
-          id: project.id,
-          path: project.path,
-          name: project.name,
-          declared: project.origin === 'declared',
-          // Absent, never null and never a placeholder: the wire says "nobody has
-          // measured this" by saying nothing at all (#41).
-          ...(project.knownTier === null ? {} : { knownTier: project.knownTier }),
-          ...(weightBytes === undefined ? {} : { weightBytes }),
-          addedAt: project.addedAt,
-          ...(project.lastOpenedAt === null ? {} : { lastOpenedAt: project.lastOpenedAt }),
-          ...(project.lastProvider === null ? {} : { lastProvider: project.lastProvider }),
-          // Absent exactly when the ledger has no row for this id — never an
-          // invented zero breakdown for a project the vault has not mined.
-          ...(materials === undefined ? {} : { materials }),
-          // Straight off the row, so a browse and the map can never disagree
-          // about where a mine stands (#136).
-          ...(project.mapSite === null ? {} : { mapSite: project.mapSite }),
-          live: onBoard.has(project.id)
-        }
-      })
+      projects: result.value.map((project) => this.toSummary(project, onBoard))
+    }
+  }
+
+  /**
+   * One stored project as the browse lists it.
+   *
+   * Extracted from queryProjects when the declare verdict started carrying the
+   * project it adopted (#156): the panel has to be able to put that card on
+   * screen itself, and a second shaping of the same row here is a second place
+   * for the wire's absent-means-unmeasured rules to drift.
+   */
+  private toSummary(project: ProjectRecord, onBoard: ReadonlySet<string>): ProjectSummary {
+    // O(1) per row off the ledger already held in memory (#90) — no query,
+    // same id scheme (mineIdForPath) the board and the ledger both key by.
+    const materials = this.ledger.knownMineTotals(project.id)
+    // Same live-join shape as materials, off TierService's own cache
+    // instead of the ledger — keyed by PATH, the same key tierOf/
+    // knownTierOf use, never mineIdForPath (#140). Absent exactly when no
+    // walk has measured this path yet; a stale measurement still counts.
+    const weightBytes = this.tiers.knownWeightBytesOf(project.path)
+    return {
+      id: project.id,
+      path: project.path,
+      name: project.name,
+      declared: project.origin === 'declared',
+      // Absent, never null and never a placeholder: the wire says "nobody has
+      // measured this" by saying nothing at all (#41).
+      ...(project.knownTier === null ? {} : { knownTier: project.knownTier }),
+      ...(weightBytes === undefined ? {} : { weightBytes }),
+      addedAt: project.addedAt,
+      ...(project.lastOpenedAt === null ? {} : { lastOpenedAt: project.lastOpenedAt }),
+      ...(project.lastProvider === null ? {} : { lastProvider: project.lastProvider }),
+      // Absent exactly when the ledger has no row for this id — never an
+      // invented zero breakdown for a project the vault has not mined.
+      ...(materials === undefined ? {} : { materials }),
+      // Straight off the row, so a browse and the map can never disagree
+      // about where a mine stands (#136).
+      ...(project.mapSite === null ? {} : { mapSite: project.mapSite }),
+      live: onBoard.has(project.id)
     }
   }
 

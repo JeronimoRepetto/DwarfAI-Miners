@@ -24,30 +24,37 @@ defineProps<{
 const emit = defineEmits<{
   select: [area: ShellArea]
   /**
-   * The app mark was pressed: put the whole shell back in the rail (#153).
+   * The app mark was pressed: hide the whole window (#156).
    *
    * Its own event rather than an area, because it is not one — the design's
    * navigation stack selects between five screens and the mark above it is not
    * a sixth. Decides nothing here for the same reason the rail's arrow does not:
-   * the window is main's, and what gets drawn is the layout that comes back.
+   * the window is main's, and hiding it is main's to do.
+   *
+   * It collapsed the shell into the rail until the second acceptance run. The
+   * arrow already closes the left page and the interior's round close already
+   * closes the right one, so that made this a third way to do what those two do
+   * between them; the maintainer's ruling is that it takes the WINDOW away,
+   * identically to the global shortcut. Nothing about the layout is touched, so
+   * whatever was drawn is what comes back.
    */
-  collapse: []
+  hide: []
 }>()
 </script>
 
 <template>
   <nav class="shell-nav" aria-label="DwarfAI-Miners sections">
     <!--
-      The app mark, and the control that collapses the whole shell back into
-      the rail (#153). It was inert until the acceptance run; the arrow used to
-      do this and now closes only the secondary panel.
+      The app mark, and the control that takes the window away (#156) — the same
+      action the global shortcut takes, which is why it says so in the tooltip:
+      it is the one control a user who has forgotten the accelerator can find.
     -->
     <button
       class="nav-mark"
       type="button"
-      aria-label="Collapse DwarfAI-Miners into the rail"
-      title="Collapse DwarfAI-Miners"
-      @click="emit('collapse')"
+      aria-label="Hide DwarfAI-Miners"
+      title="Hide DwarfAI-Miners"
+      @click="emit('hide')"
     >
       <img class="nav-mark-art" :src="TRAY_ICON_SRC" alt="" draggable="false" />
     </button>
