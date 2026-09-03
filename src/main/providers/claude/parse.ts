@@ -639,19 +639,76 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
 }
 
 /**
- * The last `limit` human-readable messages of a transcript tail: typed user
- * prompts and assistant text replies. Tool results, task notifications and
- * meta lines are skipped.
+ * The element Claude Code wraps a cross-session message in, and the only part
+ * of that line a person wrote (issue #180).
+ *
+ * A message typed into the panel and delivered through the relay tier (issue
+ * #24) reaches the target session as a meta user line: Claude Code's own
+ * framing sentence, this element, and a trailing note explaining where it came
+ * from. All three are the harness's words except what is inside the element.
+ */
+const CROSS_SESSION_MESSAGE_RE = /<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/
+
+/**
+ * What one `user` line publishes to the feed, or undefined when it is not
+ * somebody speaking.
+ *
+ * The two skips it keeps — meta lines, and string content that opens with a
+ * tag — are what keep the harness's own prompts out. The relay envelope trips
+ * both, so it has to be recognized before them, and only from a line no tool
+ * wrote: tool output can print a whole transcript, envelopes and all, which is
+ * the same reason an ending is only ever read from the record Claude Code
+ * delivered it in (see notificationStrings).
+ */
+function userMessageText(line: Rec): string | undefined {
+  if (!isRecord(line.message)) return undefined
+  const content = asString(line.message.content)
+  if (content === undefined) return undefined
+  if (line.toolUseResult === undefined) {
+    const relayed = content.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
+    if (relayed !== undefined) return relayed === '' ? undefined : relayed
+  }
+  if (line.isMeta === true || content.startsWith('<')) return undefined
+  return content
+}
+
+/**
+ * The text a human typed into the TUI while a turn was already running, or
+ * undefined for every other attachment (issue #180).
+ *
+ * Such a message is never written as a `user` line at all: it is enqueued,
+ * materialised into the running turn as this `queued_command` attachment, and
+ * then removed as `absorbed_mid_turn`. Only the middle record is read, so one
+ * message cannot reach the panel three times — and only an origin that says
+ * `human` is read, because the identical record shape carries the harness's own
+ * queued prompts, a task-notification among them.
+ */
+function typedMidTurnPrompt(line: Rec): string | undefined {
+  const attachment = line.attachment
+  if (!isRecord(attachment) || attachment.type !== 'queued_command') return undefined
+  const origin = attachment.origin
+  if (!isRecord(origin) || origin.kind !== 'human') return undefined
+  const prompt = asString(attachment.prompt)?.trim()
+  return prompt === '' ? undefined : prompt
+}
+
+/**
+ * The last `limit` human-readable messages of a transcript tail: everything a
+ * person typed, however it was delivered, and assistant text replies. Tool
+ * results, task notifications and the harness's own meta lines are skipped.
  */
 export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
   for (const line of jsonlObjects(tailText)) {
     const timestamp = asString(line.timestamp) ?? ''
-    if (line.type === 'user' && line.isMeta !== true && isRecord(line.message)) {
-      const content = line.message.content
-      if (typeof content === 'string' && !content.startsWith('<')) {
-        feed.push({ role: 'user', text: content, timestamp })
-      }
+    if (line.type === 'attachment') {
+      const typed = typedMidTurnPrompt(line)
+      if (typed !== undefined) feed.push({ role: 'user', text: typed, timestamp })
+      continue
+    }
+    if (line.type === 'user') {
+      const text = userMessageText(line)
+      if (text !== undefined) feed.push({ role: 'user', text, timestamp })
       continue
     }
     if (line.type === 'assistant') {

@@ -555,6 +555,176 @@ describe('extractClaudeFeed', () => {
   })
 })
 
+/** A user line exactly as Claude Code records one relayed cross-session message. */
+function relayedMessageLine(text: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      isMeta: true,
+      timestamp: '2026-09-03T10:00:00.000Z',
+      message: {
+        role: 'user',
+        content:
+          'Another Claude session sent a message:\n' +
+          '<cross-session-message from="uds:placeholder-socket" from-name="relay-42" ' +
+          'from-mode="bypass">\n' +
+          `${text}\n` +
+          '</cross-session-message>\n\n' +
+          'This came from another Claude session, not from your user.'
+      }
+    }) + '\n'
+  )
+}
+
+/** An ordinary meta line: the harness talking to the session, not a person. */
+function metaLine(content: string): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      isMeta: true,
+      timestamp: '2026-09-03T10:00:01.000Z',
+      message: { role: 'user', content }
+    }) + '\n'
+  )
+}
+
+/**
+ * The three lines one message typed into the TUI mid-turn produces: enqueued,
+ * materialised into the running turn, then removed as absorbed. It is never
+ * written as a `user` line at all.
+ */
+function midTurnMessageLines(text: string, origin: unknown = { kind: 'human' }): string {
+  // `null` is how a case asks for a record carrying no origin key at all;
+  // passing undefined would take the default above instead.
+  const timestamp = '2026-09-03T10:05:00.000Z'
+  return (
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp,
+      sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
+      content: text
+    }) +
+    '\n' +
+    JSON.stringify({
+      type: 'attachment',
+      attachment: {
+        type: 'queued_command',
+        prompt: text,
+        commandMode: 'prompt',
+        ...(origin === null ? {} : { origin }),
+        timestamp
+      },
+      isSidechain: false,
+      timestamp
+    }) +
+    '\n' +
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'remove',
+      content: text,
+      reason: 'absorbed_mid_turn',
+      timestamp
+    }) +
+    '\n'
+  )
+}
+
+/**
+ * Issue #180. The panel's history is this feed, and two shapes of message the
+ * user really sent were never in it — both because the reader only understood
+ * the one envelope a message typed at a turn boundary happens to land in.
+ *
+ * A message delivered through the relay tier (#24) arrives as a meta user line
+ * wrapping Claude Code's own cross-session framing, and a message typed while
+ * the assistant is mid-turn is not written as a user line at all: it is
+ * enqueued, materialised as a `queued_command` attachment, and absorbed. Both
+ * were dropped, so the dwarf said delivered and the conversation stayed empty.
+ */
+describe('extractClaudeFeed messages the panel never showed (issue #180)', () => {
+  it('shows a relayed message as the text the human typed, without the framing', () => {
+    const feed = extractClaudeFeed(relayedMessageLine('Ship the vault fix.'), 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'Ship the vault fix.']])
+    expect(feed[0]!.timestamp).toBe('2026-09-03T10:00:00.000Z')
+  })
+
+  it('keeps a multi-line relayed message whole', () => {
+    const feed = extractClaudeFeed(relayedMessageLine('First line.\nSecond line.'), 20)
+    expect(feed.map((m) => m.text)).toEqual(['First line.\nSecond line.'])
+  })
+
+  it('still keeps every other meta line out of the feed', () => {
+    // The skip is not the bug: a meta line is the harness talking to the
+    // session. Only the one envelope that carries a person's words is read.
+    const tail =
+      metaLine('<command-name>/clear</command-name>') +
+      metaLine('Caveat: placeholder system reminder.')
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+
+  it('ignores a relay envelope a tool result merely printed', () => {
+    // Tool output can contain a whole transcript, envelopes and all — the same
+    // reason an ending is only read from the envelopes Claude Code wrote it
+    // into (issue #64). A printed message is not a message.
+    const printed =
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-09-03T10:00:02.000Z',
+        message: {
+          role: 'user',
+          content:
+            '<cross-session-message from-name="relay-42">\nShip the vault fix.\n' +
+            '</cross-session-message>'
+        },
+        toolUseResult: { stdout: 'printed', stderr: '', interrupted: false, isImage: false }
+      }) + '\n'
+    expect(extractClaudeFeed(printed, 20)).toEqual([])
+  })
+
+  it('says nothing for an envelope with no message inside it', () => {
+    expect(extractClaudeFeed(relayedMessageLine(''), 20)).toEqual([])
+  })
+
+  it('shows a message typed while the assistant was still in its turn', () => {
+    const feed = extractClaudeFeed(midTurnMessageLines('Stop and read the issue first.'), 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'Stop and read the issue first.']])
+    expect(feed[0]!.timestamp).toBe('2026-09-03T10:05:00.000Z')
+  })
+
+  it('reads that message once, from the attachment and not the queue pair', () => {
+    // The same text is written three times — enqueue, attachment, remove. Only
+    // the middle one is the message materialising into the turn; reading the
+    // queue-operations too would triple every mid-turn message in the history.
+    const feed = extractClaudeFeed(midTurnMessageLines('Stop and read the issue first.'), 20)
+    expect(feed).toHaveLength(1)
+  })
+
+  it('leaves a queued command the harness wrote out of the feed', () => {
+    // `origin.kind` is the whole test: the identical record shape carries the
+    // harness's own queued prompts — a task-notification is one — and those are
+    // not somebody speaking.
+    expect(
+      extractClaudeFeed(midTurnMessageLines('Agent finished', { kind: 'system' }), 20)
+    ).toEqual([])
+    // ...and a record with no origin at all proves nothing about who wrote it.
+    expect(extractClaudeFeed(midTurnMessageLines('Agent finished', null), 20)).toEqual([])
+  })
+
+  it('keeps both kinds in transcript order beside an ordinary exchange', () => {
+    const tail =
+      parentTranscript +
+      relayedMessageLine('Ship the vault fix.') +
+      midTurnMessageLines('And update the docs.')
+    expect(extractClaudeFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'Placeholder user prompt.'],
+      ['assistant', 'Placeholder text block.'],
+      ['assistant', 'Latest assistant reply placeholder.'],
+      ['user', 'Ship the vault fix.'],
+      ['user', 'And update the docs.']
+    ])
+  })
+})
+
 describe('parseClaudeTranscriptTail on subagent transcripts', () => {
   it('reads the latest assistant text for worker speech bubbles', () => {
     const info = parseClaudeTranscriptTail(subagentTranscript)
