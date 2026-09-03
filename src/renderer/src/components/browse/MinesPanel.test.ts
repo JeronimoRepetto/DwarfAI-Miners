@@ -182,7 +182,8 @@ describe('MinesPanel list', () => {
         })
       ]
     })
-    expect(wrapper.get('.card-agents').text()).toBe('Active agents: 2')
+    // AMENDED for #135: the mock capitalizes it — see the note in MineCard.test.ts.
+    expect(wrapper.get('.card-agents').text()).toBe('Active Agents: 2')
   })
 
   it('opens the mine a live card names', async () => {

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NUGGET_SRC } from '../../lib/art'
 import { cardArtFor, cardTierLabel } from '../../lib/browse/browseCards'
+import { orePileLabel } from '../../lib/presentation'
+import { formatUnits, vaultRows } from '../../lib/vault/vault'
 import type { ProjectSummary } from '../../types'
 
 const props = defineProps<{
@@ -17,6 +20,21 @@ const emit = defineEmits<{ open: [projectId: string] }>()
 
 const tierLabel = computed(() => cardTierLabel(props.project))
 const art = computed(() => cardArtFor(props.project))
+
+/**
+ * What this project has actually mined, one pile per material (#135, #139).
+ *
+ * Read through the vault's own `vaultRows` rather than off `project.materials`
+ * directly, so the card cannot become a second answer to "how much ore is
+ * this": the grain size per material, the poorest-first order and the rule
+ * that a pile short of one whole nugget is not shown all stay in one module
+ * (see lib/vault/vault.ts and #22). The card's job is the shape of the row.
+ *
+ * Empty means no row is drawn at all. That covers both a project the ledger
+ * has never had a row for — `materials` absent, which is "never mined" and not
+ * "mined zero" — and a row that exists but holds nothing yet.
+ */
+const resources = computed(() => vaultRows(props.project.materials))
 
 /*
  * Only a project with a mine on the board can be entered: the interior of a
@@ -41,8 +59,37 @@ const enterable = computed(() => props.project.live)
           <span v-if="tierLabel" class="card-tier">{{ tierLabel }} mine -</span>
           <span class="card-name">{{ project.name }}</span>
         </span>
+        <!--
+          One capsule holding one entry per material, each with the painting
+          and the compact count the vault chip draws. Aria-hidden throughout
+          and named in words on the hover line, exactly as the chip does it —
+          a screen reader gets the sentence, not five loose numbers.
+        -->
+        <span v-if="resources.length" class="card-resources">
+          <span
+            v-for="row in resources"
+            :key="row.material"
+            class="card-resource"
+            :data-material="row.material"
+            :title="orePileLabel(row.material, row.tokens)"
+          >
+            <img
+              class="resource-nugget"
+              :src="NUGGET_SRC[row.material]"
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
+            <span class="resource-count">{{ formatUnits(row.units) }}</span>
+          </span>
+        </span>
+        <!--
+          `Active Agents` with the capital the MOCK draws. Both markdown
+          sources write it lowercase; the maintainer ruled the mock is the
+          visual truth for this panel, so the copy follows the picture.
+        -->
         <span v-if="activeAgents !== undefined" class="card-agents"
-          >Active agents: {{ activeAgents }}</span
+          >Active Agents: {{ activeAgents }}</span
         >
       </span>
     </component>
@@ -111,6 +158,42 @@ button.card-body:focus-visible {
   color: var(--color-cream);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+ * The mock draws the resources as ONE dark capsule holding every material,
+ * not as one pill each. Its ground samples as #181410, which the foundations
+ * table does not name; the panel's own #14100b is the nearest named value and
+ * is what is used, rather than minting a token the design source has no word
+ * for. Fully rounded ends are the capsule's own shape and not the shared 12px
+ * radius, which on a 16px-high strip would not close the ends at all.
+ */
+.card-resources {
+  display: flex;
+  align-self: start;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-control);
+  border-radius: 999px;
+  background: var(--color-panel-deep);
+}
+.card-resource {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.resource-nugget {
+  display: block;
+  width: 11px;
+  height: auto;
+  /* Pixel art: no blur between the source pixels when it is scaled. */
+  image-rendering: pixelated;
+  user-select: none;
+}
+/* The amber the design gives every figure; the ore itself is coloured by paint. */
+.resource-count {
+  color: var(--color-accent);
+  font-size: var(--text-meta);
 }
 .card-agents {
   color: var(--color-cream);
