@@ -7,7 +7,7 @@
  * plausible value would be inventing history.
  */
 import type { Mine, MineTier, ProjectSummary } from '../../types'
-import { MINE_TIERS } from '../../types'
+import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 import { MOUND_SRC } from '../art'
 
 /**
@@ -113,4 +113,64 @@ export function cardStatusFor(
     asking: mine.dwarfs.some((dwarf) => dwarf.pendingQuestion !== undefined),
     resting: mine.dwarfs.some((dwarf) => dwarf.status === 'waiting')
   }
+}
+
+/**
+ * One kibibyte in bytes — this module's own conversion for reading the wire's
+ * byte-weight field against a KB-denominated table (see ProjectSummary.
+ * weightBytes and TIER_WEIGHT_THRESHOLDS_KB in shared/contracts.ts). Nothing
+ * upstream does this conversion for the renderer; it belongs here, once.
+ */
+const BYTES_PER_KB = 1024
+
+/**
+ * What a card draws for the progress bar and its `Next level: <cur>/<max>`
+ * label — the seam #135's rebuild left and #140 supplies the wire field for
+ * (#90). `nextBoundaryKb` is undefined once a mine has already reached
+ * uranium: the topmost tier has no further boundary to climb toward, which
+ * the mock states as `infinite` rather than a number.
+ */
+export interface LevelProgress {
+  /** weightBytes rounded to the nearest whole KB (Math.round — ties round up). */
+  currentKb: number
+  /** The next tier's KB threshold; undefined at/above uranium. */
+  nextBoundaryKb: number | undefined
+  /** How full the bar draws, clamped to [0,1] against the rounding above. */
+  ratio: number
+}
+
+/**
+ * The next tier's KB boundary a mine at this byte weight is climbing toward.
+ *
+ * Mirrors tierForBytes' own bracket order and >= comparisons
+ * (main/tier/tierService.ts) so the two stay one honest reading of one
+ * measurement rather than two classifications that could disagree. The
+ * boundaries themselves are the CLEAN TIER_WEIGHT_THRESHOLDS_KB figures
+ * (100/500/2048/8192) — the design mock's own printed maximums (99/499) are
+ * one short of these for bronze/copper and already match for silver/gold, an
+ * inconsistency the foundations table's canonical ranges resolve in the clean
+ * numbers' favour (#90).
+ */
+function nextBoundaryKbFor(weightBytes: number): number | undefined {
+  const { copperKb, silverKb, goldKb, uraniumKb } = TIER_WEIGHT_THRESHOLDS_KB
+  if (weightBytes >= uraniumKb * BYTES_PER_KB) return undefined
+  if (weightBytes >= goldKb * BYTES_PER_KB) return uraniumKb
+  if (weightBytes >= silverKb * BYTES_PER_KB) return goldKb
+  if (weightBytes >= copperKb * BYTES_PER_KB) return silverKb
+  return copperKb
+}
+
+/**
+ * The bar/label a card draws for a mine's progress toward its next tier, or
+ * undefined for a project no walk has weighed yet — a bar with an invented
+ * denominator is worse than no bar at all, so absence draws nothing rather
+ * than a guess, same as every other unmeasured field on this card (#90).
+ */
+export function nextLevelFor(weightBytes: number | undefined): LevelProgress | undefined {
+  if (weightBytes === undefined) return undefined
+  const currentKb = Math.round(weightBytes / BYTES_PER_KB)
+  const nextBoundaryKb = nextBoundaryKbFor(weightBytes)
+  const ratio =
+    nextBoundaryKb === undefined ? 0 : Math.min(1, Math.max(0, currentKb / nextBoundaryKb))
+  return { currentKb, nextBoundaryKb, ratio }
 }

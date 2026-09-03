@@ -8,7 +8,8 @@ import {
   browseTierLabel,
   cardArtFor,
   cardStatusFor,
-  cardTierLabel
+  cardTierLabel,
+  nextLevelFor
 } from './browseCards'
 
 function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
@@ -189,5 +190,82 @@ describe('cardStatusFor', () => {
       asking: false,
       resting: false
     })
+  })
+})
+
+/*
+ * The bar/label #135's rebuild left as a seam, closed by #140 landing
+ * ProjectSummary.weightBytes (#90). cur is weightBytes rounded to the nearest
+ * whole KB (Math.round — ties round up), the same rounding tierService.ts's
+ * own debug KB display already uses. The bracket boundaries are the CLEAN
+ * TIER_WEIGHT_THRESHOLDS_KB figures (100/500/2048/8192): the mock's own
+ * printed maximums (99/499) are one off the clean numbers for bronze/copper
+ * and already clean for silver/gold, an inconsistency the foundations table
+ * resolves in the clean numbers' favour (#90).
+ */
+describe('nextLevelFor', () => {
+  it('says nothing for a project no walk has weighed yet', () => {
+    // Absence over invention, same as every other unmeasured field on this
+    // card: a bar with an invented denominator is worse than no bar at all.
+    expect(nextLevelFor(undefined)).toBeUndefined()
+  })
+
+  it('reads the bronze bracket toward the clean 100KB boundary', () => {
+    expect(nextLevelFor(80 * 1024)).toEqual({ currentKb: 80, nextBoundaryKb: 100, ratio: 0.8 })
+  })
+
+  it('rounds the byte weight to the nearest whole KB, ties rounding up', () => {
+    expect(nextLevelFor(Math.round(80.6 * 1024))?.currentKb).toBe(81)
+    expect(nextLevelFor(Math.round(80.4 * 1024))?.currentKb).toBe(80)
+  })
+
+  it("crosses into the next bracket at the clean 100KB boundary, not the mock's own 99", () => {
+    expect(nextLevelFor(100 * 1024)).toEqual({ currentKb: 100, nextBoundaryKb: 500, ratio: 0.2 })
+  })
+
+  it('stays in the bronze bracket one byte short of the boundary', () => {
+    expect(nextLevelFor(100 * 1024 - 1)?.nextBoundaryKb).toBe(100)
+  })
+
+  it('reads the silver bracket toward the clean 2048KB boundary', () => {
+    expect(nextLevelFor(1724 * 1024)).toEqual({
+      currentKb: 1724,
+      nextBoundaryKb: 2048,
+      ratio: 1724 / 2048
+    })
+  })
+
+  it('reads the gold bracket toward the clean 8192KB boundary', () => {
+    expect(nextLevelFor(3121 * 1024)).toEqual({
+      currentKb: 3121,
+      nextBoundaryKb: 8192,
+      ratio: 3121 / 8192
+    })
+  })
+
+  it('reports uranium as unbounded, matching the mock printing infinite', () => {
+    // Uranium has no next tier to climb toward, so there is no boundary to
+    // divide by — the card prints "infinite" for exactly this undefined.
+    const progress = nextLevelFor(10975 * 1024)
+    expect(progress?.currentKb).toBe(10975)
+    expect(progress?.nextBoundaryKb).toBeUndefined()
+  })
+
+  it('draws no fill once a mine has run past its ceiling', () => {
+    expect(nextLevelFor(10975 * 1024)?.ratio).toBe(0)
+  })
+
+  it('reads a full bar, not an error, when KB-rounding lands cur on a boundary it has not technically reached', () => {
+    // 101_990 bytes is 99.60...KB — still short of the 100KB copper cut — but
+    // rounds up to a displayed 100. This is the one case the [0,1] clamp
+    // guards: cur can equal nextBoundaryKb through rounding alone, and this
+    // pins that it reads as a full bar (ratio 1) rather than anything past it.
+    // The clamp itself stays unproven by this suite — cur is derived from the
+    // SAME bracket boundary as nextBoundaryKb, so it can reach but never
+    // mathematically exceed it under the current formula; the clamp is
+    // defensive against a future change to that formula, not load-bearing today.
+    const weightBytes = Math.round(99.6 * 1024)
+    const progress = nextLevelFor(weightBytes)
+    expect(progress).toEqual({ currentKb: 100, nextBoundaryKb: 100, ratio: 1 })
   })
 })
