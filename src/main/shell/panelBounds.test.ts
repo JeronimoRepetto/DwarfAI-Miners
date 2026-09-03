@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { MIN_PANEL_SIZE, PANEL_CHROME } from '../../renderer/src/lib/scene/sceneSizing'
+import { DESIGN_INTERIOR_WIDTH } from '../../renderer/src/lib/scene/sceneSizing'
 import {
   EXPANDED_WIDTH,
   MINE_COLUMN_WIDTH,
-  MINE_SCENE_CHROME_WIDTH,
+  MINE_INTERIOR_WIDTH,
   RAIL_WIDTH,
   panelBounds,
   panelWidth
@@ -106,28 +106,35 @@ describe('panelBounds', () => {
 })
 
 /*
- * Issue #44 gave the panel a floor so the cave could not be dragged below the
- * smallest box every authored anchor still fits in. The floor was a
- * `minWidth`/`minHeight` on a resizable window; the redesigned shell derives its
- * own bounds from the display and is not dragged at all (#90), so the guarantee
- * has to be re-made where the cave now lives: the mine column.
+ * REMOVED with the cave (#137), stated here rather than passing unseen: "is
+ * never narrower than the smallest panel the cave still reads in", "carries the
+ * chrome MineScene actually wraps around the cave", and "leaves the secondary
+ * panel wider than the cave floor as well" — with this file's import of
+ * `MIN_PANEL_SIZE` and `PANEL_CHROME`.
  *
- * These hold the copied numbers to the derivation the same way window.test.ts
- * did — main cannot import a renderer module at runtime, so it carries the
- * numbers and the test is what stops them drifting.
+ * All three existed because the cave was drawn with `object-fit: cover`, which
+ * crops the side walls of a narrow box and could take a whole workstation with
+ * them, so the renderer computed the narrowest box that still held every anchor
+ * and main had to reserve at least that much column. The interior is drawn with
+ * `contain`: nothing is ever cropped at any shape, so there is no computed floor
+ * left to reserve against, and the derived constants it produced are gone from
+ * sceneSizing (see the removal note there).
+ *
+ * What replaces them is narrower and truer — the column IS the design's
+ * interior width, so the only thing worth pinning is that main and the renderer
+ * still agree on that one number.
  */
-describe('the mine column against the cave the scene was drawn for', () => {
-  it('is never narrower than the smallest panel the cave still reads in', () => {
-    expect(MINE_COLUMN_WIDTH).toBeGreaterThanOrEqual(MIN_PANEL_SIZE.width)
+describe('the mine column against the interior it holds', () => {
+  it('reserves exactly the interior the renderer draws, plus the gap beside it', () => {
+    expect(MINE_INTERIOR_WIDTH).toBe(DESIGN_INTERIOR_WIDTH)
+    expect(MINE_COLUMN_WIDTH).toBeGreaterThan(MINE_INTERIOR_WIDTH)
+    // The gap is the whole difference: no chrome, no header row, no padding.
+    expect(MINE_COLUMN_WIDTH - MINE_INTERIOR_WIDTH).toBeLessThanOrEqual(8)
   })
 
-  it('carries the chrome MineScene actually wraps around the cave', () => {
-    expect(MINE_SCENE_CHROME_WIDTH).toBe(PANEL_CHROME.width)
-  })
-
-  it('leaves the secondary panel wider than the cave floor as well', () => {
-    // The mine is not the only thing mounted in the shell: a mine can be closed
-    // and the same scene opened as the whole content column.
-    expect(EXPANDED_WIDTH).toBeGreaterThanOrEqual(MIN_PANEL_SIZE.width)
+  it('leaves the secondary panel room the mine column never eats into', () => {
+    // The mine is mounted OUTBOARD of the navigation stack, so opening one
+    // widens the window rather than squeezing what is already in it.
+    expect(EXPANDED_WIDTH).toBeGreaterThan(MINE_COLUMN_WIDTH)
   })
 })

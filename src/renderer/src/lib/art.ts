@@ -18,11 +18,11 @@ import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-wo
 import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
 import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
 
-import interiorBronze from '../assets/art/concept/interior-bronze.jpg'
-import interiorCopper from '../assets/art/concept/interior-copper.jpg'
-import interiorGold from '../assets/art/concept/interior-gold.jpg'
-import interiorSilver from '../assets/art/concept/interior-silver.jpg'
-import interiorUranium from '../assets/art/concept/interior-uranium.jpg'
+import interiorBronze from '../assets/art/inside-mines/inside-bronze-mine.jpg'
+import interiorCopper from '../assets/art/inside-mines/inside-cropper-mine.jpg'
+import interiorGold from '../assets/art/inside-mines/inside-gold-mine.jpg'
+import interiorSilver from '../assets/art/inside-mines/inside-silver-mine.jpg'
+import interiorUranium from '../assets/art/inside-mines/inside-uranium-mine.jpg'
 
 import moundBronze from '../assets/art/mound-bronze.png'
 import moundCopper from '../assets/art/mound-copper.png'
@@ -113,18 +113,29 @@ export const MOUND_SRC: Record<MineTier, string> = {
 }
 
 /**
- * The pixel size every interior painting is produced at (see
- * scripts/build-art.mjs). Tall portrait art shown in a squarer, resizable
- * panel, which is exactly why `sceneGeometry.ts` has to know the ratio: it is
- * what decides how much of the painting survives the `object-fit: cover` crop,
- * and therefore where an authored anchor actually lands in the box.
+ * The pixel size every interior painting is produced at.
  *
- * All five interiors share these dimensions; `sceneLayout.test.ts` leans on
- * that when it checks the authored anchors against the crop.
+ * A tower — three times taller than it is wide — which is exactly why
+ * `sceneGeometry.ts` has to know the ratio: it decides where the painting is
+ * drawn inside its column, and therefore where an extracted work point actually
+ * lands in the box.
+ *
+ * All five share it (Cropper is 3620 tall, two pixels short, which is 0.06% and
+ * below anything the projection can express). `interiorMap.ts` keeps a copy
+ * because its coordinates are percentages OF this size, and
+ * `sceneSizing.test.ts` holds the two equal.
  */
-export const INTERIOR_ART_SIZE = { width: 1289, height: 1600 } as const
+export const INTERIOR_ART_SIZE = { width: 1184, height: 3622 } as const
 
-/** Inside of a mine, one painting per tier. Each has a walkable floor at the bottom. */
+/**
+ * Inside of a mine, one painting per tier — the production art the design's own
+ * interior sheets are renders of, wired up by #137.
+ *
+ * `copper` reads `inside-cropper-mine.jpg` because the artwork spells the tier
+ * that way; the canonical tier name is `copper` everywhere else in the codebase
+ * (see foundations.md), and the mapping is done here rather than by renaming a
+ * delivered painting to disagree with its own source.
+ */
 export const INTERIOR_SRC: Record<MineTier, string> = {
   bronze: interiorBronze,
   copper: interiorCopper,

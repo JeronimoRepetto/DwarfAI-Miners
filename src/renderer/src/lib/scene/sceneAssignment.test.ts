@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus } from '../../types'
 import { SHARE_SPREAD_X, anchorKindFor, assignScene, type SceneOccupant } from './sceneAssignment'
-import { CAVE_LAYOUT, anchorsOfKind, isWalkable, type SceneLayout } from './sceneLayout'
+import { INTERIOR_LAYOUT, anchorsOfKind, type SceneLayout } from './sceneLayout'
+
+/*
+ * REMOVED with the cave (#137), stated here rather than passing unseen: the two
+ * cases that held every placement on the walkable floor ("keeps every dwarf on
+ * the walkable floor", and the floor assertion inside "falls back to any anchor
+ * rather than dropping a dwarf"), and "sends anyone who is waiting to the rest
+ * area, foreman included". `isWalkable` and the trapezoid it tested went with
+ * the perspective gallery, and the design's spatial map has no rest class — a
+ * waiting dwarf now sleeps at his own workstation, which is what the sleeping
+ * frames draw. What the floor cases guaranteed (a placement is always a real
+ * point on the painting) did not go with them: `clampToPainting` is pinned in
+ * sceneLayout.test.ts, and the fallback case below still checks that a dwarf a
+ * layout has no spot for is placed rather than dropped.
+ */
 
 function occupant(
   id: string,
@@ -16,23 +30,29 @@ function anchorIds(placements: Map<string, { anchor: { id: string } }>): Record<
 }
 
 describe('anchorKindFor', () => {
-  it('sends a working miner to a vein and a working foreman to his post', () => {
-    expect(anchorKindFor('working', 'worker')).toBe('vein')
-    expect(anchorKindFor('working', 'foreman')).toBe('post')
-  })
-
-  it('sends anyone who is waiting to the rest area, foreman included', () => {
-    expect(anchorKindFor('waiting', 'worker')).toBe('rest')
-    expect(anchorKindFor('waiting', 'foreman')).toBe('rest')
+  it('sends a working miner to a worker station and a foreman to a foreman one', () => {
+    expect(anchorKindFor('working', 'worker')).toBe('worker')
+    expect(anchorKindFor('working', 'foreman')).toBe('foreman')
   })
 
   /*
-    Today a leaving dwarf fades where it stands. The exit is a real painted
-    place, so leaving has to mean walking to it (issue #19).
+    The design's spatial map draws no rest area, and the sleeping frames draw a
+    dwarf asleep where he was working rather than one who walked off to a bunk.
+    So waiting changes the animation, not the place.
   */
-  it('sends anyone who is leaving to the exit, whatever their rank', () => {
-    expect(anchorKindFor('leaving', 'worker')).toBe('exit')
-    expect(anchorKindFor('leaving', 'foreman')).toBe('exit')
+  it('leaves a waiting dwarf at the station its rank works, rather than moving it', () => {
+    expect(anchorKindFor('waiting', 'worker')).toBe('worker')
+    expect(anchorKindFor('waiting', 'foreman')).toBe('foreman')
+  })
+
+  /*
+    A leaving dwarf walks out rather than fading where it stands (issue #19).
+    The way out is the way in, and the design marks three of them up the shaft
+    rather than one door at the bottom, so a leaver heads for a spawn circle.
+  */
+  it('sends anyone who is leaving back to a spawn point, whatever their rank', () => {
+    expect(anchorKindFor('leaving', 'worker')).toBe('spawn')
+    expect(anchorKindFor('leaving', 'foreman')).toBe('spawn')
   })
 })
 
@@ -44,13 +64,13 @@ describe('assignScene', () => {
       occupant('claude:c', 'leaving'),
       occupant('claude:d', 'working', 'foreman')
     ]
-    const placements = assignScene(crew, CAVE_LAYOUT)
+    const placements = assignScene(crew, INTERIOR_LAYOUT)
     expect(placements.size).toBe(4)
     for (const dwarf of crew) expect(placements.has(dwarf.id), dwarf.id).toBe(true)
   })
 
   it('places nobody for an empty crew', () => {
-    expect(assignScene([], CAVE_LAYOUT).size).toBe(0)
+    expect(assignScene([], INTERIOR_LAYOUT).size).toBe(0)
   })
 
   it('gives each dwarf an anchor of the kind its status calls for', () => {
@@ -60,25 +80,28 @@ describe('assignScene', () => {
       occupant('claude:c', 'leaving'),
       occupant('claude:d', 'working', 'foreman')
     ]
-    const placements = assignScene(crew, CAVE_LAYOUT)
-    expect(placements.get('claude:a')?.anchor.kind).toBe('vein')
-    expect(placements.get('claude:b')?.anchor.kind).toBe('rest')
-    expect(placements.get('claude:c')?.anchor.kind).toBe('exit')
-    expect(placements.get('claude:d')?.anchor.kind).toBe('post')
+    const placements = assignScene(crew, INTERIOR_LAYOUT)
+    expect(placements.get('claude:a')?.anchor.kind).toBe('worker')
+    expect(placements.get('claude:b')?.anchor.kind).toBe('worker')
+    expect(placements.get('claude:c')?.anchor.kind).toBe('spawn')
+    expect(placements.get('claude:d')?.anchor.kind).toBe('foreman')
   })
 
   it('stands a dwarf that has its anchor to itself exactly on the painted feature', () => {
-    const placements = assignScene([occupant('claude:only')], CAVE_LAYOUT)
+    const placements = assignScene([occupant('claude:only')], INTERIOR_LAYOUT)
     const placement = placements.get('claude:only')
     expect(placement?.shareCount).toBe(1)
     expect(placement?.point).toEqual({ x: placement?.anchor.x, y: placement?.anchor.y })
     expect(placement?.facesLeft).toBe(placement?.anchor.facesLeft)
   })
 
-  it('keeps every dwarf on the walkable floor', () => {
-    const crew = Array.from({ length: 14 }, (_, index) => occupant(`claude:w${index}`))
-    for (const placement of assignScene(crew, CAVE_LAYOUT).values()) {
-      expect(isWalkable(CAVE_LAYOUT.band, placement.point), placement.anchor.id).toBe(true)
+  it('keeps every dwarf on the painting, however crowded the mine gets', () => {
+    const crew = Array.from({ length: 40 }, (_, index) => occupant(`claude:w${index}`))
+    for (const placement of assignScene(crew, INTERIOR_LAYOUT).values()) {
+      expect(placement.point.x, placement.anchor.id).toBeGreaterThanOrEqual(0)
+      expect(placement.point.x, placement.anchor.id).toBeLessThanOrEqual(100)
+      expect(placement.point.y, placement.anchor.id).toBeGreaterThanOrEqual(0)
+      expect(placement.point.y, placement.anchor.id).toBeLessThanOrEqual(100)
     }
   })
 
@@ -94,24 +117,24 @@ describe('assignScene', () => {
     )
 
     it('returns the same anchors for the same crew every time', () => {
-      expect(anchorIds(assignScene(crew, CAVE_LAYOUT))).toEqual(
-        anchorIds(assignScene(crew, CAVE_LAYOUT))
+      expect(anchorIds(assignScene(crew, INTERIOR_LAYOUT))).toEqual(
+        anchorIds(assignScene(crew, INTERIOR_LAYOUT))
       )
     })
 
     it('ignores the order the poll happened to deliver the crew in', () => {
       const shuffled = [...crew].reverse()
-      expect(anchorIds(assignScene(shuffled, CAVE_LAYOUT))).toEqual(
-        anchorIds(assignScene(crew, CAVE_LAYOUT))
+      expect(anchorIds(assignScene(shuffled, INTERIOR_LAYOUT))).toEqual(
+        anchorIds(assignScene(crew, INTERIOR_LAYOUT))
       )
     })
 
     it('does not move a working miner when a foreman or a leaver appears', () => {
-      const before = anchorIds(assignScene(crew, CAVE_LAYOUT))
+      const before = anchorIds(assignScene(crew, INTERIOR_LAYOUT))
       const after = anchorIds(
         assignScene(
           [...crew, occupant('claude:boss', 'working', 'foreman'), occupant('codex:z', 'leaving')],
-          CAVE_LAYOUT
+          INTERIOR_LAYOUT
         )
       )
       for (const dwarf of crew) expect(after[dwarf.id], dwarf.id).toBe(before[dwarf.id])
@@ -119,22 +142,36 @@ describe('assignScene', () => {
   })
 
   /*
-    There are four veins and a mine can easily run more sessions than that, so
-    sharing has to be graceful rather than a pile-up on one rock.
+    There are eighteen worker stations and a mine can run more sessions than
+    that, so sharing has to be graceful rather than a pile-up on one rock.
   */
   describe('sharing a work spot', () => {
-    const veinCount = anchorsOfKind(CAVE_LAYOUT, 'vein').length
-    const crew = Array.from({ length: veinCount * 2 }, (_, index) => occupant(`claude:w${index}`))
-    const placements = assignScene(crew, CAVE_LAYOUT)
+    const stationCount = anchorsOfKind(INTERIOR_LAYOUT, 'worker').length
+    const crew = Array.from({ length: stationCount * 2 }, (_, index) =>
+      occupant(`claude:w${index}`)
+    )
+    const placements = assignScene(crew, INTERIOR_LAYOUT)
 
-    it('fills every vein before doubling up on any of them', () => {
+    it('fills every station before doubling up on any of them', () => {
       const used = new Set([...placements.values()].map((place) => place.anchor.id))
-      expect(used.size).toBe(veinCount)
+      expect(used.size).toBe(stationCount)
     })
 
+    /*
+      AMENDED with the interior (#137): this used to assert `shareCount === 2`
+      exactly. That was never a guarantee `assignSlots` makes — the overflow
+      lands on its own hash-preferred slot rather than being levelled out — it
+      just happened to hold at the cave's four veins. Eighteen stations expose
+      it, so the case now pins what the sharing contract actually promises:
+      every sharer knows how many it is with, and its own place in that group.
+    */
     it('tells each sharer how many are on the rock with it', () => {
+      const byAnchor = new Map<string, number>()
       for (const placement of placements.values()) {
-        expect(placement.shareCount).toBe(2)
+        byAnchor.set(placement.anchor.id, (byAnchor.get(placement.anchor.id) ?? 0) + 1)
+      }
+      for (const placement of placements.values()) {
+        expect(placement.shareCount).toBe(byAnchor.get(placement.anchor.id))
         expect(placement.shareIndex).toBeGreaterThanOrEqual(0)
         expect(placement.shareIndex).toBeLessThan(placement.shareCount)
       }
@@ -149,10 +186,13 @@ describe('assignScene', () => {
         ])
       }
       for (const [anchorId, xs] of byAnchor) {
-        expect(xs.length, anchorId).toBe(2)
         expect(new Set(xs).size, anchorId).toBe(xs.length)
-        const [low = 0, high = 0] = [...xs].sort((a, b) => a - b)
-        expect(high - low, anchorId).toBeCloseTo(SHARE_SPREAD_X)
+        const sorted = [...xs].sort((a, b) => a - b)
+        for (let index = 1; index < sorted.length; index++) {
+          expect((sorted[index] as number) - (sorted[index - 1] as number), anchorId).toBeCloseTo(
+            SHARE_SPREAD_X
+          )
+        }
       }
     })
 
@@ -165,16 +205,15 @@ describe('assignScene', () => {
   })
 
   it('falls back to any anchor rather than dropping a dwarf a layout has no spot for', () => {
-    // A hypothetical re-authored interior with no foreman post must still place
-    // the foreman somewhere on its floor, not leave him unrendered.
+    // A hypothetical re-extracted interior with no foreman diamond must still
+    // place the foreman somewhere in the mine, not leave him unrendered.
     const postless: SceneLayout = {
-      band: CAVE_LAYOUT.band,
-      anchors: anchorsOfKind(CAVE_LAYOUT, 'vein') as unknown as SceneLayout['anchors']
+      anchors: anchorsOfKind(INTERIOR_LAYOUT, 'worker') as unknown as SceneLayout['anchors']
     }
     const placements = assignScene([occupant('claude:boss', 'working', 'foreman')], postless)
     expect(placements.size).toBe(1)
     for (const placement of placements.values()) {
-      expect(isWalkable(postless.band, placement.point)).toBe(true)
+      expect(postless.anchors).toContain(placement.anchor)
     }
   })
 })

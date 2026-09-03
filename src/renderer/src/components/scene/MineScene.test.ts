@@ -3,50 +3,69 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDwarfKicking } from '../../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
-import { INTERIOR_ART_SIZE } from '../../lib/art'
+import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
 import { BUBBLE_TTL_MS } from '../../lib/overlay/bubbles'
-import { MAX_PILE_NUGGETS } from '../../lib/vault/nuggetPile'
+import { INTERIOR_STATIONS } from '../../lib/scene/interiorMap'
 import { assignScene, type SceneOccupant } from '../../lib/scene/sceneAssignment'
 import { sceneLayout } from '../../lib/scene/sceneLayout'
-import {
-  AUTHORED_CAVE_BOX,
-  AUTHORED_SPRITE,
-  CAVE_MIN_HEIGHT_PX,
-  spriteFootprintPx
-} from '../../lib/scene/sceneSizing'
+import { AUTHORED_INTERIOR_BOX, spriteFootprintPx } from '../../lib/scene/sceneSizing'
+import { SPRITE_FRAME_SIZE } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../../testing/factories'
-import type { Dwarf } from '../../types'
+import type { Dwarf, MineTier } from '../../types'
 import MineScene from './MineScene.vue'
 
+/*
+ * REMOVED with the cave (#137), stated here rather than passing unseen: the ORE
+ * PILE, and the nine cases that covered it — "renders no ore pile for a mine
+ * that has not mined any ore yet", "grows the ore pile nugget by nugget", both
+ * `MineScene ore pile` cases, and all five `MineScene per-material deposit`
+ * cases.
+ *
+ * The heap stood on a `deposit` anchor, which was one of the cave's hand-
+ * authored spots; the design's spatial map has no such marker, and none of the
+ * four acceptance exports draws a pile of ore on the interior floor. In a 245px
+ * column six 48px mounds would not fit side by side anyway. Where the design
+ * DOES put a mine's materials is a strip along the bottom edge of the interior,
+ * which is the VaultChip — so the vault did not leave the screen, it moved to
+ * where the mock draws it, and the first case below now finds it there.
+ *
+ * The invariant those cases were guarding (#22: materials never convert into
+ * one another, so the breakdown is per material and never one merged figure)
+ * did NOT go with them. `VaultChip.test.ts` pins it independently in three
+ * cases — "shows one labelled entry per material, poorest first", "never
+ * renders one merged figure across materials", "gives each pile its own painted
+ * ore and its own hover line" — against the very component this interior now
+ * renders, and `presentation.test.ts` pins the wording. `NuggetPile.vue` and
+ * `lib/vault/nuggetPile.ts` are untouched and keep their own suites.
+ */
+
 describe('MineScene', () => {
-  it('shows the vault chip with the mine tokensObserved in the header', () => {
+  it('shows the vault chip with the mine tokensObserved along the interior', () => {
     const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 25_000 }) } })
     // `.vault-ore` — every token at one flat rate — went with #22; the chip now
     // breaks the vault down per material and keeps this compact token gauge.
-    expect(wrapper.get('.vault-tokens').text()).toBe('25K')
-  })
-
-  it('renders no ore pile for a mine that has not mined any ore yet', () => {
-    const wrapper = mount(MineScene, { props: { mine: defaultMine({ tokensObserved: 0 }) } })
-    expect(wrapper.find('.ore-pile').exists()).toBe(false)
+    expect(wrapper.get('.interior-vault .vault-tokens').text()).toBe('25K')
   })
 
   /*
-   * The pile used to thicken through five hand-picked CSS steps driven by the
-   * LIVE token gauge. It is now one painted nugget per whole unit of the mine's
-   * persisted per-material vault, capped at the mound's own capacity — so this
-   * checks real growth and the cap instead of the retired step ladder.
+   * Materials still reach the screen per material rather than as one figure —
+   * the #22 rule — now through the chip the design draws instead of through a
+   * heap on the floor.
    */
-  it('grows the ore pile nugget by nugget as ore increases, up to the cap', () => {
-    const small = mount(MineScene, {
-      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 50_000 }) }) }
+  it('gives every material this mine has produced its own entry, poorest first', () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({
+          tier: 'silver',
+          materials: defaultMaterials({ coal: 25_000, copper: 75_000, silver: 100_000 })
+        })
+      }
     })
-    expect(small.findAll('.ore-pile .nugget')).toHaveLength(5)
-
-    const big = mount(MineScene, {
-      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 90_000_000 }) }) }
-    })
-    expect(big.findAll('.ore-pile .nugget')).toHaveLength(MAX_PILE_NUGGETS)
+    expect(
+      wrapper
+        .findAll('.interior-vault .vault-material')
+        .map((row) => row.attributes('data-material'))
+    ).toEqual(['coal', 'copper', 'silver'])
   })
 
   it('pauses the bubble auto-hide while expanded and resumes it on close', async () => {
@@ -91,7 +110,7 @@ describe('MineScene bubble stacking', () => {
    * Finds an id group that `assignScene` puts on the very same anchor for a
    * synthetic all-working crew, without hardcoding which ids collide — that
    * depends on assignSlots' internal hashing, which this test has no business
-   * knowing about. `count` workers over the layout's fixed vein-anchor pool
+   * knowing about. `count` workers over the layout's fixed worker-station pool
    * guarantees a collision by pigeonhole once `count` exceeds the pool size.
    */
   function idsSharingAnAnchor(count: number): string[] {
@@ -120,7 +139,7 @@ describe('MineScene bubble stacking', () => {
   }
 
   it('gives bubbles sharing an anchor distinct positions instead of stacking on each other', async () => {
-    const CREW_SIZE = 7 // more workers than the layout has vein anchors (4)
+    const CREW_SIZE = 25 // more workers than the map has worker stations (18)
     const sharedIds = idsSharingAnAnchor(CREW_SIZE)
     // `name` doubles as the id here purely so the test can find a dwarf's own
     // rendered slot back afterwards — production always sets a real name.
@@ -229,10 +248,16 @@ describe('MineScene reaction feed', () => {
 /*
  * Issue #19 — the crew stopped being a row along the bottom edge and started
  * inhabiting the painting. jsdom lays nothing out, so every measurement falls
- * back to MineScene's default cave box, which makes these positions stable.
+ * back to MineScene's default interior box, which makes these positions stable.
+ *
+ * REMOVED with the cave (#137): "sends a waiting dwarf to the foreground rest
+ * area and a working one to the rock". The design's spatial map draws no rest
+ * area, so waiting no longer moves anyone — the case that replaced it is
+ * "leaves a waiting dwarf standing where it was working" below, which pins the
+ * new rule rather than the old one.
  */
 describe('MineScene as a place', () => {
-  /** The `bottom: N%` a slot was positioned at. Larger means farther back. */
+  /** The `bottom: N%` a slot was positioned at. Larger means higher up the shaft. */
   function bottomOf(slot: { attributes: (name: string) => string | undefined }): number {
     return Number(/bottom:\s*([\d.]+)%/.exec(slot.attributes('style') ?? '')?.[1] ?? NaN)
   }
@@ -257,30 +282,39 @@ describe('MineScene as a place', () => {
     expect(new Set(spots).size).toBe(3)
   })
 
-  it('sends a waiting dwarf to the foreground rest area and a working one to the rock', () => {
-    const wrapper = sceneOf([
-      defaultDwarf({ id: 'a', status: 'working' }),
-      defaultDwarf({ id: 'b', status: 'waiting' })
-    ])
-    const [working, waiting] = wrapper.findAll('.scene-slot')
-    // Farther back is a larger `bottom`, so the rest boulders sit lower down.
-    expect(bottomOf(working!)).toBeGreaterThan(bottomOf(waiting!))
+  /*
+    A dwarf waiting for its user is asleep at its own workstation, not walked
+    off to a bunk: the design's map has no rest class, and the sleeping frames
+    draw exactly that. So a waiting dwarf and a working one of the same rank
+    share the same pool of spots.
+  */
+  it('leaves a waiting dwarf standing where it was working', () => {
+    const same = defaultDwarf({ id: 'a', status: 'working' })
+    const working = sceneOf([same])
+    const waiting = sceneOf([{ ...same, status: 'waiting' }])
+    expect(waiting.get('.scene-slot').attributes('style')).toBe(
+      working.get('.scene-slot').attributes('style')
+    )
   })
 
   /*
-    Today a leaving dwarf fades where it stands. It has to reach the painted
-    passage at the back of the gallery first.
+    A leaving dwarf walks out rather than fading where it stands (#19). It goes
+    to a spawn circle, of which the design marks three up the shaft rather than
+    one door at the bottom — which is why this checks that the spot MOVED and
+    lands on one of the three, and not that it ends up near the floor.
   */
-  it('walks a leaving dwarf back to the painted exit rather than fading in place', () => {
-    const wrapper = sceneOf([
-      defaultDwarf({ id: 'a', status: 'working' }),
-      defaultDwarf({ id: 'b', status: 'leaving' })
-    ])
-    const [leaving, working] = wrapper.findAll('.scene-slot')
-    expect(bottomOf(leaving!)).toBeGreaterThan(bottomOf(working!))
+  it('sends a leaving dwarf to a spawn point rather than fading in place', () => {
+    const working = sceneOf([defaultDwarf({ id: 'a', status: 'working' })])
+    const leaving = sceneOf([defaultDwarf({ id: 'a', status: 'leaving' })])
+    expect(leaving.get('.scene-slot').attributes('style')).not.toBe(
+      working.get('.scene-slot').attributes('style')
+    )
+    const spawns = INTERIOR_STATIONS.filter((station) => station.kind === 'spawn')
+    const bottoms = spawns.map((spawn) => Math.round(100 - spawn.y))
+    expect(bottoms).toContain(Math.round(bottomOf(leaving.get('.scene-slot'))))
   })
 
-  it('paints the crew far to near so a nearer dwarf overlaps a farther one', () => {
+  it('paints the crew high to low so a nearer dwarf overlaps one above it', () => {
     const wrapper = sceneOf([
       defaultDwarf({ id: 'a', status: 'waiting' }),
       defaultDwarf({ id: 'b', status: 'leaving' }),
@@ -315,111 +349,6 @@ describe('MineScene as a place', () => {
     // A fresh snapshot of the identical crew, in the order a re-poll may hand it over.
     await wrapper.setProps({ mine: defaultMine({ dwarfs: [...dwarfs].reverse() }) })
     expect(wrapper.findAll('.scene-slot').map((slot) => slot.attributes('style'))).toEqual(before)
-  })
-})
-
-/*
- * The owner's verdict on the CSS nuggets was that they read as grey balls
- * nobody recognises. The painted nuggets have landed, but a picture of a stone
- * still does not say how much has been mined — so the pile carries the words
- * too, and the label now names ONE material because a pile is a pile of one.
- */
-describe('MineScene ore pile', () => {
-  it('names the material and the amount on hover', () => {
-    const wrapper = mount(MineScene, {
-      props: {
-        mine: defaultMine({ tier: 'gold', materials: defaultMaterials({ gold: 1_200_000 }) })
-      }
-    })
-    const mound = wrapper.get('.ore-mound')
-    expect(mound.attributes('title')).toBe('Gold ore — 12 mined (1.2M tokens)')
-    expect(mound.attributes('aria-label')).toBe('Gold ore — 12 mined (1.2M tokens)')
-  })
-
-  it('stands the pile on its authored patch of floor, depth-sorted with the crew', () => {
-    const wrapper = mount(MineScene, {
-      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 50_000 }) }) }
-    })
-    const style = wrapper.get('.ore-pile').attributes('style') ?? ''
-    expect(style).toMatch(/left:\s*[\d.]+%/)
-    expect(style).toMatch(/bottom:\s*[\d.]+%/)
-    expect(style).toMatch(/z-index:\s*\d+/)
-  })
-})
-
-/*
- * The deposit is one mound PER MATERIAL, standing side by side. That is the
- * shape the non-conversion rule takes on screen (see #22): a mine that grew out
- * of copper keeps its copper heap where it was, beside its new silver, and no
- * pixel anywhere shows one material restated as another.
- */
-describe('MineScene per-material deposit', () => {
-  it('gives every material this mine has produced its own mound, poorest first', () => {
-    const wrapper = mount(MineScene, {
-      props: {
-        mine: defaultMine({
-          tier: 'silver',
-          materials: defaultMaterials({ coal: 25_000, copper: 75_000, silver: 100_000 })
-        })
-      }
-    })
-    expect(wrapper.findAll('.ore-mound').map((mound) => mound.attributes('data-material'))).toEqual(
-      ['coal', 'copper', 'silver']
-    )
-  })
-
-  it('keeps what an upgraded mine already dug, in the material it was dug as', () => {
-    const wrapper = mount(MineScene, {
-      props: {
-        mine: defaultMine({
-          // Grown from copper into silver: the copper is history, not a debt to
-          // be re-valued, so its four nuggets stay four copper nuggets forever.
-          tier: 'silver',
-          materials: defaultMaterials({ copper: 100_000, silver: 100_000 })
-        })
-      }
-    })
-    const [copper, silver] = wrapper.findAll('.ore-mound')
-    expect(copper?.attributes('aria-label')).toBe('Copper ore — 4 mined (100K tokens)')
-    expect(silver?.attributes('aria-label')).toBe('Silver ore — 2 mined (100K tokens)')
-    expect(copper?.findAll('.nugget')).toHaveLength(4)
-    expect(silver?.findAll('.nugget')).toHaveLength(2)
-  })
-
-  /*
-   * Coal belongs to no tier: it is every token burned before the app existed,
-   * credited once by the historical backfill. A bronze mine can therefore be
-   * standing on a coal heap it will never add to.
-   */
-  it('stands a coal heap in a mine no tier could ever have mined coal in', () => {
-    const wrapper = mount(MineScene, {
-      props: {
-        mine: defaultMine({ tier: 'bronze', materials: defaultMaterials({ coal: 50_000 }) })
-      }
-    })
-    expect(wrapper.get('.ore-mound').attributes('aria-label')).toBe(
-      'Coal ore — 20 mined (50K tokens)'
-    )
-  })
-
-  it('leaves out a material that has not reached one whole nugget', () => {
-    const wrapper = mount(MineScene, {
-      props: { mine: defaultMine({ materials: defaultMaterials({ bronze: 9_999 }) }) }
-    })
-    expect(wrapper.find('.ore-pile').exists()).toBe(false)
-  })
-
-  /*
-   * The reason the offsets are hashed rather than random: the scene re-renders
-   * on every 2-second poll, and a deposit nobody touched must not twitch.
-   */
-  it('puts the deposit back exactly where it was on the next poll', () => {
-    const mine = defaultMine({ materials: defaultMaterials({ gold: 900_000 }) })
-    const first = mount(MineScene, { props: { mine } })
-    const second = mount(MineScene, { props: { mine: { ...mine } } })
-    expect(second.findAll('.nugget').map((n) => n.attributes('style'))).toEqual(
-      first.findAll('.nugget').map((n) => n.attributes('style'))
-    )
   })
 })
 
@@ -460,15 +389,26 @@ describe('MineScene with reduced motion', () => {
 /*
  * Issue #44 — the crew used to be drawn at a hard-coded 100px whatever the
  * panel was doing, so a smaller panel held the same sprites in less room rather
- * than the same scene in a smaller frame. MineScene already measured the cave
- * box for the anchor projection; it now hands that measurement to the sprites
- * as well, so the crew scales with the painting they stand in.
+ * than the same scene in a smaller frame. MineScene already measured the
+ * interior box for the workstation projection; it hands that measurement to the
+ * sprites as well, so the crew scales with the painting they stand in.
+ *
+ * REMOVED with the cave (#137): "keeps --depth-scale as a per-dwarf multiplier
+ * on top of the panel size" and "floors the cave at the height the window
+ * minimum is derived from". The first tested perspective within a single
+ * gallery seen in three-quarter view; the production interior is isometric, a
+ * tower of galleries where every dwarf is the same size, so MineScene no longer
+ * passes `depth-scale` at all and `depthScale` is gone from sceneLayout. The
+ * second tested a `--cave-min-height` bound into the scene from the constant the
+ * WINDOW minimum was derived from — the panel is docked and derives its own
+ * bounds now (#90), and the interior is `contain`-fitted, so neither the
+ * constant nor the floor it enforced exists.
  */
 describe('MineScene sprite scaling', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  /** Make jsdom, which lays nothing out, report a cave of a given size. */
-  function stubCaveBox(box: { width: number; height: number }): void {
+  /** Make jsdom, which lays nothing out, report an interior of a given size. */
+  function stubInteriorBox(box: { width: number; height: number }): void {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       width: box.width,
       height: box.height,
@@ -489,7 +429,7 @@ describe('MineScene sprite scaling', () => {
 
   /*
     The measurement lands in `onMounted`, so the first render still carries the
-    authored fallback and the measured size only reaches the DOM a tick later.
+    design fallback and the measured size only reaches the DOM a tick later.
     Every reader here waits for that tick — without it these would silently
     assert the fallback and agree with themselves.
   */
@@ -501,22 +441,26 @@ describe('MineScene sprite scaling', () => {
     return wrapper
   }
 
-  it('draws the crew at the authored size in the cave the authored panel produces', async () => {
-    stubCaveBox(AUTHORED_CAVE_BOX)
+  /*
+    The scale the design actually specifies: 36x38 sheet frames at 1x inside a
+    245px interior. The cave drew them at 100px tall, 2.6x too big.
+  */
+  it('draws a dwarf at one sheet frame in the column the design gives it', async () => {
+    stubInteriorBox(AUTHORED_INTERIOR_BOX)
     const wrapper = await sceneOfOne()
-    expect(customPropertyOf(wrapper, '--sprite-height')).toBeCloseTo(AUTHORED_SPRITE.height)
-    expect(customPropertyOf(wrapper, '--sprite-width')).toBeCloseTo(AUTHORED_SPRITE.width)
+    expect(customPropertyOf(wrapper, '--sprite-height')).toBeCloseTo(SPRITE_FRAME_SIZE.height)
+    expect(customPropertyOf(wrapper, '--sprite-width')).toBeCloseTo(SPRITE_FRAME_SIZE.width)
   })
 
-  it('tracks the measured cave box across a range of panel shapes', async () => {
+  it('tracks the measured interior box across a range of column shapes', async () => {
     for (const box of [
-      { width: 244, height: 320 },
-      { width: 428, height: 512 },
-      { width: 640, height: 700 },
-      { width: 900, height: 400 },
-      { width: 300, height: 900 }
+      { width: 123, height: 376 },
+      { width: 245, height: 749 },
+      { width: 245, height: 1040 },
+      { width: 245, height: 2160 },
+      { width: 490, height: 1498 }
     ]) {
-      stubCaveBox(box)
+      stubInteriorBox(box)
       const wrapper = await sceneOfOne()
       const expected = spriteFootprintPx(box, INTERIOR_ART_SIZE)
       const where = `${box.width}x${box.height}`
@@ -526,59 +470,103 @@ describe('MineScene sprite scaling', () => {
     }
   })
 
-  it('holds the same scene in a smaller panel, not the same sprites in less room', async () => {
-    stubCaveBox({ width: 244, height: 320 })
+  it('holds the same scene in a narrower column, not the same sprites in less room', async () => {
+    stubInteriorBox({ width: 123, height: 376 })
     const small = customPropertyOf(await sceneOfOne(), '--sprite-height')
     vi.restoreAllMocks()
-    stubCaveBox(AUTHORED_CAVE_BOX)
+    stubInteriorBox(AUTHORED_INTERIOR_BOX)
     const authored = customPropertyOf(await sceneOfOne(), '--sprite-height')
     expect(small).toBeLessThan(authored)
   })
 
   /*
-    The two scales compose rather than replace each other: the panel decides how
-    big the scene is drawn, perspective decides how big one dwarf is within it.
+    Every dwarf is the same size now: the interior is drawn isometrically rather
+    than in perspective, so there is no depth multiplier left to compose with
+    the column's own scale. This is the case that would fail if one crept back.
   */
-  it('keeps --depth-scale as a per-dwarf multiplier on top of the panel size', async () => {
-    stubCaveBox({ width: 640, height: 700 })
+  it('draws every dwarf at the one scale, with no per-dwarf multiplier', async () => {
+    stubInteriorBox({ width: 245, height: 1040 })
     const wrapper = mount(MineScene, {
       props: {
         mine: defaultMine({
           dwarfs: [
-            defaultDwarf({ id: 'far', status: 'leaving' }),
-            defaultDwarf({ id: 'near', status: 'waiting' })
+            defaultDwarf({ id: 'out', status: 'leaving' }),
+            defaultDwarf({ id: 'resting', status: 'waiting' })
           ]
         })
       }
     })
     await wrapper.vm.$nextTick()
-    // A panel bigger than the authored one, so the scene scale is visibly not 1x
-    // and the two multipliers cannot be confused for each other.
     expect(customPropertyOf(wrapper, '--sprite-height')).toBeCloseTo(
-      spriteFootprintPx({ width: 640, height: 700 }, INTERIOR_ART_SIZE).height
+      spriteFootprintPx({ width: 245, height: 1040 }, INTERIOR_ART_SIZE).height
     )
-    expect(customPropertyOf(wrapper, '--sprite-height')).toBeGreaterThan(AUTHORED_SPRITE.height)
     const depths = wrapper
       .findAll('.dwarf-sprite')
-      .map((sprite) =>
-        Number(/--depth-scale:\s*([\d.]+)/.exec(sprite.attributes('style') ?? '')?.[1])
-      )
+      .map((sprite) => /--depth-scale:\s*([\d.]+)/.exec(sprite.attributes('style') ?? '')?.[1])
     expect(depths).toHaveLength(2)
-    // A dwarf at the back of the gallery is drawn smaller than one at the front.
-    expect(new Set(depths).size).toBe(2)
-    for (const depth of depths) expect(depth).toBeGreaterThan(0)
+    expect(new Set(depths).size).toBe(1)
+  })
+})
+
+/*
+ * The interior shell itself: the five tier paintings, and the two round actions
+ * the design floats on top of them (#137).
+ */
+describe('MineScene interior shell', () => {
+  const TIERS: MineTier[] = ['bronze', 'copper', 'silver', 'gold', 'uranium']
+
+  it('draws the production painting for the tier it is handed', () => {
+    for (const tier of TIERS) {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ tier }) } })
+      expect(wrapper.get('.interior-art').attributes('src'), tier).toBe(INTERIOR_SRC[tier])
+    }
   })
 
   /*
-    The cave has declared its own vertical floor since #19, but nothing enforced
-    it: the window had no minimum, so a panel dragged shorter simply overflowed
-    it. That constant is now the same one the window minimum is derived from.
+    The drawing tier is `tierOf`'s, placeholder included — the AGENTS.md
+    invariant says a provisional tier is FOR drawing and only sealing a value
+    needs `knownTierOf`. A mine nobody has measured yet still has to have an
+    interior to stand in, and bronze is the one it gets.
   */
-  it('floors the cave at the height the window minimum is derived from', () => {
-    const style = mount(MineScene, { props: { mine: defaultMine() } })
-      .get('.cave')
-      .attributes('style')
-    expect(style).toContain(`--cave-min-height: ${CAVE_MIN_HEIGHT_PX}px`)
+  it('gives an unmeasured mine the placeholder tier own painting rather than nothing', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ tier: 'bronze' }) } })
+    expect(wrapper.get('.interior-art').attributes('src')).toBe(INTERIOR_SRC.bronze)
+  })
+
+  it('fits the painting into its column without ever cropping a workstation away', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
+    expect(wrapper.get('.interior').attributes('data-fit')).toBe('contain')
+    // The frame carries the painting's own shape, so it hugs the art rather
+    // than leaving a border round a letterboxed image.
+    expect(wrapper.get('.interior').attributes('style')).toContain(
+      `--interior-aspect: ${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
+    )
+  })
+
+  it('closes the mine from the round action at the top right', async () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
+    await wrapper.get('.interior .close-mine').trigger('click')
+    expect(wrapper.emitted('back')).toHaveLength(1)
+  })
+
+  /*
+    The Add action is where the design puts it and does nothing yet: the panel
+    it opens is #86. Rendered disabled with a title rather than as a live button
+    that emits into nothing — a control that answers a click with silence is a
+    worse lie than one that says it is not built.
+  */
+  it('draws the Add action disabled, saying why, until its panel exists', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
+    const add = wrapper.get('.interior .add-agent')
+    expect(add.attributes('disabled')).toBeDefined()
+    expect(add.attributes('title')).toContain('not built yet')
+    expect(add.attributes('aria-label')).toBe('Launch an agent in this mine')
+  })
+
+  it('keeps the mine name as the section own accessible name, with no header on screen', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ name: 'ledger-service' }) } })
+    expect(wrapper.get('#mine-title').text()).toBe('ledger-service')
+    expect(wrapper.get('.mine-scene').attributes('aria-labelledby')).toBe('mine-title')
   })
 })
 

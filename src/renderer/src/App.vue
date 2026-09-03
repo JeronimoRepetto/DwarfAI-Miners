@@ -19,7 +19,6 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import { CLOSE_ICON_SRC } from './lib/art'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot, ShellArea } from './types'
 
@@ -416,13 +415,6 @@ onBeforeUnmount(() => unsubscribe?.())
             @answer-question="answerQuestion"
           />
         </PanelFrame>
-        <button class="close-mine" type="button" aria-label="Close mine" @click="leaveMine">
-          <span
-            class="close-glyph"
-            :style="{ '--close-icon': `url(${CLOSE_ICON_SRC})` }"
-            aria-hidden="true"
-          ></span>
-        </button>
       </div>
     </template>
 
@@ -465,54 +457,25 @@ onBeforeUnmount(() => unsubscribe?.())
   flex: 1;
   min-height: 0;
 }
-/* The mine's own column, outboard of the navigation stack (see the exports). */
 /*
- * The design's 245px mine interior, plus the 32px of chrome MineScene still
- * wraps around the cave (its padding and header row) — the interior's own
- * rebuild is a later slice, and until it lands the cave needs that much more
- * column to be drawn at the width the design gives it. main reserves the same
- * width in the window; see MINE_COLUMN_WIDTH in main/shell/panelBounds.ts.
+ * The mine's own column, outboard of the navigation stack (see the exports):
+ * the design's 245px interior and nothing else. It carried 32px more until
+ * #137, for the header row and padding the old cave scene wrapped around
+ * itself; the design's interior has no such chrome — the painting is the
+ * screen, and the Close and Add actions float on top of it. main reserves the
+ * same width in the window; see MINE_COLUMN_WIDTH in main/shell/panelBounds.ts.
  */
 .shell-mine {
   position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: calc(var(--size-mine-interior-width) + 32px);
+  width: var(--size-mine-interior-width);
   min-width: 0;
 }
 .shell-mine > .panel-frame {
   flex: 1;
   min-height: 0;
-}
-/*
- * The design's round close, at the mine panel's top-right corner. It closes the
- * MINE, never the window — the panel's own way out is the rail.
- */
-.close-mine {
-  position: absolute;
-  z-index: 6;
-  top: var(--space-settings);
-  right: var(--space-settings);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-}
-.close-glyph {
-  display: block;
-  width: var(--size-icon);
-  height: var(--size-icon);
-  background: var(--color-cream);
-  mask: var(--close-icon) center / contain no-repeat;
-}
-.close-mine:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
 }
 .settings-area {
   display: flex;

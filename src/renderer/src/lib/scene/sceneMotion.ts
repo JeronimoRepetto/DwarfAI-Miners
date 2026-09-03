@@ -15,38 +15,89 @@
  * now*, so the sprite can play the walk cycle instead of swinging a pick at
  * thin air on its way to the rock.
  */
+import { INTERIOR_PAINTING_SIZE } from './interiorMap'
+import { paintingDistance, polylineLength } from './interiorRoute'
 import type { ScenePoint } from './sceneLayout'
 
+const PAINTING_WIDTH = INTERIOR_PAINTING_SIZE.width
+
 /**
- * How fast a dwarf crosses the painting, in image-percent units per second.
- * The gallery is about 60 units wide, so a corner-to-corner walk lands near
- * three and a half seconds: unhurried, and slow enough to be read as walking.
+ * How fast a dwarf walks, in pixels of the PAINTING per second.
+ *
+ * Painting pixels rather than image percent, because the interior is three
+ * times taller than it is wide and a percent of height is three times a percent
+ * of width: a speed in percent would have dwarfs sprinting up ladders and
+ * dawdling along galleries. At the design's 245px column the painting is drawn
+ * at 0.207x, so 300 here is about 62 screen pixels a second — a quarter of the
+ * column's width, which reads as walking rather than sliding.
  */
-export const WALK_SPEED_PER_SEC = 18
+export const WALK_SPEED_PX_PER_SEC = 300
 
 /** A twitch shorter than this reads as a glitch, not a step. */
 export const MIN_WALK_MS = 240
 
-/** Nothing in one cave is far enough to justify a longer march than this. */
-export const MAX_WALK_MS = 3200
+/**
+ * The longest a single journey may take.
+ *
+ * Much longer than the cave's 3.2 seconds, and it has to be: the full height of
+ * this painting is 3622 pixels, so a dwarf summoned from the entrance to the
+ * ceiling gallery has a genuinely long climb, and hurrying it to fit an old
+ * ceiling would have him skating up the ladders.
+ */
+export const MAX_WALK_MS = 12_000
 
 /**
- * Two points closer than this are the same spot. Guards the whole module
- * against floating-point noise in the share offsets restarting a walk, and
- * against a re-poll that reports identical coordinates twitching the sprite.
+ * Two points closer together than this are the same spot, in painting pixels.
+ *
+ * Guards the whole module against floating-point noise in the share offsets
+ * restarting a walk, and against a re-poll that reports identical coordinates
+ * twitching the sprite. Six painting pixels is about one screen pixel at the
+ * design's column width — below anything a viewer could see move.
  */
-export const ARRIVAL_EPSILON = 0.5
-
-function distance(from: ScenePoint, to: ScenePoint): number {
-  return Math.hypot(to.x - from.x, to.y - from.y)
-}
+export const ARRIVAL_EPSILON_PX = 6
 
 /** How long this crossing should take. Zero when there is nowhere to go. */
 export function walkDurationMs(from: ScenePoint, to: ScenePoint): number {
-  const span = distance(from, to)
-  if (span < ARRIVAL_EPSILON) return 0
-  const raw = (span / WALK_SPEED_PER_SEC) * 1000
+  return pathDurationMs([from, to])
+}
+
+/**
+ * How long a whole route should take, walked end to end.
+ *
+ * The clamps are on the JOURNEY and not on each leg of it, which is the point:
+ * an extracted corridor is a polyline of many short segments, and flooring each
+ * of those at `MIN_WALK_MS` would have a dwarf crawling round every corner.
+ */
+export function pathDurationMs(path: readonly ScenePoint[]): number {
+  const span = polylineLength(path)
+  if (span < ARRIVAL_EPSILON_PX) return 0
+  const raw = (span / WALK_SPEED_PX_PER_SEC) * 1000
   return Math.min(Math.max(raw, MIN_WALK_MS), MAX_WALK_MS)
+}
+
+/** One step of a route: where it ends, and how long the sprite takes to cross it. */
+export interface WalkLeg {
+  point: ScenePoint
+  durationMs: number
+}
+
+/**
+ * A route, cut into the legs a sprite is animated along.
+ *
+ * Each leg takes its own share of the journey's clamped duration, so the dwarf
+ * moves at one steady pace all the way rather than pausing at every corner.
+ */
+export function pathLegs(path: readonly ScenePoint[]): readonly WalkLeg[] {
+  const total = polylineLength(path)
+  const journeyMs = pathDurationMs(path)
+  if (path.length < 2 || total <= 0 || journeyMs === 0) return []
+  const legs: WalkLeg[] = []
+  for (let index = 1; index < path.length; index++) {
+    const from = path[index - 1] as ScenePoint
+    const to = path[index] as ScenePoint
+    legs.push({ point: to, durationMs: journeyMs * (paintingDistance(from, to) / total) })
+  }
+  return legs
 }
 
 /**
@@ -55,8 +106,8 @@ export function walkDurationMs(from: ScenePoint, to: ScenePoint): number {
  * there is no travel direction left to read, to face what its anchor faces.
  */
 export function walkFacesLeft(from: ScenePoint, to: ScenePoint, parkedFacesLeft: boolean): boolean {
-  const dx = to.x - from.x
-  if (Math.abs(dx) < ARRIVAL_EPSILON) return parkedFacesLeft
+  const dx = ((to.x - from.x) / 100) * PAINTING_WIDTH
+  if (Math.abs(dx) < ARRIVAL_EPSILON_PX) return parkedFacesLeft
   return dx < 0
 }
 
@@ -123,76 +174,131 @@ export function watchReducedMotion(
   return () => query.removeEventListener?.('change', listener)
 }
 
+/** Where a dwarf is right now, and how it is getting to where it is going. */
+export interface WalkState {
+  /** The point the sprite is animating towards — its current leg's end. */
+  point: ScenePoint
+  /** How long that leg takes, so the sprite's CSS transition can match it. */
+  legMs: number
+  /** True while there are legs left to walk. */
+  walking: boolean
+  /** Which way the sprite faces while making this leg. */
+  facesLeft: boolean
+}
+
 export interface WalkBoard {
-  /** Reconcile with the latest target per dwarf; a moved target starts a walk. */
-  sync(targets: ReadonlyMap<string, ScenePoint>): void
-  /** Cancel every pending arrival; the board stops emitting. */
+  /**
+   * Reconcile with the latest target per dwarf. A moved target asks `route` for
+   * the line to walk and starts the dwarf down it; an unchanged one is left
+   * alone, because the panel re-polls constantly and re-routing every time
+   * would hold the whole crew permanently on its way somewhere.
+   */
+  sync(
+    targets: ReadonlyMap<string, ScenePoint>,
+    route: (from: ScenePoint, to: ScenePoint) => readonly ScenePoint[]
+  ): void
+  /** Cancel every pending leg; the board stops emitting. */
   dispose(): void
 }
 
 interface TrackedWalk {
+  /** Where the dwarf has been sent. */
   target: ScenePoint
+  /** Where it is at this instant. */
+  at: ScenePoint
+  legs: readonly WalkLeg[]
+  next: number
+  facesLeft: boolean
   timer?: ReturnType<typeof setTimeout>
 }
 
 /**
  * Framework-agnostic walk tracker, shaped like `createBubbleBoard`: `onChange`
- * receives a fresh snapshot of who is mid-walk every time that set changes, so
- * a Vue component can mirror it into a ref.
+ * receives a fresh snapshot of where everybody is every time that changes, so a
+ * Vue component can mirror it into a ref.
  *
- * A dwarf seen for the first time is recorded at its target without walking —
- * a session that just connected should appear at its rock, not sprint in from
+ * The board walks a ROUTE rather than a straight line (#137). A dwarf crossing
+ * this interior has to follow the painted stairs and ladders, so the journey
+ * arrives as a polyline and the board steps along it one leg at a time —
+ * setting each leg as the sprite's target and arming a timer for its own
+ * duration. The component animates one leg; the board owns which leg that is.
+ *
+ * A dwarf seen for the first time is recorded at its target without walking — a
+ * session that just connected should appear at its station, not sprint in from
  * wherever the board had nothing.
  */
-export function createWalkBoard(onChange: (walking: ReadonlySet<string>) => void): WalkBoard {
+export function createWalkBoard(
+  onChange: (state: ReadonlyMap<string, WalkState>) => void
+): WalkBoard {
   const tracked = new Map<string, TrackedWalk>()
-  const walking = new Set<string>()
   let disposed = false
 
+  function snapshot(): ReadonlyMap<string, WalkState> {
+    const state = new Map<string, WalkState>()
+    for (const [id, entry] of tracked) {
+      const leg = entry.legs[entry.next]
+      state.set(id, {
+        point: leg ? leg.point : entry.at,
+        legMs: leg ? leg.durationMs : 0,
+        walking: leg !== undefined,
+        facesLeft: entry.facesLeft
+      })
+    }
+    return state
+  }
+
   function emit(): void {
-    if (!disposed) onChange(new Set(walking))
+    if (!disposed) onChange(snapshot())
   }
 
-  function arriveLater(id: string, entry: TrackedWalk, durationMs: number): void {
-    if (entry.timer) clearTimeout(entry.timer)
-    entry.timer = setTimeout(() => {
+  function step(id: string, entry: TrackedWalk): void {
+    const leg = entry.legs[entry.next]
+    if (!leg) {
       entry.timer = undefined
-      if (walking.delete(id)) emit()
-    }, durationMs)
+      return
+    }
+    entry.facesLeft = walkFacesLeft(entry.at, leg.point, entry.facesLeft)
+    entry.timer = setTimeout(() => {
+      entry.at = leg.point
+      entry.next += 1
+      step(id, entry)
+      emit()
+    }, leg.durationMs)
   }
 
-  function drop(id: string): boolean {
+  function drop(id: string): void {
     const entry = tracked.get(id)
     if (entry?.timer) clearTimeout(entry.timer)
     tracked.delete(id)
-    return walking.delete(id)
   }
 
   return {
-    sync(targets) {
+    sync(targets, route) {
       if (disposed) return
       let changed = false
 
       for (const [id, target] of targets) {
         const entry = tracked.get(id)
         if (!entry) {
-          tracked.set(id, { target })
+          tracked.set(id, { target, at: target, legs: [], next: 0, facesLeft: false })
+          changed = true
           continue
         }
-        const durationMs = walkDurationMs(entry.target, target)
+        if (paintingDistance(entry.target, target) < ARRIVAL_EPSILON_PX) continue
+        if (entry.timer) clearTimeout(entry.timer)
         entry.target = target
-        // An unchanged target must not re-arm anything: the panel re-polls
-        // constantly and would otherwise hold every dwarf permanently walking.
-        if (durationMs === 0) continue
-        arriveLater(id, entry, durationMs)
-        if (!walking.has(id)) {
-          walking.add(id)
-          changed = true
-        }
+        entry.legs = pathLegs(route(entry.at, target))
+        entry.next = 0
+        if (entry.legs.length === 0) entry.at = target
+        step(id, entry)
+        changed = true
       }
 
       for (const id of [...tracked.keys()]) {
-        if (!targets.has(id) && drop(id)) changed = true
+        if (!targets.has(id)) {
+          drop(id)
+          changed = true
+        }
       }
 
       if (changed) emit()
@@ -203,7 +309,6 @@ export function createWalkBoard(onChange: (walking: ReadonlySet<string>) => void
         if (entry.timer) clearTimeout(entry.timer)
       }
       tracked.clear()
-      walking.clear()
     }
   }
 }
