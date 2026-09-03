@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NUGGET_SRC } from '../../lib/art'
-import { cardArtFor, cardTierLabel } from '../../lib/browse/browseCards'
+import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC } from '../../lib/art'
+import { cardArtFor, cardTierLabel, type CardStatus } from '../../lib/browse/browseCards'
 import { orePileLabel } from '../../lib/presentation'
 import { formatUnits, vaultRows } from '../../lib/vault/vault'
 import type { ProjectSummary } from '../../types'
@@ -14,6 +14,12 @@ const props = defineProps<{
    * because "Active agents: 0" is a claim and a missing count is not one.
    */
   activeAgents?: number
+  /**
+   * What the board says about this crew beyond its size, or undefined when the
+   * panel could back no fact — see cardStatusFor(). Undefined draws no markers
+   * at all, for the same reason an absent count prints no line.
+   */
+  status?: CardStatus
 }>()
 
 const emit = defineEmits<{ open: [projectId: string] }>()
@@ -92,6 +98,26 @@ const enterable = computed(() => props.project.live)
           >Active Agents: {{ activeAgents }}</span
         >
       </span>
+      <!--
+        The mock's lower-right corner. Drawn only where the board proved the
+        fact, and the row itself disappears when it proved neither — a pair of
+        empty corners would read as "checked, nothing to report" on a project
+        nobody has looked at.
+      -->
+      <span v-if="status?.asking || status?.resting" class="card-status">
+        <span
+          v-if="status.asking"
+          class="status-glyph status-asking"
+          :style="{ '--status-icon': `url(${DIALOG_ICON_SRC})` }"
+          title="An agent here is waiting on an answer"
+        ></span>
+        <span
+          v-if="status.resting"
+          class="status-glyph status-resting"
+          :style="{ '--status-icon': `url(${SLEEP_ICON_SRC})` }"
+          title="An agent here is resting"
+        ></span>
+      </span>
     </component>
   </li>
 </template>
@@ -105,6 +131,8 @@ const enterable = computed(() => props.project.live)
   background: var(--color-panel);
 }
 .card-body {
+  /* The corner markers hang off this box rather than off the text column. */
+  position: relative;
   display: flex;
   gap: 10px;
   align-items: center;
@@ -198,5 +226,38 @@ button.card-body:focus-visible {
 .card-agents {
   color: var(--color-cream);
   font-size: var(--text-meta);
+}
+/*
+ * The mock parks both markers against the card's lower-right corner, clear of
+ * the text column — `margin-top: auto` inside the flex row would only push
+ * them down, so the row is placed against the card itself.
+ */
+.card-status {
+  position: absolute;
+  right: var(--space-settings);
+  bottom: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+/*
+ * Both glyphs are the designer's own SVGs through a mask. The mock draws them
+ * in accent amber; the component table's cream/white rule is about the status
+ * icons INSIDE a mine, where a worker and a foreman have to be told apart, and
+ * a card names no single dwarf to tell apart.
+ */
+.status-glyph {
+  display: block;
+  background: var(--color-accent);
+  mask: var(--status-icon) center / contain no-repeat;
+}
+.status-asking {
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+/* The source gives the sleep marker its own, smaller size. */
+.status-resting {
+  width: var(--size-sleep-icon);
+  height: var(--size-sleep-icon);
 }
 </style>

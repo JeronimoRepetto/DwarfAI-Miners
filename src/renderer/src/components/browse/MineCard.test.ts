@@ -128,6 +128,59 @@ describe('MineCard crew', () => {
   })
 })
 
+/*
+ * The lower-right markers the mock draws (#135). The card is thin here on
+ * purpose: what a marker MEANS is cardStatusFor's, tested beside it, and what
+ * is pinned below is only that a fact the card was not given draws nothing.
+ */
+describe('MineCard status markers', () => {
+  it('raises the message glyph for a crew that is asking something', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ live: true }), status: { asking: true, resting: false } }
+    })
+    expect(wrapper.find('.status-asking').exists()).toBe(true)
+    expect(wrapper.find('.status-resting').exists()).toBe(false)
+  })
+
+  it('raises the sleep glyph for a resting crew', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ live: true }), status: { asking: false, resting: true } }
+    })
+    expect(wrapper.find('.status-resting').exists()).toBe(true)
+    expect(wrapper.find('.status-asking').exists()).toBe(false)
+  })
+
+  it('raises both when both are true', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ live: true }), status: { asking: true, resting: true } }
+    })
+    expect(wrapper.find('.status-asking').exists()).toBe(true)
+    expect(wrapper.find('.status-resting').exists()).toBe(true)
+  })
+
+  it('draws no marker row for a crew that is simply working', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ live: true }), status: { asking: false, resting: false } }
+    })
+    expect(wrapper.find('.card-status').exists()).toBe(false)
+  })
+
+  it('draws no marker row when the panel could back no fact at all', () => {
+    // Absent status is the board having nothing to say about this project;
+    // two quiet corners would be a claim rather than a silence.
+    const wrapper = mount(MineCard, { props: { project: defaultProject() } })
+    expect(wrapper.find('.card-status').exists()).toBe(false)
+  })
+
+  it('names each marker in words rather than leaving a bare glyph', () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ live: true }), status: { asking: true, resting: true } }
+    })
+    expect(wrapper.get('.status-asking').attributes('title')).toBeTruthy()
+    expect(wrapper.get('.status-resting').attributes('title')).toBeTruthy()
+  })
+})
+
 describe('MineCard action', () => {
   it('opens the mine of a live project', async () => {
     const wrapper = mount(MineCard, {

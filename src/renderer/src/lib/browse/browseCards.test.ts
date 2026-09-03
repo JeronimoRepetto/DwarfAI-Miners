@@ -7,6 +7,7 @@ import {
   activeAgentsFor,
   browseTierLabel,
   cardArtFor,
+  cardStatusFor,
   cardTierLabel
 } from './browseCards'
 
@@ -107,5 +108,86 @@ describe('activeAgentsFor', () => {
     // panel holds may be one poll behind, and a count of 0 would then be a
     // claim the panel cannot back.
     expect(activeAgentsFor(project({ id: 'C:/dev/gamma', live: true }), mines)).toBeUndefined()
+  })
+})
+
+/*
+ * The two status markers the mock puts in a card's lower-right corner (#135).
+ * Both are joined off the board exactly as the crew count is, and both read
+ * facts the panel ALREADY draws elsewhere — the question the message panel
+ * answers, and the `z z z` the sprite floats over a resting dwarf.
+ */
+describe('cardStatusFor', () => {
+  const asking = defaultDwarf({
+    id: 'asking',
+    status: 'waiting',
+    pendingQuestion: {
+      toolUseId: 'tool-1',
+      question: 'Which branch?',
+      multiSelect: false,
+      options: [{ label: 'main' }]
+    }
+  })
+
+  it('marks a project whose agent is asking its user something', () => {
+    const mines = [defaultMine({ id: 'C:/dev/alpha', dwarfs: [asking] })]
+    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)?.asking).toBe(true)
+  })
+
+  it('marks a project with a resting agent on it', () => {
+    const mines = [
+      defaultMine({ id: 'C:/dev/alpha', dwarfs: [defaultDwarf({ status: 'waiting' })] })
+    ]
+    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)?.resting).toBe(true)
+  })
+
+  it('marks neither for a crew that is simply working', () => {
+    const mines = [
+      defaultMine({ id: 'C:/dev/alpha', dwarfs: [defaultDwarf({ status: 'working' })] })
+    ]
+    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)).toEqual({
+      asking: false,
+      resting: false
+    })
+  })
+
+  it('does not read a departure as rest', () => {
+    const mines = [
+      defaultMine({ id: 'C:/dev/alpha', dwarfs: [defaultDwarf({ status: 'leaving' })] })
+    ]
+    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)?.resting).toBe(false)
+  })
+
+  it('needs only one agent of a crew to raise a marker', () => {
+    const mines = [
+      defaultMine({
+        id: 'C:/dev/alpha',
+        dwarfs: [defaultDwarf({ id: 'busy', status: 'working' }), asking]
+      })
+    ]
+    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)).toEqual({
+      asking: true,
+      resting: true
+    })
+  })
+
+  it('says nothing at all about a project that is not live', () => {
+    const mines = [defaultMine({ id: 'C:/dev/alpha', dwarfs: [asking] })]
+    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: false }), mines)).toBeUndefined()
+  })
+
+  it('says nothing when the board has no mine under that id yet', () => {
+    // Same one-poll lag activeAgentsFor guards: no mine on the board is an
+    // absence of evidence, and "no markers" would be a claim about a crew the
+    // panel has not seen.
+    expect(cardStatusFor(project({ id: 'C:/dev/gamma', live: true }), [])).toBeUndefined()
+  })
+
+  it('reports an empty crew as neither asking nor resting', () => {
+    const mines = [defaultMine({ id: 'C:/dev/beta', dwarfs: [] })]
+    expect(cardStatusFor(project({ id: 'C:/dev/beta', live: true }), mines)).toEqual({
+      asking: false,
+      resting: false
+    })
   })
 })

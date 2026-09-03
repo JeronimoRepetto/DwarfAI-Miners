@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ADD_ICON_SRC, SORT_ICON_SRC } from '../../lib/art'
-import { TIER_CHIPS, activeAgentsFor } from '../../lib/browse/browseCards'
+import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
 import MineCard from './MineCard.vue'
 
@@ -176,6 +176,7 @@ onBeforeUnmount(stopWatching)
           :key="project.id"
           :project="project"
           :active-agents="activeAgentsFor(project, mines)"
+          :status="cardStatusFor(project, mines)"
           @open="emit('open', $event)"
         />
       </ul>

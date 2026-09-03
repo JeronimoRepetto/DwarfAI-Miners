@@ -186,6 +186,28 @@ describe('MinesPanel list', () => {
     expect(wrapper.get('.card-agents').text()).toBe('Active Agents: 2')
   })
 
+  /* The markers are joined off the same board the crew count comes from (#135). */
+  it('raises a card marker from the board rather than from the row', () => {
+    const wrapper = panel({
+      projects: [defaultProject({ id: 'C:/dev/alpha', live: true })],
+      mines: [
+        defaultMine({
+          id: 'C:/dev/alpha',
+          dwarfs: [defaultDwarf({ id: '1', status: 'waiting' })]
+        })
+      ]
+    })
+    expect(wrapper.find('.status-resting').exists()).toBe(true)
+  })
+
+  it('raises no marker for a project the board does not carry', () => {
+    const wrapper = panel({
+      projects: [defaultProject({ id: 'C:/dev/alpha', live: true })],
+      mines: []
+    })
+    expect(wrapper.find('.card-status').exists()).toBe(false)
+  })
+
   it('opens the mine a live card names', async () => {
     const wrapper = panel({
       projects: [defaultProject({ id: 'C:/dev/alpha', live: true })],
