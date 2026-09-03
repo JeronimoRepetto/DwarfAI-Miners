@@ -3233,6 +3233,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     reportSessionId: (index: number, sessionId: string) => void
     ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
     reportTelemetry: (index: number, update: HeldSessionTelemetryUpdate) => void
+    reportMessage: (index: number, role: 'user' | 'assistant', text: string) => void
   } {
     const started: HeldSessionStartRequest[] = []
     let closed = 0
@@ -3259,7 +3260,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
             }
           ]
         }),
-      reportTelemetry: (index, update) => started[index]!.onTelemetry(update)
+      reportTelemetry: (index, update) => started[index]!.onTelemetry(update),
+      reportMessage: (index, role, text) => started[index]!.onMessage(role, text)
     }
   }
 
@@ -3430,6 +3432,33 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     expect(dwarf.model).toBe('claude-haiku-4-5')
     expect(dwarf.mcpServers).toEqual([{ name: 'codegraph', status: 'connected' }])
     expect(dwarf.totalCostUsd).toBe(0.0697689)
+    runtime.stop()
+  })
+
+  it("stamps the exchange a held session's own stream carried on its foreman (#159)", async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    // A session nobody is holding carries no conversation at all — the panel
+    // reads an observed session's words off its transcript instead.
+    expect(runtime.getMines()[0]!.dwarfs[0]!.conversation).toBeUndefined()
+
+    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig here' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportMessage(0, 'assistant', 'Found the seam.')
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs[0]!.conversation).toEqual([
+      { role: 'user', text: 'dig here', timestamp: new Date(1_700_000_000_000).toISOString() },
+      {
+        role: 'assistant',
+        text: 'Found the seam.',
+        timestamp: new Date(1_700_000_000_000).toISOString()
+      }
+    ])
     runtime.stop()
   })
 

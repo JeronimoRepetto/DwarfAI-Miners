@@ -42,7 +42,11 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
-import { stampHeldQuestions, stampHeldTelemetry } from '../sessionLaunch/heldSession'
+import {
+  stampHeldConversation,
+  stampHeldQuestions,
+  stampHeldTelemetry
+} from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
@@ -544,8 +548,16 @@ export class AgentRuntime {
         // supersession rule: only a held session has any of this, so an
         // observed session's own tail-derived read (model, above all) stands
         // untouched. See stampHeldTelemetry.
-        const published = stampHeldTelemetry(withQuestions, (sessionId) =>
+        const withTelemetry = stampHeldTelemetry(withQuestions, (sessionId) =>
           this.heldSessions.telemetryState(sessionId)
+        )
+        // The words that session's own stream carried (#159), which is the
+        // only conversation this app has first-hand. Same supersession rule
+        // once more, and the same reason it can only ever ADD: a session the
+        // panel does not hold has no conversation here at all, and the panel
+        // reads its transcript on its own channel instead (see dwarfFeed).
+        const published = stampHeldConversation(withTelemetry, (sessionId) =>
+          this.heldSessions.conversationState(sessionId)
         )
         this.mines = published
         pollProfiler.count(
