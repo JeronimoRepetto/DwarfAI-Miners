@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MAP_BG_SRC } from '../../lib/art'
 import { MAP_TRAILS, MINE_SITES } from '../../lib/map/mapSites'
+import { MAP_TIME_REFRESH_MS } from '../../lib/map/mapTime'
 import { defaultMaterials, defaultMine } from '../../testing/factories'
 import MapView from './MapView.vue'
 
@@ -138,6 +140,60 @@ describe('MapView', () => {
     for (const name of ['alpha', 'beta', 'gamma']) {
       expect(styleOf(first, name)).toBe(styleOf(second, name))
     }
+  })
+})
+
+/*
+ * The four paintings, chosen by the user's own clock (#136). The design gives
+ * the table; what these check is that the panel actually asks the clock, keeps
+ * asking, and stops asking when it is torn down.
+ */
+describe('MapView time-of-day artwork', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Mount with the wall clock frozen at a local hour of the day. */
+  function mountAt(hours: number): ReturnType<typeof mount> {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 3, hours, 0, 0, 0))
+    return mount(MapView, { props: { mines: MINES } })
+  }
+
+  it.each([
+    [9, 'morning'],
+    [12, 'day'],
+    [17, 'sunset'],
+    [23, 'night'],
+    [4, 'night']
+  ] as const)('draws the %i:00 painting, which is %s', (hours, variant) => {
+    const wrapper = mountAt(hours)
+    expect(wrapper.get('.map-art').attributes('src')).toBe(MAP_BG_SRC[variant])
+  })
+
+  it('changes the painting when the clock crosses a boundary while the map is open', async () => {
+    const wrapper = mountAt(19)
+    expect(wrapper.get('.map-art').attributes('src')).toBe(MAP_BG_SRC.sunset)
+
+    vi.setSystemTime(new Date(2026, 8, 3, 20, 0, 0, 0))
+    await vi.advanceTimersByTimeAsync(MAP_TIME_REFRESH_MS)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('.map-art').attributes('src')).toBe(MAP_BG_SRC.night)
+  })
+
+  /*
+    An interval left running after the view is gone is the classic leak in a
+    panel that switches between five screens all day: it is invisible, it never
+    fails a test that does not look for it, and it costs a wake-up a minute for
+    every map the user ever opened.
+  */
+  it('stops watching the clock once the map is unmounted', async () => {
+    const wrapper = mountAt(19)
+    wrapper.unmount()
+    vi.setSystemTime(new Date(2026, 8, 3, 20, 0, 0, 0))
+    await vi.advanceTimersByTimeAsync(MAP_TIME_REFRESH_MS * 3)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

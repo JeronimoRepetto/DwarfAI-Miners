@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { MAP_BG_SRC } from '../../lib/art'
 import type { MineSite } from '../../lib/map/mapSites'
 import { MAP_TRAILS, MINE_SITES, moundLinkClass, trailPoints } from '../../lib/map/mapSites'
+import { MAP_TIME_REFRESH_MS, mapVariantAt } from '../../lib/map/mapTime'
 import { assignSlots } from '../../lib/placement'
 import type { MaterialTotals, Mine } from '../../types'
 import MineMound from './MineMound.vue'
@@ -23,6 +24,28 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ open: [mineId: string] }>()
+
+/**
+ * The painting the valley is wearing, re-read from the clock on a slow tick
+ * (see MAP_TIME_REFRESH_MS for why a tick and not one alarm at the boundary).
+ * The interval is cleared on unmount: the panel switches between five screens
+ * all day, and a timer left running per visit is a leak nothing on screen would
+ * ever show.
+ */
+const timeVariant = ref(mapVariantAt(new Date()))
+const mapArtSrc = computed(() => MAP_BG_SRC[timeVariant.value])
+let clockTick: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  clockTick = setInterval(() => {
+    timeVariant.value = mapVariantAt(new Date())
+  }, MAP_TIME_REFRESH_MS)
+})
+
+onBeforeUnmount(() => {
+  if (clockTick !== null) clearInterval(clockTick)
+  clockTick = null
+})
 
 const slotByMine = computed(() => assignSlots(props.mines.map((mine) => mine.id)))
 
@@ -54,7 +77,14 @@ function positionStyle(mineId: string): Record<string, string> {
 
 <template>
   <div class="map-view" aria-label="Isometric map of active mines">
-    <img class="map-art" :src="MAP_BG_SRC" alt="" aria-hidden="true" draggable="false" />
+    <img
+      class="map-art"
+      :src="mapArtSrc"
+      :data-variant="timeVariant"
+      alt=""
+      aria-hidden="true"
+      draggable="false"
+    />
     <!-- Darkens the edges and the valley floor so the lit mounds carry the eye. -->
     <div class="map-vignette" aria-hidden="true"></div>
     <!--

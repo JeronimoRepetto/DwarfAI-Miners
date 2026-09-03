@@ -7,6 +7,7 @@
  * build time instead of rendering as a broken image.
  */
 import type { DwarfRole, Material, MineTier } from '../types'
+import type { MapTimeVariant } from './map/mapTime'
 import type { ShellArea } from './shell/shellNav'
 
 import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
@@ -35,7 +36,10 @@ import nuggetIron from '../assets/art/nugget-iron.png'
 import nuggetSilver from '../assets/art/nugget-silver.png'
 import nuggetUranium from '../assets/art/nugget-uranium.png'
 
-import mapBg from '../assets/art/concept/map-bg.jpg'
+import mapDay from '../assets/art/map/map-bg-day.jpg'
+import mapMorning from '../assets/art/map/map-bg-sunerise.jpg'
+import mapNight from '../assets/art/map/map-bg-nigth.jpg'
+import mapSunset from '../assets/art/map/map-bg-suneset.jpg'
 import labArt from '../assets/art/lab/lab.jpg'
 import marketArt from '../assets/art/market/market.jpg'
 
@@ -147,8 +151,39 @@ export const NUGGET_SRC: Record<NuggetMaterial, string> = {
   uranium: nuggetUranium
 }
 
-/** The moonlit valley the mounds stand on. */
-export const MAP_BG_SRC = mapBg
+/**
+ * The pixel size every map painting is delivered at, measured off the four
+ * committed files rather than assumed.
+ *
+ * Here for the same reason `INTERIOR_ART_SIZE` is: the map is drawn with
+ * `object-fit: cover` into a resizable panel, so this ratio is what decides how
+ * much of the painting survives the crop — and therefore where a spawn point
+ * authored on the painting actually lands in the box (see mapProjection.ts).
+ *
+ * All four variants share it, which is what lets one authored coordinate serve
+ * every hour of the day, exactly as the design says it should.
+ */
+export const MAP_ART_SIZE = { width: 1856, height: 2304 } as const
+
+/**
+ * The world map, one painting per time of day (#136).
+ *
+ * THREE OF THE FOUR FILENAMES CARRY A TYPO — `sunerise`, `suneset`, `nigth` —
+ * and they are reproduced here exactly, the way `strart-sleep` is above. The
+ * files are the delivered art; renaming a committed asset to tidy a spelling is
+ * a separate change from wiring it up, and doing both at once makes neither
+ * reviewable. Which is why every import is spelled out rather than globbed: a
+ * typo in this list fails the build instead of drawing nothing at 3am.
+ *
+ * The variant a moment resolves to is `mapVariantAt` in lib/map/mapTime.ts;
+ * this table only says which file each name means.
+ */
+export const MAP_BG_SRC: Record<MapTimeVariant, string> = {
+  morning: mapMorning,
+  day: mapDay,
+  sunset: mapSunset,
+  night: mapNight
+}
 
 /**
  * The shell navigation icons, keyed by the area each one selects.
