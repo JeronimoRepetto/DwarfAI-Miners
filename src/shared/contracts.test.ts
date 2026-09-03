@@ -3,10 +3,12 @@ import type { DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
 import {
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
+  MCP_CONNECTION_STATUSES,
   TIER_WEIGHT_THRESHOLDS_KB,
   dwarfSilenceWindowKey,
   dwarfSilenceWindowMs,
-  isDwarfProvider
+  isDwarfProvider,
+  isMcpConnectionStatus
 } from './contracts'
 
 /*
@@ -45,6 +47,43 @@ describe('isDwarfProvider', () => {
       // user's disk, a value off the IPC boundary — so an unrecognised one has
       // to read as "no provider" rather than being passed on as a guess.
       expect(isDwarfProvider(value)).toBe(false)
+    }
+  )
+})
+
+/*
+ * Issue #96. The held-session loop reads `mcp_servers[].status` straight off
+ * the CLI's own `init` message, which types it as a plain `string` — but the
+ * live-fire spike (issue #96's comments) observed only the five values the
+ * SDK's control-request surface (`mcpServerStatus()`) types as a closed enum,
+ * across seven real entries including three flavours of `needs-auth`. Same
+ * boundary-validation discipline `isDwarfProvider`/`isMineTier` already hold:
+ * a status this build does not recognise reads as "not this enum" rather than
+ * being passed on as a guess.
+ */
+describe('MCP_CONNECTION_STATUSES', () => {
+  it('names the SDK-typed closed enum, and nothing else', () => {
+    expect(MCP_CONNECTION_STATUSES).toEqual([
+      'connected',
+      'failed',
+      'needs-auth',
+      'pending',
+      'disabled'
+    ])
+  })
+})
+
+describe('isMcpConnectionStatus', () => {
+  it('recognises every status in the table', () => {
+    for (const status of MCP_CONNECTION_STATUSES) {
+      expect(isMcpConnectionStatus(status)).toBe(true)
+    }
+  })
+
+  it.each(['Connected', 'CONNECTED', 'unknown', '', ' connected', 42, null, undefined, {}])(
+    'refuses %j, which this build has no MCP status enum member for',
+    (value) => {
+      expect(isMcpConnectionStatus(value)).toBe(false)
     }
   )
 })

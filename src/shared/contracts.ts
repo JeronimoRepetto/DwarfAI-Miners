@@ -134,6 +134,53 @@ export function isDwarfProvider(value: unknown): value is DwarfProvider {
   return typeof value === 'string' && (DWARF_PROVIDERS as readonly string[]).includes(value)
 }
 
+/**
+ * Every connection state the Agent SDK reports for one MCP server (issue
+ * #96), read verbatim off a held session's own `init` message.
+ *
+ * The CLI's `init` message types `mcp_servers[].status` as a plain `string` —
+ * but the SDK's own control-request surface (`mcpServerStatus()`) types the
+ * same status as this closed five-member enum, and issue #96's live-fire
+ * spike observed only members of this set across seven real servers on a
+ * real session (three flavours of `needs-auth` among them, correcting an
+ * earlier assumption that a fresh install would report none configured). So
+ * this app treats the field as the closed set the SDK's own typed surface
+ * promises, not as the open string its `init` message declares.
+ */
+export const MCP_CONNECTION_STATUSES = [
+  'connected',
+  'failed',
+  'needs-auth',
+  'pending',
+  'disabled'
+] as const
+
+export type McpConnectionStatus = (typeof MCP_CONNECTION_STATUSES)[number]
+
+/**
+ * Whether an unknown value names a status this build's MCP enum admits.
+ *
+ * Same reason `isMineTier`/`isDwarfProvider` are values and not casts: this
+ * reads a field the CLI itself only TYPES as a string, so an unrecognised
+ * value has to read as "not this enum" rather than being passed on as a
+ * guess — the boundary-validation discipline `WaitingReason`'s three closed
+ * values already hold.
+ */
+export function isMcpConnectionStatus(value: unknown): value is McpConnectionStatus {
+  return typeof value === 'string' && (MCP_CONNECTION_STATUSES as readonly string[]).includes(value)
+}
+
+/**
+ * One MCP server a held session's own protocol messages named, and the CLI's
+ * own connection state for it (issue #96) — never text this app parsed out
+ * of `/mcp`'s prose output, which has no structured route for a session this
+ * app does not hold (see docs/command-surface-evaluation.md §2a).
+ */
+export interface DwarfMcpServerStatus {
+  name: string
+  status: McpConnectionStatus
+}
+
 export type DwarfRole = 'foreman' | 'worker'
 
 /**
@@ -384,7 +431,13 @@ export interface Dwarf {
   provider: DwarfProvider
   role: DwarfRole
   name: string
+  /**
+   * Whichever provider observed it: Claude's transcript tail for an observed
+   * session, or (issue #96) a held session's own `init` message, which
+   * arrives on every turn and supersedes whatever the tail last read.
+   */
   model?: string
+  /** Same provenance as `model` — a held session's `init.effort` is a second writer, not a new field (issue #96). */
   effort?: string
   status: DwarfStatus
   description?: string
@@ -473,6 +526,40 @@ export interface Dwarf {
    * as every field being null: no provider channel was reachable at all.
    */
   capabilities?: DwarfCapabilities
+  /**
+   * Every MCP server a held session's own `init` message has named, and its
+   * connection status, refreshed on every turn (issue #96).
+   *
+   * Held sessions ONLY: no other session type this app runs has any
+   * structured route to a server's connection health — an observed session's
+   * transcript never carries it, and the CLI's own text commands are the
+   * "screen-scraping wearing a different hat" #96 explicitly declined
+   * (docs/command-surface-evaluation.md §2a). Absent means one of two things
+   * and deliberately does not distinguish them: this is not a held session, or
+   * it is one whose first `init` has not arrived yet — the same asymmetry
+   * DwarfQuestion's own doc comment draws for its absence.
+   */
+  mcpServers?: DwarfMcpServerStatus[]
+  /**
+   * The running cost, in USD, of the WHOLE held session's `query()` call, as
+   * of its most recently read `result` message — never a per-turn figure, and
+   * never something this panel computed (issue #96). The SDK's own doc
+   * comment on `total_cost_usd` says why a later value REPLACES this one
+   * rather than adding to it: "cumulative across turns in streaming-input
+   * sessions — each result carries the running total so far, so read the
+   * latest result rather than summing across results... an estimate, not a
+   * billing statement." Issue #96's live-fire spike confirmed this live,
+   * twice over: the structured usage call's own running total matched the
+   * plain `result.total_cost_usd` from the same turn exactly.
+   *
+   * Held sessions ONLY, for the same reason `mcpServers` is: every other
+   * session type this app runs has tokens at best, never a dollar figure (see
+   * docs/command-surface-evaluation.md §2a). A different unit from every
+   * material the vault tracks (see MATERIAL_TOKENS_PER_UNIT) — additive,
+   * never converted into materials or vice versa, for the reason materials
+   * never convert into one another.
+   */
+  totalCostUsd?: number
 }
 
 /**

@@ -19,6 +19,7 @@ export type {
   DwarfCapabilities,
   DwarfKickRequest,
   DwarfKickResult,
+  DwarfMcpServerStatus,
   DwarfProvider,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
@@ -33,6 +34,7 @@ export type {
   HeldSessionLaunchResult,
   Material,
   MaterialTotals,
+  McpConnectionStatus,
   MetricsResetResult,
   Mine,
   MineDeclareResult,
@@ -71,6 +73,7 @@ export {
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowKey,
   isDwarfProvider,
+  isMcpConnectionStatus,
   isMineTier
 } from '../../shared/contracts'
 

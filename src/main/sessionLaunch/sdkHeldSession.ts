@@ -188,6 +188,39 @@ export function createSdkHeldSession(options: SdkHeldSessionOptions = {}): HeldS
           // between this stream and the dwarf drawn from it.
           if (message.type === 'system' && message.subtype === 'init') {
             request.onSessionId(message.session_id)
+            // Everything else this message says about the session right now
+            // (issue #96) — the model in force, every configured MCP server
+            // and its connection state, the effort level (absent when the
+            // active model takes none), and the exact CLI build driving this
+            // session. `init` is re-emitted on every turn ("the newest frame
+            // wins", the SDK's own words), which is what makes a model
+            // switched mid-session visible here without polling for it.
+            request.onTelemetry({
+              model: message.model,
+              mcpServers: message.mcp_servers,
+              ...(message.effort === undefined || message.effort === null
+                ? {}
+                : { effort: message.effort }),
+              claudeCodeVersion: message.claude_code_version
+            })
+          }
+          // Once per turn, after every assistant/user/stream_event message of
+          // that turn — true of the success subtype and every error subtype
+          // alike, since both carry the same total_cost_usd/usage fields.
+          // Both are the RUNNING TOTAL for the whole query() call, not this
+          // turn's own spend (see HeldSessionTelemetryUpdate's own doc
+          // comment for why a later update REPLACES these rather than
+          // summing with what came before).
+          if (message.type === 'result') {
+            request.onTelemetry({
+              totalCostUsd: message.total_cost_usd,
+              usage: {
+                inputTokens: message.usage.input_tokens,
+                outputTokens: message.usage.output_tokens,
+                cacheCreationInputTokens: message.usage.cache_creation_input_tokens,
+                cacheReadInputTokens: message.usage.cache_read_input_tokens
+              }
+            })
           }
         }
         end('the session stream ended')
