@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import {
+  MESSAGE_PANEL_ASK_HEIGHT,
   MESSAGE_PANEL_MAX_HEIGHT,
   MESSAGE_PANEL_MIN_HEIGHT,
   initialPanelHeight
@@ -429,6 +430,10 @@ describe('DwarfMessagePanel question', () => {
       ...props
     })
   }
+
+  it('opens tall enough to hold the whole ask, without squashing the conversation', () => {
+    expect(heightOf(asking())).toBe(MESSAGE_PANEL_ASK_HEIGHT)
+  })
 
   it('shows no question surface for a dwarf with nothing outstanding', () => {
     expect(panel().find('.question-card').exists()).toBe(false)

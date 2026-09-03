@@ -41,6 +41,17 @@ export const MESSAGE_PANEL_MIN_HEIGHT = MESSAGE_PANEL_CHROME_HEIGHT + 104
  */
 export const MESSAGE_PANEL_MAX_HEIGHT = 578
 
+/**
+ * The floor when the dwarf has an outstanding ask, measured off the design's
+ * own question export (547px, against the base export's 235).
+ *
+ * An ask is not a line of text, it is a surface: the agent's options, its
+ * `Other Thing` label and a box of its own, all of it REPLACING the composer.
+ * A panel opened at the ordinary floor would have to squash the conversation
+ * to nothing to fit one.
+ */
+export const MESSAGE_PANEL_ASK_HEIGHT = 547
+
 /** 10px pixel type at the panel's own line height. */
 const BUBBLE_LINE_HEIGHT = 14
 /** Roughly what fits on one line of the design's ~865px-wide bubble at 10px. */
@@ -64,10 +75,17 @@ export function clampPanelHeight(height: number): number {
   return Math.min(MESSAGE_PANEL_MAX_HEIGHT, Math.max(MESSAGE_PANEL_MIN_HEIGHT, Math.round(height)))
 }
 
-/** The height the panel opens at for this latest message. Pure — see the module comment. */
-export function initialPanelHeight(latest: string | undefined): number {
-  if (latest === undefined || latest.trim() === '') return MESSAGE_PANEL_MIN_HEIGHT
-  return clampPanelHeight(
+/**
+ * The height the panel opens at for this latest message, and for whether the
+ * dwarf has an ask outstanding. Pure — see the module comment.
+ *
+ * `asking` raises the FLOOR rather than fixing the height: a long reply under
+ * an open ask still asks for the room it needs, up to the ceiling.
+ */
+export function initialPanelHeight(latest: string | undefined, asking = false): number {
+  const floor = asking ? MESSAGE_PANEL_ASK_HEIGHT : MESSAGE_PANEL_MIN_HEIGHT
+  if (latest === undefined || latest.trim() === '') return clampPanelHeight(floor)
+  const derived =
     MESSAGE_PANEL_CHROME_HEIGHT + BUBBLE_PADDING + lineCount(latest) * BUBBLE_LINE_HEIGHT
-  )
+  return clampPanelHeight(Math.max(floor, derived))
 }

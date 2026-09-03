@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MESSAGE_PANEL_ASK_HEIGHT,
   MESSAGE_PANEL_MAX_HEIGHT,
   MESSAGE_PANEL_MIN_HEIGHT,
   clampPanelHeight,
@@ -30,6 +31,18 @@ describe('initialPanelHeight', () => {
   it('never opens taller than the ceiling, whatever the agent wrote', () => {
     expect(initialPanelHeight('x'.repeat(100_000))).toBe(MESSAGE_PANEL_MAX_HEIGHT)
     expect(initialPanelHeight('line\n'.repeat(500))).toBe(MESSAGE_PANEL_MAX_HEIGHT)
+  })
+
+  it('opens tall enough for an outstanding ask, which is a surface of its own', () => {
+    // The ask replaces the composer with the agent's options and a box of its
+    // own, and the design's question export is 547px tall against the base
+    // export's 235. A panel opened at its floor would squash the conversation
+    // to nothing to fit one.
+    expect(initialPanelHeight('ok', true)).toBe(MESSAGE_PANEL_ASK_HEIGHT)
+  })
+
+  it('still lets a very long message under an ask ask for more room', () => {
+    expect(initialPanelHeight('x'.repeat(20_000), true)).toBe(MESSAGE_PANEL_MAX_HEIGHT)
   })
 
   it('is a pure function of the message: the same text always opens the same height', () => {

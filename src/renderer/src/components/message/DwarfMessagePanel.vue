@@ -89,7 +89,9 @@ const conversation = computed(() => conversationOf(props.dwarf, props.feed))
  * itself for free, and its second rule (new messages do not resize) holding
  * because nothing here watches the conversation.
  */
-const height = ref(initialPanelHeight(latestText(conversation.value)))
+const height = ref(
+  initialPanelHeight(latestText(conversation.value), props.dwarf.pendingQuestion !== undefined)
+)
 /** The height to give back when the history tab closes again. */
 const collapsedHeight = ref(height.value)
 
@@ -412,6 +414,8 @@ watch(
   z-index: 60;
   display: flex;
   flex-direction: column;
+  /* The height is fixed, so nothing inside it may spill past the border. */
+  overflow: hidden;
   width: min(var(--size-message-panel-width), 100%);
   border: var(--border-active);
   border-radius: var(--radius-default);
@@ -585,6 +589,7 @@ watch(
   flex: none;
   gap: var(--space-nav-gap);
   align-items: flex-end;
+  min-height: 0;
   padding: 0 8px 4px;
 }
 /* The re-homed question card takes the composer's whole width. */
