@@ -144,6 +144,15 @@ export function resolveFocusTarget(
  * regardless of that starting state. It runs again after a successful
  * attach so this process is left with no console attached, same as it
  * started.
+ *
+ * IsWindowVisible runs on the resolved handle before FreeConsole detaches,
+ * because AttachConsole finds the console *session*, not a window this pid
+ * necessarily owns visibly: Windows Terminal keeps its classic console
+ * window hidden and draws the session in its own tab, so this probe still
+ * returns a real, nonzero handle for it (issue #182). The script reports
+ * that visibility alongside the handle rather than deciding on it itself, so
+ * the decision stays in `parseConsoleWindowHandle` — pure and unit-tested
+ * without PowerShell, like everything else this probe hands back.
  */
 export function buildConsoleWindowProbeCommand(targetPid: number): string {
   return `
@@ -152,23 +161,39 @@ Add-Type -Namespace Win32 -Name Console -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern bool FreeConsole();
 [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint dwProcessId);
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
 '@
 [void][Win32.Console]::FreeConsole()
 $handle = [IntPtr]::Zero
+$visible = $false
 if ([Win32.Console]::AttachConsole(${targetPid})) {
   $handle = [Win32.Console]::GetConsoleWindow()
+  if ($handle -ne [IntPtr]::Zero) { $visible = [Win32.Console]::IsWindowVisible($handle) }
   [void][Win32.Console]::FreeConsole()
 }
-[Console]::Out.Write([int64]$handle)
+[Console]::Out.Write("$([int64]$handle) $(if ($visible) { 1 } else { 0 })")
 `.trim()
 }
 
-/** Parse the handle `buildConsoleWindowProbeCommand` prints to stdout; malformed, blank, or non-positive output means "no handle". */
+/**
+ * Parse the handle and visibility `buildConsoleWindowProbeCommand` prints to
+ * stdout ("<handle> <0|1>"); malformed, blank, non-positive, or invisible
+ * output all mean "no handle".
+ *
+ * A nonzero handle that IsWindowVisible rejects is the Windows Terminal case
+ * (issue #182): a real console window that can never be foregrounded, so it
+ * has to be indistinguishable here from a probe that found nothing at all —
+ * that is what sends `resolveFocusTarget` on to the ancestor chain walk
+ * instead of driving the foreground sequence at a window that will only
+ * fail its verification.
+ */
 export function parseConsoleWindowHandle(stdout: string): number {
   const trimmed = stdout.trim()
   if (trimmed === '') return 0
-  const value = Number(trimmed)
-  return Number.isInteger(value) && value > 0 ? value : 0
+  const [handlePart, visiblePart] = trimmed.split(/\s+/)
+  const value = Number(handlePart)
+  if (!Number.isInteger(value) || value <= 0) return 0
+  return visiblePart === '1' ? value : 0
 }
 
 /**

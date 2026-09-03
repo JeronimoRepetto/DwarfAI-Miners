@@ -112,11 +112,22 @@ describe('buildConsoleWindowProbeCommand', () => {
   it('prints the handle so the caller can parse it back from stdout', () => {
     expect(buildConsoleWindowProbeCommand(4242)).toContain('[Console]::Out.Write')
   })
+
+  // Issue #182: Windows Terminal keeps the classic console window hidden and
+  // draws the session in its own tab, so AttachConsole + GetConsoleWindow
+  // still returns a real, nonzero handle for it. Without this check that
+  // handle looked identical to a focusable one, and resolveFocusTarget took
+  // it as the target instead of falling through to the ancestor chain walk
+  // that would have found WindowsTerminal.exe.
+  it('checks IsWindowVisible on the resolved handle, so a hidden console window is not reported as a hit', () => {
+    const command = buildConsoleWindowProbeCommand(4242)
+    expect(command).toContain('IsWindowVisible')
+  })
 })
 
 describe('parseConsoleWindowHandle', () => {
-  it('parses a positive handle printed by the probe command', () => {
-    expect(parseConsoleWindowHandle('555555')).toBe(555555)
+  it('parses a positive, visible handle printed by the probe command', () => {
+    expect(parseConsoleWindowHandle('555555 1')).toBe(555555)
   })
 
   it('treats empty or blank output as no handle', () => {
@@ -131,6 +142,14 @@ describe('parseConsoleWindowHandle', () => {
   it('treats malformed output as no handle instead of throwing', () => {
     expect(parseConsoleWindowHandle('not a number')).toBe(0)
     expect(parseConsoleWindowHandle('-5')).toBe(0)
+  })
+
+  // Issue #182: a nonzero handle that IsWindowVisible rejects is exactly the
+  // Windows Terminal case — a real console window nobody can ever foreground.
+  // The caller cannot tell that apart from "no handle", so it must return 0
+  // and let resolveFocusTarget fall through to the ancestor chain walk.
+  it('treats a nonzero but invisible handle as no handle', () => {
+    expect(parseConsoleWindowHandle('555555 0')).toBe(0)
   })
 })
 
@@ -233,7 +252,7 @@ describe('focusPid', () => {
   }
 
   it('resolves the console window straight from the session pid and skips the ancestor chain walk', async () => {
-    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555' })
+    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 1' })
     const ok = await focusPid(100, run)
     expect(ok).toBe(true)
     // Only the console probe and the handle-based focus command run — no Get-CimInstance call.
@@ -241,6 +260,18 @@ describe('focusPid', () => {
     expect(executed[0]).toContain('AttachConsole')
     expect(executed[1]).toContain('555555')
     expect(executed[1]).not.toContain('Get-Process')
+  })
+
+  // Issue #182: Windows Terminal's console window resolves to a real, nonzero
+  // handle that is not visible. That must not be taken as a hit — it has to
+  // fall through exactly like a zero handle, to the ancestor chain walk that
+  // resolves WindowsTerminal.exe (already in WINDOWS_TERMINAL_HOSTS).
+  it('falls back to the ancestor chain walk when the console handle is nonzero but the window is hidden', async () => {
+    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 0' })
+    const ok = await focusPid(100, run)
+    expect(ok).toBe(true)
+    expect(executed).toHaveLength(3)
+    expect(executed[2]).toContain('Get-Process -Id 80')
   })
 
   it('falls back to the ancestor chain walk when the console probe returns a zero handle', async () => {
