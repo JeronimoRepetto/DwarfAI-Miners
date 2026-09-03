@@ -26,26 +26,28 @@ export const RAIL_WIDTH = 20
  */
 export const EXPANDED_WIDTH = 645
 
-/** The design's mine interior. */
-const MINE_INTERIOR_WIDTH = 245
-
 /**
- * The chrome the CURRENT MineScene still wraps around the cave — its own
- * padding and the header row above it.
+ * The design's mine interior, and since #137 the whole of the mine column.
  *
- * A deliberate copy of `PANEL_CHROME.width` from the renderer's `sceneSizing`,
- * which main cannot import at runtime; `panelBounds.test.ts` holds the two equal
- * so it cannot drift. It is here because the mine interior's own rebuild is a
- * later slice: until then the design's 245px is the CAVE's width, and the column
- * has to be that plus the chrome the scene has not lost yet.
+ * A deliberate copy of `DESIGN_INTERIOR_WIDTH` in the renderer's `sceneSizing`,
+ * which main cannot import at runtime; `panelBounds.test.ts` holds the two
+ * equal so it cannot drift. Both are the `--size-mine-interior-width` token.
  */
-export const MINE_SCENE_CHROME_WIDTH = 32
+export const MINE_INTERIOR_WIDTH = 245
 
 /** Air between the navigation column and the mine held open beyond it. */
 const COLUMN_GAP = 8
 
-/** The extra width an open mine costs the window. */
-export const MINE_COLUMN_WIDTH = MINE_INTERIOR_WIDTH + MINE_SCENE_CHROME_WIDTH + COLUMN_GAP
+/**
+ * The extra width an open mine costs the window.
+ *
+ * The interior and nothing else. Until #137 this carried 32px more for the
+ * header row and padding the old cave scene wrapped around itself; the design's
+ * interior has no such chrome — it is the painting, with the Close and Add
+ * actions floating on top of it — so the column is exactly the 245px the design
+ * states, plus the gap that separates it from the navigation.
+ */
+export const MINE_COLUMN_WIDTH = MINE_INTERIOR_WIDTH + COLUMN_GAP
 
 /**
  * How wide the window should be for this layout, never wider than the display.

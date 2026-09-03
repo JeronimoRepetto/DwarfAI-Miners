@@ -1,5 +1,5 @@
 /**
- * Which dwarf stands where in the cave.
+ * Which dwarf stands where in the mine.
  *
  * The panel re-polls every couple of seconds and is handed a brand new dwarf
  * list each time, in whatever order the providers produced it. So placement has
@@ -18,7 +18,7 @@ import type { DwarfRole, DwarfStatus } from '../../types'
 import { assignSlots } from '../placement'
 import {
   anchorPool,
-  clampToBand,
+  clampToPainting,
   type SceneAnchor,
   type SceneAnchorKind,
   type SceneLayout,
@@ -26,14 +26,15 @@ import {
 } from './sceneLayout'
 
 /**
- * How far apart two dwarfs sharing one anchor stand, in image percent.
+ * How far apart two dwarfs sharing one workstation stand, in image percent.
  *
- * Sized so a shared work spot still reads as two miners at one rock rather than
- * one sprite drawn twice. `sceneLayout.test.ts` holds the authored anchors to
- * half this much clearance from the rock wall, so a sharing pair is never
- * squeezed into the stone.
+ * Sized off the design rather than by eye: the sprite sheet's frame is 36px and
+ * the design draws it at 1x inside a 245px interior, so a whole frame is 14.7%
+ * of the painting's width. Ten percent puts a sharing pair about two thirds of
+ * a frame apart — overlapping at the transparent edges, which is what two
+ * miners at one vein look like, and not the same silhouette drawn twice.
  */
-export const SHARE_SPREAD_X = 9
+export const SHARE_SPREAD_X = 10
 
 /** The slice of a dwarf placement cares about. */
 export interface SceneOccupant {
@@ -58,12 +59,25 @@ export interface ScenePlacement {
  *
  * Straight off the existing status model, which is the point: no new state to
  * keep in sync, the scene simply reads what the providers already report.
+ *
+ * A waiting dwarf no longer goes anywhere. The cave had a painted rest area and
+ * sent him to it; the design's spatial map has no such class — it draws spawn
+ * circles, worker triangles and foreman diamonds, and nothing else a dwarf
+ * stands on. So resting happens where the work is, which is also what the
+ * sleeping frames draw: a dwarf asleep at his post, not one who walked away
+ * from it (#137).
  */
 export function anchorKindFor(status: DwarfStatus, role: DwarfRole): SceneAnchorKind {
-  if (status === 'leaving') return 'exit'
-  if (status === 'waiting') return 'rest'
+  /*
+   * A spawn point is where a dwarf enters, so it is also where one leaves.
+   * The design marks three of them and they are NOT all at the entrance — one
+   * near the top of the shaft, one on the left mid-way down, one at the pool at
+   * the bottom — so "leaving" means heading for the nearest way out rather than
+   * trooping down to a single door.
+   */
+  if (status === 'leaving') return 'spawn'
   // The foreman does not dig — he has his own spot and his own frames.
-  return role === 'foreman' ? 'post' : 'vein'
+  return role === 'foreman' ? 'foreman' : 'worker'
 }
 
 /**
@@ -102,7 +116,7 @@ export function assignScene(
       for (const [shareIndex, id] of sorted.entries()) {
         placements.set(id, {
           anchor,
-          point: sharedPoint(layout, anchor, shareIndex, sorted.length),
+          point: sharedPoint(anchor, shareIndex, sorted.length),
           shareIndex,
           shareCount: sorted.length,
           facesLeft: anchor.facesLeft
@@ -116,15 +130,10 @@ export function assignScene(
 
 /**
  * Where one of several sharers stands: the group is spread symmetrically about
- * the anchor, so the feature stays the centre of attention however many dwarfs
+ * the workstation, so it stays the centre of attention however many dwarfs
  * crowd onto it, and a lone dwarf lands exactly on it.
  */
-function sharedPoint(
-  layout: SceneLayout,
-  anchor: SceneAnchor,
-  shareIndex: number,
-  shareCount: number
-): ScenePoint {
+function sharedPoint(anchor: SceneAnchor, shareIndex: number, shareCount: number): ScenePoint {
   const offset = (shareIndex - (shareCount - 1) / 2) * SHARE_SPREAD_X
-  return clampToBand(layout.band, { x: anchor.x + offset, y: anchor.y })
+  return clampToPainting({ x: anchor.x + offset, y: anchor.y })
 }

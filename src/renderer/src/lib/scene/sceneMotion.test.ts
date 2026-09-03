@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { paintingDistance } from './interiorRoute'
 import type { ScenePoint } from './sceneLayout'
 import {
-  ARRIVAL_EPSILON,
+  ARRIVAL_EPSILON_PX,
   MAX_WALK_MS,
   MIN_WALK_MS,
+  WALK_SPEED_PX_PER_SEC,
   createWalkBoard,
+  pathDurationMs,
+  pathLegs,
   prefersReducedMotion,
   walkDurationMs,
   watchReducedMotion,
@@ -15,21 +19,110 @@ function targets(entries: Record<string, ScenePoint>): Map<string, ScenePoint> {
   return new Map(Object.entries(entries))
 }
 
+/** The straight line a test wants when it is not testing routing. */
+const straight = (from: ScenePoint, to: ScenePoint): readonly ScenePoint[] => [from, to]
+
 describe('walkDurationMs', () => {
   it('takes no time at all to walk to the spot a dwarf is already standing on', () => {
     expect(walkDurationMs({ x: 40, y: 70 }, { x: 40, y: 70 })).toBe(0)
-    expect(walkDurationMs({ x: 40, y: 70 }, { x: 40 + ARRIVAL_EPSILON / 2, y: 70 })).toBe(0)
+    // Half the arrival epsilon, expressed back in percent of the painting's width.
+    const nudge = (ARRIVAL_EPSILON_PX / 2 / 1184) * 100
+    expect(walkDurationMs({ x: 40, y: 70 }, { x: 40 + nudge, y: 70 })).toBe(0)
   })
 
-  it('takes longer the farther a dwarf has to cross the gallery', () => {
+  it('takes longer the farther a dwarf has to cross the mine', () => {
     const short = walkDurationMs({ x: 40, y: 70 }, { x: 50, y: 70 })
-    const long = walkDurationMs({ x: 20, y: 79 }, { x: 79, y: 79 })
+    const long = walkDurationMs({ x: 20, y: 20 }, { x: 79, y: 79 })
     expect(long).toBeGreaterThan(short)
   })
 
+  /*
+   * The painting is three times taller than it is wide, so the same number of
+   * percent means three times as far vertically. A duration measured in percent
+   * would have a dwarf climb the whole mine in the time it takes to cross one
+   * gallery — which is what a screen-space speed always gets wrong on art this
+   * shape, and it looks like sliding rather than like a bug.
+   */
+  it('counts a percent of height as three times a percent of width', () => {
+    const across = walkDurationMs({ x: 0, y: 50 }, { x: 10, y: 50 })
+    const down = walkDurationMs({ x: 50, y: 0 }, { x: 50, y: 10 })
+    expect(down / across).toBeCloseTo(3622 / 1184, 1)
+  })
+
   it('keeps every walk inside a readable range, never a twitch and never a trek', () => {
+    // One percent of the painting's width: 12 pixels, past the arrival epsilon
+    // and well inside the distance the floor covers.
     expect(walkDurationMs({ x: 40, y: 70 }, { x: 41, y: 70 })).toBeGreaterThanOrEqual(MIN_WALK_MS)
     expect(walkDurationMs({ x: 0, y: 0 }, { x: 100, y: 100 })).toBeLessThanOrEqual(MAX_WALK_MS)
+  })
+})
+
+describe('pathDurationMs', () => {
+  it('walks the route rather than the line between its ends', () => {
+    const dogleg = [
+      { x: 10, y: 10 },
+      { x: 90, y: 10 },
+      { x: 90, y: 20 }
+    ]
+    expect(pathDurationMs(dogleg)).toBeGreaterThan(
+      walkDurationMs(dogleg[0] as ScenePoint, dogleg[2] as ScenePoint)
+    )
+  })
+
+  it('holds one steady pace, so a long route simply takes longer', () => {
+    const path = [
+      { x: 20, y: 20 },
+      { x: 40, y: 30 }
+    ]
+    const span = paintingDistance(path[0] as ScenePoint, path[1] as ScenePoint)
+    expect(pathDurationMs(path)).toBeCloseTo((span / WALK_SPEED_PX_PER_SEC) * 1000, 3)
+  })
+})
+
+describe('pathLegs', () => {
+  const path = [
+    { x: 10, y: 10 },
+    { x: 40, y: 10 },
+    { x: 40, y: 40 }
+  ]
+
+  it('gives each leg its own share of the journey, so nobody pauses at a corner', () => {
+    const legs = pathLegs(path)
+    expect(legs.map((leg) => leg.point)).toEqual([path[1], path[2]])
+    const total = legs.reduce((sum, leg) => sum + leg.durationMs, 0)
+    expect(total).toBeCloseTo(pathDurationMs(path), 3)
+    // The vertical leg is three times the horizontal one on this art, so it
+    // takes three times as long — the same pace, not the same time.
+    expect((legs[1] as { durationMs: number }).durationMs).toBeGreaterThan(
+      (legs[0] as { durationMs: number }).durationMs
+    )
+  })
+
+  /*
+   * The clamps are on the journey, not on each leg. An extracted corridor is a
+   * polyline of many short segments, and flooring each of those at MIN_WALK_MS
+   * would turn a smooth walk into a stutter round every corner.
+   */
+  it('never floors a single leg at the journey minimum', () => {
+    const wiggly = [
+      { x: 10, y: 10 },
+      { x: 10.1, y: 10 },
+      { x: 10.2, y: 10 },
+      { x: 60, y: 10 }
+    ]
+    const legs = pathLegs(wiggly)
+    expect((legs[0] as { durationMs: number }).durationMs).toBeLessThan(MIN_WALK_MS)
+  })
+
+  it('has no legs to walk when there is nowhere to go', () => {
+    expect(pathLegs([])).toEqual([])
+    expect(pathLegs([{ x: 5, y: 5 }])).toEqual([])
+    expect(
+      pathLegs([
+        { x: 5, y: 5 },
+        { x: 5, y: 5 }
+      ])
+    ).toEqual([])
   })
 })
 
@@ -51,7 +144,7 @@ describe('walkFacesLeft', () => {
 
   it('ignores a nudge too small to read as a direction', () => {
     const from = { x: 40, y: 70 }
-    const to = { x: 40 - ARRIVAL_EPSILON / 2, y: 70 }
+    const to = { x: 40 - (ARRIVAL_EPSILON_PX / 2 / 1184) * 100, y: 70 }
     expect(walkFacesLeft(from, to, false)).toBe(false)
   })
 })
@@ -76,85 +169,112 @@ describe('createWalkBoard', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
+  /** The board's latest word on one dwarf. */
+  function watch(): {
+    board: ReturnType<typeof createWalkBoard>
+    walking: (id: string) => boolean
+    at: (id: string) => ScenePoint | undefined
+    emissions: () => number
+  } {
+    let state: ReadonlyMap<string, { point: ScenePoint; walking: boolean }> = new Map()
+    let emissions = 0
+    const board = createWalkBoard((next) => {
+      state = next
+      emissions++
+    })
+    return {
+      board,
+      walking: (id) => state.get(id)?.walking === true,
+      at: (id) => state.get(id)?.point,
+      emissions: () => emissions
+    }
+  }
+
   /*
     A dwarf appearing for the first time materialises at its spot. Walking it in
     from wherever the board happened to have nothing would be a sprint across
-    the cave every time a session connects.
+    the mine every time a session connects.
   */
   it('does not walk a dwarf that has only just appeared', () => {
-    const seen: ReadonlySet<string>[] = []
-    const board = createWalkBoard((walking) => seen.push(walking))
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    expect(seen.every((set) => set.size === 0)).toBe(true)
+    const seen = watch()
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    expect(seen.walking('a')).toBe(false)
+    expect(seen.at('a')).toEqual({ x: 36, y: 70 })
   })
 
   it('walks a dwarf whose spot moved, and stops it on arrival', () => {
-    let walking: ReadonlySet<string> = new Set()
-    const board = createWalkBoard((next) => {
-      walking = next
-    })
+    const seen = watch()
     const from = { x: 36, y: 70 }
     const to = { x: 21, y: 79 }
-    board.sync(targets({ a: from }))
-    board.sync(targets({ a: to }))
-    expect(walking.has('a')).toBe(true)
+    seen.board.sync(targets({ a: from }), straight)
+    seen.board.sync(targets({ a: to }), straight)
+    expect(seen.walking('a')).toBe(true)
 
     vi.advanceTimersByTime(walkDurationMs(from, to) - 1)
-    expect(walking.has('a')).toBe(true)
+    expect(seen.walking('a')).toBe(true)
     vi.advanceTimersByTime(2)
-    expect(walking.has('a')).toBe(false)
+    expect(seen.walking('a')).toBe(false)
+    expect(seen.at('a')).toEqual(to)
+  })
+
+  /*
+    The point of #137's routing: the board is handed the LINE a dwarf walks,
+    not just its two ends, and steps along it a corner at a time. A board that
+    animated straight to the target would send him through the rock.
+  */
+  it('steps a dwarf through every corner of the route it was given', () => {
+    const seen = watch()
+    const corner = { x: 60, y: 20 }
+    const end = { x: 60, y: 60 }
+    seen.board.sync(targets({ a: { x: 20, y: 20 } }), straight)
+    seen.board.sync(targets({ a: end }), (from, to) => [from, corner, to])
+
+    expect(seen.at('a')).toEqual(corner)
+    expect(seen.walking('a')).toBe(true)
+    vi.advanceTimersByTime(MAX_WALK_MS)
+    expect(seen.at('a')).toEqual(end)
+    expect(seen.walking('a')).toBe(false)
   })
 
   it('leaves a dwarf alone when the poll reports the same spot again', () => {
-    let emissions = 0
-    const board = createWalkBoard(() => {
-      emissions++
-    })
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    const before = emissions
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    expect(emissions).toBe(before)
+    const seen = watch()
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    const before = seen.emissions()
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    expect(seen.emissions()).toBe(before)
   })
 
   it('re-aims a dwarf that is redirected mid-walk instead of dropping it', () => {
-    let walking: ReadonlySet<string> = new Set()
-    const board = createWalkBoard((next) => {
-      walking = next
-    })
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    board.sync(targets({ a: { x: 64, y: 70 } }))
+    const seen = watch()
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    seen.board.sync(targets({ a: { x: 64, y: 70 } }), straight)
     vi.advanceTimersByTime(MIN_WALK_MS)
-    board.sync(targets({ a: { x: 21, y: 79 } }))
-    expect(walking.has('a')).toBe(true)
+    seen.board.sync(targets({ a: { x: 21, y: 20 } }), straight)
+    expect(seen.walking('a')).toBe(true)
     vi.advanceTimersByTime(MAX_WALK_MS)
-    expect(walking.has('a')).toBe(false)
+    expect(seen.walking('a')).toBe(false)
+    expect(seen.at('a')).toEqual({ x: 21, y: 20 })
   })
 
   it('forgets a dwarf that left the mine, mid-walk or not', () => {
-    let walking: ReadonlySet<string> = new Set()
-    const board = createWalkBoard((next) => {
-      walking = next
-    })
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    board.sync(targets({ a: { x: 79, y: 79 } }))
-    expect(walking.has('a')).toBe(true)
-    board.sync(targets({}))
-    expect(walking.has('a')).toBe(false)
+    const seen = watch()
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    seen.board.sync(targets({ a: { x: 79, y: 20 } }), straight)
+    expect(seen.walking('a')).toBe(true)
+    seen.board.sync(targets({}), straight)
+    expect(seen.at('a')).toBeUndefined()
   })
 
   it('stops emitting and cancels its timers once disposed', () => {
-    let emissions = 0
-    const board = createWalkBoard(() => {
-      emissions++
-    })
-    board.sync(targets({ a: { x: 36, y: 70 } }))
-    board.sync(targets({ a: { x: 79, y: 79 } }))
-    const afterWalkStarted = emissions
-    board.dispose()
+    const seen = watch()
+    seen.board.sync(targets({ a: { x: 36, y: 70 } }), straight)
+    seen.board.sync(targets({ a: { x: 79, y: 20 } }), straight)
+    const afterWalkStarted = seen.emissions()
+    seen.board.dispose()
     vi.advanceTimersByTime(MAX_WALK_MS * 2)
-    board.sync(targets({ a: { x: 21, y: 79 } }))
-    expect(emissions).toBe(afterWalkStarted)
+    seen.board.sync(targets({ a: { x: 21, y: 79 } }), straight)
+    expect(seen.emissions()).toBe(afterWalkStarted)
   })
 })
 

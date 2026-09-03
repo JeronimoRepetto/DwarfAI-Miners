@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import { dwarfClips } from '../../lib/sprite/dwarfSequence'
-import { AUTHORED_SPRITE } from '../../lib/scene/sceneSizing'
 import { SPRITE_FRAME_SIZE, loopOf } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf } from '../../testing/factories'
 import { DWARF_SILENCE_WINDOW_MS, type DwarfKickState, type DwarfSendState } from '../../types'
@@ -1019,13 +1018,22 @@ describe('DwarfSprite sizing', () => {
     )
   })
 
+  /*
+    AMENDED for #137, which retired `AUTHORED_SPRITE` along with the cave this
+    file used to read it from: the scene's own scale is now derived from the
+    design ("one 36x38 sheet frame at 1x in a 245px interior", see sceneSizing)
+    and is handed in through `--sprite-width`/`--sprite-height` from the
+    measured column. The literals below are DwarfSprite's own fallbacks and
+    always were — the size a sprite draws at when nothing sets those variables,
+    which is what "outside any scene" means. They are stated as literals here
+    because that is what they are in the component, rather than borrowed from a
+    scene constant that no longer describes them.
+  */
   it('still draws a sprite mounted outside any scene at its authored size', () => {
     // The var fallbacks are what keep a bare sprite byte-for-byte what it was.
     expect(styleRule('.dwarf-frame')).toContain('--sprite-height, 100px')
-    // 95, not 96: the box follows the 36x38 frame now (94.74, rounded whole).
-    expect(styleRule('.dwarf-sprite')).toContain(
-      `--sprite-width, ${Math.round(AUTHORED_SPRITE.width)}px`
-    )
+    // 95, not 96: the box follows the 36x38 frame (94.74, rounded whole).
+    expect(styleRule('.dwarf-sprite')).toContain('--sprite-width, 95px')
   })
 
   it('scales its own box with its height, so the pose stays centred on the anchor', () => {
