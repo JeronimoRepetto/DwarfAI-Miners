@@ -27,7 +27,12 @@ import {
   type ProjectQueryResult,
   type TextDeliveryChannel
 } from '../domain/types'
-import { mergeDeclaredMines, stampMapSites, type DeclaredProject } from '../domain/aggregate'
+import {
+  collapseDuplicateMines,
+  mergeDeclaredMines,
+  stampMapSites,
+  type DeclaredProject
+} from '../domain/aggregate'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
@@ -488,13 +493,7 @@ export class AgentRuntime {
         // snapshots alone. Merged before the lifecycle and the ledger see it,
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
-        // Placement is stamped on last, over both halves of the board: where a
-        // mine STANDS is a remembered fact off the projects store, and it joins
-        // by the same mineIdForPath id everything else here does (#136).
-        const mines = stampMapSites(
-          mergeDeclaredMines(rawMines, this.declared, tierOf),
-          this.mapSites
-        )
+        const mines = mergeDeclaredMines(rawMines, this.declared, tierOf)
         // Accrual happens on the lifecycle's output, which is exactly what
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
@@ -505,8 +504,24 @@ export class AgentRuntime {
         // project's first walk finishes. The vault waits for a measured tier
         // (#41) — mine.path is the very string aggregateMines handed to
         // tierOf, so this asks about exactly the mine in hand.
+        //
+        // Placement and the one-mine-per-project invariant are stamped LAST, on
+        // the lifecycle's own output (#156). The tracker is the one step that
+        // can put a mine on the board which was not on it a moment before: when
+        // the last session in a project ends, the whole mine leaves the
+        // snapshot and the tracker rebuilds it so the departing dwarf has
+        // somewhere to walk out of. Stamped before that, as it was, the rebuilt
+        // mine carried no location at all — so for the length of the grace
+        // window the panel placed it itself, and one project stood in two
+        // different places on the map within a second. Where a mine STANDS is a
+        // remembered fact off the projects store, and it joins by the same
+        // mineIdForPath id everything else here does (#136).
         const withMaterials = pollProfiler.measureSync('ledger', () =>
-          this.ledger.observe(lifecycle.apply(mines), now, confirmedTierOf)
+          this.ledger.observe(
+            collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
+            now,
+            confirmedTierOf
+          )
         )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an

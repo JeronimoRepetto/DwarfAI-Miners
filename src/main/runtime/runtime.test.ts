@@ -3726,4 +3726,69 @@ describe('AgentRuntime map placement (#136)', () => {
     const stored = await projects.list()
     expect(stored.ok && stored.value).toEqual([])
   })
+
+  /*
+   * The third joint, and the one the second acceptance run found (#156).
+   *
+   * The board is assembled in four steps and the placement stamp was the third
+   * of them, with the lifecycle tracker running AFTER it. That tracker is the
+   * one step that can put a mine on the board which was not on it a moment
+   * before: when the last session in a project ends, the whole mine leaves the
+   * provider's snapshot, and the tracker rebuilds it from what it remembers so
+   * the departing dwarf has somewhere to walk out of. Rebuilt after the stamp,
+   * that mine carried no location at all — so for the length of the grace
+   * window the panel fell back to placing it itself, and one project stood in
+   * two different places on the map within a second of each other.
+   */
+  it('keeps a mine where the store put it while its last session walks out', async () => {
+    let now = 0
+    const working = {
+      id: 'claude:session-1',
+      provider: 'claude' as const,
+      role: 'foreman' as const,
+      name: 'foreman',
+      status: 'working' as const,
+      sessionId: 'session-1'
+    }
+    const busy = [
+      {
+        provider: 'claude' as const,
+        sessionId: 'session-1',
+        cwd: WALKED,
+        status: 'busy' as const,
+        updatedAt: 1,
+        dwarfs: [working]
+      }
+    ]
+    // Twice: the location is chosen by the write the observer makes during the
+    // first poll, so the SECOND is the first board that carries it.
+    const scan = vi
+      .fn<Provider['scan']>()
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValue([])
+    const projects = placementStore()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
+      projects,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+
+    await runtime.refresh()
+    await runtime.settleProjects()
+    await runtime.refresh()
+    const placed = runtime.getMines()[0]!.mapSite
+
+    now = 1_000
+    await runtime.refresh()
+    const leaving = runtime.getMines()
+    runtime.stop()
+
+    expect(placed).toBeGreaterThan(0)
+    expect(leaving).toHaveLength(1)
+    expect(leaving[0]!.dwarfs).toMatchObject([{ status: 'leaving' }])
+    expect(leaving[0]!.mapSite).toBe(placed)
+  })
 })
