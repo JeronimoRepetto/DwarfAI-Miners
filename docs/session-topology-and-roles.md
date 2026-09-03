@@ -391,6 +391,15 @@ first survives the second going missing.
 
 ### Nested supervisor
 
+> **SUPERSEDED by the maintainer's ruling on #157.** Two claims below are now false. Depth beyond
+> 1 has been observed — 32 sidecars at depth 2 and 11 at depth 3 in one pass over 321 of them
+> (`provider-formats.md` §1.4) — and `DwarfRole` is no longer binary: everything below a worker is
+> a `worker2`, which has its own art, shares the workers' anchors and lifecycle, and needs no new
+> anchor kind. What survives unchanged is this section's reasoning about the WINDOW and the POST:
+> a worker2 is as headless as a worker and draws the same silence window, and the one `post` per
+> mine still belongs to the foreman alone. The rest is kept as written, because the argument it
+> lost is worth reading beside the ruling that overruled it.
+
 Codex records `depth` in the spawn blob (`"depth": 1` observed; `codex-v2-format.md` §
 `state_5.sqlite`) and `agent_path` as a path (`/root/<slug>`), so `/root/a/b` is depth 2. Claude
 records `spawnDepth` in `agent-<id>.meta.json` (`provider-formats.md` §1.4). Both providers can
