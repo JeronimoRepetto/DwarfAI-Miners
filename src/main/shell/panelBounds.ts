@@ -30,6 +30,22 @@ export const MIN_WINDOW_WIDTH = 32
 export const DESIGN_COMPOSITION_HEIGHT = 768
 
 /**
+ * The logical screen the whole shell is laid out on (#153).
+ *
+ * Type read far too small on a 2K display, and the maintainer's ruling is that
+ * the shell is a SURFACE designed at 1080 logical pixels tall, scaled onto
+ * whatever display it lands on. So every number below — the design's 20px rail,
+ * its 38px navigation column, the derived columns — is computed against this
+ * height and this height only, and the display's real one appears exactly once,
+ * as the factor `uiScale` returns.
+ *
+ * Not the 768 the mock's own composition was drawn at: 768 is where the
+ * design's stated widths are reproduced, 1080 is the screen the product is
+ * scaled to. The two are different questions and both are answered here.
+ */
+export const DESIGN_SCREEN_HEIGHT = 1080
+
+/**
  * The secondary content column of the design's own 645px opening width, which
  * is now the FLOOR rather than the value.
  *
@@ -103,17 +119,49 @@ export function expandedWidth(windowHeight: number): number {
 }
 
 /**
- * How wide the window should be for this layout, never wider than the display.
+ * How much bigger than the design world this display is (#153).
  *
- * A display too narrow for the whole composition gets a panel that spans it
+ * Continuous rather than quantised to whole numbers, which the maintainer chose
+ * deliberately: a 1440p display comes out at 1.333, so a design pixel is not a
+ * whole number of device pixels and the pixel art is resampled — and a panel
+ * that is the RIGHT SIZE and slightly soft beats a crisp one that reads half the
+ * size it should. 4K lands on exactly 2 and is pixel-perfect for free. A display
+ * shorter than the design world scales DOWN by the same rule rather than being
+ * left alone.
+ *
+ * Spent in exactly two places: the window's own width here, and the renderer's
+ * `webContents.setZoomFactor` (see window.ts). Nothing else on the machine is
+ * touched, which is the whole reason it is per-window zoom and not an OS
+ * setting.
+ */
+export function uiScale(area: ScreenRect): number {
+  if (area.height <= 0) return 1
+  return area.height / DESIGN_SCREEN_HEIGHT
+}
+
+/**
+ * How wide the window should be for this layout, in the display's own pixels.
+ *
+ * The whole composition is measured in the design world and multiplied once, so
+ * the renderer keeps drawing the design's literal numbers and this is the only
+ * place the display's real height is spent on a width.
+ *
+ * A display too narrow for the scaled composition gets a panel that spans it
  * rather than one that hangs off the side; the renderer's columns then shrink,
  * which is the honest failure mode for a size the design does not cover
  * (narrow-screen adaptation is Unspecified).
  */
 export function panelWidth(area: ScreenRect, layout: PanelLayoutRequest): number {
-  if (!layout.expanded) return Math.min(MIN_WINDOW_WIDTH, area.width)
-  const wanted = expandedWidth(area.height) + (layout.mineOpen ? mineColumnWidth(area.height) : 0)
-  return Math.min(wanted, area.width)
+  const scale = uiScale(area)
+  if (!layout.expanded) {
+    // The rail scales like everything else, but the platform floor is a real
+    // pixel count and does not: a window cannot be made narrower than it.
+    return Math.min(Math.max(MIN_WINDOW_WIDTH, Math.round(RAIL_WIDTH * scale)), area.width)
+  }
+  const design =
+    expandedWidth(DESIGN_SCREEN_HEIGHT) +
+    (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0)
+  return Math.min(Math.round(design * scale), area.width)
 }
 
 /**

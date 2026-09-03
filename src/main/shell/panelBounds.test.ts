@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { ScreenRect } from '../platform/screenArea'
 import {
   DESIGN_INTERIOR_WIDTH,
   interiorColumnWidth
 } from '../../renderer/src/lib/scene/sceneSizing'
 import {
   DESIGN_COMPOSITION_HEIGHT,
+  DESIGN_SCREEN_HEIGHT,
   DESIGN_SECONDARY_WIDTH,
   MIN_WINDOW_WIDTH,
   RAIL_WIDTH,
@@ -12,10 +14,21 @@ import {
   mineColumnWidth,
   panelBounds,
   panelWidth,
-  secondaryColumnWidth
+  secondaryColumnWidth,
+  uiScale
 } from './panelBounds'
 
 const AREA = { x: 0, y: 0, width: 1920, height: 1032 }
+
+/** The three displays the acceptance ruling names, by the scale each produces. */
+const AT_1X = { x: 0, y: 0, width: 1920, height: DESIGN_SCREEN_HEIGHT }
+const AT_1_333X = { x: 0, y: 0, width: 2560, height: 1440 }
+const AT_2X = { x: 0, y: 0, width: 3840, height: 2160 }
+
+/** The physical width a design-world figure occupies on this display. */
+function scaled(area: ScreenRect, designWidth: number): number {
+  return Math.round(designWidth * uiScale(area))
+}
 
 const CLOSED = { expanded: false, mineOpen: false }
 const OPEN = { expanded: true, mineOpen: false }
@@ -42,13 +55,13 @@ describe('panelWidth', () => {
     expect(RAIL_WIDTH).toBeLessThan(MIN_WINDOW_WIDTH)
   })
 
-  it('opens to the width the display’s own height derives', () => {
-    expect(panelWidth(AREA, OPEN)).toBe(expandedWidth(AREA.height))
+  it('opens to the design world’s own width, scaled onto this display', () => {
+    expect(panelWidth(AREA, OPEN)).toBe(scaled(AREA, expandedWidth(DESIGN_SCREEN_HEIGHT)))
   })
 
   it('adds the mine column when a mine is held open beside the secondary panel', () => {
     expect(panelWidth(AREA, OPEN_WITH_MINE)).toBe(
-      expandedWidth(AREA.height) + mineColumnWidth(AREA.height)
+      scaled(AREA, expandedWidth(DESIGN_SCREEN_HEIGHT) + mineColumnWidth(DESIGN_SCREEN_HEIGHT))
     )
   })
 
@@ -62,11 +75,102 @@ describe('panelWidth', () => {
     expect(panelWidth(narrow, CLOSED)).toBe(MIN_WINDOW_WIDTH)
   })
 
-  it('grows with the display, because both paintings follow its height', () => {
+  it('grows with the display, because the whole surface is scaled onto it', () => {
     const short = { x: 0, y: 0, width: 3840, height: 768 }
     const tall = { x: 0, y: 0, width: 3840, height: 1392 }
     expect(panelWidth(tall, OPEN)).toBeGreaterThan(panelWidth(short, OPEN))
     expect(panelWidth(tall, OPEN_WITH_MINE)).toBeGreaterThan(panelWidth(short, OPEN_WITH_MINE))
+  })
+})
+
+/*
+ * #153's sixth correction: type was far too small on a 2K display. The ruling
+ * is that the shell is a surface DESIGNED at 1080 logical pixels tall and then
+ * scaled onto whatever display it lands on — one continuous factor, applied to
+ * this window and nothing else on the machine, which is exactly what Electron's
+ * per-window zoomFactor is. Every number the design states stays literal in the
+ * renderer's CSS; only main multiplies.
+ */
+describe('uiScale', () => {
+  it('is the display’s usable height against the design’s own 1080-tall screen', () => {
+    expect(uiScale(AT_1X)).toBe(1)
+    expect(uiScale(AT_1_333X)).toBeCloseTo(1440 / 1080, 12)
+    expect(uiScale(AT_2X)).toBe(2)
+  })
+
+  it('is continuous rather than quantised, so 1440p is sized right rather than crisp', () => {
+    // The maintainer took this trade deliberately: 1.333 is not a whole number
+    // of device pixels per design pixel, and a correctly sized panel beats a
+    // pixel-crisp one that reads half the size it should.
+    expect(uiScale(AT_1_333X)).not.toBe(1)
+    expect(uiScale(AT_1_333X)).not.toBe(2)
+  })
+
+  it('scales a display SHORTER than the design world down by the same rule', () => {
+    const shortLaptop = { x: 0, y: 0, width: 1366, height: 768 }
+    expect(uiScale(shortLaptop)).toBeCloseTo(768 / 1080, 12)
+    expect(panelWidth(shortLaptop, OPEN)).toBeLessThan(expandedWidth(DESIGN_SCREEN_HEIGHT))
+  })
+
+  it('never divides by a display of no height', () => {
+    expect(uiScale({ x: 0, y: 0, width: 1920, height: 0 })).toBe(1)
+  })
+})
+
+describe('the scaled window', () => {
+  it('spends the same design-world width at every scale', () => {
+    for (const area of [AT_1X, AT_1_333X, AT_2X]) {
+      for (const layout of [OPEN, OPEN_WITH_MINE]) {
+        const design =
+          expandedWidth(DESIGN_SCREEN_HEIGHT) +
+          (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0)
+        expect(panelWidth(area, layout)).toBe(Math.round(design * uiScale(area)))
+      }
+    }
+  })
+
+  it('leaves the CSS-side constants alone: the design world never sees the scale', () => {
+    // The renderer keeps drawing 20px rails and 10px type; zoomFactor is what
+    // makes them bigger. So every design-world derivation has to be a function
+    // of the design screen alone, identical however tall the real display is.
+    const first = {
+      expanded: expandedWidth(DESIGN_SCREEN_HEIGHT),
+      mine: mineColumnWidth(DESIGN_SCREEN_HEIGHT),
+      secondary: secondaryColumnWidth(DESIGN_SCREEN_HEIGHT)
+    }
+    for (const area of [AT_1X, AT_1_333X, AT_2X]) {
+      // Recomputed after "moving" to that display: nothing about the design
+      // world may depend on where the window happens to be.
+      void area
+      expect({
+        expanded: expandedWidth(DESIGN_SCREEN_HEIGHT),
+        mine: mineColumnWidth(DESIGN_SCREEN_HEIGHT),
+        secondary: secondaryColumnWidth(DESIGN_SCREEN_HEIGHT)
+      }).toEqual(first)
+    }
+  })
+
+  it('still spans the display’s usable height exactly, at every scale and both edges', () => {
+    // The taskbar clearance is the rectangle screenArea hands over and is
+    // already physical, so scaling must not touch it — this is what would
+    // break if the vertical arithmetic ever went through the design world.
+    const reserved = { x: 0, y: 0, width: 2560, height: 1392 }
+    for (const area of [AT_1X, AT_1_333X, AT_2X, reserved]) {
+      for (const edge of ['left', 'right'] as const) {
+        const bounds = panelBounds(area, edge, OPEN_WITH_MINE)
+        expect(bounds.y).toBe(area.y)
+        expect(bounds.height).toBe(area.height)
+        expect(bounds.x).toBeGreaterThanOrEqual(area.x)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(area.x + area.width)
+      }
+    }
+  })
+
+  it('keeps the closed rail at the platform floor however small the scale makes it', () => {
+    const shortLaptop = { x: 0, y: 0, width: 1366, height: 768 }
+    expect(panelWidth(shortLaptop, CLOSED)).toBe(MIN_WINDOW_WIDTH)
+    // And lets it grow past the floor once the scale asks for more.
+    expect(panelWidth(AT_2X, CLOSED)).toBe(RAIL_WIDTH * 2)
   })
 })
 
@@ -137,13 +241,13 @@ describe('panelBounds', () => {
     const closed = panelBounds(AREA, 'right', CLOSED)
     const open = panelBounds(AREA, 'right', OPEN)
     expect(open.x + open.width).toBe(closed.x + closed.width)
-    expect(open.x).toBe(1920 - expandedWidth(AREA.height))
+    expect(open.x).toBe(1920 - panelWidth(AREA, OPEN))
   })
 
   it('grows inward from the left edge too, with the left edge pinned', () => {
     const open = panelBounds(AREA, 'left', OPEN)
     expect(open.x).toBe(0)
-    expect(open.width).toBe(expandedWidth(AREA.height))
+    expect(open.width).toBe(panelWidth(AREA, OPEN))
   })
 
   /*

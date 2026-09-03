@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../domain/types'
 import { currentPlatform } from '../platform/platform'
 import { panelScreenArea, type ScreenRect } from '../platform/screenArea'
-import { panelBounds } from './panelBounds'
+import { panelBounds, uiScale } from './panelBounds'
 import { resolveResourcePath } from './resourcePaths'
 
 let mainWindow: BrowserWindow | null = null
@@ -115,6 +115,33 @@ export function applyPanelBounds(target: PanelBoundsTarget, bounds: ScreenRect):
   return target.getBounds()
 }
 
+/**
+ * The slice of `webContents` the UI scale needs (#153). Narrow for the same
+ * reason the two above are: a test drives it with a fake, and the read-back is
+ * what main then trusts.
+ */
+export interface UiScaleTarget {
+  setZoomFactor: (factor: number) => void
+  getZoomFactor: () => number
+}
+
+/**
+ * Scale the whole shell onto this display and report the factor the page
+ * ACTUALLY got.
+ *
+ * The shell is laid out as a surface 1080 logical pixels tall (see
+ * DESIGN_SCREEN_HEIGHT) and this is the one thing that makes it the display's
+ * size instead: per-window zoom, so nothing else on the machine moves. It has to
+ * be the SAME factor `panelWidth` multiplied by, which is why both read it from
+ * `uiScale` rather than each deriving one — a disagreement there would have main
+ * reserving columns the renderer does not draw, and nothing would say so until
+ * something clipped.
+ */
+export function applyUiScale(target: UiScaleTarget, area: ScreenRect): number {
+  target.setZoomFactor(uiScale(area))
+  return target.getZoomFactor()
+}
+
 /** The screen rectangle the panel may cover, on the display it is currently on. */
 function currentScreenArea(): ScreenRect {
   const display =
@@ -155,7 +182,12 @@ export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
     mineOpen: request.mineOpen
   }
   if (mainWindow !== null) {
-    applyPanelBounds(mainWindow, panelBounds(currentScreenArea(), layout.edge, layout))
+    const area = currentScreenArea()
+    // Re-scaled as well as re-sized: a layout change can move the window onto
+    // another display, and the zoom belongs to the display rather than to the
+    // window that happens to be on it.
+    applyUiScale(mainWindow.webContents, area)
+    applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout))
   }
   return panelLayout()
 }
@@ -180,6 +212,19 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
       })
     })
   )
+
+  /*
+   * The scale lands BEFORE the first paint (#153): the window is created with
+   * `show: false` and only revealed by showPanel, and Electron resets a page's
+   * zoom on every navigation — so setting it as soon as the document is ready is
+   * both the earliest moment it survives and one that nobody can see. Setting it
+   * before the load would be discarded; setting it after `show()` would flash
+   * the whole shell at 1x on a 4K display.
+   */
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (mainWindow === null) return
+    applyUiScale(mainWindow.webContents, currentScreenArea())
+  })
 
   // Closing the window only hides it; the app keeps running in the tray.
   mainWindow.on('close', (event) => {
@@ -208,8 +253,11 @@ export function showPanel(): void {
   if (!mainWindow) return
   // Re-derived on every show: a docked panel that was hidden across a
   // resolution change, a docking event or a display being unplugged would
-  // otherwise come back sized for a screen that is no longer there.
-  applyPanelBounds(mainWindow, panelBounds(currentScreenArea(), layout.edge, layout))
+  // otherwise come back sized for a screen that is no longer there — and, since
+  // #153, scaled for one too.
+  const area = currentScreenArea()
+  applyUiScale(mainWindow.webContents, area)
+  applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout))
   mainWindow.show()
   mainWindow.focus()
 }
