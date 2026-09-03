@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateMines, mergeDeclaredMines, mineIdForPath, sumTokensObserved } from './aggregate'
+import {
+  aggregateMines,
+  mergeDeclaredMines,
+  mineIdForPath,
+  stampMapSites,
+  sumTokensObserved
+} from './aggregate'
 import {
   defaultDwarf,
   defaultMine,
@@ -331,5 +337,54 @@ describe('sumTokensObserved', () => {
 
   it('returns 0 for no mines', () => {
     expect(sumTokensObserved([])).toBe(0)
+  })
+})
+
+describe('stampMapSites', () => {
+  it('stamps each mine with the location the store remembers for it', () => {
+    const mines = [
+      { ...defaultMine(), id: 'mine:a' },
+      { ...defaultMine(), id: 'mine:b' }
+    ]
+    const stamped = stampMapSites(
+      mines,
+      new Map([
+        ['mine:a', 12],
+        ['mine:b', 41]
+      ])
+    )
+    expect(stamped.map((mine) => mine.mapSite)).toEqual([12, 41])
+  })
+
+  /*
+    Absent, never a zero or a placeholder. A mine nobody has placed — a
+    simulated one, or a project whose first write has not landed yet — is drawn
+    by the panel's own deterministic fallback, and the wire says so by saying
+    nothing at all. The same discipline knownTier uses (#41).
+  */
+  it('leaves a mine the store has never placed unstamped', () => {
+    const stamped = stampMapSites([{ ...defaultMine(), id: 'mine:a' }], new Map())
+    expect(stamped[0]!.mapSite).toBeUndefined()
+    expect('mapSite' in stamped[0]!).toBe(false)
+  })
+
+  it('never mutates the mines it was given', () => {
+    const mine = { ...defaultMine(), id: 'mine:a' }
+    stampMapSites([mine], new Map([['mine:a', 3]]))
+    expect(mine.mapSite).toBeUndefined()
+  })
+
+  it('is the same list when nothing is known about any mine', () => {
+    const mines = [{ ...defaultMine(), id: 'mine:a' }]
+    expect(stampMapSites(mines, new Map())).toBe(mines)
+  })
+
+  it('joins on the mine id, which is the id the store keys by', () => {
+    // mineIdForPath either side: a second id scheme here would silently drop
+    // every placement, and the map would look exactly as it does with none.
+    const path = 'C:\code\forge'
+    const mine = { ...defaultMine(), id: mineIdForPath(path, 'win32'), path }
+    const stamped = stampMapSites([mine], new Map([[mineIdForPath(path, 'win32'), 55]]))
+    expect(stamped[0]!.mapSite).toBe(55)
   })
 })

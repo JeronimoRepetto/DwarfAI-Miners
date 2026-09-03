@@ -46,7 +46,12 @@ have not been run end to end yet — see the support matrix below.
     </td>
   </tr>
   <tr>
-    <td align="center"><em>Map view — one mound per project, tiered by the weight of its code</em></td>
+    <td align="center">
+      <em
+        >Map view — one marker per project, tiered by the weight of its code. This shot predates
+        the interface rebuild (#90) and shows the older valley.</em
+      >
+    </td>
     <td align="center"><em>Mine interior — one dwarf per agent, working the veins</em></td>
   </tr>
 </table>
@@ -58,8 +63,8 @@ an agent that was running when the shutter fell.
 
 - **Live session detection** — Claude Code and Codex sessions become dwarfs the moment they
   appear, no configuration required.
-- **Two illustrated views** — an isometric map of mine mounds (one per project) and a mine interior
-  where the crew swings pickaxes, naps, or walks out.
+- **Two illustrated views** — a world map that follows the time of day, with one tier-coloured
+  marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
 - **Send and kick** — deliver a message to a session or kick an agent straight from the panel.
 - **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
   milliseconds.
@@ -151,12 +156,14 @@ Notes on the three honest gaps:
 
 The panel is an isometric idle-game with two views:
 
-**Map view (default).** An illustrated moonlit valley where every project with an observed AI CLI
-session appears as a mine mound. Positions are derived from a hash of the mine id, so mounds
-stay put across refreshes. Each tier has its own entrance art and mineral palette —
-bronze (earthy brown), copper (teal patina), silver (grey shimmer), gold (warm glow), uranium
-(dark rock with a radioactive green pulse). Hovering a mound shows project name, tier, path,
-and dwarf count; clicking enters the mine.
+**Map view (default).** An illustrated world seen from orbit, in one of four paintings chosen by
+your own clock — morning, day, sunset, night. Every project with an observed AI CLI session
+appears on one of the map's 74 spawn locations as a pulsing hexagon coloured by tier: Bronze
+(cyan), Cropper (orange-brown), Silver (grey), Gold (yellow), Uranium (green). A project is
+assigned a free location at random the first time the app sees it and that location is remembered,
+so a mine never moves — not between refreshes and not across restarts. Resting the pointer on a
+marker for a moment shows its tier, the project name and how many agents are working in it;
+clicking enters the mine.
 
 **Mine interior.** The cave art for that tier, with the crew standing on the walkable
 floor along the bottom. Each agent is a dwarf animated by swapping poses:

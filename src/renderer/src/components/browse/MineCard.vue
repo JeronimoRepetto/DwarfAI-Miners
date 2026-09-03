@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC } from '../../lib/art'
-import { cardArtFor, cardTierLabel, type CardStatus } from '../../lib/browse/browseCards'
+import {
+  cardArtFor,
+  cardTierLabel,
+  nextLevelFor,
+  type CardStatus
+} from '../../lib/browse/browseCards'
 import { orePileLabel } from '../../lib/presentation'
 import { formatUnits, vaultRows } from '../../lib/vault/vault'
 import type { ProjectSummary } from '../../types'
@@ -41,6 +46,13 @@ const art = computed(() => cardArtFor(props.project))
  * "mined zero" — and a row that exists but holds nothing yet.
  */
 const resources = computed(() => vaultRows(props.project.materials))
+
+/**
+ * The progress bar and its `Next level: <cur>/<max>` label, or undefined for
+ * a project no walk has weighed yet (#90, closing #135's seam below) — see
+ * nextLevelFor for what cur/max/ratio mean and why uranium prints no boundary.
+ */
+const level = computed(() => nextLevelFor(props.project.weightBytes))
 
 /*
  * Only a project with a mine on the board can be entered: the interior of a
@@ -99,17 +111,23 @@ const enterable = computed(() => props.project.live)
         >
       </span>
       <!--
-        SEAM FOR #140. The mock draws a second column here, right of the text
-        and vertically centred: a progress bar and `Next level: <cur>/<max>`
-        (Uranium may read `infinite`). It is not drawn yet because the browse
-        row carries no level — ProjectSummary has no such field, and #140 is
-        what puts one on the wire. Nothing is stubbed on purpose: a bar with an
-        invented denominator is the one thing worse than no bar, and every
-        other absence on this card already renders as nothing at all.
-
-        When the field lands, add the column between .card-text and
-        .card-status, and give .card-body its second flex child.
+        The mock's second column, right of the text and vertically centred
+        (#90, closing #135's seam): a progress bar and its
+        `Next level: <cur>/<max>` label. Undefined `level` means no walk has
+        weighed this project yet — no bar and no label, same absence-over-
+        invention rule every other unmeasured fact on this card already keeps.
       -->
+      <span v-if="level" class="card-level">
+        <span class="level-bar">
+          <span class="level-fill" :style="{ width: `${level.ratio * 100}%` }"></span>
+        </span>
+        <span class="level-label">
+          <span class="level-label-text">Next level:</span>
+          <span class="level-label-value"
+            >{{ level.currentKb }}/{{ level.nextBoundaryKb ?? 'infinite' }}</span
+          >
+        </span>
+      </span>
       <!--
         The mock's lower-right corner. Drawn only where the board proved the
         fact, and the row itself disappears when it proved neither — a pair of
@@ -238,6 +256,56 @@ button.card-body:focus-visible {
 .card-agents {
   color: var(--color-cream);
   font-size: var(--text-meta);
+}
+/*
+ * The mock's second column (#90): `flex: 1` gives it the row's remaining
+ * width so the bar resizes with the card rather than being pinned to the
+ * mock's own fixed screenshot width. Both children stay flush to this
+ * column's own left edge, matching the mock, rather than being centred.
+ */
+.card-level {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+/*
+ * 5px tall and fully rounded, sampled straight off the mock's pixels (#90):
+ * at this height the shared 12px --radius-default would not close the ends,
+ * same reasoning .card-resources already used for its own short capsule.
+ */
+.level-bar {
+  overflow: hidden;
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  /* The mock's own track colour, sampled off its pixels: #14100b. */
+  background: var(--color-panel-deep);
+}
+.level-fill {
+  display: block;
+  height: 100%;
+  /* The mock's own fill colour, sampled off its pixels: #d19831. */
+  background: var(--color-accent);
+}
+.level-label {
+  display: flex;
+  gap: 4px;
+  font-size: var(--text-meta);
+}
+/*
+ * Sampled off the mock's own pixels (#90): the `Next level:` label prints in
+ * accent and the cur/max figures print in cream, which is the OPPOSITE of the
+ * one blanket `10px #fae2b6` components.md gives this whole metadata row.
+ * The pixels are the visual truth this panel already defers to elsewhere
+ * (see the Active Agents capitalisation above), so the split follows them.
+ */
+.level-label-text {
+  color: var(--color-accent);
+}
+.level-label-value {
+  color: var(--color-cream);
 }
 /*
  * The mock parks both markers against the card's lower-right corner, clear of

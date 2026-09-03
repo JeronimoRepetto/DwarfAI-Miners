@@ -18,6 +18,7 @@ import {
   type HeldSessionLaunchRequest,
   type HeldSessionLaunchResult,
   type MaterialTotals,
+  type MetricsResetResult,
   type Mine,
   type MineDeclareResult,
   type MineTier,
@@ -26,7 +27,7 @@ import {
   type ProjectQueryResult,
   type TextDeliveryChannel
 } from '../domain/types'
-import { mergeDeclaredMines, type DeclaredProject } from '../domain/aggregate'
+import { mergeDeclaredMines, stampMapSites, type DeclaredProject } from '../domain/aggregate'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
@@ -86,6 +87,8 @@ const PICKER_FAILED = 'The folder picker could not be opened.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
 const UNDECLARE_FAILED = 'That mine could not be removed.'
 const NOT_DECLARED = 'That mine is not one you added.'
+/** Settings' "Reset metrics" refusal (#138). */
+const RESET_FAILED = 'The metrics could not be reset. Nothing was deleted.'
 /** #92's browse refusal. Stated for the same reason: a list that is empty because nothing could be read looks like a list with nothing in it. */
 const QUERY_FAILED = 'The projects could not be read.'
 
@@ -293,6 +296,18 @@ export class AgentRuntime {
    * throttle exists to avoid. Refreshed on load and after every declaration.
    */
   private declared: DeclaredProject[] = []
+  /**
+   * Where each project's mine stands on the world map, as the store remembers
+   * it (#136).
+   *
+   * Cached for the same reason `declared` is — the poll loop is synchronous and
+   * the store is not — but refreshed from two places rather than one: the whole
+   * table on load and after a declaration, and one row at a time as the
+   * observer writes, since a project the app has only just discovered is placed
+   * DURING that write and would otherwise be missing its location until the
+   * next launch.
+   */
+  private readonly mapSites = new Map<string, number>()
   private mines: Mine[] = []
 
   constructor(options: RuntimeOptions) {
@@ -447,6 +462,13 @@ export class AgentRuntime {
             // MEASURED tier only, and mine.tier is a provisional bronze until
             // the project's first walk finishes (#41).
             knownTierOf: confirmedTierOf,
+            // The location the store just chose for a project it had never seen
+            // (#136). Taken from the row that was actually written, never
+            // guessed here, so the panel draws a new mine where it will still
+            // be after a restart.
+            onRecorded: (record) => {
+              if (record.mapSite !== null) this.mapSites.set(record.id, record.mapSite)
+            },
             onError: (message, detail) => console.warn(message, detail)
           })
 
@@ -466,7 +488,13 @@ export class AgentRuntime {
         // snapshots alone. Merged before the lifecycle and the ledger see it,
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
-        const mines = mergeDeclaredMines(rawMines, this.declared, tierOf)
+        // Placement is stamped on last, over both halves of the board: where a
+        // mine STANDS is a remembered fact off the projects store, and it joins
+        // by the same mineIdForPath id everything else here does (#136).
+        const mines = stampMapSites(
+          mergeDeclaredMines(rawMines, this.declared, tierOf),
+          this.mapSites
+        )
         // Accrual happens on the lifecycle's output, which is exactly what
         // gets published: a dwarf held back by the grace window reports the
         // counter it last had, so it contributes a zero delta rather than a
@@ -551,8 +579,30 @@ export class AgentRuntime {
   }
 
   /**
+   * Settings' "Reset metrics" action (#138), behind its typed confirmation.
+   *
+   * PRODUCT DECISION (#138): this wipes METRICS only — the material ledger
+   * (mined totals and session marks) — and never the projects store. A
+   * declared or discovered mine is the user's remembered project list, not a
+   * metric, and this method never calls into `this.projects`. The panel side,
+   * the shortcut, the pin and autostart preferences are untouched for the
+   * same reason: none of them are metrics either.
+   *
+   * `outcome: 'reset'` is only returned once the wipe is actually persisted —
+   * see MaterialLedger.reset(), which forces the write past the throttle and
+   * reports whether it reached the store. The next ordinary poll republishes
+   * the (now empty) totals like any other ledger change; this method does not
+   * force one, because a confirm click is not itself a reason to skip ahead
+   * of the poll interval.
+   */
+  async resetMetrics(): Promise<MetricsResetResult> {
+    const succeeded = await this.ledger.reset(this.now())
+    return succeeded ? { outcome: 'reset' } : { outcome: 'failed', reason: RESET_FAILED }
+  }
+
+  /**
    * Read the declarations already on disk into the cache the poll loop merges
-   * from (#85).
+   * from (#85), and every project's map placement with them (#136).
    *
    * Awaited by index.ts BEFORE start(), exactly as the ledger is loaded before
    * the runtime exists: the very first published poll then already carries the
@@ -569,6 +619,14 @@ export class AgentRuntime {
         result.message
       )
       return
+    }
+    // Placements come off the SAME read, and from every row rather than only
+    // the declared ones: a project the app discovered is on the map too, and
+    // its location is as persisted as a declared one's. Entries are only ever
+    // added — a store that has stopped answering must not blank the board's
+    // placements, and a location is never withdrawn once chosen (#136).
+    for (const project of result.value) {
+      if (project.mapSite !== null) this.mapSites.set(project.id, project.mapSite)
     }
     // Keeping the previous cache on a failure rather than emptying it: a
     // momentary lock must not sweep the user's mines off the board.
@@ -714,6 +772,9 @@ export class AgentRuntime {
           // Absent exactly when the ledger has no row for this id — never an
           // invented zero breakdown for a project the vault has not mined.
           ...(materials === undefined ? {} : { materials }),
+          // Straight off the row, so a browse and the map can never disagree
+          // about where a mine stands (#136).
+          ...(project.mapSite === null ? {} : { mapSite: project.mapSite }),
           live: onBoard.has(project.id)
         }
       })

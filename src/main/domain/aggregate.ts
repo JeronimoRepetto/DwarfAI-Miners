@@ -114,6 +114,31 @@ export function mergeDeclaredMines(
 }
 
 /**
+ * Stamp each mine with the spawn location the projects store remembers for it
+ * (#136).
+ *
+ * A third composed step, for the same reason `mergeDeclaredMines` is a second
+ * one: where a mine STANDS is a remembered fact off disk, and aggregation is a
+ * projection of this poll's snapshots. Folding a store lookup into either would
+ * make both answer a question they do not own.
+ *
+ * A mine the store has not placed is left with no `mapSite` at all rather than
+ * a zero or a -1. Absent is a state the panel already knows how to draw — it
+ * places that mine itself, deterministically — and it is the only reading that
+ * stays true for a simulated valley, which never touches the store (#42).
+ *
+ * The input mines are never mutated; stamped copies take their place, and a
+ * list with nothing to stamp comes back as itself.
+ */
+export function stampMapSites(mines: Mine[], siteByMineId: ReadonlyMap<string, number>): Mine[] {
+  if (siteByMineId.size === 0) return mines
+  return mines.map((mine) => {
+    const site = siteByMineId.get(mine.id)
+    return site === undefined ? mine : { ...mine, mapSite: site }
+  })
+}
+
+/**
  * The mine id for one project path, using the same platform-aware
  * normalization aggregateMines groups by.
  *

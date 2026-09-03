@@ -66,6 +66,29 @@ describe('usePanelLayout', () => {
     expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: true })
   })
 
+  it('asks main to move to the requested edge, keeping expanded and mineOpen (#138)', async () => {
+    const setPanelLayout = vi
+      .fn()
+      .mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+    stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN), setPanelLayout })
+    const { sync, setEdge } = usePanelLayout()
+    await sync()
+    await setEdge('left')
+    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false, edge: 'left' })
+  })
+
+  it('renders the edge main actually applied, never the one the position control asked for', async () => {
+    // Same honesty rule every other layout request follows: a display that
+    // could not honor the move must reach the renderer as a fact.
+    const setPanelLayout = vi
+      .fn()
+      .mockResolvedValue({ edge: 'right', expanded: true, mineOpen: false })
+    stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN), setPanelLayout })
+    const { layout, setEdge } = usePanelLayout()
+    await setEdge('left')
+    expect(layout.value.edge).toBe('right')
+  })
+
   it('collapses from whatever it is currently showing', async () => {
     const setPanelLayout = vi.fn().mockResolvedValue(CLOSED)
     stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN), setPanelLayout })

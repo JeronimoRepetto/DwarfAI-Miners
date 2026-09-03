@@ -140,8 +140,10 @@ untouched either way.
 That pass covers message text and nothing else. Three things reach the panel exactly as they
 were found:
 
-- **Project paths.** Every mine is labelled with its full path — in the map tooltip and above
-  the cave (`MineMound.vue`, `MineScene.vue`).
+- **Project paths.** A mine is labelled with its full path above the cave (`MineScene.vue`). The
+  world map no longer shows one: since #136 its hover tooltip carries the tier, the project NAME
+  and the agent count, which is what the design specifies — so the folder a project sits in is not
+  on screen there any more, only what it is called.
 - **Session names**, as the Claude session registry records them.
 - **Subagent task descriptions**, taken from the `Agent` tool call that launched each worker
   and used as that worker's name and its tooltip line (`claudeProvider.ts`).

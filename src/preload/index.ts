@@ -12,6 +12,7 @@ import type {
   DwarfTextResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
+  MetricsResetResult,
   MineDeclareResult,
   MinesSnapshot,
   MineUndeclareResult,
@@ -99,6 +100,13 @@ export interface DwarfAiMinersApi {
    */
   undeclareMine: (mineId: string) => Promise<MineUndeclareResult>
   /**
+   * Settings' "Reset metrics" action (#138). No argument: the typed
+   * confirmation is validated entirely in the renderer, so this asks main to
+   * carry out an already-confirmed intent. See MetricsResetResult for exactly
+   * what this does and does not wipe.
+   */
+  resetMetrics: () => Promise<MetricsResetResult>
+  /**
    * Browse every project the app remembers — filtered by tier, ordered by
    * either stored date, searched by a substring of the name (#92).
    *
@@ -142,10 +150,15 @@ const api: DwarfAiMinersApi = {
   // Same discipline as setAlwaysOnTop: both flags are collapsed to real
   // booleans BEFORE they cross, so main's boundary check reasons about a clean
   // shape and never about what a renderer happened to put in the object.
+  // `edge` (#138) is forwarded only when it is exactly 'left' or 'right';
+  // anything else — including absent, which is every non-Settings caller — is
+  // dropped rather than coerced to a guess, so main's boundary check reasons
+  // about a real edge or none at all.
   setPanelLayout: (request) =>
     ipcRenderer.invoke(IPC_CHANNELS.setPanelLayout, {
       expanded: request?.expanded === true,
-      mineOpen: request?.mineOpen === true
+      mineOpen: request?.mineOpen === true,
+      ...(request?.edge === 'left' || request?.edge === 'right' ? { edge: request.edge } : {})
     }),
   getToggleShortcut: () => ipcRenderer.invoke(IPC_CHANNELS.getToggleShortcut),
   // Same discipline as setAlwaysOnTop: collapse anything that is not a string
@@ -185,6 +198,9 @@ const api: DwarfAiMinersApi = {
   // BEFORE it crosses, so main's boundary check only reasons about one.
   undeclareMine: (mineId) =>
     ipcRenderer.invoke(IPC_CHANNELS.undeclareMine, typeof mineId === 'string' ? mineId : ''),
+  // No payload to coerce: the typed confirmation lives entirely on the
+  // renderer side (see the reset modal), so this simply asks.
+  resetMetrics: () => ipcRenderer.invoke(IPC_CHANNELS.resetMetrics),
   // Forwarded uncoerced, exactly as sendDwarfText's payload is: an object with
   // a closed set of sort keys cannot be collapsed to a safe default the way a
   // stray boolean or string can, so main validates it and refuses what it

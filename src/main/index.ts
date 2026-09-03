@@ -16,10 +16,12 @@ import type {
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
   MaterialTotals,
+  MetricsResetResult,
   Mine,
   MineDeclareResult,
   MinesSnapshot,
   MineUndeclareResult,
+  PanelEdge,
   ProjectQuery,
   ProjectQueryResult,
   ProjectSortDirection,
@@ -48,6 +50,7 @@ import { MaterialLedger } from './ledger/materialLedger'
 import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
 import type { ProjectsStore } from './projects/projectsStore'
+import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
 import { createShortcutPreferenceStore } from './shell/shortcutPreference'
@@ -59,6 +62,7 @@ import {
   hidePanel,
   markQuitting,
   panelLayout,
+  seedPanelEdge,
   setPanelLayout,
   showPanel,
   togglePanel
@@ -97,6 +101,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.resetMetrics)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
   ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
@@ -296,6 +301,17 @@ async function init(): Promise<void> {
   const pinStore = createPinPreferenceStore({
     filePath: join(app.getPath('userData'), 'pin-preference-v1.json')
   })
+
+  // The Settings position preference (#138) is the fourth userData
+  // preference, read before the window exists for the same reason the pin
+  // preference is: the very first frame should already open on the user's
+  // chosen edge rather than always starting 'right' and jumping the moment
+  // the renderer syncs.
+  const panelEdgeStore = createPanelEdgePreferenceStore({
+    filePath: join(app.getPath('userData'), 'panel-edge-v1.json')
+  })
+  seedPanelEdge(await panelEdgeStore.load())
+
   const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
   // The panel-toggle shortcut is the third userData preference (see #17), read
@@ -476,13 +492,33 @@ async function init(): Promise<void> {
   // from the display, so a screen that could not hold the whole composition has
   // to reach the renderer as a fact.
   ipcMain.handle(IPC_CHANNELS.getPanelLayout, () => panelLayout())
-  ipcMain.handle(IPC_CHANNELS.setPanelLayout, (_event, payload: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.setPanelLayout, async (_event, payload: unknown) => {
     // Boundary discipline as elsewhere: a malformed payload moves nothing and
     // the caller still gets the real layout back.
     if (typeof payload !== 'object' || payload === null) return panelLayout()
-    const { expanded, mineOpen } = payload as Record<string, unknown>
+    const { expanded, mineOpen, edge } = payload as Record<string, unknown>
     if (typeof expanded !== 'boolean' || typeof mineOpen !== 'boolean') return panelLayout()
-    return setPanelLayout({ expanded, mineOpen })
+    // edge is optional (#138): only the Settings position control ever sends
+    // one, and an unrecognised value is treated exactly like an absent one —
+    // the rail toggle and the mine-open resize must never nudge the docked
+    // side by accident.
+    const requestedEdge: PanelEdge | undefined =
+      edge === 'left' || edge === 'right' ? edge : undefined
+    const result = setPanelLayout({
+      expanded,
+      mineOpen,
+      ...(requestedEdge ? { edge: requestedEdge } : {})
+    })
+    if (requestedEdge !== undefined) {
+      try {
+        // Persist what the window actually ended up on, not the request —
+        // same discipline as the pin preference just above.
+        await panelEdgeStore.save(result.edge)
+      } catch (error) {
+        console.warn('[panel] Failed to persist the position preference:', error)
+      }
+    }
+    return result
   })
   ipcMain.handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
   ipcMain.handle(IPC_CHANNELS.setToggleShortcut, async (_event, payload: unknown) => {
@@ -564,6 +600,16 @@ async function init(): Promise<void> {
     }
     return runtime?.undeclareMine(mineId) ?? notUndeclared
   })
+
+  // Settings' "Reset metrics" action (#138). No payload: the typed
+  // confirmation is validated entirely in the renderer, so this channel only
+  // ever carries an already-confirmed intent. See MetricsResetResult and
+  // AgentRuntime.resetMetrics for exactly what this does and does not wipe.
+  const notReset: MetricsResetResult = {
+    outcome: 'failed',
+    reason: 'The panel is still starting up.'
+  }
+  ipcMain.handle(IPC_CHANNELS.resetMetrics, () => runtime?.resetMetrics() ?? notReset)
 
   // Browsing every remembered project (#92). Both refusals answer with an
   // EMPTY list and `answered: false` rather than no list at all, so the panel

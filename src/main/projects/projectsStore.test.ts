@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
 import { mineIdForPath } from '../domain/aggregate'
-import type { MineTier } from '../domain/types'
+import { MAP_SPAWN_SITE_COUNT, type MineTier } from '../domain/types'
 import { APP_DB_FILENAME, APP_SCHEMA_VERSION } from '../appDatabase/appDatabase'
 import { createProjectsStore, type ProjectsResult, type ProjectsStore } from './projectsStore'
 
@@ -514,5 +514,141 @@ describe('projects store — failures the app must not mistake for emptiness', (
 
     sqlite.failWith(null)
     expect(value(await store.list())).toEqual([])
+  })
+})
+
+/**
+ * Where each project's mine stands on the world map (#136).
+ *
+ * The store is the home for it because the design's requirement is a
+ * persistence requirement — "persist the assigned location so closing and
+ * reopening DwarfAI-Miners does not move a mine" — and because "one unoccupied
+ * location" is a question only the table that holds every project can answer.
+ */
+describe('projects store — where the mine stands on the map (#136)', () => {
+  /** A store whose placement draws from a scripted source instead of Math.random. */
+  function placingStore(sqlite: MemoryWritableSqlite, ...fractions: number[]): ProjectsStore {
+    let index = 0
+    return createProjectsStore({
+      filePath: APP_DB_FILENAME,
+      sqlite,
+      platform: 'win32',
+      random: () => fractions[index++ % fractions.length]!
+    })
+  }
+
+  it('places a project the user declares', async () => {
+    const store = placingStore(new MemoryWritableSqlite(), 0.5)
+    const project = value(await store.declare({ path: PATH, at: 1_000 }))
+    expect(project.mapSite).toBeGreaterThanOrEqual(1)
+    expect(project.mapSite).toBeLessThanOrEqual(MAP_SPAWN_SITE_COUNT)
+  })
+
+  it('places a project discovered from a running session', async () => {
+    const store = placingStore(new MemoryWritableSqlite(), 0.5)
+    const project = value(await store.upsertObserved({ path: PATH, at: 1_000 }))
+    expect(project.mapSite).toBeGreaterThanOrEqual(1)
+    expect(project.mapSite).toBeLessThanOrEqual(MAP_SPAWN_SITE_COUNT)
+  })
+
+  it('never puts two projects on the same location', async () => {
+    // One fraction for every call, all pointing at the front of the free list:
+    // the second project can only avoid the first by consulting what is taken.
+    const store = placingStore(new MemoryWritableSqlite(), 0)
+    const first = value(await store.declare({ path: PATH, at: 1_000 }))
+    const second = value(await store.declare({ path: OTHER, at: 2_000 }))
+    expect(second.mapSite).not.toBe(first.mapSite)
+  })
+
+  it('never moves a mine that has already been placed', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = placingStore(sqlite, 0.9, 0.1, 0.4)
+    const placed = value(await store.upsertObserved({ path: PATH, at: 1_000 }))
+
+    value(await store.upsertObserved({ path: PATH, at: 2_000, provider: 'claude' }))
+    value(await store.upsertObserved({ path: PATH, at: 3_000, knownTier: 'gold' }))
+    value(await store.declare({ path: PATH, at: 4_000 }))
+
+    expect(value(await store.get(placed.id))!.mapSite).toBe(placed.mapSite)
+  })
+
+  it('keeps the location across a close and reopen, which is the whole point', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const first = placingStore(sqlite, 0.73)
+    const placed = value(await first.declare({ path: PATH, at: 1_000 }))
+    await first.close()
+
+    const second = placingStore(sqlite, 0.11)
+    expect(value(await second.get(placed.id))!.mapSite).toBe(placed.mapSite)
+  })
+
+  /*
+    The v2-to-v3 migration deliberately leaves every existing project unplaced
+    rather than inventing 74 placements inside a transaction that must not fail.
+    This is where those projects get their location: the next write places one
+    that has none, so a user who upgrades sees their mines appear on the map as
+    the poll loop touches them, without a migration having to guess.
+  */
+  it('places a project that was migrated in without a location', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = placingStore(sqlite, 0.5)
+    value(await store.declare({ path: PATH, at: 1_000 }))
+    const db = await sqlite.open(APP_DB_FILENAME)
+    db.run('UPDATE projects SET map_site = NULL')
+    db.close()
+
+    const observed = value(await store.upsertObserved({ path: PATH, at: 2_000 }))
+
+    expect(observed.mapSite).not.toBeNull()
+  })
+
+  /*
+    Past 74 projects the design's "never the same location" cannot hold. The
+    store records no location rather than a duplicate: absent is a state the
+    panel already knows how to draw, and a sealed duplicate is not.
+  */
+  it('records no location once all of them are taken', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = placingStore(sqlite, 0.5)
+    value(await store.declare({ path: PATH, at: 1_000 }))
+    const db = await sqlite.open(APP_DB_FILENAME)
+    for (let site = 1; site <= MAP_SPAWN_SITE_COUNT; site++) {
+      db.run(
+        `INSERT INTO projects (id, path, name, name_norm, added_at, last_opened_at, origin,
+         last_provider, known_tier, map_site) VALUES (?, ?, ?, ?, ?, NULL, 'declared', NULL, NULL, ?)`,
+        [`mine:filler-${site}`, `C:\filler\${site}`, `${site}`, `${site}`, 1, site]
+      )
+    }
+    db.run('UPDATE projects SET map_site = NULL WHERE id = ?', [mineIdForPath(PATH, 'win32')])
+    db.close()
+
+    const observed = value(await store.upsertObserved({ path: PATH, at: 2_000 }))
+
+    expect(observed.mapSite).toBeNull()
+  })
+
+  it('reads a location back through every way of reading a project', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = placingStore(sqlite, 0.31)
+    const placed = value(await store.declare({ path: PATH, at: 1_000 }))
+
+    const [listed] = value(await store.list())
+    const [queried] = value(await store.query({ sortBy: 'addedAt', direction: 'asc' }))
+    expect(listed!.mapSite).toBe(placed.mapSite)
+    expect(queried!.mapSite).toBe(placed.mapSite)
+  })
+
+  it('reads a site a build with more locations wrote as no site at all', async () => {
+    // The database is a file on the user's disk. A number this build has no
+    // location for is "unplaced", never a guess — the same discipline
+    // lastProvider and knownTier already use for a value they do not recognise.
+    const sqlite = new MemoryWritableSqlite()
+    const store = placingStore(sqlite, 0.5)
+    const placed = value(await store.declare({ path: PATH, at: 1_000 }))
+    const db = await sqlite.open(APP_DB_FILENAME)
+    db.run('UPDATE projects SET map_site = ?', [MAP_SPAWN_SITE_COUNT + 1])
+    db.close()
+
+    expect(value(await store.get(placed.id))!.mapSite).toBeNull()
   })
 })

@@ -68,6 +68,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // Adopting a folder (#85). Answers "cancelled" by default, the one verdict
     // that changes nothing, so only the tests about it see any effect.
     declareMine: vi.fn().mockResolvedValue({ outcome: 'cancelled' }),
+    // Settings' "Reset metrics" action (#138). Answered as a no-op success by
+    // default; only the tests about it care what main actually did.
+    resetMetrics: vi.fn().mockResolvedValue({ outcome: 'reset' }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -214,29 +217,35 @@ describe('App settings entry point', () => {
   })
 
   it('opens the settings panel, reporting the state on the button', async () => {
-    // AMENDED: settings used to TOGGLE open and closed from the same control.
-    // It is one of five areas now, and the way out is selecting another area —
-    // pressing Settings again would be asking for the screen you are on.
+    // AMENDED twice now. First (#90): settings used to TOGGLE open and closed
+    // from the same control; it is one of five areas, and the way out is
+    // selecting another area. Second (#138): the rebuilt Settings screen
+    // (SettingsPanel) carries no `role="dialog"` at all — that role belonged
+    // to the interim overlay ShortcutSettings drew, and #142 already flagged
+    // it as stale for what is now a full-page screen (see
+    // ShortcutSettings.test.ts). `.settings-panel` is the screen's own root
+    // and is what "settings is open" now means.
     const { wrapper } = await mountOpenApp()
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.settings-panel').exists()).toBe(false)
     expect(wrapper.find(NAV_SETTINGS).attributes('aria-pressed')).toBe('false')
 
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    expect(wrapper.find('.settings-panel').exists()).toBe(true)
     expect(wrapper.find(NAV_SETTINGS).attributes('aria-pressed')).toBe('true')
 
     await wrapper.find(NAV_MAP).trigger('click')
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.settings-panel').exists()).toBe(false)
     expect(wrapper.find(NAV_SETTINGS).attributes('aria-pressed')).toBe('false')
   })
 
-  it('leaves the panel from its own close button', async () => {
-    const { wrapper } = await mountOpenApp()
-    await wrapper.find(NAV_SETTINGS).trigger('click')
-    await wrapper.find('.close-settings').trigger('click')
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
-    expect(wrapper.find('.map-view').exists()).toBe(true)
-  })
+  // REMOVED (#138): Settings drew its own close (x) only as part of the
+  // interim overlay ShortcutSettings mounted directly (#142). The rebuilt
+  // screen (screens/settings.md) has no close control of its own — like Map
+  // and Mines, its title/divider are the whole header, and the way out is
+  // selecting another nav area. That coverage now lives in the test just
+  // above ("opens the settings panel...", the `NAV_MAP` branch) and in
+  // ShortcutSettings.test.ts's "emits close on Escape" — the escape hatch a
+  // recording user still has, which this component still exposes.
 
   it('flags a shortcut that failed to register, without the panel being open', async () => {
     // The whole point of #17: a startup failure used to reach only the console.
@@ -361,6 +370,109 @@ describe('App shortcut settings', () => {
 })
 
 /**
+ * The Position section (#138, screens/settings.md): a Left/Right segmented
+ * control wired to usePanelLayout.setEdge, which is what actually persists
+ * the choice (main writes it to userData, see panelEdgePreference.ts) and
+ * redocks the window live.
+ */
+describe('App position settings', () => {
+  async function openSettings(overrides: Record<string, unknown> = {}) {
+    const mounted = await mountOpenApp(overrides)
+    await mounted.wrapper.find(NAV_SETTINGS).trigger('click')
+    return mounted
+  }
+
+  it('renders the edge main reported as selected', async () => {
+    const { wrapper } = await openSettings({
+      getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+    })
+    expect(wrapper.find('.position-left').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.position-right').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('asks main to redock when the other side is chosen', async () => {
+    const setPanelLayout = vi
+      .fn()
+      .mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+    const { wrapper } = await openSettings({ setPanelLayout })
+
+    await wrapper.find('.position-left').trigger('click')
+    await flushPromises()
+
+    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false, edge: 'left' })
+    expect(wrapper.find('.position-left').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('renders the edge main actually applied, never the one clicked', async () => {
+    // Same honesty rule the rest of the layout surface follows: a display
+    // that could not honor the move must reach the renderer as a fact.
+    const setPanelLayout = vi
+      .fn()
+      .mockResolvedValue({ edge: 'right', expanded: true, mineOpen: false })
+    const { wrapper } = await openSettings({ setPanelLayout })
+
+    await wrapper.find('.position-left').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.position-right').attributes('aria-pressed')).toBe('true')
+  })
+})
+
+/**
+ * Settings' "Reset metrics" action (#138): the Data Base section opens the
+ * typed confirmation modal, and Confirm only reaches main once the gate
+ * (isValidResetConfirmation) is satisfied.
+ */
+describe('App reset metrics', () => {
+  async function openSettings(overrides: Record<string, unknown> = {}) {
+    const mounted = await mountOpenApp(overrides)
+    await mounted.wrapper.find(NAV_SETTINGS).trigger('click')
+    return mounted
+  }
+
+  it('opens the modal from Data Base and confirms only once "yes" is typed', async () => {
+    const resetMetrics = vi.fn().mockResolvedValue({ outcome: 'reset' })
+    const { wrapper } = await openSettings({ resetMetrics })
+
+    await wrapper.find('.reset-metrics').trigger('click')
+    expect(wrapper.find('.modal-confirm').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('.modal-input').setValue('yes')
+    expect(wrapper.find('.modal-confirm').attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('.modal-confirm').trigger('click')
+    await flushPromises()
+    expect(resetMetrics).toHaveBeenCalledOnce()
+  })
+
+  it('shows main’s refusal reason without closing the modal', async () => {
+    const resetMetrics = vi
+      .fn()
+      .mockResolvedValue({ outcome: 'failed', reason: 'Nothing was deleted.' })
+    const { wrapper } = await openSettings({ resetMetrics })
+
+    await wrapper.find('.reset-metrics').trigger('click')
+    await wrapper.find('.modal-input').setValue('yes')
+    await wrapper.find('.modal-confirm').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').text()).toBe('Nothing was deleted.')
+    expect(wrapper.find('.reset-modal').exists()).toBe(true)
+  })
+
+  it('closes the modal from its own close control without asking main anything', async () => {
+    const resetMetrics = vi.fn()
+    const { wrapper } = await openSettings({ resetMetrics })
+
+    await wrapper.find('.reset-metrics').trigger('click')
+    await wrapper.find('.modal-close').trigger('click')
+
+    expect(wrapper.find('.reset-modal').exists()).toBe(false)
+    expect(resetMetrics).not.toHaveBeenCalled()
+  })
+})
+
+/**
  * Which build is running (#79). The panel could not say, so a maintainer with
  * an installed 0.3.0 and a dev build of the same checkout diagnosed the wrong
  * one and had to read ProductVersion off the .exe from a shell.
@@ -410,13 +522,15 @@ describe('App version label', () => {
   })
 
   it('stays a label rather than joining the controls beside it', async () => {
-    // AMENDED: this used to count the titlebar's four window controls. There is
-    // no titlebar; what survives is the rule it protected — the version is a
-    // monitor, not an affordance, and must not be drawn as something clickable
-    // among the settings controls it now sits with.
+    // AMENDED twice now. First (#90): this used to count the titlebar's four
+    // window controls; what survives is the rule it protected. Second (#138):
+    // the pin/hide/version group moved from App's inline `.shell-preferences`
+    // into SettingsPanel's own "Application" section, `.application-controls`
+    // — the version is still a monitor, not an affordance, and must not be
+    // drawn as something clickable among the two real buttons it sits with.
     const { wrapper } = await openSettings()
     expect(wrapper.find('.version').element.tagName).toBe('SPAN')
-    expect(wrapper.find('.shell-preferences').findAll('button')).toHaveLength(2)
+    expect(wrapper.find('.application-controls').findAll('button')).toHaveLength(2)
   })
 
   it('prints nothing at all when main cannot be asked', async () => {

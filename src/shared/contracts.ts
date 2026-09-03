@@ -531,7 +531,35 @@ export interface Mine {
    * whatever the ledger already accrued for the path attach to it.
    */
   declared?: boolean
+  /**
+   * Which of the world map's spawn locations this mine stands on (#136), from
+   * `1` to `MAP_SPAWN_SITE_COUNT`.
+   *
+   * A remembered fact, not a computed one: main reads it from the projects
+   * store, which chose it once, at random from the locations nobody held, and
+   * never moves it again. That is the whole reason it crosses the wire — the
+   * renderer could hash the id and get a stable position for free, but it would
+   * be a DIFFERENT position after any change to the hash or the site list, and
+   * the design says closing and reopening the app must not move a mine.
+   *
+   * Absent means nobody has placed this mine: a project that predates the
+   * column, one the store has not written yet, a valley whose locations are all
+   * taken, or a simulated one that never touches the store at all. The renderer
+   * places those itself, deterministically, and nothing is persisted.
+   */
+  mapSite?: number
 }
+
+/**
+ * How many spawn locations the world map defines (#136).
+ *
+ * The design fixes it at 74 and the extraction found exactly 74. It is here,
+ * rather than beside the coordinates, because both processes need it and only
+ * one of them needs where the locations ARE: main chooses a site id from this
+ * range and the renderer looks its coordinates up. `MAP_SPAWN_POINTS` in the
+ * renderer is checked against this number, so the two cannot drift.
+ */
+export const MAP_SPAWN_SITE_COUNT = 74
 
 /**
  * busy: a turn is actively running. waiting: the session is alive but provably
@@ -803,15 +831,18 @@ export interface PanelLayout {
 }
 
 /**
- * What the panel asks the shell window to become (#90).
+ * What the panel asks the shell window to become (#90, #138).
  *
- * `edge` is deliberately absent: the design puts the left/right choice in the
- * Settings position control, which is its own slice. Until that exists the edge
- * is main's, and the renderer can only ever read it back.
+ * `edge` is optional and absent from every request EXCEPT the Settings
+ * position control (#138): omitting it means "keep whatever edge main already
+ * has", which is what the rail toggle and the mine-open resize both do — they
+ * are not the position control and must never nudge the docked side by
+ * accident. Only the position control's Left/Right segments ever set it.
  */
 export interface PanelLayoutRequest {
   expanded: boolean
   mineOpen: boolean
+  edge?: PanelEdge
 }
 
 /**
@@ -881,6 +912,32 @@ export interface MineDeclareResult {
 export interface MineUndeclareResult {
   outcome: 'removed' | 'reverted' | 'unchanged' | 'failed'
   /** Why nothing changed; absent exactly when the outcome is 'removed' or 'reverted'. */
+  reason?: string
+}
+
+/**
+ * Verdict of the Settings "Reset metrics" action (#138), same idiom as
+ * MineUndeclareResult: a discriminated outcome plus a reason exactly when
+ * something did NOT happen.
+ *
+ * PRODUCT DECISION (#138): this wipes METRICS only — the material ledger
+ * (mined totals and session marks) — and NEVER touches the projects store.
+ * The design's own text says "delete your data" but means the accumulated
+ * metrics; the declared/discovered project list is the user's remembered
+ * mines, not a metric, and survives a reset untouched. So does the panel
+ * side, the shortcut, the pin and autostart preferences — none of them are
+ * metrics either.
+ *
+ * 'reset' means the vault was cleared AND that clearing was persisted before
+ * this resolved — the modal's Confirm is a destructive, irreversible action,
+ * so its caller must know the wipe actually reached disk rather than assuming
+ * a promise that resolved without throwing. 'failed' carries a reason and
+ * changes nothing; there is no 'cancelled' here because closing the modal
+ * (the X) never reaches main at all.
+ */
+export interface MetricsResetResult {
+  outcome: 'reset' | 'failed'
+  /** Why nothing changed; absent exactly when the outcome is 'reset'. */
   reason?: string
 }
 
@@ -977,6 +1034,13 @@ export interface ProjectSummary {
   lastProvider?: DwarfProvider
   /** Absent means the ledger has no row for this id — never zeros for a project nobody has mined (#90). */
   materials?: MaterialTotals
+  /**
+   * Where this project's mine stands on the world map (#136), or absent when
+   * nothing has placed it. The same stored number `Mine.mapSite` carries, off
+   * the same row — a browse and the map must never disagree about where a mine
+   * is.
+   */
+  mapSite?: number
   live: boolean
 }
 
@@ -1051,6 +1115,14 @@ export const IPC_CHANNELS = {
    */
   declareMine: 'mine:declare',
   undeclareMine: 'mine:undeclare',
+  /**
+   * Settings' "Reset metrics" action (#138). No payload: the typed
+   * confirmation is validated entirely in the renderer (the gate on
+   * `Confirm`), and this channel carries only the already-confirmed intent.
+   * Answers with MetricsResetResult — see its doc comment for exactly what
+   * this does and does not wipe.
+   */
+  resetMetrics: 'metrics:reset',
   /**
    * Browsing every project the app remembers (#92) — filtered, ordered and
    * paged in SQL, in main.

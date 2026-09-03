@@ -130,14 +130,30 @@ export function panelLayout(): PanelLayout {
 }
 
 /**
+ * Adopt a persisted edge before any window exists (#138) — index.ts calls
+ * this with the Settings position preference right after loading it, mirroring
+ * how the pin preference reaches createMainWindow's `alwaysOnTop` option. The
+ * very first frame then opens on the user's chosen side instead of always
+ * starting 'right' and jumping the moment the renderer syncs.
+ */
+export function seedPanelEdge(edge: PanelEdge): void {
+  layout = { ...layout, edge }
+}
+
+/**
  * Apply a layout the renderer asked for and answer with what the window became.
  *
- * The edge is not requestable: it is main's until the Settings position control
- * exists, so a request only ever moves the panel between closed, open, and open
- * beside a mine.
+ * `edge` is optional (#138): omitting it keeps the CURRENT edge, which is what
+ * the rail toggle and the mine-open resize both do — neither is the Settings
+ * position control, and neither may nudge the docked side as a side effect.
+ * Only a request that names one (the position control) ever moves it.
  */
 export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
-  layout = { edge: layout.edge, expanded: request.expanded, mineOpen: request.mineOpen }
+  layout = {
+    edge: request.edge ?? layout.edge,
+    expanded: request.expanded,
+    mineOpen: request.mineOpen
+  }
   if (mainWindow !== null) {
     applyPanelBounds(mainWindow, panelBounds(currentScreenArea(), layout.edge, layout))
   }

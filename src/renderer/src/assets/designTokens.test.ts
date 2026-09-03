@@ -176,6 +176,29 @@ describe('design-tokens.css against the design foundations', () => {
     expect(valueOf('--elevation-5')).toBeTruthy()
   })
 
+  /**
+   * The five marker colours the design source names only by family — "Bronze
+   * (cyan), Cropper (orange-brown), Silver (gray), Gold (yellow), Uranium
+   * (green)" — with `foundations.md` stating outright that the PDF gives no hex
+   * values and pointing at the verified Canva export instead.
+   *
+   * So unlike every value above, these are not transcribed from a table: they
+   * were MEASURED off `assets/map/map-mine-markers.png` by
+   * `scripts/extract-map-markers.mjs`, which finds the five flat-fill discs on
+   * the map and reports each one's exact RGB. What is pinned here is that
+   * measurement — a re-run of that script against a revised export is what may
+   * change these numbers, never a judgement about which cyan looks right.
+   */
+  it.each([
+    ['--color-marker-bronze', '#5ce1e6'],
+    ['--color-marker-copper', '#ba6336'],
+    ['--color-marker-silver', '#c7c7c7'],
+    ['--color-marker-gold', '#ffde59'],
+    ['--color-marker-uranium', '#00bf63']
+  ])('carries the sampled marker colour %s as %s', (name, value) => {
+    expect(valueOf(name)).toBe(value)
+  })
+
   it('names the pixel family the design calls Pixel UI, with a fallback stack', () => {
     const family = valueOf('--font-pixel')
     expect(family).toContain('Tiny5')

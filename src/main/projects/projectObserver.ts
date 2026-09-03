@@ -1,5 +1,5 @@
 import type { DwarfProvider, Mine, MineTier } from '../domain/types'
-import type { ProjectsStore } from './projectsStore'
+import type { ProjectRecord, ProjectsStore } from './projectsStore'
 
 /**
  * Minimum gap between two writes for the SAME project.
@@ -31,6 +31,16 @@ export interface ProjectObserverOptions {
   knownTierOf: (mine: Mine) => MineTier | undefined
   /** Where a refusal is reported; defaults to swallowing it. */
   onError?: (message: string, detail: unknown) => void
+  /**
+   * The row a write actually produced, reported once per successful write.
+   *
+   * It exists for one fact the caller cannot learn any other way: the store
+   * chooses a project's map location DURING the write that creates it (#136),
+   * so the poll loop's cache of placements would otherwise be a restart behind
+   * for every newly discovered project — and the panel would draw that mine at
+   * its own fallback position, then move it on the next launch.
+   */
+  onRecorded?: (record: ProjectRecord) => void
   intervalMs?: number
 }
 
@@ -55,6 +65,7 @@ export class ProjectObserver {
   private readonly store: ProjectsStore
   private readonly knownTierOf: (mine: Mine) => MineTier | undefined
   private readonly onError: (message: string, detail: unknown) => void
+  private readonly onRecorded: (record: ProjectRecord) => void
   private readonly intervalMs: number
   private readonly lastWrites = new Map<string, LastWrite>()
 
@@ -62,6 +73,7 @@ export class ProjectObserver {
     this.store = options.store
     this.knownTierOf = options.knownTierOf
     this.onError = options.onError ?? (() => undefined)
+    this.onRecorded = options.onRecorded ?? (() => undefined)
     this.intervalMs = options.intervalMs ?? PROJECT_OBSERVE_INTERVAL_MS
   }
 
@@ -93,7 +105,9 @@ export class ProjectObserver {
           ...(provider === undefined ? {} : { provider }),
           ...(knownTier === undefined ? {} : { knownTier })
         })
-        if (!result.ok) {
+        if (result.ok) {
+          this.onRecorded(result.value)
+        } else {
           this.onError(
             `[projects] Could not record ${mine.name} (${result.failure}):`,
             result.message

@@ -146,13 +146,49 @@ describe('DWARF_SHEETS', () => {
     ])
   })
 
-  it('claims no impact frame anywhere, including the new working loop', () => {
-    // Sparks fire off a declared impact and nowhere else. Picking the strike
-    // frame out of `working` is a separate, artistic call from wiring the
-    // sheet in — until someone makes it, no sheet claims one, and an idle
-    // sheet that claimed one would throw debris off a dwarf standing still.
+  /*
+   * The strike is now picked (#74), so the blanket "no sheet claims one" this
+   * replaces is no longer true of `worker/working` — it stayed true of every
+   * OTHER sheet, which the tests below still pin.
+   */
+  describe('the worker striking the rock', () => {
+    it("declares the strike at the artist's frame 5, converted to index 4", () => {
+      // The maintainer's own frame map is 1-indexed off the preview GIF; every
+      // index in this codebase is 0-indexed, so frame 5 (the swing landing,
+      // first spark centered on the pick's tip) becomes index 4. Sparks fire
+      // off exactly this one frame and nowhere else — the pre-migration
+      // `isPickImpact` this restores marked only the down-stroke a hit,
+      // warning that more would read as "a permanent glow ... rather than
+      // impacts" (see presentation.ts before #87's sheet migration).
+      expect(DWARF_SHEETS.worker.working?.impactFrames).toEqual([4])
+    })
+
+    it("glows only the artist's two brightest frames, 5-6 (index 4-5), never the dispersal", () => {
+      // Frames 7-9 (index 6-8) disperse and fade in the art alone (maintainer's
+      // design call) — a separate declaration from impactFrames above,
+      // because retriggering the debris burst across all five spark frames
+      // is exactly the "permanent glow" the old single-hit comment warned
+      // against, not a light on the strike.
+      expect(DWARF_SHEETS.worker.working?.glowFrames).toEqual([4, 5])
+    })
+  })
+
+  it('leaves the foreman untouched — he has no swing to glow or spark', () => {
+    for (const name of Object.keys(DWARF_SHEETS.foreman) as (keyof typeof DWARF_SHEETS.foreman)[]) {
+      const sheet = DWARF_SHEETS.foreman[name]
+      expect(sheet?.impactFrames, name).toBeUndefined()
+      expect(sheet?.glowFrames, name).toBeUndefined()
+    }
+  })
+
+  it('claims no impact or glow frame on any other worker sheet either', () => {
+    // An idle, start-working or end-working sheet that claimed one would
+    // throw debris (or glow) off a dwarf standing still, mid pick-up, or
+    // setting the pick back down.
     for (const { where, sheet } of everySheet()) {
+      if (where === 'worker/working') continue
       expect(sheet.impactFrames, where).toBeUndefined()
+      expect(sheet.glowFrames, where).toBeUndefined()
     }
   })
 })

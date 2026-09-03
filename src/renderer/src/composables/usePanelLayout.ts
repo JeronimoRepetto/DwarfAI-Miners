@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { PanelLayout, PanelLayoutRequest } from '../types'
+import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../types'
 
 /**
  * State for the docked shell's own shape (#90).
@@ -64,5 +64,15 @@ export function usePanelLayout() {
     await apply({ expanded: !layout.value.expanded, mineOpen })
   }
 
-  return { layout, applying, sync, apply, toggle }
+  /**
+   * Settings' position control asking to redock (#138) — the only caller that
+   * may ever send `edge`. Keeps expanded/mineOpen as they currently are: the
+   * position control moves the docked side, not whether the panel is open or
+   * whether a mine is held beside it.
+   */
+  async function setEdge(edge: PanelEdge): Promise<void> {
+    await apply({ expanded: layout.value.expanded, mineOpen: layout.value.mineOpen, edge })
+  }
+
+  return { layout, applying, sync, apply, toggle, setEdge }
 }
