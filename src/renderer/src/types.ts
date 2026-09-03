@@ -11,6 +11,7 @@ export type {
   DwarfActivation,
   DwarfAttendance,
   DwarfCapabilities,
+  DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
   DwarfMcpServerStatus,

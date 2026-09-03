@@ -170,6 +170,33 @@ phase's discretion, not as confirmed-disconnected.
 **Bronze panel (committed):** main network 18 nodes / 20 edges (1487
 skeleton px), stub 2 nodes / 1 edge (82 skeleton px).
 
+#### Edge endpoint ids (defect fixed — issue #152)
+
+`extractRouteComponent` renumbers each component's `nodes` to 0..n−1 for the
+committed dataset, because `spliceDegreeTwoNodes` (§1.3) can leave gaps in
+the ids the skeleton graph handed it — a spliced-away pass-through node's id
+is simply gone. Until #152 that renumbering only ever touched `nodes`:
+`edges[].from`/`to` were left on the pre-renumbering, possibly-gapped ids, so
+literally no edge in a committed `mine-interior-features.json` pointed at a
+node that existed (Bronze's 18 nodes were 0..17 while its edges named ids up
+to 32; the stub's 2 nodes were 0..1 while its one edge named 4 and 2).
+
+The interior generator (`scripts/build-interior-map.mjs`, #137) used to carry
+a downstream repair for exactly this — `reindexComponent` recovered the
+mapping (each component's edges name exactly as many distinct ids as it has
+nodes, and sorting those ascending lines them up with the renumbered nodes in
+order) and `assertEndpoints` proved the recovery against every corridor's own
+polyline. Both are gone now: the renumbering is fixed at the source instead
+— `scripts/mapCoords/skeleton.mjs`'s `renumberComponent` rewrites `nodes` and
+`edges` through the same id map in one call, so `extract-map-coordinates.mjs`
+never produces a dangling edge in the first place. Regenerating
+`src/renderer/src/lib/scene/interiorMap.ts` against the fixed dataset moved
+not one coordinate, which is the proof the repair and the fix agreed the
+whole time. Edge-endpoint validity is pinned upstream now: unit tests on
+`renumberComponent` in `scripts/mapCoords/skeleton.test.mjs`, and — straight
+off the committed extraction, network and stub both —
+`src/renderer/src/lib/scene/interiorMap.test.ts`.
+
 ### 3.3 Cross-panel topology check — and its one honest gap
 
 The same merge+splice pipeline (§1.3) was run on the main network of all

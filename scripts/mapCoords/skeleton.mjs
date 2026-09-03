@@ -459,3 +459,31 @@ export function spliceDegreeTwoNodes(nodes, edges) {
     edges: [...edgeById.values()]
   }
 }
+
+/**
+ * Renumber a component's nodes to sequential ids 0..n-1 and rewrite every
+ * edge endpoint through the same map, so `from`/`to` always names an id the
+ * renumbered node list actually has.
+ *
+ * `mergeCloseNodes` assigns sequential ids, but `spliceDegreeTwoNodes` then
+ * removes some of them (a spliced-away pass-through node's id is simply
+ * gone), which leaves gaps — a component that started with ids 0..10 and
+ * spliced out 1, 3 and 7 keeps 0,2,4,5,6,8,9,10, in that same ascending
+ * order (`spliceDegreeTwoNodes` only ever filters, never reorders). Calling
+ * `.map((n, i) => ({ id: i, ... }))` on `nodes` alone renumbers the nodes but
+ * leaves every edge naming the old, gapped id — issue #152: not one edge in
+ * `docs/mine-interior-features.json` pointed at a node that existed, because
+ * `extract-map-coordinates.mjs` used to do exactly that. This is the one
+ * call site both `nodes` and `edges` must go through together.
+ *
+ * @param {TopoNode[]} nodes
+ * @param {TopoEdge[]} edges
+ * @returns {{ nodes: TopoNode[], edges: {from: number, to: number, points: Point[]}[] }}
+ */
+export function renumberComponent(nodes, edges) {
+  const idMap = new Map(nodes.map((n, i) => [n.id, i]))
+  return {
+    nodes: nodes.map((n, i) => ({ ...n, id: i })),
+    edges: edges.map((e) => ({ from: idMap.get(e.a), to: idMap.get(e.b), points: e.points }))
+  }
+}

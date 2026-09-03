@@ -183,88 +183,50 @@ describe('DwarfSprite', () => {
     expect(wrapper.get('.dwarf-hit').attributes('aria-label')).toContain('codex')
   })
 
-  describe('action bar', () => {
-    it('opens the action bar on click instead of activating straight away', async () => {
+  /*
+   * AMENDED for #159. This block described the icon action bar this sprite used
+   * to unfold on click. The design docks one MessagePanel at the bottom of the
+   * screen instead, so a click now only REPORTS that this dwarf was chosen and
+   * the app above decides what opens — which is also the only arrangement in
+   * which "exactly one dwarf is selected" can be true, since no sprite can know
+   * that about its neighbours.
+   *
+   * Five cases went with the bar, and their subjects all moved rather than
+   * disappearing — every one of them is pinned against the real surface in
+   * components/message/DwarfMessagePanel.test.ts:
+   *
+   * - "emits activate and closes when the console icon is chosen" — the console
+   *   action is the panel's own agent-name control now.
+   * - "forwards an answer from the bar and keeps the bar open for the verdict"
+   *   and "carries the answer verdict down to the question card" — the question
+   *   card is re-homed above the panel's input (#128, #159).
+   * - "forwards a composed message and keeps the bar open for the verdict" —
+   *   the panel's input is the composer.
+   * - "forwards a confirmed kick and keeps the bar open for the verdict" (in the
+   *   kick block below) — the panel's kick control still arms then fires.
+   *
+   * The two verdict MARKERS stay here, because they are still drawn on the
+   * sprite: a ✓ on the dwarf is what says which dwarf a delivery was for.
+   */
+  describe('selection', () => {
+    it('reports the click and lets the app above decide what opens', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-      expect(wrapper.find('.action-bar').exists()).toBe(false)
-
       await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.action-bar').exists()).toBe(true)
-      expect(wrapper.emitted('activate')).toBeUndefined()
+      expect(wrapper.emitted('select')).toHaveLength(1)
     })
 
-    it('closes the bar on a second click', async () => {
+    it('reports every click, because who is selected is not its own to decide', async () => {
+      // Clicking the selected dwarf again closes its panel — but that is a
+      // toggle the owner performs, so what the sprite does is say so twice.
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
       await wrapper.find('.dwarf-hit').trigger('click')
       await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.action-bar').exists()).toBe(false)
+      expect(wrapper.emitted('select')).toHaveLength(2)
     })
 
-    it('emits activate and closes when the console icon is chosen', async () => {
-      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-      await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.find('.icon-console').trigger('click')
-
-      expect(wrapper.emitted('activate')).toHaveLength(1)
-      expect(wrapper.find('.action-bar').exists()).toBe(false)
-    })
-
-    it('forwards an answer from the bar and keeps the bar open for the verdict', async () => {
-      // Same reasoning as a composed message: the verdict has to land somewhere,
-      // and closing the bar would take the question with it.
-      const wrapper = mount(DwarfSprite, {
-        props: {
-          dwarf: defaultDwarf({
-            pendingQuestion: {
-              toolUseId: 'toolu_01',
-              question: 'Which database?',
-              multiSelect: false,
-              options: [{ label: 'Postgres' }, { label: 'SQLite' }]
-            }
-          })
-        }
-      })
-      await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.findAll('.option-card')[0]!.trigger('click')
-      await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
-
-      expect(wrapper.emitted('answer')).toEqual([['Postgres']])
-      expect(wrapper.find('.action-bar').exists()).toBe(true)
-    })
-
-    it('carries the answer verdict down to the question card', async () => {
-      const wrapper = mount(DwarfSprite, {
-        props: {
-          dwarf: defaultDwarf({
-            pendingQuestion: {
-              toolUseId: 'toolu_01',
-              question: 'Which database?',
-              multiSelect: false,
-              options: [{ label: 'Postgres' }]
-            }
-          }),
-          answerState: {
-            phase: 'refused',
-            toolUseId: 'toolu_01',
-            error: 'That question is no longer open.'
-          }
-        }
-      })
-      await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.answer-error').text()).toBe('That question is no longer open.')
-    })
-
-    it('forwards a composed message and keeps the bar open for the verdict', async () => {
-      const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }) }
-      })
-      await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.find('.icon-chat').trigger('click')
-      await wrapper.find('.message-input').setValue('run the tests')
-      await wrapper.find('.send-button').trigger('click')
-
-      expect(wrapper.emitted('send-text')).toEqual([[{ text: 'run the tests', pressEnter: true }]])
-      expect(wrapper.find('.action-bar').exists()).toBe(true)
+    it('says whether it is the selected one, for anything reading rather than looking', () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf(), selected: true } })
+      expect(wrapper.get('.dwarf-hit').attributes('aria-pressed')).toBe('true')
     })
 
     it('marks a delivered message on the dwarf', () => {
@@ -298,16 +260,6 @@ describe('DwarfSprite', () => {
         capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
       })
     }
-
-    it('forwards a confirmed kick and keeps the bar open for the verdict', async () => {
-      const wrapper = mount(DwarfSprite, { props: { dwarf: kickableDwarf() } })
-      await wrapper.find('.dwarf-hit').trigger('click')
-      await wrapper.find('.icon-kick').trigger('click')
-      await wrapper.find('.icon-kick').trigger('click')
-
-      expect(wrapper.emitted('kick')).toHaveLength(1)
-      expect(wrapper.find('.action-bar').exists()).toBe(true)
-    })
 
     it('marks a delivered kick on the dwarf', () => {
       const wrapper = mount(DwarfSprite, {
@@ -411,25 +363,30 @@ describe('DwarfSprite', () => {
     })
   })
 
+  /*
+   * AMENDED for #159: the halo follows the `selected` PROP now rather than a
+   * popover this sprite owned. What the halo is and what it must never do are
+   * unchanged, which is what these still assert — including the source's own
+   * rule that a selected dwarf keeps moving and working.
+   */
   describe('the red halo on a selected dwarf', () => {
     it('marks the dwarf red once it is selected', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
       expect(wrapper.classes()).not.toContain('is-selected')
-      await wrapper.get('.dwarf-hit').trigger('click')
+      await wrapper.setProps({ selected: true })
       expect(wrapper.classes()).toContain('is-selected')
     })
 
     it('takes the halo off again when the selection closes', async () => {
-      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-      await wrapper.get('.dwarf-hit').trigger('click')
-      await wrapper.get('.dwarf-hit').trigger('click')
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf(), selected: true } })
+      await wrapper.setProps({ selected: false })
       expect(wrapper.classes()).not.toContain('is-selected')
     })
 
     it('never pauses the dwarf it marks, which the source states outright', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
       const before = sheetOf(wrapper)
-      await wrapper.get('.dwarf-hit').trigger('click')
+      await wrapper.setProps({ selected: true })
       // Same sequence, still animating: selection is a marker, not a pause.
       expect(sheetOf(wrapper)).toBe(before)
       expect(wrapper.classes()).toContain('is-working')
@@ -566,12 +523,14 @@ describe('DwarfSprite', () => {
       expect(wrapper.emitted('bubble-release')).toHaveLength(1)
     })
 
-    it('opening the action bar collapses the expanded bubble', async () => {
+    // AMENDED for #159: selecting the dwarf is what used to open the bar. One
+    // popover at a time is the rule that survived, and it is what this asserts.
+    it('selecting the dwarf collapses the expanded bubble', async () => {
       const wrapper = mountTalking()
       await wrapper.find('.status-dialog').trigger('click')
 
       await wrapper.find('.dwarf-hit').trigger('click')
-      expect(wrapper.find('.action-bar').exists()).toBe(true)
+      expect(wrapper.emitted('select')).toHaveLength(1)
       expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
       expect(wrapper.emitted('bubble-release')).toHaveLength(1)
     })

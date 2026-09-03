@@ -21,7 +21,7 @@ import {
   spriteFootprintPx,
   spriteMarginPercent
 } from '../../lib/scene/sceneSizing'
-import type { Dwarf, DwarfAnswerState, DwarfKickState, DwarfSendState, Mine } from '../../types'
+import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../../types'
 import DwarfSprite from '../dwarf/DwarfSprite.vue'
 import VaultChip from '../vault/VaultChip.vue'
 
@@ -32,8 +32,12 @@ const props = defineProps<{
   sendStates?: Record<string, DwarfSendState>
   /** Kick state per dwarf id, so each sprite can show its own kick verdict. */
   kickStates?: Record<string, DwarfKickState>
-  /** Answer state per dwarf id, so each sprite can show its own question verdict. */
-  answerStates?: Record<string, DwarfAnswerState>
+  /**
+   * The dwarf the message panel is open on, or null (#159). At most one in the
+   * whole mine, which is exactly why it is passed down rather than held by a
+   * sprite.
+   */
+  selectedId?: string | null
   /**
    * The dwarfs that were not on the panel's previous snapshot (#156).
    *
@@ -47,11 +51,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: []
-  activate: [dwarf: Dwarf]
-  'send-text': [dwarf: Dwarf, payload: { text: string; pressEnter: boolean }]
-  kick: [dwarf: Dwarf]
-  /** One of the agent's own option labels, answering that dwarf's outstanding ask (#125). */
-  'answer-question': [dwarf: Dwarf, label: string]
+  /** A dwarf was clicked; the message panel above decides what that opens (#159). */
+  select: [dwarf: Dwarf]
 }>()
 
 /*
@@ -307,14 +308,11 @@ onBeforeUnmount(() => {
             :activating="activatingId === slot.dwarf.id"
             :send-state="sendStates?.[slot.dwarf.id]"
             :kick-state="kickStates?.[slot.dwarf.id]"
-            :answer-state="answerStates?.[slot.dwarf.id]"
+            :selected="selectedId === slot.dwarf.id"
             anchored
             :walking="slot.walking"
             :faces-left="slot.facesLeft"
-            @activate="emit('activate', slot.dwarf)"
-            @send-text="emit('send-text', slot.dwarf, $event)"
-            @kick="emit('kick', slot.dwarf)"
-            @answer="emit('answer-question', slot.dwarf, $event)"
+            @select="emit('select', slot.dwarf)"
             @bubble-hold="board.hold(slot.dwarf.id)"
             @bubble-release="board.release(slot.dwarf.id)"
           />

@@ -114,66 +114,25 @@ function distance(a, b) {
 }
 
 /**
- * Repair one component's edge endpoints, which the extraction left dangling.
+ * Convert one component's nodes and edges to painting-percent.
  *
- * `docs/mine-interior-features.json` renumbers each component's `nodes` 0..n-1
- * but leaves `edges[].from`/`to` on the ids the skeleton graph carried BEFORE
- * that renumbering — Bronze's 18 nodes are 0..17 while its edges name ids up to
- * 32, and the stub's 2 nodes are 0..1 while its one edge names 4 and 2. Taken
- * literally, not a single edge in the dataset points at a node that exists.
- *
- * The mapping is recoverable and is not a guess: each component's edges name
- * exactly as many distinct ids as it has nodes, and sorting those ids ascending
- * lines them up with the renumbered nodes in order. The `assertEndpoints` check
- * below proves it rather than assuming it — every edge's own polyline has to
- * start and end on the two nodes this mapping picked out, which a wrong mapping
- * could not manage 21 times in a row.
- *
- * Reported upstream rather than papered over; see the commit for #137.
+ * Until #152, this function also had to recover `edges[].from`/`to`: the
+ * extraction renumbered each component's `nodes` to 0..n-1 but left its edge
+ * endpoints on the pre-renumbering skeleton ids, so not one edge in
+ * `docs/mine-interior-features.json` pointed at a node that existed. That is
+ * fixed at the source now (`scripts/mapCoords/skeleton.mjs`'s
+ * `renumberComponent`, applied in `extract-map-coordinates.mjs`) — every
+ * `from`/`to` already names a node this component has, in order, so this step
+ * is a plain unit conversion rather than a repair.
  */
-function reindexComponent(component) {
-  const originalIds = [...new Set(component.edges.flatMap((edge) => [edge.from, edge.to]))].sort(
-    (a, b) => a - b
-  )
-  if (originalIds.length !== component.nodes.length) {
-    throw new Error(
-      `component names ${originalIds.length} edge endpoints for ${component.nodes.length} nodes`
-    )
-  }
-  const index = new Map(originalIds.map((id, position) => [id, position]))
+function toPaintingComponent(component) {
   const nodes = component.nodes.map((node) => ({ id: node.id, ...toPaintingPercent(node.pixel) }))
-  const edges = component.edges.map((edge) => {
-    const from = index.get(edge.from)
-    const to = index.get(edge.to)
-    const points = edge.points.map((point) => toPaintingPercent(point.pixel))
-    // The graph is undirected and the polyline may be traced either way round.
-    // Normalizing here means every consumer can walk `points` from `from` to
-    // `to` without re-checking which end it started at.
-    const head = points[0]
-    const forward = distance(head, nodes[from]) <= distance(head, nodes[to])
-    return { from, to, points: forward ? points : [...points].reverse() }
-  })
+  const edges = component.edges.map((edge) => ({
+    from: edge.from,
+    to: edge.to,
+    points: edge.points.map((point) => toPaintingPercent(point.pixel))
+  }))
   return { nodes, edges }
-}
-
-/**
- * Every edge's polyline must land on the nodes it claims. The extraction's
- * simplifier keeps a polyline's endpoints exactly, and node positions come from
- * a merge cluster of radius 6, so anything beyond a few pixels means the
- * endpoint repair above matched the wrong node.
- */
-function assertEndpoints(component, tolerancePx) {
-  for (const edge of component.edges) {
-    const first = edge.points[0]
-    const last = edge.points[edge.points.length - 1]
-    const head = distance(first, component.nodes[edge.from])
-    const tail = distance(last, component.nodes[edge.to])
-    if (head > tolerancePx || tail > tolerancePx) {
-      throw new Error(
-        `edge ${edge.from}-${edge.to} misses its nodes by ${round2(head)}px / ${round2(tail)}px`
-      )
-    }
-  }
 }
 
 /**
@@ -183,13 +142,8 @@ function assertEndpoints(component, tolerancePx) {
  * merged edge list, with one straight bridging edge appended.
  */
 export function spliceStub(rawNetwork, rawStub) {
-  const network = reindexComponent(rawNetwork)
-  const stub = reindexComponent(rawStub)
-  // The painting is 1184x3622, so 40px is about 1% of its longest side — well
-  // past the 6px merge radius and the 1.5px simplifier epsilon, and far short
-  // of the distance to any other node.
-  assertEndpoints(network, 40)
-  assertEndpoints(stub, 40)
+  const network = toPaintingComponent(rawNetwork)
+  const stub = toPaintingComponent(rawStub)
 
   const offset = network.nodes.length
   const nodes = [...network.nodes, ...stub.nodes.map((node) => ({ ...node, id: node.id + offset }))]

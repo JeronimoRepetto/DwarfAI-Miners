@@ -1,4 +1,8 @@
-import type { DwarfQuestionAnswerResult, HeldSessionLaunchResult } from '../domain/types'
+import type {
+  DwarfQuestionAnswerResult,
+  FeedMessage,
+  HeldSessionLaunchResult
+} from '../domain/types'
 import type { CliDetector } from '../platform/cliDetection'
 import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
@@ -7,8 +11,10 @@ import {
   parseAskUserQuestion,
   prepareHeldPrompt,
   resolveAnswers,
+  retainHeldMessage,
   type HeldAnswer,
   type HeldAsk,
+  type HeldConversationState,
   type HeldCrewState,
   type HeldQuestionState,
   type HeldSessionHandle,
@@ -109,6 +115,13 @@ interface HeldRecord {
    * what its own stream says.
    */
   crew: HeldCrew
+  /**
+   * The exchange this host has watched go by on the stream (#159), oldest
+   * first and bounded by `retainHeldMessage`. Seeded with the prompt this app
+   * sent, which is the one message it knows first-hand without reading
+   * anything: everything after it is what the stream itself carried.
+   */
+  conversation: FeedMessage[]
 }
 
 export interface HeldSessionRegistryOptions {
@@ -197,6 +210,7 @@ export class HeldSessionRegistry {
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),
+        onMessage: (role, text) => this.recordMessage(key, role, text),
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
         onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
         onEnd: (reason) => this.finish(key, reason)
@@ -206,7 +220,12 @@ export class HeldSessionRegistry {
         handle,
         openAsks: new Map(),
         telemetry: {},
-        crew
+        crew,
+        // The launch prompt is the record's first message, and the only one
+        // seeded rather than watched: it is what this app sent, so it is known
+        // first-hand and exactly once. Everything after it arrives through
+        // recordMessage, off the stream.
+        conversation: retainHeldMessage([], this.message('user', prompt))
       })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
@@ -261,6 +280,18 @@ export class HeldSessionRegistry {
     const record = this.recordFor(sessionId)
     if (record === undefined) return { held: false }
     return { held: true, crew: record.crew }
+  }
+
+  /**
+   * The exchange the panel may draw for this session (#159) — `held: false`
+   * for one this panel does not hold, which is the reading that leaves the
+   * panel to read an observed session's words off its own transcript instead.
+   * See HeldConversationState and stampHeldConversation.
+   */
+  conversationState(sessionId: string): HeldConversationState {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { held: false }
+    return { held: true, conversation: record.conversation }
   }
 
   /**
@@ -351,6 +382,23 @@ export class HeldSessionRegistry {
     const record = this.held.get(key)
     if (record === undefined) return
     record.telemetry = { ...record.telemetry, ...update }
+  }
+
+  /**
+   * Keep one message the stream carried (#159). The bound, the redaction and
+   * the "nothing was said" case all live in `retainHeldMessage`, so this only
+   * decides WHEN a message is seen — which is the one thing the registry knows
+   * and the pure helper does not.
+   */
+  private recordMessage(key: number, role: FeedMessage['role'], text: string): void {
+    const record = this.held.get(key)
+    if (record === undefined) return
+    record.conversation = retainHeldMessage(record.conversation, this.message(role, text))
+  }
+
+  /** One message stamped with this host's own clock — the only honest time there is. */
+  private message(role: FeedMessage['role'], text: string): FeedMessage {
+    return { role, text, timestamp: new Date(this.now()).toISOString() }
   }
 
   /**

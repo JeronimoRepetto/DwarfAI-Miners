@@ -67,13 +67,14 @@ src/
 └── renderer/src/
     ├── App.vue      the root component; types.ts beside it is this process's type barrel
     ├── assets/      processed art and css
-    ├── components/  shell/ · map/ · scene/ · dwarf/ · vault/ · panel/ — thin, and decide nothing
+    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · vault/ · panel/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
     │                  shell/     the frame every screen sits in: the areas the rail opens onto
     │                  map/       the authored dig sites of the valley and the trails between them
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
+    │                  message/   what a dwarf's panel may honestly show, and how tall it opens
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
     │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
@@ -81,6 +82,6 @@ src/
     └── testing/     factories for tests
 ```
 
-`components/` and `lib/` share the family names `shell`, `map`, `scene` and `vault` on purpose: a
-component may read from several `lib/` families, but when a name exists in both, it means the
-same thing in both.
+`components/` and `lib/` share the family names `shell`, `map`, `scene`, `message` and `vault` on
+purpose: a component may read from several `lib/` families, but when a name exists in both, it
+means the same thing in both.

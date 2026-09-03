@@ -5,7 +5,12 @@ import {
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type { HeldSessionSubagentSignal } from './heldCrew'
-import type { HeldSessionHandle, HeldSessionPort, HeldSessionStartRequest } from './heldSession'
+import {
+  heldMessageText,
+  type HeldSessionHandle,
+  type HeldSessionPort,
+  type HeldSessionStartRequest
+} from './heldSession'
 
 /**
  * The Agent SDK, behind the held-session port.
@@ -290,6 +295,23 @@ export function createSdkHeldSession(options: SdkHeldSessionOptions = {}): HeldS
                 : { effort: message.effort }),
               claudeCodeVersion: message.claude_code_version
             })
+          }
+          /*
+           * The words themselves (#159). The loop was already reading every
+           * one of these and throwing them away, which is why the panel had
+           * no conversation to draw for the one session type it holds live.
+           *
+           * Only `assistant` and `user`, and only their text: a
+           * `stream_event` is a partial of an assistant message still being
+           * written, so retaining those alongside the finished one would
+           * write the same reply into the panel several times over. What
+           * counts as text at all is heldMessageText's decision, on the far
+           * side of the seam, so this stays a shape check with no parsing in
+           * it and the rule can be unit-tested without the SDK.
+           */
+          if (message.type === 'assistant' || message.type === 'user') {
+            const text = heldMessageText(message.message.content)
+            if (text !== '') request.onMessage(message.type, text)
           }
           // Once per turn, after every assistant/user/stream_event message of
           // that turn — true of the success subtype and every error subtype

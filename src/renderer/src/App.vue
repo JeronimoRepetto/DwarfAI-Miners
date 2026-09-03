@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
-import FeedModal from './components/panel/FeedModal.vue'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import MinesPanel from './components/browse/MinesPanel.vue'
@@ -23,7 +23,7 @@ import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
-import type { AppBuild, Dwarf, FeedMessage, Mine, MinesSnapshot, ShellArea } from './types'
+import type { AppBuild, Dwarf, DwarfFeedResult, Mine, MinesSnapshot, ShellArea } from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -177,9 +177,25 @@ const interiorColumnAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.h
 const loading = ref(true)
 const error = ref<string | null>(null)
 const activating = ref<string | null>(null)
-const feed = ref<FeedMessage[]>([])
-const feedFor = ref<string | null>(null)
 let unsubscribe: (() => void) | undefined
+
+/**
+ * The dwarf the message panel is open on (#159).
+ *
+ * At most one in the whole app, which is why it lives here rather than in a
+ * sprite: the design docks the panel at the bottom of the screen, not beside
+ * the dwarf, so no sprite can hold the fact that it is the selected one.
+ */
+const selectedDwarfId = ref<string | null>(null)
+
+/**
+ * The transcript read for the selected dwarf, for a session this panel only
+ * OBSERVES. `undefined` means the read has not come back — which the panel
+ * says out loud rather than drawing as an empty conversation.
+ */
+const selectedFeed = ref<DwarfFeedResult | undefined>(undefined)
+/** Which read is the current one, so a slow answer cannot land on a later dwarf. */
+let feedToken = 0
 
 const currentMine = computed<Mine | undefined>(() =>
   viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
@@ -260,10 +276,62 @@ function leaveMine(): void {
   error.value = null
 }
 
-function closeFeed(): void {
-  feed.value = []
-  feedFor.value = null
+const selectedDwarf = computed<Dwarf | undefined>(() =>
+  selectedDwarfId.value === null
+    ? undefined
+    : currentMine.value?.dwarfs.find((dwarf) => dwarf.id === selectedDwarfId.value)
+)
+
+/** Clicking the selected dwarf again closes its panel, as a toggle should. */
+function selectDwarf(dwarf: Dwarf): void {
+  selectedDwarfId.value = selectedDwarfId.value === dwarf.id ? null : dwarf.id
 }
+
+function closeMessages(): void {
+  selectedDwarfId.value = null
+}
+
+/**
+ * Read the selected dwarf's transcript tail, for a session this panel only
+ * observes.
+ *
+ * Skipped for a held session: it carries its own first-hand exchange on every
+ * snapshot, and reading its transcript would fetch the same words second-hand
+ * and a turn behind. Re-read when that dwarf says something new rather than on
+ * every poll, so an idle session costs no disk at all — `lastMessage` changing
+ * IS the provider reporting that the tail moved.
+ */
+watch(
+  [selectedDwarfId, () => selectedDwarf.value?.lastMessage],
+  async ([dwarfId]) => {
+    const token = ++feedToken
+    selectedFeed.value = undefined
+    if (dwarfId === null) return
+    if (selectedDwarf.value?.conversation !== undefined) return
+    try {
+      const result = await window.api.getDwarfFeed(dwarfId)
+      if (feedToken === token) selectedFeed.value = result
+    } catch {
+      // The bridge is the only source there is. Saying "no transcript this
+      // panel can read" is exactly what happened, and it is what the panel
+      // already knows how to draw.
+      if (feedToken === token) selectedFeed.value = { readable: false, messages: [] }
+    }
+  },
+  { immediate: true }
+)
+
+/*
+ * A panel can only be open on a dwarf that is there. The selection is dropped
+ * when the dwarf itself walks out or its mine closes — main owns which dwarfs
+ * exist, so this follows the snapshot rather than guessing.
+ */
+watch(
+  () => selectedDwarfId.value !== null && selectedDwarf.value === undefined,
+  (gone) => {
+    if (gone) selectedDwarfId.value = null
+  }
+)
 
 async function activate(dwarf: Dwarf): Promise<void> {
   activating.value = dwarf.id
@@ -280,12 +348,11 @@ async function activate(dwarf: Dwarf): Promise<void> {
       // alwaysOnTop, so it never needs to get out of the way).
       return
     }
-    if (result.feed.length) {
-      feed.value = result.feed
-      feedFor.value = dwarf.name
-    } else {
-      error.value = 'The agent terminal is unavailable.'
-    }
+    // The feed fallback has nowhere to go any more, and needs none: the
+    // message panel is already showing this session's latest activity, read on
+    // its own channel. What is left to say is only that the console itself
+    // could not be brought forward (#159).
+    error.value = 'The agent terminal could not be opened; its latest activity is below.'
   } catch {
     error.value = 'The agent terminal could not be opened.'
   } finally {
@@ -468,18 +535,39 @@ onBeforeUnmount(() => unsubscribe?.())
             :activating-id="activating"
             :send-states="messagingState.byDwarfId"
             :kick-states="kickingState.byDwarfId"
-            :answer-states="questionState.byDwarfId"
+            :selected-id="selectedDwarfId"
             @back="leaveMine"
-            @activate="activate"
-            @send-text="sendText"
-            @kick="kickDwarf"
-            @answer-question="answerQuestion"
+            @select="selectDwarf"
           />
         </PanelFrame>
       </div>
     </template>
 
-    <FeedModal v-if="feedFor" :title="feedFor" :messages="feed" @close="closeFeed" />
+    <!--
+      The design's MessagePanel, docked along the bottom (#159). Keyed by
+      dwarf, so selecting another one is a fresh panel: its opening height
+      derives from the latest message and is taken once per open, which only
+      holds if reopening is a genuine remount.
+
+      Held against the shell's FREE edge — the side away from the screen edge
+      the window is docked to — which is where the design's own
+      mine-and-message mock puts it relative to the mine.
+    -->
+    <div v-if="selectedDwarf" class="message-dock">
+      <DwarfMessagePanel
+        :key="selectedDwarf.id"
+        :dwarf="selectedDwarf"
+        :feed="selectedFeed"
+        :send-state="messagingState.byDwarfId[selectedDwarf.id]"
+        :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
+        :answer-state="questionState.byDwarfId[selectedDwarf.id]"
+        @send="sendText(selectedDwarf, $event)"
+        @kick="kickDwarf(selectedDwarf)"
+        @answer="answerQuestion(selectedDwarf, $event)"
+        @open-console="activate(selectedDwarf)"
+        @close="closeMessages"
+      />
+    </div>
   </div>
 </template>
 
@@ -491,6 +579,7 @@ onBeforeUnmount(() => unsubscribe?.())
  * about, mirrored once.
  */
 .shell {
+  position: relative;
   display: flex;
   height: 100vh;
   overflow: hidden;
@@ -528,6 +617,40 @@ onBeforeUnmount(() => unsubscribe?.())
   border-radius: var(--radius-default);
   background: var(--color-rail);
   box-shadow: var(--elevation-5);
+}
+/*
+ * Where the message panel sits (#159), and the honest reconciliation of the
+ * design's 990px.
+ *
+ * The source's own mine-and-message mock draws the panel 1026px wide BESIDE
+ * the shell on a 1350px screen — a second surface on the desktop, with the
+ * mine untouched to its right. This app is one docked window, and only its
+ * widest composition (a page and a mine, 1303 design px) has 990 to give; the
+ * mine-only composition has 438. So the panel takes the design's width where
+ * the composition has it and the composition's where it does not (see the
+ * `min()` in DwarfMessagePanel), rather than hanging off the side of a window
+ * that cannot grow for it.
+ *
+ * Held against the FREE edge — the side away from the screen edge the window
+ * is docked to — which is the relation the mock draws: panel on one side, mine
+ * on the other. `pointer-events` is handed back only to the panel itself, so
+ * the strip beside it never swallows a click meant for the mine underneath.
+ */
+.message-dock {
+  position: absolute;
+  z-index: 60;
+  right: var(--space-nav-gap);
+  bottom: var(--space-nav-gap);
+  left: var(--space-nav-gap);
+  display: flex;
+  justify-content: flex-start;
+  pointer-events: none;
+}
+.shell.edge-left .message-dock {
+  justify-content: flex-end;
+}
+.message-dock > * {
+  pointer-events: auto;
 }
 .shell-secondary {
   position: relative;

@@ -645,50 +645,52 @@ describe('MineScene interior shell', () => {
  * An agent's question (#125) travels the same way a message does: the scene
  * names which dwarf it came from, and App owns the IPC.
  */
-describe('MineScene pending question', () => {
-  const asking = () =>
-    defaultDwarf({
-      id: 'claude:s1',
-      pendingQuestion: {
-        toolUseId: 'toolu_01',
-        question: 'Which database?',
-        multiSelect: false,
-        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
-      }
-    })
-
-  it('names the dwarf when an answer travels up from its sprite', async () => {
-    const dwarf = asking()
+/*
+ * AMENDED for #159. This block was "MineScene pending question", and it drove
+ * the question card through a sprite's own action bar. The card lives in the
+ * MessagePanel now — docked at the bottom of the screen, outside this scene
+ * entirely — so the two cases that answered a question here went with the bar:
+ *
+ * - "names the dwarf when an answer travels up from its sprite"
+ * - "hands each dwarf its own answer verdict, keyed by that dwarf's id"
+ * - "leaves a dwarf with nothing outstanding exactly as it was", whose subject
+ *   — no card for a dwarf that asked nothing — is now the panel's, and is
+ *   pinned there as "shows no question surface for a dwarf with nothing
+ *   outstanding".
+ *
+ * No subject was lost. Answering an ask and carrying its verdict are pinned in
+ * components/message/DwarfMessagePanel.test.ts, and keying the verdict by
+ * dwarf id is pinned in App.test.ts, where the panel is actually handed one
+ * store's entry per dwarf.
+ *
+ * What the scene still owes is what replaced it: naming which dwarf was
+ * clicked, and marking the one the panel is open on.
+ */
+describe('MineScene selection', () => {
+  it('names the dwarf that was clicked, so the panel above knows whose it is', async () => {
+    const dwarf = defaultDwarf({ id: 'claude:s1' })
     const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [dwarf] }) } })
     await wrapper.find('.dwarf-hit').trigger('click')
-    await wrapper.findAll('.option-card')[1]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
-
-    expect(wrapper.emitted('answer-question')).toEqual([[dwarf, 'SQLite']])
+    expect(wrapper.emitted('select')).toEqual([[dwarf]])
   })
 
-  it("hands each dwarf its own answer verdict, keyed by that dwarf's id", async () => {
+  it('marks the selected dwarf and no other', async () => {
+    const first = defaultDwarf({ id: 'claude:s1', name: 'One' })
+    const second = defaultDwarf({ id: 'claude:s2', name: 'Two' })
     const wrapper = mount(MineScene, {
-      props: {
-        mine: defaultMine({ dwarfs: [asking()] }),
-        answerStates: {
-          'claude:s1': {
-            phase: 'refused',
-            toolUseId: 'toolu_01',
-            error: 'That question is no longer open.'
-          }
-        }
-      }
+      props: { mine: defaultMine({ dwarfs: [first, second] }), selectedId: 'claude:s2' }
     })
-    await wrapper.find('.dwarf-hit').trigger('click')
-    expect(wrapper.find('.answer-error').text()).toBe('That question is no longer open.')
+    const selected = wrapper
+      .findAll('.dwarf-sprite')
+      .filter((sprite) => sprite.classes().includes('is-selected'))
+    expect(selected).toHaveLength(1)
+    expect(selected[0]!.text()).toContain('Two')
   })
 
-  it('leaves a dwarf with nothing outstanding exactly as it was', async () => {
+  it('marks nobody when the panel is closed', () => {
     const wrapper = mount(MineScene, {
-      props: { mine: defaultMine({ dwarfs: [defaultDwarf()] }) }
+      props: { mine: defaultMine({ dwarfs: [defaultDwarf()] }), selectedId: null }
     })
-    await wrapper.find('.dwarf-hit').trigger('click')
-    expect(wrapper.find('.question-card').exists()).toBe(false)
+    expect(wrapper.find('.dwarf-sprite.is-selected').exists()).toBe(false)
   })
 })
