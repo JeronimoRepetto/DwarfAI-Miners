@@ -831,15 +831,18 @@ export interface PanelLayout {
 }
 
 /**
- * What the panel asks the shell window to become (#90).
+ * What the panel asks the shell window to become (#90, #138).
  *
- * `edge` is deliberately absent: the design puts the left/right choice in the
- * Settings position control, which is its own slice. Until that exists the edge
- * is main's, and the renderer can only ever read it back.
+ * `edge` is optional and absent from every request EXCEPT the Settings
+ * position control (#138): omitting it means "keep whatever edge main already
+ * has", which is what the rail toggle and the mine-open resize both do — they
+ * are not the position control and must never nudge the docked side by
+ * accident. Only the position control's Left/Right segments ever set it.
  */
 export interface PanelLayoutRequest {
   expanded: boolean
   mineOpen: boolean
+  edge?: PanelEdge
 }
 
 /**
@@ -909,6 +912,32 @@ export interface MineDeclareResult {
 export interface MineUndeclareResult {
   outcome: 'removed' | 'reverted' | 'unchanged' | 'failed'
   /** Why nothing changed; absent exactly when the outcome is 'removed' or 'reverted'. */
+  reason?: string
+}
+
+/**
+ * Verdict of the Settings "Reset metrics" action (#138), same idiom as
+ * MineUndeclareResult: a discriminated outcome plus a reason exactly when
+ * something did NOT happen.
+ *
+ * PRODUCT DECISION (#138): this wipes METRICS only — the material ledger
+ * (mined totals and session marks) — and NEVER touches the projects store.
+ * The design's own text says "delete your data" but means the accumulated
+ * metrics; the declared/discovered project list is the user's remembered
+ * mines, not a metric, and survives a reset untouched. So does the panel
+ * side, the shortcut, the pin and autostart preferences — none of them are
+ * metrics either.
+ *
+ * 'reset' means the vault was cleared AND that clearing was persisted before
+ * this resolved — the modal's Confirm is a destructive, irreversible action,
+ * so its caller must know the wipe actually reached disk rather than assuming
+ * a promise that resolved without throwing. 'failed' carries a reason and
+ * changes nothing; there is no 'cancelled' here because closing the modal
+ * (the X) never reaches main at all.
+ */
+export interface MetricsResetResult {
+  outcome: 'reset' | 'failed'
+  /** Why nothing changed; absent exactly when the outcome is 'reset'. */
   reason?: string
 }
 
@@ -1086,6 +1115,14 @@ export const IPC_CHANNELS = {
    */
   declareMine: 'mine:declare',
   undeclareMine: 'mine:undeclare',
+  /**
+   * Settings' "Reset metrics" action (#138). No payload: the typed
+   * confirmation is validated entirely in the renderer (the gate on
+   * `Confirm`), and this channel carries only the already-confirmed intent.
+   * Answers with MetricsResetResult — see its doc comment for exactly what
+   * this does and does not wipe.
+   */
+  resetMetrics: 'metrics:reset',
   /**
    * Browsing every project the app remembers (#92) — filtered, ordered and
    * paged in SQL, in main.

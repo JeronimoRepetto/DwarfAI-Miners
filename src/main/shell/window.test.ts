@@ -4,6 +4,9 @@ import {
   applyAlwaysOnTop,
   applyPanelBounds,
   buildMainWindowOptions,
+  panelLayout,
+  seedPanelEdge,
+  setPanelLayout,
   type AlwaysOnTopTarget,
   type PanelBoundsTarget
 } from './window'
@@ -170,5 +173,43 @@ describe('applyPanelBounds', () => {
   it('reports the REAL rectangle, never the wish, when the window manager refuses', () => {
     const { target } = fakeBoundsWindow({ honorsChanges: false })
     expect(applyPanelBounds(target, RAIL_BOUNDS)).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+  })
+})
+
+/**
+ * The Settings position control (#138): the docked side is now settable, and
+ * it persists. No real BrowserWindow exists in either test here (`mainWindow`
+ * stays null at module scope until createMainWindow() runs), so setPanelLayout
+ * only has to prove what it computes — applyPanelBounds against a live window
+ * is already covered above.
+ */
+describe('panel layout edge (#138)', () => {
+  it('seeds the persisted edge before any window exists, for the very first frame', () => {
+    seedPanelEdge('left')
+    expect(panelLayout().edge).toBe('left')
+    seedPanelEdge('right')
+    expect(panelLayout().edge).toBe('right')
+  })
+
+  it('keeps the current edge when a request does not name one', () => {
+    // The rail toggle and the mine-open resize both send bare
+    // expanded/mineOpen requests; neither is the position control, and
+    // neither may nudge the docked side by accident.
+    seedPanelEdge('left')
+    expect(setPanelLayout({ expanded: true, mineOpen: false }).edge).toBe('left')
+    expect(setPanelLayout({ expanded: false, mineOpen: false }).edge).toBe('left')
+  })
+
+  it('moves to the requested edge when the position control asks for one', () => {
+    seedPanelEdge('right')
+    const result = setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+    expect(result.edge).toBe('left')
+    expect(panelLayout().edge).toBe('left')
+  })
+
+  it('carries expanded and mineOpen through unchanged alongside an edge move', () => {
+    seedPanelEdge('right')
+    const result = setPanelLayout({ expanded: true, mineOpen: true, edge: 'left' })
+    expect(result).toEqual({ edge: 'left', expanded: true, mineOpen: true })
   })
 })

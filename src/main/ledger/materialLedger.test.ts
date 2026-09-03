@@ -243,6 +243,107 @@ describe('MaterialLedger.creditCoal', () => {
   })
 })
 
+/**
+ * Settings' "Reset metrics" action (#138): wipe the vault back to empty and
+ * persist it immediately, past the throttle — this is a user-confirmed,
+ * irreversible action, so the caller must know the wipe reached the store
+ * before it reports success, not that a promise merely resolved.
+ */
+describe('MaterialLedger.reset (#138)', () => {
+  it('clears every accrued material', async () => {
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 9_000)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 100)], 1, confirmed)
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 900)], 2, confirmed)
+    expect(ledger.totals().gold).toBe(800)
+
+    await ledger.reset(3)
+
+    expect(ledger.totals()).toEqual(emptyMaterialTotals())
+    expect(ledger.knownMineTotals('mine:a')).toBeUndefined()
+  })
+
+  it('persists the wipe immediately, past the throttle, and reports success', async () => {
+    const store = fakeStore()
+    const ledger = new MaterialLedger({ store })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 500)
+    await ledger.save(1, true)
+    expect(store.saves).toHaveLength(1)
+
+    const succeeded = await ledger.reset(2)
+
+    expect(succeeded).toBe(true)
+    expect(store.saves).toHaveLength(2)
+    expect(store.saves.at(-1)).toEqual(emptyLedger())
+  })
+
+  it('does not double-count an in-flight session after the wipe', async () => {
+    // A session running right through the reset has no baseline any more: the
+    // FIRST observation after a reset must rebaseline rather than credit the
+    // whole cumulative counter as a sudden delta (see domain/ledger.ts's
+    // accrue(), rule 1 — this is the same rule pruneSessions relies on).
+    const ledger = new MaterialLedger({ store: fakeStore() })
+    await ledger.load()
+    ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 5_000)], 1, confirmed)
+    await ledger.reset(2)
+
+    const stamped = ledger.observe([crewedMine('mine:a', 'gold', 'claude:s1', 5_050)], 3, confirmed)
+
+    expect(stamped[0]!.materials?.gold).toBe(0)
+  })
+
+  it('reports the failure and leaves the vault dirty for the next save to retry', async () => {
+    const store = fakeStore()
+    store.save = async () => {
+      throw new Error('ENOSPC')
+    }
+    const errors: unknown[] = []
+    const ledger = new MaterialLedger({ store, onError: (_m, error) => errors.push(error) })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 500)
+
+    const succeeded = await ledger.reset(1)
+
+    expect(succeeded).toBe(false)
+    expect(errors).toHaveLength(1)
+    expect(ledger.totals()).toEqual(emptyMaterialTotals())
+  })
+
+  it('serializes behind a save already in flight rather than racing it', async () => {
+    const store = fakeStore()
+    let releaseFirstSave = (): void => undefined
+    const firstSaveStarted = new Promise<void>((resolveStarted) => {
+      let firstCall = true
+      const originalSave = store.save.bind(store)
+      store.save = async (state) => {
+        if (!firstCall) return originalSave(state)
+        firstCall = false
+        resolveStarted()
+        await new Promise<void>((resolve) => {
+          releaseFirstSave = resolve
+        })
+        return originalSave(state)
+      }
+    })
+    const ledger = new MaterialLedger({ store })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 500)
+
+    const forcedSave = ledger.save(1, true)
+    await firstSaveStarted
+    const resetDone = ledger.reset(2)
+
+    releaseFirstSave()
+    await forcedSave
+    await resetDone
+
+    expect(store.saves).toHaveLength(2)
+    expect(store.saves.at(-1)).toEqual(emptyLedger())
+  })
+})
+
 describe('MaterialLedger.knownMineTotals', () => {
   it('answers undefined for a mine the ledger has no row for (#90)', async () => {
     const ledger = new MaterialLedger({ store: fakeStore() })

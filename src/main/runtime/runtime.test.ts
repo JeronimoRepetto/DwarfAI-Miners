@@ -3446,6 +3446,106 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 })
 
 /**
+ * Settings' "Reset metrics" action (#138). PRODUCT DECISION, restated at the
+ * call site: this wipes the material LEDGER only. It never touches the
+ * projects store — a declared or discovered mine is the user's remembered
+ * project list, not a metric — which is why these tests assert the ledger
+ * emptied and the runtime's own mine list untouched, in the same breath.
+ */
+describe('AgentRuntime.resetMetrics (#138)', () => {
+  /** Same minimal LedgerStore fake materialLedger.test.ts uses. */
+  function fakeLedgerStore(initial: LedgerState = emptyLedger()) {
+    const saves: LedgerState[] = []
+    return {
+      saves,
+      async load() {
+        return initial
+      },
+      async save(state: LedgerState) {
+        saves.push(state)
+      }
+    }
+  }
+
+  it('clears the vault and reports the outcome', async () => {
+    const store = fakeLedgerStore()
+    const ledger = new MaterialLedger({ store })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 9_000)
+
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      ledger,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+
+    expect(runtime.materialTotals().coal).toBe(9_000)
+    const result = await runtime.resetMetrics()
+    runtime.stop()
+
+    expect(result).toEqual({ outcome: 'reset' })
+    expect(runtime.materialTotals()).toEqual(emptyMaterialTotals())
+  })
+
+  it('never touches a declared mine while resetting its metrics', async () => {
+    const ADOPTED = 'C:\\X\\Adopted'
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite()
+    })
+    const store = fakeLedgerStore()
+    const ledger = new MaterialLedger({ store })
+    await ledger.load()
+    ledger.creditCoal(mineIdForPath(ADOPTED), 500)
+
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      projects,
+      ledger,
+      chooseDirectory: async () => ADOPTED,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+    await runtime.declareMine()
+
+    const result = await runtime.resetMetrics()
+    const stillDeclared = await runtime.queryProjects({ sortBy: 'addedAt', direction: 'desc' })
+    runtime.stop()
+
+    expect(result).toEqual({ outcome: 'reset' })
+    expect(stillDeclared.projects.map((project) => project.path)).toContain(ADOPTED)
+    expect(stillDeclared.projects[0]?.materials).toBeUndefined()
+  })
+
+  it('reports a failure and its reason when the store refuses to persist the wipe', async () => {
+    const store = fakeLedgerStore()
+    store.save = async () => {
+      throw new Error('ENOSPC')
+    }
+    const ledger = new MaterialLedger({ store, onError: () => undefined })
+    await ledger.load()
+    ledger.creditCoal('mine:a', 500)
+
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      ledger,
+      onMinesUpdated: vi.fn(),
+      now: () => 5_000
+    })
+
+    const result = await runtime.resetMetrics()
+    runtime.stop()
+
+    expect(result.outcome).toBe('failed')
+    expect(result.reason).toBeTruthy()
+  })
+})
+
+/*
  * Where each mine stands on the world map, carried from the store to the panel
  * (#136).
  *
