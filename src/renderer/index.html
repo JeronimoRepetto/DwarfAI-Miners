@@ -4,9 +4,22 @@
     <meta charset="UTF-8" />
     <title>DwarfAI-Miners</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      `img-src` and `font-src` name `data:` because the BUNDLER emits it (#156):
+      Vite inlines every asset under assetsInlineLimit as a data URI, which is
+      every shell icon, the app mark and the Tiny5 pixel font. `data:` is a
+      scheme rather than an origin, so it is not `'self'` — and with those two
+      directives undeclared they fell back to `default-src 'self'` and a packaged
+      build refused the lot. Icons that were merely INVISIBLE, with no error
+      anywhere a `pnpm dev` run could show one, because the dev server hands the
+      same assets out from its own origin. See lib/contentSecurityPolicy.ts.
+
+      Per-directive on purpose: a `data:` image or font cannot execute anything,
+      and `script-src` stays shut so a `data:` script still cannot run.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
     />
   </head>
   <body>
