@@ -830,6 +830,37 @@ export interface DwarfKickResult {
   error?: string
 }
 
+/**
+ * One provider the Add Panel may draw a chip for (#86, over detection's #91).
+ *
+ * Two facts, and they are not the same fact. `installed` is whether the CLI is
+ * on this machine, which is what decides whether a chip appears at all; the
+ * design shows detected providers and an always-present Other, and nothing
+ * else. `launchable` is whether this app has a path that can actually start it,
+ * which is narrower and moves independently — a chip drawn from the first alone
+ * would promise what the second cannot keep.
+ *
+ * What deliberately does NOT travel is where the CLI was found, or detection's
+ * own explanation for not finding it. Both name this machine's filesystem
+ * (`~/.local/bin`, or a configured override verbatim), the panel can act on
+ * neither, and the wire is where they stop — the rule the launch channels
+ * already hold by naming a mine instead of a directory.
+ */
+export interface AgentProviderOption {
+  provider: DwarfProvider
+  /** Whether this CLI was found on this machine. */
+  installed: boolean
+  /** Whether a session can actually be started for it from the panel. */
+  launchable: boolean
+  /** Fixed copy saying why not, when launchable is false. Never a path. */
+  reason?: string
+}
+
+/** Every known provider's availability, answered on request (#86). */
+export interface AgentProviderList {
+  providers: AgentProviderOption[]
+}
+
 /** One request to start a new agent session in a mine's folder (#86). */
 export interface AgentLaunchRequest {
   /** Which mine to start in. The id, never a path: main resolves the folder. */
@@ -1345,6 +1376,17 @@ export const IPC_CHANNELS = {
    * the launched session is discovered by the same poll as every other one.
    */
   launchAgent: 'agent:launch',
+  /**
+   * Which agent CLIs this machine has, and which of them the panel can start
+   * (#86, over detection's #91).
+   *
+   * Pull-only, and deliberately not folded into minesUpdated: that push carries
+   * the board — the sessions running THIS poll — and what is installed on a
+   * machine is not board state. It changes when somebody installs a CLI, which
+   * is not something to keep in step at 2Hz, so the Add Panel asks when it
+   * opens. Answers with AgentProviderList; no path ever crosses.
+   */
+  listAgentProviders: 'agent:providers',
   /**
    * Starting a session the panel HOLDS, and answering what it asks (#86, #94).
    *

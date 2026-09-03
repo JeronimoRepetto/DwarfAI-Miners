@@ -124,6 +124,41 @@ describe('MineScene', () => {
       expect(walkMsOf(wrapper, 'later')).not.toBe('0ms')
     })
 
+    /*
+     * The launch case, end to end (#86). A mine nobody is working is empty when
+     * the Add Panel is opened in it, so the dwarf a launch starts is the FIRST
+     * one this scene ever sees — which is exactly the reading #156 had to
+     * correct: the first-sync rule alone calls that "crew who were already
+     * here" and puts it on its rock.
+     *
+     * Nothing new is built for it; these pin that the machinery that already
+     * ships covers it, so a later change to the board cannot quietly take the
+     * walk away from a launch.
+     */
+    it('walks in the first dwarf to reach a mine that was opened empty', async () => {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [] }) } })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ mine: defaultMine({ dwarfs: [later] }) })
+      await wrapper.vm.$nextTick()
+      expect(walkMsOf(wrapper, 'later')).not.toBe('0ms')
+    })
+
+    it('starts that dwarf at a spawn point rather than on its workstation', async () => {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [] }) } })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ mine: defaultMine({ dwarfs: [later] }) })
+      await wrapper.vm.$nextTick()
+
+      const slot = wrapper.get('.scene-slot')
+      const bottom = Math.round(Number.parseFloat((slot.element as HTMLElement).style.bottom))
+      const target = assignScene([later as SceneOccupant], sceneLayout('bronze')).get(later.id)
+      const stationBottom = Math.round(100 - (target?.point.y ?? -1))
+
+      // It is somewhere on its route rather than parked on the rock it is
+      // walking to — the arrival-not-parade rule, in one number.
+      expect(bottom).not.toBe(stationBottom)
+    })
+
     it('leaves an arrival in place for a viewer who asked for less movement', async () => {
       const matchMedia = vi.fn().mockReturnValue({ matches: true })
       vi.stubGlobal('matchMedia', matchMedia)
@@ -621,17 +656,21 @@ describe('MineScene interior shell', () => {
   })
 
   /*
-    The Add action is where the design puts it and does nothing yet: the panel
-    it opens is #86. Rendered disabled with a title rather than as a live button
-    that emits into nothing — a control that answers a click with silence is a
-    worse lie than one that says it is not built.
+    AMENDED for #86, stated rather than passing unseen. This case was "draws the
+    Add action disabled, saying why, until its panel exists" and asserted
+    `disabled` plus a "not built yet" title. That panel now exists, so the
+    control is live and the assertion is its opposite; the aria-label it also
+    pinned is unchanged and still pinned below.
   */
-  it('draws the Add action disabled, saying why, until its panel exists', () => {
+  it('opens the launch panel from the round action at the lower right', async () => {
     const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
     const add = wrapper.get('.interior .add-agent')
-    expect(add.attributes('disabled')).toBeDefined()
-    expect(add.attributes('title')).toContain('not built yet')
+
+    expect(add.attributes('disabled')).toBeUndefined()
     expect(add.attributes('aria-label')).toBe('Launch an agent in this mine')
+
+    await add.trigger('click')
+    expect(wrapper.emitted('add')).toHaveLength(1)
   })
 
   it('keeps the mine name as the section own accessible name, with no header on screen', () => {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   AgentLaunchRequest,
+  AgentProviderList,
   AgentLaunchResult,
   AppBuild,
   DwarfFeedResult,
@@ -106,6 +107,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.resetMetrics)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
+  ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
   ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
 }
@@ -586,6 +588,16 @@ async function init(): Promise<void> {
     if (request === null) return notLaunched
     return runtime?.launchAgent(request) ?? notLaunched
   })
+
+  // Which providers the Add Panel may offer (#86). No payload to validate: the
+  // question is about this machine. A runtime that never came up answers with
+  // an empty list rather than a guess — the panel then shows Other alone,
+  // which is exactly what "nothing was detected" looks like.
+  const noProviders: AgentProviderList = { providers: [] }
+  ipcMain.handle(
+    IPC_CHANNELS.listAgentProviders,
+    () => runtime?.listAgentProviders() ?? noProviders
+  )
 
   // Adding and removing a user-declared mine (#85). declare takes no payload:
   // the folder picker runs here, so there is no path for the renderer to send
