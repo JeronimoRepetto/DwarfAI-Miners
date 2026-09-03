@@ -117,19 +117,40 @@ describe('DWARF_SHEETS', () => {
     })
   })
 
-  /*
-   * What has NOT been drawn, stated out loud so that nobody has to infer it
-   * from an absence. #74 delivers working, waiting and walking art later; when
-   * it lands these expectations are the ones that change, and the sequence
-   * picks the new sheets up as data.
-   */
-  it('has no working, waiting or walking art for a worker yet', () => {
-    expect(Object.keys(DWARF_SHEETS.worker)).toEqual(['idle'])
+  describe('the worker starting to work', () => {
+    it('has a start, a loop and an end, which is what makes it a transition', () => {
+      expect(DWARF_SHEETS.worker['start-working']?.frames).toBe(3)
+      expect(DWARF_SHEETS.worker.working?.frames).toBe(11)
+      expect(DWARF_SHEETS.worker['end-working']?.frames).toBe(6)
+    })
+
+    // No "adds up to the preview" pin here, unlike the foreman's sleep above:
+    // dwarf-worker-working-v2.gif's Graphic Control Extension blocks measure
+    // 60 frames at a uniform 100ms, not 3 + 11 + 6 = 20 — the preview loops
+    // the swing several times to show it repeating rather than encoding the
+    // three parts once each, so frame count is not evidence of ordering here.
   })
 
-  it('claims no impact frame anywhere, because no swing has been drawn', () => {
-    // Sparks fire off a declared impact and nowhere else. An idle sheet that
-    // claimed one would throw debris off a dwarf standing still.
+  /*
+   * What has NOT been drawn, stated out loud so that nobody has to infer it
+   * from an absence. #74 delivers waiting and walking art later; when it
+   * lands this expectation is the one that changes, and the sequence picks
+   * the new sheets up as data.
+   */
+  it('has working art for a worker now, but still no waiting or walking art (#74)', () => {
+    expect(Object.keys(DWARF_SHEETS.worker)).toEqual([
+      'idle',
+      'start-working',
+      'working',
+      'end-working'
+    ])
+  })
+
+  it('claims no impact frame anywhere, including the new working loop', () => {
+    // Sparks fire off a declared impact and nowhere else. Picking the strike
+    // frame out of `working` is a separate, artistic call from wiring the
+    // sheet in — until someone makes it, no sheet claims one, and an idle
+    // sheet that claimed one would throw debris off a dwarf standing still.
     for (const { where, sheet } of everySheet()) {
       expect(sheet.impactFrames, where).toBeUndefined()
     }

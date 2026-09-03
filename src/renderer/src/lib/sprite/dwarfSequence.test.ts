@@ -5,7 +5,6 @@ import { dwarfClips, isAwaitingAnswer, stillFrameOf } from './dwarfSequence'
 import { loopOf, onceOf } from './spriteSheet'
 
 const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
-const STATUSES: readonly DwarfStatus[] = ['working', 'waiting', 'leaving']
 
 const FOREMAN = DWARF_SHEETS.foreman
 const WORKER = DWARF_SHEETS.worker
@@ -120,12 +119,97 @@ describe('dwarfClips', () => {
   })
 
   /*
-   * The honest half, and the one worth reading before looking at the panel.
-   * The maintainer has drawn one loop for a worker, so a worker plays it in
-   * every state there is: swinging, resting, walking to the vein and walking
-   * out are one picture until #74 draws the rest. Style consistency was chosen
-   * over motion fidelity deliberately — the alternative was mixing hand-drawn
-   * pixel art with the AI-painted frames it replaces.
+   * #74's working strips, the same template as the foreman's sleep above,
+   * keyed on the dwarf's OWN 'working' status instead of a question asked of
+   * it. `working`/`wasWorking` default to false/undefined so every call above
+   * this block, written before this axis existed, keeps its exact old meaning.
+   */
+  describe('a worker starting work', () => {
+    it('picks up the pick once, then swings on', () => {
+      expect(sheetsOf(dwarfClips('worker', false, false, true, false))).toEqual(
+        sheetsOf([onceOf(WORKER['start-working']!), loopOf(WORKER.working!)])
+      )
+    })
+
+    it('sets the pick down once, then goes back to idling', () => {
+      expect(sheetsOf(dwarfClips('worker', false, false, false, true))).toEqual(
+        sheetsOf([onceOf(WORKER['end-working']!), loopOf(WORKER.idle)])
+      )
+    })
+
+    it('does not pick the tool back up while it is still swinging it', () => {
+      // Same non-replay guarantee as the foreman's sleep: recomputing while
+      // nothing moved must not restart the transition.
+      expect(sheetsOf(dwarfClips('worker', false, false, true, true))).toEqual(
+        sheetsOf([loopOf(WORKER.working!)])
+      )
+    })
+
+    it('starts working on a first render that already finds it working', () => {
+      // A worker spawned already at the rock has nothing to interrupt, and the
+      // pick-up is what makes the start legible rather than a worker spawned
+      // mid-swing — the same reasoning as the foreman falling asleep on a
+      // first render that already finds him asked.
+      expect(sheetsOf(dwarfClips('worker', false, undefined, true, undefined))).toEqual(
+        sheetsOf([onceOf(WORKER['start-working']!), loopOf(WORKER.working!)])
+      )
+    })
+
+    it('does not set down a pick a worker never picked up', () => {
+      expect(sheetsOf(dwarfClips('worker', false, undefined, false, undefined))).toEqual(
+        sheetsOf([loopOf(WORKER.idle)])
+      )
+    })
+
+    it('cuts straight to the opposite transition when the start is interrupted', () => {
+      // The interruption rule, on the working axis: leaving mid pick-up
+      // abandons start-working and goes straight to end-working, whatever
+      // frame it had reached.
+      const startingWork = dwarfClips('worker', false, false, true, false)
+      const leftMidStart = dwarfClips('worker', false, false, false, true)
+      expect(sheetsOf(leftMidStart)[0]).toContain('once:')
+      expect(sheetsOf(leftMidStart)[0]).not.toBe(sheetsOf(startingWork)[0])
+    })
+
+    it('is decided by the two working states alone, so the same pair always plays the same', () => {
+      expect(sheetsOf(dwarfClips('worker', false, false, true, false))).toEqual(
+        sheetsOf(dwarfClips('worker', false, false, true, false))
+      )
+    })
+
+    it('lets an interrupted sleep exit finish before any working sequence begins', () => {
+      // The ordering that keeps the foreman's wake-up intact: leaving a
+      // blocked state is resolved before a newly-true working axis is ever
+      // consulted, not the other way round. A worker has no sleep art, so
+      // this is invisible for him (idle either way) — it is what stops a
+      // FOREMAN's end-sleep transition from being skipped the instant his
+      // status flips straight from being asked to 'working'.
+      expect(sheetsOf(dwarfClips('foreman', false, true, true, false))).toEqual(
+        sheetsOf([onceOf(FOREMAN['end-sleep']!), loopOf(FOREMAN.idle)])
+      )
+    })
+
+    it('gives the foreman no working sequence, having no working art drawn for him', () => {
+      // The foreman's behaviour must not change: he has no start-working,
+      // working or end-working sheet, so the axis falls back to his idle
+      // exactly the way the sleep axis already falls back for a worker.
+      expect(sheetsOf(dwarfClips('foreman', false, false, true, false))).toEqual(
+        sheetsOf([loopOf(FOREMAN.idle)])
+      )
+      expect(sheetsOf(dwarfClips('foreman', false, false, false, true))).toEqual(
+        sheetsOf([loopOf(FOREMAN.idle)])
+      )
+    })
+  })
+
+  /*
+   * The honest remainder. #74 has now drawn a working sequence (above), which
+   * is why this block no longer claims "every state" — only what is left:
+   * being asked a question, resting, walking to the vein and walking out
+   * (without having worked first) all still fall back to the one idle loop,
+   * because none of those has been drawn. Style consistency was chosen over
+   * motion fidelity for what remains undrawn, exactly as it was chosen for
+   * all four before working landed.
    */
   describe('a worker, whose other loops have not been drawn', () => {
     it('idles through being asked a question, having no sleep art', () => {
@@ -209,6 +293,17 @@ describe('stillFrameOf', () => {
     expect(stillFrameOf([])).toEqual({ clip: 0, frame: 0 })
   })
 
+  it('holds the working loop mid-shift, and idle once the worker has left it', () => {
+    // The reduced-motion contract this task pins: a still worker mid-work
+    // shows the swing, not the pick-up it settled from; one that has left
+    // shows idle, not the hand-down on the way out.
+    const midWork = dwarfClips('worker', false, false, true, false)
+    expect(stillFrameOf(midWork)).toEqual({ clip: 1, frame: WORKER.working!.frames - 1 })
+
+    const afterLeaving = dwarfClips('worker', false, false, false, true)
+    expect(stillFrameOf(afterLeaving)).toEqual({ clip: 1, frame: WORKER.idle.frames - 1 })
+  })
+
   it('holds a frame the sheet actually has, for every state either rank can be in', () => {
     for (const role of ROLES) {
       for (const [awaiting, was] of [
@@ -237,11 +332,20 @@ describe('stillFrameOf', () => {
  * until #74 delivers the art.
  */
 describe('states that no longer have a drawing of their own', () => {
-  it('draws a working, a waiting and a leaving worker identically', () => {
-    const drawn = STATUSES.map((status) =>
+  it('narrows to waiting and leaving now that working has its own sequence (#74)', () => {
+    // REPLACES the old three-way claim. Working peeled off first — it now
+    // plays its own start/loop/end instead of the shared idle. Waiting and
+    // leaving still have no art of their own and still draw identically to
+    // each other, which is the same claim as before with the one status the
+    // art no longer applies to removed.
+    const remaining: readonly DwarfStatus[] = ['waiting', 'leaving']
+    const drawn = remaining.map((status) =>
       sheetsOf(dwarfClips('worker', isAwaitingAnswer(status, undefined), false)).join()
     )
     expect(new Set(drawn).size).toBe(1)
+
+    const workingDrawn = sheetsOf(dwarfClips('worker', false, false, true, false)).join()
+    expect(workingDrawn).not.toBe(drawn[0])
   })
 
   it('still tells a foreman waiting on a person from a foreman at his post', () => {

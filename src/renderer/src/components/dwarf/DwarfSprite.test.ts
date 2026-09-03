@@ -68,14 +68,15 @@ const WORKER_IDLE = sheetName(DWARF_SHEETS.worker.idle.src)
 const FOREMAN_IDLE = sheetName(DWARF_SHEETS.foreman.idle.src)
 
 describe('DwarfSprite', () => {
-  it('plays the worker sheet while a worker is working', () => {
-    // Was `dwarf-pick-1` until the hand-drawn sheets landed. The swing has not
-    // been drawn as a strip yet (#74), so a worker idles at the rock — the
-    // deliberate honest mapping, not an oversight. See dwarfSequence.ts.
+  it('plays the worker into its swing when work starts', () => {
+    // #74 lands the working strips: a worker no longer idles at the rock.
+    // Freshly working plays the start-working transition first — there is
+    // nothing to interrupt on a first render, mirroring how a foreman that
+    // arrives already asked still falls asleep. See dwarfSequence.ts.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
     })
-    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
     expect(framePercentOf(wrapper)).toBe(0)
   })
 
@@ -125,7 +126,10 @@ describe('DwarfSprite', () => {
       props: { dwarf: defaultDwarf({ role: 'worker', status: 'working' }) }
     })
     const style = wrapper.attributes('style') ?? ''
-    expect(style).toContain(`--sheet-size: ${DWARF_SHEETS.worker.idle.frames * 100}% 100%`)
+    // A freshly-working worker is on start-working (see above), not idle.
+    expect(style).toContain(
+      `--sheet-size: ${DWARF_SHEETS.worker['start-working']!.frames * 100}% 100%`
+    )
   })
 
   it('writes only the frame position on the element it redraws ten times a second', () => {
@@ -499,9 +503,12 @@ describe('DwarfSprite', () => {
     afterEach(() => vi.useRealTimers())
 
     it('steps one frame along the strip per frame hold', async () => {
+      // 'waiting' (not 'working'), so the strip under test is still the plain
+      // idle loop now that working has its own start-working sheet — this
+      // test is about the stepping mechanism, not any one sheet's frame count.
       const { frames, frameMs } = DWARF_SHEETS.worker.idle
       const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status: 'working' }) }
+        props: { dwarf: defaultDwarf({ status: 'waiting' }) }
       })
       expect(framePercentOf(wrapper)).toBe(0)
       vi.advanceTimersByTime(frameMs)
@@ -513,9 +520,10 @@ describe('DwarfSprite', () => {
     })
 
     it('wraps back to the head of the strip at the end of a loop', async () => {
+      // Same reasoning as above: 'waiting' keeps this on the idle loop.
       const { frames, frameMs } = DWARF_SHEETS.worker.idle
       const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status: 'working' }) }
+        props: { dwarf: defaultDwarf({ status: 'waiting' }) }
       })
       vi.advanceTimersByTime(frames * frameMs)
       await wrapper.vm.$nextTick()
@@ -647,20 +655,28 @@ describe('DwarfSprite in the scene', () => {
     // slid across the cave on the retired painted frames would be the only
     // AI-painted thing left on screen. Style consistency over motion fidelity,
     // chosen deliberately — the crossing itself is unchanged, MineScene still
-    // walks him there.
-    for (const status of ['working', 'waiting'] as const) {
-      const wrapper = mount(DwarfSprite, {
-        props: { dwarf: defaultDwarf({ status }), anchored: true, walking: true }
-      })
-      expect(sheetOf(wrapper), status).toBe(WORKER_IDLE)
-    }
+    // walks him there. `walking` is a scene prop, not a sequence input: the
+    // STATUS still decides the sheet, so a worker already `working` while
+    // crossing the floor now plays its working sequence rather than idling —
+    // only `waiting`, still undrawn, falls back to idle.
+    const working = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
+    })
+    expect(sheetOf(working)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
+
+    const waiting = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'waiting' }), anchored: true, walking: true }
+    })
+    expect(sheetOf(waiting)).toBe(WORKER_IDLE)
   })
 
   it('drops back into its own loop the moment it arrives', () => {
+    // Arrived and working now means the working sequence, not idle — see the
+    // note above on `walking` being a scene prop rather than a sequence input.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: false }
     })
-    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
   })
 
   it('faces the rock the scene put it at, not the direction the old rule assumed', () => {
@@ -981,17 +997,23 @@ describe('DwarfSprite sleep indicator', () => {
   })
 
   /*
-   * REPLACED: this used to hold that resting started no timer at all, because
-   * rest was a single pose. The worker's idle strip is six frames, so resting
-   * costs a timer again. What is worth pinning instead is that the overlay is
-   * still the only thing claiming sleep — a second indicator is what #72 came
-   * to remove, and the foreman's sleep sheets are the first art since that
-   * could reintroduce one.
+   * REPLACED twice now. First: this used to hold that resting started no
+   * timer at all, because rest was a single pose — the worker's idle strip is
+   * six frames, so resting costs a timer again. Second, with #74's working
+   * art: resting and working used to draw identically (both idle, neither
+   * drawn); working now has its own sequence, so the comparison inverts. What
+   * stays pinned throughout is the invariant that motivated the test: the
+   * overlay is still the only thing claiming SLEEP for a worker — a second
+   * sleep indicator is what #72 came to remove, and the foreman's sleep
+   * sheets are the first art since that could reintroduce one. A worker
+   * resting still has no rest sheet of its own and still idles.
    */
-  it('does not draw a worker asleep, leaving the overlay the only claim', () => {
+  it('does not draw a worker asleep, though working no longer matches resting', () => {
     const resting = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
     const working = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
-    expect(sheetOf(resting)).toBe(sheetOf(working))
+    expect(sheetOf(resting)).toBe(WORKER_IDLE)
+    expect(sheetOf(working)).not.toBe(WORKER_IDLE)
+    expect(sheetOf(resting)).not.toBe(sheetOf(working))
   })
 
   it('draws a foreman actually asleep when a person was asked, and says so once', async () => {
