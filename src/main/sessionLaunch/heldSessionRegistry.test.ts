@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
+import { HELD_CONVERSATION_LIMIT } from '../domain/types'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import { HeldSessionRegistry } from './heldSessionRegistry'
 import type {
@@ -83,6 +84,11 @@ class FakePort {
   /** The CLI's own init/result fields, arriving off the message loop (issue #96). */
   reportTelemetry(index: number, update: HeldSessionTelemetryUpdate): void {
     this.started[index]!.onTelemetry(update)
+  }
+
+  /** One message the stream carried, as the loop reads it (#159). */
+  reportMessage(index: number, role: 'user' | 'assistant', text: string): void {
+    this.started[index]!.onMessage(role, text)
   }
 }
 
@@ -476,5 +482,85 @@ describe('HeldSessionRegistry lifetime', () => {
     expect(registry.sendText('sess-1', 'dig deeper')).toBe(true)
     expect(port.sent).toEqual(['dig deeper'])
     expect(registry.sendText('sess-nobody', 'dig deeper')).toBe(false)
+  })
+})
+
+/**
+ * The exchange the panel's own message surface draws (#159). A held session is
+ * the one kind this app can carry a real conversation for, because it is the
+ * one whose stream this process is holding — so what is kept here is only what
+ * this host actually watched go by, never a transcript read back off disk.
+ */
+describe('HeldSessionRegistry conversation', () => {
+  const AT = new Date(1_700_000_000_000).toISOString()
+
+  it('opens the conversation with the prompt the panel itself sent', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: '  dig here  ' })
+    port.reportSessionId(0, 'sess-1')
+
+    // First-hand: this app composed that prompt and handed it over, so it is
+    // the one user message it can state without reading anything back.
+    expect(registry.conversationState('sess-1')).toEqual({
+      held: true,
+      conversation: [{ role: 'user', text: 'dig here', timestamp: AT }]
+    })
+  })
+
+  it('keeps every message the stream carried, in the order it carried them', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportMessage(0, 'assistant', 'Found the seam.')
+    port.reportMessage(0, 'user', 'keep going')
+    port.reportMessage(0, 'assistant', 'Digging.')
+
+    const state = registry.conversationState('sess-1')
+    expect(state.held ? state.conversation : []).toEqual([
+      { role: 'user', text: 'dig here', timestamp: AT },
+      { role: 'assistant', text: 'Found the seam.', timestamp: AT },
+      { role: 'user', text: 'keep going', timestamp: AT },
+      { role: 'assistant', text: 'Digging.', timestamp: AT }
+    ])
+  })
+
+  it('never grows past the retention bound, however long the session runs', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    port.reportSessionId(0, 'sess-1')
+    for (let index = 0; index < 100; index++) port.reportMessage(0, 'assistant', `line ${index}`)
+
+    const state = registry.conversationState('sess-1')
+    expect(state.held ? state.conversation : []).toHaveLength(HELD_CONVERSATION_LIMIT)
+    // The prompt has aged out along with everything else: the bound is on the
+    // whole list, not on "the prompt plus the last N".
+    expect(state.held ? state.conversation.at(-1)!.text : '').toBe('line 99')
+  })
+
+  it('retains nothing for a session this panel does not hold', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    port.reportSessionId(0, 'sess-1')
+
+    expect(registry.conversationState('sess-nobody')).toEqual({ held: false })
+    port.end(0)
+    // The stream is gone, so there is nothing first-hand left to claim.
+    expect(registry.conversationState('sess-1')).toEqual({ held: false })
+  })
+
+  it('lets a message with no words in it go by without retaining an empty bubble', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', minePath: MINE, prompt: 'dig here' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportMessage(0, 'assistant', '')
+
+    const state = registry.conversationState('sess-1')
+    expect(state.held ? state.conversation : []).toHaveLength(1)
   })
 })

@@ -1,9 +1,15 @@
 import { redactSecrets } from '../domain/redactSecrets'
-import { isMcpConnectionStatus, MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import {
+  HELD_CONVERSATION_LIMIT,
+  HELD_MESSAGE_MAX_CHARS,
+  isMcpConnectionStatus,
+  MAX_DWARF_TEXT_CHARS
+} from '../domain/types'
 import type {
   DwarfMcpServerStatus,
   DwarfQuestion,
   DwarfQuestionOption,
+  FeedMessage,
   Mine
 } from '../domain/types'
 
@@ -169,6 +175,17 @@ export interface HeldSessionStartRequest {
    * no deadline on it, because a human is on the other end.
    */
   onAsk: (toolUseId: string, input: Record<string, unknown>) => Promise<HeldAnswer>
+  /**
+   * One message the stream carried, as the loop reads it (#159) — the agent's
+   * own words, or a user turn the stream echoed back. Text only, already
+   * flattened out of whatever block shape the SDK wrapped it in, and never a
+   * tool call or a tool result.
+   *
+   * No timestamp: the SDK attaches none to these, so the honest one is when
+   * this host saw it, and the caller owns the clock — the same split
+   * `askToWireQuestion`'s `askedAt` already draws.
+   */
+  onMessage: (role: FeedMessage['role'], text: string) => void
   /** The session finished, one way or another. Always called exactly once. */
   onEnd: (reason: string) => void
 }
@@ -188,6 +205,57 @@ export type HeldSessionPort = (request: HeldSessionStartRequest) => Promise<Held
  */
 export function prepareHeldPrompt(text: string): string {
   return text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+}
+
+/**
+ * The words in one message off a held session's stream, or `''` when it
+ * carries none (#159).
+ *
+ * The SDK wraps a message's `content` as either a plain string or the
+ * Anthropic block array, and only `text` blocks are words. A `tool_use` is the
+ * agent reaching for a tool and a `tool_result` is what came back — neither is
+ * something a person said or an agent wrote, so neither belongs in a
+ * conversation the panel draws, and an empty answer is what keeps them out.
+ *
+ * `unknown` in, deliberately: this is fed straight from the SDK's own message
+ * types, which are wider than the two shapes here and change with the
+ * dependency. Narrowing it here means the loop above can stay a shape check
+ * with no parsing in it, and this can be unit-tested without importing the SDK
+ * at all — the seam the whole module keeps.
+ */
+export function heldMessageText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(
+      (block): block is { type: 'text'; text: string } =>
+        isRecord(block) && block.type === 'text' && typeof block.text === 'string'
+    )
+    .map((block) => block.text)
+    .join('\n')
+}
+
+/**
+ * Append one message to the exchange this host has watched go by, bounded at
+ * both ends (#159). Pure, so the retention rule is unit-tested rather than
+ * eyeballed inside the registry.
+ *
+ * Redaction happens on the way IN rather than on the way out to the wire. The
+ * kept list IS what the wire carries, so redacting later would mean a secret
+ * living in this process's memory for the whole session against one future
+ * caller remembering to strip it — the ordering `redactSecrets`'s own module
+ * comment argues for, applied to a store rather than to a single string.
+ *
+ * A message with nothing in it once trimmed is not retained at all: an empty
+ * bubble in the panel would be this app claiming somebody spoke.
+ */
+export function retainHeldMessage(
+  kept: readonly FeedMessage[],
+  message: FeedMessage
+): FeedMessage[] {
+  const text = redactSecrets(message.text.trim()).slice(0, HELD_MESSAGE_MAX_CHARS)
+  if (text === '') return [...kept]
+  return [...kept, { ...message, text }].slice(-HELD_CONVERSATION_LIMIT)
 }
 
 /** What the panel is told about a session's open ask, once it has been redacted. */
@@ -484,6 +552,42 @@ export function stampHeldTelemetry(mines: Mine[], stateOf: HeldTelemetryLookup):
         ...(state.mcpServers === undefined ? {} : { mcpServers: state.mcpServers }),
         ...(state.totalCostUsd === undefined ? {} : { totalCostUsd: state.totalCostUsd })
       }
+    })
+  }))
+}
+
+/**
+ * What the panel is told about the exchange a held session's stream carried
+ * (#159) — the same `{held}`-discriminated shape the two lookups above use.
+ *
+ * `held: false` is the only reading for a session this panel does not hold,
+ * and it leaves the dwarf without a conversation at all rather than with an
+ * empty one: the words of an observed session are read from its transcript, on
+ * its own channel, and are a different claim (see DwarfFeedResult).
+ */
+export type HeldConversationState = { held: false } | { held: true; conversation: FeedMessage[] }
+
+export type HeldConversationLookup = (sessionId: string) => HeldConversationState
+
+/**
+ * Copy `mines` with each held session's own exchange stamped onto its foreman
+ * (#159) — the same shape and the same two rules `stampHeldTelemetry` follows.
+ *
+ * Only the foreman, because a Claude worker carries its foreman's `sessionId`
+ * and keying on the id alone would copy one session's conversation onto every
+ * subagent in it. And an empty exchange stamps NOTHING: absence is what the
+ * wire means by "no conversation to show", so a held session that has yet to
+ * say a word leaves the field off rather than handing the panel an empty list
+ * to render as a conversation with nothing in it.
+ */
+export function stampHeldConversation(mines: Mine[], stateOf: HeldConversationLookup): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      if (dwarf.role !== 'foreman') return dwarf
+      const state = stateOf(dwarf.sessionId)
+      if (!state.held || state.conversation.length === 0) return dwarf
+      return { ...dwarf, conversation: state.conversation }
     })
   }))
 }

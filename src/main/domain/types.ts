@@ -17,6 +17,7 @@ export type {
   DwarfActivation,
   DwarfAttendance,
   DwarfCapabilities,
+  DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
   DwarfMcpServerStatus,
@@ -64,6 +65,8 @@ export type {
 export {
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
+  HELD_CONVERSATION_LIMIT,
+  HELD_MESSAGE_MAX_CHARS,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
   MAP_SPAWN_SITE_COUNT,

@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { defaultDwarf, defaultMine, type Mine } from '../domain/types'
+import {
+  HELD_CONVERSATION_LIMIT,
+  HELD_MESSAGE_MAX_CHARS,
+  defaultDwarf,
+  defaultMine,
+  type FeedMessage,
+  type Mine
+} from '../domain/types'
 import {
   askToWireQuestion,
+  heldMessageText,
   heldTelemetryToWire,
   parseAskUserQuestion,
   resolveAnswers,
+  retainHeldMessage,
+  stampHeldConversation,
   stampHeldQuestions,
   stampHeldTelemetry,
   type HeldAsk,
@@ -444,5 +454,132 @@ describe('stampHeldTelemetry', () => {
     mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, model: 'tail-derived-model' }
     const stamped = stampHeldTelemetry(mines, () => ({ held: true, model: 'claude-sonnet-5' }))
     expect(stamped[0]!.dwarfs[0]!.model).toBe('claude-sonnet-5')
+  })
+})
+
+/**
+ * The words a held session's own stream carried (#159). The panel's message
+ * surface needs a conversation to draw, and until now the loop read every
+ * assistant and user message and threw them away.
+ */
+describe('heldMessageText', () => {
+  it('reads a plain string message as its own text', () => {
+    expect(heldMessageText('dig here')).toBe('dig here')
+  })
+
+  it('joins the text blocks of a block-array message, in order', () => {
+    expect(
+      heldMessageText([
+        { type: 'text', text: 'Found the seam.' },
+        { type: 'text', text: 'Digging.' }
+      ])
+    ).toBe('Found the seam.\nDigging.')
+  })
+
+  it('reads no words out of a tool call or a tool result', () => {
+    // Neither is something a person said or an agent wrote, so neither is
+    // part of the conversation — an empty answer is what keeps it out.
+    expect(heldMessageText([{ type: 'tool_use', id: 'toolu_01', name: 'Read', input: {} }])).toBe(
+      ''
+    )
+    expect(
+      heldMessageText([{ type: 'tool_result', tool_use_id: 'toolu_01', content: 'file contents' }])
+    ).toBe('')
+  })
+
+  it('answers with nothing for a shape it does not recognise', () => {
+    expect(heldMessageText(undefined)).toBe('')
+    expect(heldMessageText(42)).toBe('')
+    expect(heldMessageText([{ type: 'text' }])).toBe('')
+  })
+})
+
+describe('retainHeldMessage', () => {
+  const at = '2026-09-03T09:00:00.000Z'
+
+  it('appends the message to what the host has already watched go by', () => {
+    const kept = retainHeldMessage([], { role: 'user', text: 'dig here', timestamp: at })
+    expect(retainHeldMessage(kept, { role: 'assistant', text: 'Digging.', timestamp: at })).toEqual(
+      [
+        { role: 'user', text: 'dig here', timestamp: at },
+        { role: 'assistant', text: 'Digging.', timestamp: at }
+      ]
+    )
+  })
+
+  it('keeps only the last HELD_CONVERSATION_LIMIT messages', () => {
+    let kept: FeedMessage[] = []
+    for (let index = 0; index < HELD_CONVERSATION_LIMIT + 5; index++) {
+      kept = retainHeldMessage(kept, { role: 'assistant', text: `line ${index}`, timestamp: at })
+    }
+    expect(kept).toHaveLength(HELD_CONVERSATION_LIMIT)
+    expect(kept[0]!.text).toBe('line 5')
+    expect(kept.at(-1)!.text).toBe(`line ${HELD_CONVERSATION_LIMIT + 4}`)
+  })
+
+  it('caps one message at HELD_MESSAGE_MAX_CHARS', () => {
+    const kept = retainHeldMessage([], {
+      role: 'assistant',
+      text: 'x'.repeat(HELD_MESSAGE_MAX_CHARS + 500),
+      timestamp: at
+    })
+    expect(kept[0]!.text).toHaveLength(HELD_MESSAGE_MAX_CHARS)
+  })
+
+  it('redacts on the way IN, so nothing retained can ship a secret later', () => {
+    const kept = retainHeldMessage([], {
+      role: 'user',
+      text: 'use sk-abcdefghijklmnopqrstuvwxyz012345 for the API',
+      timestamp: at
+    })
+    expect(kept[0]!.text).not.toContain('sk-abcdefghij')
+    expect(kept[0]!.text).toContain('[redacted]')
+  })
+
+  it('retains nothing for a message with no words in it', () => {
+    const kept: FeedMessage[] = [{ role: 'user', text: 'dig here', timestamp: at }]
+    expect(retainHeldMessage(kept, { role: 'assistant', text: '   ', timestamp: at })).toEqual(kept)
+  })
+})
+
+describe('stampHeldConversation', () => {
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'foreman-1', role: 'foreman', sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'worker-1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  const conversation = [
+    { role: 'user' as const, text: 'dig here', timestamp: '2026-09-03T09:00:00.000Z' },
+    { role: 'assistant' as const, text: 'Digging.', timestamp: '2026-09-03T09:00:01.000Z' }
+  ]
+
+  it("stamps the held session's own exchange onto its foreman", () => {
+    const stamped = stampHeldConversation(board(), () => ({ held: true, conversation }))
+    expect(stamped[0]!.dwarfs[0]!.conversation).toEqual(conversation)
+  })
+
+  it("never stamps a worker, which shares its foreman's session id", () => {
+    const stamped = stampHeldConversation(board(), () => ({ held: true, conversation }))
+    expect(stamped[0]!.dwarfs[1]!.conversation).toBeUndefined()
+  })
+
+  it('leaves a session this panel does not hold without a conversation at all', () => {
+    const stamped = stampHeldConversation(board(), () => ({ held: false }))
+    expect('conversation' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  it('stamps no empty conversation while a held session has said nothing yet', () => {
+    // Absence is the wire's "nothing to show"; an empty array would be the
+    // panel being told there IS a conversation and it is empty.
+    const stamped = stampHeldConversation(board(), () => ({ held: true, conversation: [] }))
+    expect('conversation' in stamped[0]!.dwarfs[0]!).toBe(false)
   })
 })

@@ -7,6 +7,7 @@ import type {
   AgentLaunchRequest,
   AgentLaunchResult,
   AppBuild,
+  DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
   DwarfQuestionAnswerRequest,
@@ -95,6 +96,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
+  ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
@@ -469,6 +471,8 @@ async function init(): Promise<void> {
   ipcMain.handle(IPC_CHANNELS.getAppBuild, () => appBuild)
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
+  /** A dwarf this process cannot read at all — never "it has said nothing". */
+  const noFeed: DwarfFeedResult = { readable: false, messages: [] }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
   ipcMain.handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
   ipcMain.handle(IPC_CHANNELS.setAlwaysOnTop, async (_event, payload: unknown) => {
@@ -544,6 +548,10 @@ async function init(): Promise<void> {
   ipcMain.handle(IPC_CHANNELS.activateDwarf, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noActivation
     return runtime?.activateDwarf(dwarfId) ?? noActivation
+  })
+  ipcMain.handle(IPC_CHANNELS.getDwarfFeed, (_event, dwarfId: unknown) => {
+    if (typeof dwarfId !== 'string') return noFeed
+    return runtime?.dwarfFeed(dwarfId) ?? noFeed
   })
 
   const notDelivered: DwarfTextResult = {
