@@ -2118,6 +2118,69 @@ describe('ClaudeProvider', () => {
     })
   })
 
+  /*
+   * Issue #183. The renderer's message-panel feed watch needs to know a
+   * transcript's tail MOVED, not how long ago — and `silentForMs` above
+   * cannot serve that job. It is `now - mtimeMs`, so it changes on every poll
+   * purely because the clock advances, whether or not a writer touched the
+   * file; a watch keyed on it would re-read a feed on every idle poll, the
+   * exact disk cost App.vue's watch exists to avoid. The raw mtime itself only
+   * changes when a writer actually appends, whoever that writer is — a human
+   * turn included, which is the whole point (#183's bug was that `lastMessage`
+   * only reports the ASSISTANT).
+   */
+  describe('transcript-movement signal (issue #183)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+
+    /** The fixture crew, read with the clock the default fixtures were built around. */
+    async function crewAtDefaultClock(): Promise<Dwarf[]> {
+      return (await makeProvider().scan())[0]!.dwarfs
+    }
+
+    it("carries each dwarf's OWN transcript mtime, never an age derived from it", async () => {
+      // The default fixtures: the parent last wrote at 42_000, the worker's
+      // own subagent file at 43_000 — the same two stats #47's silence already
+      // reads, published raw this time rather than as `now - mtime`.
+      const [foreman, worker] = await crewAtDefaultClock()
+      expect(foreman!.transcriptUpdatedAt).toBe(42_000)
+      expect(worker!.transcriptUpdatedAt).toBe(43_000)
+    })
+
+    it('measures a worker against its own transcript, never against its parent', async () => {
+      fake.addFile(TRANSCRIPT, parentTranscript, 10_000)
+      fake.addFile(SUBAGENT, subagentTranscript, 98_000)
+      const [foreman, worker] = await crewAtDefaultClock()
+      expect(foreman!.transcriptUpdatedAt).toBe(10_000)
+      expect(worker!.transcriptUpdatedAt).toBe(98_000)
+    })
+
+    it('reports nothing rather than a fabricated mtime when there is no per-agent evidence', async () => {
+      // Same absence rule as `silentForMs`: a missing file is "not known",
+      // never a value a real write could also have produced.
+      fake.removeFile(SUBAGENT)
+      const [, worker] = await crewAtDefaultClock()
+      expect(worker!.transcriptUpdatedAt).toBeUndefined()
+      expect('transcriptUpdatedAt' in worker!).toBe(false)
+    })
+
+    it('moves independently of the clock, unlike silentForMs', async () => {
+      // The whole reason this field exists rather than reusing #47's: two
+      // reads at different clock ticks over an UNCHANGED file must report the
+      // SAME transcriptUpdatedAt even though silentForMs moved between them.
+      const first = (await makeProvider().scan())[0]!.dwarfs[0]!
+      const provider = new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => 99_000 + 5_000
+      })
+      const second = (await provider.scan())[0]!.dwarfs[0]!
+      expect(second.transcriptUpdatedAt).toBe(first.transcriptUpdatedAt)
+      expect(second.silentForMs).not.toBe(first.silentForMs)
+    })
+  })
+
   /**
    * Issue #60. An agent waiting for a human answer produces no transcript
    * output at all, so age-based cleanup is exactly the thing that can remove it

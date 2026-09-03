@@ -1427,6 +1427,31 @@ describe('App feed refresh (#183)', () => {
 
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
   })
+
+  it('re-reads when the transcript-movement signal changes, even when lastMessage does not', async () => {
+    const { api } = await openRefreshDwarf()
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({
+      mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
+      tokensObserved: 0
+    })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays put on an ordinary poll where neither signal moved', async () => {
+    const { api } = await openRefreshDwarf()
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [MINE], tokensObserved: 0 })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+  })
 })
 
 /**

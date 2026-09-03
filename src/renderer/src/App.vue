@@ -417,12 +417,21 @@ function skipSelectedFeed(): void {
 
 /**
  * Read the selected dwarf's transcript tail, for a session this panel only
- * OBSERVES. Re-read when that dwarf says something new rather than on every
- * poll, so an idle session still costs no disk at all — `lastMessage`
- * changing IS the provider reporting that the tail moved.
+ * OBSERVES. Re-read when either of two signals moves, rather than on every
+ * poll, so an idle session still costs no disk at all — and neither signal
+ * alone was enough (issue #183). `lastMessage` is the provider reporting the
+ * ASSISTANT spoke; it says nothing about a human turn typed into the terminal
+ * or sent from this very panel, which sat invisible until the agent next
+ * replied. `transcriptUpdatedAt` is the transcript's own raw mtime, and it
+ * moves for ANY writer — see Dwarf.transcriptUpdatedAt for why it has to be
+ * the raw mtime and not an age derived from it.
  */
 watch(
-  [openDwarfId, () => selectedDwarf.value?.lastMessage],
+  [
+    openDwarfId,
+    () => selectedDwarf.value?.lastMessage,
+    () => selectedDwarf.value?.transcriptUpdatedAt
+  ],
   ([dwarfId]) => {
     if (dwarfId === null || selectedDwarf.value?.conversation !== undefined) {
       skipSelectedFeed()
