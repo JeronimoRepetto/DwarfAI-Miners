@@ -13,7 +13,7 @@ import { createBubbleBoard } from '../../lib/overlay/bubbles'
 import { assignScene } from '../../lib/scene/sceneAssignment'
 import { clampToBox, projectToBox } from '../../lib/scene/sceneGeometry'
 import { INTERIOR_ROUTE, routeBetween } from '../../lib/scene/interiorRoute'
-import { depthOrder, sceneLayout, type ScenePoint } from '../../lib/scene/sceneLayout'
+import { depthOrder, nearestSpawn, sceneLayout, type ScenePoint } from '../../lib/scene/sceneLayout'
 import { createWalkBoard, prefersReducedMotion, type WalkState } from '../../lib/scene/sceneMotion'
 import {
   AUTHORED_INTERIOR_BOX,
@@ -144,7 +144,17 @@ watch(
     for (const [id, placement] of next) targets.set(id, placement.point)
     // The board asks for a route only when a target has actually moved, so the
     // two-second poll does not re-plan the whole crew's journeys every tick.
-    walkBoard.sync(targets, (from, to) => routeBetween(INTERIOR_ROUTE, from, to))
+    //
+    // The third argument is #153's eleventh correction: a dwarf that turns up
+    // after the mine was opened is an ARRIVAL, and it comes in at the nearest
+    // entrance and walks its route to its station rather than materialising on
+    // it. The crew that was already at work when the mine opened is placed —
+    // the board draws that line itself, on the first sync.
+    walkBoard.sync(
+      targets,
+      (from, to) => routeBetween(INTERIOR_ROUTE, from, to),
+      (target) => nearestSpawn(layout.value, target)
+    )
   },
   { immediate: true }
 )

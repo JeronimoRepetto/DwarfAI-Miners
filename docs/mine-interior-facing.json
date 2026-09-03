@@ -1,0 +1,23 @@
+{
+  "note": "Authored dwarf facing, one entry per workstation, transcribed from the maintainer's five-panel arrow sheet for issue #153. Each station carries one blue arrow per tier panel and all five agreed, so every entry below is a five-way vote with no dissent. Stations absent from this file take the corridor derivation in scripts/build-interior-map.mjs instead — the three foreman stations carry no arrow and are derived. Consumed by that generator; never read at runtime.",
+  "facing": {
+    "worker-1": "right",
+    "worker-2": "right",
+    "worker-3": "left",
+    "worker-4": "right",
+    "worker-5": "right",
+    "worker-6": "right",
+    "worker-7": "left",
+    "worker-8": "right",
+    "worker-9": "left",
+    "worker-10": "left",
+    "worker-11": "left",
+    "worker-12": "left",
+    "worker-13": "right",
+    "worker-14": "left",
+    "worker-15": "left",
+    "worker-16": "left",
+    "worker-17": "right",
+    "worker-18": "left"
+  }
+}

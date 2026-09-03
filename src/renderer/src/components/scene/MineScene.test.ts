@@ -90,6 +90,55 @@ describe('MineScene', () => {
     expect(wrapper.find('.interior > .vault-chip').exists()).toBe(true)
   })
 
+  /*
+   * #153's eleventh correction, end to end: "a new dwarf materialized at its
+   * workstation. Arrivals must enter via a spawn point and WALK to their
+   * station." The board draws the line between the two cases by which snapshot
+   * a dwarf first appeared in (see lib/scene/sceneMotion.ts); this is the check
+   * that the scene actually hands it a spawn point to come in at.
+   */
+  describe('arrivals', () => {
+    /** The walk duration the scene put on this dwarf's slot, in ms. */
+    function walkMsOf(wrapper: ReturnType<typeof mount>, id: string): string {
+      const slot = wrapper
+        .findAll('.scene-slot')
+        .find((candidate) => candidate.get('.dwarf-name').text() === id)
+      if (!slot) throw new Error(`no rendered slot for ${id}`)
+      return (slot.element as HTMLElement).style.getPropertyValue('--walk-ms')
+    }
+
+    const first = defaultDwarf({ id: 'first', name: 'first', status: 'working' })
+    const later = defaultDwarf({ id: 'later', name: 'later', status: 'working' })
+
+    it('places the crew that was already working when the mine opened', async () => {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [first] }) } })
+      await wrapper.vm.$nextTick()
+      expect(walkMsOf(wrapper, 'first')).toBe('0ms')
+    })
+
+    it('walks in a dwarf that turns up in a later snapshot', async () => {
+      const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [first] }) } })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+      await wrapper.vm.$nextTick()
+      expect(walkMsOf(wrapper, 'later')).not.toBe('0ms')
+    })
+
+    it('leaves an arrival in place for a viewer who asked for less movement', async () => {
+      const matchMedia = vi.fn().mockReturnValue({ matches: true })
+      vi.stubGlobal('matchMedia', matchMedia)
+      try {
+        const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [first] }) } })
+        await wrapper.vm.$nextTick()
+        await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+        await wrapper.vm.$nextTick()
+        expect(walkMsOf(wrapper, 'later')).toBe('0ms')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+  })
+
   it('pauses the bubble auto-hide while expanded and resumes it on close', async () => {
     vi.useFakeTimers()
     try {
@@ -98,20 +147,20 @@ describe('MineScene', () => {
       })
       const wrapper = mount(MineScene, { props: { mine } })
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.speech-bubble').exists()).toBe(true)
+      expect(wrapper.find('.status-dialog').exists()).toBe(true)
 
       // Expanding holds the bubble on the board: far past the TTL it must remain.
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
       vi.advanceTimersByTime(BUBBLE_TTL_MS * 5)
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.speech-bubble').exists()).toBe(true)
+      expect(wrapper.find('.status-dialog').exists()).toBe(true)
 
       // Closing releases it with a fresh full TTL, after which it hides normally.
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await wrapper.vm.$nextTick()
       vi.advanceTimersByTime(BUBBLE_TTL_MS)
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.speech-bubble').exists()).toBe(false)
+      expect(wrapper.find('.status-dialog').exists()).toBe(false)
     } finally {
       vi.useRealTimers()
     }

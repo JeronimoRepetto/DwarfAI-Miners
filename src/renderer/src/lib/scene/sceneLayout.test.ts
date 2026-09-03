@@ -10,6 +10,7 @@ import {
   anchorsOfKind,
   clampToPainting,
   depthOrder,
+  nearestSpawn,
   sceneLayout
 } from './sceneLayout'
 
@@ -120,10 +121,31 @@ describe('INTERIOR_LAYOUT anchors', () => {
     }
   })
 
-  it('turns a dwarf on the right-hand wall to face the middle of the shaft', () => {
+  /*
+   * AMENDED for #153's fourteenth correction. This case asserted the rule that
+   * shipped — `facesLeft = anchor.x > 50`, "face the middle of the shaft" — and
+   * the maintainer's ruling from the running app is that a dwarf faces the WALL
+   * it is picking, which is sometimes left and sometimes right depending on
+   * which rock its station works. They then authored it: an arrow on every
+   * workstation, across all five tier panels. Thirteen of the eighteen workers
+   * face the opposite way from what the old rule said.
+   *
+   * So facing is DATA in the generated map now, not a rule this module applies,
+   * and what is left to pin here is that the layout carries it through
+   * untouched — see interiorMap.test.ts for the authored sheet itself.
+   */
+  it('carries the facing the map states, rather than deriving one of its own', () => {
+    const stated = new Map(INTERIOR_STATIONS.map((station) => [station.id, station.facesLeft]))
     for (const anchor of INTERIOR_LAYOUT.anchors) {
-      expect(anchor.facesLeft, anchor.id).toBe(anchor.x > 50)
+      expect(anchor.facesLeft, anchor.id).toBe(stated.get(anchor.id))
     }
+  })
+
+  it('has stopped agreeing with the shaft-middle rule it used to apply', () => {
+    // Stated as a count rather than as a list, because the list is the map's:
+    // if this ever falls back to 0 the derivation has quietly returned.
+    const differing = INTERIOR_LAYOUT.anchors.filter((anchor) => anchor.facesLeft !== anchor.x > 50)
+    expect(differing.length).toBeGreaterThan(10)
   })
 })
 
@@ -190,6 +212,43 @@ describe('depthOrder', () => {
       expect(depthOrder(y)).toBeGreaterThanOrEqual(10)
       expect(depthOrder(y)).toBeLessThanOrEqual(40)
       expect(Number.isInteger(depthOrder(y))).toBe(true)
+    }
+  })
+})
+
+/*
+ * Where a dwarf arriving mid-session comes in (#153). The design says a launched
+ * worker "appears at an available spawn point" and does not say which; nearest
+ * is the reading that makes the walk mean something, and nearest has to be
+ * measured in painting pixels because the interior is a tower.
+ */
+describe('nearestSpawn', () => {
+  it('brings a dwarf in at the entrance closest to the station it is heading for', () => {
+    const spawns = anchorsOfKind(INTERIOR_LAYOUT, 'spawn')
+    for (const spawn of spawns) {
+      expect(nearestSpawn(INTERIOR_LAYOUT, { x: spawn.x, y: spawn.y }).id).toBe(spawn.id)
+    }
+  })
+
+  it('always answers with a real spawn point, wherever the station is', () => {
+    const spawnIds = new Set(anchorsOfKind(INTERIOR_LAYOUT, 'spawn').map((spawn) => spawn.id))
+    for (const anchor of INTERIOR_LAYOUT.anchors) {
+      expect(spawnIds, anchor.id).toContain(nearestSpawn(INTERIOR_LAYOUT, anchor).id)
+    }
+  })
+
+  it('measures the distance the way the corridors do, in painting pixels', () => {
+    // A station near the top of the tower must come in at the top entrance even
+    // where another is closer in raw percent — one percent of this painting's
+    // height is three times one percent of its width.
+    const topStation = INTERIOR_LAYOUT.anchors.reduce((highest, anchor) =>
+      anchor.y < highest.y ? anchor : highest
+    )
+    const chosen = nearestSpawn(INTERIOR_LAYOUT, topStation)
+    for (const spawn of anchorsOfKind(INTERIOR_LAYOUT, 'spawn')) {
+      expect(paintingDistance(topStation, chosen)).toBeLessThanOrEqual(
+        paintingDistance(topStation, spawn)
+      )
     }
   })
 })

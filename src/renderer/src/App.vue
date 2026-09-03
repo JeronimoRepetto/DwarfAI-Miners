@@ -446,7 +446,15 @@ onBeforeUnmount(() => unsubscribe?.())
       -->
       <div v-if="currentMine" class="shell-mine">
         <PanelFrame>
+          <!--
+            Keyed by the mine, so switching from one to another is a fresh
+            scene rather than the same one handed different dwarfs (#153). The
+            walk board tells an arrival from the opening crew by which snapshot
+            it first saw them, and a reused board would parade a whole new
+            crew across the interior every time the user changed mine.
+          -->
           <MineScene
+            :key="currentMine.id"
             :mine="currentMine"
             :activating-id="activating"
             :send-states="messagingState.byDwarfId"

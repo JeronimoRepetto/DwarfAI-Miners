@@ -87,15 +87,19 @@ describe('DwarfSprite', () => {
     expect(sheetOf(wrapper)).not.toBe(WORKER_IDLE)
   })
 
-  it('shows the zzz overlay over a waiting worker, which is what marks the rest', () => {
-    // The rest POSE went with the painted frames; the overlay is what still
-    // says a dwarf is stopped, and it was already the only sleep indicator
-    // (issue #72).
+  /*
+   * AMENDED for #153's thirteenth correction. This case looked for `.zzz`, the
+   * hand-typed `z z z` the sprite floated over a resting dwarf. The design has
+   * its own sleep glyph — 15px, cream, from the designer's own `sleep.svg` —
+   * and the maintainer ruled the improvised overlays out. What is being asserted
+   * is unchanged: a waiting worker keeps its idle sheet and is MARKED as resting.
+   */
+  it('shows the design’s sleep glyph over a waiting worker, which is what marks the rest', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'waiting' }) }
     })
     expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
-    expect(wrapper.find('.zzz').exists()).toBe(true)
+    expect(wrapper.find('.status-sleep').exists()).toBe(true)
   })
 
   it('mirrors a leaving dwarf toward the exit', () => {
@@ -153,11 +157,22 @@ describe('DwarfSprite', () => {
     }
   })
 
-  it('marks the provider with a badge instead of tinting the painted art', () => {
+  /*
+   * REMOVED with the provider dot (#153), stated here rather than passing
+   * unseen: "marks the provider with a badge instead of tinting the painted
+   * art". The dot was never in the design and the maintainer ruled it out of the
+   * sprite — it floated over every dwarf and said nothing the tooltip does not.
+   * The provider still has a surface: `DwarfTooltip` prints `<role> · <provider>`
+   * on hover and focus, and the sprite's own accessible name carries it too, so
+   * nothing was lost with the badge. This is what replaces the case.
+   */
+  it('leaves the painted sprite clean, with nothing floating over it', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ provider: 'codex' }) }
     })
-    expect(wrapper.find('.provider-dot').classes()).toContain('provider-codex')
+    expect(wrapper.find('.provider-dot').exists()).toBe(false)
+    // Still recoverable, which is why the dot could go.
+    expect(wrapper.get('.dwarf-hit').attributes('aria-label')).toContain('codex')
   })
 
   describe('action bar', () => {
@@ -311,13 +326,21 @@ describe('DwarfSprite', () => {
     })
   })
 
-  it('shows a speech bubble only when bubble text is provided', () => {
+  /*
+   * AMENDED for #153's thirteenth correction. This case asserted the truncated
+   * parchment balloon and its text. The design draws a 19px message glyph over
+   * a talking dwarf instead — `dialog.svg`, cream for a worker and white for a
+   * foreman — and the balloon is gone with `SpeechBubble.vue`. WHEN it shows is
+   * unchanged, which is what this still asserts; the message itself is one click
+   * away, in the panel the expansion cases below already cover.
+   */
+  it('shows the design’s message glyph only when bubble text is provided', () => {
     const silent = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-    expect(silent.find('.speech-bubble').exists()).toBe(false)
+    expect(silent.find('.status-dialog').exists()).toBe(false)
     const talking = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf(), bubbleText: 'Refactoring the parser' }
     })
-    expect(talking.find('.speech-bubble').text()).toContain('Refactoring the parser')
+    expect(talking.find('.status-dialog').exists()).toBe(true)
   })
 
   /*
@@ -326,6 +349,85 @@ describe('DwarfSprite', () => {
    * (MineScene's `ScenePlacement.shareIndex`) lifts a sharer's bubble clear;
    * a dwarf with no anchor to share must render exactly as it always has.
    */
+  /*
+   * #153's ninth and thirteenth corrections, which are one surface.
+   *
+   * `screens/mine.md` specifies a RED HALO on the selected dwarf and says in as
+   * many words that selection does NOT pause it — it keeps moving and working —
+   * and `components.md` specifies the three status icons: a 19px message glyph
+   * (cream for a worker, white for a foreman), a 19px important-dialog glyph for
+   * a question put to the user, and a 15px cream sleep glyph. None of it was
+   * built; the sprite floated a parchment balloon, a typed `z z z` and a
+   * provider dot instead.
+   */
+  describe('the design’s status icons', () => {
+    const asking = defaultDwarf({
+      status: 'waiting',
+      pendingQuestion: {
+        toolUseId: 'tool-1',
+        question: 'Which branch?',
+        multiSelect: false,
+        options: [{ label: 'main' }]
+      }
+    })
+
+    it('raises the important-dialog glyph for a question put to the user', () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: asking } })
+      expect(wrapper.find('.status-important').exists()).toBe(true)
+      expect(wrapper.get('.status-important').attributes('title')).toMatch(/answer/i)
+    })
+
+    it('raises nothing important for a dwarf nobody has been asked about', () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      expect(wrapper.find('.status-important').exists()).toBe(false)
+    })
+
+    it('colours the message glyph by rank, as the component table states', () => {
+      const worker = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ role: 'worker' }), bubbleText: 'x' }
+      })
+      const foreman = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ role: 'foreman' }), bubbleText: 'x' }
+      })
+      expect(worker.get('.status-dialog').classes()).toContain('is-worker')
+      expect(foreman.get('.status-dialog').classes()).toContain('is-foreman')
+    })
+
+    it('leaves the message readable: the glyph is the control that opens it', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf(), bubbleText: 'Refactoring the parser' }
+      })
+      const glyph = wrapper.get('.status-dialog')
+      expect(glyph.element.tagName).toBe('BUTTON')
+      expect(glyph.attributes('aria-label')).toMatch(/full message/i)
+    })
+  })
+
+  describe('the red halo on a selected dwarf', () => {
+    it('marks the dwarf red once it is selected', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      expect(wrapper.classes()).not.toContain('is-selected')
+      await wrapper.get('.dwarf-hit').trigger('click')
+      expect(wrapper.classes()).toContain('is-selected')
+    })
+
+    it('takes the halo off again when the selection closes', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      await wrapper.get('.dwarf-hit').trigger('click')
+      await wrapper.get('.dwarf-hit').trigger('click')
+      expect(wrapper.classes()).not.toContain('is-selected')
+    })
+
+    it('never pauses the dwarf it marks, which the source states outright', async () => {
+      const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
+      const before = sheetOf(wrapper)
+      await wrapper.get('.dwarf-hit').trigger('click')
+      // Same sequence, still animating: selection is a marker, not a pause.
+      expect(sheetOf(wrapper)).toBe(before)
+      expect(wrapper.classes()).toContain('is-working')
+    })
+  })
+
   describe('bubble stacking', () => {
     it('places a bubble with no bubbleRow prop exactly where it sits today', () => {
       const wrapper = mount(DwarfSprite, {
@@ -365,7 +467,16 @@ describe('DwarfSprite', () => {
     })
   })
 
-  describe('speech bubble expansion', () => {
+  /*
+   * AMENDED throughout for #153's thirteenth correction: the control that opens
+   * the full message was `.bubble-hit`, the button inside the parchment balloon,
+   * and it is now `.status-dialog`, the design's own 19px message glyph. The
+   * balloon is gone with `SpeechBubble.vue`; every behaviour these cases pin —
+   * a real button, the hold and release contract with the bubble board, Escape,
+   * the outside click, and never toggling the dwarf's own action bar — is
+   * unchanged and still asserted below.
+   */
+  describe('message glyph expansion', () => {
     const FULL_MESSAGE =
       'A very long report that the truncated bubble cannot possibly show in full, spanning several sentences of agent chatter.'
 
@@ -379,7 +490,7 @@ describe('DwarfSprite', () => {
     }
 
     it('renders the bubble as a real button so Enter can expand it', () => {
-      const hit = mountTalking().find('.bubble-hit')
+      const hit = mountTalking().find('.status-dialog')
       expect(hit.element.tagName).toBe('BUTTON')
       expect(hit.attributes('aria-label')).toContain('Echo')
       expect(hit.attributes('aria-expanded')).toBe('false')
@@ -389,30 +500,30 @@ describe('DwarfSprite', () => {
       const wrapper = mountTalking()
       expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
 
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
       expect(wrapper.find('.bubble-expanded').text()).toContain(FULL_MESSAGE)
-      expect(wrapper.find('.bubble-hit').attributes('aria-expanded')).toBe('true')
+      expect(wrapper.find('.status-dialog').attributes('aria-expanded')).toBe('true')
       expect(wrapper.emitted('bubble-hold')).toHaveLength(1)
     })
 
     it('does not toggle the dwarf action bar when the bubble is clicked', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
       expect(wrapper.find('.action-bar').exists()).toBe(false)
       expect(wrapper.emitted('activate')).toBeUndefined()
     })
 
     it('collapses on a second bubble click and releases the hold', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
       expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
       expect(wrapper.emitted('bubble-release')).toHaveLength(1)
     })
 
     it('collapses on Escape and releases the hold', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
 
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await wrapper.vm.$nextTick()
@@ -422,7 +533,7 @@ describe('DwarfSprite', () => {
 
     it('collapses on an outside click', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
 
       document.body.click()
       await wrapper.vm.$nextTick()
@@ -432,7 +543,7 @@ describe('DwarfSprite', () => {
 
     it('stays open on a click inside the panel (scrolling a long message)', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
       await wrapper.find('.bubble-expanded').trigger('click')
       expect(wrapper.find('.bubble-expanded').exists()).toBe(true)
       expect(wrapper.emitted('bubble-release')).toBeUndefined()
@@ -440,7 +551,7 @@ describe('DwarfSprite', () => {
 
     it('collapses and releases when the bubble disappears mid-read', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
 
       await wrapper.setProps({ bubbleText: undefined })
       expect(wrapper.find('.bubble-expanded').exists()).toBe(false)
@@ -449,7 +560,7 @@ describe('DwarfSprite', () => {
 
     it('opening the action bar collapses the expanded bubble', async () => {
       const wrapper = mountTalking()
-      await wrapper.find('.bubble-hit').trigger('click')
+      await wrapper.find('.status-dialog').trigger('click')
 
       await wrapper.find('.dwarf-hit').trigger('click')
       expect(wrapper.find('.action-bar').exists()).toBe(true)
@@ -922,7 +1033,7 @@ describe('DwarfSprite silence', () => {
     })
     expect(wrapper.classes()).toContain('is-working')
     expect(wrapper.find('.dwarf-hit').attributes('aria-label')).toContain('working')
-    expect(wrapper.find('.zzz').exists()).toBe(false)
+    expect(wrapper.find('.status-sleep').exists()).toBe(false)
   })
 
   /*
@@ -1093,7 +1204,7 @@ describe('DwarfSprite sleep indicator', () => {
 
   it('says a dwarf is asleep exactly once, and it is the drifting overlay', async () => {
     const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'waiting' }) } })
-    expect(wrapper.find('.zzz').exists()).toBe(true)
+    expect(wrapper.find('.status-sleep').exists()).toBe(true)
 
     // A worker has one strip and no sleep art, so the sprite says nothing
     // about rest at all and the overlay is the whole of the indicator — which
@@ -1270,8 +1381,8 @@ describe('DwarfSprite with reduced motion', () => {
     const leaving = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'leaving' }) } })
     const working = mount(DwarfSprite, { props: { dwarf: defaultDwarf({ status: 'working' }) } })
 
-    expect(resting.find('.zzz').exists()).toBe(true)
-    expect(working.find('.zzz').exists()).toBe(false)
+    expect(resting.find('.status-sleep').exists()).toBe(true)
+    expect(working.find('.status-sleep').exists()).toBe(false)
     expect(leaving.classes()).toContain('is-leaving')
   })
 

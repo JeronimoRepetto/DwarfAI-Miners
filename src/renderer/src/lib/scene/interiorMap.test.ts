@@ -116,6 +116,13 @@ describe('INTERIOR_STATIONS', () => {
     expect(INTERIOR_STATIONS).toHaveLength(33)
   })
 
+  /*
+   * AMENDED for #153: a station carries a `facesLeft` now, which the extraction
+   * says nothing about — it comes from the maintainer's authored sheet or from
+   * the generator's corridor derivation (see "the authored facings" below). What
+   * this case is for is the COORDINATE bridge, so the facing is set aside here
+   * rather than being asserted twice in two different vocabularies.
+   */
   it('re-derives every station from the committed extraction', () => {
     for (const kind of KINDS) {
       const derived = FEATURES.markers[kind].map((marker) => ({
@@ -123,7 +130,13 @@ describe('INTERIOR_STATIONS', () => {
         kind,
         ...expected(marker.pixel)
       }))
-      expect(stationsOf(kind)).toEqual(derived)
+      const coordinates = stationsOf(kind).map(({ id, kind: itsKind, x, y }) => ({
+        id,
+        kind: itsKind,
+        x,
+        y
+      }))
+      expect(coordinates).toEqual(derived)
     }
   })
 
@@ -238,5 +251,72 @@ describe('the route network', () => {
       }
     }
     expect(seen.size).toBe(INTERIOR_ROUTE_NODES.length)
+  })
+})
+
+/**
+ * The authored facings (#153), read straight off the sheet rather than imported,
+ * for the same reason every coordinate above is: this is the anti-drift check on
+ * a GENERATED module, so it has to reach the same source the generator did.
+ */
+const AUTHORED = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL('../../../../../docs/mine-interior-facing.json', import.meta.url)),
+    'utf8'
+  )
+) as { facing: Record<string, 'left' | 'right'> }
+
+/*
+ * Which way a dwarf faces is DATA in this file, never a rule the renderer
+ * applies (#153). What shipped was `facesLeft = x > 50` — "face the middle of
+ * the shaft" — and the maintainer's acceptance run found it wrong for thirteen
+ * of the eighteen worker stations: a dwarf faces the WALL it is picking, and
+ * which wall that is depends on the rock rather than on which half of the
+ * painting the station sits in.
+ *
+ * They then authored it. Every workstation carries a blue arrow in all five tier
+ * panels of the comparison sheet, all five agreed on every station, and
+ * `docs/mine-interior-facing.json` is that transcription. Stations the sheet
+ * does not author — the three foreman spots, and the ladders and ramps nobody
+ * stands on — take the generator's own derivation: a station sits beside a
+ * corridor and turns away from it, into the rock.
+ */
+describe('the authored facings', () => {
+  it('ships every station with a facing, so nothing is decided at render time', () => {
+    for (const station of INTERIOR_STATIONS) {
+      expect(typeof station.facesLeft, station.id).toBe('boolean')
+    }
+  })
+
+  it('carries the maintainer’s own sheet verbatim, station for station', () => {
+    for (const [id, side] of Object.entries(AUTHORED.facing)) {
+      const station = INTERIOR_STATIONS.find((candidate) => candidate.id === id)
+      expect(station, id).toBeDefined()
+      expect(station?.facesLeft, id).toBe(side === 'left')
+    }
+  })
+
+  it('authors every workstation, which is what the sheet draws an arrow on', () => {
+    const workers = INTERIOR_STATIONS.filter((station) => station.kind === 'worker')
+    for (const worker of workers) {
+      expect(Object.keys(AUTHORED.facing), worker.id).toContain(worker.id)
+    }
+    expect(Object.keys(AUTHORED.facing)).toHaveLength(workers.length)
+  })
+
+  it('lets the derivation answer where the sheet is silent', () => {
+    // The foremen carry no arrow: nothing in the sheet says which way a
+    // coordinator turns, so the corridor beside the station decides.
+    for (const foreman of INTERIOR_STATIONS.filter((station) => station.kind === 'foreman')) {
+      expect(Object.keys(AUTHORED.facing), foreman.id).not.toContain(foreman.id)
+      expect(typeof foreman.facesLeft, foreman.id).toBe('boolean')
+    }
+  })
+
+  it('disagrees with the shaft-middle rule on most of the crew, which is the point', () => {
+    const differing = INTERIOR_STATIONS.filter(
+      (station) => station.kind === 'worker' && station.facesLeft !== station.x > 50
+    )
+    expect(differing).toHaveLength(13)
   })
 })

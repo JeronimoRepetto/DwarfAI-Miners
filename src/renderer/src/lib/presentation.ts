@@ -69,8 +69,21 @@ export function designTierLabel(tier: MineTier): string {
 /** Character budget for speech bubbles (truncated with an ellipsis). */
 export const BUBBLE_MAX_CHARS = 70
 
-/** How long a leaving dwarf has to walk out, matching the runtime grace window. */
-export const LEAVING_EXIT_MS = 16_000
+/**
+ * How long a leaving dwarf takes to leave the screen (#153).
+ *
+ * It used to be 16 seconds, chosen to fill the runtime's own 20-second grace
+ * window (`dwarfLeaveGraceS` in main/config) — and the fade held full opacity
+ * for the first 85% of it, so a dwarf reached its exit and then stood there for
+ * the best part of fourteen seconds. That is what the maintainer saw.
+ *
+ * The two clocks are separate now, because they answer different questions. How
+ * long a departed session stays in the board is main's: it is a claim about the
+ * session, and shortening it would start dropping dwarfs that are only briefly
+ * quiet. How long the dwarf takes to LEAVE is the panel's, and prompt is the
+ * only honest answer — the session is already gone.
+ */
+export const LEAVING_EXIT_MS = 1_200
 
 /*
  * WHERE THE FRAME LOOPS WENT (issues #74, #87).

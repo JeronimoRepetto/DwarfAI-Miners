@@ -61,6 +61,7 @@ import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
 import iconAdd from '../../../../docs/assets/icons/add.svg?url'
 import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
+import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.svg?url'
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 
@@ -248,6 +249,18 @@ export const SORT_ICON_SRC = iconFilter
 export const ADD_ICON_SRC = iconAdd
 export const DIALOG_ICON_SRC = iconDialog
 export const SLEEP_ICON_SRC = iconSleep
+
+/**
+ * The question-put-to-the-user glyph (#153), and the one icon in this file that
+ * is NOT drawn through a mask.
+ *
+ * `components.md` gives the other status icons a colour and marks this one
+ * **Unspecified**, so the designer's own file decides: an alert octagon painted
+ * `#ff0000` with the exclamation cut out of it, which is what the design's mine
+ * mock shows. Recolouring it would be filling a gap the source deliberately
+ * left, so it is rendered as an ordinary image and the gap stays visible.
+ */
+export const IMPORTANT_DIALOG_ICON_SRC = iconImportantDialog
 
 /**
  * One committed glyph as a CSS value a `mask` can actually be drawn with.
