@@ -20,8 +20,7 @@ import {
 } from '../../lib/sprite/spriteSheet'
 import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { computeTooltipPlacement } from '../../lib/overlay/tooltip'
-import type { Dwarf, DwarfAnswerState, DwarfKickState, DwarfSendState } from '../../types'
-import DwarfActionBar from './DwarfActionBar.vue'
+import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
 import DwarfStatusIcons from './DwarfStatusIcons.vue'
 import DwarfTooltip from './DwarfTooltip.vue'
 
@@ -38,8 +37,17 @@ const props = defineProps<{
   activating?: boolean
   sendState?: DwarfSendState
   kickState?: DwarfKickState
-  /** The verdict of the last answer given for this dwarf (see DwarfQuestionCard). */
-  answerState?: DwarfAnswerState
+  /**
+   * Whether this is the dwarf the message panel is open on (#159).
+   *
+   * Owned above rather than here. Selection used to BE this sprite's own
+   * action bar being open, which worked while the surface hung off the
+   * sprite; the design's panel is docked at the bottom of the screen, so
+   * exactly one dwarf in the whole mine may be selected and no sprite can
+   * know that about its neighbours. What did not change is what selection
+   * looks like or what it does to the animation: nothing.
+   */
+  selected?: boolean
   /*
    * The scene props (issue #19). All optional, and all falling back to the
    * behaviour the sprite had before the cave became walkable, so a sprite
@@ -60,11 +68,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  activate: []
-  'send-text': [payload: { text: string; pressEnter: boolean }]
-  kick: []
-  /** One of the agent's own option labels, answering its outstanding ask. */
-  answer: [label: string]
+  /** This dwarf was clicked. What that opens is decided above (#159). */
+  select: []
   /** The user expanded the bubble: the owner must pause its auto-hide (board.hold). */
   'bubble-hold': []
   /** The expanded bubble closed: the owner resumes auto-hide with a fresh TTL (board.release). */
@@ -77,67 +82,17 @@ const tooltipVisible = ref(false)
 const tooltipStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 
 /**
- * Clicking a dwarf opens the icon action bar (see #27) rather than acting
- * immediately: kick, boost, chat, and the old click behaviour (focus the
- * console) each get an icon. Positioned like the tooltip — `fixed`, clamped
- * inside the panel — because the mine's cave clips anything drawn inside it.
+ * Clicking a dwarf selects it, and the message panel docked at the bottom of
+ * the screen is what opens (#159). The sprite reports the click and nothing
+ * else: only one dwarf in the mine may be selected, which is not a fact a
+ * sprite can hold about itself.
  */
-const barRef = ref<InstanceType<typeof DwarfActionBar> | null>(null)
-const barOpen = ref(false)
-const barStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
-
-async function openBar(): Promise<void> {
-  barOpen.value = true
+function select(): void {
   hideTooltip()
-  // One popover at a time: the bar replaces an expanded bubble, mirroring
-  // how it replaces the hover tooltip just above.
+  // One popover at a time: opening the panel replaces an expanded bubble,
+  // mirroring how it replaces the hover tooltip just above.
   collapseBubble()
-  await nextTick()
-  const anchorEl = hitRef.value
-  const barEl = barRef.value?.$el as HTMLElement | undefined
-  if (anchorEl && barEl) {
-    const placement = computeTooltipPlacement(
-      anchorEl.getBoundingClientRect(),
-      barEl.getBoundingClientRect(),
-      { width: window.innerWidth, height: window.innerHeight }
-    )
-    barStyle.value = { left: `${placement.left}px`, top: `${placement.top}px` }
-  }
-  document.addEventListener('click', closeBar)
-}
-
-function closeBar(): void {
-  barOpen.value = false
-  document.removeEventListener('click', closeBar)
-}
-
-function toggleBar(): void {
-  if (barOpen.value) {
-    closeBar()
-    return
-  }
-  void openBar()
-}
-
-function openConsole(): void {
-  closeBar()
-  emit('activate')
-}
-
-function sendText(payload: { text: string; pressEnter: boolean }): void {
-  // The bar stays open so the delivery verdict has somewhere to land.
-  emit('send-text', payload)
-}
-
-function answer(label: string): void {
-  // Same reasoning as sendText, and one more: closing the bar would take the
-  // question with it, and only main's next snapshot may drop that.
-  emit('answer', label)
-}
-
-function kick(): void {
-  // Same reasoning as sendText: the bar stays open so the verdict has somewhere to land.
-  emit('kick')
+  emit('select')
 }
 
 /**
@@ -153,7 +108,6 @@ const bubbleExpanded = ref(false)
 const expandedStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 
 async function expandBubble(): Promise<void> {
-  closeBar()
   bubbleExpanded.value = true
   emit('bubble-hold')
   await nextTick()
@@ -230,7 +184,6 @@ const bubbleLiftStyle = computed<{ '--bubble-lift': string } | undefined>(() => 
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', closeBar)
   document.removeEventListener('click', collapseBubble)
   document.removeEventListener('keydown', onExpandedKeydown)
 })
@@ -424,12 +377,12 @@ const rootClasses = computed(() => [
     'is-departed':
       props.anchored === true && props.dwarf.status === 'leaving' && props.walking !== true,
     /*
-     * The design's red halo (#153). Selection IS the action bar being open —
-     * one click, one selected dwarf — so there is no second piece of state to
-     * keep in step with it, and nothing here touches the animation: the source
-     * says outright that a selected dwarf keeps moving and working.
+     * The design's red halo (#153). Which dwarf is selected is the panel's
+     * business (#159), so it arrives as a prop rather than being read off a
+     * popover this sprite owns — and nothing here touches the animation: the
+     * source says outright that a selected dwarf keeps moving and working.
      */
-    'is-selected': barOpen.value
+    'is-selected': props.selected === true
   }
 ])
 // The walk-out lasts exactly as long as the runtime keeps a leaving dwarf.
@@ -488,7 +441,7 @@ const strikeGlow = computed(() => {
 })
 const ariaLabel = computed(
   () =>
-    `Actions for ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
+    `Select ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
 )
 
 /**
@@ -539,8 +492,8 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       class="dwarf-hit"
       type="button"
       :aria-label="ariaLabel"
-      :aria-expanded="barOpen"
-      @click.stop="toggleBar"
+      :aria-pressed="selected === true"
+      @click.stop="select"
       @mouseenter="showTooltip"
       @mouseleave="hideTooltip"
       @focus="showTooltip"
@@ -578,21 +531,6 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       :class="{ 'is-visible': tooltipVisible }"
       :style="tooltipStyle"
       :dwarf="dwarf"
-    />
-    <DwarfActionBar
-      v-if="barOpen"
-      ref="barRef"
-      class="bar-holder"
-      :style="barStyle"
-      :dwarf="dwarf"
-      :send-state="sendState"
-      :kick-state="kickState"
-      :answer-state="answerState"
-      @open-console="openConsole"
-      @send="sendText"
-      @kick="kick"
-      @answer="answer"
-      @close="closeBar"
     />
   </div>
 </template>
@@ -902,11 +840,6 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 }
 .tooltip-holder.is-visible {
   opacity: 1;
-}
-/* Same fixed/clamped placement as the tooltip, above every other sprite. */
-.bar-holder {
-  position: fixed;
-  z-index: 40;
 }
 /*
  * The expanded bubble: fixed and clamped like the tooltip/bar (the cave

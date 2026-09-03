@@ -560,6 +560,24 @@ export interface Dwarf {
    * never convert into one another.
    */
   totalCostUsd?: number
+  /**
+   * The exchange this panel itself watched go by on a held session's stream
+   * (#159) — the prompt it sent to start the session, and every message the
+   * stream has carried since, oldest first.
+   *
+   * Held sessions ONLY, for the reason `mcpServers` is: nothing else this app
+   * runs hands it a conversation live. An observed session's words are read
+   * from its transcript on demand instead (see DwarfFeedResult), and the two
+   * are deliberately different fields because they are different claims — this
+   * one is first-hand, that one is a bounded tail somebody else wrote.
+   *
+   * Bounded at both ends, and the bound is the point: at most
+   * HELD_CONVERSATION_LIMIT messages, each at most HELD_MESSAGE_MAX_CHARS
+   * long, because this rides every poll's snapshot. Absent means one of two
+   * things and deliberately does not distinguish them: this is not a held
+   * session, or it is one that has yet to say anything.
+   */
+  conversation?: FeedMessage[]
 }
 
 /**
@@ -672,6 +690,23 @@ export interface FeedMessage {
   timestamp: string
 }
 
+/**
+ * What one dwarf's transcript last said, for a session this panel only
+ * OBSERVES (#159) — the same bounded tail the activation fallback has always
+ * read, on a channel of its own so the message panel can ask for it without
+ * first failing to focus a window.
+ *
+ * `readable: false` and an empty list are two different facts and are kept
+ * apart on purpose: the first says this session type keeps nothing this panel
+ * can read, the second says it does and has written nothing yet. A panel that
+ * blurred them would show "no activity" for a session it never had a way to
+ * read at all.
+ */
+export interface DwarfFeedResult {
+  readable: boolean
+  messages: FeedMessage[]
+}
+
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
   /** True when an existing terminal window was found and brought to the foreground. */
@@ -688,6 +723,23 @@ export interface DwarfActivation {
  * minute of the user's keyboard being taken over.
  */
 export const MAX_DWARF_TEXT_CHARS = 4000
+
+/**
+ * How many of a held session's own messages this app keeps (see
+ * `Dwarf.conversation`), and how much of any one of them.
+ *
+ * Both are ceilings on something that rides EVERY poll's snapshot, which is
+ * the whole reason they exist: a session that runs all afternoon must not grow
+ * the push, and one that pasted a file into its reply must not either. Twelve
+ * matches the transcript feed's own limit, so a held session and an observed
+ * one show a comparable amount of history rather than two arbitrary depths.
+ *
+ * The cap is short of MAX_DWARF_TEXT_CHARS on purpose: that one bounds what a
+ * user may SEND, once, and this one bounds what a dozen retained messages cost
+ * on every push forever.
+ */
+export const HELD_CONVERSATION_LIMIT = 12
+export const HELD_MESSAGE_MAX_CHARS = 2000
 
 /**
  * KB boundaries at which a mine's SOURCE-CODE BYTE WEIGHT crosses into the
@@ -1201,6 +1253,13 @@ export const IPC_CHANNELS = {
   getMines: 'mines:get',
   minesUpdated: 'mines:update',
   activateDwarf: 'dwarf:activate',
+  /**
+   * One dwarf's own transcript tail, on demand (#159). Separate from
+   * `activateDwarf` because that channel reads a feed only after failing to
+   * focus a window and failing to open a terminal, and the message panel wants
+   * the words without either attempt.
+   */
+  getDwarfFeed: 'dwarf:feed',
   sendDwarfText: 'dwarf:sendText',
   kickDwarf: 'dwarf:kick',
   /**

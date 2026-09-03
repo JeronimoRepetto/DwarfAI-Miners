@@ -9,6 +9,7 @@ import {
   type AgentLaunchRequest,
   type AgentLaunchResult,
   type DwarfActivation,
+  type DwarfFeedResult,
   type DwarfKickRequest,
   type DwarfKickResult,
   type DwarfQuestionAnswerRequest,
@@ -42,7 +43,11 @@ import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
-import { stampHeldQuestions, stampHeldTelemetry } from '../sessionLaunch/heldSession'
+import {
+  stampHeldConversation,
+  stampHeldQuestions,
+  stampHeldTelemetry
+} from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
@@ -69,6 +74,11 @@ import { createStageTimer, formatStageTimings, type StageTimings } from '../text
 import { TierService } from '../tier/tierService'
 
 const FEED_LIMIT = 12
+
+/** No transcript this app can read — never the same claim as one that is empty. */
+function unreadableFeed(): DwarfFeedResult {
+  return { readable: false, messages: [] }
+}
 
 /** Refusals that never reach the delivery port, phrased for the panel. */
 const NO_SUCH_DWARF = 'That dwarf has left the mine.'
@@ -544,8 +554,16 @@ export class AgentRuntime {
         // supersession rule: only a held session has any of this, so an
         // observed session's own tail-derived read (model, above all) stands
         // untouched. See stampHeldTelemetry.
-        const published = stampHeldTelemetry(withQuestions, (sessionId) =>
+        const withTelemetry = stampHeldTelemetry(withQuestions, (sessionId) =>
           this.heldSessions.telemetryState(sessionId)
+        )
+        // The words that session's own stream carried (#159), which is the
+        // only conversation this app has first-hand. Same supersession rule
+        // once more, and the same reason it can only ever ADD: a session the
+        // panel does not hold has no conversation here at all, and the panel
+        // reads its transcript on its own channel instead (see dwarfFeed).
+        const published = stampHeldConversation(withTelemetry, (sessionId) =>
+          this.heldSessions.conversationState(sessionId)
         )
         this.mines = published
         pollProfiler.count(
@@ -1241,6 +1259,33 @@ export class AgentRuntime {
   retireDwarf(dwarfId: string): void {
     console.log(`[runtime] Retiring ${dwarfId}: its agent was seen stopping after a kick.`)
     this.lifecycle.retire(dwarfId)
+  }
+
+  /**
+   * The last few messages of one dwarf's own transcript (#159).
+   *
+   * The same bounded tail `activateDwarf` falls back to, reached without the
+   * two attempts in front of it: the message panel wants an observed session's
+   * words whether or not its window could be focused, and a read that first
+   * tried to raise a terminal would be an activation wearing a different name.
+   *
+   * Every failure answers `readable: false` rather than throwing, and that is
+   * a different statement from an empty list: it means this session keeps
+   * nothing this app can read, so the panel says so instead of drawing a
+   * session that has never spoken.
+   */
+  async dwarfFeed(dwarfId: string): Promise<DwarfFeedResult> {
+    const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
+    if (dwarf === undefined) return unreadableFeed()
+    const provider = this.providers.find((item) => item.kind === dwarf.provider)
+    if (provider === undefined) return unreadableFeed()
+    try {
+      const messages = await provider.feed(dwarfId, FEED_LIMIT)
+      return messages === null ? unreadableFeed() : { readable: true, messages }
+    } catch (error) {
+      console.warn(`[runtime] Failed to read feed for ${dwarfId}`, error)
+      return unreadableFeed()
+    }
   }
 
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {
