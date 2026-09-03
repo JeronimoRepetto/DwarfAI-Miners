@@ -2444,11 +2444,14 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
     const { runtime, mineId } = await runtimeWith(launchSession)
 
-    await expect(runtime.launchAgent({ mineId, prompt: '  run the tests  ' })).resolves.toEqual({
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'claude', prompt: '  run the tests  ' })
+    ).resolves.toEqual({
       launched: true,
       provider: 'claude'
     })
     expect(launchSession).toHaveBeenCalledWith({
+      provider: 'claude',
       minePath: 'C:\\work\\project',
       prompt: 'run the tests'
     })
@@ -2462,17 +2465,23 @@ describe('AgentRuntime.launchAgent (#86)', () => {
 
     await runtime.launchAgent({
       mineId,
+      provider: 'claude',
       prompt: 'go',
       ...({ minePath: 'C:\\somewhere\\else' } as object)
     })
-    expect(launchSession).toHaveBeenCalledWith({ minePath: 'C:\\work\\project', prompt: 'go' })
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'claude',
+      minePath: 'C:\\work\\project',
+      prompt: 'go'
+    })
   })
 
   it('refuses a mine that is not on the board', async () => {
     const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
     const { runtime } = await runtimeWith(launchSession)
 
-    await expect(runtime.launchAgent({ mineId: 'mine:nowhere', prompt: 'go' })).resolves.toEqual({
+    const nowhere = { mineId: 'mine:nowhere', provider: 'claude' as const, prompt: 'go' }
+    await expect(runtime.launchAgent(nowhere)).resolves.toEqual({
       launched: false,
       provider: 'none',
       error: 'That mine is no longer on the map.'
@@ -2484,7 +2493,9 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
     const { runtime, mineId } = await runtimeWith(launchSession)
 
-    await expect(runtime.launchAgent({ mineId, prompt: '  \n ' })).resolves.toEqual({
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'claude', prompt: '  \n ' })
+    ).resolves.toEqual({
       launched: false,
       provider: 'none',
       error: 'Type a prompt first.'
@@ -2496,7 +2507,11 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
     const { runtime, mineId } = await runtimeWith(launchSession)
 
-    await runtime.launchAgent({ mineId, prompt: 'y'.repeat(MAX_DWARF_TEXT_CHARS + 200) })
+    await runtime.launchAgent({
+      mineId,
+      provider: 'claude',
+      prompt: 'y'.repeat(MAX_DWARF_TEXT_CHARS + 200)
+    })
     expect(launchSession.mock.calls[0]![0].prompt).toHaveLength(MAX_DWARF_TEXT_CHARS)
   })
 
@@ -2508,14 +2523,18 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     }
     const { runtime, mineId } = await runtimeWith(vi.fn().mockResolvedValue(refusal))
 
-    await expect(runtime.launchAgent({ mineId, prompt: 'go' })).resolves.toEqual(refusal)
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+    ).resolves.toEqual(refusal)
   })
 
   it('turns a thrown launcher into a stated reason rather than a rejected promise', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { runtime, mineId } = await runtimeWith(vi.fn().mockRejectedValue(new Error('boom')))
 
-    await expect(runtime.launchAgent({ mineId, prompt: 'go' })).resolves.toEqual({
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+    ).resolves.toEqual({
       launched: false,
       provider: 'claude',
       error: 'The agent could not be started.'
@@ -2529,12 +2548,43 @@ describe('AgentRuntime.launchAgent (#86)', () => {
       vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
     )
 
-    await runtime.launchAgent({ mineId, prompt: 'rotate the deploy key' })
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'rotate the deploy key' })
 
     const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
     expect(lines).toContain('21 chars')
     expect(lines).not.toContain('rotate the deploy key')
     log.mockRestore()
+  })
+
+  /*
+   * #168. The chip the user pressed reaches the engine, and reaches it
+   * unchanged. Before this the port took a folder and a prompt only, so the
+   * provider was decided behind it and the panel's row of chips could not
+   * affect which binary ran.
+   */
+  it('forwards the provider the request chose, rather than deciding one here', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'go' })
+
+    expect(launchSession.mock.calls[0]![0].provider).toBe('codex')
+  })
+
+  it('reports a thrown launcher against the provider that was asked for', async () => {
+    // A verdict naming Claude for a Codex launch would have the panel show a
+    // failure against a chip nobody pressed.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(vi.fn().mockRejectedValue(new Error('boom')))
+
+    await expect(runtime.launchAgent({ mineId, provider: 'codex', prompt: 'go' })).resolves.toEqual(
+      {
+        launched: false,
+        provider: 'codex',
+        error: 'The agent could not be started.'
+      }
+    )
+    warn.mockRestore()
   })
 
   it('adds no dwarf of its own: the poll is the only thing that discovers one', async () => {
@@ -2545,7 +2595,7 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     )
     const before = runtime.getMines()[0]!.dwarfs.length
 
-    await runtime.launchAgent({ mineId, prompt: 'go' })
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
 
     expect(runtime.getMines()[0]!.dwarfs).toHaveLength(before)
   })
@@ -3429,7 +3479,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
 
     await expect(
-      runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig here' })
+      runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH),
+        prompt: 'dig here'
+      })
     ).resolves.toEqual({ launched: true })
     runtime.stop()
 
@@ -3444,7 +3498,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     const port = heldPort()
     const runtime = heldRuntime({ heldSessions: heldRegistry(port.port) })
 
-    const result = await runtime.launchHeldSession({ mineId: 'mine-nobody', prompt: 'dig' })
+    const result = await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: 'mine-nobody',
+      prompt: 'dig'
+    })
     runtime.stop()
 
     expect(result.launched).toBe(false)
@@ -3468,7 +3526,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
     const mineId = runtime.getMines()[0]?.id ?? ''
 
-    const result = await runtime.launchHeldSession({ mineId, prompt: 'dig' })
+    const result = await runtime.launchHeldSession({ mineId, provider: 'claude', prompt: 'dig' })
     runtime.stop()
 
     expect(mineId).not.toBe('')
@@ -3492,7 +3550,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // The tail's own ask is what the panel would show without a held session.
     expect(runtime.getMines()[0]!.dwarfs[0]!.pendingQuestion?.toolUseId).toBe('toolu_stale')
 
-    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
     port.reportSessionId(0, 'sess-1')
     void port.ask(0, 'toolu_live')
     await Promise.resolve()
@@ -3522,7 +3584,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // Nothing to stamp before the session even starts.
     expect(runtime.getMines()[0]!.dwarfs[0]!.model).toBeUndefined()
 
-    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
     port.reportSessionId(0, 'sess-1')
     port.reportTelemetry(0, {
       model: 'claude-haiku-4-5',
@@ -3549,7 +3615,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // reads an observed session's words off its transcript instead.
     expect(runtime.getMines()[0]!.dwarfs[0]!.conversation).toBeUndefined()
 
-    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig here' })
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig here'
+    })
     port.reportSessionId(0, 'sess-1')
     port.reportMessage(0, 'assistant', 'Found the seam.')
     await runtime.refresh()
@@ -3573,7 +3643,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
 
-    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
     port.reportSessionId(0, 'sess-1')
     const asked = port.ask(0, 'toolu_live')
     await Promise.resolve()
@@ -3615,7 +3689,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
 
-    await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
     port.reportSessionId(0, 'sess-1')
     const asked = port.ask(0, 'toolu_live')
     await Promise.resolve()
@@ -3656,7 +3734,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
         providers: [foremanProvider()]
       })
       await runtime.refresh()
-      await runtime.launchHeldSession({ mineId: mineIdForPath(MINE_PATH), prompt: 'dig' })
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH),
+        prompt: 'dig'
+      })
       port.reportSessionId(0, 'sess-1')
       return runtime
     }

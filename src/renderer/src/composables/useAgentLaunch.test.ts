@@ -108,13 +108,17 @@ describe('submitting a launch', () => {
     return { api, launch }
   }
 
-  it('starts a HELD session, naming the mine and the trimmed prompt', async () => {
+  it('starts a HELD session, naming the mine, the provider and the trimmed prompt', async () => {
     const { api, launch } = await ready()
 
     await launch.submit()
 
+    // The provider is what #168 added: before it, the chip the user pressed
+    // reached no process, and every launch was a Claude one whatever the panel
+    // had drawn as selected.
     expect(api.launchHeldSession).toHaveBeenCalledWith({
       mineId: MINE,
+      provider: 'claude',
       prompt: 'dig the east gallery'
     })
   })

@@ -16,6 +16,7 @@ import {
   submitStarted,
   typeCommand,
   typePrompt,
+  OTHER_CHOICE,
   type LaunchChoice,
   type LaunchPhase,
   type LaunchState
@@ -147,10 +148,17 @@ export function useAgentLaunch(): AgentLaunch {
       return
     }
 
+    // Past the refusal above, the choice is a real provider: OTHER_CHOICE is
+    // the only non-provider value the union has, and it never gets here. The
+    // guard is for the compiler and for anything that changes that later — a
+    // launch with no provider named must not be sent at all (#168).
+    const provider = state.value.choice
+    if (provider === null || provider === OTHER_CHOICE) return
+
     const prompt = launchPrompt(state.value)
     state.value = submitStarted(state.value)
     try {
-      const result = await window.api.launchHeldSession({ mineId: mineId.value, prompt })
+      const result = await window.api.launchHeldSession({ mineId: mineId.value, provider, prompt })
       // A verdict of `launched: true` says a session STARTED and nothing more.
       // The panel stays on spawning until the dwarf itself turns up, because
       // adopting one here would mean inventing it.

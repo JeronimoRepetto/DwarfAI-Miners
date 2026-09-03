@@ -1,4 +1,5 @@
 import type {
+  DwarfProvider,
   DwarfQuestionAnswerResult,
   FeedMessage,
   HeldSessionLaunchResult
@@ -72,10 +73,24 @@ import {
  * (see contracts.ts on why the windows differ by who can answer).
  */
 
+/**
+ * The providers this registry can actually HOLD (#168).
+ *
+ * Claude and nothing else, and this is not a list that grows on its own:
+ * holding a session means an Agent SDK stream that yields messages and takes
+ * answers back, and `docs/command-surface-evaluation.md` records that "Codex
+ * has no held-session engine in this app (no equivalent of `sdkHeldSession.ts`
+ * exists for it)". A second name here without a stream behind it would be a
+ * launch that resolves as started and then never says a word.
+ */
+const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+
 /** Refusals, phrased for the panel. */
 const EMPTY_PROMPT = 'Type a prompt first.'
 const NOT_INSTALLED = 'Claude Code is not installed on this machine.'
 const LAUNCH_FAILED = 'The agent could not be started.'
+/** Fixed copy, and it names no path — the wire rule AgentProviderOption states. */
+const NOT_HELDABLE = 'The panel can only hold a Claude session'
 const NOT_HELD = 'That session is not one this panel is holding.'
 const NO_SUCH_QUESTION = 'That question is no longer open.'
 /** What a dissolved ask tells the agent. Never an answer — see the class comment. */
@@ -177,14 +192,28 @@ export class HeldSessionRegistry {
    */
   async launch(request: {
     mineId: string
+    provider: DwarfProvider
     minePath: string
     prompt: string
   }): Promise<HeldSessionLaunchResult> {
+    // Refused before anything else, because nothing about this machine could
+    // change the answer (#168). Holding a session IS an Agent SDK stream, and
+    // Claude is the only provider that has one — `docs/command-surface-
+    // evaluation.md` states that "Codex has no held-session engine in this app
+    // (no equivalent of `sdkHeldSession.ts` exists for it)". This method used to
+    // take no provider at all and detect `'claude'` unconditionally, so the only
+    // thing it could do with a Codex chip was start Claude under Codex's name.
+    // Naming the refused provider back is the point: the panel can say which
+    // chip it was, and no session is substituted for another.
+    if (!HELDABLE_PROVIDERS.includes(request.provider)) {
+      return { launched: false, error: `${NOT_HELDABLE} (${request.provider})` }
+    }
+
     const prompt = prepareHeldPrompt(request.prompt)
     // Cheapest refusal first, so an empty box never costs a disk probe.
     if (prompt === '') return { launched: false, error: EMPTY_PROMPT }
 
-    const detection = await this.detector.detect('claude')
+    const detection = await this.detector.detect(request.provider)
     if (!detection.installed || detection.path === undefined) {
       return {
         launched: false,

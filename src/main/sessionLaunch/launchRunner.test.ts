@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
 import { launchClaudeSession, type LaunchInvocation } from './launchRunner'
 
@@ -15,6 +15,7 @@ function installed(): CliDetector {
 }
 
 function launch(options: {
+  provider?: DwarfProvider
   prompt?: string
   cli?: CliDetector
   run?: (invocation: LaunchInvocation) => Promise<void>
@@ -24,6 +25,7 @@ function launch(options: {
   return {
     run,
     result: launchClaudeSession({
+      provider: options.provider ?? 'claude',
       minePath: MINE_PATH,
       prompt: options.prompt ?? 'set up the build',
       detector: options.cli ?? installed(),
@@ -125,5 +127,30 @@ describe('launchClaudeSession', () => {
     // The exact shape is the assertion: a launch result carries no dwarf id and
     // no mine, because the poll — not this call — is what discovers the session.
     await expect(launch({}).result).resolves.toEqual({ launched: true, provider: 'claude' })
+  })
+
+  /*
+   * #168. This function used to take no provider and detect the literal
+   * 'claude', so every chip in the Add Panel reached the same binary. It now
+   * asks for the provider it was given, and refuses one it has no invocation
+   * for BY NAME rather than falling back — a fallback here would start Claude
+   * for a user who pressed something else, in a real folder.
+   */
+  it('detects the provider it was asked for rather than a hardcoded one', async () => {
+    const cli = installed()
+    await launch({ cli }).result
+
+    expect(cli.detect).toHaveBeenCalledWith('claude')
+  })
+
+  it('refuses a provider it has no invocation for, naming it, and spawns nothing', async () => {
+    const cli = installed()
+    const { run, result } = launch({ provider: 'codex', cli })
+
+    const verdict = await result
+    expect(verdict.launched).toBe(false)
+    expect(verdict.provider).toBe('codex')
+    expect(run).not.toHaveBeenCalled()
+    expect(cli.detect).not.toHaveBeenCalled()
   })
 })

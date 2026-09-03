@@ -431,3 +431,63 @@ describe('preload provider-availability contract (#86)', () => {
     await expect(api.listAgentProviders()).resolves.toEqual(answered)
   })
 })
+
+describe('preload launch contract (#168)', () => {
+  it('carries the chosen provider alongside the mine and the prompt', async () => {
+    // Before #168 this channel took a mine and a prompt only, so the engine had
+    // nothing to read and started `claude` whatever chip the user pressed.
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig'
+    })
+  })
+
+  /*
+   * The one coercion that must NOT be a fallback. Every other field here
+   * collapses to a safe empty string, but a provider collapsed to a default
+   * would start SOME agent for a name this build does not have — the exact
+   * laundering #168 exists to stop. An unrecognised name crosses as '' and main
+   * refuses the whole request, which is the only honest end for it.
+   */
+  it('collapses a provider this build does not know to nothing, never to a default', async () => {
+    invoke.mockResolvedValueOnce({ launched: false, provider: 'none' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      prompt: 'dig',
+      ...({ provider: 'gemini' } as object)
+    } as Parameters<typeof api.launchAgent>[0])
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: '',
+      prompt: 'dig'
+    })
+  })
+
+  it('carries the chosen provider on the held channel too', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig'
+    })
+  })
+
+  it("hands back main's verdict untouched, provider and reason included", async () => {
+    const refused = {
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI is not installed on this machine.'
+    }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(
+      api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
+    ).resolves.toEqual(refused)
+  })
+})

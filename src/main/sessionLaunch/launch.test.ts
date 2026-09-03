@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
-import { buildClaudeLaunchArgs, prepareLaunchPrompt } from './launch'
+import { buildClaudeLaunchArgs, buildLaunchArgs, prepareLaunchPrompt } from './launch'
 
 describe('prepareLaunchPrompt', () => {
   it('trims the surrounding whitespace a text box collects', () => {
@@ -33,5 +33,22 @@ describe('buildClaudeLaunchArgs', () => {
     expect(buildClaudeLaunchArgs().some((arg) => !arg.startsWith('-') && arg !== 'text')).toBe(
       false
     )
+  })
+})
+
+describe('buildLaunchArgs', () => {
+  it("answers Claude with Claude's own headless argv", () => {
+    expect(buildLaunchArgs('claude')).toEqual(buildClaudeLaunchArgs())
+  })
+
+  /*
+   * The refusal that keeps a chip honest (#168). A provider this engine has no
+   * verified invocation for answers `null` rather than borrowing another one's:
+   * argv is not interchangeable between CLIs, and a borrowed one would either
+   * fail opaquely or — worse — start something that works but is not what the
+   * user chose.
+   */
+  it('answers a provider it has no verified invocation for with null', () => {
+    expect(buildLaunchArgs('codex')).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 
 /**
  * Starting a NEW agent session, as opposed to writing into one that already
@@ -50,4 +50,26 @@ export function prepareLaunchPrompt(text: string): string {
  */
 export function buildClaudeLaunchArgs(): string[] {
   return ['-p', '--input-format', 'text']
+}
+
+/**
+ * The argv for one provider, or `null` when this engine has no verified
+ * invocation for it (#168).
+ *
+ * Until #168 there was nothing to dispatch on: the engine called
+ * `buildClaudeLaunchArgs` outright, so the Add Panel's chips could not reach it
+ * and every launch was a Claude one. The `null` is the honest half of the
+ * widening — argv does not transfer between CLIs, so a provider with no
+ * verified spelling is refused rather than handed somebody else's flags.
+ *
+ * "Verified" means the same thing it means above: read out of the installed
+ * CLI's own `--help`, not inferred. The evaluation docs deliberately stop short
+ * of stating an argv for anything but Claude (`docs/command-surface-evaluation
+ * .md` writes the Codex headless row as "`codex exec`", and hedges even the
+ * registry row it would leave behind with "if a row exists at all"), so a
+ * spelling that is not probed here does not get one.
+ */
+export function buildLaunchArgs(provider: DwarfProvider): string[] | null {
+  if (provider === 'claude') return buildClaudeLaunchArgs()
+  return null
 }

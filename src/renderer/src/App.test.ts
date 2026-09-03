@@ -1432,6 +1432,7 @@ describe('App add panel', () => {
 
     expect(api.launchHeldSession).toHaveBeenCalledWith({
       mineId: MINE.id,
+      provider: 'claude',
       prompt: 'dig the east gallery'
     })
   })
