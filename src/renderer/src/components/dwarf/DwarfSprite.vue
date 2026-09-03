@@ -273,6 +273,16 @@ onBeforeUnmount(stopWatchingMotion)
 const awaiting = computed(() => isAwaitingAnswer(props.dwarf.status, props.dwarf.waitingReason))
 
 /**
+ * Whether this dwarf is at the rock (issue #74). Unlike `awaiting`, this is a
+ * direct read of the status — `working` has no other signal feeding it — but
+ * it still has to be its own watched value: going from an ordinary `waiting`
+ * straight to `working` (no human ever asked) changes nothing about
+ * `awaiting` on either side of that transition, so `dwarfClips` would never
+ * be re-run for it if the watch below only tracked `awaiting`.
+ */
+const working = computed(() => props.dwarf.status === 'working')
+
+/**
  * The strips to play, and how far into them the drawing is.
  *
  * `elapsedMs` rather than a frame counter, because a sequence is more than one
@@ -280,11 +290,13 @@ const awaiting = computed(() => isAwaitingAnswer(props.dwarf.status, props.dwarf
  * the loop behind it without a second timer, and it makes the whole cadence a
  * pure function this component only has to advance (see lib/sprite).
  *
- * The watcher carries the PREVIOUS answer into `dwarfClips`, which is what
- * turns a state into a transition — a foreman lies down when the question
- * arrives and gets up when it is answered, rather than simply being asleep.
- * Vue hands `undefined` as the old value on the immediate first run, which is
- * exactly the "nothing to leave" case the sequence wants.
+ * The watcher carries the PREVIOUS answer on each axis into `dwarfClips`,
+ * which is what turns a state into a transition — a foreman lies down when
+ * the question arrives and gets up when it is answered, a worker picks up its
+ * pick when it starts and sets it down when it stops, rather than either
+ * simply appearing that way. Vue hands `undefined` as the old value on the
+ * immediate first run, which is exactly the "nothing to leave" case the
+ * sequence wants.
  */
 const clips = ref<readonly SpriteClip[]>([])
 const elapsedMs = ref(0)
@@ -299,9 +311,9 @@ function stopCycle(): void {
 // Any change of state restarts the sequence at its head, so a dwarf that just
 // picked up a task never starts mid-gesture.
 watch(
-  [awaiting, () => props.dwarf.role] as const,
-  ([nowAwaiting, role], previous) => {
-    clips.value = dwarfClips(role, nowAwaiting, previous?.[0])
+  [awaiting, working, () => props.dwarf.role] as const,
+  ([nowAwaiting, nowWorking, role], previous) => {
+    clips.value = dwarfClips(role, nowAwaiting, previous?.[0], nowWorking, previous?.[1])
     elapsedMs.value = 0
   },
   { immediate: true }

@@ -9,13 +9,16 @@
  *
  * `frameMs` is 100 throughout because that is the delay in every preview GIF
  * the maintainer exported beside the sheets, transitions included. It is the
- * artist's cadence read off the artist's file, not a tempo chosen here.
+ * artist's cadence read off the artist's file, not a tempo chosen here — the
+ * working preview (dwarf-worker-working-v2.gif) confirms the same 100ms, read
+ * off its own Graphic Control Extension blocks, though its 60 encoded frames
+ * loop the swing several times rather than concatenating start+loop+end once
+ * each, unlike the foreman's sleep preview.
  *
  * ONE SHEET PER RANK IS REQUIRED and it is `idle`. Everything else is optional,
  * and a state a rank has no drawing for falls back to that idle rather than to
- * another rank's art — which is why a worker currently idles through working,
- * waiting and walking alike. That is #74's remaining art showing through as an
- * absence, and the absence is deliberately visible instead of papered over.
+ * another rank's art — which is why a worker currently idles through waiting
+ * and walking, having only working (#74's next delivery) and idle drawn.
  */
 import { DWARF_SHEET_SRC, type DwarfSheetName } from '../art'
 import type { DwarfRole } from '../../types'
@@ -31,7 +34,14 @@ const FRAME_MS = 100
 
 export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
   worker: {
-    idle: { src: DWARF_SHEET_SRC.worker.idle, frames: 6, frameMs: FRAME_MS }
+    idle: { src: DWARF_SHEET_SRC.worker.idle, frames: 6, frameMs: FRAME_MS },
+    'start-working': {
+      src: DWARF_SHEET_SRC.worker['start-working'],
+      frames: 3,
+      frameMs: FRAME_MS
+    },
+    working: { src: DWARF_SHEET_SRC.worker.working, frames: 11, frameMs: FRAME_MS },
+    'end-working': { src: DWARF_SHEET_SRC.worker['end-working'], frames: 6, frameMs: FRAME_MS }
   },
   foreman: {
     // The long idle: 28 frames, which is nearly three seconds before it repeats
