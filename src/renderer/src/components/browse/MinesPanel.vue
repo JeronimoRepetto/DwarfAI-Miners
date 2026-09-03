@@ -219,6 +219,12 @@ onBeforeUnmount(stopWatching)
   font-weight: 400;
   line-height: 1;
 }
+/*
+ * The field's ground samples as #272015 in the export, not the #2b2119 the
+ * component table gives the search field — the mock is the visual truth for
+ * this panel, and #272015 is the source's own control colour rather than a
+ * value invented to match a screenshot.
+ */
 .search-field {
   box-sizing: border-box;
   flex: 1;
@@ -228,9 +234,18 @@ onBeforeUnmount(stopWatching)
   border: var(--border-active);
   border-radius: var(--radius-default);
   color: var(--color-cream);
-  background: var(--color-panel);
+  background: var(--color-control);
   font: inherit;
   font-size: var(--text-meta);
+}
+/*
+ * The mock draws the placeholder at full cream, which no browser default does
+ * — every one of them dims it — so it has to be said out loud, opacity
+ * included (Firefox applies its own).
+ */
+.search-field::placeholder {
+  color: var(--color-cream);
+  opacity: 1;
 }
 /*
  * Both header controls are bare glyphs in the mock — no border, no surface, no
