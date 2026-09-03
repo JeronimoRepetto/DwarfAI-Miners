@@ -413,6 +413,17 @@ const rootClasses = computed(() => [
     'is-flipped': props.anchored === true && props.facesLeft !== true,
     'is-anchored': props.anchored === true,
     /*
+     * ARRIVED at the way out (#156). A departure disappears when it REACHES the
+     * nearest spawn point, never on a clock: the fade used to start the moment
+     * the status turned 'leaving' and run for a fixed window while the scene was
+     * still walking the dwarf there, so anything further out than that window
+     * faded mid-route — which the maintainer watched happen to a foreman. The
+     * runtime's grace window still caps how long a departure may take; what it
+     * does not do is decide when the fade begins.
+     */
+    'is-departed':
+      props.anchored === true && props.dwarf.status === 'leaving' && props.walking !== true,
+    /*
      * The design's red halo (#153). Selection IS the action bar being open —
      * one click, one selected dwarf — so there is no second piece of state to
      * keep in step with it, and nothing here touches the animation: the source
@@ -747,9 +758,11 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 /*
  * Inside the scene the dwarf is already being walked to the painted exit by
  * MineScene, so the blind leftward slide would double the movement and drag it
- * through the rock wall. Only the fade survives, on the same timing.
+ * through the rock wall. Only the fade survives — and it is keyed on having
+ * ARRIVED rather than on having been told to leave (#156), so a dwarf still on
+ * its way out is at full strength the whole way and goes at the exit itself.
  */
-.is-anchored.is-leaving {
+.is-anchored.is-departed {
   animation: exit-fade var(--exit-ms, 16000ms) linear forwards;
 }
 

@@ -839,6 +839,38 @@ describe('DwarfSprite in the scene', () => {
     expect(wrapper.classes()).toContain('is-leaving')
   })
 
+  /*
+   * #156's tenth correction: a kicked dwarf must disappear ON ARRIVAL at the
+   * nearest way out, never on a clock.
+   *
+   * The fade was an animation started the moment the status turned 'leaving',
+   * running for a fixed LEAVING_EXIT_MS while the scene was still walking the
+   * dwarf to the exit. Anything further from a spawn point than 1.2 seconds
+   * therefore faded out mid-route, which is what the maintainer watched happen
+   * to a foreman. The runtime's grace window still caps how long a departure may
+   * take; what it must not do is decide when the fade begins.
+   */
+  it('holds a leaver at full strength for as long as it is still walking out', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'leaving' }), anchored: true, walking: true }
+    })
+    expect(wrapper.classes()).not.toContain('is-departed')
+  })
+
+  it('fades a leaver only once it has reached the way out', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'leaving' }), anchored: true, walking: false }
+    })
+    expect(wrapper.classes()).toContain('is-departed')
+  })
+
+  it('never calls a working dwarf departed, however still it is standing', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: false }
+    })
+    expect(wrapper.classes()).not.toContain('is-departed')
+  })
+
   it('shrinks a dwarf standing further back into the gallery', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf(), anchored: true, depthScale: 0.8 }
@@ -1546,5 +1578,32 @@ describe('DwarfSprite strike side', () => {
     // dwarf's back would read as two different events.
     expect(glowCentrePercent('.dwarf-frame.is-strike-glow::after')).toBeLessThan(50)
     expect(glowCentrePercent('.is-flipped .dwarf-frame.is-strike-glow::after')).toBeGreaterThan(50)
+  })
+})
+
+/*
+ * Where the departure fade is declared (#156).
+ *
+ * The class above is only half the guarantee: the fade has to be attached to
+ * ARRIVING and not to leaving, or a dwarf still walking out would fade anyway.
+ * Asserted against the stylesheet, because jsdom runs no animations.
+ */
+describe('DwarfSprite departure fade', () => {
+  function styleRule(selector: string): string {
+    const at = spriteSource.indexOf('\n' + selector + ' {')
+    if (at === -1) throw new Error(`no ${selector} rule in DwarfSprite.vue`)
+    const open = spriteSource.indexOf('{', at)
+    const close = spriteSource.indexOf('}', open)
+    return spriteSource.slice(open + 1, close)
+  }
+
+  it('fades a leaver that has arrived, and nothing else', () => {
+    expect(styleRule('.is-anchored.is-departed')).toMatch(/animation:\s*exit-fade/)
+  })
+
+  it('starts no clock on a dwarf that is merely leaving', () => {
+    // The bug itself: this rule ran the fade from the moment the status
+    // changed, while the scene was still walking the dwarf to the exit.
+    expect(() => styleRule('.is-anchored.is-leaving')).toThrow()
   })
 })

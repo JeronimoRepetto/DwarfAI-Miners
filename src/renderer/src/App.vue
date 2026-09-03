@@ -464,6 +464,7 @@ onBeforeUnmount(() => unsubscribe?.())
           <MineScene
             :key="currentMine.id"
             :mine="currentMine"
+            :arrived="state.arrived"
             :activating-id="activating"
             :send-states="messagingState.byDwarfId"
             :kick-states="kickingState.byDwarfId"

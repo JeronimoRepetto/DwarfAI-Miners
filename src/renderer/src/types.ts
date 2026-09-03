@@ -86,10 +86,30 @@ export interface MinesState {
    * snapshot that carries one, since the wire field is optional.
    */
   materials?: MaterialTotals
+  /**
+   * The dwarfs on this snapshot that were not on the one before it (#156).
+   *
+   * Renderer-only, and deliberately not on the wire: it is a statement about
+   * two consecutive things the PANEL saw, and main publishes each snapshot
+   * without knowing which of them any given panel has already been shown.
+   *
+   * The mine's interior walks an arriving dwarf in from a spawn point and used
+   * to work out who had arrived from its own first snapshot — which cannot see
+   * the case the acceptance run found. A mine nobody is working is not on the
+   * board at all, so its interior is not mounted; launch the first agent and
+   * the scene mounts with that agent already in it, and reads it as crew that
+   * was at work before anybody looked. The panel has been polling all along and
+   * does know, so it says.
+   *
+   * Empty on the first snapshot after a clear: everything already running when
+   * the panel started was already running, and calling that an arrival would
+   * parade the whole valley across its interiors.
+   */
+  arrived: ReadonlySet<string>
 }
 
 export function defaultMinesState(): MinesState {
-  return { mines: [], tokensObserved: 0 }
+  return { mines: [], tokensObserved: 0, arrived: new Set() }
 }
 
 /**

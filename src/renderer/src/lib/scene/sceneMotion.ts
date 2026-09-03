@@ -198,11 +198,16 @@ export interface WalkBoard {
    * `spawnAt` says where an ARRIVAL comes in — see the rule on
    * `createWalkBoard`. Omit it and an unseen dwarf is simply placed, which is
    * what a sprite mounted outside a scene wants.
+   *
+   * `arrived` is the panel's own answer to who is new on the BOARD (#156),
+   * which this board cannot work out for itself — see the arrivals rule on
+   * `createWalkBoard`. Omit it and the first-sync rule decides alone, as it did.
    */
   sync(
     targets: ReadonlyMap<string, ScenePoint>,
     route: (from: ScenePoint, to: ScenePoint) => readonly ScenePoint[],
-    spawnAt?: (target: ScenePoint) => ScenePoint
+    spawnAt?: (target: ScenePoint) => ScenePoint,
+    arrived?: ReadonlySet<string>
   ): void
   /** Cancel every pending leg; the board stops emitting. */
   dispose(): void
@@ -243,6 +248,20 @@ interface TrackedWalk {
  * the interior on every open. Every sync after that is a genuine arrival, and it
  * comes in at the spawn point `spawnAt` names and walks its route to its
  * station, exactly as the launch flow's own worker does.
+ *
+ * That rule alone cannot see one case, and it is the one the second acceptance
+ * run found (#156). A mine nobody is working is not on the board at all, so its
+ * interior is not mounted and this board does not exist — launch the first agent
+ * and the scene mounts WITH it already inside, which the first-sync rule reads
+ * as crew that was there all along. The maintainer's first foreman materialised
+ * on the spot; his second walked, because by then the board had been alive long
+ * enough to see the mine empty.
+ *
+ * So the exemption is per-DWARF-SET as well as per-first-sync. The panel has
+ * been polling the whole time and knows which dwarfs were not on the previous
+ * snapshot (see `useMines`); one of those walks in whenever this board first
+ * sees it, first sync or not. A crew already on the board when its mine was
+ * opened is in nobody's arrival set and is still simply placed.
  *
  * Reduced motion never reaches here at all: MineScene places the crew statically
  * and does not sync the board, so an arrival appears in place.
@@ -295,15 +314,17 @@ export function createWalkBoard(
   }
 
   return {
-    sync(targets, route, spawnAt) {
+    sync(targets, route, spawnAt, arrived) {
       if (disposed) return
       let changed = false
 
       for (const [id, target] of targets) {
         const entry = tracked.get(id)
         if (!entry) {
-          // The opening crew is placed; anyone who turns up later walks in.
-          const from = opened && spawnAt ? spawnAt(target) : target
+          // The opening crew is placed; anyone who turns up later walks in —
+          // whether this board watched them turn up, or the panel did (#156).
+          const walksIn = opened || arrived?.has(id) === true
+          const from = walksIn && spawnAt ? spawnAt(target) : target
           const arrival: TrackedWalk = { target, at: from, legs: [], next: 0, facesLeft: false }
           tracked.set(id, arrival)
           if (paintingDistance(from, target) >= ARRIVAL_EPSILON_PX) {

@@ -34,6 +34,15 @@ const props = defineProps<{
   kickStates?: Record<string, DwarfKickState>
   /** Answer state per dwarf id, so each sprite can show its own question verdict. */
   answerStates?: Record<string, DwarfAnswerState>
+  /**
+   * The dwarfs that were not on the panel's previous snapshot (#156).
+   *
+   * The walk board cannot work this out for itself: a mine nobody is working is
+   * not on the board, so this scene is not mounted until the first agent starts
+   * — and then it mounts with that agent already inside, which its own first
+   * snapshot reads as crew that was there all along. See useMines.
+   */
+  arrived?: ReadonlySet<string>
 }>()
 
 const emit = defineEmits<{
@@ -153,7 +162,8 @@ watch(
     walkBoard.sync(
       targets,
       (from, to) => routeBetween(INTERIOR_ROUTE, from, to),
-      (target) => nearestSpawn(layout.value, target)
+      (target) => nearestSpawn(layout.value, target),
+      props.arrived
     )
   },
   { immediate: true }
