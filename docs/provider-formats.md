@@ -329,11 +329,11 @@ Two things follow, and both are the point of the issue:
 #### A `user` line is not where most user messages are (2026-09-03, issue #180)
 
 The classic `{"type":"user","message":{"content":"<text>"}}` line only carries a message typed at a
-**turn boundary**. Two other shapes carry text a person really sent, and the panel's history — which
-is `extractClaudeFeed` — showed neither, because the reader skipped every `isMeta` line and every
-string content opening with `<`. Measured on one live transcript: its 256 KB tail held **1** classic
-user text line and **0** of the two messages typed mid-turn, which exist only in the shape below.
-**[V]**
+**turn boundary**. Three other shapes carry text a person really sent, and the panel's history —
+which is `extractClaudeFeed` — showed none of them, because the reader skipped every `isMeta` line
+and every string content opening with `<`. Measured on one live transcript: its 256 KB tail held
+**1** classic user text line and **0** of the messages that arrived mid-turn, which exist only in
+the shapes below. **[V]**
 
 **Typed while the assistant is mid-turn — three records, no user line at all:**
 
@@ -343,10 +343,10 @@ user text line and **0** of the two messages typed mid-turn, which exist only in
 {"type":"queue-operation","operation":"remove","content":"<text>","reason":"absorbed_mid_turn",…}
 ```
 
-Read the **attachment** and nothing else, or one message reaches the panel three times. `origin.kind`
-is the whole gate: the identical record shape carries the harness's own queued prompts — a
-`<task-notification>` arrives as `commandMode:"task-notification"` (§1.4) — and only `human` is a
-person speaking.
+Read the **attachment** and nothing else, or one message reaches the panel three times. The identical
+record shape carries the harness's own queued prompts — a `<task-notification>` arrives as
+`commandMode:"task-notification"` (§1.4) — so `origin.kind` is what separates them; `human` is this
+session's own TUI, and the third shape below is the other kind that counts.
 
 **Delivered through the relay tier (#24) — a meta user line wrapping Claude Code's own framing:**
 
@@ -363,6 +363,39 @@ Only what sits inside the element was written by a person; the sentence before i
 it are Claude Code's. Unwrap it, trimmed, and only from a line carrying no `toolUseResult`: tool
 output can print a whole transcript, envelopes included, and a printed message is not a message —
 the same rule §1.4 applies to endings.
+
+**Relayed AND mid-turn — both at once, and the shape that outlived the first fix:** **[V]**
+
+```json
+{
+  "type": "attachment",
+  "attachment": {
+    "type": "queued_command",
+    "prompt": "<cross-session-message from=\"uds:…\" from-name=\"<name>\" from-mode=\"bypass\">\n<text>\n</cross-session-message>",
+    "source_uuid": "…",
+    "commandMode": "prompt",
+    "origin": {
+      "kind": "peer",
+      "from": "uds:…",
+      "msg_id": "…",
+      "name": "<name>",
+      "fromMode": "bypass",
+      "body": "<text>"
+    },
+    "timestamp": "…"
+  }
+}
+```
+
+No `user` line is written for it either, so the first two rules both miss it: the record is an
+attachment, and its origin is `peer` rather than `human`. Read `origin.body` — the message the
+sending session put on the wire, quoted on its own — and fall back to unwrapping the envelope in
+`prompt` with the same matcher, since the two say the same thing twice. Empty either way publishes
+nothing.
+
+So `origin.kind` is the whole gate, and exactly two of its values are somebody speaking: `human` and
+`peer`. It is the kind that decides, never the shape of what the record carries — a harness record
+holding an envelope, and even a `body`, is still the harness queueing text.
 
 Two facts this deliberately does **not** fix: the receiving session still reads "Another Claude
 session sent a message" from a session named after the relay's throwaway process, and the panel

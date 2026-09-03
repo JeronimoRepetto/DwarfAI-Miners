@@ -673,23 +673,40 @@ function userMessageText(line: Rec): string | undefined {
 }
 
 /**
- * The text a human typed into the TUI while a turn was already running, or
- * undefined for every other attachment (issue #180).
+ * The message a person sent into a turn that was already running, or undefined
+ * for every other attachment (issue #180).
  *
  * Such a message is never written as a `user` line at all: it is enqueued,
  * materialised into the running turn as this `queued_command` attachment, and
  * then removed as `absorbed_mid_turn`. Only the middle record is read, so one
- * message cannot reach the panel three times — and only an origin that says
- * `human` is read, because the identical record shape carries the harness's own
- * queued prompts, a task-notification among them.
+ * message cannot reach the panel three times.
+ *
+ * `origin.kind` is what separates a person from the harness, and exactly two
+ * of its values are somebody speaking. `human` is the message typed into this
+ * session's own TUI, and its prompt is the words themselves. `peer` is one
+ * relayed in from another session (issue #24) — the same envelope the meta
+ * user line above carries, only landing mid-turn — and the origin quotes the
+ * message on its own in `body`, with the envelope in the prompt saying it a
+ * second time. The body is preferred because it is the direct evidence;
+ * unwrapping the prompt is the fallback for an origin whose keys a later
+ * Claude Code spells differently. Every other kind — a task-notification's own
+ * queued prompt above all — stays out.
  */
 function typedMidTurnPrompt(line: Rec): string | undefined {
   const attachment = line.attachment
   if (!isRecord(attachment) || attachment.type !== 'queued_command') return undefined
   const origin = attachment.origin
-  if (!isRecord(origin) || origin.kind !== 'human') return undefined
-  const prompt = asString(attachment.prompt)?.trim()
-  return prompt === '' ? undefined : prompt
+  if (!isRecord(origin)) return undefined
+  const prompt = asString(attachment.prompt)
+  if (origin.kind === 'human') {
+    const typed = prompt?.trim()
+    return typed === '' ? undefined : typed
+  }
+  if (origin.kind !== 'peer') return undefined
+  const body = asString(origin.body)?.trim()
+  if (body !== undefined && body !== '') return body
+  const relayed = prompt?.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
+  return relayed === undefined || relayed === '' ? undefined : relayed
 }
 
 /**

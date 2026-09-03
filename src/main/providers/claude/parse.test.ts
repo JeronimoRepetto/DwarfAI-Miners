@@ -555,6 +555,26 @@ describe('extractClaudeFeed', () => {
   })
 })
 
+/** The element Claude Code wraps one relayed message in, wherever it lands. */
+function crossSessionEnvelope(text: string): string {
+  return (
+    '<cross-session-message from="uds:placeholder-socket" from-name="relay-42" ' +
+    `from-mode="bypass">\n${text}\n</cross-session-message>`
+  )
+}
+
+/** The peer origin such a message carries when it lands mid-turn. */
+function peerOrigin(body?: string): unknown {
+  return {
+    kind: 'peer',
+    from: 'uds:placeholder-socket',
+    msg_id: 'placeholder-msg-id',
+    name: 'relay-42',
+    fromMode: 'bypass',
+    ...(body === undefined ? {} : { body })
+  }
+}
+
 /** A user line exactly as Claude Code records one relayed cross-session message. */
 function relayedMessageLine(text: string): string {
   return (
@@ -566,11 +586,8 @@ function relayedMessageLine(text: string): string {
         role: 'user',
         content:
           'Another Claude session sent a message:\n' +
-          '<cross-session-message from="uds:placeholder-socket" from-name="relay-42" ' +
-          'from-mode="bypass">\n' +
-          `${text}\n` +
-          '</cross-session-message>\n\n' +
-          'This came from another Claude session, not from your user.'
+          crossSessionEnvelope(text) +
+          '\n\nThis came from another Claude session, not from your user.'
       }
     }) + '\n'
   )
@@ -631,15 +648,61 @@ function midTurnMessageLines(text: string, origin: unknown = { kind: 'human' }):
 }
 
 /**
- * Issue #180. The panel's history is this feed, and two shapes of message the
- * user really sent were never in it — both because the reader only understood
+ * The same three records for a message RELAYED into a session that was already
+ * mid-turn: still a `queued_command`, but the prompt is the whole
+ * cross-session envelope and the origin is the peer session that sent it.
+ * Field names and nesting come from a live transcript.
+ */
+function relayedMidTurnLines(prompt: string, origin: unknown): string {
+  const timestamp = '2026-09-03T10:07:00.000Z'
+  return (
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp,
+      sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
+      content: prompt
+    }) +
+    '\n' +
+    JSON.stringify({
+      type: 'attachment',
+      attachment: {
+        type: 'queued_command',
+        prompt,
+        source_uuid: 'placeholder-source-uuid',
+        commandMode: 'prompt',
+        origin,
+        timestamp,
+        isMeta: true
+      },
+      isSidechain: false,
+      timestamp
+    }) +
+    '\n' +
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'remove',
+      content: prompt,
+      reason: 'absorbed_mid_turn',
+      timestamp
+    }) +
+    '\n'
+  )
+}
+
+/**
+ * Issue #180. The panel's history is this feed, and three shapes of message the
+ * user really sent were never in it — all because the reader only understood
  * the one envelope a message typed at a turn boundary happens to land in.
  *
  * A message delivered through the relay tier (#24) arrives as a meta user line
  * wrapping Claude Code's own cross-session framing, and a message typed while
  * the assistant is mid-turn is not written as a user line at all: it is
- * enqueued, materialised as a `queued_command` attachment, and absorbed. Both
- * were dropped, so the dwarf said delivered and the conversation stayed empty.
+ * enqueued, materialised as a `queued_command` attachment, and absorbed. The
+ * third is both at once — a relayed message landing mid-turn, which takes the
+ * attachment shape with the whole envelope in its prompt and a `peer` origin.
+ * All three were dropped, so the dwarf said delivered and the conversation
+ * stayed empty.
  */
 describe('extractClaudeFeed messages the panel never showed (issue #180)', () => {
   it('shows a relayed message as the text the human typed, without the framing', () => {
@@ -710,17 +773,76 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
     expect(extractClaudeFeed(midTurnMessageLines('Agent finished', null), 20)).toEqual([])
   })
 
-  it('keeps both kinds in transcript order beside an ordinary exchange', () => {
+  it('leaves a queued command out however much it looks like a relayed message', () => {
+    // The kind is the gate, not the shape of what it carries: a harness record
+    // holding an envelope and even a body is still the harness queueing text.
+    // Only the two kinds that name a person speaking are published.
+    const tail = relayedMidTurnLines(crossSessionEnvelope('Ship it.'), {
+      kind: 'system',
+      body: 'Ship it.'
+    })
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+
+  it('shows a relayed message that landed while the assistant was mid-turn', () => {
+    // Both failures at once: the envelope of the first shape inside the record
+    // of the second. The origin the peer session sent carries the message on
+    // its own, so that is what the panel shows.
+    const feed = extractClaudeFeed(
+      relayedMidTurnLines(crossSessionEnvelope('Ship it.'), peerOrigin('Ship it.')),
+      20
+    )
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'Ship it.']])
+    expect(feed[0]!.timestamp).toBe('2026-09-03T10:07:00.000Z')
+  })
+
+  it('reads the peer origin body even when the prompt carries nothing', () => {
+    // The body is what the sending session put on the wire, so it is read
+    // first and stands on its own: the prompt is the same words a second time,
+    // and a record that lost them still has a message to show.
+    const feed = extractClaudeFeed(relayedMidTurnLines('', peerOrigin('Ship it.')), 20)
+    expect(feed.map((m) => m.text)).toEqual(['Ship it.'])
+  })
+
+  it('unwraps the prompt envelope when a peer origin carries no body', () => {
+    // The body is the direct evidence and the envelope is the same words a
+    // second time, so the fallback costs nothing and covers a shape whose
+    // origin keys a later Claude Code spells differently.
+    const envelope = crossSessionEnvelope('Ship it.')
+    const feed = extractClaudeFeed(relayedMidTurnLines(envelope, peerOrigin()), 20)
+    expect(feed.map((m) => m.text)).toEqual(['Ship it.'])
+  })
+
+  it('says nothing when a peer record carries no message either way', () => {
+    // An empty envelope and no body, then a prompt that is not an envelope at
+    // all: two ways to have nothing to say, and neither may publish a bubble.
+    expect(
+      extractClaudeFeed(relayedMidTurnLines(crossSessionEnvelope(''), peerOrigin()), 20)
+    ).toEqual([])
+    expect(extractClaudeFeed(relayedMidTurnLines('no envelope here', peerOrigin()), 20)).toEqual([])
+  })
+
+  it('reads a relayed mid-turn message once, not from the queue pair around it', () => {
+    const tail = relayedMidTurnLines(crossSessionEnvelope('Ship it.'), peerOrigin('Ship it.'))
+    expect(extractClaudeFeed(tail, 20)).toHaveLength(1)
+  })
+
+  it('keeps all three kinds in transcript order beside an ordinary exchange', () => {
     const tail =
       parentTranscript +
       relayedMessageLine('Ship the vault fix.') +
-      midTurnMessageLines('And update the docs.')
+      midTurnMessageLines('And update the docs.') +
+      relayedMidTurnLines(
+        crossSessionEnvelope('Then tag the release.'),
+        peerOrigin('Then tag the release.')
+      )
     expect(extractClaudeFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
       ['user', 'Placeholder user prompt.'],
       ['assistant', 'Placeholder text block.'],
       ['assistant', 'Latest assistant reply placeholder.'],
       ['user', 'Ship the vault fix.'],
-      ['user', 'And update the docs.']
+      ['user', 'And update the docs.'],
+      ['user', 'Then tag the release.']
     ])
   })
 })
