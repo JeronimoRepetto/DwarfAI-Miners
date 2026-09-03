@@ -67,9 +67,9 @@ opened never sees the rule. So: if the failure mode is _"clobbered a file withou
 must be a skill. If the failure mode is _"read the file and still misunderstood it"_, a path rule
 is the lighter and better fit.
 
-Worked example — the two coordinate spaces (`mapSites.ts` authors in box percent, `sceneLayout.ts`
-in image percent) stay a path rule, because you cannot add a point to either without opening the
-file first. The test-preservation rule is a skill, because its entire failure mode is a `Write` to
+Worked example — the two coordinate spaces (the map's `mapProjection.ts` pins its crop to the
+centre, the cave's `sceneGeometry.ts` to the bottom) stay a path rule, because you cannot add a
+point to either without opening the file first. The test-preservation rule is a skill, because its entire failure mode is a `Write` to
 a file the agent never read.
 
 ## Naming

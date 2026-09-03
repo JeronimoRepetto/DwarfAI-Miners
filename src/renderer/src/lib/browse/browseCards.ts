@@ -9,28 +9,18 @@
 import type { Mine, MineTier, ProjectSummary } from '../../types'
 import { MINE_TIERS } from '../../types'
 import { MOUND_SRC } from '../art'
+import { designTierLabel } from '../presentation'
 
 /**
  * The tier names the redesign puts on screen.
  *
- * `Cropper` is the confirmed product label for the copper tier — it is
- * deliberate and is not a typo to correct. Kept here rather than folded into
- * presentation.ts's `tierLabel`, which still spells it `Copper` for the map and
- * the cave: those surfaces belong to the old interface and are rebuilt in their
- * own slices, and quietly renaming a tier under them would change screens this
- * change never looked at.
+ * The table itself moved to `presentation.ts` as `designTierLabel` when the
+ * rebuilt map needed the same spelling for its tooltip (#136) — one home for
+ * the design's tier copy, rather than a browse module the map would have had to
+ * reach across families into. The name stays here because the browse surface is
+ * where it is read.
  */
-const TIER_LABELS: Record<MineTier, string> = {
-  bronze: 'Bronze',
-  copper: 'Cropper',
-  silver: 'Silver',
-  gold: 'Gold',
-  uranium: 'Uranium'
-}
-
-export function browseTierLabel(tier: MineTier): string {
-  return TIER_LABELS[tier]
-}
+export const browseTierLabel = designTierLabel
 
 /** One chip of the type filter row; `tier: null` is All, which filters nothing. */
 export interface TierChip {
