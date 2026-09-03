@@ -69,6 +69,9 @@ const NAV_MINES = `${NAV}[aria-label="Mines"]`
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
+    // Fire-and-forget, like hidePanel: the shell reports every click on itself
+    // so main can raise the window, and there is no verdict to render (#165).
+    raisePanel: vi.fn(),
     getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone.
@@ -1504,5 +1507,54 @@ describe('App add panel', () => {
 
     expect(wrapper.find('.add-panel').exists()).toBe(true)
     expect(wrapper.find('.launch-alert').text()).toBe('Claude Code is not installed.')
+  })
+})
+
+/**
+ * The third acceptance run's sixth correction (#165).
+ *
+ * With another program focused, clicking the panel left it BEHIND that program
+ * — alive, visible, receiving the click, and never raised. The platform's own
+ * click-to-front does not reliably apply to a frameless transparent window, so
+ * the shell reports the click and main raises the window itself.
+ *
+ * The rule is any click, pinned or not: pinning decides whether the panel STAYS
+ * above other windows, not whether a click may bring it there.
+ */
+describe('App raise on click (#165)', () => {
+  it('asks main to raise the window when the shell is pressed', async () => {
+    const { wrapper, api } = await mountOpenApp()
+
+    await wrapper.find('.shell').trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+
+  it('raises on a press ANYWHERE in the shell, not only on empty ground', async () => {
+    // The capture phase is what makes this true of every control on the panel:
+    // a button that stops propagation must not also stop the window rising.
+    const { wrapper, api } = await mountOpenApp()
+
+    await wrapper.find(NAV_MINES).trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+
+  it('raises while unpinned, which is the state the panel was found behind in', async () => {
+    const { wrapper, api } = await mountOpenApp({
+      getAlwaysOnTop: vi.fn().mockResolvedValue(false)
+    })
+
+    await wrapper.find('.shell').trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
+  })
+
+  it('raises on the rail too, which is all there is to click when collapsed', async () => {
+    const { wrapper, api } = await mountApp()
+
+    await wrapper.find('.shell').trigger('pointerdown')
+
+    expect(api.raisePanel).toHaveBeenCalledOnce()
   })
 })

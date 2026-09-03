@@ -6,10 +6,12 @@ import {
   applyUiScale,
   buildMainWindowOptions,
   panelLayout,
+  raisePanelWindow,
   seedPanelEdge,
   setPanelLayout,
   type AlwaysOnTopTarget,
   type PanelBoundsTarget,
+  type RaiseTarget,
   type UiScaleTarget
 } from './window'
 
@@ -262,5 +264,72 @@ describe('panel layout edge (#138)', () => {
     seedPanelEdge('right')
     const result = setPanelLayout({ expanded: true, mineOpen: true, edge: 'left' })
     expect(result).toEqual({ edge: 'left', expanded: true, mineOpen: true })
+  })
+})
+
+/**
+ * The third acceptance run's sixth correction (#165).
+ *
+ * With another program focused, clicking DwarfAI-Miners left the window BEHIND
+ * it — alive, visible, receiving the click, and never raised. The shell is a
+ * frameless TRANSPARENT window (a layered window on Windows), which is the one
+ * combination the platform's own click-to-front does not reliably apply, and
+ * nothing in the app compensated: the only focus() in the whole process was
+ * showPanel's.
+ *
+ * The rule the maintainer set is simple enough to test as one: a click anywhere
+ * on the shell raises AND focuses it, pinned or not. So the renderer reports the
+ * click and this is what main does with it.
+ */
+describe('raisePanelWindow', () => {
+  function fakeRaiseTarget(state: { visible?: boolean; minimized?: boolean } = {}) {
+    const calls: string[] = []
+    const target: RaiseTarget = {
+      isVisible: () => state.visible ?? true,
+      isMinimized: () => state.minimized ?? false,
+      restore: () => calls.push('restore'),
+      show: () => calls.push('show'),
+      moveTop: () => calls.push('moveTop'),
+      focus: () => calls.push('focus')
+    }
+    return { target, calls }
+  }
+
+  it('raises the window above the stack and then focuses it', () => {
+    // moveTop before focus, because the two are different asks: one is z-order
+    // and the other is keyboard focus, and a window focused underneath another
+    // is exactly the state the maintainer photographed.
+    const { target, calls } = fakeRaiseTarget()
+    raisePanelWindow(target)
+    expect(calls).toEqual(['moveTop', 'focus'])
+  })
+
+  it('raises a window the user minimized rather than leaving it in the taskbar', () => {
+    const { target, calls } = fakeRaiseTarget({ minimized: true })
+    raisePanelWindow(target)
+    expect(calls).toEqual(['restore', 'moveTop', 'focus'])
+  })
+
+  it('never shows a window that is deliberately hidden', () => {
+    // Hidden is the tray state, and the click that reaches this cannot have
+    // landed on a window nobody can see. Showing one would make a stray call
+    // from the renderer into a way to reopen the panel behind the user's back.
+    const { target, calls } = fakeRaiseTarget({ visible: false })
+    raisePanelWindow(target)
+    expect(calls).toEqual([])
+  })
+})
+
+describe('the shell window can be focused at all', () => {
+  it('is focusable, stated rather than left to the default (#165)', () => {
+    // The one flag that would silently undo the raise above: a window Electron
+    // was told not to focus cannot be focused by anything, click included.
+    const options = buildMainWindowOptions({
+      alwaysOnTop: false,
+      preloadPath: 'C:/app/out/preload/index.mjs',
+      iconPath: 'C:/app/resources/app-icon.png',
+      bounds: RAIL_BOUNDS
+    })
+    expect(options.focusable).toBe(true)
   })
 })

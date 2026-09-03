@@ -1313,6 +1313,18 @@ export interface ProjectQueryResult {
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
+   * Bring the shell to the front and focus it (#165).
+   *
+   * Fire-and-forget, like `hidePanel`: there is no verdict to render — the
+   * renderer is reporting that the user clicked the panel, and what a z-order
+   * change costs is a request the window manager may answer however it likes.
+   *
+   * It exists because the platform's own click-to-front does not reliably
+   * apply to a frameless transparent window, so the third acceptance run found
+   * the panel taking clicks from behind whatever program had the foreground.
+   */
+  raisePanel: 'panel:raise',
+  /**
    * Always-on-top ("pin") surface, see #35. Both channels answer with the REAL
    * state read back from the BrowserWindow — never the requested one — so the
    * renderer can only ever render what the window manager actually did.

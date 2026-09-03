@@ -273,6 +273,24 @@ function hidePanel(): void {
   window.api.hidePanel()
 }
 
+/**
+ * Bring the window to the front on any press anywhere on the shell (#165).
+ *
+ * The third acceptance run found the panel sitting BEHIND whatever program had
+ * the foreground — alive, taking the click, and never raised. The shell is a
+ * frameless transparent window, which the platform's own click-to-front does
+ * not reliably apply to, so the renderer reports the press and main raises the
+ * window itself (see raisePanelWindow in main/shell/window.ts).
+ *
+ * On the CAPTURE phase, and on `pointerdown` rather than `click`: every control
+ * on the panel stops its own click, and the window has to rise before any of
+ * them decides anything. Nothing here reads the pin — pinning decides whether
+ * the panel STAYS above other windows, not whether a click may bring it there.
+ */
+function raisePanel(): void {
+  window.api.raisePanel()
+}
+
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   loading.value = false
@@ -483,6 +501,7 @@ onBeforeUnmount(() => unsubscribe?.())
     class="shell"
     :class="[`edge-${layout.edge}`, `is-${composition}`]"
     :style="{ '--interior-column-aspect': interiorColumnAspect }"
+    @pointerdown.capture="raisePanel"
   >
     <!--
       The rail and the collapse arrow are one control in one component, because

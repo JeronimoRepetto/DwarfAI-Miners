@@ -30,6 +30,12 @@ import { IPC_CHANNELS } from '../shared/contracts'
 export interface DwarfAiMinersApi {
   /** Hide the floating panel (the app keeps running in the tray). */
   hidePanel: () => void
+  /**
+   * Bring the panel to the front and focus it (#165) — what the shell asks for
+   * on any click, because a frameless transparent window is not reliably raised
+   * by the platform's own click-to-front.
+   */
+  raisePanel: () => void
   /** The window's REAL always-on-top state, read back from the BrowserWindow. */
   getAlwaysOnTop: () => Promise<boolean>
   /**
@@ -165,6 +171,7 @@ export interface DwarfAiMinersApi {
 
 const api: DwarfAiMinersApi = {
   hidePanel: () => ipcRenderer.send(IPC_CHANNELS.hidePanel),
+  raisePanel: () => ipcRenderer.send(IPC_CHANNELS.raisePanel),
   getAlwaysOnTop: () => ipcRenderer.invoke(IPC_CHANNELS.getAlwaysOnTop),
   // `pinned === true` collapses any non-boolean to false BEFORE it crosses the
   // bridge, so main's boundary validation only ever sees a clean boolean.
