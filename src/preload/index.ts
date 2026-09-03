@@ -4,6 +4,7 @@ import type {
   AgentLaunchResult,
   AppBuild,
   DwarfActivation,
+  DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
   DwarfQuestionAnswerRequest,
@@ -60,6 +61,17 @@ export interface DwarfAiMinersApi {
   /** Focus the dwarf's terminal, or return recent transcript text as fallback. */
   activateDwarf: (dwarfId: string) => Promise<DwarfActivation>
   /** Deliver a typed message to the dwarf's live session; the panel stays open. */
+  /**
+   * The last few messages of one dwarf's own transcript (#159), for a session
+   * this panel only OBSERVES.
+   *
+   * Deliberately not `activateDwarf`: that one reads a feed only after failing
+   * to focus a window and failing to open a terminal, so asking it for words
+   * means asking it to try raising a console first. `readable: false` says
+   * this session keeps nothing this app can read, which is a different answer
+   * from an empty list.
+   */
+  getDwarfFeed: (dwarfId: string) => Promise<DwarfFeedResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
@@ -177,6 +189,10 @@ const api: DwarfAiMinersApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.minesUpdated, wrapped)
   },
   activateDwarf: (dwarfId) => ipcRenderer.invoke(IPC_CHANNELS.activateDwarf, dwarfId),
+  // Same string coercion as every other id crossing here: main's boundary
+  // check only ever sees a real string.
+  getDwarfFeed: (dwarfId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getDwarfFeed, typeof dwarfId === 'string' ? dwarfId : ''),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
   kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
   // Same discipline as setToggleShortcut, applied field by field: a launch

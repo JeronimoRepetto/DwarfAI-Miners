@@ -9,6 +9,7 @@ import {
   type AgentLaunchRequest,
   type AgentLaunchResult,
   type DwarfActivation,
+  type DwarfFeedResult,
   type DwarfKickRequest,
   type DwarfKickResult,
   type DwarfQuestionAnswerRequest,
@@ -73,6 +74,11 @@ import { createStageTimer, formatStageTimings, type StageTimings } from '../text
 import { TierService } from '../tier/tierService'
 
 const FEED_LIMIT = 12
+
+/** No transcript this app can read — never the same claim as one that is empty. */
+function unreadableFeed(): DwarfFeedResult {
+  return { readable: false, messages: [] }
+}
 
 /** Refusals that never reach the delivery port, phrased for the panel. */
 const NO_SUCH_DWARF = 'That dwarf has left the mine.'
@@ -1253,6 +1259,33 @@ export class AgentRuntime {
   retireDwarf(dwarfId: string): void {
     console.log(`[runtime] Retiring ${dwarfId}: its agent was seen stopping after a kick.`)
     this.lifecycle.retire(dwarfId)
+  }
+
+  /**
+   * The last few messages of one dwarf's own transcript (#159).
+   *
+   * The same bounded tail `activateDwarf` falls back to, reached without the
+   * two attempts in front of it: the message panel wants an observed session's
+   * words whether or not its window could be focused, and a read that first
+   * tried to raise a terminal would be an activation wearing a different name.
+   *
+   * Every failure answers `readable: false` rather than throwing, and that is
+   * a different statement from an empty list: it means this session keeps
+   * nothing this app can read, so the panel says so instead of drawing a
+   * session that has never spoken.
+   */
+  async dwarfFeed(dwarfId: string): Promise<DwarfFeedResult> {
+    const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
+    if (dwarf === undefined) return unreadableFeed()
+    const provider = this.providers.find((item) => item.kind === dwarf.provider)
+    if (provider === undefined) return unreadableFeed()
+    try {
+      const messages = await provider.feed(dwarfId, FEED_LIMIT)
+      return messages === null ? unreadableFeed() : { readable: true, messages }
+    } catch (error) {
+      console.warn(`[runtime] Failed to read feed for ${dwarfId}`, error)
+      return unreadableFeed()
+    }
   }
 
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {

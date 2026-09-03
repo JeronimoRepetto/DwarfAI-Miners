@@ -167,6 +167,104 @@ describe('AgentRuntime activation', () => {
     expect(launchTerminal).not.toHaveBeenCalled()
     expect(source.feed).toHaveBeenCalledWith('claude:session-1', 12)
   })
+
+  /**
+   * The same transcript tail, on a channel of its own (#159). The message panel
+   * wants an observed session's words without first failing to focus a window
+   * and failing to open a terminal, which is the only way activation ever
+   * reached them.
+   */
+  describe('AgentRuntime.dwarfFeed', () => {
+    it('reads the same bounded tail activation falls back to, without touching a window', async () => {
+      const feed = [{ role: 'assistant' as const, text: 'Still working', timestamp: 'now' }]
+      const source = provider(feed)
+      const focus = vi.fn().mockResolvedValue(true)
+      const launchTerminal = vi.fn().mockResolvedValue(true)
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        focus,
+        launchTerminal,
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:session-1')).resolves.toEqual({
+        readable: true,
+        messages: feed
+      })
+      expect(source.feed).toHaveBeenCalledWith('claude:session-1', 12)
+      // Reading is not activating: nothing was focused and no terminal opened.
+      expect(focus).not.toHaveBeenCalled()
+      expect(launchTerminal).not.toHaveBeenCalled()
+    })
+
+    it('says the transcript is readable and empty rather than unreadable', async () => {
+      // Two different facts, and the panel shows two different things: "this
+      // session has written nothing yet" is not "there is no way to read it".
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [provider([])],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:session-1')).resolves.toEqual({
+        readable: true,
+        messages: []
+      })
+    })
+
+    it('reads nothing for a dwarf that is not on the board', async () => {
+      const source = provider()
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:nobody')).resolves.toEqual({
+        readable: false,
+        messages: []
+      })
+      expect(source.feed).not.toHaveBeenCalled()
+    })
+
+    it("reports unreadable when the provider does not know the dwarf's transcript", async () => {
+      const source: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue(null) }
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:session-1')).resolves.toEqual({
+        readable: false,
+        messages: []
+      })
+    })
+
+    it('reports unreadable rather than throwing when the transcript read fails', async () => {
+      const source: Provider = {
+        kind: 'claude',
+        scan,
+        feed: vi.fn().mockRejectedValue(new Error('the file went away'))
+      }
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('claude:session-1')).resolves.toEqual({
+        readable: false,
+        messages: []
+      })
+    })
+  })
 })
 
 describe('AgentRuntime dwarf lifecycle wiring', () => {
