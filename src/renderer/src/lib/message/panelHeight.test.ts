@@ -19,8 +19,12 @@ describe('initialPanelHeight', () => {
   })
 
   it("counts a message's own line breaks, not only its length", () => {
-    const wrapped = initialPanelHeight('one\ntwo\nthree\nfour\nfive\nsix')
-    expect(wrapped).toBeGreaterThan(initialPanelHeight('one two three four five six'))
+    // Twelve short lines rather than six, so both readings clear the floor and
+    // the comparison is between two derived heights rather than two clamps.
+    const words = 'one two three four five six seven eight nine ten eleven twelve'
+    expect(initialPanelHeight(words.split(' ').join('\n'))).toBeGreaterThan(
+      initialPanelHeight(words)
+    )
   })
 
   it('never opens taller than the ceiling, whatever the agent wrote', () => {

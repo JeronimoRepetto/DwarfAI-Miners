@@ -42,7 +42,7 @@ import DwarfMessagePanel from './DwarfMessagePanel.vue'
  * that rendered it, and the panel reads the same entries.
  */
 
-const LONG_REPLY = 'x'.repeat(600)
+const LONG_REPLY = 'x'.repeat(1200)
 
 const HELD = [
   { role: 'user' as const, text: 'dig here', timestamp: '2026-09-03T09:00:00.000Z' },

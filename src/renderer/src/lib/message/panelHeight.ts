@@ -15,24 +15,31 @@
  * What the design does NOT give is the mapping from a message to a height —
  * that is Unspecified, so the constants below are ours and are named rather
  * than scattered. They were measured off the design's own base export
- * (`assets/messages/message-panel.png`, 233px tall around a six-line reply in
- * an ~865px bubble), which is what makes a six-line message here land within a
- * few pixels of the mock.
+ * (`assets/messages/message-panel.png`: 235px tall, its portrait band exactly
+ * 100px inside a 2px border, an ~865px bubble around a six-line reply), which
+ * is what makes a six-line message here land within a few pixels of the mock.
  */
 
 /** Everything that is not bubble: the title bar, the input row, the padding between them. */
-export const MESSAGE_PANEL_CHROME_HEIGHT = 128
-
-/** A one-line message still gets a panel worth opening. */
-export const MESSAGE_PANEL_MIN_HEIGHT = 150
+export const MESSAGE_PANEL_CHROME_HEIGHT = 130
 
 /**
- * The ceiling. The panel is docked over a live mine and the design is explicit
- * that the mine stays visible, so an agent that wrote an essay gets a scrolling
- * bubble rather than a panel that eats the screen — the messages scroll
- * independently for exactly this reason.
+ * The floor, and it is not arbitrary: the design's portrait is a fixed
+ * `100px` square inside a `2px` border, so a panel shorter than the chrome
+ * plus 104 could not draw one at the size the source states. Which is also why
+ * the base export is 235px tall around a six-line reply — that message asks
+ * for less room than its own portrait does.
  */
-export const MESSAGE_PANEL_MAX_HEIGHT = 420
+export const MESSAGE_PANEL_MIN_HEIGHT = MESSAGE_PANEL_CHROME_HEIGHT + 104
+
+/**
+ * The ceiling, measured off the design's own expanded-history export (578px).
+ * It is what the history tab opens to, and the furthest a drag may go — the
+ * panel is docked over a live mine and the source is explicit that the mine
+ * stays visible, so an agent that wrote an essay gets a scrolling bubble
+ * rather than a panel with no bottom to it.
+ */
+export const MESSAGE_PANEL_MAX_HEIGHT = 578
 
 /** 10px pixel type at the panel's own line height. */
 const BUBBLE_LINE_HEIGHT = 14
