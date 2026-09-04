@@ -650,19 +650,48 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
 const CROSS_SESSION_MESSAGE_RE = /<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/
 
 /**
+ * The words on one `user` line's content, whichever of its two shapes it took,
+ * or undefined when it carries none (issue #216).
+ *
+ * A string is the shape a prompt typed at a turn boundary takes, and a block
+ * array is the other one Claude Code writes for the same thing. Reading only
+ * the string dropped every prompt written the other way — measured over every
+ * transcript on one machine (519 files, 537 MiB, 35 870 `user` lines): 1746
+ * strings, 103 text-block arrays, 14 arrays mixing text with a tool result.
+ *
+ * Only a block's own `text` is read, never a `tool_result`'s nested content:
+ * 33 976 of those arrays in the same corpus are tool output, which can be a
+ * whole transcript, and publishing one as something a person typed is the
+ * failure this shape was hiding behind. A mixed array therefore keeps its text
+ * blocks and drops the rest. Blocks are joined the way assistantText joins
+ * them, so one prompt stays one message.
+ */
+function userContentText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return undefined
+  const texts = content
+    .filter(isRecord)
+    .filter((block) => block.type === 'text')
+    .map((block) => asString(block.text) ?? '')
+    .filter((text) => text !== '')
+  return texts.length > 0 ? texts.join('\n') : undefined
+}
+
+/**
  * What one `user` line publishes to the feed, or undefined when it is not
  * somebody speaking.
  *
- * The two skips it keeps — meta lines, and string content that opens with a
- * tag — are what keep the harness's own prompts out. The relay envelope trips
- * both, so it has to be recognized before them, and only from a line no tool
- * wrote: tool output can print a whole transcript, envelopes and all, which is
- * the same reason an ending is only ever read from the record Claude Code
- * delivered it in (see notificationStrings).
+ * The two skips it keeps — meta lines, and content that opens with a tag — are
+ * what keep the harness's own prompts out, and they apply to both content
+ * shapes alike: 57 of the 103 text-block arrays measured were `isMeta`. The
+ * relay envelope trips both, so it has to be recognized before them, and only
+ * from a line no tool wrote: tool output can print a whole transcript,
+ * envelopes and all, which is the same reason an ending is only ever read from
+ * the record Claude Code delivered it in (see notificationStrings).
  */
 function userMessageText(line: Rec): string | undefined {
   if (!isRecord(line.message)) return undefined
-  const content = asString(line.message.content)
+  const content = userContentText(line.message.content)
   if (content === undefined) return undefined
   if (line.toolUseResult === undefined) {
     const relayed = content.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()

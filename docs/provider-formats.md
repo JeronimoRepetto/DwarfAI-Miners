@@ -34,7 +34,7 @@ Top-level `type` values observed **[V]**: `user`, `assistant`, `system`, `attach
 Common envelope on user/assistant/system/attachment lines **[V]**:
 `parentUuid, isSidechain, type, message, uuid, timestamp, userType ("external"), entrypoint ("cli"), cwd, sessionId, version, gitBranch`
 
-- **user** adds: `promptId, permissionMode, origin, promptSource`, optional `isMeta`, optional `toolUseResult` (rich parsed result object). `message.content` is a **string** for typed prompts, or an **array** of blocks (e.g. `tool_result`) for tool responses.
+- **user** adds: `promptId, permissionMode, origin, promptSource`, optional `isMeta`, optional `toolUseResult` (rich parsed result object). `message.content` is a **string** or an **array** of blocks, and the array is not only for tool responses — a typed prompt takes either shape. Reading it as "string = prompt, array = tool result" is what issue #216 fixed; see §1.6 for the counts.
 - **assistant** adds: `requestId`, `effort` (e.g. `"xhigh"` — the reasoning-effort setting) **[V]**. `message` = full API message: `{model, id, type, role, content[], stop_reason, usage}`. `message.model` e.g. `"claude-fable-5"`, `"claude-sonnet-5"` **[V]**. `usage.output_tokens_details.thinking_tokens` present **[V]**.
 - **assistant content blocks**: `{"type":"text","text":...}` (speech-bubble material), `{"type":"thinking","thinking":...}`, `{"type":"tool_use","id":"toolu_...","name":...,"input":{...}}` **[V]**.
 - **system**: `subtype` (observed `turn_duration`), `durationMs, messageCount,`**`pendingBackgroundAgentCount`** (count of still-running background agents at end of turn — very useful) **[V]**.
@@ -401,6 +401,38 @@ Two facts this deliberately does **not** fix: the receiving session still reads 
 session sent a message" from a session named after the relay's throwaway process, and the panel
 still has no local echo, so a sent message appears only once the transcript records it. Both are
 product decisions recorded in #180.
+
+#### `message.content` is a string OR a block array, for the same prompt (2026-09-04, issue #216)
+
+The classic line above spells its content as a string. The **same** prompt is also written as a
+block array, and reading only the string dropped every one of those — invisibly, since nothing
+logs a line it skipped.
+
+```
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<text>"}]},"timestamp":"…"}
+```
+
+Counted by shape over every transcript on this machine on 2026-09-04 — 519 files, 537 MiB,
+35 870 `user` lines **[V]**:
+
+| `message.content`                    | Lines   |
+| ------------------------------------ | ------- |
+| string                               | 1 746   |
+| array, `text` blocks only            | **103** |
+| array, `tool_result` blocks only     | 33 976  |
+| array, `text` and `tool_result` both | **14**  |
+| array, neither                       | 31      |
+
+The 33 976 are tool output and must stay out; the 117 carrying text are prompts, of which 57 are
+`isMeta` (the harness talking to the session in the newer shape) and the rest are somebody
+speaking. Two facts make the rule safe rather than a guess: **no** array carrying text also
+carried `toolUseResult`, and none of their joined text opened with a tag — so widening what counts
+as content cannot reach the tool-output fork the string path leaves open, and both existing skips
+still apply unchanged.
+
+So read a string, or the joined `text` of a content array's `text` blocks — a block's own `text`
+field and never a `tool_result`'s nested `content`, which can be a whole transcript. A mixed array
+keeps its text blocks and drops the rest.
 
 ---
 

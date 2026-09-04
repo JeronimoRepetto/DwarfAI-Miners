@@ -847,6 +847,108 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
   })
 })
 
+/** One `user` line whose `message.content` is whatever shape a test needs. */
+function contentUserLine(content: unknown, extra: Record<string, unknown> = {}): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      timestamp: '2026-09-04T10:00:00.000Z',
+      message: { role: 'user', content },
+      ...extra
+    }) + '\n'
+  )
+}
+
+/*
+ * Issue #216. A `user` line's content is a string most of the time and a block
+ * array the rest of it, and the reader accepted only the string — so about one
+ * human prompt in twenty never reached any feed, invisibly: nothing logs a
+ * dropped line.
+ *
+ * Measured over every Claude transcript on the machine this was written on
+ * (519 files, 537 MiB, 35 870 `user` lines): 1746 string contents, 103
+ * text-block arrays, 14 mixed arrays, and 33 976 arrays holding tool results
+ * alone. Not one of the 117 arrays carrying text also carried
+ * `toolUseResult`, and none of their joined text opened with a tag — so
+ * reading text blocks cannot reach the tool-output fork the string path leaves
+ * open. The 33 976 must stay out, which is why only a block's own `text` is
+ * read and never a `tool_result`'s nested content: a tool prints whole
+ * transcripts.
+ */
+describe('extractClaudeFeed on block-array user content (issue #216)', () => {
+  it('reads a prompt whose content is a single text block', () => {
+    const feed = extractClaudeFeed(contentUserLine([{ type: 'text', text: 'dig' }]), 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'dig']])
+    expect(feed[0]!.timestamp).toBe('2026-09-04T10:00:00.000Z')
+  })
+
+  it('says nothing for an array that holds only tool results', () => {
+    // The dominant shape by three orders of magnitude, and the one the string
+    // check was accidentally filtering. Its nested content is deliberately
+    // unread: a tool_result can hold a whole transcript.
+    const tail = contentUserLine(
+      [
+        { type: 'tool_result', tool_use_id: 'toolu_01', content: 'ok' },
+        { type: 'tool_result', tool_use_id: 'toolu_02', content: [{ type: 'text', text: 'ok' }] }
+      ],
+      { toolUseResult: { stdout: 'ok' } }
+    )
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+
+  it('takes the text blocks of a mixed array and leaves the tool result out', () => {
+    const feed = extractClaudeFeed(
+      contentUserLine([
+        { type: 'tool_result', tool_use_id: 'toolu_01', content: 'ok' },
+        { type: 'text', text: 'now dig deeper' }
+      ]),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['now dig deeper'])
+  })
+
+  it('joins several text blocks of one prompt', () => {
+    const feed = extractClaudeFeed(
+      contentUserLine([
+        { type: 'text', text: 'First line.' },
+        { type: 'text', text: 'Second line.' }
+      ]),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['First line.\nSecond line.'])
+  })
+
+  it('keeps both existing skips over the array shape too', () => {
+    // 57 of the 103 text-block arrays measured were `isMeta` — the harness
+    // talking to the session in the newer shape. Widening what counts as
+    // content must not widen what counts as a person.
+    expect(
+      extractClaudeFeed(contentUserLine([{ type: 'text', text: 'dig' }], { isMeta: true }), 20)
+    ).toEqual([])
+    expect(
+      extractClaudeFeed(
+        contentUserLine([{ type: 'text', text: '<command-name>/clear</command-name>' }]),
+        20
+      )
+    ).toEqual([])
+  })
+
+  it('unwraps a relay envelope carried in a text block', () => {
+    const feed = extractClaudeFeed(
+      contentUserLine([{ type: 'text', text: crossSessionEnvelope('Ship the vault fix.') }]),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['Ship the vault fix.'])
+  })
+
+  it('says nothing for an array with no readable text in it', () => {
+    expect(extractClaudeFeed(contentUserLine([{ type: 'text', text: '' }]), 20)).toEqual([])
+    expect(extractClaudeFeed(contentUserLine([]), 20)).toEqual([])
+    expect(extractClaudeFeed(contentUserLine([{ type: 'image' }]), 20)).toEqual([])
+    expect(extractClaudeFeed(contentUserLine(null), 20)).toEqual([])
+  })
+})
+
 describe('parseClaudeTranscriptTail on subagent transcripts', () => {
   it('reads the latest assistant text for worker speech bubbles', () => {
     const info = parseClaudeTranscriptTail(subagentTranscript)
