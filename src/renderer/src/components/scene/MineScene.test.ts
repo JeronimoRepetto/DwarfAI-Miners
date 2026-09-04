@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDwarfKicking } from '../../composables/useDwarfKicking'
 import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
-import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
+import { HISTORY_ICON_SRC, INTERIOR_ART_SIZE, INTERIOR_SRC, maskImageValue } from '../../lib/art'
 import { BUBBLE_TTL_MS } from '../../lib/overlay/bubbles'
 import { INTERIOR_STATIONS } from '../../lib/scene/interiorMap'
 import { assignScene, type SceneOccupant } from '../../lib/scene/sceneAssignment'
@@ -671,6 +671,29 @@ describe('MineScene interior shell', () => {
 
     await add.trigger('click')
     expect(wrapper.emitted('add')).toHaveLength(1)
+  })
+
+  /*
+   * The design's History action (#192, `screens/mine.md`): directly below
+   * Close, opening the read-only mine-wide history. Like Close and Add it
+   * emits and decides nothing — App owns the dock the panel opens in.
+   */
+  it('opens the mine history from the round action directly below Close', async () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
+    const history = wrapper.get('.interior .mine-history')
+
+    expect(history.attributes('aria-label')).toBe('Mine history')
+    // A mask of the designer's own history.svg, exactly as Close is drawn.
+    expect(history.get('.action-glyph').attributes('style')).toContain(
+      maskImageValue(HISTORY_ICON_SRC)
+    )
+    // Below Close in the DOM, so a reader meets them in the order the design draws them.
+    const actions = wrapper.findAll('.interior > button').map((button) => button.classes()[0])
+    expect(actions.indexOf('mine-history')).toBe(actions.indexOf('close-mine') + 1)
+
+    await history.trigger('click')
+    expect(wrapper.emitted('history')).toHaveLength(1)
+    expect(wrapper.emitted('back')).toBeUndefined()
   })
 
   it('keeps the mine name as the section own accessible name, with no header on screen', () => {

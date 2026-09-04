@@ -65,6 +65,7 @@ import iconMarket from '../../../../docs/assets/icons/market.svg?url'
 import iconMine from '../../../../docs/assets/icons/mine.svg?url'
 import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
+import iconHistory from '../../../../docs/assets/icons/history.svg?url'
 import iconAdd from '../../../../docs/assets/icons/add.svg?url'
 import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
 import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.svg?url'
@@ -248,6 +249,14 @@ export const SHELL_ICON_SRC: Record<ShellArea, string> = {
 
 /** The design's own close glyph, used by the panel's round close control. */
 export const CLOSE_ICON_SRC = iconClose
+
+/**
+ * The mine's History action (#192), the glyph `screens/history.md` names for
+ * the round control directly below Close. Drawn through the same mask as
+ * Close, so the committed SVG keeps the designer's bytes — its own fill is
+ * black — while the control takes its colour from the tokens.
+ */
+export const HISTORY_ICON_SRC = iconHistory
 
 /**
  * The Mines panel's own glyphs (#135), from the same `docs/assets/icons`

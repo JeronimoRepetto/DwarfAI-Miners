@@ -79,6 +79,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // The Mine History panel reads the mine's transcripts on open (#192); a
+    // readable mine nobody has spoken in is the quiet default.
+    getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [] }),
     sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     // A promoted kick retires its dwarf through this (#46). Stubbed rather
@@ -1910,5 +1913,192 @@ describe('App exclusive selection (#165)', () => {
 
     expect(selectedSprites(wrapper)).toHaveLength(0)
     expect(wrapper.findAll('.message-panel')).toHaveLength(0)
+  })
+})
+
+/**
+ * The Mine History panel (#192): opened from the mine's own History action,
+ * read from main by mine id, re-read on the same signals the message panel's
+ * feed re-reads on, and sharing the one dock with the other two panels.
+ */
+describe('App mine history', () => {
+  const SPOKE_AT = new Date(2026, 8, 4, 9, 5).getTime()
+
+  const CREW_DWARF = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'Foreman',
+    status: 'working',
+    sessionId: 's1',
+    lastMessage: 'Halfway down the shaft',
+    transcriptUpdatedAt: 1_000
+  }
+
+  const MINE = {
+    id: 'mine:c:/x/anvil',
+    path: 'C:/x/anvil',
+    name: 'anvil',
+    tier: 'bronze',
+    dwarfs: [] as unknown[],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  const SPEAKER = {
+    id: 'claude:older',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'older-se',
+    lastMessageAt: SPOKE_AT,
+    messages: [{ role: 'assistant', text: 'Done long ago.', timestamp: '2026-09-04T09:05:00Z' }]
+  }
+
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+    useDwarfKicking().clearAll()
+  })
+
+  async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
+    const { wrapper, api } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      ...overrides
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  function pushFrom(api: ReturnType<typeof stubApi>) {
+    return api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+  }
+
+  it('opens the panel from the mine own History action and asks main for that mine by id', async () => {
+    const { wrapper, api } = await openMineWith([], {
+      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] })
+    })
+    expect(wrapper.find('.history-panel').exists()).toBe(false)
+
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+
+    expect(api.getMineHistory).toHaveBeenCalledWith(MINE.id)
+    expect(wrapper.find('.history-panel').exists()).toBe(true)
+    expect(wrapper.find('.history-tab').text()).toBe('older-se')
+    expect(wrapper.find('.bubble').text()).toBe('Done long ago.')
+    expect(wrapper.find('.history-timestamp').text()).toBe('September 04, 2026 09:05')
+    // The mine stays visible underneath.
+    expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
+  })
+
+  it('reads history for a mine with no crew at all — that is the point of the panel', async () => {
+    const { wrapper, api } = await openMineWith([])
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+
+    expect(api.getMineHistory).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.history-empty').text()).toBe('Nobody has spoken in this mine yet.')
+  })
+
+  it('does not read anything until the panel is opened', async () => {
+    const { api } = await openMineWith([CREW_DWARF])
+    expect(api.getMineHistory).not.toHaveBeenCalled()
+  })
+
+  it("re-reads when a crew member's transcript moves, and not on a poll that changes nothing", async () => {
+    const { wrapper, api } = await openMineWith([CREW_DWARF])
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+    expect(api.getMineHistory).toHaveBeenCalledTimes(1)
+
+    // The same board again: nothing about the crew's transcripts moved.
+    pushFrom(api)({ mines: [{ ...MINE, dwarfs: [CREW_DWARF] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(api.getMineHistory).toHaveBeenCalledTimes(1)
+
+    // The transcript's own mtime moved — the feed's signal (#183) — so the
+    // history is read again.
+    pushFrom(api)({
+      mines: [{ ...MINE, dwarfs: [{ ...CREW_DWARF, transcriptUpdatedAt: 2_000 }] }],
+      tokensObserved: 0
+    })
+    await flushPromises()
+    expect(api.getMineHistory).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-reads when a dwarf leaves the mine, since its last words land with its exit', async () => {
+    const { wrapper, api } = await openMineWith([CREW_DWARF])
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+
+    pushFrom(api)({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(api.getMineHistory).toHaveBeenCalledTimes(2)
+    // And the panel is still there: it follows the mine, not the crew.
+    expect(wrapper.find('.history-panel').exists()).toBe(true)
+  })
+
+  it('keeps showing the last answer while a re-read is in flight rather than flashing "reading"', async () => {
+    let release: ((value: unknown) => void) | undefined
+    const getMineHistory = vi
+      .fn()
+      .mockResolvedValueOnce({ readable: true, speakers: [SPEAKER] })
+      .mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
+    const { wrapper, api } = await openMineWith([CREW_DWARF], { getMineHistory })
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+
+    pushFrom(api)({
+      mines: [{ ...MINE, dwarfs: [{ ...CREW_DWARF, transcriptUpdatedAt: 2_000 }] }],
+      tokensObserved: 0
+    })
+    await flushPromises()
+    expect(wrapper.find('.bubble').text()).toBe('Done long ago.')
+
+    release!({ readable: true, speakers: [] })
+    await flushPromises()
+    expect(wrapper.find('.history-empty').exists()).toBe(true)
+  })
+
+  it('shares the dock: opening history puts the message panel away, and selecting a dwarf puts history away', async () => {
+    const { wrapper } = await openMineWith([CREW_DWARF])
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('.history-panel').exists()).toBe(true)
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.history-panel').exists()).toBe(false)
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+  })
+
+  it('closes from its own control, and from the mine closing', async () => {
+    const { wrapper } = await openMineWith([])
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+    await wrapper.find('.history-close').trigger('click')
+    expect(wrapper.find('.history-panel').exists()).toBe(false)
+
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.history-panel').exists()).toBe(true)
+    await wrapper.find('.close-mine').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.history-panel').exists()).toBe(false)
+  })
+
+  it('says the mine could not be read when the bridge itself fails', async () => {
+    const { wrapper } = await openMineWith([], {
+      getMineHistory: vi.fn().mockRejectedValue(new Error('bridge down'))
+    })
+    await wrapper.find('.mine-history').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.history-empty').text()).toBe("This mine's history could not be read.")
   })
 })

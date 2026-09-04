@@ -122,4 +122,10 @@
   --size-feature-panel-width: 487px;
   --size-message-panel-width: 990px;
   --size-message-input-width: 865px;
+  /*
+   * The Mine History panel's ceiling (#192, `screens/history.md`). The panel
+   * grows with its transcript up to this and scrolls inside it; the design
+   * fixes no width, so none is declared here.
+   */
+  --size-history-panel-max-height: 500px;
 }

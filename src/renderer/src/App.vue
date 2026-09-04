@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AddPanel from './components/launch/AddPanel.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
+import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
@@ -25,7 +26,15 @@ import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
-import type { AppBuild, Dwarf, DwarfFeedResult, Mine, MinesSnapshot, ShellArea } from './types'
+import type {
+  AppBuild,
+  Dwarf,
+  DwarfFeedResult,
+  Mine,
+  MineHistoryResult,
+  MinesSnapshot,
+  ShellArea
+} from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -376,13 +385,91 @@ const selectedDwarf = computed<Dwarf | undefined>(() => {
 
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
 function selectDwarf(dwarf: Dwarf): void {
-  // The two panels share one dock, so opening this one puts the other away.
+  // The three panels share one dock, so opening this one puts the others away.
   // Deliberately not the launch's own `close()` half-way through a spawn: a
   // selection during one abandons the handover, which is the user saying they
   // would rather look at something else, and the session is unaffected.
   closeLaunchPanel()
+  historyOpen.value = false
   selectedDwarfId.value = selectedDwarfId.value === dwarf.id ? null : dwarf.id
 }
+
+/**
+ * Whether the Mine History panel is open on the current mine (#192).
+ *
+ * A boolean rather than a mine id, because it is a statement about the mine
+ * held open beside it and nothing else: the panel is keyed by that mine, so
+ * changing mines is a fresh panel, and the watch below closes it outright when
+ * the mine goes — the same rule the message panel follows.
+ */
+const historyOpen = ref(false)
+
+/**
+ * What main read for the open mine's history. `undefined` means no answer has
+ * come back yet, which the panel says out loud rather than drawing as an empty
+ * mine. Deliberately NOT reset when a re-read starts: the previous answer stays
+ * on screen until the next lands, or a live update would flash "reading" over
+ * a transcript somebody is in the middle of.
+ */
+const mineHistory = ref<MineHistoryResult | undefined>(undefined)
+/** Which read is the current one, so a slow answer cannot land on a later mine. */
+let historyToken = 0
+
+/** The mine's History action (#192): the dock is one, so the other two panels go. */
+function openHistory(): void {
+  closeLaunchPanel()
+  selectedDwarfId.value = null
+  historyOpen.value = true
+}
+
+function closeHistory(): void {
+  historyOpen.value = false
+}
+
+async function readMineHistory(mineId: string): Promise<void> {
+  const token = ++historyToken
+  try {
+    const result = await window.api.getMineHistory(mineId)
+    if (historyToken === token) mineHistory.value = result
+  } catch {
+    // The bridge is the only source there is. "Could not be read" is exactly
+    // what happened, and it is a different statement from "nobody has spoken".
+    if (historyToken === token) mineHistory.value = { readable: false, speakers: [] }
+  }
+}
+
+/**
+ * The signal the history re-reads on while open: the SAME two the message
+ * panel's feed watches (#183, see the watch below it), over every dwarf in the
+ * mine rather than the one selected — `lastMessage` for an agent that spoke,
+ * `transcriptUpdatedAt` for any writer at all — plus a dwarf turning 'leaving'
+ * or dropping off the board, since its final words land with its exit (#192).
+ * Folded into one string so the watch fires on a change to any of them and
+ * stays silent on a poll that moved none: an idle mine costs no disk.
+ */
+const crewSignal = computed(() =>
+  (currentMine.value?.dwarfs ?? [])
+    .map(
+      (dwarf) =>
+        `${dwarf.id}|${dwarf.lastMessage ?? ''}|${dwarf.transcriptUpdatedAt ?? ''}|${dwarf.status === 'leaving'}`
+    )
+    .join('\n')
+)
+
+watch(
+  [historyOpen, () => viewState.mineId, crewSignal],
+  ([open, mineId]) => {
+    if (!open || mineId === null) {
+      // Nothing to show: bump the token so a read still in flight cannot land
+      // on a panel that has since closed or moved to another mine.
+      historyToken++
+      mineHistory.value = undefined
+      return
+    }
+    void readMineHistory(mineId)
+  },
+  { immediate: true }
+)
 
 /**
  * The mine's Add action (#86).
@@ -395,6 +482,7 @@ function selectDwarf(dwarf: Dwarf): void {
 function openLaunch(mineId: string): void {
   if (launchMineId.value === mineId && launchPhase.value !== 'closed') return
   selectedDwarfId.value = null
+  historyOpen.value = false
   void openLaunchPanel(mineId)
 }
 
@@ -495,6 +583,9 @@ watch(
 watch(
   () => viewState.mineId,
   () => {
+    // The history panel follows its mine the same way (#192): a person closing
+    // the mine, or the board dropping it, takes the history with it.
+    historyOpen.value = false
     if (openDwarfId.value === null) return
     selectedDwarfId.value = null
     // A launch whose adopted dwarf has lost its mine is over too, or its id
@@ -732,16 +823,20 @@ onBeforeUnmount(() => unsubscribe?.())
             @back="leaveMine"
             @select="selectDwarf"
             @add="openLaunch(currentMine.id)"
+            @history="openHistory"
           />
         </PanelFrame>
       </div>
     </template>
 
     <!--
-      ONE dock, two panels (#86, #159). The design's own transition is the Add
-      Panel being REPLACED by the MessagePanel in the same place, so they share
-      this slot rather than each having one — which is also why opening either
-      puts the other away, in App and not in either component.
+      ONE dock, three panels (#86, #159, #192). The design's own transition is
+      the Add Panel being REPLACED by the MessagePanel in the same place, so
+      they share this slot rather than each having one — which is also why
+      opening any of them puts the others away, in App and not in a component.
+      The Mine History panel joins them here because the design floats it over
+      the same ground while the mine stays visible, and two panels in one
+      corner would cover each other.
 
       Held against the shell's FREE edge — the side away from the screen edge
       the window is docked to — which is where the design's own
@@ -763,6 +858,19 @@ onBeforeUnmount(() => unsubscribe?.())
         @prompt="setLaunchPrompt"
         @submit="submitLaunch"
         @close="closeLaunchPanel"
+      />
+    </div>
+
+    <!--
+      Keyed by mine, so opening it on another mine is a fresh panel and a fresh
+      default tab rather than a selection carried over from another folder.
+    -->
+    <div v-else-if="historyOpen && currentMine" class="message-dock">
+      <MineHistoryPanel
+        :key="currentMine.id"
+        :mine="currentMine"
+        :history="mineHistory"
+        @close="closeHistory"
       />
     </div>
 

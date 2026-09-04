@@ -54,6 +54,7 @@ src/
 │   ├── appDatabase/ the one file the app writes: its schema version, and the migrations between versions
 │   ├── config/      typed settings, and the userData document layered under the environment
 │   ├── domain/      this process's type barrel, and the pure domain rules (materials, ledger, lifecycle)
+│   ├── history/     what a mine's transcripts on disk remember: every dwarf that spoke there, read on request
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill and its migration
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
@@ -67,7 +68,7 @@ src/
 └── renderer/src/
     ├── App.vue      the root component; types.ts beside it is this process's type barrel
     ├── assets/      processed art and css
-    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · launch/ · vault/ · panel/ — thin, and decide nothing
+    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
     │                  shell/     the frame every screen sits in: the areas the rail opens onto
@@ -75,6 +76,7 @@ src/
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
     │                  message/   what a dwarf's panel may honestly show, and how tall it opens
+    │                  history/   the mine-wide history: tab order, the 50-message cap, the timestamp's spelling
     │                  launch/    starting an agent: the gates, the chips, and whose dwarf arrived
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
     │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
@@ -83,6 +85,6 @@ src/
     └── testing/     factories for tests
 ```
 
-`components/` and `lib/` share the family names `shell`, `map`, `scene`, `message`, `launch` and
-`vault` on purpose: a component may read from several `lib/` families, but when a name exists in
+`components/` and `lib/` share the family names `shell`, `map`, `scene`, `message`, `history`,
+`launch` and `vault` on purpose: a component may read from several `lib/` families, but when a name exists in
 both, it means the same thing in both.

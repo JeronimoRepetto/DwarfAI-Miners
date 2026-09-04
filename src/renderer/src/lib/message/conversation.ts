@@ -62,7 +62,12 @@ export const NO_TRANSCRIPT_NOTE = 'This session keeps no transcript this panel c
  */
 export const ENDED_NOTE = 'This session has ended.'
 
-function toPanel(messages: readonly FeedMessage[]): PanelMessage[] {
+/**
+ * Wire messages as the panel draws them. Exported since #192 because the Mine
+ * History panel draws the same rows from the same wire shape, and two readings
+ * of who is `agent` and who is `user` would eventually disagree.
+ */
+export function panelMessagesOf(messages: readonly FeedMessage[]): PanelMessage[] {
   return messages.map((message, index) => {
     // An issuer is an AGENT naming itself as the author, so the row is an agent
     // row whatever half of the exchange the wire's `role` calls it (#175). The
@@ -108,13 +113,13 @@ function liveConversationOf(
   feed?: DwarfFeedResult
 ): PanelConversation {
   if (dwarf.conversation !== undefined && dwarf.conversation.length > 0) {
-    return { source: 'held', messages: toPanel(dwarf.conversation), note: HELD_NOTE }
+    return { source: 'held', messages: panelMessagesOf(dwarf.conversation), note: HELD_NOTE }
   }
 
   const tail = feed !== undefined && feed.messages.length > 0 ? feed.messages : []
   const messages = tail.length > 0 ? tail : fromLastMessage(dwarf.lastMessage)
   if (messages.length > 0) {
-    return { source: 'observed', messages: toPanel(messages), note: OBSERVED_NOTE }
+    return { source: 'observed', messages: panelMessagesOf(messages), note: OBSERVED_NOTE }
   }
 
   // Three ways to have nothing, and they are three different statements. The
