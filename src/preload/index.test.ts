@@ -491,3 +491,27 @@ describe('preload launch contract (#168)', () => {
     ).resolves.toEqual(refused)
   })
 })
+
+describe('preload mine-history contract (#192)', () => {
+  it('asks on the mine:history channel by mine id, exactly as given', async () => {
+    invoke.mockResolvedValueOnce({ readable: true, speakers: [] })
+    await api.getMineHistory('mine:c:\\x\\anvil')
+    expect(invoke).toHaveBeenLastCalledWith('mine:history', 'mine:c:\\x\\anvil')
+  })
+
+  it('collapses a non-string id to an empty string before it crosses the bridge', async () => {
+    invoke.mockResolvedValueOnce({ readable: false, speakers: [] })
+    await api.getMineHistory(42 as unknown as string)
+    expect(invoke).toHaveBeenLastCalledWith('mine:history', '')
+  })
+
+  it("hands back main's answer untouched, unreadable included", async () => {
+    // `readable: false` is a different fact from "nobody has spoken here", and
+    // the bridge must not flatten one into the other.
+    invoke.mockResolvedValueOnce({ readable: false, speakers: [] })
+    await expect(api.getMineHistory('mine:nowhere')).resolves.toEqual({
+      readable: false,
+      speakers: []
+    })
+  })
+})

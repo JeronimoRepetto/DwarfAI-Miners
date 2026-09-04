@@ -4,6 +4,7 @@ import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { agentProviderList } from '../domain/launchProviders'
+import { MineHistoryReader, type MineHistorySource } from '../history/mineHistory'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
 import {
@@ -26,6 +27,7 @@ import {
   type MetricsResetResult,
   type Mine,
   type MineDeclareResult,
+  type MineHistoryResult,
   type MineTier,
   type MineUndeclareResult,
   type ProjectQuery,
@@ -86,6 +88,11 @@ const FEED_LIMIT = 12
 /** No transcript this app can read — never the same claim as one that is empty. */
 function unreadableFeed(): DwarfFeedResult {
   return { readable: false, messages: [] }
+}
+
+/** No history this app could read for the mine — never "nobody has spoken here" (#192). */
+function unreadableHistory(): MineHistoryResult {
+  return { readable: false, speakers: [] }
 }
 
 /** Refusals that never reach the delivery port, phrased for the panel. */
@@ -241,6 +248,12 @@ export interface RuntimeOptions {
    */
   tiers?: TierService
   /**
+   * What a mine's transcripts on disk remember (#192), for the Mine History
+   * panel. Injected so a test never reaches a real Claude or Codex home; the
+   * default reads the same roots and registry the providers do.
+   */
+  history?: MineHistorySource
+  /**
    * The REAL process environment, consulted for the development-only simulated
    * provider (#42) and for nothing else.
    *
@@ -303,6 +316,8 @@ export class AgentRuntime {
    * a walk; it reads whatever this service already has cached.
    */
   private readonly tiers: TierService
+  /** Reads a mine's transcripts on disk for the history panel (#192). */
+  private readonly history: MineHistorySource
   /** Writes a row per observed project, throttled (#93); null without a store. */
   private readonly projectObserver: ProjectObserver | null
   /**
@@ -489,6 +504,26 @@ export class AgentRuntime {
         ttlS: options.config.tierCacheTtlS
       })
     this.tiers = tiers
+    /*
+     * The history panel's reader (#192), over the SAME roots and registry the
+     * providers scan — composed here rather than handed a provider, because a
+     * provider answers for the sessions running now and this reads the ones
+     * that are not. A simulated valley's folders are on nobody's disk, so its
+     * mines simply have no history; nothing here needs to know it is a demo.
+     */
+    this.history =
+      options.history ??
+      new MineHistoryReader({
+        fs,
+        claudeRoots: options.config.providers.claude.configDirs.map((path) =>
+          expandHomePath(path, home)
+        ),
+        codex: {
+          sqlite: options.sqlite ?? new NodeSqlite(),
+          stateDbPath: expandHomePath(options.config.providers.codex.stateDb, home)
+        },
+        platform: platform.platform
+      })
     /*
      * Who decides what a mine is made of.
      *
@@ -1410,6 +1445,27 @@ export class AgentRuntime {
     } catch (error) {
       console.warn(`[runtime] Failed to read feed for ${dwarfId}`, error)
       return unreadableFeed()
+    }
+  }
+
+  /**
+   * Every dwarf that has spoken in one mine, with its latest messages (#192).
+   *
+   * Resolved by MINE ID against the board, never by a path the renderer
+   * names: the folder is the one the panel is already being shown for, so this
+   * channel cannot be talked into reading transcripts for a folder it is not.
+   * A mine the board does not hold, and a read that fails, both answer
+   * `readable: false` rather than an empty list — the panel says "nobody has
+   * spoken here yet" only about a folder it actually read.
+   */
+  async mineHistory(mineId: string): Promise<MineHistoryResult> {
+    const mine = this.mines.find((item) => item.id === mineId)
+    if (mine === undefined) return unreadableHistory()
+    try {
+      return { readable: true, speakers: await this.history.read(mine.path) }
+    } catch (error) {
+      console.warn(`[runtime] Failed to read the history of ${mineId}`, error)
+      return unreadableHistory()
     }
   }
 

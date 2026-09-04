@@ -16,6 +16,7 @@ import type {
   HeldSessionLaunchResult,
   MetricsResetResult,
   MineDeclareResult,
+  MineHistoryResult,
   MinesSnapshot,
   MineUndeclareResult,
   PanelLayout,
@@ -79,6 +80,17 @@ export interface DwarfAiMinersApi {
    * from an empty list.
    */
   getDwarfFeed: (dwarfId: string) => Promise<DwarfFeedResult>
+  /**
+   * Every dwarf that has spoken in a mine, with its latest messages, read from
+   * the transcripts under the mine's folder (#192) — for the Mine History
+   * panel, which reads a mine whose crew may be long gone.
+   *
+   * Named by MINE ID, never a path, like every other mine channel: main
+   * resolves the folder from the board it is already showing. `readable:
+   * false` says main could not answer for this mine at all, which is a
+   * different answer from a mine nobody has spoken in.
+   */
+  getMineHistory: (mineId: string) => Promise<MineHistoryResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
@@ -211,6 +223,10 @@ const api: DwarfAiMinersApi = {
   // check only ever sees a real string.
   getDwarfFeed: (dwarfId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getDwarfFeed, typeof dwarfId === 'string' ? dwarfId : ''),
+  // Same discipline as getDwarfFeed: a mine id crosses as a real string or as
+  // '', which main refuses as a mine it does not hold.
+  getMineHistory: (mineId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getMineHistory, typeof mineId === 'string' ? mineId : ''),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
   kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
   // Same discipline as setToggleShortcut, applied field by field: a launch

@@ -275,6 +275,9 @@ const MAIN_TREE_GLOSSES = {
   appDatabase: 'the one SQLite file',
   config: null,
   domain: 'pure rules and the type barrel',
+  // Glossed in src/README.md instead: AGENTS.md sits at its own 199-line
+  // budget, and one more word here is the line that breaks it.
+  history: null,
   hooks: 'the opt-in Claude push channel',
   ledger: 'mined, persisted',
   platform: 'composed once in `platformAdapters.ts`',

@@ -21,6 +21,7 @@ import type {
   MetricsResetResult,
   Mine,
   MineDeclareResult,
+  MineHistoryResult,
   MinesSnapshot,
   MineUndeclareResult,
   PanelEdge,
@@ -100,6 +101,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
+  ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
@@ -568,6 +570,13 @@ async function init(): Promise<void> {
   ipcMain.handle(IPC_CHANNELS.getDwarfFeed, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noFeed
     return runtime?.dwarfFeed(dwarfId) ?? noFeed
+  })
+  // A mine this process could not read history for (#192) — never "nobody has
+  // spoken here", which is what an empty list with `readable: true` would say.
+  const noHistory: MineHistoryResult = { readable: false, speakers: [] }
+  ipcMain.handle(IPC_CHANNELS.getMineHistory, (_event, mineId: unknown) => {
+    if (typeof mineId !== 'string' || mineId === '') return noHistory
+    return runtime?.mineHistory(mineId) ?? noHistory
   })
 
   const notDelivered: DwarfTextResult = {
