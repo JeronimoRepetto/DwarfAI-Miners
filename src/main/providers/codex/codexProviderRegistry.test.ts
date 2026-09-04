@@ -179,7 +179,13 @@ describe('CodexProvider with the Codex SQLite registry', () => {
     // A heartbeat proves liveness but must never promote to busy: only an open
     // turn or observed rollout growth may do that.
     expect(snapshots[0]!.status).toBe('idle')
-    expect(snapshots[0]!.dwarfs).toEqual([])
+    // AMENDED for #202 (was: `dwarfs` is `[]`). The clause above is the whole
+    // reason this line had to change: a heartbeat PROVES the session is live,
+    // and a live session that showed no dwarf was the flicker — a Codex dwarf
+    // that existed only inside an open turn. The dwarf is here and resting;
+    // only the busy claim is withheld.
+    expect(snapshots[0]!.dwarfs).toHaveLength(1)
+    expect(snapshots[0]!.dwarfs[0]).toMatchObject({ id: 'codex:' + LIVE_ID, status: 'waiting' })
   })
 
   it('ignores a heartbeat older than the heartbeat window', async () => {

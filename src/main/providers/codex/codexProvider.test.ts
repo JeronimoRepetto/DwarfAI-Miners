@@ -127,16 +127,40 @@ describe('CodexProvider', () => {
     expect(snapshots.map((s) => s.sessionId).sort()).toEqual([BUSY_SESSION_ID, SESSION_ID])
   })
 
-  it('maps a completed last turn to an idle snapshot with no dwarfs', async () => {
+  /**
+   * AMENDED for #202 (was: "maps a completed last turn to an idle snapshot with
+   * no dwarfs"). The snapshot status is unchanged — no turn is open — but the
+   * `dwarfs: []` it used to assert was the defect itself: a Codex session the
+   * scan still reports is a session a human is sitting in front of between
+   * turns, and deleting its dwarf at task_complete is what made the same dwarf
+   * leave, return, and be placed somewhere else on every prompt. Only its
+   * STATUS may move. The doc named this test as one taught to agree with the
+   * defect (docs/session-topology-and-roles.md).
+   */
+  it('maps a completed last turn to an idle snapshot whose dwarf rests in place', async () => {
     const snapshots = await makeProvider().scan()
     const idle = snapshots.find((s) => s.sessionId === SESSION_ID)!
     expect(idle.status).toBe('idle')
-    expect(idle.dwarfs).toEqual([])
+    expect(idle.dwarfs).toHaveLength(1)
+    expect(idle.dwarfs[0]).toMatchObject({
+      id: `codex:${SESSION_ID}`,
+      provider: 'codex',
+      status: 'waiting',
+      sessionId: SESSION_ID
+    })
     expect(idle.cwd).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
     expect(idle.updatedAt).toBe(NOW - 60_000)
   })
 
-  it('maps an open turn to a busy snapshot with a single worker dwarf', async () => {
+  /**
+   * AMENDED for #202 (was: "…with a single worker dwarf"). The role assertion
+   * stands and is the point: 'worker' here records that no child edge has ever
+   * been observed for this session, which is the absence of evidence — it is no
+   * longer a verdict recomputed from how many children are busy this scan. The
+   * doc named this test too (it pins a standalone busy Codex session as a
+   * worker); what it pinned by accident it now pins on purpose.
+   */
+  it('maps an open turn to a busy snapshot with one dwarf no child edge has ranked', async () => {
     const snapshots = await makeProvider().scan()
     const busy = snapshots.find((s) => s.sessionId === BUSY_SESSION_ID)!
     expect(busy.status).toBe('busy')
@@ -154,7 +178,14 @@ describe('CodexProvider', () => {
     })
   })
 
-  it('maps a user-aborted turn to an idle snapshot with no dwarfs (issue #34)', async () => {
+  /**
+   * AMENDED for #202 (was: "…to an idle snapshot with no dwarfs"). Issue #34's
+   * subject is untouched and still asserted: an aborted turn must stop the
+   * dwarf MINING. What changed is that stopping work is not leaving the mine —
+   * the session is still there, at the prompt, so the dwarf rests instead of
+   * disappearing.
+   */
+  it('maps a user-aborted turn to an idle snapshot whose dwarf stops mining (issue #34)', async () => {
     // Esc mid-turn: task_started stays unmatched by any task_complete, but the
     // structured turn_aborted record proves the turn is over. Without it the
     // dwarf keeps mining forever even though the agent sits at the prompt.
@@ -178,7 +209,11 @@ describe('CodexProvider', () => {
     const snapshots = await makeProvider().scan()
     const aborted = snapshots.find((snapshot) => snapshot.sessionId === BUSY_SESSION_ID)!
     expect(aborted.status).toBe('idle')
-    expect(aborted.dwarfs).toEqual([])
+    expect(aborted.dwarfs).toHaveLength(1)
+    expect(aborted.dwarfs[0]).toMatchObject({
+      id: `codex:${BUSY_SESSION_ID}`,
+      status: 'waiting'
+    })
   })
 
   it('falls back to head context when a large turn pushes it outside the tail read', async () => {
@@ -214,7 +249,16 @@ describe('CodexProvider', () => {
     expect(pushedOut.dwarfs[0]).toMatchObject({ status: 'working' })
   })
 
-  it('uses explicit Codex thread_spawn data to name a worker and promote its observed parent', async () => {
+  /**
+   * AMENDED for #202 (was: "…and promote its observed parent"). There is no
+   * promotion left to name: the parent is not raised while its child happens to
+   * be busy, it is a foreman because a child edge was read for it — a fact
+   * about the tree, not about this scan's headcount. The assertions are the
+   * same ones; what they mean changed, and the doc flagged this test as
+   * carrying the old meaning. The edge outliving the child's turn is pinned
+   * separately, in the #202 block at the end of this file.
+   */
+  it('uses explicit Codex thread_spawn data to name a worker and make its parent a foreman', async () => {
     const parentSessionId = '01a048b5-parent-7312-ab78-000000000000'
     const childSessionId = '01a048b5-child-7312-ab78-000000000000'
     fake.addFile(
@@ -685,6 +729,111 @@ describe('CodexProvider', () => {
       const snapshots = await makeProvider().scan()
       const idle = snapshots.find((s) => s.sessionId === SESSION_ID)!
       expect(idle.cwd).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
+    })
+  })
+
+  /**
+   * Issue #202 — the flicker. Two rules made a Codex dwarf unstable where
+   * Claude's was steady, and both are gone:
+   *
+   * 1. A main dwarf existed only while a turn was open (`dwarfs: busy ? … : []`),
+   *    so task_complete DELETED it and the next prompt built a new one — which
+   *    the map's hash slot over the changing set of unplaced mines then put
+   *    somewhere else (`renderer/src/lib/placement.ts`). The reported symptom
+   *    was a foreman popping up at a random site and vanishing again.
+   * 2. Rank was re-derived from the busy headcount on every scan: every main
+   *    dwarf was born 'worker' and promoted only while a child was busy in the
+   *    SAME scan, so a foreman reverted to worker the moment its child's turn
+   *    closed. Claude retired exactly this rule — "the main session is the
+   *    orchestrator: it is the foreman whether or not it currently has agents
+   *    out" (`claudeProvider.ts`).
+   *
+   * What replaced them: the dwarf lives as long as the session the liveness
+   * window still reports, an observed child edge makes its parent a foreman for
+   * the rest of that session, and STATUS is the only thing that moves between
+   * turns.
+   */
+  describe('a main dwarf that outlives its own turns (#202)', () => {
+    const STEADY_ID = '01a048b5-steady-7312-ab78-000000000000'
+    const KID_ID = '01a048b5-steadykid-ab78-000000000000'
+    const STEADY_PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-40-00-${STEADY_ID}.jsonl`
+    const KID_PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-41-00-${KID_ID}.jsonl`
+    /** The fixture's own final line: the task_complete that closes its turn. */
+    const TASK_COMPLETE = rolloutLines[rolloutLines.length - 1]!
+    /** A second, unmatched task_started — the next prompt reopening the turn. */
+    const REOPENED = JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'steady-second-turn' }
+    })
+
+    it('keeps one dwarf with one id and one role as its turn closes and reopens', async () => {
+      const provider = makeProvider()
+      const openTurn = busyLines().replaceAll(BUSY_SESSION_ID, STEADY_ID)
+      fake.addFile(STEADY_PATH, openTurn, NOW - 10_000)
+      fake.addFile(
+        KID_PATH,
+        withThreadSpawn(
+          busyLines().replaceAll(BUSY_SESSION_ID, KID_ID),
+          STEADY_ID,
+          'Focused worker'
+        ),
+        NOW - 9_000
+      )
+
+      const working = (await provider.scan()).find((s) => s.sessionId === STEADY_ID)!
+
+      // The child's turn ends and its rollout leaves the scan entirely. Under
+      // the deleted promotion rule the parent's rank was recomputed here from
+      // the children busy in THIS scan, and reverted to 'worker'.
+      fake.removeFile(KID_PATH)
+      // The parent's turn closes. The scan that OBSERVES the completion still
+      // reads busy, because the rollout grew since the previous scan and growth
+      // is the one liveness signal a frozen mtime cannot contradict (issue #1).
+      // The closed turn is visible on the scan after it, with no growth left to
+      // contradict it — which is why the three turn states take four scans.
+      fake.addFile(STEADY_PATH, `${openTurn}${TASK_COMPLETE}\n`, NOW - 8_000)
+      await provider.scan()
+      const waiting = (await provider.scan()).find((s) => s.sessionId === STEADY_ID)!
+
+      fake.addFile(STEADY_PATH, `${openTurn}${TASK_COMPLETE}\n${REOPENED}\n`, NOW - 7_000)
+      const workingAgain = (await provider.scan()).find((s) => s.sessionId === STEADY_ID)!
+
+      for (const snapshot of [working, waiting, workingAgain]) {
+        expect(snapshot.dwarfs.map((dwarf) => dwarf.id)).toEqual([`codex:${STEADY_ID}`])
+        expect(snapshot.dwarfs[0]!.role).toBe('foreman')
+      }
+      expect([working, waiting, workingAgain].map((s) => s.dwarfs[0]!.status)).toEqual([
+        'working',
+        'waiting',
+        'working'
+      ])
+    })
+
+    /**
+     * The other half of the relaxed filter, and the reason it is a relaxation
+     * rather than a deletion: a dwarf now belongs to every session the scan
+     * reports, so the guard against resurrecting the whole scanDays window of
+     * finished sessions has to be the liveness gate itself. The rollout below
+     * is inside the day-directory window, has no registry row, and never
+     * spoke — and it is the STALENESS that keeps it off the board, before any
+     * snapshot exists to carry a dwarf.
+     */
+    it('leaves an aged-out rollout the registry never recorded off the board, dwarf and all', async () => {
+      const HISTORY_ID = '01a048b5-history-7312-ab78-000000000000'
+      const meta: { payload: Record<string, unknown> } = JSON.parse(rolloutLines[0]!)
+      meta.payload.session_id = HISTORY_ID
+      meta.payload.id = HISTORY_ID
+      fake.addFile(
+        `${ROOT}\\2026\\08\\25\\rollout-2026-08-25T09-00-00-${HISTORY_ID}.jsonl`,
+        JSON.stringify(meta) + '\n',
+        NOW - 4 * 24 * 60 * 60 * 1_000
+      )
+
+      const snapshots = await makeProvider().scan()
+      expect(snapshots.map((s) => s.sessionId)).not.toContain(HISTORY_ID)
+      expect(snapshots.flatMap((s) => s.dwarfs.map((dwarf) => dwarf.id))).not.toContain(
+        `codex:${HISTORY_ID}`
+      )
     })
   })
 })

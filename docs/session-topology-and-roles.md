@@ -1,11 +1,16 @@
 # Session topology and dwarf roles
 
-Research for issue #62. **Nothing here is implemented.** It exists so the next backend — Gemini,
-OpenCode, a local LLM — does not have to guess what `foreman` means, and so the two backends that
-already ship stop disagreeing about it.
+Research for issue #62. **The normalized model proposed in §6 is not implemented.** It exists so the
+next backend — Gemini, OpenCode, a local LLM — does not have to guess what `foreman` means, and so
+the two backends that already ship stop disagreeing about it.
 
-Every claim below carries the file and line it was read from, on `cc75a89`. Where the issue's own
-account differs from the code, the code wins and the difference is named.
+Two things this document argued for have since shipped on their own axes: the attendance split
+(#68) and the Codex rank-and-existence fix §1 reported as a live defect (#202). Both are recorded
+where they belong — §1 and §12 — and neither is §6.
+
+Every claim below carries the file and line it was read from, on `cc75a89`, except where a section
+says otherwise. Where the issue's own account differs from the code, the code wins and the
+difference is named.
 
 ---
 
@@ -13,39 +18,70 @@ account differs from the code, the code wins and the difference is named.
 
 Three providers, three unrelated rules. The issue names two of them.
 
-| Provider  | Rule                                                                    | Where                           |
-| --------- | ----------------------------------------------------------------------- | ------------------------------- |
-| Claude    | Main session is **always** `foreman`; every subagent is `worker`        | `claudeProvider.ts:532`, `:591` |
-| Codex     | Every `mainDwarf` starts `worker`; a parent is **mutated** to `foreman` | `codexProvider.ts:483`, `:597`  |
-| Simulated | Roster index 0 is `foreman`, everyone else `worker`                     | `world.ts:293`                  |
+| Provider  | Rule                                                             | Where                           |
+| --------- | ---------------------------------------------------------------- | ------------------------------- |
+| Claude    | Main session is **always** `foreman`; every subagent is `worker` | `claudeProvider.ts:532`, `:591` |
+| Codex     | See the resolved rule below (**changed since `cc75a89`**, #202)  | `codexProvider.ts:566`, `:700`  |
+| Simulated | Roster index 0 is `foreman`, everyone else `worker`              | `world.ts:293`                  |
 
 The simulated provider is the tell. It is not modelling topology at all — it is picking the first
 element of an array — and nothing stopped it, because there is no place in the codebase where the
 meaning of `foreman` is written down.
 
-**Codex's promotion is narrower than "has a child".** `linkSubagents` (`codexProvider.ts:586-602`)
-requires all four of:
+### RESOLVED (#202) — Codex no longer derives rank from the headcount
 
-1. the child's snapshot status is `busy` (`:592`),
-2. a parent id from the child's own rollout head or from `thread_spawn_edges` (`:593`),
-3. the parent was discovered in the **same scan** (`:595-596`),
-4. and then it writes `parent.mainDwarf.role = 'foreman'` (`:597`).
+What this section reported as a live defect was fixed on `5569b97`+ and is kept here, defect first,
+because the reasoning is what generalises to the next backend. Line numbers in this sub-section were
+read on the fix; every other line number in this document is still `cc75a89`'s.
 
-So a Codex session that spawned a subagent which has since gone quiet falls back to `worker` on the
-next tick. The rank flickers. That is precisely the defect Claude fixed and pinned:
+**The defect, as it stood.** `linkSubagents` required all four of: the child's snapshot status is
+`busy`, a parent id from the child's own rollout head or from `thread_spawn_edges`, the parent
+discovered in the **same scan**, and only then `parent.mainDwarf.role = 'foreman'`. So a Codex
+session that spawned a subagent which had since gone quiet fell back to `worker` on the next tick.
+The rank flickered. That was precisely the defect Claude fixed and pinned:
 
 > The main session is the orchestrator: it is the foreman whether or not it currently has agents
 > out. Deriving the role from the headcount instead made the same dwarf swap identity mid-session.
-> — `claudeProvider.ts:529-531`, pinned by `claudeProvider.test.ts:143` and `:156`
+> — `claudeProvider.ts:529-531` on `cc75a89`, `:686-688` today after #68's line drift; pinned by
+> `claudeProvider.test.ts:143` and `:156` then, `:185` and `:198` now
 
-Codex is running the rule Claude already retired. It just spells the headcount as an edge.
+It compounded with a second rule this section named only in passing: an idle Codex session
+contributed no dwarfs of its own — `dwarfs: busy ? [mainDwarf] : []` — so `task_complete` deleted
+the dwarf outright and the next prompt built a new one, which the map's hash slot over the changing
+set of unplaced mines then placed somewhere else (`renderer/src/lib/placement.ts`). Existence
+flickering, not just rank. Reported live on Windows against real Codex sessions, 2026-09-04 (#202).
 
-**Where the issue's account needed tightening:** it says `linkSubagents()` promotes "when a busy
-child and a real parent edge are both observed in the same scan", which is right, but it omits that
-the same function is also what puts an _idle_ parent on the board at all (`:598-600`, and the
-`DiscoveredCodexSnapshot.mainDwarf` comment at `:95`). An idle Codex session contributes no dwarfs
-of its own — `dwarfs: busy ? [mainDwarf] : []` at `codexProvider.ts:514` — so `linkSubagents` today
-carries two unrelated jobs on one line of reasoning. Any change has to keep the second one.
+**The rule now.** Two facts, kept apart:
+
+- **Existence** is the session's, not the turn's. `dwarfs: [mainDwarf]`
+  (`codexProvider.ts:607`) — reaching that line already means `scan()`'s liveness gate accepted the
+  session (registry activity via `readCodexThreads`, a `logs_2.sqlite` heartbeat, file growth, or
+  the process probe inside `livenessWindowS + idleRetentionS`), and that gate stays the one and only
+  place a Codex session stops being live. Only `status` moves between turns, `working` ↔ `waiting`.
+  The snapshot's own `status` is unchanged (`busy ? 'busy' : 'idle'`, `:598`) because it answers a
+  different question — _is a turn open_ — and listing a dwarf beside an `idle` snapshot is exactly
+  what `claudeProvider` does for a session that is idle with agents out (`:680`).
+- **Rank** is a remembered edge, not a headcount. One `Set<string>` of session ids ever observed as
+  a parent (`codexProvider.ts:244`) is read when the dwarf is built (`:566`) and written by
+  `linkSubagents` (`:695`), which then applies it to every parent in the scan (`:700`) so an edge
+  first read this tick still reaches a dwarf already built. Monotone: `worker` is now the absence of
+  evidence, and nothing demotes.
+
+The `Set` is flat and process-lifetime, for the reason `claudeProvider`'s `abandonedAgents`
+(`:343`) is: one short string per session that ever spawned a sub-agent, and stickiness is the
+point — pruning it to the sessions still on the board would reintroduce the flicker for any parent
+one scan happened to miss.
+
+**What did not change**, and is worth stating because #202's over-engineering test was that the fix
+delete a rule and relax a filter rather than add machinery: no new field on the wire, no new
+provider option, no second store, no change to busy detection, and no change to how a session ages
+off the board — a waiting Codex root still leaves through the ordinary liveness window, so the
+silence-window invariant (#47, #68) is untouched. `linkSubagents`' second job — putting a parent on
+the board that its own turn state would have hidden — is not deleted but subsumed: every live
+session lists its dwarf now, so there is nothing left to unshift.
+
+Sections 2 to 11 below are unaffected: they argue for a normalized topology model (#62), which is
+still unimplemented. #202 changed only which of the two rules §1 describes Codex is running.
 
 ---
 
@@ -228,6 +264,15 @@ rather than passively updated:
 
 The first two survive the proposed rule unchanged. **The third is the one that has to be amended**,
 which means [`test-safety`](../skills/test-safety/SKILL.md) binds on any implementation.
+
+**Since resolved (#202).** Three Codex tests were amended, and the prediction above was half right:
+the standalone-`worker` assertion survived — it now records the _absence_ of an observed child edge
+rather than a headcount verdict — while two tests this section did not name had to change with it,
+because they pinned the deleted existence rule rather than the rank one:
+`codexProvider.test.ts`'s completed-last-turn and user-aborted-turn cases (both asserted
+`dwarfs: []` for a session the scan still reported), and `codexProviderRegistry.test.ts`'s
+heartbeat case, whose own comment said the heartbeat _proves the session is live_ two lines above an
+empty crew. Each amendment is labelled `AMENDED for #202` where it stands.
 
 ---
 
@@ -555,7 +600,8 @@ topology as a fact — which makes §6 a refactor with two working examples inst
   is deferred, not incurred — but it becomes real the day Codex learns to report silence, which is
   the same day §8's `humanAttended` question has to be answered.
 - **`codexProvider.test.ts:138-154` must be amended, not rewritten.**
-  [`test-safety`](../skills/test-safety/SKILL.md) binds.
+  [`test-safety`](../skills/test-safety/SKILL.md) binds. (It was, under #202 — see §5's addendum
+  for which tests actually moved.)
 
 ### The alternative, and why not
 
@@ -605,6 +651,15 @@ One thing it argued for has since shipped, on a different axis than this documen
 - **Ordinary line drift, unrelated to #68**: `claudeProvider.ts`'s role-write sites moved,
   because #68 inserted the `attendance` field earlier in the file. The quoted comment text is
   unchanged; only its line numbers moved.
+- **§1's Codex defect has been fixed (#202)**, and §1 now carries the resolved rule beside the
+  account of the defect. This is the one place where this document no longer describes `cc75a89`:
+  §1's Codex row and its `RESOLVED (#202)` sub-section were read on the fix. §5's write inventory
+  still lists `codexProvider.ts:483`/`:597` as `cc75a89` recorded them — the second of those sites,
+  the mutation, is the one that went. It was a scoped Codex-only fix of exactly the shape §10
+  recommended, and it did **not** implement §6: nothing was added to `contracts.ts`, no
+  `deriveRoles` exists, and providers still write `role` directly. §10's rules 2 and 3 (an
+  unresolvable subagent must not render as a foreman) were not needed either, because the fix never
+  flipped the default: a Codex dwarf with no observed parent edge is still born `worker`.
 
-Nothing above touches this document's actual subject — the role and topology proposal for #62
-is still unimplemented, and sections 1 to 11 remain an accurate reading of `cc75a89`.
+Nothing above changes this document's actual subject — the role and topology proposal for #62
+is still unimplemented, and sections 2 to 11 remain an accurate reading of `cc75a89`.
