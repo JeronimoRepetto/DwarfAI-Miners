@@ -476,11 +476,11 @@ the content shape — so the block array of #216 is not a way back in. Note this
 lines Claude Code wrote for the transcript, not about `isMeta`, which is a different skip with a
 different reason (§1.6 above).
 
-Known limit, unchanged by this: `ClaudeProvider.feed` now walks the same widened window the history
-panel does, but **Codex's** `feed()` still reads a fixed 256 KiB tail
-(`FEED_TAIL_BYTES` in `codexProvider.ts`). Codex _history_ is bounded by messages, because
-`MineHistoryReader` walks both providers' transcripts; only its live feed is not. No issue covers
-that yet.
+Both providers read the same way as of issue #228: `ClaudeProvider.feed` and `CodexProvider.feed`
+each walk this window, as `MineHistoryReader` already did for both. The gap this paragraph used to
+record — Codex's live feed alone left on a fixed 256 KiB tail while the other two were widened —
+is closed. What a rollout's own line shapes do to the walk, and what it measured on real rollouts,
+are in §2.3.
 
 ---
 
@@ -535,11 +535,49 @@ Minimal example (trimmed) **[V]**:
 
 **2026-08-29 re-verification against a real, actively-running Codex session on this machine** (this project, PID 32864 `codex.exe` alive since 14:23, confirmed via `Get-CimInstance Win32_Process`):
 
-- **Bug found and fixed — tail-window busy detection**: a real rollout from this session showed a `task_started`→`task_complete` gap of **347,167 bytes** (one turn's tool output/reasoning). AgentName originally read only the last 256KiB (`TAIL_BYTES`) of the rollout to detect an open turn, so a genuinely in-progress turn whose `task_started` had already scrolled past that window looked idle — the main symptom reported ("no dwarfs appear with a live session"). Fixed by reading a larger, still-bounded tail (4 MiB, `BUSY_TAIL_BYTES` in `codexProvider.ts`) for busy detection specifically, keeping the smaller 256KiB read for the click-to-focus feed. Reproduced and verified against a synthetic rollout built from this session's real `session_meta`/`turn_context` lines plus an oversized body (`src/main/providers/codex/codexProvider.integration.test.ts`).
+- **Bug found and fixed — tail-window busy detection**: a real rollout from this session showed a `task_started`→`task_complete` gap of **347,167 bytes** (one turn's tool output/reasoning). AgentName originally read only the last 256KiB (`TAIL_BYTES`) of the rollout to detect an open turn, so a genuinely in-progress turn whose `task_started` had already scrolled past that window looked idle — the main symptom reported ("no dwarfs appear with a live session"). Fixed by reading a larger, still-bounded tail (4 MiB, `BUSY_TAIL_BYTES` in `codexProvider.ts`) for busy detection specifically, keeping a smaller read for the click-to-focus feed — which walks
+  the window instead of reading a fixed tail as of issue #228, see below. Reproduced and verified against a synthetic rollout built from this session's real `session_meta`/`turn_context` lines plus an oversized body (`src/main/providers/codex/codexProvider.integration.test.ts`).
 - **Bug found and fixed — date-directory scan gap**: a rollout lives in its **START-date** directory for its whole lifetime, but the provider only scanned `today` and `yesterday`. A session opened more than a day ago and still active would never be found even with a fresh mtime. Fixed with a configurable `CODEX_SCAN_DAYS` (default 7) scanning today back N-1 days; mtime filtering keeps this cheap.
 - **Bug found and fixed — idle-but-open session disappears entirely**: once a rollout's mtime exceeds `CODEX_LIVENESS_WINDOW_S` (300s default), the old code dropped it outright — even though Codex writes nothing to the rollout while its CLI is open but quiet (confirmed here: the same real session's rollout had not been touched in ~1h49m while its process was still alive). Fixed with `CODEX_IDLE_RETENTION_S` (default 3600s): a stale-but-recent rollout stays visible while a `codex`-named process is confirmed running (`isCodexProcessRunning()`, PowerShell `Get-CimInstance Win32_Process` matching name/cmdline). **Caveat observed live**: by the time this was checked, the same session's rollout was quiet for ~1h58m — past even the 3600s default retention — so it was (correctly) still excluded; a user whose Codex sessions sit idle for multiple hours between prompts should raise `CODEX_IDLE_RETENTION_S`.
 - `dateSegments()` in `codexProvider.ts` uses local `Date` methods (`getFullYear`/`getMonth`/`getDate`), and real rollout directory names matched the local wall-clock date on this machine exactly — **no local/UTC mismatch found**; this was checked and is not a bug.
 - Field names used by the parser (`session_meta.payload.id`/`session_id`/`cwd`, `turn_context.payload.model`/`effort`, `event_msg.payload.type` of `task_started`/`task_complete`) were re-confirmed byte-for-byte against this real, currently-relevant rollout — **no parser/format drift found**.
+
+#### The feed read walks the window, and a rollout's line shapes make that safe (2026-09-04, issue #228)
+
+`CodexProvider.feed` read a fixed 256 KiB tail (`FEED_TAIL_BYTES`) long after `readFeedWindow`
+had replaced that same window on the Claude side and in the Mine History panel — the gap §1
+recorded rather than quietly widening (#225). It now takes the same walk, and the constant is
+gone: nothing else read it, and the poll's own window here is `BUSY_TAIL_BYTES` (4 MiB), which
+`feed()` never shared. Claude's `TRANSCRIPT_TAIL_BYTES` survives for the opposite reason — there
+the poll does read it.
+
+Two things needed checking rather than assuming, because a rollout is not a transcript:
+
+- **The stop condition reads correctly for a rollout.** The walk stops when a window comes back
+  short of the bytes it asked for, which proves the read reached the start of the file. Rollout
+  lines are long and a byte-offset tail routinely opens in the middle of one; `jsonlRecords` drops
+  that fragment, so a narrow window does not show half a message — it loses the message. Both
+  directions are pinned in `codexProvider.test.ts`: a rollout below the narrowest step is answered
+  by one read and no escalation, and a user line the 256 KiB boundary cuts 40 bytes short comes
+  back whole once the walk widens, where the narrow window answers with the reply alone.
+- **Nothing moved onto the poll.** The 2-second loop calls `scan()` and nothing else;
+  `provider.feed()` has exactly two call sites, both in `runtime.ts` and both on demand —
+  `dwarfFeed` for the message panel, and `activateDwarf`'s fallback for a session whose window
+  cannot be focused. The same two Claude has, so widening cost zero per poll.
+
+Measured over every rollout on the machine this was written on, 2026-09-04 **[V]** — 174 files,
+538.9 MiB, 142 over 256 KiB, 38 over 2 MiB, 11 over 8 MiB, largest 128.0 MiB:
+
+| Asking for             | Messages found, fixed 256 KiB | Messages found, walk | Rollouts the walk improved | Rollouts answering nothing |
+| ---------------------- | ----------------------------- | -------------------- | -------------------------- | -------------------------- |
+| 12 (the message panel) | 578                           | **881**              | 68 of 174                  | 18 to 16                   |
+| 50 (Mine History)      | 1 023                         | **1 778**            | 74 of 174                  | 18 to 16                   |
+
+One feed open reads one rollout, so what a person waits for is the per-rollout figure: at a limit
+of 12, p50 3.1 ms, p95 18.3 ms, max 24.9 ms (at 50: p50 2.9 ms, p95 19.1 ms, max 33.1 ms). Reading
+the whole corpus goes from 210 ms to 863 ms, which nobody does — and the 16 rollouts still
+answering nothing are sessions carrying no human-readable message anywhere in them, not a window
+too narrow to find one.
 
 ---
 
