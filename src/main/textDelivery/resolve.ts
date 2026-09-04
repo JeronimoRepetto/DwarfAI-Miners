@@ -157,6 +157,13 @@ function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint 
  * Both callers read this one function, exactly as they read canCarryKick:
  * duplicating the rule is how the panel and the runtime start disagreeing
  * about the same dwarf (#97).
+ *
+ * 'hosted-stdin' ends a whole process too (#194) and gets no matching guard,
+ * because it cannot reach one: the hop rule above exists for a launched CLI
+ * whose own transcript reports subagents, and nothing observes children for a
+ * hosted process — no provider reads it, so no worker of its can be on the
+ * board to relay through it. A guard here would be an unreachable branch
+ * claiming a case exists.
  */
 function kickEndpointOf(hops: ForemanHops): KickEndpoint | null {
   if (!canCarryKick(hops.endpoint)) return null

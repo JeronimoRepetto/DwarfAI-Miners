@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OTHER_CHOICE } from '../lib/launch/launchState'
-import { OTHER_NOT_LAUNCHABLE } from '../lib/launch/providerChips'
 import { defaultDwarf, defaultMine } from '../testing/factories'
 import type { Dwarf, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
@@ -32,6 +31,10 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, CODEX] }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' }),
+    // The third launch channel (#194). Named here rather than per test for the
+    // reason this whole stub exists: an awaited member resolving undefined
+    // becomes an unhandled rejection only the full suite catches.
+    launchHostedProcess: vi.fn().mockResolvedValue({ launched: true }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -171,24 +174,95 @@ describe('submitting a launch', () => {
   })
 
   /*
-   * The chip is drawn where the design draws it and its gate works, but no
-   * engine takes a command — so Enter says so and nothing is started. A submit
-   * that reached the bridge would start a CLAUDE session for a command the user
-   * chose instead of it, which is the one outcome worse than refusing.
+   * ## This test was REPLACED for #194
+   *
+   * It used to be "refuses a custom command with the stated reason and starts
+   * nothing", and it pinned `OTHER_NOT_LAUNCHABLE`: the #168 ruling that no
+   * engine takes a command, so Enter says why and starts nothing. The
+   * maintainer reversed that ruling on 2026-09-04 — the panel is the process's
+   * stdio, so the panel is what observes it — and the constant is gone from
+   * providerChips.ts with its whole argument.
+   *
+   * The case it covered is still covered, on the other side: Enter on Other
+   * reaches the bridge now, and what it must NOT do is reach either of the
+   * other two channels. Starting a Claude session for a command somebody typed
+   * instead of Claude was the worse outcome the refusal existed to prevent, and
+   * it still is.
    */
-  it('refuses a custom command with the stated reason and starts nothing', async () => {
+  it('starts a custom command down the hosted channel and no other', async () => {
     const api = stubApi()
     const launch = useAgentLaunch()
     await launch.open(MINE)
     launch.choose(OTHER_CHOICE)
-    launch.setCommand('lalolanda')
+    launch.setCommand('  lalolanda --once  ')
+    launch.commit()
+    launch.setPrompt('  dig the east gallery  ')
+
+    await launch.submit()
+
+    expect(api.launchHostedProcess).toHaveBeenCalledWith({
+      mineId: MINE,
+      // The committed command, trimmed exactly as commitCommand left it — the
+      // panel sends the string and main decides what program that is.
+      command: 'lalolanda --once',
+      prompt: 'dig the east gallery'
+    })
+    expect(api.launchHeldSession).not.toHaveBeenCalled()
+    expect(api.launchAgent).not.toHaveBeenCalled()
+    expect(launch.state.value.error).toBeNull()
+  })
+
+  /*
+   * The one thing the panel must not do with a command it cannot run: swallow
+   * the answer. #194 was reported as "it froze", which was a refusal nobody
+   * could see, so main's own reason has to reach the panel intact.
+   */
+  it('shows main’s own reason when the command could not be started', async () => {
+    const api = stubApi({
+      launchHostedProcess: vi
+        .fn()
+        .mockResolvedValue({ launched: false, error: 'That command has no shell to run in.' })
+    })
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose(OTHER_CHOICE)
+    launch.setCommand('lalolanda | tee log')
     launch.commit()
     launch.setPrompt('dig')
 
     await launch.submit()
 
-    expect(api.launchHeldSession).not.toHaveBeenCalled()
-    expect(launch.state.value.error).toBe(OTHER_NOT_LAUNCHABLE)
+    expect(api.launchHostedProcess).toHaveBeenCalledOnce()
+    expect(launch.state.value.error).toBe('That command has no shell to run in.')
+    // Back in the Add state with the typing intact, so a retry costs nothing.
+    expect(launch.state.value.prompt).toBe('dig')
+  })
+
+  /*
+   * No new phase for a hosted launch, which is the test of the wire shape
+   * (#194): main seeds a hosted process's conversation with the prompt exactly
+   * as the held registry seeds a session's, so the SAME receipt adopts it and
+   * the panel reaches the MessagePanel through the path it already had.
+   */
+  it('waits for its dwarf and adopts it by the receipt a held launch uses', async () => {
+    stubApi()
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose(OTHER_CHOICE)
+    launch.setCommand('lalolanda')
+    launch.commit()
+    launch.setPrompt('dig the east gallery')
+
+    await launch.submit()
+    expect(launch.phase.value).toBe('submitted-spawning')
+
+    launch.observe([mineWith([heldDwarf('hosted:1', 'dig the east gallery')])])
+
+    expect(launch.state.value.launchedDwarfId).toBe('hosted:1')
+    expect(launch.phase.value).toBe('message-panel')
+    // Never the detached terminal state: that one says the panel is not
+    // watching, and here it is.
+    expect(launch.state.value.detached).toBe(false)
   })
 
   it('refuses a detected provider it cannot start, repeating main’s reason', async () => {

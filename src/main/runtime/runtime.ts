@@ -23,6 +23,8 @@ import {
   type DwarfTextResult,
   type HeldSessionLaunchRequest,
   type HeldSessionLaunchResult,
+  type HostedLaunchRequest,
+  type HostedLaunchResult,
   type MaterialTotals,
   type MetricsResetResult,
   type Mine,
@@ -59,6 +61,9 @@ import {
   stampHeldTelemetry
 } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
+import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
+import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
+import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
@@ -133,6 +138,19 @@ const NO_LAUNCH_INBOX =
   'That session takes no messages: it was launched with a single prompt and exits with its turn.'
 const LAUNCH_ALREADY_ENDED = 'That session has already ended.'
 const LAUNCH_END_REFUSED = 'That session could not be ended.'
+/**
+ * The refusals for a process this panel is HOLDING over stdio (#194).
+ *
+ * A hosted process is the mirror image of a launched one, and the copy has to
+ * say so: it takes messages until its pipe closes, and the only kick available
+ * to it ends the whole process. There is no interrupt to offer, because this
+ * app knows nothing about what somebody else's program treats as one — a byte
+ * it happened to accept would be the panel guessing at another program's key
+ * bindings.
+ */
+const HOSTED_PIPE_CLOSED = 'That process is no longer taking input.'
+const HOSTED_ALREADY_ENDED = 'That process has already ended.'
+const HOSTED_END_REFUSED = 'That process could not be ended.'
 const NO_SUCH_MINE = 'That mine is no longer on the map.'
 const EMPTY_PROMPT = 'Type a prompt first.'
 const LAUNCH_FAILED = 'The agent could not be started.'
@@ -269,6 +287,11 @@ export interface RuntimeOptions {
    * real process tree; the default ends it through the platform port.
    */
   launchedSessions?: LaunchedSessionRegistry
+  /**
+   * Every command of the person's own this panel is holding (#194). Injected
+   * for tests, which must never spawn a process; the default holds real ones.
+   */
+  hostedProcesses?: HostedProcessRegistry
   /** Every per-OS adapter, already selected; injected for tests. */
   platformAdapters?: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
@@ -335,6 +358,14 @@ export class AgentRuntime {
   private readonly heldSessions: HeldSessionRegistry
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
+  /**
+   * Every command of the person's own this panel is holding (#194).
+   *
+   * A third way to own a child and deliberately not a fourth: it takes its
+   * per-OS half from the same `processEnd` port `launched` does, and its spawn
+   * seam is the same shape `heldSessions` uses for the Agent SDK.
+   */
+  private readonly hosted: HostedProcessRegistry
   /** Which agent CLIs this machine has (#91), asked when the Add Panel opens. */
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
@@ -515,6 +546,26 @@ export class AgentRuntime {
         endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
         log: (message) => console.log(message)
       })
+    // The same per-OS half as `launched` above, for the same reason: ending a
+    // tree differs by platform and that difference has exactly one owner. The
+    // spawn seam is composed here rather than in platformAdapters because
+    // starting a process is the same act everywhere — see nodeHostedProcess on
+    // why a hosted child needs no console-hosting intermediary (#194, #208).
+    this.hosted =
+      options.hostedProcesses ??
+      new HostedProcessRegistry({
+        start: createNodeHostedProcess(),
+        endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
+        // The plain environment, and no `buildRelayEnv` beside it: that helper
+        // leads PATH with the DETECTED CLI's own directory so a re-exec inside
+        // the child reaches the install detection found. There is no detected
+        // install here — the program is a name somebody typed — so leading PATH
+        // with anything would be this app deciding which of their programs they
+        // meant.
+        env: process.env,
+        now: this.now,
+        log: (message) => console.log(message)
+      })
     // Composed here rather than in platformAdapters: starting a CLI is the same
     // act on all three platforms, so there is no per-OS branch to own — only
     // the PATH spelling, which arrives as the already-selected platform.
@@ -640,6 +691,22 @@ export class AgentRuntime {
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
         const merged = mergeDeclaredMines(rawMines, this.declared, tierOf)
+        // Every command of the person's own this panel is holding (#194) —
+        // dwarfs no provider can see either, and for a stronger reason than a
+        // held session's crew: nothing observes these at all except this
+        // process. Stamped HERE, beside mergeDeclaredMines, because it is the
+        // other step that may put a mine on the board which discovery did not
+        // find: a hosted process has no provider snapshot, so there is no
+        // `cwd` for aggregateMines to group, and a mine nobody is working is
+        // not on the board at all. Before the lifecycle, like the crew stamp,
+        // so a process that has gone gets the same leaving grace and walks out
+        // to a spawn point.
+        const withHosted = stampHostedProcesses(
+          merged,
+          this.hosted.states(),
+          tierOf,
+          platform.platform
+        )
         // A held session's own subagents (#157), which no provider can see:
         // they run in the foreground, so the transcript carries no
         // `async_launched` record for the poll to read (see heldCrew.ts for
@@ -648,7 +715,9 @@ export class AgentRuntime {
         // it gets the leaving grace and walks out to a spawn point, it is
         // placed by the same solver, and its send route is resolved by the
         // same stamp as everyone else's.
-        const crew = stampHeldCrew(merged, (sessionId) => this.heldSessions.crewState(sessionId))
+        const crew = stampHeldCrew(withHosted, (sessionId) =>
+          this.heldSessions.crewState(sessionId)
+        )
         this.heldCrewTargets = crew.targets
         const mines = crew.mines
         // Accrual happens on the lifecycle's output, which is exactly what
@@ -749,6 +818,18 @@ export class AgentRuntime {
         } else {
           pollProfiler.count('skip')
         }
+        // A hosted process whose dwarf has now left the published board is
+        // forgotten (#194). Held until here rather than dropped at its exit,
+        // because the lifecycle's grace window is what walks it out — a record
+        // removed the moment the process died would make its dwarf blink off
+        // instead.
+        for (const state of this.hosted.states()) {
+          if (state.running) continue
+          const stillDrawn = published.some((mine) =>
+            mine.dwarfs.some((dwarf) => dwarf.id === state.hostedId)
+          )
+          if (!stillDrawn) this.hosted.forget(state.hostedId)
+        }
         // Throttled inside the ledger, and deliberately not awaited: the panel
         // must never wait on a disk write to see its dwarfs move.
         void this.ledger.save(now)
@@ -780,6 +861,12 @@ export class AgentRuntime {
     // question still open is dissolved on the way out — told that nobody
     // answered, never handed a fabricated one (see HeldSessionRegistry).
     this.heldSessions.closeAll()
+    // And so does a hosted process, for a stronger reason than a held session:
+    // this panel IS its stdio, so one left running would have nobody reading
+    // its output or writing its input (#194). Not awaited — quitting must not
+    // wait on a kill — and the same act a person can take deliberately on one
+    // process through Kick.
+    void this.hosted.closeAll()
     // The launched register is deliberately NOT ended here (#217). A detached
     // session outliving the panel is the whole point of detaching it — #212
     // watched a turn finish after the parent had gone — so quitting ends
@@ -1118,6 +1205,14 @@ export class AgentRuntime {
     // reported the wrong thing, one by failing focus and one by exiting 0.
     const heldSessionId = this.heldSessionIdOf(dwarfId)
     if (heldSessionId !== undefined) return { kind: 'held-session', sessionId: heldSessionId }
+    // Ownership again, and the same reason as the line above: this process is
+    // holding that pipe, and no provider can know it because no provider ever
+    // saw this dwarf at all (#194). Ahead of the provider loop because it can
+    // never collide with one — a hosted dwarf's id is this register's own — and
+    // placed here so both ownership answers read as one rule rather than two.
+    if (this.hosted.states().some((state) => state.hostedId === dwarfId)) {
+      return { kind: 'hosted-stdin', hostedId: dwarfId }
+    }
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
       if (target === undefined || target === null) continue
@@ -1202,6 +1297,46 @@ export class AgentRuntime {
     return {
       delivered: false,
       error: verdict === 'already-ended' ? LAUNCH_ALREADY_ENDED : LAUNCH_END_REFUSED
+    }
+  }
+
+  /**
+   * The hosted-process tier for a message: straight onto the stdin this
+   * process is holding (#194).
+   *
+   * Synchronous underneath, exactly as the held tier is, and for the same
+   * reason: this is a write onto a stream this process owns, so there is
+   * nothing to await and nothing to time. A refusal means the pipe would not
+   * take it — a process on its way out, above all — and it stops there rather
+   * than reaching for a second channel, because there has never been one.
+   *
+   * `delivered` claims what it claims everywhere else and no more: the bytes
+   * went into the pipe. Whether the program read them is a fact no hosted
+   * process can report, so nothing here ever promotes to a reaction (see
+   * reaction.ts).
+   */
+  private sendToHostedProcess(hostedId: string, text: string): TextDeliveryOutcome {
+    return this.hosted.sendText(hostedId, text)
+      ? { delivered: true }
+      : { delivered: false, error: HOSTED_PIPE_CLOSED }
+  }
+
+  /**
+   * Ending a process this panel is HOLDING — the only kick it has (#194).
+   *
+   * It ends the process rather than a turn, exactly as the launched tier does,
+   * and for a reason that is stronger rather than weaker: this app knows
+   * nothing about what somebody else's program treats as an interrupt, and a
+   * byte it happened to accept as one would be the panel guessing at another
+   * program's key bindings. So the harsh act is the honest one, and the panel
+   * has to say which act it performed.
+   */
+  private async endHostedProcess(hostedId: string): Promise<TextDeliveryOutcome> {
+    const verdict = await this.hosted.end(hostedId)
+    if (verdict === 'ended') return { delivered: true }
+    return {
+      delivered: false,
+      error: verdict === 'already-ended' ? HOSTED_ALREADY_ENDED : HOSTED_END_REFUSED
     }
   }
 
@@ -1295,6 +1430,51 @@ export class AgentRuntime {
   }
 
   /**
+   * Start the command somebody typed into Add > Other, and hold it (#194).
+   *
+   * The third launch mode, and the only one whose subject is not a CLI this app
+   * knows: what arrives is a string, parsed here into a program and an argv
+   * array with no shell anywhere (see hostedCommand.ts for that whole posture).
+   *
+   * **Unlike the other two, this DOES imply a dwarf is coming** — on the next
+   * poll, through the ordinary pipeline, because for a hosted process this
+   * panel is the observer. There is still no second observation path and
+   * nothing is invented in this verdict: the dwarf is drawn from the fact that
+   * this process is holding that pipe, which is a fact rather than a guess.
+   *
+   * The poll is not woken for it, and that is deliberate. All three launch
+   * modes acknowledge on the verdict and let the ordinary poll deliver the
+   * dwarf, which is what makes ONE arrival rule serve all of them (see
+   * launchArrival.ts). `nudge()` would buy at most one poll interval and cost
+   * the guarantee: its leading-edge tick is unawaited and an overlapping one is
+   * dropped, so the verdict's relationship to the board would become a race
+   * rather than a promise.
+   *
+   * The request names a mine, never a directory, and that guard matters more
+   * here than on either other channel: the program is the caller's too, so the
+   * one thing this must never be talked into is starting it somewhere the
+   * panel is not showing. Nothing here logs the prompt — only its length.
+   */
+  async launchHostedProcess(request: HostedLaunchRequest): Promise<HostedLaunchResult> {
+    // Refused before the mine is even looked up, exactly as a held launch is:
+    // a demo's mines are invented, so there is no folder to start in (#42).
+    if (this.simulated) return { launched: false, error: NO_SIMULATED_LAUNCH }
+
+    const mine = this.mines.find((item) => item.id === request.mineId)
+    if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
+
+    const outcome = await this.hosted.launch({
+      mineId: mine.id,
+      minePath: mine.path,
+      command: request.command,
+      prompt: request.prompt
+    })
+    return outcome.started
+      ? { launched: true }
+      : { launched: false, ...(outcome.error === undefined ? {} : { error: outcome.error }) }
+  }
+
+  /**
    * Answer a question a held session asked (#94).
    *
    * Addressed by DWARF, like every other action the panel offers, because a
@@ -1371,6 +1551,14 @@ export class AgentRuntime {
           // request.pressEnter is dropped for the reason the queue tier drops
           // it: there is no console line here to leave unsent.
           return Promise.resolve(this.sendToHeldSession(endpoint.sessionId, payload))
+        }
+        if (endpoint.kind === 'hosted-stdin') {
+          // No stage of its own, for the reason the held tier has none: a write
+          // onto a pipe this process owns is not a focus, a spawn or a model
+          // turn. request.pressEnter is dropped because the line terminator is
+          // not optional here — a program reading a line is waiting for it, so
+          // nodeHostedProcess appends exactly one either way.
+          return Promise.resolve(this.sendToHostedProcess(endpoint.hostedId, payload))
         }
         if (endpoint.kind === 'terminal') {
           return this.textDelivery.sendToConsole({
@@ -1560,6 +1748,13 @@ export class AgentRuntime {
         // foreman's whole session (resolveKickDelivery refuses that).
         if (endpoint.kind === 'launched-process') {
           return this.endLaunchedSession(endpoint.launchId)
+        }
+        // The other tier that ends rather than interrupts (#194). No prefix
+        // branch beside it, unlike the held tier above: a hosted process has no
+        // crew for a prefix to name — nothing observes children for it — so a
+        // worker's cancel can never resolve here.
+        if (endpoint.kind === 'hosted-stdin') {
+          return this.endHostedProcess(endpoint.hostedId)
         }
         if (endpoint.kind === 'terminal') {
           return this.textDelivery.sendInterrupt({ pid: endpoint.pid })

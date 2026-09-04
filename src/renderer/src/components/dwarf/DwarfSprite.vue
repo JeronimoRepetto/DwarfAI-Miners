@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { preloadDwarfArt } from '../../lib/art'
+import { observerLabel } from '../../lib/dwarf/observerLabel'
 import { bubbleRowOffsetPx } from '../../lib/overlay/bubbleLayout'
 import {
   kickMarker as kickMarkerFor,
@@ -441,7 +442,7 @@ const strikeGlow = computed(() => {
 })
 const ariaLabel = computed(
   () =>
-    `Select ${props.dwarf.name} (${props.dwarf.role}, ${props.dwarf.provider}) — ${props.dwarf.status}`
+    `Select ${props.dwarf.name} (${props.dwarf.role}, ${observerLabel(props.dwarf.provider)}) — ${props.dwarf.status}`
 )
 
 /**

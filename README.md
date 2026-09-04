@@ -550,8 +550,9 @@ artwork has its own [artwork license](ARTWORK-LICENSE.md).
   shaped the design.
 - [`docs/simulated-provider.md`](docs/simulated-provider.md) — the development-only simulated
   valley: seeing the panel under load without launching real agents (`DWARFAI_SIMULATE=1`).
-- [`docs/custom-launch-command.md`](docs/custom-launch-command.md) — why the Add Panel's
-  **Other** chip refuses to run a command of your own, and what would change that.
+- [`docs/custom-launch-command.md`](docs/custom-launch-command.md) — what the Add Panel's
+  **Other** chip starts, the long list of what a held process cannot tell you about itself, and
+  the refusal that was reversed to get here.
 - [`LICENSE`](LICENSE) — MIT license for the code.
 - [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
   audio assets.

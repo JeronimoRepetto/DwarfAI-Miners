@@ -17,6 +17,8 @@ import type {
   DwarfTextResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
+  HostedLaunchRequest,
+  HostedLaunchResult,
   MaterialTotals,
   MetricsResetResult,
   Mine,
@@ -114,6 +116,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
   ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
+  ipcMain.removeHandler(IPC_CHANNELS.launchHostedProcess)
 }
 
 /**
@@ -148,6 +151,25 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   // be starting the wrong agent rather than refusing an unreadable request.
   if (!isDwarfProvider(record.provider)) return null
   return { mineId: record.mineId, provider: record.provider, prompt: record.prompt }
+}
+
+/**
+ * The same boundary discipline for the one launch channel that names no
+ * provider (#194) — and the same refusal of a directory, which matters most
+ * here: the program is the caller's own, so the mine must stay the only way to
+ * say where it may start.
+ *
+ * The command is checked for being a string and nothing more. What it means is
+ * the runtime's question — `parseHostedCommand` is where a program name, an
+ * argv array and a refusal of shell metacharacters are decided, and a second
+ * reading here would be a second answer to what will actually run.
+ */
+function parseHostedLaunchRequest(payload: unknown): HostedLaunchRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.mineId !== 'string' || typeof record.prompt !== 'string') return null
+  if (typeof record.command !== 'string') return null
+  return { mineId: record.mineId, command: record.command, prompt: record.prompt }
 }
 
 /** Same boundary discipline as parseTextRequest: kick carries no user text at all. */
@@ -693,6 +715,19 @@ async function init(): Promise<void> {
     const request = parseAnswerRequest(payload)
     if (request === null) return notAnswered
     return runtime?.answerDwarfQuestion(request) ?? notAnswered
+  })
+
+  // Starting a command of the person's own and holding it over stdio (#194).
+  // Its own refusal rather than the launch channel's, because the sentence has
+  // to be about the right thing: nothing here is an "agent" this app knows.
+  const notHostedLaunched: HostedLaunchResult = {
+    launched: false,
+    error: 'That command could not be started.'
+  }
+  ipcMain.handle(IPC_CHANNELS.launchHostedProcess, (_event, payload: unknown) => {
+    const request = parseHostedLaunchRequest(payload)
+    if (request === null) return notHostedLaunched
+    return runtime?.launchHostedProcess(request) ?? notHostedLaunched
   })
 
   // The panel watched a kicked agent stop (#46). One-way: main decides what

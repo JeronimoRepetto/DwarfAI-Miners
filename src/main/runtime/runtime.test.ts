@@ -14,6 +14,7 @@ import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
 import {
   MAX_DWARF_TEXT_CHARS,
+  PANEL_OBSERVER,
   type Dwarf,
   type DwarfQuestion,
   type FeedMessage
@@ -31,6 +32,12 @@ import type {
   HeldSessionTelemetryUpdate
 } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
+import { SHELL_METACHARACTER_REFUSAL } from '../sessionLaunch/hostedCommand'
+import {
+  HostedProcessRegistry,
+  type HostedProcessPort,
+  type HostedProcessStartRequest
+} from '../sessionLaunch/hostedProcesses'
 import { LaunchedSessionRegistry, type LaunchedProcess } from '../sessionLaunch/launchedSessions'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { TierService, type TierThresholds } from '../tier/tierService'
@@ -5283,5 +5290,459 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
     expect(held.interrupts()).toBe(0)
     expect(held.sends()[0]).toContain('[cancel agent Explorer]')
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * Add > Other, end to end through the runtime (#194).
+ *
+ * The reversal this pins: `docs/custom-launch-command.md` refused a custom
+ * command because it writes no session store, so no provider could read one and
+ * no dwarf could ever be drawn. The maintainer reversed that on 2026-09-04 —
+ * the panel observes terminals AND is a terminal itself, and a process the
+ * panel HOLDS needs no session file to be observed, because the panel is its
+ * stdio. Every test here is about a dwarf nothing on disk knows exists.
+ *
+ * No test in this block spawns a process: HostedProcessRegistry takes the spawn
+ * seam as a port, and the fake below is what stands in for a real child.
+ */
+describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
+  const HOSTED_MINE = 'C:\\work\\hosted'
+  const HOSTED_MINE_ID = mineIdForPath(HOSTED_MINE, 'win32')
+
+  /** Stands in for a real child; nothing here reaches node:child_process. */
+  class FakeHostedPort {
+    readonly started: HostedProcessStartRequest[] = []
+    readonly written: string[] = []
+    failWith: Error | undefined = undefined
+    stdinTakes = true
+
+    readonly start: HostedProcessPort = async (request) => {
+      if (this.failWith !== undefined) throw this.failWith
+      this.started.push(request)
+      return {
+        pid: 5150,
+        send: (text: string) => {
+          if (!this.stdinTakes) return false
+          this.written.push(text)
+          return true
+        }
+      }
+    }
+
+    emit(text: string): void {
+      this.started[0]!.onOutput(text)
+    }
+
+    exit(): void {
+      this.started[0]!.onEnd('exit 0')
+    }
+  }
+
+  /**
+   * A provider that sees a Claude session in the same folder, so a hosted
+   * process can be shown landing in a mine that already exists as well as in
+   * one that does not.
+   */
+  function claudeInHostedMine(): Provider {
+    return {
+      kind: 'claude',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'claude',
+          sessionId: 'sess-1',
+          cwd: HOSTED_MINE,
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: 'claude:sess-1',
+              provider: 'claude',
+              role: 'foreman',
+              name: 'hosted-01',
+              status: 'working',
+              sessionId: 'sess-1'
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: () => null
+    }
+  }
+
+  /** A provider that sees nothing at all: the empty-mine case Add is for. */
+  function emptyProvider(): Provider {
+    return {
+      kind: 'claude',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([]),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: () => null
+    }
+  }
+
+  async function runtimeWithHost(
+    options: { provider?: Provider; endProcessTree?: (pid: number) => Promise<boolean> } = {}
+  ) {
+    const port = new FakeHostedPort()
+    const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
+    const hosted = new HostedProcessRegistry({
+      start: port.start,
+      endProcessTree,
+      env: {}
+    })
+    // A mutable clock, so the lifecycle's leaving grace can be waited out by
+    // hand rather than by a real timer — the house idiom for a module that
+    // takes a `now` (see skills/tdd).
+    const clock = { now: 1_700_000_000_000 }
+    const config = defaultConfig()
+    const runtime = new AgentRuntime({
+      config,
+      providers: [options.provider ?? claudeInHostedMine()],
+      hostedProcesses: hosted,
+      now: () => clock.now,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return {
+      runtime,
+      port,
+      hosted,
+      endProcessTree,
+      clock,
+      graceMs: config.dwarfLeaveGraceS * 1_000
+    }
+  }
+
+  function hostedDwarfOf(runtime: AgentRuntime): Dwarf | undefined {
+    return runtime
+      .getMines()
+      .flatMap((mine) => mine.dwarfs)
+      .find((dwarf) => dwarf.provider === PANEL_OBSERVER)
+  }
+
+  it('refuses a launch into a mine that is not on the board', async () => {
+    const { runtime, port } = await runtimeWithHost()
+
+    const result = await runtime.launchHostedProcess({
+      mineId: 'mine:nowhere',
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+
+    expect(result.launched).toBe(false)
+    expect(port.started).toHaveLength(0)
+  })
+
+  /*
+   * The prompt is the user's own words, so the argv/stdin split matters most
+   * here of all three launch modes — see the privacy rule at the top of
+   * launch.ts, and docs/privacy.md on this machine's process list.
+   */
+  it('starts the parsed program in the mine folder with the prompt on stdin', async () => {
+    const { runtime, port } = await runtimeWithHost()
+
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent --once',
+      prompt: 'dig the east gallery'
+    })
+
+    expect(port.started[0]?.program).toBe('my-agent')
+    expect(port.started[0]?.args).toEqual(['--once'])
+    expect(port.started[0]?.cwd).toBe(HOSTED_MINE)
+    expect(port.started[0]?.prompt).toBe('dig the east gallery')
+    expect(JSON.stringify(port.started[0]?.args)).not.toContain('east gallery')
+  })
+
+  it('repeats the parse’s refusal for a command carrying shell syntax', async () => {
+    const { runtime, port } = await runtimeWithHost()
+
+    const result = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent && rm -rf .',
+      prompt: 'dig'
+    })
+
+    expect(result.launched).toBe(false)
+    expect(result.error).toBe(SHELL_METACHARACTER_REFUSAL)
+    expect(port.started).toHaveLength(0)
+  })
+
+  /*
+   * The reversal, in one assertion: a dwarf for a process no store on this
+   * machine has ever heard of, and it appears through the ordinary poll rather
+   * than through a second observation path.
+   */
+  it('draws a dwarf for the held process on the ordinary poll', async () => {
+    const { runtime } = await runtimeWithHost()
+
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig the east gallery'
+    })
+    await runtime.refresh()
+
+    const dwarf = hostedDwarfOf(runtime)
+    expect(dwarf?.name).toBe('my-agent')
+    expect(dwarf?.role).toBe('foreman')
+    expect(dwarf?.status).toBe('working')
+    expect(dwarf?.conversation?.[0]?.text).toBe('dig the east gallery')
+  })
+
+  /*
+   * A mine the board does not have is refused rather than invented from an id.
+   * The launch names a mine and main resolves the FOLDER from the board, which
+   * is what keeps this channel — the one whose program is the caller's own —
+   * from being talked into starting somewhere the panel is not showing.
+   */
+  it('refuses a launch for a folder no mine on the board names', async () => {
+    const { runtime, port } = await runtimeWithHost({ provider: emptyProvider() })
+    expect(runtime.getMines()).toHaveLength(0)
+
+    const refused = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+
+    expect(refused.launched).toBe(false)
+    expect(refused.error).toBe('That mine is no longer on the map.')
+    expect(port.started).toHaveLength(0)
+  })
+
+  /*
+   * The freeze #194 reported, in the shape that outlives the launch: the mine
+   * was on the board when the command started, and the session that put it
+   * there then finished. Every other launch mode gets its mine from a provider
+   * snapshot's `cwd` — the trick docs/console-hosting.md calls "the whole
+   * trick" — and a hosted process has no snapshot, so the stamp has to keep
+   * the mine standing or the dwarf being held would have nowhere to be drawn.
+   */
+  it('keeps the mine on the board after the session that discovered it ends', async () => {
+    const provider = claudeInHostedMine()
+    const { runtime, clock, graceMs } = await runtimeWithHost({ provider })
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+
+    // The observed Claude session is gone from disk; only the held process is
+    // left, and nothing on this machine records that it exists.
+    provider.scan = vi.fn<Provider['scan']>().mockResolvedValue([])
+    // Past the leaving grace, which is the point: inside it the lifecycle
+    // tracker rebuilds the mine for the departing Claude dwarf, so the mine
+    // would still be there for a reason that has nothing to do with hosting.
+    await runtime.refresh()
+    clock.now += graceMs + 1_000
+    await runtime.refresh()
+
+    const mine = runtime.getMines().find((entry) => entry.path === HOSTED_MINE)
+    expect(mine?.id).toBe(HOSTED_MINE_ID)
+    expect(mine?.dwarfs.map((dwarf) => dwarf.provider)).toEqual([PANEL_OBSERVER])
+    expect(hostedDwarfOf(runtime)?.name).toBe('my-agent')
+  })
+
+  it('reports the exchange it watched go by on the process’s own pipes', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+
+    port.emit('starting up')
+    await runtime.refresh()
+
+    expect(hostedDwarfOf(runtime)?.conversation?.map((message) => message.text)).toEqual([
+      'dig',
+      'starting up'
+    ])
+  })
+
+  it('leaves the dwarfs a provider observed in that mine exactly as they were', async () => {
+    const { runtime } = await runtimeWithHost()
+
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+
+    const observed = runtime
+      .getMines()
+      .flatMap((mine) => mine.dwarfs)
+      .filter((dwarf) => dwarf.provider === 'claude')
+    expect(observed.map((dwarf) => dwarf.id)).toEqual(['claude:sess-1'])
+  })
+
+  /*
+   * The thing a DETACHED launch structurally cannot do (#217's
+   * launchedNoInboxReason): its stdin was closed after the prompt. A hosted
+   * process still has its pipe in this process's hands.
+   */
+  it('delivers a typed message onto the stdin it is holding', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+    const dwarfId = hostedDwarfOf(runtime)!.id
+
+    const result = await runtime.sendDwarfText({
+      dwarfId,
+      text: 'also check the west wall',
+      pressEnter: true
+    })
+
+    expect(result).toEqual({ delivered: true, via: 'hosted-stdin' })
+    expect(port.written).toEqual(['also check the west wall'])
+  })
+
+  it('offers the composer and the kick together, which no other launch mode does', async () => {
+    const { runtime } = await runtimeWithHost()
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+
+    const dwarf = hostedDwarfOf(runtime)!
+    expect(dwarf.textDelivery).toBe('hosted-stdin')
+    expect(dwarf.capabilities?.sendText).toBe('hosted-stdin')
+    expect(dwarf.capabilities?.cancel).toBe('hosted-stdin')
+  })
+
+  it('states the failure when the pipe would not take the message', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+    const dwarfId = hostedDwarfOf(runtime)!.id
+    port.stdinTakes = false
+
+    const result = await runtime.sendDwarfText({ dwarfId, text: 'hello', pressEnter: true })
+
+    expect(result.delivered).toBe(false)
+    expect(result.via).toBe('hosted-stdin')
+    expect(result.error).not.toBeUndefined()
+  })
+
+  /*
+   * Kick ends the process, not a turn, and the panel has to say so (#217's
+   * rule, and here for a stronger reason): this app knows nothing about what
+   * somebody else's program treats as an interrupt.
+   */
+  it('ends the process tree on a kick, through the per-OS port', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const { runtime } = await runtimeWithHost({ endProcessTree })
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+    const dwarfId = hostedDwarfOf(runtime)!.id
+
+    const result = await runtime.kickDwarf({ dwarfId })
+
+    expect(result).toEqual({ delivered: true, via: 'hosted-stdin' })
+    expect(endProcessTree).toHaveBeenCalledWith(5150)
+  })
+
+  it('never claims to have ended a process the platform refused to kill', async () => {
+    const { runtime } = await runtimeWithHost({
+      endProcessTree: vi.fn().mockResolvedValue(false)
+    })
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+    const dwarfId = hostedDwarfOf(runtime)!.id
+
+    const result = await runtime.kickDwarf({ dwarfId })
+
+    expect(result.delivered).toBe(false)
+    expect(result.error).not.toBeUndefined()
+  })
+
+  it('takes a process that exited off the board', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    await runtime.refresh()
+
+    port.exit()
+    await runtime.refresh()
+
+    // Not gone from the board outright: the lifecycle tracker gives it the same
+    // leaving grace every other departing dwarf gets, so it walks out instead
+    // of blinking off.
+    expect(hostedDwarfOf(runtime)?.status).toBe('leaving')
+  })
+
+  /*
+   * The lifetime bargain, paid where it is made: this panel IS the process's
+   * stdio, so one left running after a quit would have nobody reading its
+   * output or writing its input. The opposite of the detached register, which
+   * stop() deliberately does not touch (#217).
+   */
+  it('ends every hosted process when the runtime stops', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const { runtime } = await runtimeWithHost({ endProcessTree })
+    await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+
+    runtime.stop()
+    await Promise.resolve()
+
+    expect(endProcessTree).toHaveBeenCalledWith(5150)
+  })
+
+  /*
+   * A demo's mines are invented, so there is no folder for a real process to
+   * start in — the same refusal a held launch already gives (#42).
+   */
+  it('starts nothing while the simulated valley is running', async () => {
+    const port = new FakeHostedPort()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [claudeInHostedMine()],
+      hostedProcesses: new HostedProcessRegistry({
+        start: port.start,
+        endProcessTree: vi.fn().mockResolvedValue(true),
+        env: {}
+      }),
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    const result = await runtime.launchHostedProcess({
+      mineId: runtime.getMines()[0]?.id ?? '',
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+
+    expect(result.launched).toBe(false)
+    expect(port.started).toHaveLength(0)
   })
 })

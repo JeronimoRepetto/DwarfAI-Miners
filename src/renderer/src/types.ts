@@ -17,6 +17,7 @@ export type {
   DwarfKickRequest,
   DwarfKickResult,
   DwarfMcpServerStatus,
+  DwarfObserver,
   DwarfProvider,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
@@ -29,6 +30,8 @@ export type {
   FeedMessage,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
+  HostedLaunchRequest,
+  HostedLaunchResult,
   Material,
   MaterialTotals,
   McpConnectionStatus,
@@ -72,12 +75,14 @@ export {
   MAX_DWARF_TEXT_CHARS,
   MINE_HISTORY_MESSAGE_LIMIT,
   MINE_TIERS,
+  PANEL_OBSERVER,
   TIER_WEIGHT_THRESHOLDS_KB,
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowMs,
   isDwarfProvider,
   isMcpConnectionStatus,
-  isMineTier
+  isMineTier,
+  isPanelObserved
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */

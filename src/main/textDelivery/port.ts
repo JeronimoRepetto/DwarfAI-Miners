@@ -45,6 +45,13 @@ import type { StageTimings } from './timing'
  * rather than a session, a window or a pid: the pid behind it belongs to
  * LaunchedSessionRegistry, which is what knows whether that process is still
  * the one it started.
+ *
+ * A 'hosted-stdin' target is the third of that family and the completion of it
+ * (#194): the panel started that process AND still holds its stdin, so it is
+ * the one target that can be both written to and ended. It addresses a hosted
+ * process rather than a session or a pid, for the reason 'launched-process'
+ * addresses a launch — HostedProcessRegistry is what knows whether that pipe
+ * is still open and whether that pid is still the one it started.
  */
 export type TextDeliveryTarget =
   | { kind: 'terminal'; pid: number; sessionName?: string }
@@ -53,6 +60,7 @@ export type TextDeliveryTarget =
   | { kind: 'codex-queue'; threadId: string }
   | { kind: 'held-session'; sessionId: string }
   | { kind: 'launched-process'; launchId: string }
+  | { kind: 'hosted-stdin'; hostedId: string }
 
 /**
  * A target that can actually be written to (a foreman hop has been resolved away).
@@ -62,6 +70,11 @@ export type TextDeliveryTarget =
  * stream open is neither — it belongs to HeldSessionRegistry, which the runtime
  * owns. So the runtime dispatches this kind to the registry, and no per-OS
  * implementation ever grows a branch for it.
+ *
+ * 'hosted-stdin' is writable on exactly those terms and for exactly that reason
+ * (#194): a pipe this process is holding is neither provider knowledge nor
+ * platform mechanism, so it is dispatched to HostedProcessRegistry and no
+ * per-OS port grows a branch for it either.
  */
 export type TextDeliveryEndpoint = Extract<
   TextDeliveryTarget,
@@ -70,6 +83,7 @@ export type TextDeliveryEndpoint = Extract<
   | { kind: 'codex-queue' }
   | { kind: 'held-session' }
   | { kind: 'launched-process' }
+  | { kind: 'hosted-stdin' }
 >
 
 /**
@@ -83,6 +97,12 @@ export type TextDeliveryEndpoint = Extract<
  * sendDwarfText cannot grow a branch for it by accident; resolveTextDelivery
  * is where it is enforced, and the panel's refusal says which launch shape it
  * is refusing rather than the generic "no channel yet".
+ *
+ * 'hosted-stdin' is INCLUDED, and the contrast is the point (#194): the same
+ * app started that process too, and the difference is only that it kept the
+ * pipe instead of closing it. So the exclusion above is about a closed stdin
+ * rather than about "a process we launched" — which is why hosting is worth
+ * its lifetime cost at all.
  */
 export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-process' }>
 
@@ -107,6 +127,12 @@ export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-proce
  * ever offered where nothing weaker exists, and the panel has to say which act
  * it performed — a person told a turn was interrupted, when the session is
  * gone, has been told the wrong thing.
+ *
+ * 'hosted-stdin' is harsh in the same way and has to say so in the same words
+ * (#194). This app knows nothing about what the person's program treats as an
+ * interrupt — a byte it happens to accept as one would be this panel guessing
+ * at another program's key bindings — so the only act available is the tree
+ * kill, and the only honest thing to call it is ending the session.
  */
 export type KickEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'codex-queue' }>
 

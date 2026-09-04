@@ -135,6 +135,65 @@ export function isDwarfProvider(value: unknown): value is DwarfProvider {
 }
 
 /**
+ * The observer that is not a provider: THIS PANEL, holding a process it
+ * started over its stdio (#194).
+ *
+ * ## Why this is not a new DWARF_PROVIDERS entry
+ *
+ * Because `DwarfProvider` is a list of STORES that can be read, and this is not
+ * one. Adding a member there would demand a `ProviderConfigs` block and a
+ * `PROVIDER_REGISTRY` factory row for a store that does not exist, and would
+ * offer a chip for a "provider" nobody can install. The two facts are on
+ * different axes, so they are on different types: `DwarfProvider` is unchanged
+ * and `DwarfObserver` is what a dwarf carries.
+ *
+ * ## Why it is not 'other' either
+ *
+ * `launchState.ts` keeps `OTHER_CHOICE` out of the provider union with a rule
+ * that reads exactly right and must not be softened: that union "is who
+ * OBSERVED a dwarf, and no observation ever comes back saying 'other'". It
+ * still does not. 'other' is what a person PICKED in the chip row; 'panel' is
+ * who then observed the result. #194's maintainer decision is that a process
+ * the panel holds needs no session file to be observed, because the panel is
+ * its stdio — so the observer has a name, and the name is not the chip's.
+ *
+ * ## What it costs a dwarf to carry it
+ *
+ * Everything a transcript would have supplied. A hosted dwarf has no store
+ * behind it, so `model`, `effort`, `tokensUsed`, `tokensObserved`,
+ * `silentForMs`, `transcriptUpdatedAt`, `attendance`, `waitingReason`,
+ * `pendingQuestion`, `mcpServers` and `totalCostUsd` are absent — not "not
+ * yet", but with nothing that could ever report them. Its mine's tier is a
+ * provisional one for the same reason every unwalked mine's is. Absence is the
+ * reading this app takes everywhere: absent beats guessed.
+ */
+export const PANEL_OBSERVER = 'panel'
+
+/**
+ * Who observed one dwarf: a provider that read its store, or the panel holding
+ * the process itself.
+ *
+ * Named for the question it answers rather than for the field it sits in, and
+ * the field keeps its own name (`Dwarf.provider`) so nothing that already reads
+ * it has to be renamed to keep compiling. Every reader that must now handle a
+ * dwarf no CLI produced is named by the type checker, which is the point.
+ */
+export type DwarfObserver = DwarfProvider | typeof PANEL_OBSERVER
+
+/**
+ * Whether a dwarf was observed by a provider at all, or is one this panel is
+ * holding itself.
+ *
+ * A value rather than a comparison spelled out at each site, for the reason
+ * `isDwarfProvider` is one: this is the question ten call sites ask, and ten
+ * spellings of it is ten chances for one of them to mean something slightly
+ * different.
+ */
+export function isPanelObserved(observer: DwarfObserver): observer is typeof PANEL_OBSERVER {
+  return observer === PANEL_OBSERVER
+}
+
+/**
  * The providers a session can be HELD for — kept open by this app, over the
  * provider's own Agent SDK stream (#168).
  *
@@ -444,6 +503,23 @@ export type TextDeliveryChannel =
   | 'codex-queue'
   | 'held-session'
   | 'launched-process'
+  /**
+   * The stdin of a process this panel is HOLDING (#194) — the one channel that
+   * is a pipe rather than a store, a window or a queue.
+   *
+   * Told apart from `'launched-process'` on purpose, because the two are
+   * opposite halves of the same distinction. A launched process had its stdin
+   * CLOSED right after its prompt, so it takes no messages and can only be
+   * ended; a hosted process still has its stdin open in this process's hands,
+   * so it takes messages and can be ended. That is the whole reason hosting is
+   * worth its lifetime cost.
+   *
+   * What reaches it is still only `delivered`, never `reacted`: bytes went into
+   * a pipe. Whether anything read them is a fact no hosted process can report,
+   * because there is no transcript to watch — see the reaction rule in the
+   * renderer's reaction.ts, which this channel can never promote past.
+   */
+  | 'hosted-stdin'
 
 /**
  * One answer an agent said it would accept, in its own words.
@@ -505,7 +581,13 @@ export interface DwarfQuestion {
 
 export interface Dwarf {
   id: string
-  provider: DwarfProvider
+  /**
+   * Who observed this dwarf — a provider that read its store, or `'panel'` for
+   * a process this panel is holding over stdio (#194). See DwarfObserver for
+   * why a hosted process is an OBSERVER value and not a provider one, and for
+   * the complete list of what a dwarf carrying `'panel'` cannot say.
+   */
+  provider: DwarfObserver
   role: DwarfRole
   name: string
   /**
@@ -697,15 +779,23 @@ export interface Dwarf {
    */
   totalCostUsd?: number
   /**
-   * The exchange this panel itself watched go by on a held session's stream
-   * (#159) — the prompt it sent to start the session, and every message the
-   * stream has carried since, oldest first.
+   * The exchange this panel itself watched go by on a stream it is HOLDING
+   * (#159, #194) — the prompt it sent to start the session, and every message
+   * the stream has carried since, oldest first.
    *
-   * Held sessions ONLY, for the reason `mcpServers` is: nothing else this app
-   * runs hands it a conversation live. An observed session's words are read
-   * from its transcript on demand instead (see DwarfFeedResult), and the two
-   * are deliberately different fields because they are different claims — this
-   * one is first-hand, that one is a bounded tail somebody else wrote.
+   * Sessions this panel HOLDS only, for the reason `mcpServers` is: nothing
+   * else this app runs hands it a conversation live. An observed session's
+   * words are read from its transcript on demand instead (see
+   * DwarfFeedResult), and the two are deliberately different fields because
+   * they are different claims — this one is first-hand, that one is a bounded
+   * tail somebody else wrote.
+   *
+   * Two things hold a stream, and both write here. A held Claude session's
+   * conversation is its own structured messages off the Agent SDK stream; a
+   * hosted process's is the plain text captured off its stdout and stderr
+   * (#194). Same claim in both cases — this panel saw these bytes go past —
+   * and it is deliberately the ONE field a hosted dwarf shares with a held one,
+   * because it is the only fact hosting actually establishes.
    *
    * Bounded at both ends, and the bound is the point: at most
    * HELD_CONVERSATION_LIMIT messages, each at most HELD_MESSAGE_MAX_CHARS
@@ -1168,6 +1258,62 @@ export interface HeldSessionLaunchRequest {
  * both processes already agree on.
  */
 export interface HeldSessionLaunchResult {
+  launched: boolean
+  /** Human-readable reason shown in the panel when launched is false. */
+  error?: string
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Hosted processes (#194) — the panel starting a command of the person's OWN
+ * and being that process's stdio.
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * One request to start the command somebody typed into Add > Other (#194).
+ *
+ * Names a MINE and never a directory, exactly as both other launch channels
+ * do: the folder is resolved in main from the board the panel is being shown,
+ * so this channel cannot be talked into starting a process somewhere the panel
+ * is not showing. That guard matters more here than anywhere else in the app,
+ * because the program is the caller's too.
+ *
+ * ## The command travels; the argv does not
+ *
+ * What crosses is the raw string the person typed. Main parses it — a program
+ * name plus an argv array, no shell, shell metacharacters refused — and it is
+ * parsed THERE rather than in the renderer for the reason every boundary check
+ * in this app lives in main: the panel renders what main verified, and a parse
+ * done twice is two answers to "what will actually run".
+ *
+ * ## Why there is no provider field
+ *
+ * Because there is no provider. This is the one launch channel whose subject is
+ * not a CLI this app knows, which is exactly what `AgentLaunchRequest.provider`
+ * being a `DwarfProvider` refuses to express — and why this is a channel of its
+ * own rather than a nullable field on that one. The dwarf it produces reports
+ * `PANEL_OBSERVER`, because the panel is what observed it.
+ */
+export interface HostedLaunchRequest {
+  mineId: string
+  /** The command exactly as typed. Parsed in main; never run through a shell. */
+  command: string
+  /** The first thing to say to the new process. Capped like any delivered message. */
+  prompt: string
+}
+
+/**
+ * Verdict of one hosted launch.
+ *
+ * `launched` means a process STARTED and this panel is holding it. Unlike the
+ * other two launch verdicts, that DOES imply a dwarf will appear — the panel is
+ * its own observer here, so the next poll draws it with no store to wait on.
+ * What it still does not carry is the dwarf's id: the panel recognises its own
+ * launch by the receipt on the board (see launchArrival.ts), which is one rule
+ * for all three modes rather than a fourth way of being told.
+ */
+export interface HostedLaunchResult {
   launched: boolean
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
@@ -1675,5 +1821,19 @@ export const IPC_CHANNELS = {
    * exchange its asks reach the panel live rather than post-hoc. Both belong.
    */
   launchHeldSession: 'agent:launchHeld',
-  answerDwarfQuestion: 'agent:answerQuestion'
+  answerDwarfQuestion: 'agent:answerQuestion',
+  /**
+   * Starting a command of the person's own and holding it over stdio (#194).
+   *
+   * Its own channel rather than a variant of `agent:launch`, because the two
+   * carry different subjects: that one names a `DwarfProvider` this app knows
+   * how to start, and this one names a string somebody typed. Folding them
+   * together would mean a nullable provider on a request where "no provider"
+   * and "a provider I could not read" would look identical at the boundary.
+   *
+   * A third launch mode, and all three belong. Detached (`agent:launch`) hands
+   * the session over and lets go; held (`agent:launchHeld`) keeps a structured
+   * stream into a CLI this app knows; hosted keeps a PIPE into one it does not.
+   */
+  launchHostedProcess: 'agent:launchHosted'
 } as const
