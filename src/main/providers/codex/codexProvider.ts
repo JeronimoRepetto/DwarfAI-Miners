@@ -96,7 +96,10 @@ export interface CodexProviderOptions {
 
 interface DiscoveredCodexSnapshot {
   snapshot: ProviderSnapshot
-  /** Always retained internally so an idle parent can become a foreman. */
+  /**
+   * The session's own dwarf, named beside the snapshot so linkSubagents can
+   * reach it without indexing into the crew it already leads.
+   */
   mainDwarf: Dwarf
   parentSessionId?: string
 }
@@ -223,6 +226,22 @@ export class CodexProvider implements Provider {
    * keep offering one.
    */
   private queueTargets: ReadonlyMap<string, string> = new Map()
+  /**
+   * Session ids ever observed as the PARENT of a Codex sub-agent.
+   *
+   * The whole of what this provider remembers about topology, and the reason
+   * rank stopped flickering (#202). A parent used to be promoted only while a
+   * child was busy in the same scan, so it reverted to 'worker' the moment that
+   * child's turn closed — the identity swap Claude had already retired. Being
+   * the root of a spawn tree is not a headcount, so an edge once read is kept.
+   *
+   * Flat and process-lifetime, for the reason claudeProvider's abandonedAgents
+   * is: the whole cost is one short string per session that ever spawned a
+   * sub-agent, and stickiness is the point. Pruning it to the sessions still
+   * on the board would reintroduce the flicker for any parent a single scan
+   * happened to miss.
+   */
+  private readonly parentSessions = new Set<string>()
 
   constructor(options: CodexProviderOptions) {
     this.fs = options.fs
@@ -540,7 +559,11 @@ export class CodexProvider implements Provider {
     const mainDwarf: Dwarf = {
       id: dwarfId,
       provider: 'codex',
-      role: 'worker',
+      // A session is a foreman once a child edge has been observed for it, and
+      // stays one (#202). 'worker' here is the absence of that evidence, never
+      // a verdict about how many children are busy right now; linkSubagents
+      // applies an edge first read in THIS scan.
+      role: this.parentSessions.has(sessionId) ? 'foreman' : 'worker',
       name: thread?.agentName ?? rollout?.head.agentName ?? `codex-${sessionId.slice(0, 8)}`,
       model: thread?.model ?? rollout?.info.model,
       effort: thread?.effort ?? rollout?.info.effort,
@@ -570,8 +593,18 @@ export class CodexProvider implements Provider {
         provider: 'codex',
         sessionId,
         cwd,
+        // Whether a TURN is open, which is a different fact from whether the
+        // SESSION is alive — conflating the two is what #202 was.
         status: busy ? 'busy' : 'idle',
-        dwarfs: busy ? [mainDwarf] : [],
+        // The session is on the board for as long as this provider reports it
+        // at all, so only `status` moves between turns (#202). Reaching here
+        // already means the liveness gate in scan() accepted the session —
+        // registry activity, a logs heartbeat, file growth or the process probe
+        // — and that gate stays the one and only place a Codex session stops
+        // being live. Listing the dwarf beside an 'idle' snapshot mirrors
+        // claudeProvider, whose root is on scene while its registry entry says
+        // idle-with-agents-out.
+        dwarfs: [mainDwarf],
         updatedAt: context.activityMs
       },
       mainDwarf
@@ -638,26 +671,33 @@ export class CodexProvider implements Provider {
   }
 
   /**
-   * Codex records a spawned worker's parent thread in session_meta, and the
-   * registry mirrors the same graph in thread_spawn_edges. Promote a parent
-   * only when both sessions were observed in this scan; we never infer a
-   * hierarchy from shared cwd, process ancestry or transcript recency.
+   * Record every parent edge this scan read, and rank the parents accordingly.
+   *
+   * Codex records a spawned worker's parent thread in its own session_meta, and
+   * the registry mirrors the same graph in thread_spawn_edges. Both are records
+   * the CHILD carries about itself, so an edge is a fact the moment it is read;
+   * a hierarchy is still never inferred from shared cwd, process ancestry or
+   * transcript recency.
+   *
+   * What went (#202): the promotion used to require the child to be busy AND
+   * its parent to be in the same scan, so rank tracked the live headcount and a
+   * parent whose sub-agent had gone quiet fell back to 'worker' on the next
+   * tick. Remembering the edge instead makes the rank monotone — a session that
+   * has led a crew keeps its rank whether or not the crew is still out, which
+   * is the rule claudeProvider has always had.
    */
   private linkSubagents(
     discovered: DiscoveredCodexSnapshot[],
     edges: ReadonlyMap<string, string>
   ): void {
-    const bySessionId = new Map(discovered.map((item) => [item.snapshot.sessionId, item]))
     for (const child of discovered) {
-      if (child.snapshot.status !== 'busy') continue
       const parentSessionId = child.parentSessionId ?? edges.get(child.snapshot.sessionId)
-      if (parentSessionId === undefined) continue
-      const parent = bySessionId.get(parentSessionId)
-      if (parent === undefined) continue
-      parent.mainDwarf.role = 'foreman'
-      if (!parent.snapshot.dwarfs.some((dwarf) => dwarf.id === parent.mainDwarf.id)) {
-        parent.snapshot.dwarfs.unshift(parent.mainDwarf)
-      }
+      if (parentSessionId !== undefined) this.parentSessions.add(parentSessionId)
+    }
+    // Applied after the whole scan is read so an edge first seen in THIS scan
+    // reaches a parent whose dwarf was already built.
+    for (const item of discovered) {
+      if (this.parentSessions.has(item.snapshot.sessionId)) item.mainDwarf.role = 'foreman'
     }
   }
 }
