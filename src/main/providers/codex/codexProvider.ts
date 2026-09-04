@@ -102,6 +102,16 @@ interface DiscoveredCodexSnapshot {
    */
   mainDwarf: Dwarf
   parentSessionId?: string
+  /**
+   * True for a spawned thread whose own turn is over: it has gone home, and
+   * scan() drops it from what it returns (#219).
+   *
+   * Carried here rather than answered by returning no snapshot at all because
+   * the spawn edge this thread records is the only evidence its ROOT is a
+   * foreman — linkSubagents has to read it before the thread is dropped. See
+   * the retirement rule in snapshotSession.
+   */
+  finished?: boolean
 }
 
 /** What the SQLite registry contributed to one scan. */
@@ -358,7 +368,16 @@ export class CodexProvider implements Provider {
     // in place rather than stripping it.
     this.feedSources = feedSources
     this.queueTargets = queueTargets
-    return discovered.map(({ snapshot }) => snapshot)
+    // A spawned agent that has closed its turn goes home (#219). Filtered HERE
+    // rather than in snapshotSession, and strictly after linkSubagents, for a
+    // reason that is easy to get backwards: the spawn edge lives on the CHILD,
+    // so it is the only thing that tells this provider its ROOT is a foreman.
+    // Dropping the child any earlier would demote a root whose only agent had
+    // already finished when the panel started — #202's identity swap, back
+    // through the side door. Its feed entry is deliberately left in place, for
+    // the reason the generation above is seeded rather than emptied (#192): the
+    // panel reads the transcript one more time while the dwarf walks out.
+    return discovered.filter(({ finished }) => finished !== true).map(({ snapshot }) => snapshot)
   }
 
   /**
@@ -541,6 +560,36 @@ export class CodexProvider implements Provider {
     // right now, which is a running turn even when the tail read cannot prove it.
     const busy = (rollout?.info.busy ?? false) || context.grew
 
+    const parentSessionId = rollout?.head.parentSessionId ?? thread?.parentThreadId
+    // Finished, as opposed to idle (#219). A spawned agent's turn is the whole
+    // of its life: it was launched to do one thing, and once it has said so it
+    // will never speak again — where a root between turns is a human at a
+    // prompt who may. #202 rightly froze existence to the SESSION so a root
+    // stops flickering, and left this gate alone, so a finished agent aged out
+    // on `livenessWindowS + idleRetentionS` — a window sized for "open but
+    // quiet", granted while ANY codex process is alive anywhere because the
+    // probe is global. That is 3900s on the shipped defaults; three finished
+    // workers were measured resting for about 65 minutes.
+    //
+    // Both halves are records the thread carries about ITSELF, never a verdict
+    // recomputed from how many children are busy — that is the rule #202
+    // retired and #209 deleted, and nothing here reintroduces it:
+    //
+    // - `parentSessionId`, from its own session_meta thread_spawn blob or the
+    //   registry's thread_spawn_edges. A root has neither, so a root can never
+    //   reach this branch and its window is untouched (#47, #68).
+    // - `completedTurn`, the task_complete in its own rollout with no later
+    //   turn reopened (parse.ts). Not `!busy`, which is also what a thread
+    //   whose first task_started is not on disk yet looks like.
+    //
+    // `busy` still wins: the scan that OBSERVES the completion reads growth,
+    // and an agent still filing its report must not be sent home mid-sentence.
+    // Nothing is pruned when it goes — a thread that somehow opens another
+    // turn grows, and growth brings the same dwarf back under the same
+    // remembered rank.
+    const finished =
+      parentSessionId !== undefined && !busy && (rollout?.info.completedTurn ?? false)
+
     const dwarfId = `codex:${sessionId}`
     if (rollout !== null) context.feedSources.set(dwarfId, path)
     // Keyed on the REGISTRY row, never on the rollout: the source tag and the
@@ -614,8 +663,8 @@ export class CodexProvider implements Provider {
       },
       mainDwarf
     }
-    const parentSessionId = rollout?.head.parentSessionId ?? thread?.parentThreadId
     if (parentSessionId !== undefined) discovered.parentSessionId = parentSessionId
+    if (finished) discovered.finished = true
     return discovered
   }
 

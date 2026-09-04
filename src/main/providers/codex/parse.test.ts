@@ -111,6 +111,61 @@ describe('parseCodexRolloutTail', () => {
     })
   })
 
+  /**
+   * Issue #219: `busy: false` is not a record that a turn ENDED. It is also
+   * what a rollout with no turn events at all looks like — a thread whose
+   * session_meta is on disk but whose first `task_started` has not been
+   * written yet. `completedTurn` is the positive record: Codex's own
+   * `task_complete`, the event that carries `last_agent_message`, with no
+   * later turn reopened. The provider retires a finished sub-agent on it, so
+   * "no evidence yet" must never read as "finished".
+   */
+  describe('completedTurn (issue #219)', () => {
+    function event(payload: Record<string, unknown>): string {
+      return JSON.stringify({ type: 'event_msg', payload }) + '\n'
+    }
+
+    it('records a completed turn when task_complete closes the last task_started', () => {
+      expect(parseCodexRolloutTail(rollout).completedTurn).toBe(true)
+    })
+
+    it('records no completed turn while a turn is still open', () => {
+      expect(parseCodexRolloutTail(busyRollout).completedTurn).toBe(false)
+    })
+
+    it('records no completed turn for a rollout that carries no turn events at all', () => {
+      // The freshly spawned thread: identity on disk, nothing started yet.
+      // `busy` is false here too, which is exactly why it cannot be the signal.
+      const tail = parseCodexRolloutTail(rolloutLines[0]! + '\n')
+      expect(tail.busy).toBe(false)
+      expect(tail.completedTurn).toBe(false)
+    })
+
+    it('records no completed turn once a later task_started reopens one', () => {
+      const tail =
+        event({ type: 'task_started', turn_id: 'turn-1' }) +
+        event({ type: 'task_complete', turn_id: 'turn-1' }) +
+        event({ type: 'task_started', turn_id: 'turn-2' })
+      expect(parseCodexRolloutTail(tail).completedTurn).toBe(false)
+    })
+
+    /**
+     * A `turn_aborted` ends the turn (issue #34) but is deliberately NOT a
+     * completion: it is a human pressing Esc, and what happens next is the
+     * human's, not the agent's. Retiring on it would be this app deciding an
+     * interrupted thread is finished, so an aborted thread keeps the window it
+     * has today.
+     */
+    it('does not count a user-interrupted turn as completed, though the turn is closed', () => {
+      const tail =
+        event({ type: 'task_started', turn_id: 'turn-4' }) +
+        event({ type: 'turn_aborted', turn_id: 'turn-4', reason: 'interrupted' })
+      const info = parseCodexRolloutTail(tail)
+      expect(info.busy).toBe(false)
+      expect(info.completedTurn).toBe(false)
+    })
+  })
+
   it('reads the latest assistant message text', () => {
     expect(parseCodexRolloutTail(rollout).lastMessage).toBe('Latest codex reply placeholder.')
   })

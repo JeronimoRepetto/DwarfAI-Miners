@@ -5,8 +5,9 @@ next backend — Gemini, OpenCode, a local LLM — does not have to guess what `
 the two backends that already ship stop disagreeing about it.
 
 Two things this document argued for have since shipped on their own axes: the attendance split
-(#68) and the Codex rank-and-existence fix §1 reported as a live defect (#202). Both are recorded
-where they belong — §1 and §12 — and neither is §6.
+(#68) and the Codex rank-and-existence fix §1 reported as a live defect (#202) — which #219 then
+narrowed, because freezing a dwarf's existence to its session was right for a root and wrong for a
+spawned agent. All three are recorded where they belong — §1 and §12 — and none of them is §6.
 
 Every claim below carries the file and line it was read from, on `cc75a89`, except where a section
 says otherwise. Where the issue's own account differs from the code, the code wins and the
@@ -18,11 +19,11 @@ difference is named.
 
 Three providers, three unrelated rules. The issue names two of them.
 
-| Provider  | Rule                                                             | Where                           |
-| --------- | ---------------------------------------------------------------- | ------------------------------- |
-| Claude    | Main session is **always** `foreman`; every subagent is `worker` | `claudeProvider.ts:532`, `:591` |
-| Codex     | See the resolved rule below (**changed since `cc75a89`**, #202)  | `codexProvider.ts:566`, `:700`  |
-| Simulated | Roster index 0 is `foreman`, everyone else `worker`              | `world.ts:293`                  |
+| Provider  | Rule                                                                   | Where                           |
+| --------- | ---------------------------------------------------------------------- | ------------------------------- |
+| Claude    | Main session is **always** `foreman`; every subagent is `worker`       | `claudeProvider.ts:532`, `:591` |
+| Codex     | See the resolved rules below (**changed since `cc75a89`**, #202, #219) | `codexProvider.ts:615`, `:761`  |
+| Simulated | Roster index 0 is `foreman`, everyone else `worker`                    | `world.ts:293`                  |
 
 The simulated provider is the tell. It is not modelling topology at all — it is picking the first
 element of an array — and nothing stopped it, because there is no place in the codebase where the
@@ -32,7 +33,8 @@ meaning of `foreman` is written down.
 
 What this section reported as a live defect was fixed on `5569b97`+ and is kept here, defect first,
 because the reasoning is what generalises to the next backend. Line numbers in this sub-section were
-read on the fix; every other line number in this document is still `cc75a89`'s.
+read on the #202 fix and re-read on #219's, which drifted them; every line number outside these two
+`RESOLVED` sub-sections is still `cc75a89`'s.
 
 **The defect, as it stood.** `linkSubagents` required all four of: the child's snapshot status is
 `busy`, a parent id from the child's own rollout head or from `thread_spawn_edges`, the parent
@@ -51,19 +53,19 @@ the dwarf outright and the next prompt built a new one, which the map's hash slo
 set of unplaced mines then placed somewhere else (`renderer/src/lib/placement.ts`). Existence
 flickering, not just rank. Reported live on Windows against real Codex sessions, 2026-09-04 (#202).
 
-**The rule now.** Two facts, kept apart:
+**The rule now.** Two facts, kept apart (a third, retirement, arrived with #219 below):
 
 - **Existence** is the session's, not the turn's. `dwarfs: [mainDwarf]`
-  (`codexProvider.ts:607`) — reaching that line already means `scan()`'s liveness gate accepted the
+  (`codexProvider.ts:661`) — reaching that line already means `scan()`'s liveness gate accepted the
   session (registry activity via `readCodexThreads`, a `logs_2.sqlite` heartbeat, file growth, or
   the process probe inside `livenessWindowS + idleRetentionS`), and that gate stays the one and only
   place a Codex session stops being live. Only `status` moves between turns, `working` ↔ `waiting`.
-  The snapshot's own `status` is unchanged (`busy ? 'busy' : 'idle'`, `:598`) because it answers a
+  The snapshot's own `status` is unchanged (`busy ? 'busy' : 'idle'`, `:652`) because it answers a
   different question — _is a turn open_ — and listing a dwarf beside an `idle` snapshot is exactly
   what `claudeProvider` does for a session that is idle with agents out (`:680`).
 - **Rank** is a remembered edge, not a headcount. One `Set<string>` of session ids ever observed as
-  a parent (`codexProvider.ts:244`) is read when the dwarf is built (`:566`) and written by
-  `linkSubagents` (`:695`), which then applies it to every parent in the scan (`:700`) so an edge
+  a parent (`codexProvider.ts:254`) is read when the dwarf is built (`:615`) and written by
+  `linkSubagents` (`:750`), which then applies it to every parent in the scan (`:761`) so an edge
   first read this tick still reaches a dwarf already built. Monotone: `worker` is now the absence of
   evidence, and nothing demotes.
 
@@ -80,8 +82,68 @@ silence-window invariant (#47, #68) is untouched. `linkSubagents`' second job �
 the board that its own turn state would have hidden — is not deleted but subsumed: every live
 session lists its dwarf now, so there is nothing left to unshift.
 
+That last clause held for a root and cost a spawned agent 65 minutes; #219, immediately below,
+narrowed it.
+
+### RESOLVED (#219) — a finished agent leaves; only a root idles
+
+Read on the #219 fix, like the sub-section above and unlike the rest of this document.
+
+**What #202 left behind.** Freezing existence to the SESSION is right for a root and wrong for a
+spawned agent, and #202 applied it to both. A Codex sub-agent that had closed its turn aged out on
+the same gate as everything else — kept while its newest activity is newer than
+`now - (livenessWindowS + idleRetentionS)` (`codexProvider.ts:333`), which is 3900s on the shipped
+defaults (`config/config.ts:166-169`), and granted while **any** Codex process is alive anywhere,
+because the probe is global rather than per-thread (`getCachedProcessRunning`,
+`codexProvider.ts:335`). With no Codex process at all it is 300s, plus the 20s
+`dwarfLeaveGraceS` the lifecycle tracker spends on the departure (`config.ts:145`,
+`domain/lifecycle.ts:114-120`). Reported live on Windows, 2026-09-04: a foreman and three agents
+resting long after their reports were delivered (#219).
+
+**The rule now.** A third fact, kept apart from the two above:
+
+- **Retirement** is the thread's own record, not the clock's and not the crew's. `finished`
+  (`codexProvider.ts:590-591`) is true for a thread that satisfies both halves at once:
+
+  1. it carries a spawn edge — `parentSessionId`, from its own
+     `session_meta.source.subagent.thread_spawn.parent_thread_id` or the registry's
+     `thread_spawn_edges`. A root has neither, so a root can never reach this branch and its window
+     is byte-for-byte the one it had before, which is how the silence-window invariant (#47, #68)
+     survives a change to retention; and
+  2. its rollout records `task_complete` with no later turn reopened — `completedTurn`
+     (`parse.ts:226`), added for this. `busy: false` is deliberately **not** the signal: it is
+     equally what a thread whose first `task_started` is not yet on disk looks like, and retiring on
+     it would send a worker home before it lifted a pick and bring it back next tick — the flicker
+     #202 was. `turn_aborted` does not set it either: an interrupt is a human's decision about what
+     happens next (#34), so an interrupted thread keeps the window it has.
+
+  `busy` still wins over both, so the scan that _observes_ the completion — which still reads busy
+  from file growth, issue #1's rule — leaves the agent on the board. It goes on the scan after.
+
+The filter runs in `scan()` **after** `linkSubagents` (`codexProvider.ts:359`, then `:380`),
+and that order is load-bearing rather than incidental: the spawn edge lives on the CHILD, so it is
+the only thing that tells this provider its root is a foreman. Dropping the child first demotes a
+root whose only agent had already finished when the panel started — #202's identity swap, back
+through the side door. Deliberately breaking the order fails exactly one test,
+`still ranks its root a foreman when the agent is already finished on the first scan`, with
+`expected 'worker' to be 'foreman'`.
+
+Retirement is a withdrawal, not a deletion. Nothing in the provider is pruned when an agent goes
+home — not `parentSessions`, not `lastSeenSizes`, not the feed entry, which is left in place for the
+reason the feed generation is seeded rather than emptied (#192): the panel reads the transcript once
+more while the dwarf walks out. A thread that somehow opens another turn grows, and growth brings
+the same dwarf id back under the same remembered rank.
+
+**What did not change**: no new field on the wire (`finished` never leaves the provider — it lives
+on the internal `DiscoveredCodexSnapshot`, not on `ProviderSnapshot`), no new provider option, no
+second store, no change to the liveness gate itself, no change to `dwarfs: [mainDwarf]`
+(`codexProvider.ts:661`) or to the snapshot's `status` (`:652`), and no change to a root's window in
+either direction. Nothing infers "finished" from the busy headcount, which is the rule #202 retired
+and #209 deleted.
+
 Sections 2 to 11 below are unaffected: they argue for a normalized topology model (#62), which is
-still unimplemented. #202 changed only which of the two rules §1 describes Codex is running.
+still unimplemented. #202 and #219 changed only which of the two rules §1 describes Codex is
+running, and how long one of its two kinds of session stays.
 
 ---
 
@@ -684,6 +746,17 @@ One thing it argued for has since shipped, on a different axis than this documen
   `deriveRoles` exists, and providers still write `role` directly. §10's rules 2 and 3 (an
   unresolvable subagent must not render as a foreman) were not needed either, because the fix never
   flipped the default: a Codex dwarf with no observed parent edge is still born `worker`.
+
+- **§1's resolved rule has since been narrowed (#219)**, and §1 carries that as a second
+  `RESOLVED` sub-section. #202 froze a Codex dwarf's existence to its SESSION rather than its turn,
+  which is right for a root — a human between prompts may speak again — and wrong for a spawned
+  agent, whose turn is the whole of its life: it aged out on the 3900s "open but quiet" window
+  instead of leaving, measured at about 65 minutes on a real round. What arrives is one internal
+  flag read from two records the thread carries about itself — its spawn edge and its own
+  `task_complete` — never from the busy headcount, which stays retired. Nothing on the wire, no new
+  option, no change to the liveness gate or to a root's window. §5's test addendum is unaffected:
+  #219 amended no existing test, and the census records `codexProvider.test.ts` 41 → 45 and
+  `parse.test.ts` 22 → 27, both purely appended.
 
 Nothing above changes this document's actual subject — the role and topology proposal for #62
 is still unimplemented, and sections 2 to 11 remain an accurate reading of `cc75a89`.

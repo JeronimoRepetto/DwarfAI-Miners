@@ -836,4 +836,153 @@ describe('CodexProvider', () => {
       )
     })
   })
+
+  /**
+   * Issue #219 — a finished agent goes home; an idle root does not.
+   *
+   * #202 froze a Codex dwarf's existence to its SESSION rather than its turn,
+   * which is right for a root: a human between prompts is idle, and may speak
+   * again. It left the liveness gate alone, so a spawned agent that had closed
+   * its turn aged out on the same window — `livenessWindowS + idleRetentionS`,
+   * 3900s on the shipped defaults, granted for as long as ANY codex process is
+   * alive anywhere because the probe is global. Measured on a real round of
+   * agents: three finished workers resting for about 65 minutes.
+   *
+   * Finished and idle are different facts, and the distinction is NOT the busy
+   * headcount — that is the rule #202 retired and #209 deleted, and nothing
+   * below re-derives it. It is two records the thread carries about itself:
+   *
+   * 1. a spawn edge, from its own `session_meta.source.subagent.thread_spawn`
+   *    or the registry's `thread_spawn_edges` — a root has neither, so a root
+   *    can never take this path, and
+   * 2. `task_complete` in its own rollout, with no turn reopened after it
+   *    (`completedTurn`, parse.ts). A turn it OPENED and CLOSED. `busy: false`
+   *    alone is not that record: it is also a thread whose first task_started
+   *    is not on disk yet, which is why the guard below exists.
+   */
+  describe('a spawned agent that has finished its turn (#219)', () => {
+    const ROOT_ID = '01a048b5-root219-7312-ab78-000000000000'
+    const AGENT_ID = '01a048b5-agent219-ab78-000000000000'
+    const ROOT_PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-50-00-${ROOT_ID}.jsonl`
+    const AGENT_PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-51-00-${AGENT_ID}.jsonl`
+    /** The fixture's own final line: the task_complete that closes its turn. */
+    const TASK_COMPLETE = rolloutLines[rolloutLines.length - 1]!
+    /** An unmatched task_started — a turn opening on a thread thought finished. */
+    const REOPENED = JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'agent-second-turn' }
+    })
+
+    /** A root whose own last turn completed: idle, and #202 says it stays. */
+    function idleRoot(): string {
+      return rollout.replaceAll(SESSION_ID, ROOT_ID)
+    }
+
+    /** The same rollout, re-keyed and carrying the spawn edge back to the root. */
+    function spawnedAgent(body: string): string {
+      return withThreadSpawn(body.replaceAll(SESSION_ID, AGENT_ID), ROOT_ID, 'Report writer')
+    }
+
+    function dwarfIds(snapshots: { dwarfs: { id: string }[] }[]): string[] {
+      return snapshots.flatMap((snapshot) => snapshot.dwarfs.map((dwarf) => dwarf.id))
+    }
+
+    it('takes it off the board on the scan after its turn completes, while its idle root stays', async () => {
+      const provider = makeProvider()
+      fake.addFile(ROOT_PATH, idleRoot(), NOW - 60_000)
+      const openTurn = spawnedAgent(busyRollout)
+      fake.addFile(AGENT_PATH, openTurn, NOW - 10_000)
+
+      const working = await provider.scan()
+      expect(working.find((s) => s.sessionId === AGENT_ID)!.dwarfs[0]).toMatchObject({
+        id: `codex:${AGENT_ID}`,
+        role: 'worker',
+        status: 'working'
+      })
+
+      // The scan that OBSERVES the completion still reads busy, because the
+      // rollout grew since the previous scan and growth is the one liveness
+      // signal a frozen mtime cannot contradict (issue #1). Retiring here
+      // would take the agent off the board while it was still filing its
+      // report, so the completed turn only counts once growth has stopped.
+      fake.addFile(AGENT_PATH, `${openTurn}${TASK_COMPLETE}\n`, NOW - 9_000)
+      const observing = await provider.scan()
+      expect(observing.map((s) => s.sessionId)).toContain(AGENT_ID)
+      expect(observing.find((s) => s.sessionId === AGENT_ID)!.dwarfs[0]).toMatchObject({
+        status: 'working'
+      })
+
+      const after = await provider.scan()
+      expect(after.map((s) => s.sessionId)).not.toContain(AGENT_ID)
+      expect(dwarfIds(after)).not.toContain(`codex:${AGENT_ID}`)
+      // The whole point of the split: the root is idle in this very scan, with
+      // a completed turn of its own, and it is untouched (#202, #47, #68).
+      const root = after.find((s) => s.sessionId === ROOT_ID)!
+      expect(root.status).toBe('idle')
+      expect(root.dwarfs[0]).toMatchObject({
+        id: `codex:${ROOT_ID}`,
+        role: 'foreman',
+        status: 'waiting'
+      })
+    })
+
+    /**
+     * #209's rank rule, guarded against the order of this fix. The edge that
+     * makes a root a foreman is read off the CHILD, so a retirement applied
+     * before `linkSubagents` would silently demote a root whose only agent was
+     * already finished when the panel started — the identity swap #202 fixed,
+     * reintroduced through the back door.
+     */
+    it('still ranks its root a foreman when the agent is already finished on the first scan', async () => {
+      fake.addFile(ROOT_PATH, idleRoot(), NOW - 60_000)
+      fake.addFile(AGENT_PATH, spawnedAgent(rollout), NOW - 9_000)
+
+      const snapshots = await makeProvider().scan()
+      expect(snapshots.map((s) => s.sessionId)).not.toContain(AGENT_ID)
+      expect(snapshots.find((s) => s.sessionId === ROOT_ID)!.dwarfs[0]!.role).toBe('foreman')
+    })
+
+    /**
+     * The guard on reading the record rather than its absence. A thread whose
+     * session_meta is on disk but whose first task_started is not has
+     * `busy: false` exactly like a finished one — retiring on `!busy` would
+     * send a worker home before it ever picked up a pick, and bring it back on
+     * the next tick. Flicker, which is what #202 was.
+     */
+    it('keeps a just-spawned agent whose turn has not started yet', async () => {
+      fake.addFile(ROOT_PATH, idleRoot(), NOW - 60_000)
+      fake.addFile(AGENT_PATH, spawnedAgent(rolloutLines[0]! + '\n'), NOW - 1_000)
+
+      const snapshots = await makeProvider().scan()
+      expect(snapshots.map((s) => s.sessionId)).toContain(AGENT_ID)
+      expect(snapshots.find((s) => s.sessionId === AGENT_ID)!.dwarfs[0]).toMatchObject({
+        id: `codex:${AGENT_ID}`,
+        status: 'waiting'
+      })
+    })
+
+    /**
+     * Retirement is a withdrawal, not a deletion, and that is what keeps this
+     * fix from being the thing #202 forbade. Nothing in the provider is
+     * pruned when an agent goes home: if its thread ever writes another turn,
+     * the growth that proves it brings back the SAME dwarf id under the same
+     * remembered rank.
+     */
+    it('brings it back under the same id if its thread ever opens another turn', async () => {
+      const provider = makeProvider()
+      fake.addFile(ROOT_PATH, idleRoot(), NOW - 60_000)
+      const finished = spawnedAgent(rollout)
+      fake.addFile(AGENT_PATH, finished, NOW - 9_000)
+      expect((await provider.scan()).map((s) => s.sessionId)).not.toContain(AGENT_ID)
+
+      fake.addFile(AGENT_PATH, `${finished}${REOPENED}\n`, NOW - 8_000)
+      const reopened = (await provider.scan()).find((s) => s.sessionId === AGENT_ID)!
+      expect(reopened.dwarfs[0]).toMatchObject({
+        id: `codex:${AGENT_ID}`,
+        role: 'worker',
+        status: 'working',
+        parentId: `codex:${ROOT_ID}`
+      })
+    })
+  })
 })
