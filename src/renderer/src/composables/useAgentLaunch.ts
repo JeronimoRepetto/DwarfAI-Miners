@@ -9,6 +9,7 @@ import {
   commitCommand,
   composerEnabled,
   composerPlaceholder,
+  launchCommand,
   launchPhase,
   launchPrompt,
   openLaunch,
@@ -27,7 +28,7 @@ import { HELDABLE_PROVIDERS } from '../types'
 import type { AgentProviderOption, Mine } from '../types'
 
 /**
- * Launching an agent from inside a mine (#86): the IPC, and the state the
+ * Launching an agent from inside a mine (#86, #194): the IPC, and the state the
  * design's gates are read off.
  *
  * App owns this composable — and therefore the bridge — for the reason it owns
@@ -36,15 +37,32 @@ import type { AgentProviderOption, Mine } from '../types'
  * all; they are pure, in lib/launch, so this file is only the parts that need a
  * process on the other end.
  *
- * ## Why the HELD channel and not the detached one
+ * ## Why a channel this panel HOLDS, and not the detached one
  *
- * Two launch modes exist and both belong. The detached one hands the session
- * over and lets go, so it outlives the panel; the held one keeps the stream and
- * its child dies with the panel. The design decides it: submitting has to open
- * the MessagePanel with the submitted prompt as the first message and then show
- * the agent's first reply there. Only a held session gives the panel words at
- * all — an observed one is read from a transcript, second-hand and a write
- * behind — so a detached launch would open a panel with nothing in it.
+ * Three launch modes exist and all three belong. The detached one hands the
+ * session over and lets go, so it outlives the panel; the held one keeps an
+ * Agent SDK stream into a CLI this app knows; the HOSTED one keeps a pipe into
+ * a program the person named themselves (#194). The design decides between
+ * them: submitting has to open the MessagePanel with the submitted prompt as
+ * the first message and then show the reply there. Only a stream this panel
+ * holds gives it words at all — an observed session is read from a transcript,
+ * second-hand and a write behind — so a detached launch would open a panel with
+ * nothing in it, and the two held modes both fill it.
+ *
+ * ## Other is a launch now, not a refusal
+ *
+ * It was refused until #194 — `OTHER_NOT_LAUNCHABLE`, gone from
+ * providerChips.ts along with its whole argument — on the ground that a custom
+ * process writes no session store, so no dwarf could ever be drawn from it. The
+ * maintainer reversed that: the panel is its stdio, so the panel is what
+ * observes it.
+ *
+ * Nothing here gained a phase for it, and that is the test of the shape. A
+ * hosted launch is adopted through the SAME receipt a held one is — the first
+ * message of the arriving dwarf's conversation is the prompt this panel sent
+ * (see launchedDwarfIn) — because main seeds a hosted process's conversation
+ * exactly as the held registry seeds a session's. So `submit` gained one branch
+ * and `observe` gained nothing at all.
  *
  * ## The first message is not shown twice
  *
@@ -141,6 +159,11 @@ export function useAgentLaunch(): AgentLaunch {
    * it anyway would start a Claude session for a command the user picked
    * instead of Claude — a launch nobody asked for is worse than a refusal that
    * says why, and it would be a real process in a real folder.
+   *
+   * Which of the three channels a submit goes down is decided by what the
+   * choice IS, and each is the only honest route for its own case: a command of
+   * the person's own has no provider to name, a Claude session can be held, and
+   * anything else is started detached.
    */
   async function submit(): Promise<void> {
     if (!canSubmit(state.value) || mineId.value === null) return
@@ -150,31 +173,46 @@ export function useAgentLaunch(): AgentLaunch {
       return
     }
 
-    // Past the refusal above, the choice is a real provider: OTHER_CHOICE is
-    // the only non-provider value the union has, and it never gets here. The
-    // guard is for the compiler and for anything that changes that later — a
-    // launch with no provider named must not be sent at all (#168).
-    const provider = state.value.choice
-    if (provider === null || provider === OTHER_CHOICE) return
-
+    const choice = state.value.choice
+    if (choice === null) return
     const prompt = launchPrompt(state.value)
-    const held = HELDABLE_PROVIDERS.includes(provider)
     state.value = submitStarted(state.value)
     try {
+      // A command of the person's own (#194). It names no provider because
+      // there is none — the whole reason it is a channel of its own rather than
+      // a nullable field on the launch request — and main parses the string
+      // into a program plus an argv array, with no shell anywhere.
+      if (choice === OTHER_CHOICE) {
+        const hostedResult = await window.api.launchHostedProcess({
+          mineId: mineId.value,
+          command: launchCommand(state.value),
+          prompt
+        })
+        // No `startedDetached` branch, because this panel IS holding that
+        // process: its dwarf arrives carrying the prompt sent here, which is
+        // the same receipt `observe` already recognises for a held session.
+        if (!hostedResult.launched) {
+          state.value = submitRefused(state.value, hostedResult.error ?? NOT_LAUNCHED)
+        }
+        return
+      }
+
+      const held = HELDABLE_PROVIDERS.includes(choice)
       const result = held
-        ? await window.api.launchHeldSession({ mineId: mineId.value, provider, prompt })
-        : await window.api.launchAgent({ mineId: mineId.value, provider, prompt })
+        ? await window.api.launchHeldSession({ mineId: mineId.value, provider: choice, prompt })
+        : await window.api.launchAgent({ mineId: mineId.value, provider: choice, prompt })
 
       // A verdict of `launched: true` says a session STARTED and nothing more,
-      // on either channel. What differs is what can be done with that fact.
+      // on every channel. What differs is what can be done with that fact.
       if (!result.launched) {
         state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
         return
       }
       // A held launch waits: its dwarf will arrive carrying the prompt this
       // panel sent, which is the receipt `observe` recognises. A detached one
-      // never will — a conversation is held-sessions-only — so the panel stops
-      // here and says so rather than watching for something that cannot come.
+      // never will — a conversation belongs to a stream this panel holds — so
+      // the panel stops here and says so rather than watching for something
+      // that cannot come.
       if (!held) state.value = startedDetached(state.value)
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)

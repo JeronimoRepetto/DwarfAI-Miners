@@ -137,7 +137,12 @@ So that nobody invests work the project will decline:
   scheduled.
 - **New providers need verifiable session artifacts.** Gemini CLI stays "planned" until its
   session files can be verified on a real machine — the same bar Claude Code and Codex met
-  (see [`docs/provider-formats.md`](docs/provider-formats.md)).
+  (see [`docs/provider-formats.md`](docs/provider-formats.md)). The Add Panel's **Other** chip
+  is not a way round that bar and does not lower it: it starts a command of your own as a
+  process the panel HOLDS, so the panel is its stdio rather than a reader of its store, and its
+  dwarf can say nothing a transcript would have said. A CLI that wants a chip, a tier, ore, or
+  a session it can be reconnected to still needs its own provider and still needs the evidence
+  (see [`docs/custom-launch-command.md`](docs/custom-launch-command.md)).
 
 ## Routing
 

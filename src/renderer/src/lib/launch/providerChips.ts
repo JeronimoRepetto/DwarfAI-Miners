@@ -15,33 +15,35 @@ import { OTHER_CHOICE, type LaunchChoice } from './launchState'
 /** The chip that is not a provider. Always last, always there. */
 export const OTHER_CHIP_LABEL = 'Other'
 
-/**
- * Why a custom command is not started — the ruling, not a gap (#168).
+/*
+ * ## Other launches, and what it does not promise (#194)
  *
- * This used to say "cannot be started yet", which was honest while neither
- * launch channel took a provider and there was nowhere for a user's command to
- * go. #168 built that somewhere, and the answer is still no. The reason has
- * nothing to do with the wire, which could carry a command string tomorrow:
+ * This file used to hold `OTHER_NOT_LAUNCHABLE`, the refusal #168 ruled and
+ * `docs/custom-launch-command.md` argued at length: a launched command of the
+ * user's own writes no session store, every dwarf is read out of one, so a
+ * custom process is one the poll can never find and the panel would sit in its
+ * spawning state forever. The reasoning was sound and the conclusion was
+ * reversed by the maintainer on 2026-09-04. The panel observes terminals AND is
+ * a terminal itself: a process the panel HOLDS needs no session file to be
+ * observed, because the panel is its stdio. The constant is gone rather than
+ * softened, and the doc carries the reversal.
  *
- * A launched command of the user's own writes no session store. Every dwarf on
- * the board is read out of one — Claude's transcripts, Codex's rollout files —
- * so a custom process is one the poll can never find, and the panel would sit
- * in its spawning state waiting for an arrival that cannot happen. Drawing it
- * anyway would need a third way of noticing a session, which is the second
- * observation path #86 refuses.
+ * So there is no refusal here for Other any more. What there is instead is a
+ * shorter list of things it does not promise, and they are refusals main gives
+ * with the command in hand rather than gates a chip can hold:
  *
- * `launchState.ts` reached this from the other side already: `OTHER_CHOICE` is
- * kept out of `DwarfProvider` because that union is who OBSERVED a dwarf, and
- * no observation ever comes back saying 'other'.
+ * - the command runs with NO shell, so pipes, redirects, chains and variables
+ *   are refused by name rather than passed on as literal arguments;
+ * - its dwarf has no transcript, so tier, subagents, model, tokens, blocked
+ *   reasons and reactions are all absent — not pending, absent;
+ * - stdio pipes, not a pty: a program that only draws a TUI produces escape
+ *   sequences here rather than a screen. A real pty is the maintainer's
+ *   explicit second step, with its own issue.
  *
- * The chip stays where the design draws it and its gate still works — hiding it
- * would answer a product question by deletion. Enter says this instead.
- *
- * The full ruling, including what would change it, is docs/custom-launch-command.md.
+ * `launchState.ts`'s rule survives all of this untouched, which is worth
+ * noticing: `OTHER_CHOICE` is still not a `DwarfProvider`, because no
+ * observation ever comes back saying 'other'. It comes back saying 'panel'.
  */
-export const OTHER_NOT_LAUNCHABLE =
-  'A launch command of your own would start a process no dwarf could ever be drawn from — ' +
-  'the panel observes agents through their own session files.'
 
 /** Why a chip for something detection has since stopped reporting cannot be started. */
 export const NOT_DETECTED = 'That provider is no longer detected on this machine.'
@@ -93,13 +95,22 @@ export function providerChips(
  * A reason from main is repeated rather than reworded: the panel's job is to
  * render what main verified, and a second phrasing here would be a second place
  * for the two processes to disagree about what this app can do.
+ *
+ * Null for Other since #194 — see the block above. Every honest refusal for a
+ * custom command needs the command, and main is where it is read.
  */
 export function launchRefusal(
   providers: readonly AgentProviderOption[],
   chosen: LaunchChoice | null
 ): string | null {
   if (chosen === null) return null
-  if (chosen === OTHER_CHOICE) return OTHER_NOT_LAUNCHABLE
+  // Other has no chip-level refusal left (#194). What can go wrong with a
+  // command is only knowable once there IS one — an unrunnable program, shell
+  // syntax, a `.cmd` that cannot be spawned without a shell — and main answers
+  // all of it with the string in hand. A refusal invented here would either
+  // repeat a check main is about to make properly or refuse something that
+  // works.
+  if (chosen === OTHER_CHOICE) return null
   const entry = providers.find((option) => option.provider === chosen)
   if (entry === undefined || !entry.installed) return NOT_DETECTED
   if (entry.launchable) return null

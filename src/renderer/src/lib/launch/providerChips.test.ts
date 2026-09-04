@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentProviderOption } from '../../types'
 import { OTHER_CHOICE } from './launchState'
-import {
-  OTHER_CHIP_LABEL,
-  OTHER_NOT_LAUNCHABLE,
-  launchRefusal,
-  providerChips
-} from './providerChips'
+import { NOT_DETECTED, OTHER_CHIP_LABEL, launchRefusal, providerChips } from './providerChips'
+
+/*
+ * ## Two tests were REPLACED here, for #194
+ *
+ * `docs/custom-launch-command.md` ruled in #168 that the panel would not start
+ * a command of your own, and two tests below pinned that ruling and its copy:
+ *
+ * - "refuses a custom command, because nothing could observe what it started"
+ * - "gives the refusal a reason, not a promise that it is coming"
+ *
+ * The maintainer reversed the ruling on 2026-09-04: the panel observes
+ * terminals AND is a terminal itself, so a process the panel HOLDS needs no
+ * session file to be observed. `OTHER_NOT_LAUNCHABLE` is gone from
+ * providerChips.ts, and neither test has a subject any more — the first
+ * asserted a refusal that must not happen, and the second asserted the wording
+ * of a constant that no longer exists.
+ *
+ * They are replaced rather than deleted: the case they covered — what Enter on
+ * Other does — is still tested, and now asserts a launch instead of a no. What
+ * the old ruling was FOR is preserved in the doc, which states the reversal and
+ * what the new behaviour does not promise.
+ */
 
 const claude: AgentProviderOption = { provider: 'claude', installed: true, launchable: true }
 const codex: AgentProviderOption = {
@@ -87,24 +104,25 @@ describe('what a chip cannot actually start', () => {
   })
 
   /*
-   * The ruling #168 asked for, and it is a ruling rather than a gap: see
-   * docs/custom-launch-command.md. Other is refused because a launched command
-   * of the user's own leaves no session store behind it, so no provider can
-   * read one and no dwarf can ever be drawn — not because the wire cannot carry
-   * a command string. The chip is still offered exactly where the design draws
-   * it, and Enter says this instead of doing nothing.
+   * The reversal (#194) — this is what replaces the two tests named in the
+   * block at the top of this file. Other has no chip-level refusal at all: the
+   * things that can go wrong with a custom command are only knowable once there
+   * IS one, and main answers every one of them with the string in hand.
    */
-  it('refuses a custom command, because nothing could observe what it started', () => {
-    expect(launchRefusal([claude], OTHER_CHOICE)).toBe(OTHER_NOT_LAUNCHABLE)
+  it('refuses nothing for a custom command, because the command is main’s to judge', () => {
+    expect(launchRefusal([claude], OTHER_CHOICE)).toBeNull()
   })
 
-  it('gives the refusal a reason, not a promise that it is coming', () => {
-    // The old copy said "cannot be started yet", which was true while both
-    // channels resolved their own CLI. Since #168 an engine takes a provider,
-    // and the answer for a custom command is still no — so the copy must not
-    // read as a feature in progress.
-    expect(OTHER_NOT_LAUNCHABLE).not.toContain('yet')
-    expect(OTHER_NOT_LAUNCHABLE.toLowerCase()).toContain('observ')
+  it('refuses nothing for Other even when no provider was detected at all', () => {
+    // The chip is always there, so it must be launchable in the state the
+    // design guarantees is always reachable: nothing installed, Other alone.
+    expect(launchRefusal([], OTHER_CHOICE)).toBeNull()
+  })
+
+  it('still refuses a detected provider main said it cannot start', () => {
+    // The reversal is about Other and nothing else. A chip-level refusal that
+    // repeats main's reason is unchanged.
+    expect(launchRefusal([absentCodex], 'codex')).toBe(NOT_DETECTED)
   })
 
   it('refuses a provider that is not on the detected list at all', () => {

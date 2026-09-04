@@ -23,6 +23,13 @@ import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../../types'
  * command the user supplies. Kept out of `DwarfProvider` deliberately — that
  * union is who OBSERVED a dwarf, and no observation ever comes back saying
  * 'other'.
+ *
+ * That rule is UNCHANGED by #194, which is why it is restated here rather than
+ * quietly left alone. Other launches now: the command starts as a process the
+ * panel holds over its stdio, and its dwarf is drawn from that. The observation
+ * still never says 'other' — it says `PANEL_OBSERVER`, because what observed
+ * the dwarf is the panel and not the chip somebody pressed. 'other' is a
+ * CHOICE, 'panel' is an OBSERVER, and this constant belongs to the first.
  */
 export const OTHER_CHOICE = 'other'
 export type LaunchChoice = DwarfProvider | typeof OTHER_CHOICE
