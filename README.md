@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/hero01.gif" width="200" alt="Worker2">
+  <img src="docs/media/hero01.gif" width="210" alt="Worker2">
   <img src="docs/media/hero.gif" width="100" alt="Foreman">
-  <img src="docs/media/hero02.gif" width="200" alt="Worker">
+  <img src="docs/media/hero02.gif" width="210" alt="Worker">
 </p>
 
 <div align="center">
