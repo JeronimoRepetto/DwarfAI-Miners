@@ -69,21 +69,52 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
     'end-working': { src: DWARF_SHEET_SRC.worker['end-working'], frames: 6, frameMs: FRAME_MS }
   },
   /*
-   * The new rank (#157), and the smallest inventory this table admits: an idle
-   * and nothing else. Six frames of 36x38, read off the PNG header, and 100ms
-   * apiece read off the six Graphic Control Extension blocks of the preview GIF
-   * committed beside it — the same cadence every other sheet here was exported
-   * at, verified rather than assumed from the pattern.
+   * The rank #157 introduced, and it no longer has the smallest inventory this
+   * table admits: its working sequence arrived (#211) and is declared below.
+   * The idle is six frames of 36x38, read off the PNG header, at 100ms apiece
+   * read off the six Graphic Control Extension blocks of the preview GIF
+   * committed beside it.
    *
-   * Its WORKING sheet has not been drawn. So a worker2 swinging at a rock plays
-   * this idle, by the rule at the top of this file: a rank falls back to its own
-   * idle, never to another rank's art. That is why the interim "reuse the
-   * worker's sheets" was superseded — a worker2 wearing a worker's skin is the
-   * borrowing that rule exists to forbid, and the maintainer's own art landed
-   * before it could happen.
+   * The working triad is 16/10/17, every count read off its own PNG's IHDR
+   * width against the 36px cell — 576/36, 360/36, 612/36, all exact and all 38
+   * tall, the same cell as this rank's idle. It is a much longer sequence than
+   * the worker's 3/11/6: a slower pick-up, a shorter swing, and a set-down
+   * nearly three times the length. That is the art, not a miscount.
+   *
+   * Its 100ms is measured, not inherited from the pattern: every one of
+   * dwarf-worker2-working-v2.gif's 73 Graphic Control Extension blocks carries
+   * a delay of 10 (hundredths). Those 73 frames are also evidence of ORDER,
+   * which the worker's own preview could not give — 73 is exactly
+   * 16 + (10 x 4) + 17, the pick-up, four turns of the swing and the set-down
+   * concatenated, where the worker's 60 do not decompose into 3/11/6 at all.
+   *
+   * NO `impactFrames` AND NO `glowFrames` ON ANY OF THE THREE, and that is a
+   * SETTLED DECISION rather than art still owed — maintainer ruling on #211.
+   * THE WORKER2 CARRIES NO PICK. The worker's two fields exist because its loop
+   * lands a strike that bites the rock, throwing debris and lighting sparks;
+   * this rank's animation has no strike to name, so there is no frame for
+   * either field to point at and no frame map coming. A reader who finds the
+   * fields absent here has found the answer, not a hole: do not go looking for
+   * numbers, and do not pick a frame by eye. Both fields are optional exactly
+   * so a strip with nothing to declare can declare nothing.
+   *
+   * The interim "reuse the worker's sheets" never landed, and this is why: a
+   * worker2 wearing a worker's skin is the borrowing the rule at the top of
+   * this file exists to forbid, and the maintainer's own art arrived first.
    */
   worker2: {
-    idle: { src: DWARF_SHEET_SRC.worker2.idle, frames: 6, frameMs: FRAME_MS }
+    idle: { src: DWARF_SHEET_SRC.worker2.idle, frames: 6, frameMs: FRAME_MS },
+    'start-working': {
+      src: DWARF_SHEET_SRC.worker2['start-working'],
+      frames: 16,
+      frameMs: FRAME_MS
+    },
+    working: { src: DWARF_SHEET_SRC.worker2.working, frames: 10, frameMs: FRAME_MS },
+    'end-working': {
+      src: DWARF_SHEET_SRC.worker2['end-working'],
+      frames: 17,
+      frameMs: FRAME_MS
+    }
   },
   foreman: {
     // The long idle: 28 frames, which is nearly three seconds before it repeats
