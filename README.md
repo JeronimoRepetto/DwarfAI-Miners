@@ -8,6 +8,10 @@
   Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
 </p>
 
+<p align="center">
+  <img src="docs/media/hero.gif" width="720" alt="Animated view of a crew of dwarfs mining inside a project cave">
+</p>
+
 <div align="center">
 
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
@@ -36,28 +40,38 @@ have not been run end to end yet — see the support matrix below.
 
 ## What it looks like
 
+The panel is designed to be understood at a glance: the map answers **where work is happening**,
+and the mine answers **what each agent is doing**. The hero animation uses privacy-safe generic
+content; it contains no real project names, paths, or session data.
+
+## Feature tour
+
 <table>
   <tr>
-    <td align="center">
-      <img src="docs/assets/screenshot-map.png" width="420" alt="Map view — a moonlit valley where each project is a mine mound, joined by trails, with a per-material vault total in the corner">
-    </td>
-    <td align="center">
-      <img src="docs/assets/screenshot-mine.png" width="420" alt="Mine interior — dwarfs swinging pickaxes at the ore veins while the foreman reads his log book, with the mined ore piled by the entrance">
-    </td>
+    <td align="center"><img src="docs/assets/feature-tour/map.png" width="260" alt="World map with tiered mine markers and a project tooltip"></td>
+    <td align="center"><img src="docs/assets/feature-tour/mines.png" width="260" alt="Mines list with search, filters, sorting, and project cards"></td>
+    <td align="center"><img src="docs/assets/feature-tour/mine.png" width="260" alt="Mine interior with dwarfs working and the message panel open"></td>
   </tr>
   <tr>
-    <td align="center">
-      <em
-        >Map view — one marker per project, tiered by the weight of its code. This shot predates
-        the interface rebuild (#90) and shows the older valley.</em
-      >
-    </td>
-    <td align="center"><em>Mine interior — one dwarf per agent, working the veins</em></td>
+    <td align="center"><strong>Map</strong><br>See every active project at once.</td>
+    <td align="center"><strong>Mines</strong><br>Search and open a project directly.</td>
+    <td align="center"><strong>Mine interior</strong><br>Watch the crew and their status.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/feature-tour/messages.png" width="260" alt="Message history panel with agent and user messages"></td>
+    <td align="center"><img src="docs/assets/feature-tour/launch.png" width="260" alt="Launch panel choosing a supported AI provider"></td>
+    <td align="center"><img src="docs/assets/feature-tour/settings.png" width="260" alt="Settings panel with shortcut and application preferences"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Messages</strong><br>Read history, send, kick, and answer questions.</td>
+    <td align="center"><strong>Launch</strong><br>Start Claude Code or Codex in a project mine.</td>
+    <td align="center"><strong>Settings</strong><br>Configure the shortcut and panel behavior.</td>
   </tr>
 </table>
 
-Both are real captures of a working machine: the mounds are actual projects, and every dwarf is
-an agent that was running when the shutter fell.
+The screenshots in this tour are interface references with generic, privacy-safe content. The
+pixel-art assets and interface design are by Jeronimo Repetto; the [art pipeline](CONTRIBUTING.md#artwork)
+explains how the shipped assets are processed.
 
 ## Highlights
 
@@ -95,6 +109,13 @@ Nothing is code-signed or notarized (see [`docs/signing.md`](docs/signing.md)), 
 Every release is built and packaged on the target OS, but Windows is the only platform that has
 been run end to end — see the support matrix below for exactly what is verified versus built and
 unit-tested only.
+
+### First run
+
+Launch DwarfAI-Miners and it will start minimized to the tray. Use **Ctrl+Alt+Shift+P** (or the
+tray menu) to open the panel. Once packaged, the app enables start-at-login by default; you can
+change that choice from the tray menu. The first run never sends session data anywhere — see
+[Privacy](docs/privacy.md).
 
 ## Quick start
 
@@ -466,6 +487,9 @@ stored, what is transmitted, with the source file behind each claim), and
 privately.
 
 ## Documentation
+
+The pixel-art assets and interface design are by Jeronimo Repetto. Code and artwork are released
+together under the MIT license.
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup, verification commands, testing
   philosophy, commit conventions, and where help is wanted.
