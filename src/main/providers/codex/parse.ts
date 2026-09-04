@@ -21,6 +21,23 @@ export interface CodexRolloutInfo {
   effort?: string
   /** True when the last task_started has no matching task_complete or turn_aborted. */
   busy: boolean
+  /**
+   * True when this fragment carries a `task_complete` and no turn was reopened
+   * after it — Codex's own record that a turn ENDED, rather than the absence of
+   * evidence that one is running (#219).
+   *
+   * `busy: false` cannot answer that question: it is equally what a rollout
+   * with no turn events at all looks like, which is a thread whose session_meta
+   * is on disk but whose first `task_started` is not yet. The provider retires
+   * a finished sub-agent on this field, so it must never be true for a thread
+   * that has not spoken.
+   *
+   * `turn_aborted` deliberately does not set it, though it closes the turn for
+   * `busy` (issue #34): an interrupt is a human's decision about what happens
+   * next, and reading it as "finished" would be this app making that decision
+   * instead.
+   */
+  completedTurn: boolean
   lastMessage?: string
 }
 
@@ -157,6 +174,8 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
   const context = parseCodexRolloutContext(tailText)
   let lastMessage: string | undefined
   let openTurnId: string | null | undefined
+  /** Whether a task_complete has been read at all — see completedTurn (#219). */
+  let sawTaskComplete = false
 
   for (const record of jsonlRecords(tailText)) {
     if (record.type === 'response_item') {
@@ -172,6 +191,10 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
         break
       case 'task_complete': {
         const turnId = asString(record.payload.turn_id)
+        // Recorded for every task_complete read, matched or not: a turn whose
+        // task_started fell outside this tail still completed, and the record
+        // of its ending is exactly this line (#219).
+        sawTaskComplete = true
         // Close the open turn when ids match, or when either side has no id.
         if (openTurnId === null || turnId === undefined || turnId === openTurnId) {
           openTurnId = undefined
@@ -197,7 +220,12 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
     }
   }
 
-  return { ...context, busy: openTurnId !== undefined, lastMessage }
+  return {
+    ...context,
+    busy: openTurnId !== undefined,
+    completedTurn: sawTaskComplete && openTurnId === undefined,
+    lastMessage
+  }
 }
 
 /**
