@@ -7,8 +7,10 @@
 <p align="center">
   Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
 </p>
-
-<p align="center">
+<p align="start">
+  <img src="docs/media/hero01.gif" width="100" alt="Animated view of a crew of dwarfs mining inside a project cave">
+</p>
+<p align="end">
   <img src="docs/media/hero.gif" width="100" alt="Animated view of a crew of dwarfs mining inside a project cave">
 </p>
 
