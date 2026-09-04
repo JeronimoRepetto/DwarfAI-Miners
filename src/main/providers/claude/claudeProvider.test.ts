@@ -1733,6 +1733,25 @@ describe('ClaudeProvider', () => {
       await provider.scan()
       expect(await provider.feed('claude:nope', 20)).toBeNull()
     })
+
+    /**
+     * #192: a session that exits takes its registry entry with it, but its
+     * transcript stays on disk — and the assistant's final reply is in it.
+     * The runtime keeps the dwarf visible as 'leaving' for a grace window and
+     * the panel reads once more at that edge, which only helps if the provider
+     * still knows where the file is. Its console is a different matter: a dead
+     * pid must never be handed a typed message.
+     */
+    it('still reads the transcript of a session that has left the registry', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      alivePids.clear()
+      expect(await provider.scan()).toEqual([])
+
+      const feed = await provider.feed(`claude:${SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toContain('Latest assistant reply placeholder.')
+      expect(provider.textDelivery(`claude:${SESSION_ID}`)).toBeNull()
+    })
   })
 
   /**

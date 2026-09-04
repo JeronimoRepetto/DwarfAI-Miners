@@ -421,7 +421,15 @@ export class ClaudeProvider implements Provider {
   async scan(): Promise<ProviderSnapshot[]> {
     // Built off to the side; swapped in atomically once the scan completes so
     // concurrent feed()/transcriptPath() calls always see a whole generation.
-    const feedSources = new Map<string, string>()
+    //
+    // Seeded from the previous generation rather than empty (#192): a session
+    // that exits takes its registry entry with it, but its transcript stays on
+    // disk with the assistant's final reply in it, and the runtime keeps the
+    // dwarf visible as 'leaving' for a grace window in which the panel reads
+    // once more. A live session's path is re-set below and wins; a departed
+    // one keeps the path it had, which is where its file still is. Delivery
+    // targets are NOT carried: a dead pid must never be handed a message.
+    const feedSources = new Map<string, string>(this.feedSources)
     const deliveryTargets = new Map<string, TextDeliveryTarget>()
     const snapshots: ProviderSnapshot[] = []
     const seenSessions = new Set<string>()

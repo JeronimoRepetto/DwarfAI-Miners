@@ -53,6 +53,14 @@ export const OBSERVED_NOTE = "Latest activity, read from this session's own tran
 export const READING_NOTE = "Reading this session's latest activity..."
 export const NOTHING_SAID_NOTE = 'Nothing has been said in this session yet.'
 export const NO_TRANSCRIPT_NOTE = 'This session keeps no transcript this panel can read.'
+/**
+ * Said in FRONT of whichever note above applies, for a dwarf the board reports
+ * as leaving (#192). The ending changes nothing about what the words are —
+ * first-hand or read from the transcript — so that claim stays; what changes
+ * is that nothing further will be said, and the panel is now what is left of
+ * the conversation rather than a window onto it.
+ */
+export const ENDED_NOTE = 'This session has ended.'
 
 function toPanel(messages: readonly FeedMessage[]): PanelMessage[] {
   return messages.map((message, index) => {
@@ -86,6 +94,16 @@ function fromLastMessage(lastMessage: string | undefined): FeedMessage[] {
  * answer rather than an empty one.
  */
 export function conversationOf(
+  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage' | 'status'>,
+  feed?: DwarfFeedResult
+): PanelConversation {
+  const shown = liveConversationOf(dwarf, feed)
+  if (dwarf.status !== 'leaving') return shown
+  return { ...shown, note: `${ENDED_NOTE} ${shown.note}` }
+}
+
+/** What the panel draws while the session is still there to be drawn. */
+function liveConversationOf(
   dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
   feed?: DwarfFeedResult
 ): PanelConversation {

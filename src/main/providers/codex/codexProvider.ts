@@ -243,7 +243,13 @@ export class CodexProvider implements Provider {
   async scan(): Promise<ProviderSnapshot[]> {
     // Built off to the side; swapped in atomically once the scan completes so
     // concurrent feed()/transcriptPath() calls always see a whole generation.
-    const feedSources = new Map<string, string>()
+    //
+    // Seeded from the previous generation rather than empty (#192): a rollout
+    // that ages out of the liveness window stops being a session but is still
+    // a file with the last turn in it, and the panel reads once more while the
+    // runtime shows the dwarf leaving. Queue targets are NOT carried, for the
+    // reason their comment gives: a thread that ended must stop answering.
+    const feedSources = new Map<string, string>(this.feedSources)
     const queueTargets = new Map<string, string>()
     const nowMs = this.now()
     const freshAfter = nowMs - this.livenessWindowS * 1_000

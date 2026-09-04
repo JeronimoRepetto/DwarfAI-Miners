@@ -66,7 +66,22 @@ export const NO_EFFORT_REASON = "No provider supports changing a running session
 
 export const CONSOLE_HINT = "Focus this session's console."
 
+/**
+ * A 'leaving' dwarf's agent has already finished (#192): its pid is stale and
+ * its session name no longer resolves, which is why main refuses to write to
+ * one. The channel it HAD is still on the dwarf — the grace window freezes the
+ * last real snapshot — so the bar has to read the status, not the channel, or
+ * it offers a way in that main is about to refuse.
+ */
+export const SESSION_ENDED_REASON = 'This session has ended.'
+
+function hasEnded(dwarf: Dwarf): boolean {
+  return dwarf.status === 'leaving'
+}
+
 function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
+  if (hasEnded(dwarf))
+    return { id: 'kick', name: 'Kick', enabled: false, hint: SESSION_ENDED_REASON }
   const channel = dwarf.capabilities?.cancel ?? null
   // A session reachable for text but not for a kick (the Codex queue, #97) is
   // told apart from one with no way in at all: the generic reason would deny a
@@ -105,6 +120,8 @@ function boostAction(dwarf: Dwarf): ActionBarEntry {
 }
 
 function chatAction(dwarf: Dwarf): ActionBarEntry {
+  if (hasEnded(dwarf))
+    return { id: 'chat', name: 'Chat', enabled: false, hint: SESSION_ENDED_REASON }
   const channel = dwarf.textDelivery
   if (channel === undefined) {
     return { id: 'chat', name: 'Chat', enabled: false, hint: NO_CHANNEL_REASON }

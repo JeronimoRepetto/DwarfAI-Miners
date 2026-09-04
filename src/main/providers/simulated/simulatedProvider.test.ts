@@ -81,6 +81,35 @@ describe('SimulatedProvider', () => {
     expect(feed!.every((message) => message.text !== '')).toBe(true)
   })
 
+  /**
+   * #192: a real provider's transcript outlives its session on disk, and the
+   * panel reads it once more as the dwarf leaves. The simulation has to keep
+   * answering for a dwarf that has walked out too, or the leaving re-read
+   * would show "no transcript" for every simulated ending — a lie the
+   * simulation exists to make visible, not to produce.
+   */
+  it('still serves the feed of a dwarf that has since left the world', async () => {
+    const spec = config({ seed: 'departures' })
+    const { provider, advance } = providerWith(spec)
+    const idsNow = async (): Promise<Set<string>> =>
+      new Set((await provider.scan()).flatMap((snapshot) => snapshot.dwarfs.map((d) => d.id)))
+
+    // Walk the world forward until somebody who was there a step ago is gone.
+    let before = await idsNow()
+    let departed: string | undefined
+    for (let steps = 0; departed === undefined; steps++) {
+      if (steps > 10_000) throw new Error('nobody ever left the world')
+      advance(spec.stepMs)
+      const after = await idsNow()
+      departed = [...before].find((id) => !after.has(id))
+      before = after
+    }
+
+    const feed = await provider.feed(departed, 5)
+    expect(feed).not.toBeNull()
+    expect(feed).toHaveLength(5)
+  })
+
   it('answers null for a dwarf it has never scanned', async () => {
     const { provider } = providerWith(config())
     await provider.scan()
