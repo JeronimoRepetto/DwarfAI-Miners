@@ -10,7 +10,9 @@
 
 <p align="center">
   <img src="docs/media/hero01.gif" width="210" alt="Worker2">
-  <img src="docs/media/hero.gif" width="100" alt="Foreman">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/media/hero.gif" width="100" paddin="10" alt="Foreman">
+  &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="docs/media/hero02.gif" width="210" alt="Worker">
 </p>
 
