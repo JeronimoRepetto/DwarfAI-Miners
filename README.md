@@ -44,6 +44,39 @@ tiers, animated dwarfs, terminal focus with transcript fallback, autostart, and 
 implemented. Windows is the verified platform; macOS and Linux build and are unit-tested but
 have not been run end to end yet — see the support matrix below.
 
+## The bigger picture
+
+DwarfAI-Miners is growing toward an **idle game for AI agents**: your agents work in the mines,
+you watch the colony develop, and you step in when a session needs direction. The project is
+intended to make working with agents feel both useful and alive — part control room, part
+observer, and eventually part game.
+
+### What it is today
+
+- **Observer:** reads local Claude Code and Codex session data and turns projects, agents, status,
+  messages, and mined materials into a living colony.
+- **Control surface:** lets you launch supported sessions, focus their external terminal, open a
+  live transcript viewer, send messages, kick work, and answer agent questions.
+- **Terminal companion:** it works alongside the provider's terminal rather than replacing it with
+  a terminal emulator. The panel is already the interactive surface for the actions it supports;
+  the underlying provider still owns the actual process and terminal.
+
+Claude Code and Codex are the two currently supported providers. More providers can be added once
+their session artifacts and interaction paths meet the project's verification bar.
+
+### Where it is going
+
+Once the provider integrations and core interaction model are complete, the **Laboratory** and
+**Market** will turn the colony's mined materials into game systems. The planned direction is to
+use the Lab to change dwarf skins and other cosmetic loadouts, and the Market to spend the raw
+materials the agents mine. Those systems are intentionally not shipped yet: both screens currently
+show an unavailable state, while the material ledger provides the foundation for the future
+economy.
+
+The goal is not to make agent work less trustworthy by hiding it behind game mechanics. The game
+layer should make real agent activity easier and more enjoyable to understand — an idle game built
+around work that is actually happening.
+
 ## What it looks like
 
 The panel is designed to be understood at a glance: the map answers **where work is happening**,
