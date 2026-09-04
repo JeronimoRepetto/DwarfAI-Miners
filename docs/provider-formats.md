@@ -434,6 +434,35 @@ So read a string, or the joined `text` of a content array's `text` blocks — a 
 field and never a `tool_result`'s nested `content`, which can be a whole transcript. A mixed array
 keeps its text blocks and drops the rest.
 
+#### A feed asks for messages, so a byte window is the wrong bound (2026-09-04, issue #215)
+
+Every feed this app builds asks for a **count** — "the latest 50 messages" per dwarf in the Mine
+History panel, twelve in the message panel — and each used to get the last N messages of a fixed
+256 KiB tail, with `feed.slice(-limit)` applied only afterwards. Two windows in series, the narrow
+one first, and it is narrow in the currency the file is mostly made of: tool output. The 256 KB
+figure above is the same measurement from the other side.
+
+`readFeedWindow` (`src/main/providers/feedWindow.ts`) walks the window outwards instead: read
+256 KiB, and only when that came up short of the count **and** the file filled it, read 2 MiB, then
+8 MiB as the ceiling. Whether a window was filled is measured in **bytes** of the returned text,
+never in string length — a tail read slices at a byte offset, so a multi-byte transcript's decoded
+string is shorter than the window it filled, and comparing lengths stops the walk a step early.
+
+Measured over the same 519-file corpus on 2026-09-04, comparing the fixed window with the walk
+**[V]**. 369 of the files are over 256 KiB, 56 over 2 MiB, 8 over 8 MiB, largest 19.8 MiB:
+
+| Asking for | Messages found, fixed 256 KiB | Messages found, walk | Time for one 64-transcript history open |
+| ---------- | ----------------------------- | -------------------- | --------------------------------------- |
+| 12         | 2 564                         | 3 541                | —                                       |
+| 50         | 2 965                         | **6 642**            | 44 ms → **214 ms**                      |
+
+So the panel's promise of fifty goes from being met on paper to being met in fact, for 170 ms on a
+user action. Per transcript the walk costs p50 2.2 ms, p95 14.3 ms, max 24.1 ms at a limit of 50.
+
+**None of this is on the poll.** The 2-second loop reads `TRANSCRIPT_TAIL_BYTES` in
+`claudeProvider.snapshotSession` and does not call `feed()` at all; the two `feed()` call sites in
+`runtime.ts` are both on-demand (`dwarfFeed` for the panel, and `activateDwarf`'s fallback).
+
 ---
 
 ## 2. Codex CLI

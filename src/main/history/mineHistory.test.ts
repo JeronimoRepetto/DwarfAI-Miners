@@ -4,12 +4,8 @@ import type { FsLike } from '../adapters/fsLike'
 import { MemorySqlite } from '../adapters/memorySqlite'
 import { MINE_HISTORY_MESSAGE_LIMIT } from '../domain/types'
 import { CODEX_STATE_SCHEMA, subagentSource, threadInsert } from '../providers/codex/stateSeed'
-import {
-  MINE_HISTORY_TAIL_BYTES,
-  MINE_HISTORY_TRANSCRIPT_LIMIT,
-  MineHistoryReader,
-  speakerRole
-} from './mineHistory'
+import { FEED_WINDOW_CEILING_BYTES, FEED_WINDOW_STEPS } from '../providers/feedWindow'
+import { MINE_HISTORY_TRANSCRIPT_LIMIT, MineHistoryReader, speakerRole } from './mineHistory'
 
 /*
  * The Mine History panel (#192) reads what a mine's transcripts on disk
@@ -65,6 +61,23 @@ function toolResultLine(timestamp: string): string {
       content: [{ tool_use_id: 'toolu_01', type: 'tool_result', content: 'ok' }]
     },
     toolUseResult: { stdout: 'ok' },
+    timestamp
+  })
+}
+
+/**
+ * A tool result big enough to matter to a byte window: 4 KiB of output on one
+ * `user` record the feed skips. This is what a transcript is mostly made of,
+ * and why a byte tail is a poor proxy for a message count (#215).
+ */
+function bulkyToolResultLine(timestamp: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [{ tool_use_id: 'toolu_01', type: 'tool_result', content: 'x'.repeat(4 * 1024) }]
+    },
+    toolUseResult: { stdout: 'x'.repeat(16) },
     timestamp
   })
 }
@@ -289,6 +302,39 @@ describe('MineHistoryReader over Claude transcripts', () => {
     expect(speaker?.messages.at(-1)?.text).toBe(`reply ${MINE_HISTORY_MESSAGE_LIMIT + 9}`)
   })
 
+  /*
+   * Issue #215. The panel promises "the latest 50 messages" per dwarf and used
+   * to show the last 50 messages of the last 256 KiB — two windows in series
+   * with the narrow one first, and the narrow one a byte count over a file
+   * whose bytes are nearly all tool output. Reported as "I open the history of
+   * a finished agent and my first message is not there", and it was outside the
+   * window by construction rather than by chance.
+   */
+  it('reaches the launch prompt behind more than 256 KiB of tool traffic', async () => {
+    const fs = new FakeFs()
+    // One 4 KiB tool result per record, 80 of them: 320 KiB of traffic behind
+    // the prompt, and far fewer than fifty readable messages in front of it.
+    const noise = Array.from({ length: 80 }, (_, index) =>
+      bulkyToolResultLine(new Date(Date.UTC(2026, 8, 1, 9, index)).toISOString())
+    )
+    fs.addFile(
+      `${PROJECT_DIR}\\${SESSION}.jsonl`,
+      lines(userLine('dig the north seam', AT_9), ...noise, assistantLine('Dug it.', AT_12)),
+      1
+    )
+
+    const [speaker] = await reader(fs).read(CWD)
+    expect(speaker?.messages[0]).toEqual({
+      role: 'user',
+      text: 'dig the north seam',
+      timestamp: AT_9
+    })
+    expect(speaker?.messages.map((message) => message.text)).toEqual([
+      'dig the north seam',
+      'Dug it.'
+    ])
+  })
+
   it('is not a speaker when the transcript holds nothing a person could read', async () => {
     const fs = new FakeFs()
     fs.addFile(`${PROJECT_DIR}\\${SESSION}.jsonl`, lines(toolResultLine(AT_9)), 1)
@@ -332,7 +378,15 @@ describe('MineHistoryReader over Claude transcripts', () => {
     ])
   })
 
-  it('reads a bounded tail of every transcript, never the whole file', async () => {
+  /*
+   * Amended for #215, which retired MINE_HISTORY_TAIL_BYTES — the single fixed
+   * window this used to name. The claim it was making is unchanged and still
+   * the one worth pinning: a read is bounded and never asks for the whole
+   * file. What it now names is the walk's own narrowest and widest steps
+   * (readFeedWindow), so the bound is still asserted against a constant rather
+   * than a literal.
+   */
+  it('reads a bounded window of every transcript, never the whole file', async () => {
     const fs = new FakeFs()
     fs.addFile(`${PROJECT_DIR}\\${SESSION}.jsonl`, lines(userLine('dig', AT_9)), 1)
     const readTextTail = vi.fn(fs.readTextTail.bind(fs))
@@ -349,8 +403,14 @@ describe('MineHistoryReader over Claude transcripts', () => {
     await reader(bounded).read(CWD)
     expect(readTextTail).toHaveBeenCalledWith(
       `${PROJECT_DIR}\\${SESSION}.jsonl`,
-      MINE_HISTORY_TAIL_BYTES
+      FEED_WINDOW_STEPS[0]
     )
+    // A short transcript costs one read: the walk stops at the first window
+    // the file did not fill, and never reaches the ceiling.
+    expect(readTextTail).toHaveBeenCalledTimes(1)
+    for (const [, bytes] of readTextTail.mock.calls) {
+      expect(bytes).toBeLessThanOrEqual(FEED_WINDOW_CEILING_BYTES)
+    }
   })
 
   /*
