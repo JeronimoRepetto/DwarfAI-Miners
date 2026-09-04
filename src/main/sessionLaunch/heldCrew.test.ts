@@ -261,6 +261,30 @@ describe('heldCrewDwarfs', () => {
     expect(dwarf?.description).not.toContain('SECRETSECRETSECRET')
   })
 
+  it('carries the parent edge of a nested crew member, so its launcher can be named', () => {
+    // #189. The rank cannot say who spawned a worker2 (rankForSpawnDepth gives
+    // it to depth 2 AND DEEPER) and the id names the SESSION, so the fact that
+    // settles it is the crew's own parent join — carried onto the wire here,
+    // where messageIssuer can read it off the board.
+    const crew = crewOf(
+      started('a1', { toolUseId: 'toolu-1' }),
+      { kind: 'tool-call', toolUseId: 'toolu-2', insideToolUseId: 'toolu-1' },
+      started('a2', { toolUseId: 'toolu-2', spawnDepth: 2 })
+    )
+    expect(heldCrewDwarfs(root(), crew).map((dwarf) => [dwarf.id, dwarf.parentId])).toEqual([
+      ['claude:session-1:a1', undefined],
+      ['claude:session-1:a2', 'claude:session-1:a1']
+    ])
+  })
+
+  it('leaves the edge absent when the stream established no parent, never guessing the root', () => {
+    // The same refusal parentTaskId already holds one layer down: "I was
+    // spawned" and "here is who by" are different facts, and an absent edge
+    // keeps a worker2's prompt unattributed rather than naming the session.
+    const crew = crewOf(started('a2', { spawnDepth: 2 }))
+    expect(heldCrewDwarfs(root(), crew)[0]?.parentId).toBeUndefined()
+  })
+
   it('claims nothing about how long any of them has been silent', () => {
     // No per-agent transcript is read here, so there is no mtime to publish.
     // The absent field means "nothing is known", where a 0 would claim the

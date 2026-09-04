@@ -506,7 +506,48 @@ export interface Dwarf {
   /** Same provenance as `model` — a held session's `init.effort` is a second writer, not a new field (issue #96). */
   effort?: string
   status: DwarfStatus
+  /**
+   * What this agent was asked to do, in whatever form its provider states it
+   * as a FIELD — never prose anything here parsed out of a transcript.
+   *
+   * Three writers, one meaning. A Claude subagent's is the `description` its
+   * spawning tool call carried; a held session's crew member's is the same
+   * string off `task_started`; and a Codex sub-agent's is the `agent_path` of
+   * its spawn blob (`/root/audit_chain_report`), which is the only field that
+   * states its objective at all — a Codex child thread is a FORK, so the first
+   * `user` record in its own rollout is the HUMAN's original prompt rather
+   * than the instruction its parent gave it (#218).
+   *
+   * Carried verbatim, agent_path included: prettifying `/root/…` into a
+   * sentence would be this app writing an objective rather than repeating one.
+   */
   description?: string
+  /**
+   * The id of the dwarf that spawned this one, when the provider saw it — the
+   * parent EDGE (#189, #218). Always a `Dwarf.id`, never a raw provider
+   * session or task id, so one board lookup crosses no translation.
+   *
+   * The field docs/session-topology-and-roles.md §6 proposed, landed early
+   * because two issues needed the edge before the rank redesign around it
+   * does. That design pairs it with a `topology` verdict; nothing here reads
+   * one, and whoever lands `topology` should read THIS field rather than add a
+   * second name for the same fact.
+   *
+   * A dwarf id is not a family tree. It reads like one for a Claude subagent,
+   * whose id is its session's plus its own agent id, and `launchingAgentOf`
+   * used to slice it at the last colon to name a launcher. That answer is
+   * right for exactly one shape and wrong for the rest: a `worker2` is depth 2
+   * OR DEEPER, so the prefix names the SESSION it belongs to rather than the
+   * agent that spawned it, and a Codex sub-agent's id is `codex:<uuid>`, whose
+   * prefix is a PROVIDER's name and no agent at all. An id prefix is not an
+   * edge; this is.
+   *
+   * ABSENT MEANS UNKNOWN, and unknown stays unattributed. #175's contract is
+   * that a message with no issuer is the human's, so a wrong issuer is a worse
+   * claim than none: every provider that has not observed a spawn — and every
+   * session root, which really was launched by a person — carries no value.
+   */
+  parentId?: string
   lastMessage?: string
   sessionId: string
   pid?: number
