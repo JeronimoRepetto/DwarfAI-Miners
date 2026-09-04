@@ -237,7 +237,45 @@ already written. Both models are supported; neither had to win.
 
 ---
 
-## 6. Open edges
+## 6. The terminal handoff, when the panel is not the host
+
+Path 4 keeps one act the other three never need: bringing **somebody else's** terminal window to the
+front before typing into it. Two things about that are counter-intuitive enough to have cost #190
+three rounds, and neither is legible in the code that does it [code: `src/main/platform/focus.ts`].
+
+**Windows refuses the foreground to a process that has not earned it.** `SetForegroundWindow` is
+granted to a process that already owns the foreground or received the last input event; this app has
+no window of its own and drives the call from a freshly spawned `powershell.exe`, so it is neither.
+The documented mitigation is `AttachThreadInput` — borrow the input state of the thread owning the
+current foreground window for the duration of the call — and **the thread id it needs is
+`GetWindowThreadProcessId`'s return value; the out parameter is the _process_ id.** Reading those
+two the wrong way round is not a type error in PowerShell and fails as a plain `False`, which is how
+the mitigation sat in the tree unexecuted from #182 until #190 measured it. Measured live,
+2026-09-04: out parameter 39872 (explorer's pid) against a return value of 31976 (its foreground
+thread); attaching returned `False` for the first and `True` for the second [V, #190]. The attach
+also makes the **read-back** meaningful — without it `GetForegroundWindow()` called immediately
+after the switch returned `0`, the switch still in flight, three times out of three [V, #190].
+
+**A console window a probe finds may not be a window anyone can see.** Windows 11's default-terminal
+handoff puts a `cmd.exe` session inside Windows Terminal, and `AttachConsole` + `GetConsoleWindow`
+then resolves a ConPTY **`PseudoConsoleWindow` phantom** rather than the terminal — measured live on
+one session, handle 133320 class `PseudoConsoleWindow` owned by `cmd.exe`, against handle 133266
+class `CASCADIA_HOSTING_WINDOW_CLASS` owned by `WindowsTerminal.exe` [V, #190]. `IsWindowVisible`
+reports the phantom **true**, so #182's visibility guard does not filter it, and the handoff leaves
+`WT_SESSION` unset, so that does not either. Foregrounding the phantom nevertheless works: Windows
+raises the window that **owns** it. So the foreground afterwards is the terminal, not the handle that
+was asked for, and verification accepts `GetAncestor(GA_ROOTOWNER)` of the target as well as the
+target itself — it returns the handle unchanged when nothing owns it, so an ordinary window verifies
+as before. It also insists the window is **visible**, because text delivery types into whatever holds
+the foreground and a phantom raised alone would take the keystrokes somewhere nobody is looking.
+
+Neither fact is reachable from a unit test: both live in what user32 does, not in what the generated
+PowerShell says. #190 closed once on pure builders and reopened. A change here is measured live
+against a real hosted session, and the measurement goes in the issue.
+
+---
+
+## 7. Open edges
 
 - **`vscode`-source Codex sessions are unproven, not disproven.** Nobody has watched a Desktop-app
   thread drain its queue; it stays `null` until someone runs the same ten minutes against one [#97].

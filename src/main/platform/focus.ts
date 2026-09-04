@@ -272,8 +272,8 @@ export function parseConsoleWindowHandle(stdout: string): number {
  * with the thread that owns the current foreground window lifts the
  * restriction for the duration of the call. Because even that is not
  * guaranteed (e.g. the foreground-lock timeout), success is verified by
- * reading `GetForegroundWindow()` back and comparing it to the target handle
- * — the exit code reflects that comparison, not merely the API call result.
+ * reading `GetForegroundWindow()` back — the exit code reflects what actually
+ * holds the foreground afterwards, not merely the API call result.
  */
 /**
  * Shared user32 dance: given a PowerShell statement (or statements) that
@@ -283,6 +283,35 @@ export function parseConsoleWindowHandle(stdout: string): number {
  * Get-Process (buildFocusCommand) and when it is already a known
  * console-window handle (buildFocusHandleCommand) — the foreground sequence
  * itself never changes, only how `$handle` gets its value.
+ *
+ * Two details here are the whole of issue #190's second round, and both were
+ * measured live rather than reasoned about:
+ *
+ * 1. **The thread id is `GetWindowThreadProcessId`'s return value**, not its
+ *    out parameter — the out parameter is the *process* id. The sequence read
+ *    them the wrong way round, so `AttachThreadInput` was handed a process id
+ *    and returned false: the mitigation described above had never run. Live,
+ *    against a foreground explorer window, the out parameter gave 39872
+ *    (explorer's pid) where the return value gave 31976 (its foreground
+ *    thread), and attaching succeeded only with the second. The attach is also
+ *    what makes the read-back below meaningful: without it, the switch is still
+ *    in flight and `GetForegroundWindow()` answered `0` immediately after
+ *    `SetForegroundWindow` in every attempt measured.
+ * 2. **Success is the foreground reaching the target _or the window that owns
+ *    it_.** Under the Windows 11 default-terminal handoff a session's console
+ *    window is a ConPTY `PseudoConsoleWindow` phantom, and foregrounding it
+ *    raises the terminal that owns it instead — live, target 133320 against a
+ *    foreground of 133266, the real `CASCADIA_HOSTING_WINDOW_CLASS` window of
+ *    WindowsTerminal.exe. Exact handle equality read that as a failure and the
+ *    message fell back to the relay. `GetAncestor(GA_ROOTOWNER)` returns the
+ *    handle itself when nothing owns it, so a window with no owner still
+ *    verifies exactly as it did before.
+ *
+ * The visibility check on top of that is not decoration. Text delivery types
+ * into whatever holds the foreground (`buildSendKeysCommand` in
+ * textDelivery/sendKeys.ts), so accepting an invisible window would send
+ * keystrokes somewhere nobody can see. Widening the comparison to the owner
+ * must not widen it to a hidden window.
  */
 function buildForegroundSequence(handleAssignment: string): string {
   return `
@@ -294,6 +323,8 @@ Add-Type -Namespace Win32 -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
@@ -303,8 +334,9 @@ if ([Win32.Native]::IsIconic($handle)) { [void][Win32.Native]::ShowWindow($handl
 $currentThreadId = [Win32.Native]::GetCurrentThreadId()
 $foregroundWindow = [Win32.Native]::GetForegroundWindow()
 $foregroundThreadId = [uint32]0
+$foregroundProcessId = [uint32]0
 if ($foregroundWindow -ne [IntPtr]::Zero) {
-  [void][Win32.Native]::GetWindowThreadProcessId($foregroundWindow, [ref]$foregroundThreadId)
+  $foregroundThreadId = [Win32.Native]::GetWindowThreadProcessId($foregroundWindow, [ref]$foregroundProcessId)
 }
 $attached = $false
 if ($foregroundThreadId -ne 0 -and $foregroundThreadId -ne $currentThreadId) {
@@ -316,7 +348,10 @@ try {
   if ($attached) { [void][Win32.Native]::AttachThreadInput($currentThreadId, $foregroundThreadId, $false) }
 }
 
-if ([Win32.Native]::GetForegroundWindow() -eq $handle) { exit 0 } else { exit 1 }
+$foregroundAfter = [Win32.Native]::GetForegroundWindow()
+$targetRootOwner = [Win32.Native]::GetAncestor($handle, 3)
+$reachedTarget = $foregroundAfter -eq $handle -or $foregroundAfter -eq $targetRootOwner
+if ($reachedTarget -and [Win32.Native]::IsWindowVisible($foregroundAfter)) { exit 0 } else { exit 1 }
 `.trim()
 }
 
