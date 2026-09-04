@@ -9,8 +9,6 @@
 </p>
 <p align="center">
   <img src="docs/media/hero01.gif" width="100" alt="Animated view of a crew of dwarfs mining inside a project cave">
-</p>
-<p align="center">
   <img src="docs/media/hero.gif" width="100" alt="Animated view of a crew of dwarfs mining inside a project cave">
 </p>
 
