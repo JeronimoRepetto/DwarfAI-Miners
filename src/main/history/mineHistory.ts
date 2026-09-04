@@ -13,6 +13,7 @@ import {
 import { currentPlatform, normalizePathKey, type Platform } from '../platform/platform'
 import { encodeClaudeProjectDir, extractClaudeFeed } from '../providers/claude/parse'
 import { extractCodexFeed } from '../providers/codex/parse'
+import { readFeedWindow, type FeedExtractor } from '../providers/feedWindow'
 import { readCodexThreads, type CodexThread } from '../providers/codex/state'
 import { rankForSpawnDepth } from '../sessionLaunch/heldCrew'
 
@@ -38,27 +39,18 @@ import { rankForSpawnDepth } from '../sessionLaunch/heldCrew'
  */
 
 /**
- * How far back into each transcript one history read reaches.
- *
- * The same window the live feed reads (`TRANSCRIPT_TAIL_BYTES` in
- * claudeProvider), for the same reason: a message panel and a history panel
- * that reached different distances into one file would show different "latest"
- * sets for the same dwarf. Generous enough for fifty human-readable turns
- * beside the tool results interleaved with them; a transcript whose last fifty
- * turns outgrow it shows fewer, never a wrong one.
- */
-export const MINE_HISTORY_TAIL_BYTES = 256 * 1024
-
-/**
  * How many transcripts one read opens, newest by mtime first.
  *
  * The number of transcripts under a project is bounded only by the CLI's own
  * cleanup, and a busy month leaves hundreds. Sixty-four keeps one open of the
- * panel at 64 × MINE_HISTORY_TAIL_BYTES = 16 MiB of reads in the worst case —
- * and the read repeats on every live signal while the panel is open, so the
- * bound is spent per open rather than once. The tabs the panel then shows are
- * the sixty-four most recently written sessions and agents; anything older is
- * left unread rather than sampled.
+ * panel at 64 × FEED_WINDOW_CEILING_BYTES of reads in the absolute worst case
+ * — every transcript longer than the ceiling and nearly all of it tool output
+ * — and the read repeats on every live signal while the panel is open, so the
+ * bound is spent per open rather than once. What it actually costs is the
+ * NARROWEST window that holds fifty messages per file (see readFeedWindow),
+ * which for an ordinary transcript is the first step and one read. The tabs
+ * the panel then shows are the sixty-four most recently written sessions and
+ * agents; anything older is left unread rather than sampled.
  */
 export const MINE_HISTORY_TRANSCRIPT_LIMIT = 64
 
@@ -120,7 +112,7 @@ interface Candidate {
    */
   issuerId?: string
   /** Which text extractor reads this file. */
-  extract: (tailText: string, limit: number) => FeedMessage[]
+  extract: FeedExtractor
 }
 
 interface ClaudeSidecar {
@@ -184,17 +176,26 @@ export class MineHistoryReader implements MineHistorySource {
    * feed redacts: preload and renderer never hold the raw string.
    */
   private async readCandidate(candidate: Candidate): Promise<MineHistorySpeaker | null> {
-    let tail: string
+    let read: FeedMessage[]
     try {
-      tail = await this.fs.readTextTail(candidate.path, MINE_HISTORY_TAIL_BYTES)
+      // Bounded by the fifty MESSAGES the panel promises rather than by a byte
+      // window that happens to contain some of them (#215): the window walks
+      // outwards until fifty are collected or the file starts.
+      read = await readFeedWindow(
+        this.fs,
+        candidate.path,
+        MINE_HISTORY_MESSAGE_LIMIT,
+        candidate.extract
+      )
     } catch {
       // Gone between the listing and the read: the CLI's cleanup, or a user
       // deleting a session. Not a speaker, and not an error worth a warning.
       return null
     }
-    const messages = candidate
-      .extract(tail, MINE_HISTORY_MESSAGE_LIMIT)
-      .map((message) => ({ ...message, text: redactSecrets(message.text) }))
+    const messages = read.map((message) => ({
+      ...message,
+      text: redactSecrets(message.text)
+    }))
     if (messages.length === 0) return null
     const last = messages[messages.length - 1]!
     const lastMessageAt = Date.parse(last.timestamp)

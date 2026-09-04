@@ -34,7 +34,7 @@ Top-level `type` values observed **[V]**: `user`, `assistant`, `system`, `attach
 Common envelope on user/assistant/system/attachment lines **[V]**:
 `parentUuid, isSidechain, type, message, uuid, timestamp, userType ("external"), entrypoint ("cli"), cwd, sessionId, version, gitBranch`
 
-- **user** adds: `promptId, permissionMode, origin, promptSource`, optional `isMeta`, optional `toolUseResult` (rich parsed result object). `message.content` is a **string** for typed prompts, or an **array** of blocks (e.g. `tool_result`) for tool responses.
+- **user** adds: `promptId, permissionMode, origin, promptSource`, optional `isMeta`, optional `toolUseResult` (rich parsed result object). `message.content` is a **string** or an **array** of blocks, and the array is not only for tool responses — a typed prompt takes either shape. Reading it as "string = prompt, array = tool result" is what issue #216 fixed; see §1.6 for the counts.
 - **assistant** adds: `requestId`, `effort` (e.g. `"xhigh"` — the reasoning-effort setting) **[V]**. `message` = full API message: `{model, id, type, role, content[], stop_reason, usage}`. `message.model` e.g. `"claude-fable-5"`, `"claude-sonnet-5"` **[V]**. `usage.output_tokens_details.thinking_tokens` present **[V]**.
 - **assistant content blocks**: `{"type":"text","text":...}` (speech-bubble material), `{"type":"thinking","thinking":...}`, `{"type":"tool_use","id":"toolu_...","name":...,"input":{...}}` **[V]**.
 - **system**: `subtype` (observed `turn_duration`), `durationMs, messageCount,`**`pendingBackgroundAgentCount`** (count of still-running background agents at end of turn — very useful) **[V]**.
@@ -401,6 +401,86 @@ Two facts this deliberately does **not** fix: the receiving session still reads 
 session sent a message" from a session named after the relay's throwaway process, and the panel
 still has no local echo, so a sent message appears only once the transcript records it. Both are
 product decisions recorded in #180.
+
+#### `message.content` is a string OR a block array, for the same prompt (2026-09-04, issue #216)
+
+The classic line above spells its content as a string. The **same** prompt is also written as a
+block array, and reading only the string dropped every one of those — invisibly, since nothing
+logs a line it skipped.
+
+```
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<text>"}]},"timestamp":"…"}
+```
+
+Counted by shape over every transcript on this machine on 2026-09-04 — 519 files, 537 MiB,
+35 870 `user` lines **[V]**:
+
+| `message.content`                    | Lines   |
+| ------------------------------------ | ------- |
+| string                               | 1 746   |
+| array, `text` blocks only            | **103** |
+| array, `tool_result` blocks only     | 33 976  |
+| array, `text` and `tool_result` both | **14**  |
+| array, neither                       | 31      |
+
+The 33 976 are tool output and must stay out; the 117 carrying text are prompts, of which 57 are
+`isMeta` (the harness talking to the session in the newer shape) and the rest are somebody
+speaking. Two facts make the rule safe rather than a guess: **no** array carrying text also
+carried `toolUseResult`, and none of their joined text opened with a tag — so widening what counts
+as content cannot reach the tool-output fork the string path leaves open, and both existing skips
+still apply unchanged.
+
+So read a string, or the joined `text` of a content array's `text` blocks — a block's own `text`
+field and never a `tool_result`'s nested `content`, which can be a whole transcript. A mixed array
+keeps its text blocks and drops the rest.
+
+#### A feed asks for messages, so a byte window is the wrong bound (2026-09-04, issue #215)
+
+Every feed this app builds asks for a **count** — "the latest 50 messages" per dwarf in the Mine
+History panel, twelve in the message panel — and each used to get the last N messages of a fixed
+256 KiB tail, with `feed.slice(-limit)` applied only afterwards. Two windows in series, the narrow
+one first, and it is narrow in the currency the file is mostly made of: tool output. The 256 KB
+figure above is the same measurement from the other side.
+
+`readFeedWindow` (`src/main/providers/feedWindow.ts`) walks the window outwards instead: read
+256 KiB, and only when that came up short of the count **and** the file filled it, read 2 MiB, then
+8 MiB as the ceiling. Whether a window was filled is measured in **bytes** of the returned text,
+never in string length — a tail read slices at a byte offset, so a multi-byte transcript's decoded
+string is shorter than the window it filled, and comparing lengths stops the walk a step early.
+
+Measured over the same 519-file corpus on 2026-09-04, comparing the fixed window with the walk
+**[V]**. 369 of the files are over 256 KiB, 56 over 2 MiB, 8 over 8 MiB, largest 19.8 MiB:
+
+| Asking for | Messages found, fixed 256 KiB | Messages found, walk | Time for one 64-transcript history open |
+| ---------- | ----------------------------- | -------------------- | --------------------------------------- |
+| 12         | 2 564                         | 3 541                | —                                       |
+| 50         | 2 965                         | **6 642**            | 44 ms → **214 ms**                      |
+
+So the panel's promise of fifty goes from being met on paper to being met in fact, for 170 ms on a
+user action. Per transcript the walk costs p50 2.2 ms, p95 14.3 ms, max 24.1 ms at a limit of 50.
+
+**None of this is on the poll.** The 2-second loop reads `TRANSCRIPT_TAIL_BYTES` in
+`claudeProvider.snapshotSession` and does not call `feed()` at all; the two `feed()` call sites in
+`runtime.ts` are both on-demand (`dwarfFeed` for the panel, and `activateDwarf`'s fallback).
+
+#### Two flags say a `user` line is the harness writing down its own state (issue #188)
+
+When Claude Code compacts, it writes a `user` line whose content is the whole multi-kilobyte
+summary ("This session is being continued from a previous conversation…"), flagged
+`isCompactSummary: true` and `isVisibleInTranscriptOnly: true`. Nobody typed it, and
+`extractClaudeFeed` published it as a user turn. Two such lines exist in the corpus above, both
+carrying both flags **[V]**.
+
+Either flag on its own is enough to skip the line, and it is the **flag** that decides rather than
+the content shape — so the block array of #216 is not a way back in. Note this is a claim about
+lines Claude Code wrote for the transcript, not about `isMeta`, which is a different skip with a
+different reason (§1.6 above).
+
+Known limit, unchanged by this: `ClaudeProvider.feed` now walks the same widened window the history
+panel does, but **Codex's** `feed()` still reads a fixed 256 KiB tail
+(`FEED_TAIL_BYTES` in `codexProvider.ts`). Codex _history_ is bounded by messages, because
+`MineHistoryReader` walks both providers' transcripts; only its live feed is not. No issue covers
+that yet.
 
 ---
 
