@@ -527,8 +527,8 @@ privately.
 
 ## Documentation
 
-The pixel-art assets and interface design are by Jeronimo Repetto. Code and artwork are released
-together under the MIT license.
+The pixel-art assets and interface design are by Jeronimo Repetto. The code is MIT-licensed; the
+artwork has its own [artwork license](ARTWORK-LICENSE.md).
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup, verification commands, testing
   philosophy, commit conventions, and where help is wanted.
@@ -552,16 +552,19 @@ together under the MIT license.
   valley: seeing the panel under load without launching real agents (`DWARFAI_SIMULATE=1`).
 - [`docs/custom-launch-command.md`](docs/custom-launch-command.md) — why the Add Panel's
   **Other** chip refuses to run a command of your own, and what would change that.
-- [`LICENSE`](LICENSE) — MIT, code and artwork alike.
+- [`LICENSE`](LICENSE) — MIT license for the code.
+- [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
+  audio assets.
 
 ## Support the project
 
-DwarfAI-Miners is free and MIT-licensed. If it has earned a spot on your desktop, you can
-support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
+DwarfAI-Miners' code is free and MIT-licensed. The artwork remains the creator's property and is
+not separately reusable without authorization. If the project has earned a spot on your desktop,
+you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
 nothing in the app is, or will be, gated on it.
 
 ## License
 
-[MIT](LICENSE) © 2026 Jeronimo Repetto — code and artwork alike. The images under
-`src/renderer/src/assets/art/` carry the same MIT grant as the source files, deliberately: there
-is no carve-out.
+[MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
+copyright and covered separately by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be
+reused without prior written authorization.
