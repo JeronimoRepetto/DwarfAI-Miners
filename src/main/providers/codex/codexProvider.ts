@@ -6,6 +6,7 @@ import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
+import { readFeedWindow } from '../feedWindow'
 import type { Provider } from '../provider'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import {
@@ -27,8 +28,6 @@ import {
 } from './state'
 
 const HEAD_BYTES = 64 * 1024
-/** Tail size used to answer the click-to-focus feed(); a short human-readable window is enough. */
-const FEED_TAIL_BYTES = 256 * 1024
 /**
  * Tail size used for busy detection. A verbose in-progress turn (tool
  * output, reasoning) can push its own task_started event out of a small
@@ -484,11 +483,18 @@ export class CodexProvider implements Provider {
     const path = this.feedSources.get(dwarfId)
     if (path === undefined) return null
     if (!(await this.fs.exists(path))) return []
+    // Bounded by the COUNT asked for rather than by a fixed byte window
+    // (#228, the Codex half of #188): a rollout is overwhelmingly tool output,
+    // so 256 KiB of it held a few minutes of conversation or none. This read
+    // is on demand — the message panel, and activateDwarf's fallback — so it
+    // can walk wider without touching the poll, which reads BUSY_TAIL_BYTES
+    // and never calls feed(). Same walk ClaudeProvider.feed and the Mine
+    // History panel take (#225, #215).
+    //
     // Redacted here — user text included — so preload/renderer never hold the
     // raw string (see domain/redactSecrets).
-    return extractCodexFeed(await this.fs.readTextTail(path, FEED_TAIL_BYTES), limit).map(
-      (message) => ({ ...message, text: redactSecrets(message.text) })
-    )
+    const messages = await readFeedWindow(this.fs, path, limit, extractCodexFeed)
+    return messages.map((message) => ({ ...message, text: redactSecrets(message.text) }))
   }
 
   /** Path backing feed(), used to open a terminal that tails the transcript live. */

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
 import { CODEX_PROBE_SCRIPT } from '../../platform/processProbe'
 import { CodexProvider, type CodexProviderOptions } from './codexProvider'
+import { extractCodexFeed } from './parse'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'codex')
 const rollout = readFileSync(join(FIXTURES, 'rollout.jsonl'), 'utf8')
@@ -14,6 +15,8 @@ const busyRollout = rolloutLines.slice(0, rolloutLines.length - 1).join('\n') + 
 const ROOT = 'C:\\Users\\j\\.codex\\sessions'
 const SESSION_ID = '01a048b5-5f35-7312-ab78-38db464920de'
 const BUSY_SESSION_ID = '01a048b5-0000-7312-ab78-000000000000'
+/** A rollout whose conversation sits behind a turn's worth of tool output (#228). */
+const BURIED_SESSION_ID = '01a048b5-1111-7312-ab78-111111111111'
 
 // Local noon on 2026-08-29; "yesterday" is 2026-08-28.
 const NOW = new Date(2026, 7, 29, 12, 0, 0).getTime()
@@ -72,6 +75,27 @@ function openTurnPushedOutOfTailRollout(): string {
     payload: { type: 'reasoning', encrypted_content: 'x'.repeat(300_000) }
   })
   return `${head}\n${taskStarted}\n${padding}\n`
+}
+
+/** The window CodexProvider.feed used to be fixed at, and the walk's first step. */
+const POLL_FEED_WINDOW_BYTES = 256 * 1024
+
+/**
+ * One rollout record of tool output, `bytes` of it: the currency a rollout is
+ * mostly made of, and what a feed read has to get past to reach the words.
+ * `function_call_output` is what a real shell or apply_patch call writes back.
+ */
+function toolOutputRecord(bytes: number): string {
+  return JSON.stringify({
+    timestamp: '2026-08-29T11:30:00.000Z',
+    type: 'response_item',
+    payload: { type: 'function_call_output', call_id: 'call_01', output: 'x'.repeat(bytes) }
+  })
+}
+
+/** The fixture's finished conversation, then `trailing` bytes of a later turn. */
+function rolloutWithTrailingNoise(trailing: string): string {
+  return rollout.replaceAll(SESSION_ID, BURIED_SESSION_ID) + trailing
 }
 
 function withThreadSpawn(rolloutText: string, parentSessionId: string, agentName: string): string {
@@ -467,6 +491,104 @@ describe('CodexProvider', () => {
       const feed = await provider.feed(`codex:${BUSY_SESSION_ID}`, 20)
       expect(feed!.map((m) => m.role)).toEqual(['user', 'assistant'])
       expect(provider.textDelivery(`codex:${BUSY_SESSION_ID}`)).toBeNull()
+    })
+
+    /**
+     * #228, the Codex half of #188: feed() read a fixed 256 KiB tail, so a
+     * conversation with one turn's worth of tool output behind it was outside
+     * the window by construction rather than by chance. 4 KiB of
+     * function_call_output per record, 80 of them — 320 KiB of traffic after
+     * the only two lines a person wanted to read.
+     */
+    it('reaches past the poll window for a conversation buried in tool output', async () => {
+      const noise = Array.from({ length: 80 }, () => toolOutputRecord(4 * 1024)).join('\n')
+      fake.addFile(
+        `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-30-00-${BURIED_SESSION_ID}.jsonl`,
+        rolloutWithTrailingNoise(noise + '\n'),
+        NOW - 30_000
+      )
+
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`codex:${BURIED_SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toEqual([
+        'Placeholder plain message.',
+        'Placeholder text block.'
+      ])
+    })
+
+    /**
+     * The escalation question a rollout answers differently from a transcript
+     * (#228): the walk stops when a window comes back short of the bytes it
+     * asked for, and a byte-offset tail can open in the middle of a rollout
+     * line. `jsonlRecords` drops that fragment, so the narrow window does not
+     * show half a message — it loses the message. This sizes the tool output
+     * so the 256 KiB boundary falls 40 bytes before a user line ends, then
+     * pins both halves of the claim: the narrow window really does lose it,
+     * and the walk really does bring it back whole.
+     */
+    it('brings back whole a user message the poll window opened in the middle of', async () => {
+      const path = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-31-00-${BURIED_SESSION_ID}.jsonl`
+      const userLine = JSON.stringify({
+        timestamp: '2026-08-29T11:31:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'The question the poll window cut in half.' }
+      })
+      const assistantLine = JSON.stringify({
+        timestamp: '2026-08-29T11:32:00.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'The answer that survived it.' }]
+        }
+      })
+      const fill =
+        POLL_FEED_WINDOW_BYTES -
+        40 -
+        Buffer.byteLength(toolOutputRecord(0), 'utf8') -
+        Buffer.byteLength(assistantLine, 'utf8') -
+        2
+      fake.addFile(
+        path,
+        rolloutWithTrailingNoise(`${userLine}\n${toolOutputRecord(fill)}\n${assistantLine}\n`),
+        NOW - 30_000
+      )
+
+      // The fragment is unparseable JSON, so the 256 KiB window answers with
+      // the reply alone and no trace of the question it answers.
+      const pollWindow = await fake.readTextTail(path, POLL_FEED_WINDOW_BYTES)
+      expect(pollWindow.startsWith('{')).toBe(false)
+      expect(extractCodexFeed(pollWindow, 20).map((m) => m.text)).toEqual([
+        'The answer that survived it.'
+      ])
+
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`codex:${BURIED_SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toEqual([
+        'Placeholder plain message.',
+        'Placeholder text block.',
+        'The question the poll window cut in half.',
+        'The answer that survived it.'
+      ])
+    })
+
+    /**
+     * The other half of that question (#228): a rollout smaller than the
+     * narrowest window comes back whole on the first read, so a short answer
+     * already proves the read reached the start and the walk must stop there.
+     * Asserted on the read count, because "it returned the right messages" is
+     * equally true of a walk that paid for two more windows first.
+     */
+    it('reads a small rollout once, because the first window already reached its start', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+
+      const tailSpy = vi.spyOn(fake, 'readTextTail')
+      const feed = await provider.feed(`codex:${SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.role)).toEqual(['user', 'assistant'])
+      expect(tailSpy.mock.calls.length).toBe(1)
     })
   })
 
