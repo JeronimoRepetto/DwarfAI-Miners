@@ -7,7 +7,8 @@ import {
   focusPid,
   parseConsoleWindowHandle,
   parseProcessRows,
-  resolveFocusTarget,
+  planFocusCandidates,
+  processChain,
   selectFocusTargetPid,
   WINDOWS_TERMINAL_HOSTS,
   type ProcessRow
@@ -51,6 +52,24 @@ describe('parseProcessRows', () => {
 describe('WINDOWS_TERMINAL_HOSTS', () => {
   it('includes herdr.exe as a defensive backstop, even though its MainWindowHandle is 0', () => {
     expect(WINDOWS_TERMINAL_HOSTS.has('herdr.exe')).toBe(true)
+  })
+})
+
+describe('processChain', () => {
+  it('lists the start process first and then each parent in turn', () => {
+    const rows = [row(100, 90, 'claude.exe'), row(90, 85, 'node.exe'), row(85, 1, 'cmd.exe')]
+    expect(processChain(rows, 100).map((process) => process.pid)).toEqual([100, 90, 85])
+  })
+
+  it('stops at a parent the table does not list, and is empty for an unknown start pid', () => {
+    const rows = [row(100, 90, 'claude.exe')]
+    expect(processChain(rows, 100).map((process) => process.pid)).toEqual([100])
+    expect(processChain(rows, 999)).toEqual([])
+  })
+
+  it('breaks a parent-pid cycle instead of looping', () => {
+    const rows = [row(10, 20, 'a.exe'), row(20, 10, 'b.exe')]
+    expect(processChain(rows, 10).map((process) => process.pid)).toEqual([10, 20])
   })
 })
 
@@ -116,9 +135,9 @@ describe('buildConsoleWindowProbeCommand', () => {
   // Issue #182: Windows Terminal keeps the classic console window hidden and
   // draws the session in its own tab, so AttachConsole + GetConsoleWindow
   // still returns a real, nonzero handle for it. Without this check that
-  // handle looked identical to a focusable one, and resolveFocusTarget took
-  // it as the target instead of falling through to the ancestor chain walk
-  // that would have found WindowsTerminal.exe.
+  // handle looked identical to a focusable one, and focusPid took it as the
+  // target instead of falling through to the ancestor walk that would have
+  // found WindowsTerminal.exe.
   it('checks IsWindowVisible on the resolved handle, so a hidden console window is not reported as a hit', () => {
     const command = buildConsoleWindowProbeCommand(4242)
     expect(command).toContain('IsWindowVisible')
@@ -147,7 +166,7 @@ describe('parseConsoleWindowHandle', () => {
   // Issue #182: a nonzero handle that IsWindowVisible rejects is exactly the
   // Windows Terminal case — a real console window nobody can ever foreground.
   // The caller cannot tell that apart from "no handle", so it must return 0
-  // and let resolveFocusTarget fall through to the ancestor chain walk.
+  // and let focusPid fall through to the ancestor walk.
   it('treats a nonzero but invisible handle as no handle', () => {
     expect(parseConsoleWindowHandle('555555 0')).toBe(0)
   })
@@ -169,21 +188,89 @@ describe('buildFocusHandleCommand', () => {
   })
 })
 
-describe('resolveFocusTarget', () => {
-  // These rows would resolve to pid 5 via the ancestor chain walk.
+// A `resolveFocusTarget` block stood here with three tests pinning the pure
+// decision between the session's own console handle and the name walk. Issue
+// #190 made the walk probe ancestors as it climbs, so it needs a shell runner
+// and the pure part is the plan below. Of the three: "a nonzero handle wins
+// and skips the walk" now lives in focusPid's first test; "zero handle falls
+// back to the walk" is the first test below; "both miss returns null" is
+// replaced by the second, because an ancestor that is not a named host is no
+// longer a miss — it gets probed.
+describe('planFocusCandidates', () => {
   const hostRows = [row(10, 5, 'claude.exe'), row(5, 1, 'WindowsTerminal.exe')]
 
-  it('prefers a nonzero console handle and skips the ancestor chain walk entirely', () => {
-    expect(resolveFocusTarget(999, hostRows, 10)).toEqual({ kind: 'handle', handle: 999 })
+  it('names a terminal host that is the direct parent as the target, with nothing to probe', () => {
+    expect(planFocusCandidates(hostRows, 10)).toEqual([{ kind: 'host', pid: 5 }])
   })
 
-  it('falls back to the ancestor chain walk when the console handle is zero', () => {
-    expect(resolveFocusTarget(0, hostRows, 10)).toEqual({ kind: 'pid', pid: 5 })
-  })
-
-  it('returns null when both the console handle and the ancestor chain walk miss', () => {
+  it('asks for an ancestor that is not a named host to be probed instead of giving up', () => {
     const rows = [row(10, 5, 'claude.exe'), row(5, 1, 'services.exe')]
-    expect(resolveFocusTarget(0, rows, 10)).toBeNull()
+    expect(planFocusCandidates(rows, 10)).toEqual([{ kind: 'console', pid: 5 }])
+  })
+
+  // Issue #190: the live chain of a Claude session in a classic cmd.exe
+  // console. No rung is a named host, so every one is a probe, nearest first.
+  it('probes each ancestor of a classic cmd.exe console in turn, nearest first', () => {
+    const rows = [
+      row(100, 90, 'claude.exe'),
+      row(90, 85, 'node.exe'),
+      row(85, 70, 'cmd.exe'),
+      row(70, 1, 'explorer.exe')
+    ]
+    expect(planFocusCandidates(rows, 100)).toEqual([
+      { kind: 'console', pid: 90 },
+      { kind: 'console', pid: 85 },
+      { kind: 'console', pid: 70 }
+    ])
+  })
+
+  // Issue #182: under Windows Terminal every console beneath it is hidden by
+  // design, so the host ends the walk — nothing above it is worth a probe.
+  it('ends the walk at the first named host, probing only the rungs beneath it', () => {
+    const rows = [
+      row(100, 90, 'claude.exe'),
+      row(90, 85, 'node.exe'),
+      row(85, 80, 'cmd.exe'),
+      row(80, 1, 'WindowsTerminal.exe'),
+      row(1, 0, 'wininit.exe')
+    ]
+    expect(planFocusCandidates(rows, 100)).toEqual([
+      { kind: 'console', pid: 90 },
+      { kind: 'console', pid: 85 },
+      { kind: 'host', pid: 80 }
+    ])
+  })
+
+  it('stops asking for probes after three ancestors, yet still finds a host by name past them', () => {
+    const rows = [
+      row(100, 90, 'claude.exe'),
+      row(90, 80, 'a.exe'),
+      row(80, 70, 'b.exe'),
+      row(70, 60, 'c.exe'),
+      row(60, 50, 'd.exe'),
+      row(50, 40, 'e.exe'),
+      row(40, 1, 'WindowsTerminal.exe')
+    ]
+    expect(planFocusCandidates(rows, 100)).toEqual([
+      { kind: 'console', pid: 90 },
+      { kind: 'console', pid: 80 },
+      { kind: 'console', pid: 70 },
+      { kind: 'host', pid: 40 }
+    ])
+  })
+
+  it('never asks to probe the session pid itself, whose console was already probed', () => {
+    const rows = [row(10, 5, 'claude.exe'), row(5, 1, 'services.exe')]
+    expect(planFocusCandidates(rows, 10)).not.toContainEqual({ kind: 'console', pid: 10 })
+  })
+
+  it('still takes the session pid itself as the target when it is a named host', () => {
+    const rows = [row(10, 5, 'WindowsTerminal.exe'), row(5, 1, 'explorer.exe')]
+    expect(planFocusCandidates(rows, 10)).toEqual([{ kind: 'host', pid: 10 }])
+  })
+
+  it('plans nothing for an unknown start pid', () => {
+    expect(planFocusCandidates(hostRows, 999)).toEqual([])
   })
 })
 
@@ -230,21 +317,35 @@ describe('focusPid', () => {
    * the console-window probe (AttachConsole), the process-list query
    * (Get-CimInstance), or a foreground command (buildFocusCommand /
    * buildFocusHandleCommand) — everything else falls to that last bucket.
+   *
+   * A probe answers per pid when `consoleProbes` names that pid, so one fake
+   * can hand a hidden console to the session and a visible one to its
+   * ancestors (issue #190); any pid it does not name gets `consoleHandleStdout`.
    */
   function fakeRunner(options: {
     consoleHandleStdout?: string
+    consoleProbes?: Record<number, string>
     consoleProbeExitCode?: number
     focusExitCode?: number
+    processJson?: string
   }) {
-    const { consoleHandleStdout = '0', consoleProbeExitCode = 0, focusExitCode = 0 } = options
+    const {
+      consoleHandleStdout = '0',
+      consoleProbes = {},
+      consoleProbeExitCode = 0,
+      focusExitCode = 0,
+      processJson: rowsJson = processJson
+    } = options
     const executed: string[] = []
     const run = async (command: string) => {
       executed.push(command)
-      if (command.includes('AttachConsole')) {
-        return { stdout: consoleHandleStdout, exitCode: consoleProbeExitCode }
+      const probed = /AttachConsole\((\d+)\)/.exec(command)
+      if (probed !== null) {
+        const stdout = consoleProbes[Number(probed[1])] ?? consoleHandleStdout
+        return { stdout, exitCode: consoleProbeExitCode }
       }
       if (command.includes('Get-CimInstance')) {
-        return { stdout: processJson, exitCode: 0 }
+        return { stdout: rowsJson, exitCode: 0 }
       }
       return { stdout: '', exitCode: focusExitCode }
     }
@@ -311,5 +412,56 @@ describe('focusPid', () => {
       throw new Error('powershell missing')
     })
     expect(ok).toBe(false)
+  })
+
+  // Issue #190: a Claude session in a classic cmd.exe console, with the probe
+  // results measured live. AttachConsole on claude.exe itself resolves a
+  // console whose window is hidden, while node.exe and cmd.exe above it share
+  // the console the person is actually looking at. Neither cmd.exe nor
+  // explorer.exe is a named terminal host, so the name walk alone found
+  // nothing and no foreground attempt was ever made.
+  it('foregrounds the nearest ancestor console window that is visible when the session own is hidden', async () => {
+    const processJson = JSON.stringify([
+      { ProcessId: 100, ParentProcessId: 90, Name: 'claude.exe' },
+      { ProcessId: 90, ParentProcessId: 85, Name: 'node.exe' },
+      { ProcessId: 85, ParentProcessId: 70, Name: 'cmd.exe' },
+      { ProcessId: 70, ParentProcessId: 1, Name: 'explorer.exe' }
+    ])
+    const { executed, run } = fakeRunner({
+      processJson,
+      consoleProbes: { 100: '131732 0', 90: '133320 1', 85: '133320 1' }
+    })
+    const ok = await focusPid(100, run)
+    expect(ok).toBe(true)
+    // Probe the session, list the processes, probe the parent, foreground its
+    // console — the visible console is found one rung up, so cmd.exe and
+    // explorer.exe are never probed.
+    expect(executed).toHaveLength(4)
+    expect(executed[0]).toContain('AttachConsole(100)')
+    expect(executed[1]).toContain('Get-CimInstance')
+    expect(executed[2]).toContain('AttachConsole(90)')
+    expect(executed[3]).toContain('[IntPtr]133320')
+    expect(executed[3]).not.toContain('Get-Process')
+  })
+
+  it('gives up after probing three ancestors when none has a visible console and no host is named', async () => {
+    const processJson = JSON.stringify([
+      { ProcessId: 100, ParentProcessId: 90, Name: 'claude.exe' },
+      { ProcessId: 90, ParentProcessId: 80, Name: 'a.exe' },
+      { ProcessId: 80, ParentProcessId: 70, Name: 'b.exe' },
+      { ProcessId: 70, ParentProcessId: 60, Name: 'c.exe' },
+      { ProcessId: 60, ParentProcessId: 50, Name: 'd.exe' },
+      { ProcessId: 50, ParentProcessId: 1, Name: 'e.exe' }
+    ])
+    const { executed, run } = fakeRunner({ processJson, consoleHandleStdout: '555555 0' })
+    const ok = await focusPid(100, run)
+    expect(ok).toBe(false)
+    // The session's own probe, the process list, and three ancestor probes —
+    // no fourth probe, and no foreground command at a window nobody can see.
+    expect(executed).toHaveLength(5)
+    expect(executed.slice(2).map((command) => /AttachConsole\((\d+)\)/.exec(command)?.[1])).toEqual(
+      ['90', '80', '70']
+    )
+    expect(executed.some((command) => command.includes('SetForegroundWindow'))).toBe(false)
   })
 })

@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process'
  * Click-to-focus: given the pid of a CLI session (e.g. claude.exe), resolve
  * the terminal window hosting it and bring it to the foreground with user32.
  *
- * Two resolution strategies exist, tried in this order:
+ * Resolution is one probe, then one walk:
  *
  * 1. Console-window resolution (`buildConsoleWindowProbeCommand` +
  *    `parseConsoleWindowHandle`): AttachConsole(pid) + GetConsoleWindow()
@@ -12,14 +12,17 @@ import { execFile } from 'node:child_process'
  *    matching — and is the only strategy that works for a host like Herdr,
  *    whose console-hosting process has no discoverable "main window" (its
  *    .NET-style MainWindowHandle stays 0) but does own a real console window
- *    shared with its whole process tree.
- * 2. Ancestor-name chain walk (`selectFocusTargetPid`): only reached when the
- *    console probe comes back with a zero handle (a genuinely headless
- *    session, or the attach failed), this walks the parent-pid chain looking
- *    for a process name known to host a focusable window.
+ *    shared with its whole process tree. A visible hit here ends resolution.
+ * 2. The ancestor walk (`planFocusCandidates`): only reached when that window
+ *    is hidden or absent, this climbs the parent-pid chain once, nearest
+ *    first, and each rung is one of two things. A process name known to host
+ *    a focusable window of its own (Windows Terminal, VS Code) is the target
+ *    and ends the walk; any other ancestor has its own console window probed,
+ *    because a classic cmd.exe console is visible on the shell and its
+ *    children while the session's own pid reports a hidden one (issue #190).
  *
- * Command construction, parsing and the decision between the two strategies
- * are pure and unit-tested; actually running PowerShell is integration-only.
+ * Command construction, parsing and the plan for the walk are pure and
+ * unit-tested; actually running PowerShell is integration-only.
  */
 
 export interface ProcessRow {
@@ -43,6 +46,12 @@ export type ShellRunner = (command: string) => Promise<ShellResult>
  * MainWindowHandle is 0 (so a name match here still cannot be foregrounded
  * through buildFocusCommand's Get-Process resolution) — the console-window
  * probe is what actually resolves it; see the module docstring.
+ *
+ * conhost.exe is listed for the same reason and is just as academic: a classic
+ * console's conhost is a *child* of the process that owns the console, never
+ * an ancestor of the session, so the walk cannot meet it. The window a cmd.exe
+ * session is seen in is reached by probing the shell's console instead
+ * (issue #190).
  */
 export const WINDOWS_TERMINAL_HOSTS: ReadonlySet<string> = new Set([
   'windowsterminal.exe',
@@ -55,6 +64,19 @@ export const WINDOWS_TERMINAL_HOSTS: ReadonlySet<string> = new Set([
 
 /** Safety bound for ancestor walking (also breaks parent-pid cycles). */
 const MAX_CHAIN_DEPTH = 32
+
+/**
+ * How many ancestors may have their console window probed before the walk
+ * stops paying for probes. Each one is a fresh PowerShell process — roughly
+ * 200 ms — spent on a focus step the person is waiting on before a single
+ * keystroke lands, and the shape that needs a probe is short: in a classic
+ * cmd.exe console the visible window belongs to the very next rung
+ * (claude.exe <- node.exe <- cmd.exe, issue #190), so two rungs cover one
+ * wrapper between the two and the third is spare. Past that the chain is into
+ * explorer.exe and service hosts, which own no console a probe could find;
+ * the walk goes on matching hosts by name there, which costs nothing.
+ */
+const MAX_ANCESTOR_CONSOLE_PROBES = 3
 
 export function buildProcessQueryCommand(): string {
   return (
@@ -82,6 +104,25 @@ export function parseProcessRows(json: unknown): ProcessRow[] {
 }
 
 /**
+ * The process chain from `startPid` up through its parents — `startPid` first,
+ * ending at a pid the table does not list, a parent-pid cycle, or the depth
+ * bound. Every ancestor walk in this module and in platform/unixFocus.ts is a
+ * pass over this one chain, so the cycle and depth rules live here alone.
+ */
+export function processChain(rows: ProcessRow[], startPid: number): ProcessRow[] {
+  const byPid = new Map(rows.map((row) => [row.pid, row]))
+  const visited = new Set<number>()
+  const chain: ProcessRow[] = []
+  let current = byPid.get(startPid)
+  while (current !== undefined && chain.length < MAX_CHAIN_DEPTH && !visited.has(current.pid)) {
+    visited.add(current.pid)
+    chain.push(current)
+    current = byPid.get(current.parentPid)
+  }
+  return chain
+}
+
+/**
  * Walk from `startPid` up the parent chain and return the pid of the first
  * terminal-host process, or null when the chain has none. The chain walk is
  * the same everywhere; only the set of names that count as a terminal differs
@@ -92,14 +133,8 @@ export function selectFocusTargetPid(
   startPid: number,
   hosts: ReadonlySet<string> = WINDOWS_TERMINAL_HOSTS
 ): number | null {
-  const byPid = new Map(rows.map((row) => [row.pid, row]))
-  const visited = new Set<number>()
-  let current = byPid.get(startPid)
-  for (let depth = 0; current !== undefined && depth < MAX_CHAIN_DEPTH; depth++) {
-    if (visited.has(current.pid)) return null
-    visited.add(current.pid)
-    if (hosts.has(current.name.toLowerCase())) return current.pid
-    current = byPid.get(current.parentPid)
+  for (const process of processChain(rows, startPid)) {
+    if (hosts.has(process.name.toLowerCase())) return process.pid
   }
   return null
 }
@@ -108,23 +143,51 @@ export function selectFocusTargetPid(
 export type FocusTarget = { kind: 'handle'; handle: number } | { kind: 'pid'; pid: number }
 
 /**
- * Decide how to focus the terminal hosting `startPid`.
- *
- * A nonzero console handle wins outright and short-circuits the ancestor
- * chain walk entirely — it is pid-exact, so there is nothing for the name
- * match to add. Only a zero handle (probe failed, or the session is
- * genuinely headless) falls through to `selectFocusTargetPid`. Both missing
- * means there is nothing to focus.
+ * One rung of the walk `focusPid` climbs once the session's own console window
+ * has turned out hidden or absent. `console` asks for that ancestor's console
+ * window to be probed, a visible one being the target; `host` names a process
+ * known to draw the session in a window of its own, foregrounded through its
+ * main window handle without any probe.
  */
-export function resolveFocusTarget(
-  consoleHandle: number,
+export type FocusCandidate = { kind: 'console'; pid: number } | { kind: 'host'; pid: number }
+
+/**
+ * Plan the walk up from `startPid`, nearest ancestor first, for when its own
+ * console window is out of the running.
+ *
+ * One pass, and each rung is one of two things. A named terminal host is the
+ * target and ends the walk: it draws the session inside a window of its own —
+ * Windows Terminal's tab, VS Code's panel — so the classic console every
+ * process beneath it shares is hidden by design, and nothing above it can own
+ * the window the person sees (issue #182). Any other ancestor gets its console
+ * window probed, because in a classic cmd.exe console the shell and its
+ * children sit on a visible console while the session's own pid reports a
+ * hidden one (issue #190). Probes stop at MAX_ANCESTOR_CONSOLE_PROBES rungs;
+ * the name match carries on past that for free.
+ *
+ * `startPid` itself is only ever matched by name here — its console was probed
+ * before this plan was asked for, and once is enough.
+ *
+ * Pure on purpose: the probes it asks for run in `focusPid`, so the order and
+ * the bound are tested without PowerShell.
+ */
+export function planFocusCandidates(
   rows: ProcessRow[],
   startPid: number,
   hosts: ReadonlySet<string> = WINDOWS_TERMINAL_HOSTS
-): FocusTarget | null {
-  if (consoleHandle !== 0) return { kind: 'handle', handle: consoleHandle }
-  const targetPid = selectFocusTargetPid(rows, startPid, hosts)
-  return targetPid === null ? null : { kind: 'pid', pid: targetPid }
+): FocusCandidate[] {
+  const candidates: FocusCandidate[] = []
+  let probes = 0
+  for (const process of processChain(rows, startPid)) {
+    if (hosts.has(process.name.toLowerCase())) {
+      candidates.push({ kind: 'host', pid: process.pid })
+      break
+    }
+    if (process.pid === startPid || probes >= MAX_ANCESTOR_CONSOLE_PROBES) continue
+    candidates.push({ kind: 'console', pid: process.pid })
+    probes++
+  }
+  return candidates
 }
 
 /**
@@ -132,11 +195,14 @@ export function resolveFocusTarget(
  * directly, without any name matching.
  *
  * AttachConsole looks up the console *session* a pid belongs to, not a
- * window that pid itself created — so every process descending from one
- * console-hosting ancestor (as Herdr's claude.exe -> node.exe -> cmd.exe ->
- * powershell.exe -> herdr.exe chain does) resolves to the SAME console
- * window here, regardless of which pid in that chain is passed in. This is
- * why it works even for a host whose .NET-style MainWindowHandle is 0.
+ * window that pid itself created — so processes sharing one console-hosting
+ * ancestor (as Herdr's claude.exe -> node.exe -> cmd.exe -> powershell.exe ->
+ * herdr.exe chain does) resolve to the SAME console window here, whichever
+ * of them is passed in. This is why it works even for a host whose .NET-style
+ * MainWindowHandle is 0. It is not a guarantee for the whole chain, though:
+ * measured live in a classic cmd.exe console, claude.exe reported a hidden
+ * console of its own while node.exe and cmd.exe above it shared the visible
+ * one (issue #190) — which is why `focusPid` probes the ancestors too.
  *
  * FreeConsole() runs defensively first: a process can be attached to at most
  * one console at a time, and this Electron process may or may not already
@@ -183,9 +249,8 @@ if ([Win32.Console]::AttachConsole(${targetPid})) {
  * A nonzero handle that IsWindowVisible rejects is the Windows Terminal case
  * (issue #182): a real console window that can never be foregrounded, so it
  * has to be indistinguishable here from a probe that found nothing at all —
- * that is what sends `resolveFocusTarget` on to the ancestor chain walk
- * instead of driving the foreground sequence at a window that will only
- * fail its verification.
+ * that is what sends `focusPid` on to the ancestor walk instead of driving
+ * the foreground sequence at a window that will only fail its verification.
  */
 export function parseConsoleWindowHandle(stdout: string): number {
   const trimmed = stdout.trim()
@@ -288,27 +353,43 @@ function runPowerShell(command: string): Promise<ShellResult> {
 }
 
 /**
- * Focus the terminal window hosting `pid`. Returns false when neither
- * resolution strategy finds a window or the window cannot be foregrounded —
- * the caller then falls back to showing a live transcript feed instead.
+ * Resolve the window to foreground for the session `pid`: its own console
+ * window when that is visible, else the first rung of `planFocusCandidates`
+ * that yields one — a visible ancestor console, or a named host. Null when
+ * the walk runs out, which means there is nothing to focus.
  *
- * The console-window probe runs first and, on a hit, skips the process-list
- * query and ancestor chain walk entirely (see resolveFocusTarget); the
- * process list is only queried when that probe comes back empty.
+ * The process list is only queried once the session's own probe has missed,
+ * so the common pid-exact hit costs one PowerShell process and no walk.
+ */
+async function resolveFocusTarget(pid: number, run: ShellRunner): Promise<FocusTarget | null> {
+  const probeConsole = async (targetPid: number): Promise<number> => {
+    const probe = await run(buildConsoleWindowProbeCommand(targetPid))
+    return probe.exitCode === 0 ? parseConsoleWindowHandle(probe.stdout) : 0
+  }
+
+  const ownHandle = await probeConsole(pid)
+  if (ownHandle !== 0) return { kind: 'handle', handle: ownHandle }
+
+  const query = await run(buildProcessQueryCommand())
+  if (query.exitCode !== 0) return null
+  const rows = parseProcessRows(JSON.parse(query.stdout))
+
+  for (const candidate of planFocusCandidates(rows, pid)) {
+    if (candidate.kind === 'host') return { kind: 'pid', pid: candidate.pid }
+    const handle = await probeConsole(candidate.pid)
+    if (handle !== 0) return { kind: 'handle', handle }
+  }
+  return null
+}
+
+/**
+ * Focus the terminal window hosting `pid`. Returns false when resolution finds
+ * no window or the window cannot be foregrounded — the caller then falls back
+ * to showing a live transcript feed instead.
  */
 export async function focusPid(pid: number, run: ShellRunner = runPowerShell): Promise<boolean> {
   try {
-    const probe = await run(buildConsoleWindowProbeCommand(pid))
-    const consoleHandle = probe.exitCode === 0 ? parseConsoleWindowHandle(probe.stdout) : 0
-
-    let rows: ProcessRow[] = []
-    if (consoleHandle === 0) {
-      const query = await run(buildProcessQueryCommand())
-      if (query.exitCode !== 0) return false
-      rows = parseProcessRows(JSON.parse(query.stdout))
-    }
-
-    const target = resolveFocusTarget(consoleHandle, rows, pid)
+    const target = await resolveFocusTarget(pid, run)
     if (target === null) return false
 
     const focus = await run(
