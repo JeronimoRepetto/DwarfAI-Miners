@@ -417,7 +417,10 @@ export class AgentRuntime {
           fs,
           sqlite: options.sqlite ?? new NodeSqlite(),
           platform,
-          expandPath: (path) => expandHomePath(path, home)
+          expandPath: (path) => expandHomePath(path, home),
+          // Read at scan time, never now: the held registry is composed a few
+          // lines below this, and no scan runs before the constructor returns.
+          isHeldSession: (sessionId) => this.heldSessions.holds(sessionId)
         },
         options.providerRegistry ?? PROVIDER_REGISTRY
       )

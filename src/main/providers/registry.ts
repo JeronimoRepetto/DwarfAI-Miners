@@ -47,6 +47,13 @@ export interface ProviderContext {
    * resolves a path against a different home than the rest of the poll.
    */
   expandPath: (path: string) => string
+  /**
+   * Whether the panel holds a live stream into a session (#191) — the held
+   * registry's answer, for the provider whose registry entries say nothing
+   * about an SDK-hosted session's status. A provider whose sessions this app
+   * never holds simply does not read it.
+   */
+  isHeldSession: (sessionId: string) => boolean
 }
 
 /** How one provider is built. */
@@ -72,13 +79,14 @@ export type ProviderRegistry = Readonly<Record<string, ProviderFactory>>
  * joining them, and the runtime owns that choice.
  */
 export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
-  claude: ({ config, fs, platform, expandPath }) =>
+  claude: ({ config, fs, platform, expandPath, isHeldSession }) =>
     new ClaudeProvider({
       fs,
       roots: config.providers.claude.configDirs.map(expandPath),
       // The pid-reuse guard's source of truth: a registry entry only counts
       // as alive when the pid's real creation time matches its procStart.
-      processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid)
+      processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid),
+      isHeldSession
     }),
 
   codex: ({ config, fs, sqlite, platform, expandPath }) =>

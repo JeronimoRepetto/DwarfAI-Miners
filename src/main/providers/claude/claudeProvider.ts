@@ -168,6 +168,22 @@ export interface ClaudeProviderOptions {
    * so they are crossed independently.
    */
   workerSilenceMs?: number
+  /**
+   * Whether this app HOLDS a live stream into the session (#191) — the held
+   * registry's answer, handed in because the provider cannot see it and must
+   * not guess it from the registry entry.
+   *
+   * An SDK-hosted session — every session the panel launches — registers in
+   * `sessions/` like an interactive one (`kind: interactive`) but with
+   * `entrypoint: sdk-ts` and never a `status`: the REPL writes that field, and
+   * an SDK session has no REPL. Observed live against Claude Code 2.1.260. The
+   * parser's conservative reading of an absent status is idle, and an idle
+   * session with no agents out lists no dwarf — so the held session's dwarf
+   * never reached the board, and nothing could be stamped onto it. Holding the
+   * stream is the proof the session is there; see the foreman rule in
+   * snapshotSession. Absent means nothing is held.
+   */
+  isHeldSession?: (sessionId: string) => boolean
 }
 
 function defaultIsPidAlive(pid: number): boolean {
@@ -263,6 +279,7 @@ export class ClaudeProvider implements Provider {
   private readonly now: () => number
   private readonly foremanSilenceMs: number
   private readonly workerSilenceMs: number
+  private readonly isHeldSession: (sessionId: string) => boolean
   /**
    * "pid|procStart" -> what probing that exact pair concluded.
    *
@@ -398,6 +415,7 @@ export class ClaudeProvider implements Provider {
     this.now = options.now ?? Date.now
     this.foremanSilenceMs = options.foremanSilenceMs ?? ATTENDED_SILENCE_MS
     this.workerSilenceMs = options.workerSilenceMs ?? UNATTENDED_SILENCE_MS
+    this.isHeldSession = options.isHeldSession ?? (() => false)
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -642,7 +660,18 @@ export class ClaudeProvider implements Provider {
     // alive but stopped on user input, an open dialog, or a long tool, with
     // waitingFor naming the condition (issue #34). Only a truly idle session
     // with no agents lists no dwarfs, so leaving behavior is unchanged.
-    if (inFlightAgents.length > 0 || session.status !== 'idle') {
+    //
+    // ...or the session is one this app HOLDS (#191). Its registry entry never
+    // says busy — an SDK-hosted session writes no status at all, see
+    // isHeldSession — yet the panel has a live stream into it and the user can
+    // type there, so it is on the board for as long as it is held. Resting
+    // unless the registry proves work, exactly as a waiting one is: the rule
+    // below is unchanged, only the door into it is wider.
+    if (
+      inFlightAgents.length > 0 ||
+      session.status !== 'idle' ||
+      this.isHeldSession(session.sessionId)
+    ) {
       dwarfs.push({
         id: mainDwarfId,
         provider: 'claude',

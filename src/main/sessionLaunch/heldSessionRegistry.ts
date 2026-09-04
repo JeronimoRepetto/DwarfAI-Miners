@@ -261,6 +261,22 @@ export class HeldSessionRegistry {
   }
 
   /**
+   * Whether this panel holds a live stream into `sessionId` (#191).
+   *
+   * The one fact the Claude provider needs from here, and the reason it is a
+   * separate question rather than `conversationState(id).held` read for its
+   * flag: an SDK-hosted session's registry entry never carries a `status` —
+   * the REPL writes that, and a held session has no REPL — so the provider
+   * reads it as idle and would list no dwarf for the one session type this
+   * app can actually type into. Holding the stream is the proof the session
+   * is there. False for a session id the stream has not yet announced, which
+   * is a session no dwarf could be matched to anyway.
+   */
+  holds(sessionId: string): boolean {
+    return this.recordFor(sessionId) !== undefined
+  }
+
+  /**
    * What the panel should be told about this session's open asks.
    *
    * `held: false` for a session this panel does not hold, which is the reading

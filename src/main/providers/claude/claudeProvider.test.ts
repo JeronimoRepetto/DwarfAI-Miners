@@ -352,6 +352,79 @@ describe('ClaudeProvider', () => {
     })
   })
 
+  /*
+   * Issue #191. A session the panel starts over the Agent SDK registers itself
+   * exactly as an interactive one does — same directory, `kind: interactive` —
+   * but with `entrypoint: sdk-ts` and NO `status`, ever: the registry's status
+   * is written by the REPL, and an SDK-hosted session has no REPL. Observed
+   * live against Claude Code 2.1.260 on the maintainer's own machine, side by
+   * side with a `cli` entry carrying `status: busy`.
+   *
+   * The parser reads an absent status as idle (its conservative rule), and an
+   * idle session with no agents out lists no dwarf — so the one session type
+   * this app HOLDS a live stream into was the one it could never draw, and the
+   * Add Panel's handover, which recognises its launch by the conversation
+   * stamped onto that dwarf, had nothing to find.
+   */
+  describe('sessions this app holds (#191)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+
+    /** The fixture entry as the SDK writes it: no status at all, and it says so in `entrypoint`. */
+    function sdkEntry(): string {
+      const entry = JSON.parse(sessionEntry) as Record<string, unknown>
+      delete entry.status
+      delete entry.statusUpdatedAt
+      return JSON.stringify({ ...entry, entrypoint: 'sdk-ts' })
+    }
+
+    function heldProvider(isHeldSession: (sessionId: string) => boolean): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => 99_000,
+        isHeldSession
+      })
+    }
+
+    beforeEach(() => {
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, sdkEntry(), 1_000)
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
+    })
+
+    it('draws the root of a session this app holds although its registry entry never says busy', async () => {
+      const snapshots = await heldProvider((sessionId) => sessionId === SESSION_ID).scan()
+
+      // The registry still reads idle — nothing is invented about the entry.
+      expect(snapshots[0]!.status).toBe('idle')
+      // ...but the dwarf is there, under the id every other stamp finds it by,
+      // resting rather than working: the registry proved no work, and the
+      // stream is the panel's to read.
+      expect(snapshots[0]!.dwarfs).toHaveLength(1)
+      expect(snapshots[0]!.dwarfs[0]).toMatchObject({
+        id: `claude:${SESSION_ID}`,
+        role: 'foreman',
+        status: 'waiting',
+        sessionId: SESSION_ID
+      })
+    })
+
+    it('keeps an SDK-hosted session nobody holds dwarfless, exactly as an idle one', async () => {
+      // Another tool's SDK session on this machine is not this panel's to draw:
+      // only holding the stream proves the session is there for the user.
+      const snapshots = await heldProvider(() => false).scan()
+
+      expect(snapshots[0]!.dwarfs).toEqual([])
+    })
+
+    it('is asked about the session the entry names, never about the pid', async () => {
+      const asked: string[] = []
+      await heldProvider((sessionId) => (asked.push(sessionId), false)).scan()
+
+      expect(asked).toEqual([SESSION_ID])
+    })
+  })
+
   describe('finished agents', () => {
     it('drops an agent killed by an accidental stop', async () => {
       fake.addFile(
