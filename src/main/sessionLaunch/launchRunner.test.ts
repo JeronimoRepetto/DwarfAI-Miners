@@ -6,6 +6,7 @@ import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import {
+  CONSOLE_HOSTING_PROGRAM,
   launchClaudeSession,
   runLaunchProcess,
   type LaunchChild,
@@ -391,6 +392,7 @@ describe('runLaunchProcess', () => {
       env: { PATH: '/usr/bin' },
       cwd: MINE_PATH,
       stdin: 'dig',
+      viaNodeEntry: false,
       ...overrides
     }
   }
@@ -468,5 +470,182 @@ describe('runLaunchProcess', () => {
 
     await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).rejects.toThrow('EINVAL')
     expect(spawn.written).toEqual([])
+  })
+
+  /*
+   * #208. The black console window. `detached` turns into DETACHED_PROCESS,
+   * which Win32 documents as making CREATE_NO_WINDOW — libuv's spelling of
+   * `windowsHide` — ignored, so the child starts with NO console. A JS entry is
+   * then an interpreter that spawns the real CLI itself, and a console-subsystem
+   * program whose parent has no console is handed a fresh VISIBLE one. Measured
+   * live on Windows 11 / Node v24.11.1: a detached, windowsHide'd node spawning
+   * a console program produced consoleVisible=true, owned by the child itself.
+   */
+  it('runs a node entry through a hidden-console intermediary rather than spawning it console-less (#208)', async () => {
+    const spawn = fakeSpawn()
+
+    await runLaunchProcess(
+      invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'], viaNodeEntry: true }),
+      spawn.spawnProcess
+    )
+
+    const call = spawn.calls[0]!
+    // The same node, twice: once to run the intermediary, once as the program
+    // the intermediary starts. Nothing else is introduced into the chain.
+    expect(call.command).toBe('node')
+    expect(call.args).toEqual(['-e', CONSOLE_HOSTING_PROGRAM, 'node', NPM_ENTRY, 'exec', '-'])
+    // The outer spawn is unchanged: detached is still what makes the session
+    // outlive the panel, and no shell is involved in either hop.
+    expect(call.options).toEqual({
+      cwd: MINE_PATH,
+      env: { PATH: '/usr/bin' },
+      detached: true,
+      stdio: ['pipe', 'ignore', 'ignore'],
+      windowsHide: true
+    })
+    expect(spawn.written).toEqual(['dig'])
+  })
+
+  it('spawns a program that is its own console program as itself, with no intermediary', async () => {
+    const spawn = fakeSpawn()
+
+    await runLaunchProcess(
+      invocation({ command: CODEX_PATH, args: ['exec', '-'], viaNodeEntry: false }),
+      spawn.spawnProcess
+    )
+
+    const call = spawn.calls[0]!
+    expect(call.command).toBe(CODEX_PATH)
+    expect(call.args).toEqual(['exec', '-'])
+    expect(call.args).not.toContain('-e')
+  })
+
+  it('keeps the prompt off argv with the intermediary in the chain too', async () => {
+    const secret = 'rotate the deploy key'
+    const spawn = fakeSpawn()
+
+    await runLaunchProcess(
+      invocation({
+        command: 'node',
+        args: [NPM_ENTRY, 'exec', '-'],
+        stdin: secret,
+        viaNodeEntry: true
+      }),
+      spawn.spawnProcess
+    )
+
+    const call = spawn.calls[0]!
+    expect(call.args[0]).toBe('-e')
+    expect(call.args.join(' ')).not.toContain(secret)
+    expect(call.command).not.toContain(secret)
+    expect(spawn.written).toEqual([secret])
+  })
+})
+
+/*
+ * Hosting the console the launched CLI's own children will inherit (#208).
+ *
+ * The intermediary is a program TEXT rather than a script file because it
+ * travels on `node -e`: the packaged app lives inside app.asar, which a plain
+ * node.exe cannot read, so there is no file on disk to point at. Running that
+ * text here against a recording spawn is what pins its one decision — a hidden
+ * console of its own, and deliberately NOT detached — to a test instead of to
+ * prose.
+ */
+describe('hosting the launched CLI’s console (#208)', () => {
+  function runIntermediary(argv: string[]) {
+    const calls: Array<{ command: string; args: readonly string[]; options: SpawnOptions }> = []
+    const listeners = new Map<string, (value: unknown) => void>()
+    const exitCodes: Array<number | undefined> = []
+    const child = {
+      on(event: string, listener: (value: unknown) => void) {
+        listeners.set(event, listener)
+        return child
+      }
+    }
+    const fakeRequire = (id: string): unknown => {
+      if (id !== 'child_process') throw new Error(`unexpected require: ${id}`)
+      return {
+        spawn(command: string, args: readonly string[], options: SpawnOptions) {
+          calls.push({ command, args, options })
+          return child
+        }
+      }
+    }
+    const fakeProcess = {
+      argv: ['node', ...argv],
+      exit(code?: number) {
+        exitCodes.push(code)
+      }
+    }
+    // The program is our own constant, evaluated against fakes: nothing here
+    // reads the disk, spawns a process or touches the running OS.
+    new Function('require', 'process', CONSOLE_HOSTING_PROGRAM)(fakeRequire, fakeProcess)
+    return { calls, listeners, exitCodes }
+  }
+
+  /*
+   * The Win32 flag interaction this whole fix turns on. CREATE_NO_WINDOW is
+   * honoured only when DETACHED_PROCESS is absent, so the intermediary's child
+   * must NOT be detached — that is what buys it an invisible console of its own,
+   * which the CLI it starts in turn inherits. Measured live: the grandchild
+   * reported hasConsole=true with consoleVisible=false, owned by the
+   * intermediary's child rather than by itself.
+   */
+  it('gives its target a hidden console of its own, and never detaches it', () => {
+    const { calls } = runIntermediary(['node', NPM_ENTRY, 'exec', '-'])
+
+    expect(calls).toHaveLength(1)
+    const call = calls[0]!
+    expect(call.command).toBe('node')
+    expect(call.args).toEqual([NPM_ENTRY, 'exec', '-'])
+    expect(call.options.windowsHide).toBe(true)
+    expect(call.options.detached).toBeUndefined()
+    expect(call.options.shell).toBeUndefined()
+    // stdin is inherited so the prompt the panel wrote reaches the CLI through
+    // the intermediary without being read and rewritten on the way.
+    expect(call.options.stdio).toEqual(['inherit', 'ignore', 'ignore'])
+  })
+
+  /*
+   * libuv puts every non-detached child in a job object created with
+   * KILL_ON_JOB_CLOSE, and that job's handle belongs to the spawning process —
+   * so the intermediary has to stay alive for as long as its child, or the
+   * session dies the moment it exits. Measured live: an intermediary that
+   * spawned and returned had its child killed before the child's first
+   * statement ran. It must also not outlive the child, or a launch would leak
+   * an idle process for every session ever started.
+   */
+  it('waits for its target and then leaves with the same exit code', () => {
+    const { listeners, exitCodes } = runIntermediary(['node', NPM_ENTRY, 'exec', '-'])
+
+    expect(exitCodes).toEqual([])
+    listeners.get('exit')!(0)
+    expect(exitCodes).toEqual([0])
+  })
+
+  it('marks a shim launch as a node-entry launch, so the runner hosts its console', async () => {
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.viaNodeEntry).toBe(true)
+  })
+
+  it('does not mark a real executable as a node-entry launch', async () => {
+    // A program that IS the console program needs no host: spawned detached it
+    // simply has no console, and nothing allocates a visible one for it.
+    const { run, result } = launch({ provider: 'codex', cli: installedCodex(), fs: new FakeFs() })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.viaNodeEntry).toBe(false)
   })
 })

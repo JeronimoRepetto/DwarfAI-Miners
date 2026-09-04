@@ -48,6 +48,14 @@ export interface LaunchInvocation {
   cwd: string
   /** The first prompt, written to the child's stdin and never placed in argv. */
   stdin: string
+  /**
+   * Whether `command` is an interpreter running a JS entry rather than the
+   * console program itself (#208). It decides console hosting, not argv: a
+   * program that IS the console program needs no host, and one that will go on
+   * to spawn one does. Set where the answer is known — `resolveLaunchProgram`,
+   * which is what read the shim.
+   */
+  viaNodeEntry: boolean
 }
 
 /** Resolves once the process is running; rejects when it could not be started at all. */
@@ -88,6 +96,104 @@ export type SessionLauncher = (request: {
 }) => Promise<AgentLaunchResult>
 
 /**
+ * The program that hosts the launched CLI's console (#208).
+ *
+ * A program text rather than a script file on purpose: it travels on `node -e`,
+ * because the packaged app lives inside app.asar, which a plain node.exe cannot
+ * read. There is no file to point at, so the argv IS the file. It carries no
+ * user data — the prompt still travels only on stdin — and `stdio` is inherited
+ * rather than read and rewritten, so the pipe the panel wrote reaches the CLI
+ * untouched.
+ *
+ * It must not detach its child (that is the whole point, see
+ * `buildLaunchSpawn`), must not unref it, and must not outlive it: libuv's job
+ * handle is what keeps the child alive, and an intermediary that stayed behind
+ * would leak an idle process for every session ever launched.
+ */
+export const CONSOLE_HOSTING_PROGRAM = [
+  "const{spawn}=require('child_process');",
+  'const argv=process.argv.slice(1);',
+  "const child=spawn(argv[0],argv.slice(1),{stdio:['inherit','ignore','ignore'],windowsHide:true});",
+  "child.on('error',()=>process.exit(1));",
+  "child.on('exit',(code)=>process.exit(code===null?1:code));"
+].join('')
+
+/**
+ * The exact spawn call, as a value (#208).
+ *
+ * ## Why a JS entry cannot be spawned the way a program can
+ *
+ * libuv turns `detached` into `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` and
+ * `windowsHide` into `CREATE_NO_WINDOW`, and Win32 documents CREATE_NO_WINDOW
+ * as IGNORED alongside DETACHED_PROCESS. So `windowsHide` on this spawn is
+ * inert — it is kept because it states the intent, and because that flag is what
+ * a reader reaches for first, which is exactly the trap that produced #208 —
+ * and the child starts with NO console at all. Harmless for a program that is
+ * itself the console program: it simply has none. Not harmless for a JS entry,
+ * which is an interpreter that goes on to spawn the real CLI, because Windows
+ * hands a console-subsystem program whose parent has no console a fresh VISIBLE
+ * console. Measured on Windows 11 / Node v24.11.1: consoleVisible=true, owned
+ * by the grandchild itself. Since #193 resolved a shim to `node <entry>`, every
+ * npm/pnpm Codex launch took that path — hence the window that stayed on screen
+ * for as long as the session ran.
+ *
+ * ## Why an intermediary, and why it waits
+ *
+ * A console cannot be hidden and detached in the same spawn, so the two are
+ * split across two hops. The detached hop is console-less, as before, and its
+ * only job is to spawn the real program NOT detached but WITH `windowsHide`:
+ * with DETACHED_PROCESS gone, CREATE_NO_WINDOW is honoured and the program gets
+ * an INVISIBLE console of its own, which the CLI it starts then inherits.
+ * Measured: hasConsole=true, consoleVisible=false, owned by the intermediary's
+ * child rather than by the grandchild.
+ *
+ * The intermediary has to stay alive, and that is a cost rather than an
+ * oversight. libuv gives its job object KILL_ON_JOB_CLOSE and the handle
+ * belongs to the spawning process, so a non-detached child dies when its
+ * spawner exits — measured twice: an intermediary that spawned and returned had
+ * its child killed before the child's first statement ran. That job's
+ * SILENT_BREAKAWAY_OK only keeps the child out of the PANEL's job; it does not
+ * save it from the intermediary's own. A hidden console therefore always needs
+ * a live holder, and the price is one resident node process (~37 MB) per
+ * shim-launched session, for that session's lifetime.
+ *
+ * Verified end to end on this machine with a real `codex exec` turn that ran a
+ * shell tool after the panel process had already exited: no window appeared,
+ * the turn completed, and the prompt had arrived on stdin.
+ *
+ * The road not taken: resolving one level deeper and spawning the native
+ * codex.exe detached measures clean too — its own tool shells set
+ * CREATE_NO_WINDOW, so a real turn popped no window either — but finding that
+ * binary means reimplementing `@openai/codex`'s private resolution (a target
+ * triple table, module resolution of an optional platform package from the
+ * entry's REALPATH, and a vendor fallback that does not exist on this machine),
+ * and wherever that copy misses, the window comes back unannounced.
+ */
+export function buildLaunchSpawn(invocation: LaunchInvocation): {
+  command: string
+  args: string[]
+  options: SpawnOptions
+} {
+  const options: SpawnOptions = {
+    cwd: invocation.cwd,
+    env: invocation.env,
+    detached: true,
+    stdio: ['pipe', 'ignore', 'ignore'],
+    windowsHide: true
+  }
+  if (!invocation.viaNodeEntry) {
+    return { command: invocation.command, args: invocation.args, options }
+  }
+  // The same node twice: once to run the intermediary, once as the program the
+  // intermediary starts. Nothing new is introduced into the chain.
+  return {
+    command: invocation.command,
+    args: ['-e', CONSOLE_HOSTING_PROGRAM, invocation.command, ...invocation.args],
+    options
+  }
+}
+
+/**
  * Start the session and let go of it.
  *
  * Detached and unref'd so the agent outlives the panel: the panel is an
@@ -103,6 +209,11 @@ export type SessionLauncher = (request: {
  * object and dies with the panel; both verified on Windows 11 / Node v24.11.1
  * for #193. A batch shim therefore never reaches this function: the launcher
  * resolves it to the program it points at first (see `resolveShimTarget`).
+ *
+ * What is spawned is not always what was asked for: a JS entry is wrapped in a
+ * console host first, for the reasons `buildLaunchSpawn` sets out (#208). The
+ * prompt still goes to the process this function spawned, which passes that
+ * pipe down the chain by inheritance.
  */
 export function runLaunchProcess(
   invocation: LaunchInvocation,
@@ -111,14 +222,9 @@ export function runLaunchProcess(
   return new Promise((resolve, reject) => {
     let settled = false
     let child: LaunchChild
+    const call = buildLaunchSpawn(invocation)
     try {
-      child = spawnProcess(invocation.command, invocation.args, {
-        cwd: invocation.cwd,
-        env: invocation.env,
-        detached: true,
-        stdio: ['pipe', 'ignore', 'ignore'],
-        windowsHide: true
-      })
+      child = spawnProcess(call.command, call.args, call.options)
     } catch (error) {
       reject(error instanceof Error ? error : new Error(String(error)))
       return
@@ -174,12 +280,12 @@ const SHIM_READ_BYTES = 8 * 1024
 async function resolveLaunchProgram(
   binaryPath: string,
   fs: FsLike
-): Promise<{ command: string; args: string[] } | undefined> {
-  if (!isShellShim(binaryPath)) return { command: binaryPath, args: [] }
+): Promise<{ command: string; args: string[]; viaNodeEntry: boolean } | undefined> {
+  if (!isShellShim(binaryPath)) return { command: binaryPath, args: [], viaNodeEntry: false }
   const target = resolveShimTarget(binaryPath, await fs.readTextHead(binaryPath, SHIM_READ_BYTES))
   if (target === undefined) return undefined
   const command = (await fs.exists(target.bundledNode)) ? target.bundledNode : 'node'
-  return { command, args: [target.entry] }
+  return { command, args: [target.entry], viaNodeEntry: true }
 }
 
 /**
@@ -237,7 +343,8 @@ export async function launchClaudeSession(
       // launch still leads with the shim's own directory.
       env: buildRelayEnv(options.env, detection.path, options.platform),
       cwd: options.minePath,
-      stdin: prompt
+      stdin: prompt,
+      viaNodeEntry: program.viaNodeEntry
     })
     return { launched: true, provider: options.provider }
   } catch {
