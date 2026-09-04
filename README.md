@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/hero.gif" width="720" alt="Animated view of a crew of dwarfs mining inside a project cave">
+  <img src="docs/media/hero.gif" width="100" alt="Animated view of a crew of dwarfs mining inside a project cave">
 </p>
 
 <div align="center">
