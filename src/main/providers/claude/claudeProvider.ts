@@ -14,6 +14,7 @@ import {
 } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
+import { readFeedWindow } from '../feedWindow'
 import type { Provider } from '../provider'
 import {
   claudeSessionAttendance,
@@ -29,7 +30,15 @@ import {
   type ClaudeTranscriptInfo
 } from './parse'
 
-/** Read at most this many bytes from the end of a transcript per scan. */
+/**
+ * Read at most this many bytes from the end of a transcript per scan.
+ *
+ * The POLL's window, and deliberately still 256 KiB: it is spent every 2
+ * seconds per session, and transcript reading plus JSONL parsing cost 1.66 ms
+ * of a poll at this bound (docs/performance.md). `feed()` no longer shares it
+ * — see there and issue #188 — so widening the panel's read did not widen
+ * this one.
+ */
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024
 const SUBAGENT_TAIL_BYTES = 64 * 1024
 /**
@@ -495,12 +504,18 @@ export class ClaudeProvider implements Provider {
     const path = this.feedSources.get(dwarfId)
     if (path === undefined) return null
     if (!(await this.fs.exists(path))) return []
+    // Bounded by the COUNT asked for rather than by the poll's byte window
+    // (#188): that window is sized for a 2-second loop, and in a tool-heavy
+    // session it held 8 messages against 65 in 2 MB of the same transcript.
+    // This read is on demand — the panel opening or refreshing (#183) — so it
+    // can afford to walk wider without touching the poll's budget, and it
+    // takes the same walk the Mine History panel does (#215).
+    //
     // Redacted here — user text included, since pasting a key into one's own
     // session is exactly how secrets enter transcripts — so preload/renderer
     // never hold the raw string (see domain/redactSecrets).
-    return extractClaudeFeed(await this.fs.readTextTail(path, TRANSCRIPT_TAIL_BYTES), limit).map(
-      (message) => ({ ...message, text: redactSecrets(message.text) })
-    )
+    const messages = await readFeedWindow(this.fs, path, limit, extractClaudeFeed)
+    return messages.map((message) => ({ ...message, text: redactSecrets(message.text) }))
   }
 
   /** Path backing feed(), used to open a terminal that tails the transcript live. */

@@ -463,6 +463,25 @@ user action. Per transcript the walk costs p50 2.2 ms, p95 14.3 ms, max 24.1 ms 
 `claudeProvider.snapshotSession` and does not call `feed()` at all; the two `feed()` call sites in
 `runtime.ts` are both on-demand (`dwarfFeed` for the panel, and `activateDwarf`'s fallback).
 
+#### Two flags say a `user` line is the harness writing down its own state (issue #188)
+
+When Claude Code compacts, it writes a `user` line whose content is the whole multi-kilobyte
+summary ("This session is being continued from a previous conversation…"), flagged
+`isCompactSummary: true` and `isVisibleInTranscriptOnly: true`. Nobody typed it, and
+`extractClaudeFeed` published it as a user turn. Two such lines exist in the corpus above, both
+carrying both flags **[V]**.
+
+Either flag on its own is enough to skip the line, and it is the **flag** that decides rather than
+the content shape — so the block array of #216 is not a way back in. Note this is a claim about
+lines Claude Code wrote for the transcript, not about `isMeta`, which is a different skip with a
+different reason (§1.6 above).
+
+Known limit, unchanged by this: `ClaudeProvider.feed` now walks the same widened window the history
+panel does, but **Codex's** `feed()` still reads a fixed 256 KiB tail
+(`FEED_TAIL_BYTES` in `codexProvider.ts`). Codex _history_ is bounded by messages, because
+`MineHistoryReader` walks both providers' transcripts; only its live feed is not. No issue covers
+that yet.
+
 ---
 
 ## 2. Codex CLI

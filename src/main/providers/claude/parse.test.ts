@@ -949,6 +949,53 @@ describe('extractClaudeFeed on block-array user content (issue #216)', () => {
   })
 })
 
+/*
+ * Issue #188. Two `user` lines in that same corpus carried `isCompactSummary`,
+ * both of them also `isVisibleInTranscriptOnly`: Claude Code's compaction
+ * summary, multiple kilobytes of "This session is being continued from a
+ * previous conversation...", which the panel drew as a message the person
+ * typed. It is the harness writing down its own state, not conversation.
+ */
+describe('extractClaudeFeed on the harness transcript bookkeeping (issue #188)', () => {
+  it('says nothing for a compaction summary', () => {
+    const tail = contentUserLine(
+      'This session is being continued from a previous conversation that ran out of context.',
+      { isCompactSummary: true, isVisibleInTranscriptOnly: true }
+    )
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+
+  it('says nothing for a line marked visible in the transcript only', () => {
+    // Either flag on its own is enough: both name a line written for the
+    // transcript rather than sent by anybody.
+    expect(
+      extractClaudeFeed(
+        contentUserLine('Placeholder summary.', { isVisibleInTranscriptOnly: true }),
+        20
+      )
+    ).toEqual([])
+    expect(
+      extractClaudeFeed(contentUserLine('Placeholder summary.', { isCompactSummary: true }), 20)
+    ).toEqual([])
+  })
+
+  it('still publishes an ordinary prompt written beside one', () => {
+    const tail =
+      contentUserLine('Placeholder summary.', { isCompactSummary: true }) +
+      contentUserLine('carry on digging')
+    expect(extractClaudeFeed(tail, 20).map((m) => m.text)).toEqual(['carry on digging'])
+  })
+
+  it('skips a summary written as a block array too', () => {
+    // The flag decides, never the content shape — the fifth shape #216 added
+    // must not become a way back in.
+    const tail = contentUserLine([{ type: 'text', text: 'Placeholder summary.' }], {
+      isCompactSummary: true
+    })
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+})
+
 describe('parseClaudeTranscriptTail on subagent transcripts', () => {
   it('reads the latest assistant text for worker speech bubbles', () => {
     const info = parseClaudeTranscriptTail(subagentTranscript)

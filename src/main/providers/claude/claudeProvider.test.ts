@@ -1752,6 +1752,76 @@ describe('ClaudeProvider', () => {
       expect(feed!.map((m) => m.text)).toContain('Latest assistant reply placeholder.')
       expect(provider.textDelivery(`claude:${SESSION_ID}`)).toBeNull()
     })
+
+    /*
+     * Issue #188. feed() read the same 256 KiB tail the poll reads, and in a
+     * tool-heavy session that window held 8 messages against 65 in 2 MB of the
+     * same transcript. The poll's window is sized for a 2-second loop; the feed
+     * is read on demand, when the panel opens or refreshes (#183), so it can
+     * afford a wider read without touching the poll's budget — and it takes the
+     * same walk the Mine History panel does (#215).
+     */
+    it('reaches past the poll window for a conversation buried in tool output', async () => {
+      // 4 KiB of tool result per record, 80 of them: 320 KiB of traffic between
+      // the two things a person would want to read.
+      const noise = Array.from({ length: 80 }, () =>
+        JSON.stringify({
+          type: 'user',
+          timestamp: '2026-08-29T11:30:00.000Z',
+          message: {
+            role: 'user',
+            content: [
+              { tool_use_id: 'toolu_01', type: 'tool_result', content: 'x'.repeat(4 * 1024) }
+            ]
+          },
+          toolUseResult: { stdout: 'ok' }
+        })
+      ).join('\n')
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript + noise + '\n',
+        42_000
+      )
+
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`claude:${SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toEqual([
+        'Placeholder user prompt.',
+        'Placeholder text block.',
+        'Latest assistant reply placeholder.'
+      ])
+    })
+
+    it('leaves the compaction summary out of the feed it publishes', async () => {
+      // The panel drew this as a message the person typed. Nobody typed it:
+      // it is Claude Code writing down its own state at a compaction.
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript +
+          JSON.stringify({
+            type: 'user',
+            timestamp: '2026-08-29T11:45:00.000Z',
+            isCompactSummary: true,
+            isVisibleInTranscriptOnly: true,
+            message: {
+              role: 'user',
+              content: 'This session is being continued from a previous conversation.'
+            }
+          }) +
+          '\n',
+        42_000
+      )
+
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`claude:${SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.text)).toEqual([
+        'Placeholder user prompt.',
+        'Placeholder text block.',
+        'Latest assistant reply placeholder.'
+      ])
+    })
   })
 
   /**

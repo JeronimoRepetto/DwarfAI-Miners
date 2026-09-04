@@ -688,8 +688,18 @@ function userContentText(content: unknown): string | undefined {
  * from a line no tool wrote: tool output can print a whole transcript,
  * envelopes and all, which is the same reason an ending is only ever read from
  * the record Claude Code delivered it in (see notificationStrings).
+ *
+ * A third skip sits ahead of all of it (issue #188). When Claude Code compacts
+ * it writes a `user` line whose content is the whole multi-kilobyte summary
+ * ("This session is being continued from a previous conversation…"), flagged
+ * `isCompactSummary` and `isVisibleInTranscriptOnly`; the panel drew it as a
+ * message the person typed. Both flags name a line written for the transcript
+ * rather than sent by anybody, so either one on its own is enough — and it is
+ * the FLAG that decides, never the content shape, so the block array #216
+ * added cannot become a way back in.
  */
 function userMessageText(line: Rec): string | undefined {
+  if (line.isCompactSummary === true || line.isVisibleInTranscriptOnly === true) return undefined
   if (!isRecord(line.message)) return undefined
   const content = userContentText(line.message.content)
   if (content === undefined) return undefined
