@@ -1,3 +1,4 @@
+import { isPanelObserved } from '../../types'
 import type { Dwarf, DwarfProvider, TextDeliveryChannel } from '../../types'
 import { describeEffort } from './effort'
 
@@ -78,7 +79,13 @@ export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   // Never a send channel — see launchedNoInboxReason, which is what a disabled
   // composer says instead. Present because the map is total, and honest for
   // the same reason the others are.
-  'launched-process': 'Nothing: a session launched with one prompt has no inbox.'
+  'launched-process': 'Nothing: a session launched with one prompt has no inbox.',
+  // The mirror of the line above, and the reason hosting is worth its cost
+  // (#194): the same app started this process too, and the only difference is
+  // that it kept the pipe instead of closing it. Says stdin rather than
+  // "the session", because what is on the other end is the person's own
+  // program and this app knows nothing about what it does with a line.
+  'hosted-stdin': 'Written onto the stdin of the process this panel is holding.'
 }
 
 export const NO_KICK_REASON = "This session type can't be canceled yet."
@@ -105,7 +112,12 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   // panel started the process and nothing weaker exists for it, so the kick
   // ends the SESSION. A person told a turn was interrupted, when the session
   // is gone, has been told the wrong thing.
-  'launched-process': 'Ends the session this panel launched — the whole process, not the turn.'
+  'launched-process': 'Ends the session this panel launched — the whole process, not the turn.',
+  // The second exception, and it has to say the same thing (#194). There is no
+  // interrupt to offer: this app knows nothing about what somebody else's
+  // program treats as one, and a byte it happened to accept would be the panel
+  // guessing at another program's key bindings.
+  'hosted-stdin': 'Ends the process this panel is holding — the whole process, not the turn.'
 }
 
 export const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."
@@ -175,9 +187,16 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
     // describes a gap in this app, and this describes the session. Read off
     // the same matrix the kick beside it reads, so the two halves of one
     // refusal can never come from two different facts.
+    // Narrowed on the observer as well as the channel, and the pairing is a
+    // real invariant rather than a cast to satisfy the compiler (#194):
+    // 'launched-process' is a channel only a dwarf some PROVIDER observed can
+    // have, because a launch is a CLI this app knows how to start. A dwarf this
+    // panel holds itself is never one, and its composer is never disabled for
+    // this reason — its stdin is open, which is the whole point of holding it.
+    const provider = dwarf.provider
     const hint =
-      dwarf.capabilities?.cancel === 'launched-process'
-        ? launchedNoInboxReason(dwarf.provider)
+      dwarf.capabilities?.cancel === 'launched-process' && !isPanelObserved(provider)
+        ? launchedNoInboxReason(provider)
         : NO_CHANNEL_REASON
     return { id: 'chat', name: 'Chat', enabled: false, hint }
   }

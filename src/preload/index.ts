@@ -14,6 +14,8 @@ import type {
   DwarfTextResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
+  HostedLaunchRequest,
+  HostedLaunchResult,
   MetricsResetResult,
   MineDeclareResult,
   MineHistoryResult,
@@ -179,6 +181,20 @@ export interface DwarfAiMinersApi {
    * own words back to it.
    */
   answerDwarfQuestion: (request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
+  /**
+   * Start the command the person typed into Add > Other, and hold it over its
+   * stdio (#194).
+   *
+   * The third launch mode, and the only one that names no provider — there is
+   * none: the subject is a program of the caller's own. Main parses the string
+   * into a program plus an argv array with no shell anywhere, and refuses what
+   * it cannot run with a reason the panel shows.
+   *
+   * Unlike both other channels, a `launched: true` here does mean a dwarf is
+   * coming: for a hosted process this panel is the observer, so the next poll
+   * draws it with no session store to wait on.
+   */
+  launchHostedProcess: (request: HostedLaunchRequest) => Promise<HostedLaunchResult>
 }
 
 const api: DwarfAiMinersApi = {
@@ -274,6 +290,17 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.invoke(IPC_CHANNELS.launchHeldSession, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
       provider: isDwarfProvider(request?.provider) ? request.provider : '',
+      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+    }),
+  // Field by field once more, for the reason the two launch channels above are
+  // rebuilt rather than forwarded: this one starts a real process too, and the
+  // command it starts is the caller's own string. Two strings cross and
+  // nothing else — a directory, above all, is dropped before main sees it, so
+  // the mine remains the only way to say where a process may start.
+  launchHostedProcess: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.launchHostedProcess, {
+      mineId: typeof request?.mineId === 'string' ? request.mineId : '',
+      command: typeof request?.command === 'string' ? request.command : '',
       prompt: typeof request?.prompt === 'string' ? request.prompt : ''
     }),
   // Field by field again, and the record entry by entry: an answer releases a

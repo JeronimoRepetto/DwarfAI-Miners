@@ -1,3 +1,4 @@
+import { isPanelObserved } from '../domain/types'
 import type { DwarfProvider, Mine, MineTier } from '../domain/types'
 import type { ProjectRecord, ProjectsStore } from './projectsStore'
 
@@ -189,8 +190,21 @@ function isBeingWorked(mine: Mine): boolean {
  * in at the same moment, and the store's COALESCE keeps the last unambiguous
  * one rather than accepting a coin flip. Reporting whichever dwarf happened to
  * be listed first would make the column flicker between the two.
+ *
+ * A dwarf this panel is HOLDING itself contributes nothing here, and is not
+ * merely filtered out of the count — it is dropped BEFORE the count, so a mine
+ * with one Claude session and one hosted process still answers 'claude' rather
+ * than falling to "ambiguous". The column records which agent CLI a project is
+ * worked with, and a program somebody typed is not one this app can name (see
+ * DwarfObserver): remembering `panel` would put an observer in a provider
+ * column, and letting it make the answer ambiguous would lose a real reading
+ * to a dwarf that had nothing to say.
  */
 function soleProviderOf(mine: Mine): DwarfProvider | undefined {
-  const providers = new Set(mine.dwarfs.map((dwarf) => dwarf.provider))
+  const providers = new Set(
+    mine.dwarfs
+      .map((dwarf) => dwarf.provider)
+      .filter((observer): observer is DwarfProvider => !isPanelObserved(observer))
+  )
   return providers.size === 1 ? [...providers][0] : undefined
 }

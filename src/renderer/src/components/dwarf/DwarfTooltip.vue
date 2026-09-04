@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { describeEffort } from '../../lib/delivery/effort'
+import { observerLabel } from '../../lib/dwarf/observerLabel'
 import { describeSilence } from '../../lib/presentation'
 import type { Dwarf } from '../../types'
 
@@ -33,7 +34,7 @@ const silence = computed(() =>
 <template>
   <div class="dwarf-tooltip" role="tooltip">
     <strong>{{ dwarf.name }}</strong>
-    <span>{{ roleLabel() }} · {{ dwarf.provider }}</span>
+    <span>{{ roleLabel() }} · {{ observerLabel(dwarf.provider) }}</span>
     <span>{{ dwarf.model ?? 'Model unknown' }}</span>
     <span v-if="dwarf.effort">Effort: {{ describeEffort(dwarf.provider, dwarf.effort) }}</span>
     <span v-if="silence" class="dwarf-silence">{{ silence }}</span>

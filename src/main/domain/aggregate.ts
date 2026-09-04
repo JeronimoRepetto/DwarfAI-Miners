@@ -94,18 +94,10 @@ export function mergeDeclaredMines(
     }
     indexByKey.set(key, output.length)
     output.push({
-      id: mineIdForPath(displayPath, platform),
-      path: displayPath,
-      name: lastSegment(displayPath),
       // A measured tier when there is one, the provisional bronze otherwise:
       // an unwalked mine is drawn as the poorest thing it could be, which is
       // exactly what that placeholder is for.
-      tier: project.knownTier ?? tierOf(displayPath),
-      dwarfs: [],
-      tokensObserved: 0,
-      // Nothing has happened in it. The board sorts by activity, so a crewless
-      // declared mine belongs behind every project that has any.
-      updatedAt: 0,
+      ...emptyMineForPath(project.path, project.knownTier ?? tierOf(displayPath), platform),
       declared: true
     })
   }
@@ -225,6 +217,56 @@ export function collapseDuplicateMines(mines: Mine[]): Mine[] {
  */
 export function mineIdForPath(path: string, platform: Platform = currentPlatform()): string {
   return `mine:${normalizeKey(path, platform)}`
+}
+
+/**
+ * A mine for a project path that no provider snapshot produced — its id, its
+ * display name and its trailing-separator handling, in one derivation.
+ *
+ * Two composed steps now need a mine the aggregation never emitted, for two
+ * different reasons: a user-declared project nobody is working (#85), and a
+ * folder whose only occupant is a process this panel is holding itself (#194),
+ * which has no snapshot to be grouped from at all. Both must land on exactly
+ * the id `mineIdForPath` gives, because that id is what joins a mine to the
+ * ledger and to the projects store — a second derivation is how one project
+ * comes to stand on the board twice.
+ *
+ * `updatedAt` is 0 because nothing has been observed happening in it. The board
+ * sorts by activity, so a mine with no observed session belongs behind every
+ * project that has one; a caller with a better answer overrides it.
+ */
+export function emptyMineForPath(
+  path: string,
+  tier: MineTier,
+  platform: Platform = currentPlatform()
+): Mine {
+  const displayPath = trimTrailingSlashes(path)
+  return {
+    id: mineIdForPath(displayPath, platform),
+    path: displayPath,
+    name: lastSegment(displayPath),
+    tier,
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+}
+
+/**
+ * Whether two project paths name the same place, by the same platform-aware
+ * normalization the board is grouped and keyed by.
+ *
+ * Exported for the same reason `mineIdForPath` is: a composed step that has to
+ * find the mine a path belongs to must ask this rather than compare strings,
+ * or it will miss `C:\Code\Anvil` against `c:\code\anvil` on Windows and merge
+ * `/home/j/Proj` with `/home/j/proj` on Linux.
+ */
+export function samePathKey(
+  left: string,
+  right: string,
+  platform: Platform = currentPlatform()
+): boolean {
+  return normalizeKey(left, platform) === normalizeKey(right, platform)
 }
 
 function sumDwarfTokens(dwarfs: Dwarf[]): number {
