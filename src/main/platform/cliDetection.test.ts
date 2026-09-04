@@ -4,7 +4,8 @@ import {
   conventionalCliPaths,
   cliExecutableNames,
   createCliDetector,
-  pathLookupCandidates
+  pathLookupCandidates,
+  resolveShimTarget
 } from './cliDetection'
 
 const HOME = '/home/j'
@@ -186,5 +187,78 @@ describe('createCliDetector', () => {
       path: '/home/j/.local/bin/claude',
       source: 'convention'
     })
+  })
+})
+
+/*
+ * What a Windows batch shim actually runs (#193). Both fixtures are the real
+ * shim text of the two package managers that produce one — npm's cmd-shim and
+ * pnpm's — with only the home and pnpm's store hash made generic. Pure, over
+ * the shim's text and path, so no host ever needs a `.cmd` to run this.
+ */
+describe('resolveShimTarget', () => {
+  const NPM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
+  const NPM_SHIM_TEXT = [
+    '@ECHO off',
+    'GOTO start',
+    ':find_dp0',
+    'SET dp0=%~dp0',
+    'EXIT /b',
+    ':start',
+    'SETLOCAL',
+    'CALL :find_dp0',
+    '',
+    'IF EXIST "%dp0%\\node.exe" (',
+    '  SET "_prog=%dp0%\\node.exe"',
+    ') ELSE (',
+    '  SET "_prog=node"',
+    '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+    ')',
+    '',
+    'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
+  ].join('\r\n')
+
+  const PNPM_DIR = 'C:\\Users\\x\\AppData\\Local\\pnpm\\bin'
+  const PNPM_SHIM_TEXT = [
+    '@SETLOCAL',
+    '@IF EXIST "%~dp0\\node.exe" (',
+    '  "%~dp0\\node.exe"  "%~dp0\\..\\global\\v11\\abcd-0123456789abc\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+    ') ELSE (',
+    '  @SET PATHEXT=%PATHEXT:;.JS;=;%',
+    '  node  "%~dp0\\..\\global\\v11\\abcd-0123456789abc\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+    ')'
+  ].join('\r\n')
+
+  it("resolves npm's cmd-shim to the JS entry beside it, and the node.exe it would prefer", () => {
+    expect(resolveShimTarget(`${NPM_DIR}\\codex.cmd`, NPM_SHIM_TEXT)).toEqual({
+      entry: `${NPM_DIR}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+      bundledNode: `${NPM_DIR}\\node.exe`
+    })
+  })
+
+  it("resolves pnpm's shim, collapsing the `..` its store path goes through", () => {
+    // `where codex` on a pnpm machine answers `...\pnpm\bin\codex.CMD`, upper-case.
+    expect(resolveShimTarget(`${PNPM_DIR}\\codex.CMD`, PNPM_SHIM_TEXT)).toEqual({
+      entry:
+        'C:\\Users\\x\\AppData\\Local\\pnpm\\global\\v11\\abcd-0123456789abc\\node_modules\\@openai\\codex\\bin\\codex.js',
+      bundledNode: `${PNPM_DIR}\\node.exe`
+    })
+  })
+
+  it('takes an entry written as an absolute path as it is', () => {
+    expect(
+      resolveShimTarget('C:\\tools\\codex.bat', 'node "C:\\opt\\codex\\bin\\codex.js" %*')
+    ).toEqual({ entry: 'C:\\opt\\codex\\bin\\codex.js', bundledNode: 'C:\\tools\\node.exe' })
+  })
+
+  it('answers undefined for a shim that names no JS entry, rather than guessing one', () => {
+    expect(resolveShimTarget('C:\\tools\\codex.cmd', '@echo off\r\nrem nothing to run\r\n')).toBe(
+      undefined
+    )
+  })
+
+  it('answers undefined when the entry hangs on a variable only cmd.exe could expand', () => {
+    const text = 'node "%APPDATA%\\npm\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
+    expect(resolveShimTarget(`${NPM_DIR}\\codex.cmd`, text)).toBe(undefined)
   })
 })
