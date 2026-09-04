@@ -53,6 +53,26 @@ function framePercentOf(wrapper: ReturnType<typeof mount>): number {
   return Number(/--sheet-position:\s*([\d.]+)%/.exec(style)?.[1] ?? NaN)
 }
 
+/**
+ * The frame box the CSS is given, e.g. "36 / 38". On the ROOT beside the strip,
+ * for the same reason: it changes only when the authored frame size does.
+ */
+function frameAspectOf(wrapper: ReturnType<typeof mount>): string {
+  const style = wrapper.attributes('style') ?? ''
+  return /--frame-aspect:\s*([^;]*)/.exec(style)?.[1]?.trim() ?? ''
+}
+
+/**
+ * The VERTICAL term of `--sheet-size`, which is what decides whether a sheet's
+ * own pixel height can reach the drawn box (issue #211). The horizontal term
+ * varies with the frame count and is `backgroundSizePercent`'s business.
+ */
+function sheetSizeHeightOf(wrapper: ReturnType<typeof mount>): string {
+  const style = wrapper.attributes('style') ?? ''
+  const size = /--sheet-size:\s*([^;]*)/.exec(style)?.[1]?.trim() ?? ''
+  return size.split(/\s+/)[1] ?? ''
+}
+
 /** The sheet named in the inventory, by the same basename `sheetOf` returns. */
 function sheetName(src: string): string {
   return (
@@ -77,6 +97,39 @@ describe('DwarfSprite', () => {
     })
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
     expect(framePercentOf(wrapper)).toBe(0)
+  })
+
+  /*
+   * The scale question #211 asked, answered where it can actually be observed:
+   * on the rendered box rather than on the sheet's pixels.
+   *
+   * Nothing about a sheet's own dimensions reaches the drawn size. The box is
+   * `--sprite-height` (from sceneSizing, which derives it from
+   * SPRITE_FRAME_SIZE and the measured column) times `--depth-scale`, with the
+   * width following `--frame-aspect` — all three independent of which strip is
+   * showing. The sheet contributes `--sheet-image` and `--sheet-size`, and the
+   * vertical term of that size is the constant `100%`: one frame is STRETCHED
+   * to exactly the box in both axes, so a strip of any pixel height fills the
+   * same box. That is the property that makes the swap seamless, and it is
+   * asserted here rather than reasoned about in a comment.
+   */
+  it('draws a worker2 at the same size working as idling, whatever the strip (#211)', () => {
+    const idling = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'worker2', status: 'waiting' }) }
+    })
+    const working = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'worker2', status: 'working' }) }
+    })
+
+    // It really did change strip — otherwise the equalities below prove nothing.
+    expect(sheetOf(idling)).toBe(sheetName(DWARF_SHEETS.worker2.idle.src))
+    expect(sheetOf(working)).toBe(sheetName(DWARF_SHEETS.worker2['start-working']!.src))
+
+    expect(frameAspectOf(working)).toBe(frameAspectOf(idling))
+    // The vertical term, which is what would have to vary for a taller or
+    // shorter sheet to change the drawn height. It does not.
+    expect(sheetSizeHeightOf(idling)).toBe('100%')
+    expect(sheetSizeHeightOf(working)).toBe('100%')
   })
 
   it('puts the foreman on his own sheet instead of the worker one', () => {

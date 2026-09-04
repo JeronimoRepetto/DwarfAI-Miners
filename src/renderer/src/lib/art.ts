@@ -19,6 +19,9 @@ import worker2IdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker2-idle
 import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-start-working.png'
 import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
 import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
+import worker2StartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-start-working-v2.png'
+import worker2WorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-working-v2.png'
+import worker2EndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-end-working-v2.png'
 
 import foremanFace from '../assets/art/dwarf-foreman/dwarf-foreman-face.jpg'
 import workerFace from '../assets/art/dwarf-worker/dwarf-worker-face.jpg'
@@ -99,10 +102,11 @@ export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, st
  * Waiting and walking art still arrives later and drops in here the same
  * way — no branch anywhere else moves.
  *
- * The worker2's idle (#157) lives in the WORKER's directory because that is
- * where the maintainer drew and delivered it; the path is the artist's filing,
- * not a claim that the two ranks share art. They do not — each rank's `idle` is
- * its own file, which is exactly what the fallback rule below depends on.
+ * The worker2's sheets (#157's idle, #211's working triad) live in the WORKER's
+ * directory because that is where the maintainer drew and delivered them; the
+ * path is the artist's filing, not a claim that the two ranks share art. They
+ * do not — every sheet below is one rank's own file, which is exactly what the
+ * fallback rule depends on.
  */
 export const DWARF_SHEET_SRC = {
   worker: {
@@ -111,11 +115,15 @@ export const DWARF_SHEET_SRC = {
     working: workerWorkingSheet,
     'end-working': workerEndWorkingSheet
   },
-  // Idle alone, and that is the whole inventory a rank is required to have: a
-  // working worker2 plays its OWN idle until the working strip lands, never the
-  // worker's (see dwarfSheets.ts on why a rank never borrows across ranks).
+  // The working strip landed (#211), so the rank the comment here used to
+  // describe as "idle alone, until the working strip lands" now has its own
+  // swing as well — drawn for it, never borrowed from the worker (see
+  // dwarfSheets.ts on why a rank never reaches across ranks for art).
   worker2: {
-    idle: worker2IdleSheet
+    idle: worker2IdleSheet,
+    'start-working': worker2StartWorkingSheet,
+    working: worker2WorkingSheet,
+    'end-working': worker2EndWorkingSheet
   },
   foreman: {
     idle: foremanIdleSheet,

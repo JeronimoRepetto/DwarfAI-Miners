@@ -62,13 +62,32 @@ describe('DWARF_SHEETS against the committed art', () => {
   })
 
   it('corrects the design source, which states a smaller box than was drawn', () => {
-    // foundations.md says the dwarf sprite is 34x36. Every sheet the maintainer
-    // actually drew is 38 tall and a whole number of 36s wide, and 34 divides
-    // none of them. The art is the answer; the document is the stale copy.
+    /*
+     * foundations.md says the dwarf sprite is 34x36. Every sheet the maintainer
+     * actually drew is 38 tall and a whole number of 36s wide. The art is the
+     * answer; the document is the stale copy.
+     *
+     * AMENDED by #211, which caught this test resting on a coincidence. It used
+     * to assert `width % 34 !== 0` for every sheet on the claim that "34 divides
+     * none of them" — true of the eleven sheets that existed when it was
+     * written, and false the moment the worker2's end-working strip landed: 612
+     * is 34 x 18 exactly, as well as the 36 x 17 it actually is. The strip is
+     * fine and its 17 frames are confirmed by its own preview GIF; the
+     * ARGUMENT was the weak part, since nothing stops a multiple of 36 also
+     * being a multiple of 34.
+     *
+     * So the claim is now tested as the CONJUNCTION the design source actually
+     * states — a 34x36 box — rather than as two independent halves. No sheet is
+     * consistent with that box, and the height is what rules it out every time,
+     * which is the half that was load-bearing all along.
+     */
     for (const { where, sheet } of everySheet()) {
       const { width, height } = pngSize(sheet.src)
       expect(height, where).not.toBe(36)
-      expect(width % 34, where).not.toBe(0)
+      expect({ where, fitsDesignBox: height === 36 && width % 34 === 0 }).toEqual({
+        where,
+        fitsDesignBox: false
+      })
     }
   })
 })
@@ -99,20 +118,38 @@ describe('DWARF_SHEETS', () => {
   })
 
   describe('the worker2 (#157)', () => {
-    it('has its own six-frame idle and nothing else drawn yet', () => {
-      // The maintainer's art note: the idle sheet landed, the WORKING sheet is
-      // still pending. Stated out loud rather than left to be inferred from an
-      // absence — when the working strip arrives THIS is the expectation that
-      // changes, and the sequence picks it up as data with no branch moving.
-      expect(Object.keys(DWARF_SHEETS.worker2)).toEqual(['idle'])
+    /*
+     * AMENDED by #211, which is the arrival the version below predicted in so
+     * many words: "when the working strip arrives THIS is the expectation that
+     * changes, and the sequence picks it up as data with no branch moving." It
+     * asserted `Object.keys(DWARF_SHEETS.worker2)` was `['idle']` alone and
+     * nothing else drawn yet. The working triad has now been drawn, so the
+     * inventory is the four sheets below; the six-frame idle assertion is kept
+     * verbatim, and no branch did have to move.
+     */
+    it('has its own six-frame idle, and now its own working triad too (#211)', () => {
+      expect(Object.keys(DWARF_SHEETS.worker2)).toEqual([
+        'idle',
+        'start-working',
+        'working',
+        'end-working'
+      ])
       expect(DWARF_SHEETS.worker2.idle.frames).toBe(6)
     })
 
+    /*
+     * AMENDED by #211 for the same reason, and narrowed rather than dropped.
+     * The version below ran over ['working', 'start-working', 'end-working',
+     * 'sleeping']; the first three are now drawn, so asserting them undefined
+     * would be asserting the art had not arrived. `sleeping` is what is still
+     * undrawn for this rank, and the fallback rule it proves — a worker2 uses
+     * its OWN idle, never the worker's or the foreman's art — is unchanged and
+     * is still the whole point of the test.
+     */
     it('falls back to its own idle for every state it has no sheet for', () => {
-      // The engine's rule, spent here on the rank that needs it most: a working
-      // worker2 plays its idle, never the WORKER's working strip. Borrowing
+      // The engine's rule, spent here on the rank that needs it most. Borrowing
       // across ranks is how the foreman ended up walking like a miner (#74).
-      for (const name of ['working', 'start-working', 'end-working', 'sleeping'] as const) {
+      for (const name of ['sleeping', 'start-sleep', 'end-sleep'] as const) {
         expect(DWARF_SHEETS.worker2[name], name).toBeUndefined()
       }
     })
@@ -156,6 +193,77 @@ describe('DWARF_SHEETS', () => {
     // 60 frames at a uniform 100ms, not 3 + 11 + 6 = 20 — the preview loops
     // the swing several times to show it repeating rather than encoding the
     // three parts once each, so frame count is not evidence of ordering here.
+  })
+
+  describe('the worker2 starting to work (#211)', () => {
+    it('has a start, a loop and an end, which is what makes it a transition', () => {
+      // Read off the three PNGs' IHDR widths against the 36px cell: 576/36,
+      // 360/36 and 612/36, all exact. The counts are longer than the worker's
+      // 3/11/6 throughout and that is the art, not a mistake — this rank was
+      // drawn with a slower pick-up and a much longer set-down.
+      expect(DWARF_SHEETS.worker2['start-working']?.frames).toBe(16)
+      expect(DWARF_SHEETS.worker2.working?.frames).toBe(10)
+      expect(DWARF_SHEETS.worker2['end-working']?.frames).toBe(17)
+    })
+
+    it('adds up to the working preview, which encodes start, four swings and end', () => {
+      /*
+       * The evidence that these three are one movement and are meant to be
+       * played in this order — the shape the foreman's sleep pin uses, and
+       * available here in a way it was NOT for the worker.
+       * dwarf-worker2-working-v2.gif's Graphic Control Extension blocks measure
+       * 73 frames, and 73 is exactly 16 + (10 x 4) + 17: the preview
+       * concatenates the pick-up, four turns of the swing, and the set-down.
+       * The worker's own preview has no such decomposition (60 frames against
+       * 3/11/6), which is why that pin is absent above and present here.
+       */
+      const start = DWARF_SHEETS.worker2['start-working']?.frames ?? 0
+      const loop = DWARF_SHEETS.worker2.working?.frames ?? 0
+      const end = DWARF_SHEETS.worker2['end-working']?.frames ?? 0
+      expect(start + loop * 4 + end).toBe(73)
+    })
+
+    it('is drawn in the same cell as its own idle, so it cannot change size mid-swing', () => {
+      /*
+       * The scale question #211 raised, answered at the asset. The issue read
+       * the worker2's idle as 180x190 against 38-tall working strips and
+       * expected a size jump; 180x190 is the PREVIEW GIF's logical screen (one
+       * 36x38 cell at 5x), and the worker's own preview is 180x190 too. The
+       * committed idle SHEET is 216x38 — six cells of exactly the same 36x38
+       * box the new strips use.
+       *
+       * Sheet pixels never reach the drawn size anyway (see the DwarfSprite
+       * pin), so this holds the stronger property: the same cell means the same
+       * pixel density as well as the same box, which is what makes the swap
+       * invisible rather than merely the right size.
+       */
+      const idle = pngSize(DWARF_SHEETS.worker2.idle.src)
+      for (const name of ['start-working', 'working', 'end-working'] as const) {
+        const sheet = DWARF_SHEETS.worker2[name]
+        expect(sheet, name).toBeDefined()
+        const { width, height } = pngSize(sheet!.src)
+        expect(height, name).toBe(idle.height)
+        expect(width / (sheet!.frames || 1), name).toBe(
+          idle.width / DWARF_SHEETS.worker2.idle.frames
+        )
+      }
+    })
+
+    it('names no impact or glow frame on any strip, because it carries no pick', () => {
+      /*
+       * A SETTLED DECISION, pinned so it is not re-opened as an oversight —
+       * maintainer ruling on #211. The worker's loop declares impactFrames [4]
+       * and glowFrames [4, 5] because its swing lands a pick strike that bites
+       * the rock; the worker2 carries no pick and its animation has no strike,
+       * so there is no frame for either field to name and no frame map coming.
+       * Nothing is owed here. What would break this test is somebody picking a
+       * frame by eye, which is exactly what it is here to stop.
+       */
+      for (const name of ['idle', 'start-working', 'working', 'end-working'] as const) {
+        expect(DWARF_SHEETS.worker2[name]?.impactFrames, name).toBeUndefined()
+        expect(DWARF_SHEETS.worker2[name]?.glowFrames, name).toBeUndefined()
+      }
+    })
   })
 
   /*
