@@ -154,6 +154,16 @@ describe('design-tokens.css against the design foundations', () => {
     expect(valueOf(name)).toBe(value)
   })
 
+  /*
+   * The Mine History panel's own ceiling (#192, `screens/history.md`: "500px
+   * maximum height"). Not in the foundations table — it arrived with the v3
+   * history screen — but a design value all the same, so it has the same one
+   * home as the rest.
+   */
+  it('carries the history panel maximum height as 500px', () => {
+    expect(valueOf('--size-history-panel-max-height')).toBe('500px')
+  })
+
   it('keeps one radius for rails, panels, cards, inputs, buttons and dialogs', () => {
     expect(valueOf('--radius-default')).toBe('12px')
   })

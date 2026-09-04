@@ -829,6 +829,67 @@ export interface DwarfFeedResult {
   messages: FeedMessage[]
 }
 
+/**
+ * How many of one dwarf's messages the Mine History panel shows at most
+ * (#192, `screens/history.md`: "up to that dwarf's latest 50 messages").
+ *
+ * On the wire because both sides act on it: main reads no more than this
+ * off a transcript, and the renderer's tab trims to the same figure, so a
+ * main that ever over-delivered could not make the panel disagree with the
+ * design. A count rather than a time window or a session count — the
+ * maintainer settled that reading in #192's design comment.
+ */
+export const MINE_HISTORY_MESSAGE_LIMIT = 50
+
+/**
+ * One dwarf that has spoken in a mine, as its transcript on disk remembers it
+ * (#192) — a tab of the Mine History panel.
+ *
+ * Deliberately NOT a `Dwarf`. The dwarf may be gone: this is read from the
+ * transcripts under the mine's project folder, which outlive the session that
+ * wrote them, so nothing here is a claim about anything running now. `id`
+ * repeats the provider's own dwarf-id scheme (`claude:<session>`,
+ * `claude:<session>:<agent>`, `codex:<thread>`) so a speaker and the live dwarf
+ * it once was are one name, never two.
+ *
+ * `role` is TOPOLOGY read off the transcript's own position and its sidecar —
+ * the root of a session is the foreman, a subagent's depth picks worker or
+ * worker2 through the same `rankForSpawnDepth` the live board uses — never
+ * copied from a live dwarf, since there may be none. A depth the sidecar does
+ * not state falls to `worker`, the direction every unproven rank falls in here.
+ *
+ * `messages` is oldest first and at most MINE_HISTORY_MESSAGE_LIMIT long, read
+ * from a bounded tail: a transcript older than Claude Code's own
+ * `cleanupPeriodDays` is gone, so "the latest 50" is a safe claim and
+ * "everything ever said" never was. `lastMessageAt` is the newest message's
+ * own timestamp as epoch ms, falling back to the file's mtime when the line
+ * carried none; the panel orders tabs by it, newest first.
+ */
+export interface MineHistorySpeaker {
+  id: string
+  provider: DwarfProvider
+  role: DwarfRole
+  name: string
+  lastMessageAt: number
+  messages: FeedMessage[]
+}
+
+/**
+ * What a mine's transcripts on disk say (#192), answered on request for one
+ * mine id — never a path, for the reason every other mine channel names an id.
+ *
+ * `readable: false` and an empty list are two different facts and are kept
+ * apart on purpose, exactly as DwarfFeedResult keeps them: the first says main
+ * could not answer for this mine at all (it is not on the board), the second
+ * says it could and nobody has spoken there yet. The panel draws one line for
+ * the second and must never draw it for the first.
+ */
+export interface MineHistoryResult {
+  readable: boolean
+  /** Every dwarf that has spoken, in no promised order — the renderer sorts. */
+  speakers: MineHistorySpeaker[]
+}
+
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
   /** True when an existing terminal window was found and brought to the foreground. */
@@ -1450,6 +1511,17 @@ export const IPC_CHANNELS = {
    * the words without either attempt.
    */
   getDwarfFeed: 'dwarf:feed',
+  /**
+   * Every dwarf that has spoken in one mine, with its latest messages (#192),
+   * read from the transcripts under the mine's project folder on request.
+   *
+   * Pull-only, like `getDwarfFeed`, and deliberately not folded into
+   * minesUpdated: that push carries the board — the sessions running THIS
+   * poll — and the whole point of this channel is the sessions that are not.
+   * Names a mine ID and never a path, for the reason the declare/undeclare
+   * channels give: the id is what both sides already agree on.
+   */
+  getMineHistory: 'mine:history',
   sendDwarfText: 'dwarf:sendText',
   kickDwarf: 'dwarf:kick',
   /**

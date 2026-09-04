@@ -2181,7 +2181,7 @@ describe('AgentRuntime material vault', () => {
    * backslashes there (neither \w nor \p is an escape sequence), so the mine's
    * path — and therefore the tier cache key — is exactly this string.
    */
-  const VAULT_PROJECT = 'C:workproject'
+  const VAULT_PROJECT = 'C:\work\project'
 
   /** Tiny thresholds so a few KB of fixture crosses a real tier boundary. */
   const VAULT_THRESHOLDS: TierThresholds = {
@@ -4619,5 +4619,95 @@ describe('AgentRuntime board-and-list coherence (#165)', () => {
 
     expect(mines).toHaveLength(1)
     expect('unrecorded' in mines[0]!).toBe(false)
+  })
+})
+
+/**
+ * The Mine History panel's read (#192): what a mine's transcripts on disk say,
+ * for dwarfs that may be gone. The runtime's whole part is resolving the mine
+ * id to the folder the board already knows for it — a channel that accepted a
+ * path would be a channel that accepts any path — and answering `readable:
+ * false` when it cannot, which is a different fact from a mine nobody has
+ * spoken in.
+ */
+describe('AgentRuntime.mineHistory', () => {
+  const scan = vi.fn<Provider['scan']>().mockResolvedValue([
+    {
+      provider: 'claude',
+      sessionId: 'session-1',
+      cwd: 'C:\\work\\project',
+      status: 'busy',
+      updatedAt: 1,
+      dwarfs: [
+        {
+          id: 'claude:session-1',
+          provider: 'claude',
+          role: 'foreman',
+          name: 'session-',
+          status: 'working',
+          sessionId: 'session-1'
+        }
+      ]
+    }
+  ])
+  const source: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }
+  const SPEAKER = {
+    id: 'claude:older-session',
+    provider: 'claude' as const,
+    role: 'foreman' as const,
+    name: 'older-se',
+    lastMessageAt: 1_000,
+    messages: [{ role: 'assistant' as const, text: 'Done long ago.', timestamp: '1970-01-01' }]
+  }
+
+  it("resolves the mine to its folder and answers with the folder's speakers", async () => {
+    const read = vi.fn().mockResolvedValue([SPEAKER])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      history: { read },
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project'))).resolves.toEqual({
+      readable: true,
+      speakers: [SPEAKER]
+    })
+    expect(read).toHaveBeenCalledWith('C:\\work\\project')
+  })
+
+  it('reads nothing for a mine that is not on the board, and says it could not', async () => {
+    const read = vi.fn().mockResolvedValue([SPEAKER])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      history: { read },
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    await expect(runtime.mineHistory('mine:nowhere')).resolves.toEqual({
+      readable: false,
+      speakers: []
+    })
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('answers unreadable rather than throwing when the read itself fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      history: { read: vi.fn().mockRejectedValue(new Error('disk')) },
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project'))).resolves.toEqual({
+      readable: false,
+      speakers: []
+    })
+    warn.mockRestore()
   })
 })

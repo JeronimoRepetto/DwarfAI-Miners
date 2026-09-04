@@ -5,6 +5,7 @@ import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
 import {
   ADD_ICON_SRC,
   CLOSE_ICON_SRC,
+  HISTORY_ICON_SRC,
   INTERIOR_ART_SIZE,
   INTERIOR_SRC,
   maskImageValue
@@ -55,6 +56,8 @@ const emit = defineEmits<{
   select: [dwarf: Dwarf]
   /** The Add action was used; the shell above opens the Add Panel in its dock (#86). */
   add: []
+  /** The History action was used; the shell above opens the Mine History panel (#192). */
+  history: []
 }>()
 
 /*
@@ -371,6 +374,26 @@ onBeforeUnmount(() => {
       </button>
 
       <!--
+        The design's History action (#192), directly below Close: it opens the
+        read-only mine-wide history while the mine stays visible. Emits and
+        decides nothing, for the reason Add does — App owns the dock the panel
+        opens in. Drawn at Close's size, because the two are a stacked pair.
+      -->
+      <button
+        class="mine-history"
+        type="button"
+        aria-label="Mine history"
+        title="Mine history"
+        @click="emit('history')"
+      >
+        <span
+          class="action-glyph"
+          :style="{ '--action-icon': maskImageValue(HISTORY_ICON_SRC) }"
+          aria-hidden="true"
+        ></span>
+      </button>
+
+      <!--
         The design's Add action, lower-right, which opens the in-mine Add Panel
         (components.md, "Mine Add action"). It emits and decides nothing: the
         panel docks at the bottom of the SHELL, beside this column rather than
@@ -515,12 +538,13 @@ onBeforeUnmount(() => {
  * to a selector somebody else writes.
  */
 /*
- * The two round actions the design floats on the interior: Close at the top
- * right, Add at the lower right. Both are drawn through a CSS mask from the
- * designer's own SVG, so the committed file keeps its bytes and the colour
- * comes from the tokens.
+ * The three round actions the design floats on the interior: Close at the top
+ * right, History directly below it (#192), Add at the lower right. All are
+ * drawn through a CSS mask from the designer's own SVG, so the committed file
+ * keeps its bytes and the colour comes from the tokens.
  */
 .close-mine,
+.mine-history,
 .add-agent {
   position: absolute;
   z-index: 7;
@@ -535,6 +559,13 @@ onBeforeUnmount(() => {
 }
 .close-mine {
   top: 8px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+}
+/* Close's size and column, one gap below it — the design draws them as a stacked pair. */
+.mine-history {
+  top: calc(8px + 18px + var(--space-nav-gap));
   right: 8px;
   width: 18px;
   height: 18px;
@@ -557,10 +588,12 @@ onBeforeUnmount(() => {
   mask: var(--action-icon) center / contain no-repeat;
 }
 .close-mine:hover,
+.mine-history:hover,
 .add-agent:not(:disabled):hover {
   background: var(--color-accent);
 }
 .close-mine:focus-visible,
+.mine-history:focus-visible,
 .add-agent:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;

@@ -4,6 +4,7 @@ import {
   ADD_ICON_SRC,
   CLOSE_ICON_SRC,
   DIALOG_ICON_SRC,
+  HISTORY_ICON_SRC,
   MAP_ART_SIZE,
   MAP_BG_SRC,
   NUGGET_SRC,
@@ -86,13 +87,22 @@ describe('browse and status icons', () => {
     ['SORT_ICON_SRC', SORT_ICON_SRC],
     ['ADD_ICON_SRC', ADD_ICON_SRC],
     ['DIALOG_ICON_SRC', DIALOG_ICON_SRC],
-    ['SLEEP_ICON_SRC', SLEEP_ICON_SRC]
+    ['SLEEP_ICON_SRC', SLEEP_ICON_SRC],
+    // The mine's History action (#192), from the same design directory.
+    ['HISTORY_ICON_SRC', HISTORY_ICON_SRC]
   ])('resolves %s to a bundled url', (_name, src) => {
     expect(src).toBeTruthy()
   })
 
   it('gives each glyph its own file rather than reusing one', () => {
-    const sources = [SORT_ICON_SRC, ADD_ICON_SRC, DIALOG_ICON_SRC, SLEEP_ICON_SRC, CLOSE_ICON_SRC]
+    const sources = [
+      SORT_ICON_SRC,
+      ADD_ICON_SRC,
+      DIALOG_ICON_SRC,
+      SLEEP_ICON_SRC,
+      CLOSE_ICON_SRC,
+      HISTORY_ICON_SRC
+    ]
     expect(new Set(sources).size).toBe(sources.length)
   })
 })
@@ -139,7 +149,8 @@ describe('maskImageValue', () => {
       ADD_ICON_SRC,
       DIALOG_ICON_SRC,
       SLEEP_ICON_SRC,
-      CLOSE_ICON_SRC
+      CLOSE_ICON_SRC,
+      HISTORY_ICON_SRC
     ]
     for (const src of every) {
       const value = maskImageValue(src)

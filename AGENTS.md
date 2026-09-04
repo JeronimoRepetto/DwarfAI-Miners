@@ -178,10 +178,10 @@ adding a file. This is the index — one line per group, so you can tell what a 
 - **`main/`** — `index.ts` is the composition root, and the only file that owns Electron's
   `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
   seams with their fakes), `appDatabase` (the one SQLite file), `config`, `domain` (pure rules and
-  the type barrel), `hooks` (the opt-in Claude push channel), `ledger` (mined, persisted),
-  `platform` (composed once in `platformAdapters.ts`), `projects`, `providers` (one per agent CLI
-  plus the simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session and
-  holding one), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
+  the type barrel), `history`, `hooks` (the opt-in Claude push channel), `ledger` (mined,
+  persisted), `platform` (composed once in `platformAdapters.ts`), `projects`, `providers` (one per
+  agent CLI plus the simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session
+  and holding one), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
 
 <!-- END GENERATED: main-tree -->
 
