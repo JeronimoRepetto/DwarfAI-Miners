@@ -287,6 +287,49 @@ describe('CodexProvider with the Codex SQLite registry', () => {
     expect(child.dwarfs[0]).toMatchObject({ role: 'worker', name: 'Bernoulli' })
   })
 
+  it("carries a sub-agent's launcher edge and its objective onto the dwarf", async () => {
+    // #218. Two facts the panel had no way to state: who launched this thread
+    // — the id `codex:<uuid>` never said, and slicing it named the literal
+    // `codex` — and what it was asked to do, which only `agent_path` carries.
+    const parentId = '01a04d79-0000-7000-0000-0000000000cc'
+    const childId = '01a04d7e-0000-7000-0000-0000000000dd'
+    const parentRollout = rolloutPathFor(parentId)
+    const childRollout = rolloutPathFor(childId)
+    fake.addFile(parentRollout, busyRollout(parentId), FROZEN_MTIME)
+    fake.addFile(childRollout, busyRollout(childId), FROZEN_MTIME)
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: parentId, cwd: 'C:\p', rolloutPath: parentRollout, updatedAtMs: NOW })
+    )
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({
+        id: childId,
+        cwd: 'C:\p',
+        rolloutPath: childRollout,
+        updatedAtMs: NOW,
+        agentNickname: 'Bernoulli',
+        source: subagentSource(parentId, 'Bernoulli', '/root/audit_chain_report')
+      })
+    )
+
+    const snapshots = await makeProvider().scan()
+    const child = snapshots.find((s) => s.sessionId === childId)!
+    expect(child.dwarfs[0]).toMatchObject({
+      parentId: `codex:${parentId}`,
+      description: '/root/audit_chain_report'
+    })
+  })
+
+  it('leaves a root thread with no launcher edge and no objective', async () => {
+    // The other half, and the one that was already right: nothing launched a
+    // root, so the prompt in its rollout really was the human's (#175).
+    seedLiveThread()
+    const [snapshot] = await makeProvider().scan()
+    expect(snapshot?.dwarfs[0]?.parentId).toBeUndefined()
+    expect(snapshot?.dwarfs[0]?.description).toBeUndefined()
+  })
+
   it('detects a registry thread whose rollout file is not on disk', async () => {
     // The desktop app can register a thread before a readable rollout exists;
     // the registry row alone still describes the session.

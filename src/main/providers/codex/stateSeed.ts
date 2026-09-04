@@ -64,14 +64,24 @@ export function threadInsert(seed: ThreadSeed): string {
   return `INSERT INTO threads (${names}) VALUES (${values})`
 }
 
-/** The JSON blob Codex stores in `threads.source` for a spawned sub-agent. */
-export function subagentSource(parentThreadId: string, agentNickname?: string): string {
+/**
+ * The JSON blob Codex stores in `threads.source` for a spawned sub-agent.
+ *
+ * `agentPath` is the agent definition the spawn names, and the only field that
+ * states what the child was asked to do (#218) — its fork carries the human's
+ * original prompt rather than the parent's instruction.
+ */
+export function subagentSource(
+  parentThreadId: string,
+  agentNickname?: string,
+  agentPath = '/root/audit'
+): string {
   return JSON.stringify({
     subagent: {
       thread_spawn: {
         parent_thread_id: parentThreadId,
         depth: 1,
-        agent_path: '/root/audit',
+        agent_path: agentPath,
         agent_nickname: agentNickname ?? null,
         agent_role: null
       }

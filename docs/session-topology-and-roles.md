@@ -317,6 +317,27 @@ added to `Dwarf` as:
   parentId?: string
 ```
 
+### LANDED (#189, #218) — `parentId` is on the wire already
+
+`parentId` shipped ahead of the rest of this section, because message attribution needed the edge
+before the rank redesign around it does. Read its doc comment in `contracts.ts` for the authority;
+the summary is that it means exactly what is proposed above, and `topology` did **not** land with
+it.
+
+Two providers write it today. `heldCrew.ts` publishes a crew member's `parentTaskId` as the dwarf
+id that task is drawn under, and `codexProvider.ts`'s `linkSubagents` publishes
+`codex:<parent_thread_id>` from the spawn blob. Whoever lands `topology` reads this field rather
+than adding a second name for the same fact — and note that a provider reporting the edge without
+reporting a rank is already the direction §6 asks for.
+
+One consumer reads it: `domain/messageIssuer.ts`. **`launchingAgentOf` no longer slices a dwarf id
+to name a launcher** — that was the root of both issues. It asks for the edge, and when a provider
+declared none it derives its session's own root from the dwarf's OWN fields
+(`${provider}:${sessionId}`), which a depth-1 `worker` rank proves is its launcher and which the
+observed-Claude path still relies on. A launcher named from a declared edge takes its RANK from
+the launcher's own board entry, so `LAUNCHER_RANK` no longer has to infer one — which is how a
+`worker2` launched by a worker and a Codex agent launched by a foreman are served by one rule.
+
 `role` stays exactly as it is: `'foreman' | 'worker'`, required, and the field every renderer read
 in §5 keeps using. **Do not widen the union.** §7 covers why the nested-supervisor case does not
 need a third value.
@@ -353,6 +374,9 @@ free, but it should be stated rather than left to the prefix.
 Providers stop deciding rank. They report what they read. `codexProvider.ts:597` — the mutation —
 goes away entirely; `linkSubagents` keeps only its second job, putting an idle parent on the board
 (`:598-600`), and should be renamed to say so.
+
+Since #218 it also has a third: publishing `parentId` on the child's own dwarf. That one is
+reporting rather than deciding, so it is the half of `linkSubagents` this section wants kept.
 
 ---
 

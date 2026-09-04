@@ -60,10 +60,31 @@ describe('parseCodexThreadSource', () => {
         }
       }
     })
+    // Amended for #218: `agentPath` joins the exact shape this asserts. The
+    // blob always carried it and this reader threw it away, which is why the
+    // panel could not say what a spawned agent was working on.
     expect(parseCodexThreadSource(source)).toEqual({
       parentThreadId: '01a04d79-5c87-7a31-9b1a-4aacc350d6fd',
-      agentName: 'Bernoulli'
+      agentName: 'Bernoulli',
+      agentPath: '/root/quality_audit'
     })
+  })
+
+  it('keeps the agent path the blob names, which is the only field stating the objective', () => {
+    // #218. A Codex child thread is a FORK: its first role:'user' item is the
+    // human's original prompt, not the parent's instruction, and there is no
+    // event_msg/user_message at all — so no readable line states what it was
+    // asked to do. `agent_path` is the field that does. It is read verbatim,
+    // never prettified: nothing here parses prose or infers an intent.
+    const source = JSON.stringify({
+      subagent: { thread_spawn: { agent_path: '/root/audit_chain_report' } }
+    })
+    expect(parseCodexThreadSource(source).agentPath).toBe('/root/audit_chain_report')
+  })
+
+  it('omits the agent path when the blob carried none, rather than inventing an empty one', () => {
+    const source = JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: 'p' } } })
+    expect(parseCodexThreadSource(source)).toEqual({ parentThreadId: 'p' })
   })
 
   it('ignores a subagent blob with no thread_spawn', () => {
@@ -164,6 +185,26 @@ describe('readCodexThreads', () => {
       parentThreadId: 'parent',
       agentName: 'Bernoulli'
     })
+  })
+
+  it("carries the spawned agent's objective path from the source blob (#218)", async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({
+        id: 'child',
+        cwd: 'C:\p',
+        updatedAtMs: NOW,
+        source: subagentSource('parent', 'Bernoulli', '/root/audit_chain_report')
+      })
+    )
+    expect((await read(NOW - 60_000))[0]?.agentPath).toBe('/root/audit_chain_report')
+  })
+
+  it('leaves a root thread with no objective path at all', async () => {
+    // A root was nobody's spawn, so there is no agent definition behind it —
+    // and the human who typed its prompt is the objective's author.
+    sqlite.exec(STATE_DB, threadInsert({ id: 'root', cwd: 'C:\p', updatedAtMs: NOW }))
+    expect((await read(NOW - 60_000))[0]?.agentPath).toBeUndefined()
   })
 
   it('omits model, effort and tokens when the row has none', async () => {
