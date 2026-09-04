@@ -31,7 +31,8 @@ function context(): ProviderContext {
         processStartTimeMs: vi.fn().mockResolvedValue(undefined)
       }
     } as unknown as ProviderContext['platform'],
-    expandPath: (path) => path
+    expandPath: (path) => path,
+    isHeldSession: () => false
   }
 }
 

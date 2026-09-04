@@ -207,6 +207,32 @@ describe('HeldSessionRegistry.launch', () => {
   })
 })
 
+/*
+ * Issue #191. The Claude provider asks this and nothing else of the registry:
+ * an SDK-hosted session's own registry entry never carries a status, so
+ * holding the stream is the one proof the provider has that the session is
+ * there to draw.
+ */
+describe('HeldSessionRegistry.holds', () => {
+  it('holds a session from the moment its stream names it until the stream ends', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+
+    // Started but not yet named: no dwarf could be matched to it, so nothing
+    // is claimed for any id.
+    expect(registry.holds('sess-1')).toBe(false)
+
+    port.reportSessionId(0, 'sess-1')
+    expect(registry.holds('sess-1')).toBe(true)
+    expect(registry.holds('sess-2')).toBe(false)
+
+    // The stream ending is the session leaving — the dwarf goes with it.
+    port.end(0)
+    expect(registry.holds('sess-1')).toBe(false)
+  })
+})
+
 describe('HeldSessionRegistry questions', () => {
   it("makes an arriving ask the held session's pending question, redacted and stamped", async () => {
     const port = new FakePort()

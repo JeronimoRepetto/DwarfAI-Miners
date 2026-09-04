@@ -12,7 +12,12 @@ import type { PlatformAdapters } from '../platform/platformAdapters'
 import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
-import { MAX_DWARF_TEXT_CHARS, type DwarfQuestion, type FeedMessage } from '../domain/types'
+import {
+  MAX_DWARF_TEXT_CHARS,
+  type Dwarf,
+  type DwarfQuestion,
+  type FeedMessage
+} from '../domain/types'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
@@ -3717,6 +3722,80 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
         timestamp: new Date(1_700_000_000_000).toISOString()
       }
     ])
+    runtime.stop()
+  })
+
+  /*
+   * Issue #191, end to end through main: the Add Panel recognises the dwarf of
+   * the session it just launched by the first message of its conversation, so
+   * the launch's dwarf has to reach the board AT ALL. It did not. An SDK-hosted
+   * session registers with `entrypoint: sdk-ts` and never a `status` — the REPL
+   * writes that, and there is no REPL — which the provider read as an idle
+   * session and drew as nobody. The fixture below is that entry as observed
+   * live, through the REAL Claude provider off the real registry, so the
+   * wiring from the held registry into the provider is what this holds.
+   */
+  it("draws the held session's dwarf carrying its first prompt although the SDK entry never says busy (#191)", async () => {
+    const home = 'C:\\Users\\j'
+    const fake = new FakeFs()
+    // Alive by definition, and no procStart, so the pid-reuse guard has nothing
+    // to compare and stays out of the way.
+    fake.addFile(
+      `${home}\\.claude\\sessions\\${process.pid}.json`,
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: 'sess-1',
+        cwd: MINE_PATH,
+        startedAt: 8_000,
+        kind: 'interactive',
+        entrypoint: 'sdk-ts',
+        name: 'anvil-7'
+      }),
+      8_000
+    )
+    const port = heldPort()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      home,
+      fs: fake,
+      heldSessions: heldRegistry(port.port),
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+    const mineId = mineIdForPath(MINE_PATH)
+    const dwarfsOf = (): readonly Dwarf[] =>
+      runtime.getMines().find((mine) => mine.id === mineId)?.dwarfs ?? []
+
+    // Before the launch the same entry is a session nobody holds: no dwarf, as
+    // an idle one has none. The mine is still there to launch from.
+    await runtime.refresh()
+    expect(runtime.getMines().map((mine) => mine.id)).toContain(mineId)
+    expect(dwarfsOf()).toEqual([])
+
+    const result = await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId,
+      prompt: 'dig the east gallery'
+    })
+    expect(result).toEqual({ launched: true })
+    port.reportSessionId(0, 'sess-1')
+    await runtime.refresh()
+
+    // Exactly the receipt the renderer's `launchedDwarfIn` reads: one dwarf,
+    // its conversation opening with the user's own prompt, in the mine the
+    // launch was made from.
+    expect(dwarfsOf()).toHaveLength(1)
+    expect(dwarfsOf()[0]).toMatchObject({ id: 'claude:sess-1', sessionId: 'sess-1' })
+    expect(dwarfsOf()[0]!.conversation?.[0]).toEqual({
+      role: 'user',
+      text: 'dig the east gallery',
+      timestamp: new Date(1_700_000_000_000).toISOString()
+    })
+
+    // And it stays for as long as the panel holds the session — a turn ending
+    // is not the dwarf leaving.
+    await runtime.refresh()
+    expect(dwarfsOf()).toHaveLength(1)
     runtime.stop()
   })
 
