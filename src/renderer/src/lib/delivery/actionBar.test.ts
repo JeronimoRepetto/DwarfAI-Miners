@@ -5,9 +5,11 @@ import {
   buildActionBar,
   CHANNEL_HINT,
   KICK_HINT,
+  launchedNoInboxReason,
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
   NO_KICK_REASON,
+  refusalLine,
   SESSION_ENDED_REASON,
   type ActionBarEntry,
   type ActionId,
@@ -30,6 +32,68 @@ function entryFor(id: ActionId, dwarf: Dwarf, state: ActionTransientState = IDLE
   if (!entry) throw new Error(`the bar is missing its "${id}" action`)
   return entry
 }
+
+/**
+ * The refusal the PANEL shows, rather than the one a hover reveals (#217).
+ *
+ * Two dead controls with no visible explanation is exactly the "it looks
+ * broken" report this comes from: the composer was disabled with no sentence
+ * saying why, and the kick's refusal lived only in a tooltip. The reason a
+ * disabled control carries is already honest — it just had nowhere on screen
+ * to be, so this is what the panel reads to put it there.
+ *
+ * Chat first, because the composer is the control a person is looking at when
+ * they try to say something; the kick's reason surfaces when chat works and
+ * the kick does not, which is every ordinary Codex thread (#97).
+ */
+describe('refusalLine', () => {
+  const IDLE_STATE: ActionTransientState = { kicking: false, kickArmed: false }
+
+  it('has nothing to say when both controls work', () => {
+    expect(
+      refusalLine(
+        defaultDwarf({
+          textDelivery: 'terminal',
+          capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+        }),
+        IDLE_STATE
+      )
+    ).toBeNull()
+  })
+
+  it('shows why the composer is disabled, in the panel', () => {
+    const dwarf = defaultDwarf({
+      provider: 'codex',
+      capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+    })
+    expect(refusalLine(dwarf, IDLE_STATE)).toBe(launchedNoInboxReason('codex'))
+  })
+
+  it("shows the kick's own reason when the composer works and the kick does not", () => {
+    const dwarf = defaultDwarf({
+      provider: 'codex',
+      textDelivery: 'codex-queue',
+      capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+    })
+    expect(refusalLine(dwarf, IDLE_STATE)).toBe(KICK_HINT['codex-queue'])
+  })
+
+  it('says a session has ended once its agent is gone', () => {
+    expect(refusalLine(defaultDwarf({ status: 'leaving' }), IDLE_STATE)).toBe(SESSION_ENDED_REASON)
+  })
+
+  /*
+   * An in-flight kick is not a refusal: the control is disabled because it is
+   * working, and the verdict line is what has something to say about it.
+   */
+  it('says nothing about a kick that is merely in flight', () => {
+    const dwarf = defaultDwarf({
+      textDelivery: 'terminal',
+      capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+    })
+    expect(refusalLine(dwarf, { kicking: true, kickArmed: false })).toBeNull()
+  })
+})
 
 describe('buildActionBar', () => {
   it('lays out the four actions in fixed order: kick, boost, chat, console', () => {
@@ -167,6 +231,51 @@ describe('buildActionBar', () => {
       const entry = entryFor('kick', capableDwarf({ status: 'leaving' }))
       expect(entry.enabled).toBe(false)
       expect(entry.hint).toBe(SESSION_ENDED_REASON)
+    })
+  })
+
+  /**
+   * A session this panel LAUNCHED and can only end (#217). `codex exec` reads
+   * one prompt from stdin and exits with its turn, so there is no inbox to
+   * reach — the generic "can't receive messages yet" describes a missing
+   * feature, and what this is is the shape of the session. The kick is the
+   * opposite of the queue's: it is the only control that works, and it ends
+   * the session rather than interrupting a turn.
+   */
+  describe('launched session', () => {
+    function launched(overrides: Partial<Dwarf> = {}): Dwarf {
+      return capableDwarf({
+        provider: 'codex',
+        textDelivery: undefined,
+        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null },
+        ...overrides
+      })
+    }
+
+    it('disables chat and names the command the session was launched with', () => {
+      const entry = entryFor('chat', launched())
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).not.toBe(NO_CHANNEL_REASON)
+      expect(entry.hint).toContain('codex exec')
+      expect(entry.hint).toBe(launchedNoInboxReason('codex'))
+    })
+
+    /*
+     * Never the wrong CLI's command: the detached shape is the same for both,
+     * and a Codex sentence shown for a Claude launch would send somebody to
+     * read the wrong program's docs (the #168 mistake, in copy).
+     */
+    it('names the launch command per provider', () => {
+      expect(entryFor('chat', launched({ provider: 'claude' })).hint).toContain('claude -p')
+      expect(launchedNoInboxReason('claude')).not.toContain('codex')
+    })
+
+    it('offers kick, and says it ends the session rather than interrupting a turn', () => {
+      const entry = entryFor('kick', launched())
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(KICK_HINT['launched-process'])
+      expect(entry.hint).toContain('Ends the session')
+      expect(entry.hint.toLowerCase()).not.toContain('interrupts the turn')
     })
   })
 

@@ -5,6 +5,7 @@ import { resolveShimTarget, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
 import { buildLaunchArgs, isShellShim, prepareLaunchPrompt } from './launch'
+import type { LaunchedProcess } from './launchedSessions'
 
 /**
  * Running the launch: the spawn seam, and the mapping from every way it can go
@@ -58,8 +59,17 @@ export interface LaunchInvocation {
   viaNodeEntry: boolean
 }
 
-/** Resolves once the process is running; rejects when it could not be started at all. */
-export type LaunchRunner = (invocation: LaunchInvocation) => Promise<void>
+/**
+ * Resolves once the process is running; rejects when it could not be started
+ * at all.
+ *
+ * What it resolves WITH is the handle on that process (#217), which is the
+ * whole of how a detached launch stopped being a dead end: the panel now keeps
+ * the pid it spawned and the notice of that process going, so a session
+ * started here can be ended here. Undefined means the process started but
+ * reported no pid — nothing to hold, so nothing is claimed.
+ */
+export type LaunchRunner = (invocation: LaunchInvocation) => Promise<LaunchedProcess | undefined>
 
 /**
  * The slice of a ChildProcess the runner touches, so a test can hand it a
@@ -67,7 +77,13 @@ export type LaunchRunner = (invocation: LaunchInvocation) => Promise<void>
  * (#193).
  */
 export interface LaunchChild {
-  once(event: 'spawn' | 'error', listener: (error: Error) => void): unknown
+  once(event: 'spawn' | 'error' | 'exit', listener: (error: Error) => void): unknown
+  /**
+   * The started process's own pid, which is what the panel retains so it can
+   * end that tree later (#217). Optional because Node's is: a child that never
+   * started has none, and neither does one this cannot hold onto.
+   */
+  readonly pid?: number
   stdin: { on(event: 'error', listener: () => void): unknown; end(chunk: string): unknown } | null
   unref(): void
 }
@@ -93,7 +109,23 @@ export type SessionLauncher = (request: {
   provider: DwarfProvider
   minePath: string
   prompt: string
-}) => Promise<AgentLaunchResult>
+}) => Promise<SessionLaunchOutcome>
+
+/**
+ * The launcher's verdict, plus the handle on what it started (#217).
+ *
+ * `retained` is main-side only and never crosses the wire: what the renderer
+ * is told is unchanged — a process started, and nothing more is claimed. The
+ * runtime keeps the handle (see LaunchedSessionRegistry) and strips it from the
+ * verdict it answers the panel with, so a pid is not something the panel holds
+ * or could ask about.
+ *
+ * Absent means there is nothing to keep: a refused launch started no process,
+ * and a started one that reported no pid cannot be held onto.
+ */
+export interface SessionLaunchOutcome extends AgentLaunchResult {
+  retained?: LaunchedProcess
+}
 
 /**
  * The program that hosts the launched CLI's console (#208).
@@ -218,7 +250,7 @@ export function buildLaunchSpawn(invocation: LaunchInvocation): {
 export function runLaunchProcess(
   invocation: LaunchInvocation,
   spawnProcess: SpawnLaunch = spawn
-): Promise<void> {
+): Promise<LaunchedProcess | undefined> {
   return new Promise((resolve, reject) => {
     let settled = false
     let child: LaunchChild
@@ -243,9 +275,33 @@ export function runLaunchProcess(
       child.stdin?.on('error', () => {})
       child.stdin?.end(invocation.stdin)
       child.unref()
-      resolve()
+      resolve(retainedProcess(child))
     })
   })
+}
+
+/**
+ * The handle the panel keeps on what this started (#217).
+ *
+ * Retaining a pid alone would be enough to signal something and not enough to
+ * know it is still the right something: once that process has gone its number
+ * can belong to anything on this machine. So the handle carries the notice of
+ * the exit too, and the register that holds it stops signalling from there —
+ * see LaunchedSessionRegistry.
+ *
+ * `unref` above is untouched by this, and deliberately: unref only stops the
+ * child from keeping an event loop alive, and this main process has one for as
+ * long as the app runs, so the exit still arrives.
+ */
+function retainedProcess(child: LaunchChild): LaunchedProcess | undefined {
+  const pid = child.pid
+  if (pid === undefined) return undefined
+  return {
+    pid,
+    onExit: (listener) => {
+      child.once('exit', listener)
+    }
+  }
 }
 
 export interface ClaudeLaunchOptions {
@@ -312,7 +368,7 @@ async function resolveLaunchProgram(
  */
 export async function launchClaudeSession(
   options: ClaudeLaunchOptions
-): Promise<AgentLaunchResult> {
+): Promise<SessionLaunchOutcome> {
   const prompt = prepareLaunchPrompt(options.prompt)
   // Cheapest refusal first, so an empty box never costs a disk probe.
   if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
@@ -334,7 +390,7 @@ export async function launchClaudeSession(
     if (program === undefined) {
       return { launched: false, provider: options.provider, error: couldNotStart(options.provider) }
     }
-    await options.run({
+    const started = await options.run({
       command: program.command,
       args: [...program.args, ...buildLaunchArgs(options.provider)],
       // The relay's env rule, for the relay's reason: a re-exec of the CLI
@@ -346,7 +402,14 @@ export async function launchClaudeSession(
       stdin: prompt,
       viaNodeEntry: program.viaNodeEntry
     })
-    return { launched: true, provider: options.provider }
+    // Reported rather than kept: whoever asked for the launch decides whether
+    // to hold onto it, because deciding needs the board and this does not have
+    // one (#217). A refusal started nothing, so it carries nothing.
+    return {
+      launched: true,
+      provider: options.provider,
+      ...(started === undefined ? {} : { retained: started })
+    }
   } catch {
     return { launched: false, provider: options.provider, error: couldNotStart(options.provider) }
   }

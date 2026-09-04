@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { ProbeCommand } from './processProbe'
+import type { EndProcessCommand } from './processEnd'
 import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
 import { createAutostartPort, createPlatformAdapters, type Platform } from './platformAdapters'
 
@@ -67,6 +68,23 @@ describe('createPlatformAdapters — process probe', () => {
       )
     }
     expect(seen.map((command) => command.command)).toEqual(['powershell.exe', 'ps', 'cat'])
+  })
+
+  /*
+   * The exit from a session this panel launched (#217). Ending a TREE is the
+   * per-OS half of it — a Windows tree kill, a POSIX process-group signal —
+   * so it is selected here like every other adapter, and the argv itself is
+   * asserted in processEnd's own tests.
+   */
+  it('ends a process tree via taskkill on Windows and a group signal elsewhere', async () => {
+    const seen: EndProcessCommand[] = []
+    const endRun = async (command: EndProcessCommand): Promise<void> => {
+      seen.push(command)
+    }
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      await createPlatformAdapters(options(platform, { endRun })).processEnd.endProcessTree(4242)
+    }
+    expect(seen.map((command) => command.command)).toEqual(['taskkill', 'kill', 'kill'])
   })
 })
 

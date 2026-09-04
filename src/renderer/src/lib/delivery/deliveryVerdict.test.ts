@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfKickState, DwarfSendState } from '../../types'
-import { kickMarker, kickStatusLine, sendMarker, sendStatusLine } from './deliveryVerdict'
+import {
+  kickEndedTheSession,
+  kickMarker,
+  kickStatusLine,
+  sendMarker,
+  sendStatusLine
+} from './deliveryVerdict'
 
 /**
  * The whole point of the two-phase verdict: "delivered" means the message was
@@ -138,5 +144,42 @@ describe('kickStatusLine', () => {
     expect(kickStatusLine({ phase: 'kicking' })).toBeNull()
     expect(kickStatusLine({ phase: 'failed', via: 'terminal', error: 'nope' })).toBeNull()
     expect(kickStatusLine(undefined)).toBeNull()
+  })
+})
+
+/*
+ * A kick that ENDED the session is a different act from one that was handed
+ * over (#217), and the copy has to keep them apart the way ✓ and ✓✓ already
+ * keep handed-over apart from reacted. Nothing is watched for afterwards:
+ * there is no session left to react, so a marker that said "watching for it to
+ * react" would be waiting for something that cannot happen — and one that
+ * promoted itself to ✓✓ would claim a reaction from a process that is gone.
+ */
+describe('a kick that ended the session', () => {
+  it('says the session was ended, never that a turn was interrupted', () => {
+    const line = kickStatusLine({ phase: 'delivered', via: 'launched-process' })
+    expect(line).toContain('Ended the session')
+    expect(line).not.toContain('watching')
+    expect(line).not.toContain('handed over')
+  })
+
+  it('marks it without ever claiming a reaction', () => {
+    const marker = kickMarker({ phase: 'delivered', via: 'launched-process' })
+    expect(marker?.glyph).toBe('✓')
+    expect(marker?.cls).toBe('is-delivered')
+    expect(marker?.title).toContain('ended')
+    expect(marker?.title).not.toContain('react')
+  })
+
+  it('leaves every other channel saying exactly what it said before', () => {
+    expect(kickStatusLine({ phase: 'delivered', via: 'terminal', awaitingReaction: true })).toBe(
+      'Kick handed over via terminal — watching for the session to react.'
+    )
+  })
+
+  it('knows which channels end a session and which only ask', () => {
+    expect(kickEndedTheSession('launched-process')).toBe(true)
+    expect(kickEndedTheSession('held-session')).toBe(false)
+    expect(kickEndedTheSession(undefined)).toBe(false)
   })
 })

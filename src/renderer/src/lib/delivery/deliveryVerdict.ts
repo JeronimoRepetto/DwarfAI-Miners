@@ -26,6 +26,27 @@ const KICK_REACTED_TITLE = 'The session reacted to the kick.'
 const SEND_REACTED_TITLE = 'The session reacted to the message.'
 const SEND_FAILED_TITLE = 'The message could not be delivered.'
 const KICK_FAILED_TITLE = 'The kick could not be delivered.'
+/**
+ * A kick that ENDED the session rather than asking it to stop (#217).
+ *
+ * Its own words because it is its own act: everywhere else `delivered` means
+ * handed over and the panel goes on watching for the session to react, and
+ * here there is no session left to react. Saying "watching for it to react"
+ * would wait for something that cannot happen, and promoting it to ✓✓ would
+ * claim a reaction from a process that is gone — the exact thing reaction.ts
+ * exists to stop. So it says what happened, once, and waits for nothing.
+ */
+const KICK_ENDED_TITLE = 'The session was ended: the process this panel launched is gone.'
+const KICK_ENDED_LINE = 'Ended the session — the process this panel launched is gone.'
+
+/**
+ * Whether a kick on this channel ends the session rather than asking it to
+ * stop. Read by the copy below and by the kick store, which opens no reaction
+ * watch for one.
+ */
+export function kickEndedTheSession(via: string | undefined): boolean {
+  return via === 'launched-process'
+}
 
 function deliveredMarker(awaitingReaction: boolean | undefined): DeliveryMarker {
   return {
@@ -50,6 +71,12 @@ export function sendMarker(state: DwarfSendState | undefined): DeliveryMarker | 
 export function kickMarker(state: DwarfKickState | undefined): DeliveryMarker | null {
   if (state === undefined) return null
   if (state.phase === 'kicking') return { cls: 'is-sending', glyph: '…', title: 'Kicking...' }
+  // Not a reacted marker: the panel ended that process, which is a fact it
+  // observed rather than behaviour it inferred, and ✓✓ means a session was
+  // SEEN acting. One tick, and its own sentence.
+  if (state.phase === 'delivered' && kickEndedTheSession(state.via)) {
+    return { cls: 'is-delivered', glyph: '✓', title: KICK_ENDED_TITLE }
+  }
   if (state.phase === 'delivered') return deliveredMarker(state.awaitingReaction)
   if (state.phase === 'reacted') return reactedMarker(KICK_REACTED_TITLE)
   return { cls: 'is-failed', glyph: '✕', title: state.error ?? KICK_FAILED_TITLE }
@@ -81,5 +108,7 @@ export function sendStatusLine(state: DwarfSendState | undefined): string | null
 
 export function kickStatusLine(state: DwarfKickState | undefined): string | null {
   if (state === undefined) return null
+  // The one act that is not a hand-over, and never described as one.
+  if (state.phase === 'delivered' && kickEndedTheSession(state.via)) return KICK_ENDED_LINE
   return statusLine(state.phase, state.via, state.awaitingReaction, 'Kick handed over')
 }

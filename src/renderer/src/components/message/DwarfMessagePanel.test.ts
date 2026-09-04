@@ -358,6 +358,57 @@ describe('DwarfMessagePanel input', () => {
     expect(wrapper.find('.panel-input').attributes('title')).toContain('foreman')
   })
 
+  /*
+   * #217. A control the panel disables says why IN the panel. Two dead
+   * controls with nothing said is the "it looks broken" report this comes
+   * from: the reason existed all along and lived only in a hover tooltip,
+   * which is a refusal somebody has to go looking for.
+   */
+  it('says in the panel why the composer is disabled, not only on hover', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        provider: 'codex',
+        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+      })
+    })
+    expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.panel-refusal').text()).toContain('codex exec')
+    // The provenance note keeps its own row: what the panel may claim about a
+    // transcript is a different fact from why a control is disabled.
+    expect(wrapper.find('.panel-note').exists()).toBe(true)
+  })
+
+  it("shows the kick's refusal in the panel when the composer works and it does not", () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        provider: 'codex',
+        textDelivery: 'codex-queue',
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+      })
+    })
+    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.panel-refusal').text()).toContain('between turns')
+  })
+
+  it('draws no refusal row at all when both controls work', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      })
+    })
+    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+  })
+
+  it('lets a failure reason take the floor rather than doubling up with a refusal', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: undefined }),
+      sendState: { phase: 'failed', error: 'The relay never answered.' }
+    })
+    expect(wrapper.find('.panel-alert').text()).toBe('The relay never answered.')
+    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+  })
+
   it('shows the send verdict without ever blurring handed over and reacted', () => {
     const handed = panel({
       sendState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
@@ -430,6 +481,23 @@ describe('DwarfMessagePanel controls', () => {
       kickState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
     })
     expect(wrapper.find('.panel-status').text()).toContain('Kick handed over')
+  })
+
+  /*
+   * Ending a session and interrupting a turn are different acts, and the person
+   * must not be told the wrong one (#217).
+   */
+  it('says a kick ENDED the session where that is what it did', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        provider: 'codex',
+        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+      }),
+      kickState: { phase: 'delivered', via: 'launched-process' }
+    })
+    const line = wrapper.find('.panel-status').text()
+    expect(line).toContain('Ended the session')
+    expect(line).not.toContain('handed over')
   })
 
   it('draws Boost where the design puts it and refuses to pretend it works', () => {

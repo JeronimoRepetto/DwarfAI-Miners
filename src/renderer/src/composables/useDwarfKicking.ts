@@ -6,6 +6,7 @@ import {
   type ReactionSnapshot,
   type ReactionWatch
 } from '../lib/delivery/reaction'
+import { kickEndedTheSession } from '../lib/delivery/deliveryVerdict'
 import {
   defaultDwarfKickingState,
   type Dwarf,
@@ -99,10 +100,16 @@ export function useDwarfKicking() {
       via: result.via
     }
     if (result.error !== undefined) next.error = result.error
-    if (result.delivered) next.awaitingReaction = true
+    // A kick that ended the session has nothing to await and nothing that
+    // could ever prove it (#217): the process is gone, so no later snapshot
+    // says anything about it, and a watch would decay to "no reaction seen"
+    // about a session that ended. Absent awaitingReaction is what the copy
+    // reads to say the session WAS ended rather than promising to watch.
+    const watchable = result.delivered && !kickEndedTheSession(result.via)
+    if (watchable) next.awaitingReaction = true
     state.byDwarfId[dwarfId] = next
 
-    if (result.delivered) startWatch(dwarfId)
+    if (watchable) startWatch(dwarfId)
     else scheduleClear(dwarfId)
   }
 

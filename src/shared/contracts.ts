@@ -411,6 +411,12 @@ export function dwarfSilenceWindowKey(
  *   window, pid or console (#97).
  * held-session: THIS PANEL is holding the session's own stream open, so the text
  *   goes onto that stream in-process — no window, no pid, no relay turn (#210).
+ * launched-process: THIS PANEL started that session detached and still holds the
+ *   process it started, so the session can be ENDED — and only ended (#217). The
+ *   one channel that carries no message at all: `codex exec` reads one prompt
+ *   from stdin and exits with its turn, so there is no inbox behind it and no
+ *   process left to read one. It is `cancel` without `sendText`, the mirror of
+ *   the queue's `sendText` without `cancel`.
  *
  * held-session outranks every other channel for the same dwarf, and that
  * ordering is the fix #210 exists for: an SDK-hosted session registers as
@@ -432,7 +438,12 @@ export function dwarfSilenceWindowKey(
  * A dwarf with no channel at all simply carries no value.
  */
 export type TextDeliveryChannel =
-  'terminal' | 'claude-relay' | 'foreman-relay' | 'codex-queue' | 'held-session'
+  | 'terminal'
+  | 'claude-relay'
+  | 'foreman-relay'
+  | 'codex-queue'
+  | 'held-session'
+  | 'launched-process'
 
 /**
  * One answer an agent said it would accept, in its own words.
@@ -717,8 +728,17 @@ export interface DwarfCapabilities {
   /**
    * Cancelling reuses whichever channel sendText would use — a terminal gets a
    * raw interrupt keystroke instead of typed text, a relay tier gets a fixed
-   * instruction instead of the user's message — so it is null exactly when
-   * sendText is null (see resolveKickDelivery).
+   * instruction instead of the user's message.
+   *
+   * It used to be null exactly when sendText was null; that stopped being true
+   * the moment a channel could do one and not the other, and both directions
+   * now exist. A Codex thread's queue delivers and cannot interrupt a turn
+   * (#97), so cancel is null beside a working sendText. A process this panel
+   * launched can be ended and takes no messages (#217), so sendText is null
+   * beside a working cancel — and there the act is harsher than everywhere
+   * else: it ends the SESSION rather than the turn, which the panel has to say
+   * out loud. Read both halves; neither implies the other, and
+   * resolveKickDelivery remains the one place the cancel rule lives.
    */
   cancel: TextDeliveryChannel | null
   /**
