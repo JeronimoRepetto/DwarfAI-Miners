@@ -8,19 +8,11 @@
   Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
 </p>
 
-<table width="100%">
-  <tr>
-    <td align="left" width="33%">
-      <img src="docs/media/hero01.gif" width="200" alt="Worker2">
-    </td>
-    <td align="center" width="33%">
-      <img src="docs/media/hero.gif" width="100" alt="Foreman">
-    </td>
-    <td align="right" width="33%">
-      <img src="docs/media/hero02_flipped.gif" width="200" alt="Worker">
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/media/hero01.gif" width="200" alt="Worker2">
+  <img src="docs/media/hero.gif" width="100" alt="Foreman">
+  <img src="docs/media/hero02.gif" width="100" alt="Worker">
+</p>
 
 <div align="center">
 
