@@ -101,6 +101,17 @@ const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_KICK_CHANNEL = "This session type can't be canceled yet."
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
+/**
+ * The two held-session refusals (#210).
+ *
+ * Both are terminal: the channel that failed IS the session, so there is no
+ * second one to try and nothing to promise. Phrased as what happened rather
+ * than as a fault, because a stream that will not take a message is usually a
+ * session on its way out — and the alternative was a relay ✓ that could not be
+ * true (see reaction.ts on what `delivered` may ever claim).
+ */
+const HELD_STREAM_CLOSED = 'That session is no longer taking messages.'
+const HELD_KICK_REFUSED = "That session didn't take the interrupt."
 const NO_SUCH_MINE = 'That mine is no longer on the map.'
 const EMPTY_PROMPT = 'Type a prompt first.'
 const LAUNCH_FAILED = 'The agent could not be started.'
@@ -1038,8 +1049,25 @@ export class AgentRuntime {
     // (#157). Every one of them relays — a running subagent has no channel of
     // its own — and resolve.ts follows the hops to the session that can be
     // written to.
+    //
+    // This ordering is load-bearing against the ownership check below, not
+    // merely historical: a crew dwarf carries its ROOT's sessionId
+    // (heldCrewDwarfs), so an ownership check reached first would answer
+    // 'held-session' for a subagent and write the message straight to the
+    // session — losing both the hop and the '[for agent X] ' prefix that names
+    // which agent it was for. Crew targets and crew dwarfs are rebuilt from the
+    // same crew on the same poll, so a crew dwarf is never missing from here.
     const heldTarget = this.heldCrewTargets.get(dwarfId)
     if (heldTarget !== undefined) return heldTarget
+    // Ownership BEFORE endpoint kind (#210). A session this panel holds is
+    // written to through the stream this process is holding, and no provider
+    // can know that: an SDK-hosted session's registry entry records
+    // `kind: "interactive"`, so claudeSessionDeliveryTarget answers with the SDK
+    // child's pid — a process that owns no window — and the relay name beside
+    // it addresses a queue no REPL drains. Both were tried live and both
+    // reported the wrong thing, one by failing focus and one by exiting 0.
+    const heldSessionId = this.heldSessionIdOf(dwarfId)
+    if (heldSessionId !== undefined) return { kind: 'held-session', sessionId: heldSessionId }
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
       if (target === undefined || target === null) continue
@@ -1051,6 +1079,51 @@ export class AgentRuntime {
       return target
     }
     return null
+  }
+
+  /**
+   * The session id of a dwarf whose own session this panel is HOLDING, or
+   * undefined (#210).
+   *
+   * Read off the board rather than taken from the wire, exactly as
+   * answerDwarfQuestion reads it, so the two processes keep agreeing on one id
+   * instead of two. Undefined covers both "no such dwarf" and "a session this
+   * panel merely observes"; neither is a held session, and the caller wants the
+   * same answer for both.
+   */
+  private heldSessionIdOf(dwarfId: string): string | undefined {
+    const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
+    if (dwarf === undefined) return undefined
+    return this.heldSessions.holds(dwarf.sessionId) ? dwarf.sessionId : undefined
+  }
+
+  /**
+   * The held-session tier for a message, and for a worker's cancel (#210).
+   *
+   * Synchronous underneath: the registry pushes onto a queue this process owns,
+   * so there is nothing to await and nothing to time. A refusal means the
+   * stream would not take it — a session already closing, above all — and it
+   * stops there rather than reaching for the relay, which for this session
+   * would exit 0 into a queue nothing reads. `delivered` still means exactly
+   * what it means everywhere else: handed to a queue something drains.
+   */
+  private sendToHeldSession(sessionId: string, text: string): TextDeliveryOutcome {
+    return this.heldSessions.sendText(sessionId, text)
+      ? { delivered: true }
+      : { delivered: false, error: HELD_STREAM_CLOSED }
+  }
+
+  /**
+   * The held-session tier for a kick: a real interrupt of the running turn,
+   * leaving the session open for the next one (#210).
+   *
+   * Nothing harsher exists behind it and nothing escalates — the same policy
+   * every other channel's kick holds. A refusal is reported as one; the panel
+   * must not show a ✓ for a turn that is still running.
+   */
+  private async interruptHeldSession(sessionId: string): Promise<TextDeliveryOutcome> {
+    const interrupted = await this.heldSessions.interrupt(sessionId)
+    return interrupted ? { delivered: true } : { delivered: false, error: HELD_KICK_REFUSED }
   }
 
   /**
@@ -1202,6 +1275,15 @@ export class AgentRuntime {
       // stages only it can see (focus, spawn), and the relay call is timed here
       // because the runtime is what makes it.
       const outcome = await timer.measure('total', () => {
+        if (endpoint.kind === 'held-session') {
+          // No stage of its own, and none to measure: this is a push onto an
+          // in-process queue, not a focus, a spawn or a model turn. It is also
+          // why #196's relay floor does not apply to a channel we own.
+          //
+          // request.pressEnter is dropped for the reason the queue tier drops
+          // it: there is no console line here to leave unsent.
+          return Promise.resolve(this.sendToHeldSession(endpoint.sessionId, payload))
+        }
         if (endpoint.kind === 'terminal') {
           return this.textDelivery.sendToConsole({
             pid: endpoint.pid,
@@ -1347,19 +1429,41 @@ export class AgentRuntime {
       // Note what this does NOT do: there is no harsher second tier here, and
       // no escalation flag to raise. A repeated kick repeats this exact polite
       // interrupt — see the kick escalation policy tests.
-      const outcome = await timer.measure('total', () =>
-        endpoint.kind === 'terminal'
-          ? this.textDelivery.sendInterrupt({ pid: endpoint.pid })
-          : timer.measure('relay', () =>
-              this.textDelivery.relayToClaudeSession({
-                sessionName: endpoint.sessionName,
-                text:
-                  resolved.prefix === ''
-                    ? CANCEL_INSTRUCTION
-                    : `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
-              })
-            )
-      )
+      const outcome = await timer.measure('total', () => {
+        // The one channel where a kick is a real interrupt of the running turn
+        // rather than a keystroke aimed at a window or an instruction a session
+        // may decline (#210) — the panel holds this session's own stream.
+        //
+        // The prefix decides WHICH of the two acts it is, and getting that
+        // backwards would cancel the wrong thing: an empty prefix is this
+        // session's own turn, so it is interrupted; a non-empty one names a
+        // WORKER, and interrupting here would abort the foreman's turn instead
+        // of the agent the user pointed at. So a worker's cancel goes onto the
+        // stream as the same instruction the relay tier sends, and the session
+        // stops the agent it launched.
+        if (endpoint.kind === 'held-session') {
+          return resolved.prefix === ''
+            ? this.interruptHeldSession(endpoint.sessionId)
+            : Promise.resolve(
+                this.sendToHeldSession(
+                  endpoint.sessionId,
+                  `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
+                )
+              )
+        }
+        if (endpoint.kind === 'terminal') {
+          return this.textDelivery.sendInterrupt({ pid: endpoint.pid })
+        }
+        return timer.measure('relay', () =>
+          this.textDelivery.relayToClaudeSession({
+            sessionName: endpoint.sessionName,
+            text:
+              resolved.prefix === ''
+                ? CANCEL_INSTRUCTION
+                : `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
+          })
+        )
+      })
       timer.absorb(outcome.stages)
       console.log(
         `[runtime] Kick for ${request.dwarfId} via ${resolved.channel}: ` +
@@ -1368,6 +1472,8 @@ export class AgentRuntime {
       if (outcome.delivered) return { delivered: true, via: resolved.channel }
       // Same fallback as sendDwarfText, carrying the exact instruction the
       // relay tier already uses — a kick has no user text, only this message.
+      // A 'held-session' endpoint carries no relay name and must not borrow
+      // one: the failure is stated instead (#210). See the endpoint's own doc.
       if (resolved.endpoint.kind === 'terminal' && resolved.endpoint.sessionName !== undefined) {
         return this.relayFallback({
           dwarfId: request.dwarfId,

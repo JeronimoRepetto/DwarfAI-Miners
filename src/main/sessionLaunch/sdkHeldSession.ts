@@ -345,7 +345,34 @@ export function createSdkHeldSession(options: SdkHeldSessionOptions = {}): HeldS
         session.close()
         end('the panel closed the session')
       },
-      send: (text: string) => input.push(text)
+      send: (text: string) => input.push(text),
+      /*
+       * A real interrupt, not a close (#210).
+       *
+       * `query()` returns a `Query`, and its own types declare
+       * `interrupt(): Promise<SDKControlInterruptResponse | undefined>` as a
+       * control request "only supported when streaming input/output is used" —
+       * which this session is, since its prompt is an async iterable. So the
+       * session survives the interrupt and can be spoken to again, which is
+       * exactly what the panel's Kick means and what `close` would have got
+       * wrong.
+       *
+       * The resolved value is deliberately dropped. On a CLI advertising
+       * `interrupt_receipt_v1` it is a receipt listing the queued messages that
+       * will still run; older ones resolve to `undefined`. Neither changes the
+       * only thing this handle promises — that the turn was cut short — and
+       * reading the receipt would be a claim about the queue this port has no
+       * business making.
+       */
+      interrupt: async () => {
+        try {
+          await session.interrupt()
+          return true
+        } catch (error) {
+          console.warn('[held] The session refused an interrupt', error)
+          return false
+        }
+      }
     }
   }
 }

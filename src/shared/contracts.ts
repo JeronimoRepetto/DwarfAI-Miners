@@ -409,17 +409,30 @@ export function dwarfSilenceWindowKey(
  * codex-queue: the session is a Codex thread whose own message queue accepts an
  *   item addressed by thread id, so `codex queue` hands it over without any
  *   window, pid or console (#97).
+ * held-session: THIS PANEL is holding the session's own stream open, so the text
+ *   goes onto that stream in-process — no window, no pid, no relay turn (#210).
+ *
+ * held-session outranks every other channel for the same dwarf, and that
+ * ordering is the fix #210 exists for: an SDK-hosted session registers as
+ * `kind: "interactive"`, which made the provider offer the SDK child's pid — a
+ * process owning no window — and then a relay a session with no REPL never
+ * drains. Ownership is a fact about who holds the stream, so it is resolved
+ * before any question about what kind of endpoint exists.
  *
  * A ✓ means the same thing on every one of them and nothing more: handed over.
  * It is worth restating for the queue, because that tier is the one where the
  * gap is visible — a queued item is persisted immediately and drained at the
  * thread's next idle boundary (6-8s in the one measured run), so the panel is
- * reporting a durable hand-over, never that anything has read it. Only the
- * renderer's observed-reaction rule may ever say more (see reaction.ts).
+ * reporting a durable hand-over, never that anything has read it. held-session
+ * is the one tier with nothing between the hand-over and the session: it is the
+ * session's own input stream, which is also why it has no second channel to
+ * fall back to and says so instead. Only the renderer's observed-reaction rule
+ * may ever say more (see reaction.ts).
  *
  * A dwarf with no channel at all simply carries no value.
  */
-export type TextDeliveryChannel = 'terminal' | 'claude-relay' | 'foreman-relay' | 'codex-queue'
+export type TextDeliveryChannel =
+  'terminal' | 'claude-relay' | 'foreman-relay' | 'codex-queue' | 'held-session'
 
 /**
  * One answer an agent said it would accept, in its own words.
