@@ -180,11 +180,66 @@ describe('buildFocusHandleCommand', () => {
     expect(command).toContain('ShowWindow')
     expect(command).toContain('IsIconic')
     expect(command).toContain('AttachThreadInput')
-    expect(command).toContain('[Win32.Native]::GetForegroundWindow() -eq $handle')
+    // Amended for issue #190: the verification is no longer handle equality —
+    // see the two tests below for why. The assertion here previously read
+    // `GetForegroundWindow() -eq $handle`, and its job is unchanged: prove
+    // this builder drives the same shared sequence buildFocusCommand does.
+    expect(command).toContain('$reachedTarget = $foregroundAfter -eq $handle')
   })
 
   it('does not resolve the handle through Get-Process, unlike buildFocusCommand', () => {
     expect(buildFocusHandleCommand(555555)).not.toContain('Get-Process')
+  })
+
+  // Issue #190, defect A: the shipped sequence read the thread id out of
+  // GetWindowThreadProcessId's *out parameter* — which is the process id — and
+  // `[void]`'d the return value, which is the thread id. AttachThreadInput was
+  // therefore always handed a process id and always returned false. Measured
+  // live against a foreground explorer window: the out parameter gave 39872,
+  // explorer's pid, against a return value of 31976, its foreground thread;
+  // AttachThreadInput was False for the first and True for the second. The
+  // foreground-lock mitigation the docstring describes had never run once.
+  it('takes the foreground thread id from GetWindowThreadProcessId return value, not its out parameter', () => {
+    const command = buildFocusHandleCommand(555555)
+    expect(command).toContain(
+      '$foregroundThreadId = [Win32.Native]::GetWindowThreadProcessId($foregroundWindow, [ref]$foregroundProcessId)'
+    )
+    // The return value is the thread id, so discarding it is the defect.
+    expect(command).not.toContain('[void][Win32.Native]::GetWindowThreadProcessId')
+    // ...and the out parameter is the process id, so reading it as a thread id
+    // is the other half of the same defect.
+    expect(command).not.toContain(
+      'GetWindowThreadProcessId($foregroundWindow, [ref]$foregroundThreadId)'
+    )
+  })
+
+  // Issue #190, defect B: with defect A repaired the foreground genuinely
+  // moves, but under the Windows 11 default-terminal handoff the console
+  // window the probe resolves is a ConPTY `PseudoConsoleWindow` phantom, and
+  // Windows brings the window that *owns* it forward instead. Measured live:
+  // target 133320, foreground afterwards 133266 — the real
+  // CASCADIA_HOSTING_WINDOW_CLASS window of WindowsTerminal.exe. Exact handle
+  // equality called that a failure and the message fell back to the relay.
+  it('accepts the window that owns the target as the foreground, not only the target handle itself', () => {
+    const command = buildFocusHandleCommand(555555)
+    // GA_ROOTOWNER is 3, and it returns the handle itself when nothing owns
+    // it — so a window with no owner still verifies exactly as it did before.
+    expect(command).toContain('$targetRootOwner = [Win32.Native]::GetAncestor($handle, 3)')
+    expect(command).toContain(
+      '$reachedTarget = $foregroundAfter -eq $handle -or $foregroundAfter -eq $targetRootOwner'
+    )
+    expect(command).not.toContain('[Win32.Native]::GetForegroundWindow() -eq $handle')
+  })
+
+  // Issue #190: buildSendKeysCommand types into whatever holds the foreground,
+  // and the typing step had never run in any of this issue's measurements. A
+  // phantom raised without its terminal would put keystrokes somewhere nobody
+  // can see, so widening the check to the owner must not widen it to an
+  // invisible window.
+  it('requires the window it ended up on to be visible before reporting success', () => {
+    expect(buildFocusHandleCommand(555555)).toContain(
+      'if ($reachedTarget -and [Win32.Native]::IsWindowVisible($foregroundAfter)) { exit 0 } else { exit 1 }'
+    )
   })
 })
 
@@ -302,7 +357,29 @@ describe('buildFocusCommand', () => {
   it('verifies the switch by reading GetForegroundWindow() back instead of trusting the API result', () => {
     const command = buildFocusCommand(4242)
     expect(command).toContain('GetForegroundWindow')
-    expect(command).toContain('[Win32.Native]::GetForegroundWindow() -eq $handle')
+    // Amended for issue #190: what is read back is unchanged, what it is
+    // compared against is not. The assertion previously read
+    // `GetForegroundWindow() -eq $handle`; the test below says why.
+    expect(command).toContain('$foregroundAfter = [Win32.Native]::GetForegroundWindow()')
+    expect(command).toContain('$reachedTarget = $foregroundAfter -eq $handle')
+  })
+
+  // Issue #190: both builders share buildForegroundSequence, so both carry
+  // both repairs — the thread id from the call's return value rather than its
+  // out parameter, and a verification that accepts the owner of the target and
+  // insists the window is visible. Pinned on this entry point too, because
+  // this is the one a named terminal host is foregrounded through.
+  it('carries the repaired thread-id read and owner-aware, visibility-checked verification', () => {
+    const command = buildFocusCommand(4242)
+    expect(command).toContain(
+      '$foregroundThreadId = [Win32.Native]::GetWindowThreadProcessId($foregroundWindow, [ref]$foregroundProcessId)'
+    )
+    expect(command).not.toContain('[void][Win32.Native]::GetWindowThreadProcessId')
+    expect(command).toContain('$targetRootOwner = [Win32.Native]::GetAncestor($handle, 3)')
+    expect(command).toContain(
+      'if ($reachedTarget -and [Win32.Native]::IsWindowVisible($foregroundAfter)) { exit 0 } else { exit 1 }'
+    )
+    expect(command).not.toContain('[Win32.Native]::GetForegroundWindow() -eq $handle')
   })
 })
 
