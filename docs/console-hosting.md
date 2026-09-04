@@ -123,6 +123,15 @@ no terminal window [#86].
   a `claude -p` with none reads it from stdin [V, #86].
 - The verdict says a process **started** and refuses to say more; the poll finds the session up to
   2000 ms later, so the panel must acknowledge on the verdict alone.
+- **Detached is console-less, and that is not the same as quiet** [#208]. `detached` becomes
+  DETACHED_PROCESS, which makes libuv's `windowsHide` (CREATE_NO_WINDOW) ignored, so the child gets
+  no console at all. Fine for a program that is itself the console program. Not fine for the
+  `node <entry>` shape #193 resolves a shim to: that interpreter spawns the real CLI, and Windows
+  gives a console program whose parent has no console a fresh **visible** one — the black window
+  #208 reported. A JS entry is therefore spawned through a `node -e` intermediary that re-spawns it
+  **not** detached but **with** `windowsHide`, so it gets an invisible console of its own to pass
+  down; the intermediary must then stay alive, because libuv's job object is what keeps its child
+  alive. `buildLaunchSpawn` carries the measurements.
 
 ### The held session — open, #113
 
