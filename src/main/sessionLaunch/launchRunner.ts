@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process'
+import { spawn, type SpawnOptions } from 'node:child_process'
+import type { FsLike } from '../adapters/fsLike'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
-import type { CliDetector } from '../platform/cliDetection'
+import { resolveShimTarget, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
 import { buildLaunchArgs, isShellShim, prepareLaunchPrompt } from './launch'
@@ -31,32 +32,12 @@ const PRODUCT_NAME: Record<DwarfProvider, string> = {
   codex: 'Codex CLI'
 }
 
-/**
- * The config key that reaches an install this launcher cannot spawn.
- *
- * Named in the refusal because it is the only thing the user can do about it,
- * and it is a setting's name rather than a path — so it says nothing about this
- * machine's filesystem (docs/privacy.md, #59).
- */
-const CLI_PATH_SETTING: Record<DwarfProvider, string> = {
-  claude: 'CLAUDE_CLI_PATH',
-  codex: 'CODEX_CLI_PATH'
-}
-
 function notInstalled(provider: DwarfProvider): string {
   return `${PRODUCT_NAME[provider]} is not installed on this machine.`
 }
 
 function couldNotStart(provider: DwarfProvider): string {
   return `${PRODUCT_NAME[provider]} could not be started.`
-}
-
-/** See `isShellShim`: a batch shim needs a shell, and a shell re-parses the payload. */
-function shimRefusal(provider: DwarfProvider): string {
-  return (
-    `${PRODUCT_NAME[provider]} is installed as a shell shim the panel cannot start directly. ` +
-    `Set ${CLI_PATH_SETTING[provider]} to the real executable.`
-  )
 }
 
 export interface LaunchInvocation {
@@ -71,6 +52,24 @@ export interface LaunchInvocation {
 
 /** Resolves once the process is running; rejects when it could not be started at all. */
 export type LaunchRunner = (invocation: LaunchInvocation) => Promise<void>
+
+/**
+ * The slice of a ChildProcess the runner touches, so a test can hand it a
+ * recording fake and assert the exact spawn call without starting a process
+ * (#193).
+ */
+export interface LaunchChild {
+  once(event: 'spawn' | 'error', listener: (error: Error) => void): unknown
+  stdin: { on(event: 'error', listener: () => void): unknown; end(chunk: string): unknown } | null
+  unref(): void
+}
+
+/** `spawn`'s shape as the runner needs it; Node's own `spawn` satisfies it. */
+export type SpawnLaunch = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions
+) => LaunchChild
 
 /**
  * The port as the runtime holds it: a provider, a folder and a prompt in, a
@@ -97,13 +96,23 @@ export type SessionLauncher = (request: {
  * prompt's only transport and is closed straight after writing — the child then
  * has no stream anyone here reads, which is also why the other two are ignored
  * rather than piped: an unread pipe fills and stalls the child.
+ *
+ * No `shell`, ever, and `detached` is not negotiable — the two are linked. A
+ * detached cmd.exe has no console and starts no external program (exit 0,
+ * nothing run), and a non-detached child sits in libuv's kill-on-close job
+ * object and dies with the panel; both verified on Windows 11 / Node v24.11.1
+ * for #193. A batch shim therefore never reaches this function: the launcher
+ * resolves it to the program it points at first (see `resolveShimTarget`).
  */
-export function runLaunchProcess(invocation: LaunchInvocation): Promise<void> {
+export function runLaunchProcess(
+  invocation: LaunchInvocation,
+  spawnProcess: SpawnLaunch = spawn
+): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false
-    let child: ReturnType<typeof spawn>
+    let child: LaunchChild
     try {
-      child = spawn(invocation.command, invocation.args, {
+      child = spawnProcess(invocation.command, invocation.args, {
         cwd: invocation.cwd,
         env: invocation.env,
         detached: true,
@@ -142,7 +151,35 @@ export interface ClaudeLaunchOptions {
   detector: CliDetector
   env: NodeJS.ProcessEnv
   platform: Platform
+  /** Reads a batch shim for the program it points at (#193); the same fs detection probes with. */
+  fs: FsLike
   run: LaunchRunner
+}
+
+/**
+ * A shim is a few hundred bytes; an entry that has not appeared by here is
+ * not in a shim. Bounded so a wrong detection can never make this read a
+ * large file.
+ */
+const SHIM_READ_BYTES = 8 * 1024
+
+/**
+ * The program to spawn for a detected path, and the argv that precedes the
+ * CLI's own (#193). A real executable is itself. A batch shim is read for the
+ * node entry it names, which is then run the way the shim would have run it —
+ * the `node.exe` beside the shim if there is one, else `node` from PATH.
+ * Undefined means the shim named nothing this can run; the caller says
+ * "could not be started" rather than guessing.
+ */
+async function resolveLaunchProgram(
+  binaryPath: string,
+  fs: FsLike
+): Promise<{ command: string; args: string[] } | undefined> {
+  if (!isShellShim(binaryPath)) return { command: binaryPath, args: [] }
+  const target = resolveShimTarget(binaryPath, await fs.readTextHead(binaryPath, SHIM_READ_BYTES))
+  if (target === undefined) return undefined
+  const command = (await fs.exists(target.bundledNode)) ? target.bundledNode : 'node'
+  return { command, args: [target.entry] }
 }
 
 /**
@@ -158,8 +195,10 @@ export interface ClaudeLaunchOptions {
  * silent no-op — the discipline deliverViaRelay already holds. "Not installed"
  * is deliberately its own reason rather than being folded into "could not be
  * started": it is the one failure the user can actually do something about,
- * and detection (#91) already knows how to say why. The shim refusal below is
- * the second of that kind, and names the setting that fixes it.
+ * and detection (#91) already knows how to say why. A batch shim used to be a
+ * second refusal of that kind, naming CODEX_CLI_PATH; #193 removed it, because
+ * the program behind the shim can be started (see `resolveLaunchProgram`) and
+ * the exit it named was one a packaged user could not take.
  *
  * A successful verdict says a process started and nothing more. No dwarf is
  * returned and none is invented: the poll discovers the session, on its own
@@ -182,20 +221,20 @@ export async function launchClaudeSession(
     }
   }
 
-  // Detection found something that cannot be spawned without a shell, and a
-  // shell would re-parse the payload. Refused with the setting that reaches the
-  // real binary rather than left to fail as an opaque EINVAL (#168).
-  if (isShellShim(detection.path)) {
-    return { launched: false, provider: options.provider, error: shimRefusal(options.provider) }
-  }
-
   try {
+    // Inside the try because reading a shim is a disk read that can fail like
+    // a spawn can, and it fails the same way for the user: nothing started.
+    const program = await resolveLaunchProgram(detection.path, options.fs)
+    if (program === undefined) {
+      return { launched: false, provider: options.provider, error: couldNotStart(options.provider) }
+    }
     await options.run({
-      command: detection.path,
-      args: buildLaunchArgs(options.provider),
+      command: program.command,
+      args: [...program.args, ...buildLaunchArgs(options.provider)],
       // The relay's env rule, for the relay's reason: a re-exec of the CLI
-      // inside the child must reach the real binary rather than a shim that
-      // happens to sit earlier on PATH.
+      // inside the child must reach the install detection found rather than
+      // one that happens to sit earlier on PATH. The detected path, so a shim
+      // launch still leads with the shim's own directory.
       env: buildRelayEnv(options.env, detection.path, options.platform),
       cwd: options.minePath,
       stdin: prompt

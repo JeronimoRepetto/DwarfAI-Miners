@@ -104,15 +104,14 @@ describe('isShellShim', () => {
   /*
    * Verified against this machine's Node (v24.11.1): `spawn('probe.cmd', [],
    * { shell: false })` throws `EINVAL` outright. Since the CVE-2024-27980 fix,
-   * a `.cmd`/`.bat` cannot be spawned without a shell — and a shell would
-   * re-parse the payload, which is the thing this launcher must never do.
+   * a `.cmd`/`.bat` cannot be spawned without a shell.
    *
    * It matters because detection genuinely produces these: `conventionalCliPaths`
    * returns `AppData\Roaming\npm\codex.cmd` on Windows, and the PATH lookup
-   * admits `.cmd` and `.bat` for either CLI. docs/console-hosting.md records
-   * the same finding for the queue — "an npm-global `codex` is a `.cmd` shim
-   * the queue refuses to run … so those users must set CODEX_CLI_PATH" — and
-   * this is that refusal, in the launcher.
+   * admits `.cmd` and `.bat` for either CLI. Until #193 the answer was a
+   * refusal, borrowed from the queue; it is now the switch that makes the
+   * launcher read the shim and start the node entry it names directly (see
+   * resolveShimTarget in cliDetection.ts).
    *
    * Pure, and asked of a path string rather than of the host, so the Windows
    * case is asserted on any OS the suite runs on.

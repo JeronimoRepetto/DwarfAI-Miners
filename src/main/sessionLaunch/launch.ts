@@ -126,16 +126,20 @@ export function buildLaunchArgs(provider: DwarfProvider): string[] {
  *
  * Verified against this machine's Node (v24.11.1): `spawn('probe.cmd', [],
  * { shell: false })` throws `EINVAL` outright. Since the CVE-2024-27980 fix a
- * `.cmd`/`.bat` needs `shell: true`, and a shell would re-parse the payload —
- * which is precisely what a launcher carrying somebody's prompt must never
- * introduce.
+ * `.cmd`/`.bat` needs `shell: true`.
  *
  * This is not hypothetical: `conventionalCliPaths` returns
- * `AppData\Roaming\npm\codex.cmd` on Windows, and the PATH lookup admits `.cmd`
- * and `.bat` for either CLI. `docs/console-hosting.md` records the same finding
- * on the queue side — "an npm-global `codex` is a `.cmd` shim the queue refuses
- * to run … so those users must set `CODEX_CLI_PATH`" — and this keeps the
- * launcher's posture identical rather than inventing a second one.
+ * `AppData\Roaming\npm\codex.cmd` on Windows, the PATH lookup admits `.cmd` and
+ * `.bat` for either CLI, and a pnpm machine answers `where codex` with
+ * `...\pnpm\bin\codex.CMD`. Until #193 the launcher answered a shim with a
+ * refusal borrowed from the queue, naming `CODEX_CLI_PATH` as the exit — one a
+ * packaged user has no Settings UI to take, and a block whose only exit cannot
+ * be taken is worse than no block. The queue's reason was also never the
+ * launcher's: the queue's payload is an argv element a shell would re-parse,
+ * whereas this argv is a constant and the prompt is on stdin. So a shim is now
+ * the cue to read the program it points at and start that directly — see
+ * `resolveShimTarget` in cliDetection.ts for the reading, and for why the shim
+ * is read rather than run through cmd.exe.
  *
  * Asked of a path string rather than of the host, so the Windows case is
  * asserted by tests running on any OS.

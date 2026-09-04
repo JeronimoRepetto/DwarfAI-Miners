@@ -463,6 +463,7 @@ export class AgentRuntime {
           detector: platform.cliDetector,
           env: process.env,
           platform: platform.platform,
+          fs,
           run: runLaunchProcess
         }))
     /*

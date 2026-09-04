@@ -86,6 +86,48 @@ export function conventionalCliPaths(cli: AgentCli, home: string, platform: Plat
   return [nativeBin]
 }
 
+/** What a Windows batch shim runs (#193): the JS entry it names, and where its node.exe would sit. */
+export interface ShimTarget {
+  entry: string
+  /** `<shim dir>\node.exe`: spawn it if it exists, else `node` from PATH — the shim's own IF/ELSE. */
+  bundledNode: string
+}
+
+/**
+ * Read a `.cmd`/`.bat` shim for what it would run, so the launcher can run
+ * that directly instead of the shim (#193).
+ *
+ * Why the shim is read and not run. The launcher needs its child detached, so
+ * the session outlives the panel, and both ways of running a batch file fail
+ * that need — verified on Windows 11 / Node v24.11.1 while fixing #193. A
+ * DETACHED cmd.exe has no console and starts no external program at all: it
+ * exits 0 having run nothing, which would be a `launched: true` with no
+ * session behind it. A non-detached cmd.exe runs the shim, but libuv places
+ * every non-detached child in a kill-on-close job object, so the session dies
+ * the moment the panel quits. Spawning the program the shim points at,
+ * detached, is the one shape that both runs and lets go.
+ *
+ * Two dialects exist and one reading covers both. npm's cmd-shim writes
+ * `"%dp0%\node_modules\@openai\codex\bin\codex.js"`; pnpm's writes
+ * `"%~dp0\..\global\<store>\node_modules\@openai\codex\bin\codex.js"`. The
+ * entry is the first double-quoted `.js` token, and `%~dp0`/`%dp0%` — the
+ * shim's own directory — is the one variable cmd.exe would have expanded that
+ * this can expand too. Anything else still wrapped in `%` needs cmd.exe, and
+ * the answer is undefined rather than a guess: the caller reports "could not
+ * be started" and no path crosses the wire.
+ *
+ * Windows path rules unconditionally, because a batch shim is a Windows
+ * artefact whichever host the suite runs on.
+ */
+export function resolveShimTarget(shimPath: string, shimText: string): ShimTarget | undefined {
+  const quoted = /"([^"]+\.js)"/i.exec(shimText)
+  if (quoted === null) return undefined
+  const shimDir = win32.dirname(shimPath)
+  const expanded = quoted[1]!.replace(/%~dp0|%dp0%/gi, `${shimDir}\\`)
+  if (expanded.includes('%')) return undefined
+  return { entry: win32.normalize(expanded), bundledNode: win32.join(shimDir, 'node.exe') }
+}
+
 /** Every `<PATH entry>/<executable name>` candidate, in PATH order then name order. */
 export function pathLookupCandidates(
   cli: AgentCli,

@@ -384,6 +384,8 @@ Tier thresholds must be strictly increasing.
 npm-global `codex.cmd`/`.bat` shim, sending is refused with that reason rather than run: a shim
 cannot be spawned without a shell, and a shell would re-parse the message — expanding `%VAR%`
 into it, or letting a quote end the argument. Point this at the real executable to fix it.
+Launching a new Codex session from the Add panel has no such limit: the panel reads the shim and
+starts the `node` entry it names directly, so an npm or pnpm install launches without an override.
 
 </details>
 

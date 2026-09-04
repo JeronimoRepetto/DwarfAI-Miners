@@ -1,11 +1,47 @@
+import type { SpawnOptions } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
+import { FakeFs } from '../adapters/fakeFs'
+import type { FsLike } from '../adapters/fsLike'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
-import { launchClaudeSession, type LaunchInvocation } from './launchRunner'
+import type { Platform } from '../platform/platform'
+import {
+  launchClaudeSession,
+  runLaunchProcess,
+  type LaunchChild,
+  type LaunchInvocation,
+  type SpawnLaunch
+} from './launchRunner'
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
 const CODEX_PATH = '/home/j/.local/bin/codex'
 const MINE_PATH = '/home/j/work/project'
+
+/** npm's cmd-shim for codex, as `npm i -g @openai/codex` writes it on Windows. */
+const NPM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
+const NPM_SHIM = `${NPM_DIR}\\codex.cmd`
+const NPM_ENTRY = `${NPM_DIR}\\node_modules\\@openai\\codex\\bin\\codex.js`
+const NPM_SHIM_TEXT = [
+  '@ECHO off',
+  'GOTO start',
+  ':find_dp0',
+  'SET dp0=%~dp0',
+  'EXIT /b',
+  ':start',
+  'SETLOCAL',
+  'CALL :find_dp0',
+  'IF EXIST "%dp0%\\node.exe" (',
+  '  SET "_prog=%dp0%\\node.exe"',
+  ') ELSE (',
+  '  SET "_prog=node"',
+  '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+  ')',
+  'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
+].join('\r\n')
+
+function shimDetector(path: string): CliDetector {
+  return detector({ cli: 'codex', installed: true, path, source: 'convention' })
+}
 
 function detector(verdict: CliDetection): CliDetector {
   return { detect: vi.fn().mockResolvedValue(verdict), peek: vi.fn().mockReturnValue(verdict) }
@@ -25,6 +61,8 @@ function launch(options: {
   cli?: CliDetector
   run?: (invocation: LaunchInvocation) => Promise<void>
   env?: NodeJS.ProcessEnv
+  platform?: Platform
+  fs?: FsLike
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -35,7 +73,8 @@ function launch(options: {
       prompt: options.prompt ?? 'set up the build',
       detector: options.cli ?? installed(),
       env: options.env ?? { PATH: '/usr/bin' },
-      platform: 'linux',
+      platform: options.platform ?? 'linux',
+      fs: options.fs ?? new FakeFs(),
       run
     })
   }
@@ -208,38 +247,125 @@ describe('launching Codex', () => {
   })
 
   /*
-   * The npm-global install, which is the common one for Codex on Windows.
-   * `spawn('codex.cmd', …, { shell: false })` throws EINVAL — verified against
-   * this machine's Node — and the shell that would fix it is exactly what a
-   * launcher handling user text must not introduce. So it is refused with the
-   * one thing the user can act on, and the escape hatch is the CLI-path
-   * override the config already has.
+   * The npm-global install, which is the common one for Codex on Windows, and
+   * pnpm's `codex.CMD` beside it. Until #193 this was REFUSED, with a message
+   * naming CODEX_CLI_PATH: a batch shim needs cmd.exe, and the launcher had
+   * borrowed the queue's reason for never handing a payload to a shell. That
+   * reason was the queue's alone — there the message is an argv element — and
+   * the named exit was one a packaged user could not take (no Settings UI for
+   * CLI paths). The shell was still not the answer: a detached cmd.exe has no
+   * console and starts no external program at all, while a non-detached one
+   * dies with the panel. So the launcher does what the shim would have done —
+   * reads it, and runs the node entry it names directly, detached. The two
+   * refusal tests that stood here ("refuses a shell shim rather than failing
+   * opaquely, and says what to set", "never publishes the shim path it
+   * refused") went with the refusal.
    */
-  it('refuses a shell shim rather than failing opaquely, and says what to set', async () => {
-    const shim = 'C:\\Users\\x\\AppData\\Roaming\\npm\\codex.cmd'
+  it('starts an npm .cmd shim by running the node entry it names, instead of refusing it (#193)', async () => {
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
     const { run, result } = launch({
       provider: 'codex',
-      cli: detector({ cli: 'codex', installed: true, path: shim, source: 'path' })
+      platform: 'win32',
+      env: { Path: 'C:\\Windows\\System32' },
+      prompt: 'dig',
+      cli: shimDetector(NPM_SHIM),
+      fs
     })
 
-    const verdict = await result
-    expect(verdict.launched).toBe(false)
-    expect(verdict.provider).toBe('codex')
-    expect(verdict.error).toContain('CODEX_CLI_PATH')
+    await expect(result).resolves.toEqual({ launched: true, provider: 'codex' })
+    expect(run).toHaveBeenCalledTimes(1)
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    // No node.exe beside this shim, so `node` from PATH — the shim's own ELSE arm.
+    expect(invocation.command).toBe('node')
+    expect(invocation.args).toEqual([NPM_ENTRY, 'exec', '-'])
+    expect(invocation.stdin).toBe('dig')
+    expect(invocation.cwd).toBe(MINE_PATH)
+    // PATH is still led by the shim's directory: a re-exec of `codex` inside
+    // the child must find the same install detection did.
+    expect(invocation.env.Path).toBe(`${NPM_DIR};C:\\Windows\\System32`)
+  })
+
+  it('prefers the node.exe the shim itself would prefer, when one sits beside it', async () => {
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    fs.addFile(`${NPM_DIR}\\node.exe`, 'MZ')
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).toBe(`${NPM_DIR}\\node.exe`)
+    expect(invocation.args[0]).toBe(NPM_ENTRY)
+  })
+
+  it('never hands a shim to a shell, in either direction', async () => {
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation).not.toHaveProperty('shell')
+    expect(invocation.command.toLowerCase().endsWith('.cmd')).toBe(false)
+  })
+
+  it('keeps the prompt off argv for a shim launch too', async () => {
+    const secret = 'rotate the deploy key'
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      prompt: secret,
+      cli: shimDetector(NPM_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).not.toContain(secret)
+    expect(invocation.args.join(' ')).not.toContain(secret)
+    expect(invocation.stdin).toBe(secret)
+  })
+
+  it('says Codex could not be started when the shim names nothing it can run', async () => {
+    // A third shim dialect, or a hand-written wrapper: an honest generic
+    // failure, never a guess at an entry and never a path on the wire.
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, '@echo off\r\nrem nothing to run here\r\n')
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs
+    })
+
+    await expect(result).resolves.toEqual({
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI could not be started.'
+    })
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('never publishes the shim path it refused', async () => {
-    // Fixed copy only: a detected path names this machine's filesystem, and the
-    // wire is where it stops (docs/privacy.md, #59).
-    const shim = 'C:\\Users\\someone\\AppData\\Roaming\\npm\\codex.cmd'
-    const verdict = await launch({
-      provider: 'codex',
-      cli: detector({ cli: 'codex', installed: true, path: shim, source: 'path' })
-    }).result
+  it('starts a real codex executable as itself, reading no shim', async () => {
+    const fs = new FakeFs()
+    const { run, result } = launch({ provider: 'codex', cli: installedCodex(), fs })
+    await result
 
-    expect(verdict.error).not.toContain('someone')
-    expect(verdict.error).not.toContain('.cmd')
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).toBe(CODEX_PATH)
+    expect(invocation.args).toEqual(['exec', '-'])
   })
 
   it('claims only that the process started, and never a dwarf', async () => {
@@ -249,5 +375,98 @@ describe('launching Codex', () => {
       launched: true,
       provider: 'codex'
     })
+  })
+})
+
+/*
+ * The thin runner, through an injected spawn: what actually reaches
+ * child_process (#193). Nothing runs here — the fake records the call and
+ * reports the child as started, so the suite stays platform-independent.
+ */
+describe('runLaunchProcess', () => {
+  function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
+    return {
+      command: CODEX_PATH,
+      args: ['exec', '-'],
+      env: { PATH: '/usr/bin' },
+      cwd: MINE_PATH,
+      stdin: 'dig',
+      ...overrides
+    }
+  }
+
+  function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn') {
+    const calls: Array<{ command: string; args: readonly string[]; options: SpawnOptions }> = []
+    const written: string[] = []
+    let unrefCalls = 0
+    const spawnProcess: SpawnLaunch = (command, args, options) => {
+      calls.push({ command, args, options })
+      const spawned: Array<() => void> = []
+      const failed: Array<(error: Error) => void> = []
+      const child: LaunchChild = {
+        once(event, listener) {
+          if (event === 'spawn') spawned.push(listener as () => void)
+          else failed.push(listener)
+          return child
+        },
+        stdin: {
+          on() {
+            return undefined
+          },
+          end(chunk: string) {
+            written.push(chunk)
+          }
+        },
+        unref() {
+          unrefCalls += 1
+        }
+      }
+      queueMicrotask(() => {
+        if (outcome === 'spawn') for (const listener of spawned) listener()
+        else for (const listener of failed) listener(new Error('EINVAL'))
+      })
+      return child
+    }
+    return { spawnProcess, calls, written, unrefCalls: () => unrefCalls }
+  }
+
+  /*
+   * `detached` is load-bearing and `shell` is deliberately absent, both
+   * verified against this machine (Windows 11, Node v24.11.1) while #193 was
+   * being fixed: a detached cmd.exe has no console and silently starts no
+   * external program (exit 0, nothing run), and a non-detached child sits in
+   * libuv's kill-on-close job object and dies with the panel. Direct spawn of a
+   * real program, detached, is the one shape that both runs and outlives us.
+   */
+  it('spawns the command as given — detached, hidden, no shell — and writes the prompt to stdin', async () => {
+    const spawn = fakeSpawn()
+
+    await expect(
+      runLaunchProcess(
+        invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'] }),
+        spawn.spawnProcess
+      )
+    ).resolves.toBeUndefined()
+
+    expect(spawn.calls).toHaveLength(1)
+    const call = spawn.calls[0]!
+    expect(call.command).toBe('node')
+    expect(call.args).toEqual([NPM_ENTRY, 'exec', '-'])
+    expect(call.options).toEqual({
+      cwd: MINE_PATH,
+      env: { PATH: '/usr/bin' },
+      detached: true,
+      stdio: ['pipe', 'ignore', 'ignore'],
+      windowsHide: true
+    })
+    expect(spawn.written).toEqual(['dig'])
+    expect(spawn.unrefCalls()).toBe(1)
+  })
+
+  it('rejects when the child reports it could not start, writing nothing', async () => {
+    const spawn = fakeSpawn('error')
+
+    await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).rejects.toThrow('EINVAL')
+    expect(spawn.written).toEqual([])
   })
 })
