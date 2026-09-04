@@ -7,6 +7,8 @@
 <p align="center">
   Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
 </p>
+
+<p align="center">
 <p align="left">
   <img src="docs/media/hero01.gif" width="100" alt="Worker2">
 </p>
@@ -14,7 +16,8 @@
   <img src="docs/media/hero.gif" width="100" alt="Foreman">
 </p>
 <p align="right">
-  <img src="docs/media/hero02.gif" width="100" alt="Worker" style="transform: rotate(90deg);">
+ <img src="docs/media/hero02.gif" width="100" alt="Worker" style="transform: scaleX(-1);">
+</p>
 </p>
 
 <div align="center">
