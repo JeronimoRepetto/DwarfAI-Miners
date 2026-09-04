@@ -1,16 +1,16 @@
-MIT License
+MIT License — Code
 
 Copyright (c) 2026 Jeronimo Repetto
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
+of the source code and associated software files (the "Code"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+copies or substantial portions of the Code.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -22,9 +22,6 @@ SOFTWARE.
 
 ---
 
-Artwork
-
-The MIT terms above cover the artwork as well as the code. The images committed
-under src/renderer/src/assets/art/ are licensed on exactly the same terms as the
-source files. That is deliberate, not an omission: there is no carve-out for
-them, or for any other file in this repository.
+This MIT license applies to the Code only. Artwork is expressly excluded and is
+covered by [ARTWORK-LICENSE.md](ARTWORK-LICENSE.md). No license to use, copy,
+modify, distribute, or create derivative artwork is granted by this document.
