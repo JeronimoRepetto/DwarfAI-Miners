@@ -8,6 +8,7 @@ import {
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
   NO_KICK_REASON,
+  SESSION_ENDED_REASON,
   type ActionBarEntry,
   type ActionId,
   type ActionTransientState
@@ -146,6 +147,26 @@ describe('buildActionBar', () => {
       expect(entry.enabled).toBe(true)
       expect(entry.hint).toBe(CHANNEL_HINT['codex-queue'])
       expect(entry.hint).toContain('queue')
+    })
+  })
+
+  /**
+   * A 'leaving' dwarf's agent has already finished (#192): its pid is stale
+   * and its session name no longer resolves, which is exactly why main refuses
+   * to write to one. The bar says so up front, in the same words, rather than
+   * offering a channel the session left behind and letting main refuse it.
+   */
+  describe('ended session', () => {
+    it('disables chat with the ended reason, whatever channel the session used to have', () => {
+      const entry = entryFor('chat', capableDwarf({ status: 'leaving' }))
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).toBe(SESSION_ENDED_REASON)
+    })
+
+    it('disables kick with the ended reason: there is nothing left to interrupt', () => {
+      const entry = entryFor('kick', capableDwarf({ status: 'leaving' }))
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).toBe(SESSION_ENDED_REASON)
     })
   })
 

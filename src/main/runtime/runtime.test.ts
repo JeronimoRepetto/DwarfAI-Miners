@@ -337,6 +337,59 @@ describe('AgentRuntime activation', () => {
       })
     })
 
+    /**
+     * #192: the poll that first reports a dwarf as leaving is the first that
+     * can carry its final reply, so the panel reads once more at that edge.
+     * Unlike a send or a kick, a read has nothing unsafe to do to a stale pid,
+     * so the runtime must keep answering for a leaving dwarf rather than
+     * refusing it the way sendDwarfText does.
+     */
+    it('still reads the feed of a dwarf that is leaving', async () => {
+      const final = [{ role: 'assistant' as const, text: 'Packing up.', timestamp: 't2' }]
+      const source: Provider = {
+        kind: 'claude',
+        scan: vi
+          .fn<Provider['scan']>()
+          .mockResolvedValueOnce([
+            {
+              provider: 'claude',
+              sessionId: 'session-1',
+              cwd: 'C:\\work\\project',
+              status: 'busy',
+              updatedAt: 1,
+              dwarfs: [
+                {
+                  id: 'claude:session-1',
+                  provider: 'claude',
+                  role: 'worker',
+                  name: 'worker',
+                  status: 'working',
+                  sessionId: 'session-1'
+                }
+              ]
+            }
+          ])
+          .mockResolvedValue([]),
+        feed: vi.fn().mockResolvedValue(final)
+      }
+      const runtime = new AgentRuntime({
+        config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+        providers: [source],
+        onMinesUpdated: vi.fn(),
+        now: () => 0
+      })
+      await runtime.refresh()
+      await runtime.refresh()
+      expect(runtime.getMines().flatMap((mine) => mine.dwarfs)).toMatchObject([
+        { id: 'claude:session-1', status: 'leaving' }
+      ])
+
+      await expect(runtime.dwarfFeed('claude:session-1')).resolves.toEqual({
+        readable: true,
+        messages: final
+      })
+    })
+
     it('reports unreadable rather than throwing when the transcript read fails', async () => {
       const source: Provider = {
         kind: 'claude',

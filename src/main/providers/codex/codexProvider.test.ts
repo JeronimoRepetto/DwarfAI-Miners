@@ -403,6 +403,27 @@ describe('CodexProvider', () => {
       await provider.scan()
       expect(await provider.feed('codex:nope', 20)).toBeNull()
     })
+
+    /**
+     * #192: a rollout that ages out of the liveness window is no longer a
+     * session, but it is still a file, and the last turn is in it. The panel
+     * reads once more as the dwarf leaves, which needs the path to survive
+     * the scan that stopped reporting it. The queue address does not survive
+     * (see queueTargets): a message must not be queued for a thread that ended.
+     */
+    it('still reads the rollout of a session that has aged out of the liveness window', async () => {
+      let clock = NOW
+      const provider = makeProvider({ now: () => clock })
+      await provider.scan()
+
+      clock = NOW + (WINDOW_S + 60) * 1_000
+      const later = await provider.scan()
+      expect(later.map((s) => s.sessionId)).not.toContain(BUSY_SESSION_ID)
+
+      const feed = await provider.feed(`codex:${BUSY_SESSION_ID}`, 20)
+      expect(feed!.map((m) => m.role)).toEqual(['user', 'assistant'])
+      expect(provider.textDelivery(`codex:${BUSY_SESSION_ID}`)).toBeNull()
+    })
   })
 
   describe('secret redaction at the provider boundary', () => {

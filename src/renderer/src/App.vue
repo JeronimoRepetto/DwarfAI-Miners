@@ -337,11 +337,42 @@ function leaveMine(): void {
   error.value = null
 }
 
-const selectedDwarf = computed<Dwarf | undefined>(() =>
+/** The selected dwarf as the CURRENT snapshot reports it, or nothing once the board dropped it. */
+const liveSelectedDwarf = computed<Dwarf | undefined>(() =>
   openDwarfId.value === null
     ? undefined
     : currentMine.value?.dwarfs.find((dwarf) => dwarf.id === openDwarfId.value)
 )
+
+/**
+ * The selected dwarf as the board LAST reported it (#192).
+ *
+ * The panel used to exist only while its dwarf was in the live snapshot, so a
+ * session ending — the moment its final reply lands — unmounted the panel and
+ * lost the conversation. Main already keeps a finished dwarf on the board as
+ * 'leaving' for a grace window, and then drops it; this holds on to that last
+ * snapshot so the panel can outlive the drop and be closed by the person.
+ *
+ * Every real disappearance passes through 'leaving' (see DwarfLifecycleTracker),
+ * so the kept dwarf already carries the status the panel reads as "ended". The
+ * stamp below is for a board that drops a dwarf without that window — it says
+ * the same thing the tracker would have, and nothing the snapshot did not.
+ */
+const lastSelectedDwarf = ref<Dwarf | undefined>(undefined)
+
+watch(liveSelectedDwarf, (dwarf, previous) => {
+  if (dwarf !== undefined) {
+    lastSelectedDwarf.value = dwarf
+    return
+  }
+  if (previous !== undefined) lastSelectedDwarf.value = { ...previous, status: 'leaving' }
+})
+
+const selectedDwarf = computed<Dwarf | undefined>(() => {
+  if (liveSelectedDwarf.value !== undefined) return liveSelectedDwarf.value
+  const last = lastSelectedDwarf.value
+  return last !== undefined && last.id === openDwarfId.value ? last : undefined
+})
 
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
 function selectDwarf(dwarf: Dwarf): void {
@@ -425,35 +456,49 @@ function skipSelectedFeed(): void {
  * replied. `transcriptUpdatedAt` is the transcript's own raw mtime, and it
  * moves for ANY writer — see Dwarf.transcriptUpdatedAt for why it has to be
  * the raw mtime and not an age derived from it.
+ *
+ * A third signal, once (#192): the dwarf turning 'leaving'. The final reply
+ * and the exit can land inside one poll, so the snapshot that first shows the
+ * dwarf leaving is the first that can carry that reply, and neither signal
+ * above need have moved for it.
+ *
+ * Never for a dwarf the board has dropped. Main answers a read only for a
+ * dwarf it still has, so a read then would replace the words with "no
+ * transcript" — and the kept dwarf's own signals cannot move any more, so the
+ * only thing that could still fire this is the leaving signal falling back to
+ * false as the live dwarf goes. That is the case the guard is for.
  */
 watch(
   [
     openDwarfId,
     () => selectedDwarf.value?.lastMessage,
-    () => selectedDwarf.value?.transcriptUpdatedAt
+    () => selectedDwarf.value?.transcriptUpdatedAt,
+    () => liveSelectedDwarf.value?.status === 'leaving'
   ],
   ([dwarfId]) => {
     if (dwarfId === null || selectedDwarf.value?.conversation !== undefined) {
       skipSelectedFeed()
       return
     }
+    if (liveSelectedDwarf.value === undefined) return
     void readSelectedFeed(dwarfId)
   },
   { immediate: true }
 )
 
 /*
- * A panel can only be open on a dwarf that is there. The selection is dropped
- * when the dwarf itself walks out or its mine closes — main owns which dwarfs
- * exist, so this follows the snapshot rather than guessing.
+ * The panel follows its MINE, not the board (#192). Its dwarf walking out no
+ * longer closes it — that is the moment the conversation is worth reading —
+ * but the mine going away does: closing the mine is the person's own act, and
+ * a mine the board dropped takes the scene the panel was docked beside with it.
  */
 watch(
-  () => openDwarfId.value !== null && selectedDwarf.value === undefined,
-  (gone) => {
-    if (!gone) return
+  () => viewState.mineId,
+  () => {
+    if (openDwarfId.value === null) return
     selectedDwarfId.value = null
-    // A launch whose adopted dwarf has left the board is over too, or its id
-    // would keep reopening a panel onto a session that is no longer there.
+    // A launch whose adopted dwarf has lost its mine is over too, or its id
+    // would keep reopening a panel onto a session with nowhere to be shown.
     if (launchState.value.launchedDwarfId !== null) closeLaunchPanel()
   }
 )

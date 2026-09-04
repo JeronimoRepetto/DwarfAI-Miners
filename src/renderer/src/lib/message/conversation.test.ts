@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
 import type { DwarfFeedResult } from '../../types'
 import {
+  ENDED_NOTE,
   NOTHING_SAID_NOTE,
   NO_TRANSCRIPT_NOTE,
   OBSERVED_NOTE,
@@ -85,6 +86,24 @@ describe('conversationOf', () => {
     })
     expect(shown.source).toBe('observed')
     expect(shown.messages.map((message) => message.text)).toEqual(['Blasting'])
+  })
+
+  /**
+   * A dwarf the board reports as leaving belongs to a session that has ended
+   * (#192). The words are still what they were — first-hand or read from the
+   * transcript — so the note keeps saying which, and says the ending in front.
+   */
+  it('says the session has ended in front of what it shows, for a leaving dwarf', () => {
+    const observed = conversationOf(defaultDwarf({ status: 'leaving' }), {
+      readable: true,
+      messages: [{ role: 'assistant', text: 'Packing up.', timestamp: 'now' }]
+    })
+    expect(observed.source).toBe('observed')
+    expect(observed.note).toBe(`${ENDED_NOTE} ${OBSERVED_NOTE}`)
+
+    const held = conversationOf(defaultDwarf({ status: 'leaving', conversation: HELD }))
+    expect(held.source).toBe('held')
+    expect(held.note).toBe(`${ENDED_NOTE} ${HELD_NOTE}`)
   })
 
   it('never invents a bubble for a dwarf with nothing to say', () => {

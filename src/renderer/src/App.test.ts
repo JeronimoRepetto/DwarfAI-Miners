@@ -1278,15 +1278,62 @@ describe('App message panel', () => {
     expect(wrapper.find('.panel-status').text()).not.toContain('the session reacted')
   })
 
-  it('drops the panel when its dwarf walks out of the mine', async () => {
+  /*
+   * AMENDED (#192). This used to assert the panel DROPPED when its dwarf left
+   * the board, which threw the conversation away — final reply included — at
+   * the one moment a person is most likely to be reading it. The panel now
+   * stays on the dwarf as the board last reported it, says the session has
+   * ended, and waits to be closed by hand. What the test protected survives:
+   * main still owns which dwarfs exist, and the panel still follows the
+   * snapshot — it just no longer forgets the last one it was given.
+   */
+  it('keeps the panel on the last known dwarf when it walks out of the mine, and says so', async () => {
+    const { wrapper, api } = await openMineWith([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }], {
+      getDwarfFeed: vi.fn().mockResolvedValue({
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Blasting the last metre', timestamp: 'now' }]
+      })
+    })
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    await flushPromises()
+
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
+    expect(wrapper.find('.bubble').text()).toBe('Blasting the last metre')
+    // Ended is said in words, and typing into a session that is gone is
+    // refused with the same words rather than handed to main to refuse.
+    expect(wrapper.find('.panel-note').text()).toContain('ended')
+    expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.panel-input').attributes('title')).toContain('ended')
+  })
+
+  it("leaves closing an ended session's panel to the person", async () => {
     const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
 
-    // Main owns which dwarfs exist, so the panel follows the snapshot.
     const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
     push({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(wrapper.find('.message-panel').exists()).toBe(true)
+
+    await wrapper.find('.panel-close').trigger('click')
+    expect(wrapper.find('.message-panel').exists()).toBe(false)
+  })
+
+  it('still lets go of the panel with the mine it was opened in', async () => {
+    // The panel outlives its dwarf, not its mine: closing the mine is the
+    // person's own act, and a conversation docked to nothing has no place.
+    const { wrapper } = await openMineWith([OBSERVED_DWARF])
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.close-mine').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.message-panel').exists()).toBe(false)
@@ -1451,6 +1498,44 @@ describe('App feed refresh (#183)', () => {
     await flushPromises()
 
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+  })
+
+  /*
+   * #192: the assistant's final reply and the session's end can land inside
+   * one poll, so the snapshot that first shows the dwarf leaving is the first
+   * that can read that reply — and the last: once the grace window drops the
+   * dwarf, main no longer answers for it, and a read then would replace the
+   * words with "no transcript". One more read, at the leaving edge, never after.
+   */
+  it('re-reads once when the dwarf turns leaving, and not again once the board drops it', async () => {
+    const getDwarfFeed = vi
+      .fn()
+      .mockResolvedValueOnce({
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Halfway down the shaft', timestamp: 't1' }]
+      })
+      .mockResolvedValue({
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Seam exhausted, packing up.', timestamp: 't2' }]
+      })
+    const { wrapper, api } = await openRefreshDwarf({ getDwarfFeed })
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({
+      mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, status: 'leaving' }] }],
+      tokensObserved: 0
+    })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
+
+    push({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    await flushPromises()
+
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
   })
 })
 

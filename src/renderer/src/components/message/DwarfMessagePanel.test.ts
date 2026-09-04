@@ -340,6 +340,18 @@ describe('DwarfMessagePanel input', () => {
     expect(input.attributes('title')).toContain("can't receive messages yet")
   })
 
+  it('disables the box, saying the session has ended, for a dwarf that is leaving', () => {
+    // #192: the channel the session HAD is still on the dwarf, frozen by the
+    // grace window; the box must read the capability model, not the field.
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', status: 'leaving', conversation: HELD })
+    })
+    const input = wrapper.find('.panel-input')
+    expect(input.attributes('disabled')).toBeDefined()
+    expect(input.attributes('title')).toContain('ended')
+    expect(wrapper.find('.panel-note').text()).toContain('ended')
+  })
+
   it('names the channel a message would travel through', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'foreman-relay' }) })
     expect(panel().find('.panel-input').attributes('title')).toContain('console')

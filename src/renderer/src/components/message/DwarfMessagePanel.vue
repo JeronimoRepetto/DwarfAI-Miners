@@ -102,7 +102,10 @@ function action(id: 'kick' | 'boost' | 'chat') {
   return actions.value.find((entry) => entry.id === id)
 }
 
-const canReceive = computed(() => props.dwarf.textDelivery !== undefined)
+// Off the capability model rather than off `textDelivery` directly: a leaving
+// dwarf still carries the channel it had, and the model is what knows the
+// session behind it has ended (#192).
+const canReceive = computed(() => action('chat')?.enabled === true)
 const isSending = computed(() => props.sendState?.phase === 'sending')
 const isKicking = computed(() => props.kickState?.phase === 'kicking')
 

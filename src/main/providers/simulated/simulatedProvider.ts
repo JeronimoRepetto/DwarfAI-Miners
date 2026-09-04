@@ -65,8 +65,12 @@ export class SimulatedProvider implements Provider {
   /** Tick 0 is the moment this provider was built, so a run always starts at the beginning. */
   private readonly startedAt: number
   private readonly mines: readonly SimulatedMine[]
-  /** Ids from the latest scan, so feed() can refuse a dwarf that was never here. */
-  private known = new Set<string>()
+  /**
+   * Every id any scan has reported, so feed() can refuse a dwarf that was never
+   * here — and still answer one that has since left (#192), the way a real
+   * provider's transcript stays on disk after its session ends.
+   */
+  private readonly known = new Set<string>()
 
   constructor(options: SimulatedProviderOptions) {
     this.config = options.config
@@ -80,7 +84,9 @@ export class SimulatedProvider implements Provider {
   async scan(): Promise<ProviderSnapshot[]> {
     const nowMs = this.now()
     const snapshots = simulatedSnapshots(this.config, this.mines, this.tick(nowMs), nowMs)
-    this.known = new Set(snapshots.flatMap((snapshot) => snapshot.dwarfs.map((dwarf) => dwarf.id)))
+    for (const snapshot of snapshots) {
+      for (const dwarf of snapshot.dwarfs) this.known.add(dwarf.id)
+    }
     return snapshots
   }
 
