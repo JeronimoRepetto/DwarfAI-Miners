@@ -3539,7 +3539,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
           close: () => {
             closed += 1
           },
-          send: () => true
+          send: () => true,
+          // #210 added interrupt() beside close/send. These tests are about
+          // holding a session, not delivering to one, so the fake only has to
+          // satisfy the port; the delivery route is pinned in its own describe.
+          interrupt: async () => true
         }
       },
       reportSessionId: (index, sessionId) => started[index]!.onSessionId(sessionId),
@@ -4709,5 +4713,241 @@ describe('AgentRuntime.mineHistory', () => {
       speakers: []
     })
     warn.mockRestore()
+  })
+})
+
+/**
+ * Delivery to a session THIS PANEL HOLDS (#210).
+ *
+ * The bug these pin, measured live: a held session's registry entry reports
+ * `kind: "interactive"`, so `claudeSessionDeliveryTarget` answers with the SDK
+ * child's pid — a process that owns no window. Focus failed (1121ms), the relay
+ * fallback ran, and `delivered: true` came back for a session whose inbox
+ * nothing drains: an SDK-hosted session has no REPL to read cross-session
+ * messaging. So ownership is resolved BEFORE endpoint kind, and the terminal
+ * tier below is wired to report exactly that lie — a failing focus and a relay
+ * that "succeeds" — so a regression cannot pass by returning delivered: true.
+ */
+describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
+  const MINE_PATH = 'C:\\X\\anvil'
+  const CLAUDE = '/home/j/.local/bin/claude'
+  const HELD_FOREMAN_ID = 'claude:sess-1'
+
+  interface HeldFake {
+    port: HeldSessionPort
+    sends: () => string[]
+    interrupts: () => number
+    reportSessionId: (sessionId: string) => void
+    reportSubagent: (signal: HeldSessionSubagentSignal) => void
+  }
+
+  /** The Agent SDK seam, as always: no test here starts a real agent. */
+  function heldFake(options: { streamTakes?: boolean; canInterrupt?: boolean } = {}): HeldFake {
+    const sends: string[] = []
+    let interrupts = 0
+    let started: HeldSessionStartRequest | undefined
+    return {
+      sends: () => sends,
+      interrupts: () => interrupts,
+      port: async (request) => {
+        started = request
+        return {
+          close: () => {},
+          send: (text: string) => {
+            sends.push(text)
+            return options.streamTakes ?? true
+          },
+          interrupt: async () => {
+            interrupts += 1
+            return options.canInterrupt ?? true
+          }
+        }
+      },
+      reportSessionId: (sessionId) => started!.onSessionId(sessionId),
+      reportSubagent: (signal) => started!.onSubagent(signal)
+    }
+  }
+
+  /** The tiers that must never be reached, each reporting what it reported live. */
+  function terminalPort() {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'focus failed' }),
+      // The exit-0-shaped lie itself: the relay says delivered for a queue
+      // nothing reads. If ownership stops deciding the route, this is what the
+      // verdict assertions below catch.
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: false, error: 'focus failed' })
+    } satisfies TextDeliveryPort
+  }
+
+  /**
+   * What the Claude provider really answers for a held session: its registry
+   * entry records `kind: "interactive"` and a name, so the target carries the
+   * SDK child's pid and the relay address beside it.
+   */
+  function heldProvider(): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude' as const,
+          sessionId: 'sess-1',
+          cwd: MINE_PATH,
+          status: 'busy' as const,
+          updatedAt: 7,
+          dwarfs: [
+            {
+              id: HELD_FOREMAN_ID,
+              provider: 'claude' as const,
+              role: 'foreman' as const,
+              name: 'foreman',
+              status: 'working' as const,
+              sessionId: 'sess-1',
+              pid: 4242
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) =>
+        dwarfId === HELD_FOREMAN_ID
+          ? { kind: 'terminal' as const, pid: 4242, sessionName: 'anvil-70' }
+          : null
+    }
+  }
+
+  async function runtimeHolding(held: HeldFake, port: TextDeliveryPort): Promise<AgentRuntime> {
+    const fs = new FakeFs()
+    fs.addFile(CLAUDE, '#!/bin/sh\n')
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [heldProvider()],
+      textDelivery: port,
+      heldSessions: new HeldSessionRegistry({
+        detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+        start: held.port,
+        now: () => 1_700_000_000_000,
+        log: () => {}
+      }),
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+    await runtime.refresh()
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    // The CLI names its own session, and that name is the only link between
+    // this stream and the dwarf the poll draws.
+    held.reportSessionId('sess-1')
+    await runtime.refresh()
+    return runtime
+  }
+
+  it('kicks a held session through its own session instead of focusing a terminal', async () => {
+    const held = heldFake()
+    const port = terminalPort()
+    const runtime = await runtimeHolding(held, port)
+
+    const result = await runtime.kickDwarf({ dwarfId: HELD_FOREMAN_ID })
+    runtime.stop()
+
+    expect(result).toEqual({ delivered: true, via: 'held-session' })
+    expect(held.interrupts()).toBe(1)
+    // Neither of the two channels the live run went through: the pid owns no
+    // window, and the relay's inbox has no REPL to drain it.
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('sends a message to a held session through its own session', async () => {
+    const held = heldFake()
+    const port = terminalPort()
+    const runtime = await runtimeHolding(held, port)
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: HELD_FOREMAN_ID,
+      text: 'dig east',
+      pressEnter: true
+    })
+    runtime.stop()
+
+    expect(result).toEqual({ delivered: true, via: 'held-session' })
+    expect(held.sends()).toEqual(['dig east'])
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('says the kick failed rather than claiming a relay hand-over nothing can read', async () => {
+    const held = heldFake({ canInterrupt: false })
+    const port = terminalPort()
+    const runtime = await runtimeHolding(held, port)
+
+    const result = await runtime.kickDwarf({ dwarfId: HELD_FOREMAN_ID })
+    runtime.stop()
+
+    expect(result.delivered).toBe(false)
+    expect(result.via).toBe('held-session')
+    expect(result.error).not.toBeUndefined()
+    // The whole point of #210: the honest failure, never the second channel.
+    // `delivered` means handed to a queue something reads, and a held session
+    // has none (see reaction.ts).
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('says the message failed when the held stream will not take it', async () => {
+    const held = heldFake({ streamTakes: false })
+    const port = terminalPort()
+    const runtime = await runtimeHolding(held, port)
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: HELD_FOREMAN_ID,
+      text: 'dig east',
+      pressEnter: true
+    })
+    runtime.stop()
+
+    expect(result.delivered).toBe(false)
+    expect(result.via).toBe('held-session')
+    expect(result.error).not.toBeUndefined()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('publishes held-session as the channel, so the panel offers the route that works', async () => {
+    const held = heldFake()
+    const runtime = await runtimeHolding(held, terminalPort())
+    const dwarf = runtime.getMines()[0]!.dwarfs.find((item) => item.id === HELD_FOREMAN_ID)
+    runtime.stop()
+
+    expect(dwarf?.textDelivery).toBe('held-session')
+    expect(dwarf?.capabilities).toMatchObject({
+      sendText: 'held-session',
+      cancel: 'held-session'
+    })
+  })
+
+  it("cancels a held session's worker by instructing the session, not by aborting its turn", async () => {
+    const held = heldFake()
+    const port = terminalPort()
+    const runtime = await runtimeHolding(held, port)
+    held.reportSubagent({
+      kind: 'task-started',
+      taskId: 'a1',
+      taskType: 'local_agent',
+      spawnDepth: 1,
+      description: 'Explorer'
+    })
+    await runtime.refresh()
+
+    const result = await runtime.kickDwarf({ dwarfId: HELD_FOREMAN_ID + ':a1' })
+    runtime.stop()
+
+    expect(result).toEqual({ delivered: true, via: 'foreman-relay' })
+    // A named worker's cancel is an instruction the session reads, so an
+    // interrupt would abort the wrong turn — the foreman's own.
+    expect(held.interrupts()).toBe(0)
+    expect(held.sends()[0]).toContain('[cancel agent Explorer]')
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 })

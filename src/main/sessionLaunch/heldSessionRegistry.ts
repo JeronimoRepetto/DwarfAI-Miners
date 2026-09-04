@@ -368,16 +368,39 @@ export class HeldSessionRegistry {
   /**
    * Put a user message onto a held session's own stream.
    *
-   * The seam, not yet the route: `sendDwarfText` still goes through the text
-   * delivery tiers, which reach a session this panel merely observes. Wiring a
-   * held dwarf's Send here means a new TextDeliveryChannel on the wire and a
-   * matching capability in the panel, which is the UI half (#90/#105) rather
-   * than this one. False means the session is not one this panel holds.
+   * The route, since #210: `sendDwarfText` resolves ownership before endpoint
+   * kind, so a dwarf whose session this panel holds arrives here instead of
+   * going out through the terminal and relay tiers — which for a held session
+   * meant a pid owning no window followed by a relay queue no REPL drains.
+   * `held-session` is the wire channel that says so.
+   *
+   * False means the session is not one this panel holds, or its stream would
+   * not take the message. Either way the caller states the failure rather than
+   * reaching for a second channel: there is no honest one here.
    */
   sendText(sessionId: string, text: string): boolean {
     const record = this.recordFor(sessionId)
     if (record === undefined) return false
     return record.handle.send(text)
+  }
+
+  /**
+   * Cut the running turn short on a held session, leaving it open (#210).
+   *
+   * The panel's Kick, for the one session type this app can genuinely
+   * interrupt. Not `closeAll`'s act and not `close`'s: a session this panel
+   * ends is a session the user has to start again, and Kick has never meant
+   * that on any other channel — the terminal tier sends one ESC keystroke and
+   * the relay tier asks politely. This is the same request, made properly.
+   *
+   * False for a session this panel does not hold, and false when the stream
+   * refused the interrupt. Nothing is retried and nothing else is attempted:
+   * see sendText on why there is no second channel to fall back to.
+   */
+  async interrupt(sessionId: string): Promise<boolean> {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return false
+    return record.handle.interrupt()
   }
 
   /**

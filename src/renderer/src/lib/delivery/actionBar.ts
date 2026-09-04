@@ -42,7 +42,8 @@ export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   terminal: 'Typed straight into the session console.',
   'claude-relay': 'Relayed to the headless session by name.',
   'foreman-relay': "Delivered to this worker's foreman, tagged for them.",
-  'codex-queue': "Added to this Codex session's queue; it reads it between turns."
+  'codex-queue': "Added to this Codex session's queue; it reads it between turns.",
+  'held-session': 'Put straight onto the session this panel is holding open.'
 }
 
 export const NO_KICK_REASON = "This session type can't be canceled yet."
@@ -50,7 +51,8 @@ export const NO_KICK_REASON = "This session type can't be canceled yet."
 /**
  * What kicking that channel actually does, in honest terms — or, where a
  * channel cannot kick at all, why not: a terminal gets a real interrupt
- * keystroke, a relay tier is a semantic ask the session may decline, and the
+ * keystroke, a relay tier is a semantic ask the session may decline, a held
+ * session gets a genuine interrupt of the turn it is in (#210), and the
  * Codex queue cannot cut a turn short at all, because the only thing it is
  * proven to do is drain between turns (#97).
  */
@@ -59,7 +61,11 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   'claude-relay': 'Asks the agent to stop — it decides how.',
   'foreman-relay': "Asks this worker's foreman to stop it — it decides how.",
   'codex-queue':
-    "The queue only drains between turns, so it can't interrupt one — a kick still has to come from the session console."
+    "The queue only drains between turns, so it can't interrupt one — a kick still has to come from the session console.",
+  // The only tier that stops the turn itself rather than asking: the panel is
+  // holding this session's stream, so the interrupt is a control request to it.
+  // It ends the turn, never the session — that is Kick's meaning everywhere.
+  'held-session': 'Interrupts the turn on the session this panel holds.'
 }
 
 export const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."

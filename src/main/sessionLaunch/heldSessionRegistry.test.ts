@@ -47,10 +47,14 @@ class FakePort {
   readonly started: HeldSessionStartRequest[] = []
   readonly closed: number[] = []
   readonly sent: string[] = []
+  /** Which sessions were asked to cut their turn short, in order (#210). */
+  readonly interrupted: number[] = []
   /** Whatever the host handed back for each ask, in the order the asks were made. */
   readonly answered: HeldAnswer[] = []
   /** Set to make the next start reject, as a CLI that will not launch would. */
   failWith: Error | undefined = undefined
+  /** Set false to make the stream refuse an interrupt, as one already ending would. */
+  interruptTakes = true
 
   readonly start: HeldSessionPort = async (request) => {
     if (this.failWith !== undefined) throw this.failWith
@@ -61,6 +65,10 @@ class FakePort {
       send: (text: string) => {
         this.sent.push(text)
         return true
+      },
+      interrupt: async () => {
+        this.interrupted.push(index)
+        return this.interruptTakes
       }
     }
   }
@@ -571,6 +579,36 @@ describe('HeldSessionRegistry lifetime', () => {
     expect(registry.sendText('sess-1', 'dig deeper')).toBe(true)
     expect(port.sent).toEqual(['dig deeper'])
     expect(registry.sendText('sess-nobody', 'dig deeper')).toBe(false)
+  })
+
+  it('interrupts the turn on a session it holds, and refuses one it does not (#210)', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    await expect(registry.interrupt('sess-1')).resolves.toBe(true)
+    expect(port.interrupted).toEqual([0])
+
+    await expect(registry.interrupt('sess-nobody')).resolves.toBe(false)
+    // Refused, never attempted against whatever else is held: an interrupt
+    // aimed at a session this panel does not hold has no stream to reach.
+    expect(port.interrupted).toEqual([0])
+    // And the session it does hold is still held — an interrupt ends the turn,
+    // not the session, which is the whole distinction from close (#210).
+    expect(port.closed).toEqual([])
+    expect(registry.count()).toBe(1)
+  })
+
+  it('reports an interrupt the stream would not take, instead of claiming one (#210)', async () => {
+    const port = new FakePort()
+    port.interruptTakes = false
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    await expect(registry.interrupt('sess-1')).resolves.toBe(false)
+    expect(port.interrupted).toEqual([0])
   })
 })
 

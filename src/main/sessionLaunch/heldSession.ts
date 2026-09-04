@@ -97,6 +97,20 @@ export interface HeldSessionHandle {
    * take it — a session already closing, above all.
    */
   send(text: string): boolean
+  /**
+   * Cut the running turn short, leaving the session open for the next one
+   * (#210).
+   *
+   * A DIFFERENT act from `close`, and the difference is the whole reason this
+   * exists: closing ends the session, interrupting ends the turn. The panel's
+   * Kick means the second, so an implementation that can only do the first must
+   * say which one it did rather than let the panel report the other.
+   *
+   * False when the interrupt did not happen. Async because the mechanism is a
+   * control request to the agent, not a local flag: it is the one thing on this
+   * handle that has to reach the child and be acknowledged.
+   */
+  interrupt(): Promise<boolean>
 }
 
 /**

@@ -29,21 +29,45 @@ import type { StageTimings } from './timing'
  * A 'codex-queue' target has no such second address and needs none: it wants
  * neither a window nor a pid, only the thread's own UUID, which is why it is
  * the one channel a Codex session has ever had (#97).
+ *
+ * A 'held-session' target is the one kind no provider ever reports, because it
+ * is not a fact about the session — it is a fact about THIS PROCESS: the panel
+ * is holding that session's own input stream, so the message goes onto it
+ * directly (#210). It carries no fallback address on purpose. The relay name a
+ * held session also has is exactly the trap #210 was: an SDK-hosted session has
+ * no REPL, so cross-session messaging reaches a queue nothing drains, and a
+ * relay exiting 0 for it is the ✓ that cannot be true.
  */
 export type TextDeliveryTarget =
   | { kind: 'terminal'; pid: number; sessionName?: string }
   | { kind: 'claude-relay'; sessionName: string }
   | { kind: 'foreman-relay'; foremanDwarfId: string; workerName: string }
   | { kind: 'codex-queue'; threadId: string }
+  | { kind: 'held-session'; sessionId: string }
 
-/** A target that can actually be written to (a foreman hop has been resolved away). */
+/**
+ * A target that can actually be written to (a foreman hop has been resolved away).
+ *
+ * 'held-session' is writable but NOT through TextDeliveryPort below: this file's
+ * two halves split provider knowledge from platform mechanism, and holding a
+ * stream open is neither — it belongs to HeldSessionRegistry, which the runtime
+ * owns. So the runtime dispatches this kind to the registry, and no per-OS
+ * implementation ever grows a branch for it.
+ */
 export type TextDeliveryEndpoint = Extract<
   TextDeliveryTarget,
-  { kind: 'terminal' } | { kind: 'claude-relay' } | { kind: 'codex-queue' }
+  | { kind: 'terminal' }
+  | { kind: 'claude-relay' }
+  | { kind: 'codex-queue' }
+  | { kind: 'held-session' }
 >
 
 /**
  * The endpoints a KICK can land on — every writable one except the Codex queue.
+ *
+ * 'held-session' is the strongest of them: the panel holds the session's own
+ * stream, so a kick there is a real interrupt of the running turn rather than an
+ * instruction the session may decline (#210).
  *
  * A queued item is drained at the thread's next idle boundary, so an interrupt
  * sent that way would arrive precisely when the turn it meant to cut short had
