@@ -337,6 +337,75 @@ describe('AgentRuntime activation', () => {
       })
     })
 
+    it("names a Codex agent's parent thread on the live board, never its id prefix", async () => {
+      // #218 on the path the issue measured. A Codex sub-agent is a thread of
+      // its own, so its dwarf id is `codex:<uuid>` exactly like a root's — and
+      // the launcher used to be read out of that id, which named the literal
+      // `codex`, matched no dwarf, and left every spawned agent's prompt under
+      // the human's face. The edge the provider now declares says who.
+      const codexCrew: Provider = {
+        kind: 'codex',
+        scan: vi.fn<Provider['scan']>().mockResolvedValue([
+          {
+            provider: 'codex',
+            sessionId: 'thread-p',
+            cwd: 'C:\work\project',
+            status: 'busy',
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: 'codex:thread-p',
+                provider: 'codex',
+                role: 'foreman',
+                name: 'codex-thread-p',
+                status: 'working',
+                sessionId: 'thread-p'
+              }
+            ]
+          },
+          {
+            provider: 'codex',
+            sessionId: 'thread-c',
+            cwd: 'C:\work\project',
+            status: 'busy',
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: 'codex:thread-c',
+                provider: 'codex',
+                role: 'worker',
+                name: 'Bernoulli',
+                status: 'working',
+                sessionId: 'thread-c',
+                parentId: 'codex:thread-p',
+                description: '/root/audit_chain_report'
+              }
+            ]
+          }
+        ]),
+        feed: vi.fn().mockResolvedValue(CREW_FEED)
+      }
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [codexCrew],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(runtime.dwarfFeed('codex:thread-c')).resolves.toEqual({
+        readable: true,
+        messages: [
+          {
+            role: 'user',
+            text: 'survey the seam',
+            timestamp: 't0',
+            issuer: { role: 'foreman', name: 'codex-thread-p' }
+          },
+          { role: 'assistant', text: 'On my way.', timestamp: 't1' }
+        ]
+      })
+    })
+
     /**
      * #192: the poll that first reports a dwarf as leaving is the first that
      * can carry its final reply, so the panel reads once more at that edge.

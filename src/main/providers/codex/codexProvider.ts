@@ -581,6 +581,11 @@ export class CodexProvider implements Provider {
       lastMessage: redactSecrets(rollout?.info.lastMessage),
       sessionId
     }
+    // What a spawned agent was asked to do (#218). Registry-only, and only
+    // ever the spawn blob's own `agent_path`: a root thread was nobody's
+    // spawn, so it has no agent definition behind it and gets no objective —
+    // the prompt in its rollout really was the human's.
+    if (thread?.agentPath !== undefined) mainDwarf.description = thread.agentPath
     if (thread?.tokensUsed !== undefined) {
       mainDwarf.tokensUsed = thread.tokensUsed
       // Mirrors tokensUsed so the ore/vault economy has one field to sum
@@ -692,7 +697,14 @@ export class CodexProvider implements Provider {
   ): void {
     for (const child of discovered) {
       const parentSessionId = child.parentSessionId ?? edges.get(child.snapshot.sessionId)
-      if (parentSessionId !== undefined) this.parentSessions.add(parentSessionId)
+      if (parentSessionId === undefined) continue
+      this.parentSessions.add(parentSessionId)
+      // The same edge, published for the board (#218). A Codex sub-agent's id
+      // is `codex:<uuid>` exactly like a root's, so nothing about it says who
+      // launched it — and messageIssuer used to read the launcher out of that
+      // id, which named the literal `codex`. Stated here, it is the fact Mine
+      // History has always resolved through `parentThreadId`, on the live path.
+      child.mainDwarf.parentId = `codex:${parentSessionId}`
     }
     // Applied after the whole scan is read so an edge first seen in THIS scan
     // reaches a parent whose dwarf was already built.

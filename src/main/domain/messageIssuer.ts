@@ -18,41 +18,65 @@ import type { Dwarf, DwarfRole, FeedMessage, MessageIssuer } from './types'
  */
 
 /**
- * The one rank whose launcher the board can prove, and the rank that launcher
- * must have.
+ * The one rank pairing that can stand in for an edge nobody declared, and the
+ * rank the stand-in launcher must have.
  *
  * A `worker` is a DEPTH-1 spawn (see rankForSpawnDepth), so the only thing that
- * can have launched it is the root of its own session — and a subagent's dwarf
- * id is its session dwarf's id with its own agent id appended, in both the
- * observed path (`${mainDwarfId}:${agentId}`) and the held one (`crewDwarfId`).
- * That makes the launcher findable and the finding checkable.
+ * can have launched it is the root of its own session — and that root's id is
+ * derivable from the worker's OWN fields, `${provider}:${sessionId}`, without
+ * reading a single character of the worker's id. Claude's observed-session path
+ * declares no edge, so this is what still names a foreman for its workers.
  *
- * A `worker2` is deliberately absent, and its absence is the load-bearing part.
- * `rankForSpawnDepth` gives that rank to depth 2 AND DEEPER, so the agent above
- * one is a worker or another worker2 — unknowable from the rank — and its id
- * names the session it belongs to rather than the agent that spawned it. The
- * fact that would settle it is `HeldCrew`'s own `parentTaskId`, which is not on
- * the wire; nothing renders a worker2's transcript today (a held crew member is
- * no provider's feed source), so it is left unproved rather than guessed.
+ * Every other rank is deliberately absent, and the absence is load-bearing.
+ * `rankForSpawnDepth` gives `worker2` to depth 2 AND DEEPER, so the agent above
+ * one is a worker or another worker2 and no pairing describes it; a Codex
+ * sub-agent is a session dwarf whose parent is another session dwarf, which no
+ * pairing describes either. Those need the real edge, and they now have one.
  */
 const LAUNCHER_RANK: Partial<Record<DwarfRole, DwarfRole>> = { worker: 'foreman' }
 
 /**
  * The agent that launched `dwarf`, or undefined when nothing on the board
  * proves one — including for every root, whose prompt really was the human's.
+ *
+ * ONE question, asked of the board: which dwarf is at the other end of this
+ * dwarf's parent edge? A provider that observed the spawn declares the edge
+ * (`parentId`); a Claude subagent whose provider declares none falls back to
+ * its session's own root, which its depth-1 rank proves is its launcher.
+ * Neither route reads a substring of an id: that is what named the literal
+ * `codex` for every Codex agent (#218) and the wrong session for a worker2
+ * (#189).
+ *
+ * The launcher's RANK comes from the launcher's own board entry in both cases,
+ * so nothing here infers one — which is why a worker2 launched by a worker and
+ * a Codex agent launched by a foreman need no rule of their own.
  */
 export function launchingAgentOf(dwarf: Dwarf, board: readonly Dwarf[]): MessageIssuer | undefined {
-  const expected = LAUNCHER_RANK[dwarf.role]
-  if (expected === undefined) return undefined
-  const separator = dwarf.id.lastIndexOf(':')
-  if (separator <= 0) return undefined
-  const launcherId = dwarf.id.slice(0, separator)
+  const launcherId = launcherIdOf(dwarf)
+  // A dwarf is never its own launcher. A session root's derived root id is its
+  // own, and a provider that named an edge back to the dwarf itself has stated
+  // no edge at all.
+  if (launcherId === undefined || launcherId === dwarf.id) return undefined
   const launcher = board.find((candidate) => candidate.id === launcherId)
-  // A launcher of the wrong rank is not this dwarf's launcher: a session dwarf
-  // and a subagent of it share the same id prefix, and only the rank tells the
-  // prefix that is a session from one that is a coincidence.
-  if (launcher === undefined || launcher.role !== expected) return undefined
+  if (launcher === undefined) return undefined
+  // The rank check belongs to the DERIVED edge alone: it is what tells a
+  // session root apart from another dwarf that happens to sit at that id. A
+  // declared edge needs no such proof — the provider watched the spawn.
+  if (dwarf.parentId === undefined && launcher.role !== LAUNCHER_RANK[dwarf.role]) {
+    return undefined
+  }
   return { role: launcher.role, name: launcher.name }
+}
+
+/**
+ * The id of the dwarf at the other end of this dwarf's parent edge, declared or
+ * derived — never parsed out of the dwarf's own id.
+ */
+function launcherIdOf(dwarf: Dwarf): string | undefined {
+  if (dwarf.parentId !== undefined) return dwarf.parentId
+  return LAUNCHER_RANK[dwarf.role] === undefined
+    ? undefined
+    : `${dwarf.provider}:${dwarf.sessionId}`
 }
 
 /**

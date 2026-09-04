@@ -273,6 +273,19 @@ export function heldCrewDwarfs(root: Dwarf, crew: HeldCrew): Dwarf[] {
       // signal, so an agent that is out is never guessed into waiting.
       status: 'working',
       ...(description === undefined ? {} : { description }),
+      // The parent edge, carried onto the wire so a worker2's prompt can be
+      // attributed to the agent that actually wrote it (#189). `parentTaskId`
+      // is a task id and means nothing to the board, so it is published as the
+      // dwarf id that task is drawn under — the same id crewDwarfId gives the
+      // parent itself, which is what makes the two ends meet.
+      //
+      // Absent stays absent. A depth-1 member has no parent task and needs
+      // none: messageIssuer derives its session's root from its own fields.
+      // A deeper one whose parent the stream never named keeps no issuer at
+      // all, because naming the session there would be a guess.
+      ...(member.parentTaskId === undefined
+        ? {}
+        : { parentId: crewDwarfId(root, member.parentTaskId) }),
       sessionId: root.sessionId,
       ...(root.pid === undefined ? {} : { pid: root.pid })
     } satisfies Dwarf

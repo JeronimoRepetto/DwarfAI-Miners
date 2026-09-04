@@ -31,6 +31,19 @@ export interface CodexThread {
   parentThreadId?: string
   agentName?: string
   /**
+   * The agent definition this thread was spawned as (`/root/audit_chain_report`)
+   * — the objective, and the only field that states one (#218).
+   *
+   * A Codex child thread is a FORK of its parent: its rollout's first
+   * `role:'user'` item is the HUMAN's original prompt rather than the
+   * instruction the parent gave it, and it carries no `event_msg/user_message`
+   * at all, so nothing readable in the transcript says what it was asked to
+   * do. The spawn blob names it, as a field.
+   *
+   * Present only for a spawned sub-agent, like `parentThreadId`.
+   */
+  agentPath?: string
+  /**
    * The plain `threads.source` tag — 'cli' for a CLI/TUI session, 'vscode' for
    * the desktop app. Absent when the column carries the sub-agent spawn blob
    * instead, which is a different fact and is parsed separately above.
@@ -46,6 +59,8 @@ export interface CodexThread {
 export interface CodexThreadSource {
   parentThreadId?: string
   agentName?: string
+  /** The agent definition the spawn names; the objective (#218). */
+  agentPath?: string
 }
 
 function asString(value: unknown): string | undefined {
@@ -98,8 +113,13 @@ export function parseCodexThreadSource(source: unknown): CodexThreadSource {
   const result: CodexThreadSource = {}
   const parentThreadId = asString(threadSpawn.parent_thread_id)
   const agentName = asString(threadSpawn.agent_nickname)
+  // Kept rather than dropped (#218). It is read verbatim: `/root/…` is the
+  // agent definition's own path, and prettifying it into a sentence would be
+  // this app writing an objective instead of repeating the one it was given.
+  const agentPath = asString(threadSpawn.agent_path)
   if (parentThreadId !== undefined) result.parentThreadId = parentThreadId
   if (agentName !== undefined) result.agentName = agentName
+  if (agentPath !== undefined) result.agentPath = agentPath
   return result
 }
 
@@ -136,6 +156,7 @@ function toThread(row: SqliteRow): CodexThread | null {
   const agentName = source.agentName ?? asString(row.agent_nickname)
   if (source.parentThreadId !== undefined) thread.parentThreadId = source.parentThreadId
   if (agentName !== undefined) thread.agentName = agentName
+  if (source.agentPath !== undefined) thread.agentPath = source.agentPath
   const sourceTag = plainSourceTag(row.source)
   if (sourceTag !== undefined) thread.sourceTag = sourceTag
   return thread
