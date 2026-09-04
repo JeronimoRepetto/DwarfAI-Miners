@@ -296,6 +296,56 @@ describe('resolveKickDelivery', () => {
     ).toBeNull()
   })
 
+  /**
+   * A process this panel LAUNCHED is the mirror image of the queue (#217): it
+   * can be ended and it can never be written to, because `codex exec` reads
+   * one prompt and exits. So the kick routes and the message does not — the
+   * opposite asymmetry to the queue's, through the same one rule each.
+   */
+  it('routes a kick to a process this panel launched', () => {
+    expect(
+      resolveKickDelivery(
+        'codex:t1',
+        targetsFrom({ 'codex:t1': { kind: 'launched-process', launchId: 'launch:1' } })
+      )
+    ).toEqual({
+      channel: 'launched-process',
+      endpoint: { kind: 'launched-process', launchId: 'launch:1' },
+      prefix: ''
+    })
+  })
+
+  it('refuses to route a message to a process this panel launched', () => {
+    expect(
+      resolveTextDelivery(
+        'codex:t1',
+        targetsFrom({ 'codex:t1': { kind: 'launched-process', launchId: 'launch:1' } })
+      )
+    ).toBeNull()
+  })
+
+  /**
+   * Ending a process is the whole session, so it may only ever answer a kick
+   * aimed at that session itself. A worker's cancel that reached here would
+   * kill the foreman's process — the user asked to stop one agent, not to end
+   * everything running in that folder.
+   */
+  it("refuses a worker's cancel that would end its foreman's whole process", () => {
+    expect(
+      resolveKickDelivery(
+        'codex:t1:agent-9',
+        targetsFrom({
+          'codex:t1:agent-9': {
+            kind: 'foreman-relay',
+            foremanDwarfId: 'codex:t1',
+            workerName: 'Explorer'
+          },
+          'codex:t1': { kind: 'launched-process', launchId: 'launch:1' }
+        })
+      )
+    ).toBeNull()
+  })
+
   it('still routes that same session for a message', () => {
     // The point of the refusal above: it takes away the kick, never the send.
     expect(
@@ -407,6 +457,26 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'codex-queue',
       cancel: null,
+      adjustEffort: null
+    })
+  })
+
+  /**
+   * The second asymmetric channel, and the opposite one (#217). A session
+   * launched with `codex exec` takes no messages — it reads one prompt and
+   * exits — but the panel still holds the process it started, so the exit is
+   * real. The matrix therefore has to carry a cancel WITHOUT a sendText, which
+   * `textDelivery` must stay absent for: it is the field the composer reads.
+   */
+  it('stamps a cancel and no send channel for a session this panel launched', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf({ id: 'codex:t1', provider: 'codex' })])],
+      targetsFrom({ 'codex:t1': { kind: 'launched-process', launchId: 'launch:1' } })
+    )
+    expect(stamped?.dwarfs[0]?.textDelivery).toBeUndefined()
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: null,
+      cancel: 'launched-process',
       adjustEffort: null
     })
   })

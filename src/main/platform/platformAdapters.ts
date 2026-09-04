@@ -3,6 +3,7 @@ import { NodeFs } from '../adapters/fsLike'
 import type { FsLike } from '../adapters/fsLike'
 import { createCliDetector, type AgentCli, type CliDetector } from './cliDetection'
 import { createProcessProbe, type ProbeRunner, type ProcessProbePort } from './processProbe'
+import { createProcessEnd, type EndProcessRunner, type ProcessEndPort } from './processEnd'
 import { focusPid as windowsFocusPid, type ShellRunner } from './focus'
 import {
   launchTranscriptViewer,
@@ -72,6 +73,8 @@ export interface PlatformAdapters {
   viewerScriptPath: string
   textDelivery: TextDeliveryPort
   processProbe: ProcessProbePort
+  /** Ends a process and everything below it — the exit from a launched session (#217). */
+  processEnd: ProcessEndPort
   /** Which agent CLIs are installed on this machine, and where (#91). */
   cliDetector: CliDetector
 }
@@ -95,6 +98,8 @@ export interface PlatformAdapterOptions {
   runCommand?: CommandRunner
   /** Injected for tests; defaults to a real process-list probe. */
   probeRun?: ProbeRunner
+  /** Injected for tests; defaults to a real taskkill/kill run (#217). */
+  endRun?: EndProcessRunner
   /** Injected for tests; defaults to node:child_process.spawn. */
   spawn?: SpawnFn
   /** Injected for tests; defaults to a real claude spawn. */
@@ -198,6 +203,10 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
     processProbe: createProcessProbe({
       platform,
       ...(options.probeRun === undefined ? {} : { run: options.probeRun })
+    }),
+    processEnd: createProcessEnd({
+      platform,
+      ...(options.endRun === undefined ? {} : { run: options.endRun })
     }),
     cliDetector
   }

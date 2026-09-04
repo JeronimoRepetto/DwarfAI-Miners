@@ -132,6 +132,23 @@ no terminal window [#86].
   **not** detached but **with** `windowsHide`, so it gets an invisible console of its own to pass
   down; the intermediary must then stay alive, because libuv's job object is what keeps its child
   alive. `buildLaunchSpawn` carries the measurements.
+- **Letting go is not the same as having no exit** [#217]. Detached still means detached — the
+  session outlives the panel, and quitting the tray still ends nothing — but the launcher now hands
+  back the **pid it spawned** and the notice of that process ending, and the runtime keeps both
+  [code: `src/main/sessionLaunch/launchedSessions.ts`]. So a launched session can be ended **on
+  purpose**, which is what a Kick on one now does: it ends the process TREE, not the turn, and the
+  panel says which of those two it did. Ending the tree is the per-OS half — a forced
+  `taskkill` tree kill on Windows, a `kill -TERM` process-group signal elsewhere — so it sits
+  behind `platform/processEnd.ts` like every other per-OS act. Measured live on Windows 11 / Node
+  v24.11.1 against a rebuilt copy of this exact shape: intermediary, program and grandchild all
+  gone, `taskkill` naming each one, and the retained handle's own `exit` observed firing. (The
+  same run showed a plain `TerminateProcess` on the intermediary taking the tree with it as well,
+  through libuv's KILL_ON_JOB_CLOSE cascade — but only while every link spawns through libuv, and
+  the CLI's own tool processes do not, which is why the tree kill is what ships.) Two honest
+  limits: the register is in memory, so a session launched by a **previous** run of the app has no
+  exit here, and the launch is bound to the first session root of that provider to appear in that
+  mine — a session already on the board is never claimed, because ending somebody else's process
+  is the one mistake this must not make.
 
 ### The held session — open, #113
 
@@ -231,6 +248,14 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 | **Detached launch**             | yes — the child is detached and `unref`'d          | nothing the panel was responsible for         |
 | **Held (SDK) session**          | the **persisted** session does; the child does not | the **in-flight turn**; resumable by id after |
 | **Observed (terminal / Herdr)** | yes, including mid-turn                            | nothing — but no structured question channel  |
+
+Surviving the quit is not the same as being beyond reach. A detached launch made **in this run of
+the app** can be ended deliberately from the panel — Kick ends its process tree — because the pid
+it started is retained for as long as the app lives [#217]. Quitting still ends nothing, which is
+the point of detaching in the first place; what changed is that "the app cannot stop what it
+started" stopped being true while it is running. After a restart it is true again, and honestly so:
+the pid died with the process that knew it, and signalling a remembered number is how an unrelated
+process gets killed.
 
 Claude and Codex sessions persist to disk and resume by id [V, #95], so a panel restart costs nothing
 already written. Both models are supported; neither had to win.

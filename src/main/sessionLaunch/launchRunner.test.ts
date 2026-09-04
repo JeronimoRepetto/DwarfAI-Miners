@@ -5,12 +5,14 @@ import type { FsLike } from '../adapters/fsLike'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
+import type { LaunchedProcess } from './launchedSessions'
 import {
   CONSOLE_HOSTING_PROGRAM,
   launchClaudeSession,
   runLaunchProcess,
   type LaunchChild,
   type LaunchInvocation,
+  type LaunchRunner,
   type SpawnLaunch
 } from './launchRunner'
 
@@ -60,7 +62,9 @@ function launch(options: {
   provider?: DwarfProvider
   prompt?: string
   cli?: CliDetector
-  run?: (invocation: LaunchInvocation) => Promise<void>
+  // Typed as the port itself since #217: the runner reports what it started,
+  // so that the panel can end it later. Was `(invocation) => Promise<void>`.
+  run?: LaunchRunner
   env?: NodeJS.ProcessEnv
   platform?: Platform
   fs?: FsLike
@@ -384,6 +388,41 @@ describe('launching Codex', () => {
  * child_process (#193). Nothing runs here — the fake records the call and
  * reports the child as started, so the suite stays platform-independent.
  */
+/*
+ * What the panel keeps of a launch (#217). The verdict crossing the wire is
+ * unchanged — a process started, and nothing more is claimed — so the retained
+ * handle leaves through its own seam rather than through the result.
+ */
+describe('launchClaudeSession retention', () => {
+  it('reports the process it started, so the caller can decide to keep it', async () => {
+    const started: LaunchedProcess = { pid: 4242, onExit: () => {} }
+    const { result } = launch({ run: vi.fn().mockResolvedValue(started) })
+
+    await expect(result).resolves.toEqual({
+      launched: true,
+      provider: 'claude',
+      retained: started
+    })
+  })
+
+  it('reports no process when the launch never started one', async () => {
+    const { result } = launch({
+      cli: detector({ cli: 'codex', installed: false, source: 'convention' }),
+      provider: 'codex'
+    })
+
+    const verdict = await result
+    expect(verdict.launched).toBe(false)
+    expect(verdict.retained).toBeUndefined()
+  })
+
+  it('reports no process when the runner had none to hand back', async () => {
+    const { result } = launch({ run: vi.fn().mockResolvedValue(undefined) })
+
+    await expect(result).resolves.toEqual({ launched: true, provider: 'claude' })
+  })
+})
+
 describe('runLaunchProcess', () => {
   function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
     return {
@@ -397,17 +436,25 @@ describe('runLaunchProcess', () => {
     }
   }
 
-  function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn') {
+  /*
+   * Since #217 the fake also carries a pid and an 'exit' subscription, because
+   * that is what the runner now hands back for the panel to hold onto. Nothing
+   * else about it changed.
+   */
+  function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn', pid: number | null = 4242) {
     const calls: Array<{ command: string; args: readonly string[]; options: SpawnOptions }> = []
     const written: string[] = []
     let unrefCalls = 0
+    const exited: Array<() => void> = []
     const spawnProcess: SpawnLaunch = (command, args, options) => {
       calls.push({ command, args, options })
       const spawned: Array<() => void> = []
       const failed: Array<(error: Error) => void> = []
       const child: LaunchChild = {
+        ...(pid === null ? {} : { pid }),
         once(event, listener) {
           if (event === 'spawn') spawned.push(listener as () => void)
+          else if (event === 'exit') exited.push(listener as () => void)
           else failed.push(listener)
           return child
         },
@@ -429,7 +476,15 @@ describe('runLaunchProcess', () => {
       })
       return child
     }
-    return { spawnProcess, calls, written, unrefCalls: () => unrefCalls }
+    return {
+      spawnProcess,
+      calls,
+      written,
+      unrefCalls: () => unrefCalls,
+      exit: () => {
+        for (const listener of exited) listener()
+      }
+    }
   }
 
   /*
@@ -443,12 +498,14 @@ describe('runLaunchProcess', () => {
   it('spawns the command as given — detached, hidden, no shell — and writes the prompt to stdin', async () => {
     const spawn = fakeSpawn()
 
+    // Was `resolves.toBeUndefined()` before #217; the runner now answers with
+    // the retained handle, and the spawn assertions below are unchanged.
     await expect(
       runLaunchProcess(
         invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'] }),
         spawn.spawnProcess
       )
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ pid: 4242 })
 
     expect(spawn.calls).toHaveLength(1)
     const call = spawn.calls[0]!
@@ -518,6 +575,52 @@ describe('runLaunchProcess', () => {
     expect(call.command).toBe(CODEX_PATH)
     expect(call.args).toEqual(['exec', '-'])
     expect(call.args).not.toContain('-e')
+  })
+
+  /*
+   * #217. The launch is still detached and still let go of, but the panel now
+   * keeps the one thing it needs to be able to end it: the pid of the process
+   * it spawned. For a shim launch that is the console-hosting intermediary,
+   * whose child is the real CLI — so ending the session means ending that
+   * tree, and the pid retained is the one this spawn returned rather than a
+   * guess about the program underneath it.
+   */
+  it('hands back the pid of the process it started, so the panel can end it', async () => {
+    const spawn = fakeSpawn()
+
+    const retained = await runLaunchProcess(
+      invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'], viaNodeEntry: true }),
+      spawn.spawnProcess
+    )
+
+    expect(retained?.pid).toBe(4242)
+    // Still detached and still unref'd: the session outlives the panel, and
+    // quitting the app does not end it. Only an explicit kick does.
+    expect(spawn.calls[0]!.options.detached).toBe(true)
+    expect(spawn.unrefCalls()).toBe(1)
+  })
+
+  /*
+   * The pid-reuse guard's own half of the bargain: the handle reports that
+   * process going, so nothing ever signals a number that has since been handed
+   * to something else on this machine.
+   */
+  it('reports the process ending, through the handle it handed back', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+
+    let gone = false
+    retained?.onExit(() => {
+      gone = true
+    })
+    expect(gone).toBe(false)
+    spawn.exit()
+    expect(gone).toBe(true)
+  })
+
+  it('retains nothing when the child reports no pid at all', async () => {
+    const spawn = fakeSpawn('spawn', null)
+    await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).resolves.toBeUndefined()
   })
 
   it('keeps the prompt off argv with the intermediary in the chain too', async () => {

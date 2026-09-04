@@ -31,6 +31,7 @@ import type {
   HeldSessionTelemetryUpdate
 } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
+import { LaunchedSessionRegistry, type LaunchedProcess } from '../sessionLaunch/launchedSessions'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { TierService, type TierThresholds } from '../tier/tierService'
 import { AgentRuntime, expandHomePath } from './runtime'
@@ -1697,6 +1698,265 @@ describe('AgentRuntime over the Codex message queue', () => {
   })
 })
 
+/*
+ * The dead end #217 reported: a Codex session started from the panel could not
+ * be messaged, interrupted or killed, so the app offered no exit from a process
+ * the person had started in it.
+ *
+ * `codex exec` tags its thread source='exec' rather than 'cli', so the queue
+ * gate refuses it (correctly — it exits with its turn, and a queue nothing
+ * drains is the exit-0-shaped lie), and the provider therefore reports NO
+ * channel at all. What is added is the one channel that does not need the
+ * session to cooperate: the panel started that process and still holds it.
+ */
+describe('AgentRuntime ending a session it launched (#217)', () => {
+  const MINE_PATH = 'C:\\work\\project'
+  const THREAD_ID = 'thread-launched'
+  const DWARF_ID = `codex:${THREAD_ID}`
+
+  /** A Codex session with no channel of its own: an exec thread is not queue-reachable. */
+  function execProvider(sessionId = THREAD_ID): Provider {
+    return {
+      kind: 'codex',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'codex',
+          sessionId,
+          cwd: MINE_PATH,
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: `codex:${sessionId}`,
+              provider: 'codex',
+              role: 'worker',
+              name: 'codex-01a04d79',
+              status: 'working',
+              sessionId
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: () => null
+    }
+  }
+
+  function retained(pid = 4242): { process: LaunchedProcess; exit: () => void } {
+    const listeners: Array<() => void> = []
+    return {
+      process: {
+        pid,
+        onExit(listener) {
+          listeners.push(listener)
+        }
+      },
+      exit: () => {
+        for (const listener of listeners) listener()
+      }
+    }
+  }
+
+  async function runtimeWithLaunch(
+    options: {
+      endProcessTree?: (pid: number) => Promise<boolean>
+      process?: LaunchedProcess
+      knownSessionIds?: string[]
+      provider?: Provider
+    } = {}
+  ) {
+    const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
+    const launched = new LaunchedSessionRegistry({ endProcessTree })
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [options.provider ?? execProvider()],
+      launchedSessions: launched,
+      onMinesUpdated: vi.fn()
+    })
+    launched.retain({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      process: options.process ?? retained().process,
+      knownSessionIds: options.knownSessionIds ?? []
+    })
+    await runtime.refresh()
+    return { runtime, launched, endProcessTree }
+  }
+
+  it('ends the process tree of the session it launched, instead of refusing for want of a channel', async () => {
+    const { runtime, endProcessTree } = await runtimeWithLaunch()
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'launched-process'
+    })
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+  })
+
+  /*
+   * The composer stays disabled, and that is the right behaviour with the
+   * right reason at last: the queue is NOT widened to admit an exec thread,
+   * because `codex exec` has exited by the time anything could drain one.
+   */
+  it('offers a cancel and no send channel on the dwarf it launched', async () => {
+    const { runtime } = await runtimeWithLaunch()
+    const dwarf = runtime.getMines()[0]?.dwarfs[0]
+
+    expect(dwarf?.textDelivery).toBeUndefined()
+    expect(dwarf?.capabilities).toEqual({
+      sendText: null,
+      cancel: 'launched-process',
+      adjustEffort: null
+    })
+  })
+
+  it('refuses a message for it with the launch shape as the reason, not the generic one', async () => {
+    const { runtime } = await runtimeWithLaunch()
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: DWARF_ID,
+      text: 'run the tests',
+      pressEnter: true
+    })
+    expect(result.delivered).toBe(false)
+    expect(result.via).toBe('none')
+    expect(result.error).toBe(
+      'That session takes no messages: it was launched with a single prompt and exits with its turn.'
+    )
+  })
+
+  /*
+   * The pid-reuse guard, end to end: once that process has gone its number can
+   * belong to anything on this machine, so nothing is signalled and the panel
+   * is told the session had already ended.
+   */
+  it('signals nothing and says so when the process has already gone', async () => {
+    const handle = retained()
+    const { runtime, endProcessTree } = await runtimeWithLaunch({ process: handle.process })
+    handle.exit()
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: false,
+      via: 'launched-process',
+      error: 'That session has already ended.'
+    })
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  it('never reports a session ended that the platform refused to end', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(false)
+    const { runtime } = await runtimeWithLaunch({ endProcessTree })
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: false,
+      via: 'launched-process',
+      error: 'That session could not be ended.'
+    })
+  })
+
+  /*
+   * A session that was already on the board when the launch happened is
+   * somebody else's, and ending somebody else's process is the one mistake
+   * this whole binding exists to avoid. The dwarf keeps the dead end it had.
+   */
+  it('offers no exit for a session it did not start', async () => {
+    const { runtime } = await runtimeWithLaunch({ knownSessionIds: [THREAD_ID] })
+
+    // No matrix at all and every field null mean the same thing here — see
+    // DwarfCapabilities — and what is being asserted is "no cancel channel".
+    expect(runtime.getMines()[0]?.dwarfs[0]?.capabilities?.cancel ?? null).toBeNull()
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
+      delivered: false,
+      via: 'none'
+    })
+  })
+
+  /*
+   * What the panel is told is unchanged: a process started. The pid it started
+   * is main's business, and the runtime is what keeps it — reported by the
+   * launcher rather than kept behind it, because deciding whether to keep it
+   * needs the board.
+   */
+  it('keeps what the launcher started, and keeps it off the wire', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const handle = retained(777)
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    // One session in the mine to begin with — so there is a mine to launch
+    // into — and the launched one appearing on the poll after, exactly as the
+    // real thing arrives: through Codex's own storage, up to a poll later.
+    function snapshot(sessionId: string) {
+      return {
+        provider: 'codex' as const,
+        sessionId,
+        cwd: MINE_PATH,
+        status: 'idle' as const,
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: `codex:${sessionId}`,
+            provider: 'codex' as const,
+            role: 'worker' as const,
+            name: sessionId,
+            status: 'waiting' as const,
+            sessionId
+          }
+        ]
+      }
+    }
+    const scan = vi
+      .fn<Provider['scan']>()
+      .mockResolvedValueOnce([snapshot('was-here-first')])
+      .mockResolvedValue([snapshot('was-here-first'), snapshot(THREAD_ID)])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [
+        { kind: 'codex', scan, feed: vi.fn().mockResolvedValue([]), textDelivery: () => null }
+      ],
+      launchSession,
+      launchedSessions: new LaunchedSessionRegistry({ endProcessTree }),
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    // Nothing but the verdict crosses the wire — no pid, no launch id.
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    ).resolves.toEqual({ launched: true, provider: 'codex' })
+
+    await runtime.refresh()
+    const dwarfs = runtime.getMines()[0]!.dwarfs
+    // The session that was there before the launch keeps its dead end...
+    expect(
+      dwarfs.find((dwarf) => dwarf.sessionId === 'was-here-first')?.capabilities?.cancel ?? null
+    ).toBeNull()
+    // ...and the one that arrived after it is the one this panel can end.
+    expect(dwarfs.find((dwarf) => dwarf.sessionId === THREAD_ID)?.capabilities?.cancel).toBe(
+      'launched-process'
+    )
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
+      delivered: true,
+      via: 'launched-process'
+    })
+    expect(endProcessTree).toHaveBeenCalledWith(777)
+  })
+
+  it('logs the channel and the verdict, and never a message', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const { runtime } = await runtimeWithLaunch()
+      await runtime.kickDwarf({ dwarfId: DWARF_ID })
+      const lines = log.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(lines).toContain('launched-process')
+      expect(lines).toContain('delivered')
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
 describe('AgentRuntime provider wiring', () => {
   /**
    * R3-wiring-test-real-clock: this test builds a real (non-injected)
@@ -2496,6 +2756,9 @@ describe('AgentRuntime simulated provider wiring (#42)', () => {
         isCodexProcessRunning: vi.fn().mockResolvedValue(false),
         processStartTimeMs: vi.fn().mockResolvedValue(null)
       },
+      // Added by #217. A fake that never ends anything: no test here may end a
+      // real process tree.
+      processEnd: { endProcessTree: vi.fn().mockResolvedValue(false) },
       cliDetector: {
         detect: vi.fn().mockResolvedValue({ cli: 'claude', installed: false }),
         peek: vi.fn().mockReturnValue('unprobed')
@@ -4533,6 +4796,8 @@ describe('AgentRuntime provider availability (#86)', () => {
         relayToClaudeSession: async () => ({ delivered: true }),
         sendInterrupt: async () => ({ delivered: true })
       },
+      // Added by #217; never ends a real tree, like every other port here.
+      processEnd: { endProcessTree: async () => false },
       processProbe: {
         isCodexProcessRunning: async () => false,
         processStartTimeMs: async () => null

@@ -1,5 +1,5 @@
 import type { Mine, TextDeliveryChannel } from '../domain/types'
-import type { KickEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './port'
+import type { KickEndpoint, SendEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './port'
 
 /**
  * Turning a provider's raw target into something writable, and stamping the
@@ -15,7 +15,8 @@ import type { KickEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './p
 export interface ResolvedTextDelivery {
   /** Tier reported to the panel and the logs. */
   channel: TextDeliveryChannel
-  endpoint: TextDeliveryEndpoint
+  /** Narrower than a kick's: a process this panel launched takes no messages (see SendEndpoint). */
+  endpoint: SendEndpoint
   /** Prepended to the user's text, e.g. '[for agent Explorer] '. Empty for a direct send. */
   prefix: string
 }
@@ -110,12 +111,26 @@ export function resolveTextDelivery(
   targetOf: TextDeliveryLookup
 ): ResolvedTextDelivery | null {
   const hops = followForemanHops(dwarfId, targetOf)
-  if (hops === null) return null
+  if (hops === null || !canCarryText(hops.endpoint)) return null
   return {
     channel: hops.channel,
     endpoint: hops.endpoint,
     prefix: hops.workerNames.map((name) => `[for agent ${name}] `).join('')
   }
+}
+
+/**
+ * Whether a resolved endpoint can carry a MESSAGE — the mirror of canCarryKick
+ * below, and the second place send and kick routing part company (#217).
+ *
+ * See SendEndpoint in port.ts for why a launched process is excluded: it has
+ * read its one prompt and exited, so there is nothing left to hand text to.
+ * One rule in one place, for the reason canCarryKick is: the panel and the
+ * runtime must refuse the same dwarf, or the composer accepts text main will
+ * not take.
+ */
+function canCarryText(endpoint: TextDeliveryEndpoint): endpoint is SendEndpoint {
+  return endpoint.kind !== 'launched-process'
 }
 
 /**
@@ -128,6 +143,25 @@ export function resolveTextDelivery(
  */
 function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint {
   return endpoint.kind !== 'codex-queue'
+}
+
+/**
+ * The kick endpoint one resolved chain answers with, or null when it has none.
+ *
+ * Two refusals, and the second is about the hops rather than the endpoint:
+ * ending a launched process ends the WHOLE session, so it may only ever answer
+ * a kick aimed at that session itself. A worker's cancel that landed here
+ * would kill its foreman's process — the user asked for one agent to stop, not
+ * for everything running in that folder to be ended.
+ *
+ * Both callers read this one function, exactly as they read canCarryKick:
+ * duplicating the rule is how the panel and the runtime start disagreeing
+ * about the same dwarf (#97).
+ */
+function kickEndpointOf(hops: ForemanHops): KickEndpoint | null {
+  if (!canCarryKick(hops.endpoint)) return null
+  if (hops.endpoint.kind === 'launched-process' && hops.workerNames.length > 0) return null
+  return hops.endpoint
 }
 
 /**
@@ -144,10 +178,12 @@ export function resolveKickDelivery(
   targetOf: TextDeliveryLookup
 ): ResolvedKickDelivery | null {
   const hops = followForemanHops(dwarfId, targetOf)
-  if (hops === null || !canCarryKick(hops.endpoint)) return null
+  if (hops === null) return null
+  const endpoint = kickEndpointOf(hops)
+  if (endpoint === null) return null
   return {
     channel: hops.channel,
-    endpoint: hops.endpoint,
+    endpoint,
     prefix: hops.workerNames.map((name) => `[cancel agent ${name}] `).join('')
   }
 }
@@ -158,33 +194,43 @@ export function resolveKickDelivery(
  * trip. A 'leaving' dwarf is skipped: its session has already finished, so its
  * pid is stale and its name no longer addressable.
  *
- * capabilities.cancel mirrors the same resolved channel wherever a kick can
- * ride it: Kick reuses whatever routing sendText would use (see
- * resolveKickDelivery), just with a raw keystroke or a fixed instruction
- * instead of the user's text. The exception is a channel that cannot interrupt
- * a turn at all — the Codex queue — which stamps a null cancel beside a working
- * sendText, through the same canCarryKick rule resolveKickDelivery enforces
- * (#97). Read off the endpoint already resolved rather than by resolving a
- * second time: the poll asks each provider once per dwarf, and it should stay
- * once. adjustEffort is always null — no provider exposes a channel for it yet.
+ * The two halves of the matrix are resolved from ONE walk and can disagree,
+ * which is the whole reason it is a matrix. `sendText` is null wherever the
+ * endpoint cannot take text and `cancel` is null wherever it cannot take a
+ * kick, both read off the same predicates resolveTextDelivery and
+ * resolveKickDelivery enforce (#97, #217) rather than re-derived here — a
+ * second copy of either rule is how the panel and the runtime would start
+ * refusing different dwarfs.
+ *
+ * Two channels are asymmetric today, in opposite directions: the Codex queue
+ * delivers and cannot interrupt, and a process this panel launched can be
+ * ended and takes no messages. `textDelivery` mirrors sendText only, because
+ * it is the field the composer reads — stamping a channel that cannot carry
+ * text there would enable a box whose message main is bound to refuse.
+ *
+ * One walk per dwarf, which is why both halves come off `followForemanHops`
+ * here rather than from two resolve calls: the poll asks each provider once
+ * per dwarf, and it should stay once. adjustEffort is always null; no provider
+ * exposes a channel for it yet.
  */
 export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): Mine[] {
   return mines.map((mine) => ({
     ...mine,
     dwarfs: mine.dwarfs.map((dwarf) => {
       if (dwarf.status === 'leaving') return dwarf
-      const resolved = resolveTextDelivery(dwarf.id, targetOf)
-      return resolved === null
-        ? dwarf
-        : {
-            ...dwarf,
-            textDelivery: resolved.channel,
-            capabilities: {
-              sendText: resolved.channel,
-              cancel: canCarryKick(resolved.endpoint) ? resolved.channel : null,
-              adjustEffort: null
-            }
-          }
+      const hops = followForemanHops(dwarf.id, targetOf)
+      if (hops === null) return dwarf
+      const sendChannel = canCarryText(hops.endpoint) ? hops.channel : null
+      const kickChannel = kickEndpointOf(hops) === null ? null : hops.channel
+      return {
+        ...dwarf,
+        ...(sendChannel === null ? {} : { textDelivery: sendChannel }),
+        capabilities: {
+          sendText: sendChannel,
+          cancel: kickChannel,
+          adjustEffort: null
+        }
+      }
     })
   }))
 }

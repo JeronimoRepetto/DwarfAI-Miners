@@ -37,6 +37,14 @@ import type { StageTimings } from './timing'
  * held session also has is exactly the trap #210 was: an SDK-hosted session has
  * no REPL, so cross-session messaging reaches a queue nothing drains, and a
  * relay exiting 0 for it is the ✓ that cannot be true.
+ *
+ * A 'launched-process' target is the other kind no provider reports, and for
+ * the same reason: it is a fact about this process — the panel STARTED that
+ * session and still holds the process it started (#217). It is the one target
+ * that can be ended and can never be written to, so it addresses a launch
+ * rather than a session, a window or a pid: the pid behind it belongs to
+ * LaunchedSessionRegistry, which is what knows whether that process is still
+ * the one it started.
  */
 export type TextDeliveryTarget =
   | { kind: 'terminal'; pid: number; sessionName?: string }
@@ -44,6 +52,7 @@ export type TextDeliveryTarget =
   | { kind: 'foreman-relay'; foremanDwarfId: string; workerName: string }
   | { kind: 'codex-queue'; threadId: string }
   | { kind: 'held-session'; sessionId: string }
+  | { kind: 'launched-process'; launchId: string }
 
 /**
  * A target that can actually be written to (a foreman hop has been resolved away).
@@ -60,7 +69,22 @@ export type TextDeliveryEndpoint = Extract<
   | { kind: 'claude-relay' }
   | { kind: 'codex-queue' }
   | { kind: 'held-session' }
+  | { kind: 'launched-process' }
 >
+
+/**
+ * The endpoints a MESSAGE can land on — every writable one except a process
+ * this panel launched (#217).
+ *
+ * `codex exec` reads one prompt from stdin and exits when its turn ends, so
+ * there is no inbox behind a launched Codex session and no process left to
+ * read one: a composer that accepted text for it would take the message and
+ * lose it. The exclusion is in the type rather than in a comment so that
+ * sendDwarfText cannot grow a branch for it by accident; resolveTextDelivery
+ * is where it is enforced, and the panel's refusal says which launch shape it
+ * is refusing rather than the generic "no channel yet".
+ */
+export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-process' }>
 
 /**
  * The endpoints a KICK can land on — every writable one except the Codex queue.
@@ -76,6 +100,13 @@ export type TextDeliveryEndpoint = Extract<
  * on the untested half would be the exit-0-shaped lie (#97). The exclusion is
  * in the type rather than in a comment so kickDwarf cannot grow a queue branch
  * by accident; resolveKickDelivery is where it is enforced.
+ *
+ * 'launched-process' is the harshest of them and the only one that is not an
+ * interrupt at all: it ENDS the session rather than the turn (#217). Kick's
+ * meaning is "stop what you are doing" everywhere else, so this one is only
+ * ever offered where nothing weaker exists, and the panel has to say which act
+ * it performed — a person told a turn was interrupted, when the session is
+ * gone, has been told the wrong thing.
  */
 export type KickEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'codex-queue' }>
 

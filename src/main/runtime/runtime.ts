@@ -59,6 +59,7 @@ import {
   stampHeldTelemetry
 } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
+import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
 import {
@@ -112,6 +113,26 @@ const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
  */
 const HELD_STREAM_CLOSED = 'That session is no longer taking messages.'
 const HELD_KICK_REFUSED = "That session didn't take the interrupt."
+/**
+ * The three refusals for a session this panel LAUNCHED and can only end
+ * (#217).
+ *
+ * NO_LAUNCH_INBOX replaces the generic no-channel string for these dwarfs, and
+ * the difference is the whole point: "this session type can't receive messages
+ * yet" reads as a gap in the app, and a session started with one prompt that
+ * exits with its turn has no inbox to reach — a fact about the world. The
+ * panel's own copy for the disabled composer names the exact command (see
+ * actionBar.ts), which it can do because it knows the provider; this one is
+ * the race's fallback and stays provider-neutral.
+ *
+ * The other two are what an ending can honestly answer. Neither ever reads as
+ * an ended session: a kill the platform refused leaves the process running,
+ * and a process already gone was not ended by this kick.
+ */
+const NO_LAUNCH_INBOX =
+  'That session takes no messages: it was launched with a single prompt and exits with its turn.'
+const LAUNCH_ALREADY_ENDED = 'That session has already ended.'
+const LAUNCH_END_REFUSED = 'That session could not be ended.'
 const NO_SUCH_MINE = 'That mine is no longer on the map.'
 const EMPTY_PROMPT = 'Type a prompt first.'
 const LAUNCH_FAILED = 'The agent could not be started.'
@@ -242,6 +263,12 @@ export interface RuntimeOptions {
    * binary CLI detection found (#91).
    */
   heldSessions?: HeldSessionRegistry
+  /**
+   * Sessions the panel STARTED detached and still holds the process of, so
+   * that it can end one (#217). Injected for tests, which must never end a
+   * real process tree; the default ends it through the platform port.
+   */
+  launchedSessions?: LaunchedSessionRegistry
   /** Every per-OS adapter, already selected; injected for tests. */
   platformAdapters?: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
@@ -306,6 +333,8 @@ export class AgentRuntime {
   private readonly launchSession: SessionLauncher
   /** Sessions this panel started and still holds (#86, #94). */
   private readonly heldSessions: HeldSessionRegistry
+  /** Sessions this panel started and let go of, but can still end (#217). */
+  private readonly launched: LaunchedSessionRegistry
   /** Which agent CLIs this machine has (#91), asked when the Add Panel opens. */
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
@@ -474,6 +503,16 @@ export class AgentRuntime {
         detector: platform.cliDetector,
         start: createSdkHeldSession(),
         now: this.now,
+        log: (message) => console.log(message)
+      })
+    // Ending a process tree is NOT the same act on all three platforms, so
+    // unlike the two registries around it this one takes its per-OS half from
+    // platformAdapters — the single composition point — and keeps only the
+    // policy here (#217).
+    this.launched =
+      options.launchedSessions ??
+      new LaunchedSessionRegistry({
+        endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
         log: (message) => console.log(message)
       })
     // Composed here rather than in platformAdapters: starting a CLI is the same
@@ -647,6 +686,12 @@ export class AgentRuntime {
             confirmedTierOf
           )
         )
+        // Which session each launch of ours became (#217), decided against the
+        // board this poll produced and BEFORE the channels below are stamped:
+        // a session claimed on this poll is offered its exit on this poll,
+        // rather than a poll later. Claims are made once and kept, so this
+        // costs a lookup per launch still waiting for one.
+        this.launched.observe(withMaterials)
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
@@ -735,6 +780,11 @@ export class AgentRuntime {
     // question still open is dissolved on the way out — told that nobody
     // answered, never handed a fabricated one (see HeldSessionRegistry).
     this.heldSessions.closeAll()
+    // The launched register is deliberately NOT ended here (#217). A detached
+    // session outliving the panel is the whole point of detaching it — #212
+    // watched a turn finish after the parent had gone — so quitting ends
+    // nothing it started. The exit added for #217 is one a person takes on
+    // purpose, on one session, never a reaping.
     // Forced past the save throttle: whatever the last poll accrued would
     // otherwise be lost, and quitting is exactly when that is most likely.
     void this.ledger.save(this.now(), true)
@@ -1078,7 +1128,15 @@ export class AgentRuntime {
       }
       return target
     }
-    return null
+    // LAST, and deliberately: this is the channel of last resort (#217). It
+    // can only end the session, so any real channel — one that can carry a
+    // message, or interrupt a turn and leave the session standing — is a
+    // better answer than this one, and a session whose provider offers
+    // anything at all never reaches here. What it replaces is not a channel
+    // but a dead end: no send, no kick, and no way out of a process this app
+    // started.
+    const launchId = this.launched.launchIdOfDwarf(dwarfId)
+    return launchId === undefined ? null : { kind: 'launched-process', launchId }
   }
 
   /**
@@ -1124,6 +1182,27 @@ export class AgentRuntime {
   private async interruptHeldSession(sessionId: string): Promise<TextDeliveryOutcome> {
     const interrupted = await this.heldSessions.interrupt(sessionId)
     return interrupted ? { delivered: true } : { delivered: false, error: HELD_KICK_REFUSED }
+  }
+
+  /**
+   * Ending a session this panel launched — Kick's harshest tier, and the only
+   * one that is not an interrupt (#217).
+   *
+   * It ends the SESSION rather than the turn, so the verdict has to be read as
+   * that act and not as a delivered interrupt: `delivered: true` here means the
+   * process tree is gone, which is a fact this process observed rather than a
+   * message handed to somebody who may act on it. Nothing is watched for
+   * afterwards and nothing may be inferred — there is no session left to react
+   * (see reaction.ts on what a marker may claim), which is why the panel says
+   * the session was ended instead of watching for a stop.
+   */
+  private async endLaunchedSession(launchId: string): Promise<TextDeliveryOutcome> {
+    const verdict = await this.launched.end(launchId)
+    if (verdict === 'ended') return { delivered: true }
+    return {
+      delivered: false,
+      error: verdict === 'already-ended' ? LAUNCH_ALREADY_ENDED : LAUNCH_END_REFUSED
+    }
   }
 
   /**
@@ -1265,7 +1344,16 @@ export class AgentRuntime {
     if (text === '') return { delivered: false, via: 'none', error: EMPTY_MESSAGE }
 
     const resolved = resolveTextDelivery(request.dwarfId, (id) => this.deliveryTargetOf(id))
-    if (resolved === null) return { delivered: false, via: 'none', error: NO_CHANNEL }
+    if (resolved === null) {
+      // Two different refusals, because they are two different facts (#217).
+      // A session this panel launched HAS no inbox — it read one prompt and
+      // exits with its turn — and saying "not yet" about it would describe a
+      // missing feature rather than the shape the session is. Reachable only
+      // by a race, since the composer for such a dwarf is already disabled
+      // with the same fact in the panel's own words.
+      const launched = this.launched.launchIdOfDwarf(request.dwarfId) !== undefined
+      return { delivered: false, via: 'none', error: launched ? NO_LAUNCH_INBOX : NO_CHANNEL }
+    }
 
     const payload = `${resolved.prefix}${text}`
     const endpoint = resolved.endpoint
@@ -1384,9 +1472,23 @@ export class AgentRuntime {
 
     const timer = createStageTimer(this.now)
     try {
-      const result = await timer.measure('total', () =>
+      const { retained, ...result } = await timer.measure('total', () =>
         this.launchSession({ provider: request.provider, minePath: mine.path, prompt })
       )
+      // Keep hold of what was started, so this app can end what it starts
+      // (#217). Decided here rather than behind the launcher because deciding
+      // needs the board: which sessions were already on it is what tells the
+      // claim below apart from somebody else's session in the same folder.
+      // The handle stays in main — `result` is what crosses the wire, and it
+      // says a process started and nothing more, exactly as it always has.
+      if (retained !== undefined && result.launched) {
+        this.launched.retain({
+          provider: request.provider,
+          minePath: mine.path,
+          process: retained,
+          knownSessionIds: this.mines.flatMap((item) => item.dwarfs.map((dwarf) => dwarf.sessionId))
+        })
+      }
       console.log(
         `[runtime] Launch of ${request.provider} in ${mine.id}: ` +
           `${result.launched ? 'started' : 'failed'} ` +
@@ -1450,6 +1552,14 @@ export class AgentRuntime {
                   `${resolved.prefix}${CANCEL_WORKER_INSTRUCTION}`
                 )
               )
+        }
+        // The one tier that ends the session rather than the turn it is in
+        // (#217). Reached only where nothing weaker exists — see
+        // deliveryTargetOf, which offers it last — and a worker's cancel never
+        // arrives here at all, because ending a launched process would end its
+        // foreman's whole session (resolveKickDelivery refuses that).
+        if (endpoint.kind === 'launched-process') {
+          return this.endLaunchedSession(endpoint.launchId)
         }
         if (endpoint.kind === 'terminal') {
           return this.textDelivery.sendInterrupt({ pid: endpoint.pid })

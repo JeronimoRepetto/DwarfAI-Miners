@@ -325,3 +325,42 @@ describe('useDwarfKicking retirement', () => {
     expect(retireDwarf).toHaveBeenCalledTimes(1)
   })
 })
+
+/*
+ * A kick that ENDED the session (#217). Every other channel's kick is an ask —
+ * a keystroke, an instruction, an interrupt request — so the store watches the
+ * dwarf's own snapshots for proof it stopped. There is nothing to watch for
+ * here: the process is gone, so no later snapshot can prove anything, and a
+ * watch would decay to "no reaction seen" about a session that ended.
+ */
+describe('useDwarfKicking on a session that was ended', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    retireDwarf.mockClear()
+    useDwarfKicking().clearAll()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens no reaction watch, and never promotes itself to reacted', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'launched-process' }))
+    const { kick, observe, stateFor } = useDwarfKicking()
+
+    await kick('codex:t1')
+    expect(stateFor('codex:t1')).toEqual({ phase: 'delivered', via: 'launched-process' })
+
+    // The exact snapshot pair that PROVES a reaction on every other channel:
+    // seen working, then settled. It may prove nothing here.
+    observe([defaultDwarf({ id: 'codex:t1', status: 'working' })])
+    observe([defaultDwarf({ id: 'codex:t1', status: 'waiting' })])
+    expect(stateFor('codex:t1')?.phase).toBe('delivered')
+    expect(retireDwarf).not.toHaveBeenCalled()
+
+    // ...and the marker still leaves on the ordinary schedule rather than
+    // sitting there for the whole reaction window.
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('codex:t1')).toBeUndefined()
+  })
+})

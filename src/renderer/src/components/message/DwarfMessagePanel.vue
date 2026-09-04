@@ -8,7 +8,7 @@ import {
   USER_PORTRAIT_SRC,
   maskImageValue
 } from '../../lib/art'
-import { CONSOLE_HINT, buildActionBar } from '../../lib/delivery/actionBar'
+import { CONSOLE_HINT, buildActionBar, refusalLine } from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { authorOf, conversationOf, latestText } from '../../lib/message/conversation'
 import {
@@ -95,9 +95,17 @@ const height = ref(
 /** The height to give back when the history tab closes again. */
 const collapsedHeight = ref(height.value)
 
-const actions = computed(() =>
-  buildActionBar(props.dwarf, { kicking: isKicking.value, kickArmed: kickArmed.value })
-)
+const transient = computed(() => ({ kicking: isKicking.value, kickArmed: kickArmed.value }))
+const actions = computed(() => buildActionBar(props.dwarf, transient.value))
+/*
+ * Why a disabled control is disabled, on screen (#217). The `title` attributes
+ * below carry the same sentence and always did — a tooltip is a refusal
+ * somebody has to go looking for, and the report this comes from is a person
+ * meeting a dead composer and a dead kick with nothing said. Which sentence it
+ * is belongs to lib/delivery/actionBar, like every other thing this panel says
+ * about a capability.
+ */
+const refusal = computed(() => refusalLine(props.dwarf, transient.value))
 function action(id: 'kick' | 'boost' | 'chat') {
   return actions.value.find((entry) => entry.id === id)
 }
@@ -412,6 +420,13 @@ watch(
       </div>
     </div>
 
+    <!--
+      Its own row rather than the note's: what the panel may claim about a
+      transcript and why a control is disabled are two different facts, and
+      neither may take the other's place. Silent while an alert is up — a
+      failure the user just caused takes the floor over a standing refusal.
+    -->
+    <p v-if="refusal && !alertLine" class="panel-refusal" role="status">{{ refusal }}</p>
     <p v-if="alertLine" class="panel-alert" role="alert">{{ alertLine }}</p>
     <p v-else-if="statusLine" class="panel-status" role="status">{{ statusLine }}</p>
     <p v-else class="panel-note">{{ conversation.note }}</p>
@@ -704,6 +719,7 @@ watch(
  * apart (see lib/delivery/deliveryVerdict).
  */
 .panel-note,
+.panel-refusal,
 .panel-status,
 .panel-alert {
   flex: none;
@@ -712,9 +728,19 @@ watch(
   font-size: 9px;
   line-height: 1.3;
 }
-.panel-note {
+/*
+ * The refusal row introduces no new type, colour or spacing: it is the note's
+ * own rule, because it is the same kind of prose about the same session. Only
+ * its opacity is the note's rather than lower — a standing refusal is the one
+ * sentence in the panel a person needs to be able to read.
+ */
+.panel-note,
+.panel-refusal {
   color: var(--color-tooltip-text);
   opacity: 0.75;
+}
+.panel-refusal {
+  padding-bottom: 4px;
 }
 .panel-status {
   color: #8fd07a;

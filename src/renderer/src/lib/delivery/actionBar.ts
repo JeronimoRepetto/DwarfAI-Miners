@@ -1,4 +1,4 @@
-import type { Dwarf, TextDeliveryChannel } from '../../types'
+import type { Dwarf, DwarfProvider, TextDeliveryChannel } from '../../types'
 import { describeEffort } from './effort'
 
 /**
@@ -37,13 +37,48 @@ export interface ActionTransientState {
 
 export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
 
+/**
+ * How each provider is started detached, in its own argv (#217).
+ *
+ * Named per provider rather than as one sentence, for the reason
+ * launchRunner's PRODUCT_NAME is: this is copy a person acts on, and telling
+ * somebody their Claude session was launched with `codex exec` would send them
+ * to read the wrong program's documentation at the one moment the sentence was
+ * supposed to help.
+ */
+const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
+  claude: 'claude -p',
+  codex: 'codex exec'
+}
+
+/**
+ * Why a session this panel launched takes no messages — a fact about the
+ * world, where the generic no-channel string reads as a bug (#217).
+ *
+ * Both launch shapes are one prompt on stdin and one turn: the process exits
+ * when it finishes, so there is no inbox to reach and no process left to read
+ * one. Widening a queue to accept text for it would be worse than this
+ * refusal — the composer would take the message and lose it. So the sentence
+ * names the shape, and then names the one control that does do something.
+ */
+export function launchedNoInboxReason(provider: DwarfProvider): string {
+  return (
+    `A session launched with ${LAUNCH_COMMAND[provider]} takes no messages: ` +
+    'it reads one prompt and exits with its turn. Kick ends it.'
+  )
+}
+
 /** What each channel means, in the sender's terms. */
 export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   terminal: 'Typed straight into the session console.',
   'claude-relay': 'Relayed to the headless session by name.',
   'foreman-relay': "Delivered to this worker's foreman, tagged for them.",
   'codex-queue': "Added to this Codex session's queue; it reads it between turns.",
-  'held-session': 'Put straight onto the session this panel is holding open.'
+  'held-session': 'Put straight onto the session this panel is holding open.',
+  // Never a send channel — see launchedNoInboxReason, which is what a disabled
+  // composer says instead. Present because the map is total, and honest for
+  // the same reason the others are.
+  'launched-process': 'Nothing: a session launched with one prompt has no inbox.'
 }
 
 export const NO_KICK_REASON = "This session type can't be canceled yet."
@@ -65,7 +100,12 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   // The only tier that stops the turn itself rather than asking: the panel is
   // holding this session's stream, so the interrupt is a control request to it.
   // It ends the turn, never the session — that is Kick's meaning everywhere.
-  'held-session': 'Interrupts the turn on the session this panel holds.'
+  'held-session': 'Interrupts the turn on the session this panel holds.',
+  // The one exception to that, and the reason it says so out loud (#217): this
+  // panel started the process and nothing weaker exists for it, so the kick
+  // ends the SESSION. A person told a turn was interrupted, when the session
+  // is gone, has been told the wrong thing.
+  'launched-process': 'Ends the session this panel launched — the whole process, not the turn.'
 }
 
 export const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."
@@ -130,9 +170,41 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
     return { id: 'chat', name: 'Chat', enabled: false, hint: SESSION_ENDED_REASON }
   const channel = dwarf.textDelivery
   if (channel === undefined) {
-    return { id: 'chat', name: 'Chat', enabled: false, hint: NO_CHANNEL_REASON }
+    // A session with a cancel and no send is one this panel LAUNCHED (#217),
+    // and its refusal is a fact rather than a "not yet": the generic string
+    // describes a gap in this app, and this describes the session. Read off
+    // the same matrix the kick beside it reads, so the two halves of one
+    // refusal can never come from two different facts.
+    const hint =
+      dwarf.capabilities?.cancel === 'launched-process'
+        ? launchedNoInboxReason(dwarf.provider)
+        : NO_CHANNEL_REASON
+    return { id: 'chat', name: 'Chat', enabled: false, hint }
   }
   return { id: 'chat', name: 'Chat', enabled: true, hint: CHANNEL_HINT[channel] }
+}
+
+/**
+ * The one sentence the panel SHOWS about a control it has disabled (#217).
+ *
+ * The reasons above were already honest and already carried by every disabled
+ * entry — they just had nowhere on screen to be, so a person met a dead
+ * composer and a dead kick with nothing said. A tooltip is not a refusal; it
+ * is a refusal somebody has to go looking for.
+ *
+ * Chat first, because the composer is the control somebody is looking at when
+ * they try to say something. The kick's reason surfaces when chat works and
+ * the kick does not, which is every ordinary Codex thread (#97). An in-flight
+ * kick is not a refusal — the control is disabled because it is working, and
+ * the verdict line has that covered.
+ */
+export function refusalLine(dwarf: Dwarf, state: ActionTransientState): string | null {
+  const entries = buildActionBar(dwarf, state)
+  const chat = entries.find((entry) => entry.id === 'chat')
+  if (chat !== undefined && !chat.enabled) return chat.hint
+  if (state.kicking) return null
+  const kick = entries.find((entry) => entry.id === 'kick')
+  return kick !== undefined && !kick.enabled ? kick.hint : null
 }
 
 /**
