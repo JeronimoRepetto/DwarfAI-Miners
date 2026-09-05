@@ -11,7 +11,14 @@ export interface PollerOptions {
   intervalMs: number
   /** Non-blocking tier lookup (TierService.tierOf bound). */
   tierOf: (path: string) => MineTier
-  onUpdate: (mines: Mine[]) => void
+  /**
+   * Publishes one poll's aggregated result. May return a promise (#196): the
+   * runtime's onUpdate now sometimes does real async work of its own — it
+   * reads a watched dwarf's feed before publishing, when that dwarf's signal
+   * moved — so tick() awaits whatever comes back (see below) rather than
+   * treating this as fire-and-forget.
+   */
+  onUpdate: (mines: Mine[]) => void | Promise<void>
   logError?: (message: string, error: unknown) => void
   /** How long nudge() coalesces further events after firing; defaults to 300 ms. */
   nudgeWindowMs?: number
@@ -107,7 +114,17 @@ export class Poller {
       const mines = pollProfiler.measureSync('aggregate', () =>
         aggregateMines(snapshots, this.options.tierOf)
       )
-      pollProfiler.measureSync('publish', () => this.options.onUpdate(mines))
+      // Awaited rather than fire-and-forgotten (#196): onUpdate can now do
+      // real async work of its own before it publishes (reading a watched
+      // dwarf's feed), and `ticking` must stay true for the whole of that —
+      // otherwise the scheduled interval could fire again, scan, and publish
+      // a NEWER snapshot before this slower pass reaches its own publish, so
+      // the two would land out of order and leave PublishGate's
+      // `lastPublished` behind a snapshot the panel never saw. `tickNowOrDefer`
+      // already treats `ticking` as the single source of truth for "a pass is
+      // in flight", so keeping it true here is what makes that guard cover
+      // the publish too.
+      await pollProfiler.measure('publish', () => Promise.resolve(this.options.onUpdate(mines)))
     } finally {
       this.ticking = false
       pollProfiler.end()
