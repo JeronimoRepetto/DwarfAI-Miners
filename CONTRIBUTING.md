@@ -29,11 +29,14 @@ Before opening a pull request, run the same checks CI runs, in the same order
 
 1. **The privacy guard**, which runs **first** — every check below it can pass on a change
    that still goes red. It is a `git grep` over tracked files for machine-specific
-   identifiers. Run it the way CI does by reading the step out of the workflow
-   (`sed -n '/Privacy guard/,/^$/p' .github/workflows/ci.yml`) rather than retyping the
-   patterns: quoting them in any other tracked file is itself what trips the guard. See
-   [`skills/privacy-guard/SKILL.md`](skills/privacy-guard/SKILL.md) for what it does not
-   cover — screenshots above all.
+   identifiers. The patterns are the `PRIVACY_GUARD_PATTERN` repository secret, never a
+   tracked file: quoting them anywhere in the tree is itself what the guard exists to catch.
+   The maintainer keeps the same value in a shell variable and runs
+   `! git grep -n -I -E "$PRIVACY_GUARD_PATTERN" -- .` before pushing; a contributor without
+   it relies on the placeholders table in
+   [`skills/privacy-guard/SKILL.md`](skills/privacy-guard/SKILL.md) and on CI, which runs the
+   guard on every push to `main` and every same-repository pull request. That skill also
+   says what the guard does not cover — screenshots above all.
 2. Then, in CI's order:
 
 ```bash

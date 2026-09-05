@@ -34,12 +34,18 @@ pasting a captured value is the path of least resistance.
 | the real machine hostname              | `placeholder-host` |
 | the maintainer's secondary Claude root | `~/.claude-work`   |
 
-Check before you commit by running the guard the way CI runs it — read the step out of
-`.github/workflows/ci.yml` and run it, rather than retyping the patterns from memory:
+Check before you commit by running the guard the way CI runs it. The patterns are the
+`PRIVACY_GUARD_PATTERN` repository secret, and the maintainer keeps the same value in a shell
+variable of the same name — never in a tracked file, and never retyped into a command that could
+end up in a committed transcript:
 
 ```bash
-sed -n '/Privacy guard/,/^$/p' .github/workflows/ci.yml
+! git grep -n -I -E "$PRIVACY_GUARD_PATTERN" -- .
 ```
+
+Without the variable, the command above greps for nothing and is not a check. Rely on the table
+above and on CI, which runs the guard with the secret on every push to `main` and every
+same-repository pull request.
 
 ## What the guard actually does
 
@@ -62,10 +68,14 @@ Be precise about this; it is narrower than it sounds.
   `3a8b0e3`.
 - It skips **binary files**. A path baked into PNG metadata, or a project name legible in a
   committed screenshot, cannot be caught — see the next section.
-- It excludes exactly one file: the workflow itself, because that file necessarily spells the
-  patterns it searches for. Unavoidable, and stated in the step's own comment so it is not read as
-  an oversight — but the consequence is that the single most identifier-dense file in the
-  repository is the one file never scanned.
+- It excludes no file. It used to exclude the workflow itself, because that file spelled the
+  patterns it searched for, which made the single most identifier-dense file in the repository the
+  one file never scanned. Since the patterns moved into the `PRIVACY_GUARD_PATTERN` secret (done
+  just before the repository went public) the workflow is scanned like everything else. Two
+  consequences the step's own comment states: a missing secret fails the run rather than passing
+  it, and a fork's pull request, which gets no secrets, is skipped with a notice and caught by the
+  push to `main` after merge. The git history before that change still carries the literals;
+  issue #51 decided to publish it as it was, and the maintainer confirmed that before going public.
 
 So a green build is not proof of privacy. It is proof that four specific strings are absent from
 the text of tracked files.
