@@ -84,6 +84,17 @@ export interface DwarfAiMinersApi {
    */
   getDwarfFeed: (dwarfId: string) => Promise<DwarfFeedResult>
   /**
+   * Tell main which OBSERVED dwarf the message panel currently has open, or
+   * that none is, so the poll can carry that dwarf's feed with its snapshot
+   * instead of this panel pulling it a tick later over its own round trip
+   * (#196). Never call this with a held session's dwarf: it already carries
+   * its own conversation on every snapshot and needs no feed read at all.
+   *
+   * One-way, like `retireDwarf`: there is no verdict to wait for, because the
+   * feed itself arrives on the next `minesUpdated` like any other change.
+   */
+  setWatchedDwarf: (dwarfId: string | null) => void
+  /**
    * Every dwarf that has spoken in a mine, with its latest messages, read from
    * the transcripts under the mine's folder (#192) — for the Mine History
    * panel, which reads a mine whose crew may be long gone.
@@ -252,6 +263,11 @@ const api: DwarfAiMinersApi = {
   // check only ever sees a real string.
   getDwarfFeed: (dwarfId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getDwarfFeed, typeof dwarfId === 'string' ? dwarfId : ''),
+  // Unlike every other id crossing here, a non-string collapses to null
+  // rather than '': this channel's boundary is string-or-null, because null
+  // is itself a real answer ("nobody is watched") and not a malformed one.
+  setWatchedDwarf: (dwarfId) =>
+    ipcRenderer.send(IPC_CHANNELS.setWatchedDwarf, typeof dwarfId === 'string' ? dwarfId : null),
   // Same discipline as getDwarfFeed: a mine id crosses as a real string or as
   // '', which main refuses as a mine it does not hold.
   getMineHistory: (mineId) =>

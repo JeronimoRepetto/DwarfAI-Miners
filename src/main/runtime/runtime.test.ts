@@ -17,7 +17,8 @@ import {
   PANEL_OBSERVER,
   type Dwarf,
   type DwarfQuestion,
-  type FeedMessage
+  type FeedMessage,
+  type ProviderSnapshot
 } from '../domain/types'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
 import { nullLedgerStore } from '../ledger/ledgerStore'
@@ -486,6 +487,146 @@ describe('AgentRuntime activation', () => {
         messages: []
       })
     })
+  })
+})
+
+/**
+ * The renderer telling main which observed dwarf its message panel has open
+ * (#196), so a poll that already re-scanned that dwarf's transcript reads its
+ * feed in the same pass and carries it with the snapshot — never a second,
+ * renderer-driven pull a tick later.
+ */
+describe('AgentRuntime.watchDwarfFeed (#196)', () => {
+  const DWARF_ID = 'claude:session-1'
+
+  function scanWith(transcriptUpdatedAt: number): ProviderSnapshot[] {
+    return [
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: transcriptUpdatedAt,
+        dwarfs: [
+          {
+            id: DWARF_ID,
+            provider: 'claude',
+            role: 'worker',
+            name: 'worker',
+            status: 'working',
+            sessionId: 'session-1',
+            transcriptUpdatedAt
+          }
+        ]
+      }
+    ]
+  }
+
+  it("reads and publishes the watched dwarf's feed the first time its signal is seen", async () => {
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
+    const feed = vi
+      .fn()
+      .mockResolvedValue([{ role: 'assistant', text: 'hi', timestamp: 'now' } as FeedMessage])
+    const onMinesUpdated = vi.fn()
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan, feed }],
+      onMinesUpdated
+    })
+
+    runtime.watchDwarfFeed(DWARF_ID)
+    await runtime.refresh()
+
+    expect(feed).toHaveBeenCalledWith(DWARF_ID, 12)
+    expect(onMinesUpdated).toHaveBeenCalledTimes(1)
+    expect(onMinesUpdated.mock.calls[0]?.[2]).toEqual({
+      dwarfId: DWARF_ID,
+      feed: { readable: true, messages: [{ role: 'assistant', text: 'hi', timestamp: 'now' }] }
+    })
+  })
+
+  it('never reads a feed for a dwarf nobody is watching', async () => {
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
+    const feed = vi.fn().mockResolvedValue([])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan, feed }],
+      onMinesUpdated: vi.fn()
+    })
+
+    await runtime.refresh()
+
+    expect(feed).not.toHaveBeenCalled()
+  })
+
+  it("does not re-read once the watched dwarf's signal has stopped moving", async () => {
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
+    const feed = vi.fn().mockResolvedValue([])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan, feed }],
+      onMinesUpdated: vi.fn()
+    })
+
+    runtime.watchDwarfFeed(DWARF_ID)
+    await runtime.refresh()
+    expect(feed).toHaveBeenCalledTimes(1)
+
+    // The second poll observes the identical signal, so nothing is re-read.
+    await runtime.refresh()
+    expect(feed).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads again once the signal moves a second time', async () => {
+    const scan = vi.fn<Provider['scan']>()
+    scan.mockResolvedValueOnce(scanWith(100))
+    scan.mockResolvedValueOnce(scanWith(100))
+    scan.mockResolvedValueOnce(scanWith(200))
+    const feed = vi.fn().mockResolvedValue([])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan, feed }],
+      onMinesUpdated: vi.fn()
+    })
+
+    runtime.watchDwarfFeed(DWARF_ID)
+    await runtime.refresh() // 100, first sight: read #1
+    await runtime.refresh() // 100 again: no read
+    await runtime.refresh() // 200: read #2
+    expect(feed).toHaveBeenCalledTimes(2)
+  })
+
+  it('carries the feed on a nudge, not only on the ordinary poll', async () => {
+    vi.useFakeTimers()
+    const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
+    const feed = vi
+      .fn()
+      .mockResolvedValue([{ role: 'assistant', text: 'hi', timestamp: 'now' } as FeedMessage])
+    const onMinesUpdated = vi.fn()
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), pollIntervalMs: 60_000 },
+      providers: [{ kind: 'claude', scan, feed }],
+      onMinesUpdated
+    })
+    try {
+      runtime.watchDwarfFeed(DWARF_ID)
+      runtime.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(1)
+      expect((onMinesUpdated.mock.calls[0]?.[2] as { dwarfId: string })?.dwarfId).toBe(DWARF_ID)
+
+      scan.mockResolvedValue(scanWith(200))
+      runtime.nudge()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onMinesUpdated).toHaveBeenCalledTimes(2)
+      expect(onMinesUpdated.mock.calls[1]?.[2]).toEqual({
+        dwarfId: DWARF_ID,
+        feed: { readable: true, messages: [{ role: 'assistant', text: 'hi', timestamp: 'now' }] }
+      })
+    } finally {
+      runtime.stop()
+      vi.useRealTimers()
+    }
   })
 })
 

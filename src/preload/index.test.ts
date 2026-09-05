@@ -561,3 +561,25 @@ describe('preload mine-history contract (#192)', () => {
     })
   })
 })
+
+/**
+ * The panel telling main which observed dwarf it has open (#196), so the poll
+ * can carry that dwarf's feed with its snapshot. One-way, like retireDwarf:
+ * there is no verdict to wait for.
+ */
+describe('preload watched-dwarf-feed contract (#196)', () => {
+  it('reports the watched dwarf on the panel:watchDwarfFeed channel', () => {
+    expect(api.setWatchedDwarf('claude:s1')).toBeUndefined()
+    expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', 'claude:s1')
+  })
+
+  it('reports null to clear the watch, as a real answer rather than a malformed one', () => {
+    api.setWatchedDwarf(null)
+    expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
+  })
+
+  it('collapses anything that is not a string to null before it crosses the bridge', () => {
+    ;(api.setWatchedDwarf as unknown as (value: unknown) => void)(42)
+    expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
+  })
+})
