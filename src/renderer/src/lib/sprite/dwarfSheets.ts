@@ -56,12 +56,18 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
      *
      * `glowFrames` is the separate, maintainer-delegated design call: frames
      * 5-6 (index 4-5) are the two brightest the artist drew, and the sprite
-     * lights only those beside the art's own sparks. Frames 7-9 (index 6-8)
+     * lights only those beside the art's own sparks. The frames after them
      * disperse and fade — the art carries that alone.
+     *
+     * Thirteen frames since the loop was redrawn (2026-09-05): the artist
+     * lengthened the swing's recovery, and the strike stayed where it was. A
+     * per-frame pixel census of the redrawn strip confirmed it — frame 5 is
+     * still the one with the most lit pixels, the spark burst — so the indices
+     * above did not move; only the count did. Start and end were untouched.
      */
     working: {
       src: DWARF_SHEET_SRC.worker.working,
-      frames: 11,
+      frames: 13,
       frameMs: FRAME_MS,
       impactFrames: [4],
       glowFrames: [4, 5]

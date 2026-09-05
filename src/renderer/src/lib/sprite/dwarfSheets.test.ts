@@ -184,13 +184,15 @@ describe('DWARF_SHEETS', () => {
   describe('the worker starting to work', () => {
     it('has a start, a loop and an end, which is what makes it a transition', () => {
       expect(DWARF_SHEETS.worker['start-working']?.frames).toBe(3)
-      expect(DWARF_SHEETS.worker.working?.frames).toBe(11)
+      // 13 since the loop was redrawn with a longer recovery (2026-09-05); the
+      // header test above is what holds this to the bytes on disk.
+      expect(DWARF_SHEETS.worker.working?.frames).toBe(13)
       expect(DWARF_SHEETS.worker['end-working']?.frames).toBe(6)
     })
 
     // No "adds up to the preview" pin here, unlike the foreman's sleep above:
     // dwarf-worker-working-v2.gif's Graphic Control Extension blocks measure
-    // 60 frames at a uniform 100ms, not 3 + 11 + 6 = 20 — the preview loops
+    // 60 frames at a uniform 100ms, not 3 + 13 + 6 = 22 — the preview loops
     // the swing several times to show it repeating rather than encoding the
     // three parts once each, so frame count is not evidence of ordering here.
   })
