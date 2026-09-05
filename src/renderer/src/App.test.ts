@@ -800,6 +800,27 @@ describe('App mines browse', () => {
     expect(wrapper.find('.map-view').exists()).toBe(true)
   })
 
+  /*
+   * #197's second half: the map is the default area, so a fix that only reads
+   * `projects` when the user visits Mines never helps the common case — the
+   * map opens first and stayed on the live board alone until Mines had been
+   * visited at least once. `loadProjects` now runs once on mount, beside the
+   * mines poll and the other startup reads, so a remembered project with no
+   * live session has a marker from the very first frame.
+   */
+  it('draws a remembered project’s marker on the map without ever visiting Mines', async () => {
+    const { wrapper } = await mountOpenApp({
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [
+          { id: 'a', path: 'a', name: 'Lalolanda', declared: false, addedAt: 1, live: false }
+        ]
+      })
+    })
+    expect(wrapper.find('.mines-panel').exists()).toBe(false)
+    expect(wrapper.findAll('.mine-marker')).toHaveLength(1)
+  })
+
   it('opens the browse and reads its first page', async () => {
     const { wrapper, api } = await mountOpenApp()
     await wrapper.find(NAV_MINES).trigger('click')
@@ -920,6 +941,10 @@ describe('App mines browse', () => {
   it('shows the adopted project without the panel being reopened', async () => {
     const queryProjects = vi
       .fn()
+      // #197: the app now reads the browse once on mount too, so the same
+      // page has to be queued twice before the "added" page — once for that
+      // startup read, once for the Mines nav click's own reload.
+      .mockResolvedValueOnce({ answered: true, projects: [] })
       .mockResolvedValueOnce({ answered: true, projects: [] })
       .mockResolvedValueOnce({
         answered: true,
