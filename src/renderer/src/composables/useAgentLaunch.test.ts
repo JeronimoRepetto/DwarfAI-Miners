@@ -30,7 +30,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, CODEX] }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
-    launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' }),
+    // The detached channel answers with the receipt main opened for this
+    // launch (#191) — never a dwarf id, which is not known at that moment.
+    launchAgent: vi.fn().mockResolvedValue({
+      launched: true,
+      provider: 'codex',
+      launchId: 'receipt:1'
+    }),
     // The third launch channel (#194). Named here rather than per test for the
     // reason this whole stub exists: an awaited member resolving undefined
     // becomes an unhandled rejection only the full suite catches.
@@ -52,6 +58,15 @@ function heldDwarf(id: string, first: string): Dwarf {
     sessionId: id,
     conversation: [{ role: 'user', text: first, timestamp: '2026-01-01T00:00:00Z' }]
   })
+}
+
+/**
+ * A dwarf main has PROVED to be one of this panel's own detached launches
+ * (#191) — no conversation, because a detached session hands the panel none,
+ * and the receipt instead.
+ */
+function launchedDwarf(id: string, launchId: string): Dwarf {
+  return defaultDwarf({ id, name: id, sessionId: id, launchId })
 }
 
 /** The store is a module-scope singleton, so each test starts from closed. */
@@ -325,12 +340,13 @@ describe('routing a launch to the channel its provider can actually use', () => 
   })
 
   /*
-   * The honest end for a launch nothing can watch. `launchedDwarfIn` matches an
-   * arriving dwarf by the first message of its conversation, and a conversation
-   * is held-sessions-only — so no Codex dwarf can ever carry the receipt, and
-   * waiting for one would be the panel pretending to look.
+   * AMENDED for #191 (was: "stops on started-detached instead of waiting for a
+   * dwarf it cannot recognise"). The state it lands in is unchanged and so is
+   * every assertion; what the old name claimed — that this is where a detached
+   * launch ends — is what #191 reversed. It now WAITS here, for main's receipt
+   * rather than for words it could never read.
    */
-  it('stops on started-detached instead of waiting for a dwarf it cannot recognise', async () => {
+  it('lands on started-detached with main’s receipt and no dwarf claimed', async () => {
     const { launch } = await ready('codex')
 
     await launch.submit()
@@ -338,8 +354,15 @@ describe('routing a launch to the channel its provider can actually use', () => 
     expect(launch.phase.value).toBe('started-detached')
     expect(launch.state.value.launchedDwarfId).toBeNull()
     expect(launch.state.value.error).toBeNull()
+    expect(launch.state.value.launchId).toBe('receipt:1')
   })
 
+  /*
+   * The distinction the receipt exists to keep. A detached session's own words
+   * are not on the wire at all, so a dwarf whose conversation happens to match
+   * proves nothing — only main, which read that session's transcript against
+   * the prompt it sent, can say which dwarf this launch became.
+   */
   it('never adopts a dwarf for a detached launch, however well its words match', async () => {
     const { launch } = await ready('codex')
     await launch.submit()
@@ -348,6 +371,65 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     expect(launch.phase.value).toBe('started-detached')
     expect(launch.state.value.launchedDwarfId).toBeNull()
+  })
+
+  /*
+   * #191's whole point. Add > Codex started the session, the dwarf appeared,
+   * replied and left, and the Add Panel still read "the session started" with
+   * the prompt sitting in it. It hands over now.
+   */
+  it('hands over to the MessagePanel on the dwarf carrying its receipt', async () => {
+    const { launch } = await ready('codex')
+    await launch.submit()
+
+    launch.observe([mineWith([launchedDwarf('codex:sess-9', 'receipt:1')])])
+
+    expect(launch.phase.value).toBe('message-panel')
+    expect(launch.state.value.launchedDwarfId).toBe('codex:sess-9')
+  })
+
+  /*
+   * The session that finished before the poll first drew it — the case the
+   * issue reports, where the reply had already landed. The panel opens on the
+   * ended dwarf all the same, and the MessagePanel draws the ended state with
+   * the transcript it reads on its own channel.
+   */
+  it('hands over to a dwarf whose session had already ended', async () => {
+    const { launch } = await ready('codex')
+    await launch.submit()
+
+    launch.observe([
+      mineWith([{ ...launchedDwarf('codex:sess-9', 'receipt:1'), status: 'leaving' }])
+    ])
+
+    expect(launch.phase.value).toBe('message-panel')
+    expect(launch.state.value.launchedDwarfId).toBe('codex:sess-9')
+  })
+
+  it('ignores a dwarf carrying somebody else’s receipt', async () => {
+    const { launch } = await ready('codex')
+    await launch.submit()
+
+    launch.observe([mineWith([launchedDwarf('codex:sess-8', 'receipt:2')])])
+
+    expect(launch.phase.value).toBe('started-detached')
+  })
+
+  /*
+   * A launch main opened no receipt for is where #168's original reading still
+   * holds: the session started and nothing can prove which dwarf it became, so
+   * the panel says that and adopts nobody.
+   */
+  it('waits without adopting when main opened no receipt', async () => {
+    const { launch } = await ready('codex', {
+      launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+    })
+    await launch.submit()
+
+    launch.observe([mineWith([launchedDwarf('codex:sess-9', 'receipt:1')])])
+
+    expect(launch.state.value.launchId).toBeNull()
+    expect(launch.phase.value).toBe('started-detached')
   })
 
   it('carries a refused detached launch back with main’s own reason', async () => {

@@ -63,13 +63,15 @@ const emit = defineEmits<{
 
 const spawning = computed(() => props.phase === 'submitted-spawning')
 /**
- * A launch that started and is not being watched (#168).
+ * A launch that started and that this panel is not holding (#168, #191).
  *
  * Drawn like the spawning view — the chips and the composer go, the submitted
- * prompt stays — but its note says something different, because the panel is
- * not looking for anything. A detached session leaves no held conversation, so
- * no dwarf can ever be matched to this launch; it simply appears in the mine
- * when the poll next reads the provider's own storage.
+ * prompt stays — but its note says something different, because what the panel
+ * is waiting for is different. A detached session leaves no held conversation,
+ * so it cannot be recognised by its words the way a held one is; it is
+ * recognised when main proves it from the session's own transcript, which is a
+ * thing that can take a sweep or two and, on a provider whose store says
+ * nothing, may not happen at all. The copy below promises only that.
  */
 const detached = computed(() => props.phase === 'started-detached')
 /** Both end states replace the Add controls with the prompt that was sent. */
@@ -193,15 +195,18 @@ function onCommandKeydown(event: KeyboardEvent): void {
       Starting the session. Its dwarf appears in the mine as soon as the panel finds it.
     </p>
     <!--
-      Deliberately NOT the line above. That one promises the panel will find it,
-      which is a promise only a held session can keep: the panel recognises its
-      own launch by the first message of a conversation, and nothing but a held
-      stream carries one. This session started and is not being watched, so the
-      copy says what is true — it will turn up in the mine on an ordinary poll,
-      like a session somebody else started.
+      Deliberately NOT the line above. That one says "as soon as the panel
+      finds it", which is a held session's promise: its dwarf arrives carrying
+      the conversation main seeded, so the panel finds it the moment it lands.
+      This one arrives carrying nothing the panel can read, and is recognised
+      only once main has proved it from the session's own transcript — a sweep
+      or two later, and never at all where the store says nothing. So the copy
+      keeps the one claim that is true either way, and adds the second as what
+      the panel will do rather than as when.
     -->
     <p v-else-if="detached" class="launch-note" role="status">
-      The session started. Its dwarf joins the mine on the next sweep.
+      The session started. Its dwarf joins the mine on the next sweep, and this panel opens on it
+      once its transcript proves which one it is.
     </p>
     <p v-else-if="refusal" class="launch-note" role="status">{{ refusal }}</p>
   </section>

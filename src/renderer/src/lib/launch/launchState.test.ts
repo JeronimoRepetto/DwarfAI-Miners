@@ -206,31 +206,52 @@ describe('submitting, and what comes back', () => {
 })
 
 /*
- * A launch the panel cannot watch (#168).
+ * A launch the panel started and does not hold (#168, #191).
  *
- * Every phase the design's model ends in leads to `message-panel`, and that
- * hand-over needs a HELD conversation: `launchedDwarfIn` recognises the
- * launched dwarf by its first message, and `Dwarf.conversation` is documented
- * as held-sessions-only, "because nothing else this app runs hands it a
- * conversation live". Codex has no held-session engine, so a Codex launch can
- * never produce that receipt — no amount of waiting turns one up.
+ * ## AMENDED for #191
  *
- * So the model gains one state the source does not have, because the source's
- * flow assumes a session the panel holds. The alternative was to leave the
- * panel spinning in `submitted-spawning` forever, which would be the panel
- * claiming to be looking for something it knows cannot arrive.
+ * This block used to be titled "a launch that started but cannot be watched",
+ * and its argument was that `message-panel` needs a HELD conversation, so a
+ * Codex launch "can never produce that receipt — no amount of waiting turns
+ * one up". The first half is still true and the conclusion was too narrow: the
+ * maintainer named a third source of evidence on 2026-09-04, the session's own
+ * transcript, whose first human turn is the prompt that was sent. Main runs
+ * that match and stamps its verdict on the dwarf, so a detached launch DOES
+ * have a receipt now — main's, not the board's words.
+ *
+ * The state itself survives unchanged and is still not in the source's model:
+ * it is where a launch waits once main has answered and before its dwarf has
+ * been proved. What it no longer means is "this is as far as it goes". Every
+ * claim below stands; two names and one comment said the old thing.
  */
-describe('a launch that started but cannot be watched', () => {
-  const started = () => startedDetached(submitStarted(chooseProvider(withPrompt(), 'codex')))
+describe('a launch that started detached', () => {
+  const started = () =>
+    startedDetached(submitStarted(chooseProvider(withPrompt(), 'codex')), 'receipt:1')
   const withPrompt = () => typePrompt(chooseProvider(opened(), 'codex'), 'dig here')
 
-  it('leaves the spawning state instead of waiting for a dwarf that cannot arrive', () => {
+  it('leaves the spawning state, because main has already answered', () => {
     expect(launchPhase(started())).toBe('started-detached')
     expect(started().submitting).toBe(false)
   })
 
-  it('claims no dwarf, because the panel has no receipt to recognise one by', () => {
+  it('claims no dwarf yet: the receipt names the launch, never a dwarf', () => {
     expect(started().launchedDwarfId).toBeNull()
+  })
+
+  it('carries main’s receipt, which is what its dwarf will be recognised by', () => {
+    expect(started().launchId).toBe('receipt:1')
+  })
+
+  /*
+   * A launch main opened no receipt for waits in exactly the same place, and
+   * that is the honest reading of #168's original argument: the session
+   * started, and nothing here can prove which dwarf it became.
+   */
+  it('waits in the same state when main opened no receipt at all', () => {
+    const receiptless = startedDetached(submitStarted(chooseProvider(withPrompt(), 'codex')), null)
+
+    expect(launchPhase(receiptless)).toBe('started-detached')
+    expect(receiptless.launchId).toBeNull()
   })
 
   it('is not an error state: the session really did start', () => {
@@ -240,12 +261,28 @@ describe('a launch that started but cannot be watched', () => {
   it('only ever follows a submit, so nothing enters it on its own', () => {
     // Same guard adoptLaunchedDwarf holds, for the same reason: a panel nobody
     // launched from must not be taken over by something that started elsewhere.
-    const stray = startedDetached(withPrompt())
+    const stray = startedDetached(withPrompt(), 'receipt:1')
 
     expect(launchPhase(stray)).toBe('prompt-ready')
   })
 
   it('is forgotten when the panel closes, like every other launch state', () => {
     expect(launchPhase(closeLaunch(started()))).toBe('closed')
+  })
+
+  /*
+   * The end of #191. A detached launch is no longer a terminal state: once its
+   * dwarf is proved the panel hands over exactly as a held one does, through
+   * the same field and the same phase.
+   */
+  it('hands over to the MessagePanel once its dwarf is proved', () => {
+    const adopted = adoptLaunchedDwarf(started(), 'codex:sess-9')
+
+    expect(launchPhase(adopted)).toBe('message-panel')
+    expect(adopted.launchedDwarfId).toBe('codex:sess-9')
+  })
+
+  it('stays detached after the handover, because the session still is', () => {
+    expect(adoptLaunchedDwarf(started(), 'codex:sess-9').detached).toBe(true)
   })
 })

@@ -38,18 +38,21 @@ export type LaunchChoice = DwarfProvider | typeof OTHER_CHOICE
  * The source's own state names, in the source's own order — plus one.
  *
  * `started-detached` is not in the source, and it is the only addition here.
- * The source's flow ends in `message-panel`, and that hand-over needs a session
- * the panel HOLDS: `launchedDwarfIn` recognises the launched dwarf by the first
+ * The source's flow ends in `message-panel`, and that hand-over needs a
+ * receipt: `launchedDwarfIn` recognises the launched dwarf by the first
  * message of its conversation, and `Dwarf.conversation` is documented as
- * held-sessions-only "because nothing else this app runs hands it a
- * conversation live". Codex has no held-session engine in this app (#168), so a
- * Codex launch leaves no such receipt and no dwarf can ever be matched to it.
+ * sessions-the-panel-HOLDS only, "because nothing else this app runs hands it
+ * a conversation live". Codex has no held-session engine in this app (#168),
+ * so a detached launch leaves no conversation and, for a while, no receipt of
+ * any kind — the panel could not have looked for its dwarf without inventing
+ * one by timing.
  *
- * The alternative was to leave such a launch sitting in `submitted-spawning`,
- * which would be the panel claiming to look for something it knows cannot
- * arrive. So the flow gains an honest terminal state instead: the session
- * started, the panel is not watching it, and its dwarf turns up in the mine on
- * an ordinary poll like any other.
+ * So the flow gained a state where such a launch waits instead: the session
+ * started, the panel is not holding it, and its dwarf turns up in the mine on
+ * an ordinary poll like any other. #191 then gave that wait an end — main
+ * proves the dwarf from the session's own opening prompt and stamps a receipt
+ * on it — so this is no longer a terminal state, only the one before the
+ * hand-over. It stays terminal for a launch main opened no receipt for.
  */
 export type LaunchPhase =
   | 'closed'
@@ -79,11 +82,20 @@ export interface LaunchState {
   /** True from the moment Enter submits until a dwarf is adopted or main refuses. */
   submitting: boolean
   /**
-   * True once a launch the panel cannot watch has started (#168) — see
+   * True once a launch the panel does not HOLD has started (#168) — see
    * `startedDetached`. Distinct from `launchedDwarfId` on purpose: this says a
    * session exists, and says nothing at all about which dwarf it becomes.
    */
   detached: boolean
+  /**
+   * The receipt main opened for a detached launch (#191), or null.
+   *
+   * Names the LAUNCH and never a dwarf — see `Dwarf.launchId`. It is what the
+   * panel waits to see come back on the board, and it is the only receipt a
+   * detached launch has: a held or hosted one is recognised by the
+   * conversation main seeded, and gets none of these.
+   */
+  launchId: string | null
   /** The dwarf the launched session turned out to be, once one is identified. */
   launchedDwarfId: string | null
   /** Main's reason for refusing the last launch, or null. */
@@ -99,6 +111,7 @@ export function closedLaunch(): LaunchState {
     prompt: '',
     submitting: false,
     detached: false,
+    launchId: null,
     launchedDwarfId: null,
     error: null
   }
@@ -246,35 +259,44 @@ export function submitRefused(state: LaunchState, reason: string): LaunchState {
 }
 
 /**
- * A launch started that this panel cannot watch (#168).
+ * A DETACHED launch started: main has answered, and the panel is not holding
+ * the session (#168, #191).
  *
- * The honest end of a DETACHED launch. `adoptLaunchedDwarf` cannot ever be
- * reached for one: it needs a dwarf whose first conversation message is the
- * prompt this panel sent, and only a HELD session carries a conversation at
- * all. So rather than wait in `submitted-spawning` for a receipt that does not
- * exist, the panel stops and says what it actually knows — a session started,
- * and its dwarf will appear in the mine on an ordinary poll.
+ * It used to be the honest END of such a launch. `adoptLaunchedDwarf` could
+ * not be reached for one, because the only receipt that existed was a HELD
+ * conversation opening with the prompt this panel sent, and a detached session
+ * carries no conversation at all — so rather than wait in `submitted-spawning`
+ * for something that could not arrive, the panel stopped and said what it knew.
  *
- * No dwarf id is invented and none is guessed at by timing. That is the same
- * refusal `launchedDwarfIn` is built on: "the dwarf that was not here a moment
- * ago" would adopt whatever happened to start next.
+ * #191 gave it a receipt of its own. Main matches the session's own opening
+ * prompt against the one it sent and stamps the dwarf it proves, so the panel
+ * waits HERE for that verdict and then hands over exactly as a held launch
+ * does. What has not changed is the rule underneath: still evidence, still
+ * never timing. `launchId` is null when main opened no receipt, and then this
+ * really is where the launch ends — the session started, and nothing can prove
+ * which dwarf it became.
  *
  * Only ever while a launch is in flight, exactly as adoption is, so a panel
  * nobody submitted from cannot fall into this state.
  */
-export function startedDetached(state: LaunchState): LaunchState {
+export function startedDetached(state: LaunchState, launchId: string | null): LaunchState {
   if (!state.submitting) return state
-  return { ...state, submitting: false, detached: true, error: null }
+  return { ...state, submitting: false, detached: true, launchId, error: null }
 }
 
 /**
  * The arriving dwarf has been identified as this launch's own.
  *
- * Only ever while a launch is in flight: adopting outside one would let an
- * unrelated session that happened to start elsewhere take over a panel nobody
- * launched from.
+ * Only ever while a launch is still this panel's own business — in flight, or
+ * detached and waiting for its receipt to appear on the board (#191). Adopting
+ * outside both would let an unrelated session that happened to start elsewhere
+ * take over a panel nobody launched from.
+ *
+ * `detached` is deliberately left standing: it is a fact about the session,
+ * not a phase, and the session is no less detached for having been recognised.
+ * `launchPhase` reads `launchedDwarfId` first, so the panel moves on regardless.
  */
 export function adoptLaunchedDwarf(state: LaunchState, dwarfId: string): LaunchState {
-  if (!state.submitting) return state
+  if (!state.submitting && !state.detached) return state
   return { ...state, submitting: false, launchedDwarfId: dwarfId, error: null }
 }
