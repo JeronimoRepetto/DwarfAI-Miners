@@ -16,6 +16,8 @@ import {
   MAX_DWARF_TEXT_CHARS,
   PANEL_OBSERVER,
   type Dwarf,
+  type DwarfPermissionDecision,
+  type DwarfPermissionRequest,
   type DwarfQuestion,
   type FeedMessage,
   type ProviderSnapshot
@@ -26,6 +28,7 @@ import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
 import type { Provider } from '../providers/provider'
+import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
 import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
 import type {
   HeldAnswer,
@@ -4812,13 +4815,15 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       input: 'pnpm test'
     })
 
-    expect(
+    // Awaited since #203 gave the observed channel a keystroke to type; a held
+    // decision is still the same local handover it always was.
+    await expect(
       runtime.answerDwarfPermission({
         dwarfId: 'claude:sess-1',
         toolUseId: 'toolu_perm',
         decision: 'allow'
       })
-    ).toEqual({ answered: true })
+    ).resolves.toEqual({ answered: true })
     await expect(asked).resolves.toEqual({ decision: 'allow' })
     await runtime.refresh()
     expect(runtime.getMines()[0]!.dwarfs[0]!.pendingPermission).toBeUndefined()
@@ -4829,7 +4834,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     const port = heldPort()
     const runtime = heldRuntime({ heldSessions: heldRegistry(port.port) })
 
-    const result = runtime.answerDwarfPermission({
+    const result = await runtime.answerDwarfPermission({
       dwarfId: 'claude:nobody',
       toolUseId: 'toolu_perm',
       decision: 'deny'
@@ -6474,5 +6479,276 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     runtime.stop()
 
     expect(reasonOf(runtime)).toBeUndefined()
+  })
+})
+
+/**
+ * Issue #203. Deciding an OBSERVED session's permission prompt, which is the
+ * one decision this app cannot hand over structurally: the dialog belongs to
+ * a terminal somebody else is running, so the only answer is a keystroke into
+ * that console.
+ *
+ * Measured on Claude Code 2.1.261 (Windows console): the prompt is a
+ * SELECTOR, a digit picks that option and fires it with no Enter, and the
+ * first option is always "Yes". So Allow is `1`, and Deny is nothing — "No"
+ * is the LAST option and the dialog has two or three of them, so a positional
+ * digit would sometimes mean "yes, and don't ask again". Both halves are
+ * pinned here: the measured one end to end, the unmeasured one as the refusal
+ * it currently is.
+ */
+describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', () => {
+  const FOREMAN_ID = 'claude:session-1'
+  const TOOL_USE_ID = 'toolu_p1'
+  const NOT_VERIFIED =
+    'Answering this prompt from the panel is not yet verified for this Claude Code build. ' +
+    'Answer it at the terminal.'
+  const NO_TERMINAL = 'Could not reach that terminal. Answer the prompt there.'
+  const PROMPT_CLOSED = 'That permission request is no longer open.'
+
+  function promptFor(toolUseId: string): DwarfPermissionRequest {
+    return {
+      toolUseId,
+      toolName: 'Bash',
+      input: 'pnpm test',
+      channel: 'terminal',
+      askedAt: '2026-09-05T10:00:00.000Z'
+    }
+  }
+
+  function fakePort(overrides: Partial<TextDeliveryPort> = {}) {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      ...overrides
+    }
+  }
+
+  interface Wiring {
+    target?: TextDeliveryTarget | null
+    port?: ReturnType<typeof fakePort>
+    /** Null draws a dwarf carrying no prompt at all. */
+    permission?: DwarfPermissionRequest | null
+    /**
+     * What every scan AFTER the first one finds, for the re-read guard: the
+     * dialog a person answered at their own terminal while the card was up.
+     */
+    thenPermission?: DwarfPermissionRequest | null
+    /** Absent means the shipped measurement: the digit 1 for allow, Esc for deny. */
+    keystroke?: (decision: DwarfPermissionDecision) => PermissionKeystroke | null
+  }
+
+  async function runtimeWith(wiring: Wiring = {}) {
+    const target =
+      wiring.target === undefined ? { kind: 'terminal' as const, pid: 42 } : wiring.target
+    const port = wiring.port ?? fakePort()
+    const first = wiring.permission === undefined ? promptFor(TOOL_USE_ID) : wiring.permission
+    let scans = 0
+    const source: Provider = {
+      kind: 'claude',
+      scan: async () => {
+        scans += 1
+        const permission =
+          scans === 1 || wiring.thenPermission === undefined ? first : wiring.thenPermission
+        return [
+          {
+            provider: 'claude' as const,
+            sessionId: 'session-1',
+            cwd: 'C:\\work\\project',
+            status: 'busy' as const,
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: FOREMAN_ID,
+                provider: 'claude' as const,
+                role: 'foreman' as const,
+                name: 'boss',
+                status: 'waiting' as const,
+                waitingReason: 'approval' as const,
+                sessionId: 'session-1',
+                pid: 42,
+                ...(permission === null ? {} : { pendingPermission: permission })
+              }
+            ]
+          }
+        ]
+      },
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) => (dwarfId === FOREMAN_ID ? target : null)
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      textDelivery: port,
+      onMinesUpdated: vi.fn(),
+      ...(wiring.keystroke === undefined ? {} : { permissionKeystroke: wiring.keystroke })
+    })
+    await runtime.refresh()
+    return { runtime, port }
+  }
+
+  function decide(runtime: AgentRuntime, decision: 'allow' | 'deny', toolUseId = TOOL_USE_ID) {
+    return runtime.answerDwarfPermission({ dwarfId: FOREMAN_ID, toolUseId, decision })
+  }
+
+  it('answers Allow with the digit that picks the first option, and no Enter', async () => {
+    // The shipped path. A digit fires the selection on its own, so pressEnter
+    // stays false — it is what a MESSAGE ends with, and on a session whose
+    // dialog was answered a second ago it would submit the input box.
+    const { runtime, port } = await runtimeWith()
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({ answered: true })
+    expect(port.sendToConsole).toHaveBeenCalledWith({ pid: 42, text: '1', pressEnter: false })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('answers Deny with Escape, through the port method that presses it', async () => {
+    // "No" is the LAST option and the dialog has two, three or four of them
+    // depending on the tool, so no digit means No — on a four-option dialog
+    // `2` is "Yes, and always allow …", a standing permission granted by the
+    // button that refuses. Esc cancels the prompt whatever it drew, and
+    // sendInterrupt is already the raw-Esc path, built per platform for Kick.
+    const { runtime, port } = await runtimeWith()
+
+    await expect(decide(runtime, 'deny')).resolves.toEqual({ answered: true })
+    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('asks the keystroke seam for the decision it was actually given', async () => {
+    const seen: string[] = []
+    const { runtime, port } = await runtimeWith({
+      keystroke: (decision) => {
+        seen.push(decision)
+        return { kind: 'text', text: decision === 'allow' ? '1' : '9' }
+      }
+    })
+
+    await decide(runtime, 'deny')
+    expect(seen).toEqual(['deny'])
+    expect(port.sendToConsole).toHaveBeenCalledWith({ pid: 42, text: '9', pressEnter: false })
+  })
+
+  it('refuses in words when a decision has no measured key on this build', async () => {
+    // The branch that let Allow ship while Deny was still being established,
+    // and the one a future build's regression would be recorded through. It
+    // names the BUILD rather than the app, because that is the true shape of
+    // it, and points where every refusal on this route points.
+    const { runtime, port } = await runtimeWith({ keystroke: () => null })
+
+    await expect(decide(runtime, 'deny')).resolves.toEqual({
+      answered: false,
+      error: NOT_VERIFIED
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+  })
+
+  it('re-reads the board and refuses when the dialog moved on while the card was up', async () => {
+    // THE guard. A digit fires whatever option is under it in whatever dialog
+    // is up, so a `1` one dialog late does not miss — it approves the NEXT
+    // tool call, unread. Somebody answering at their own terminal and the
+    // session opening its next prompt is exactly that, and the panel's card
+    // can be a poll behind it.
+    const { runtime, port } = await runtimeWith({ thenPermission: promptFor('toolu_next') })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('re-reads the board and refuses when no dialog is open any more', async () => {
+    const { runtime, port } = await runtimeWith({ thenPermission: null })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('never falls back to the relay when the console will not take the key', async () => {
+    // A message that fails at the console can be relayed, and a decision
+    // cannot: a relay hands text to the session's QUEUE, which is read
+    // between tool calls, and this session is stopped INSIDE one. The queued
+    // sentence would arrive after the dialog had been answered by somebody
+    // else, and the ✓ would have claimed a decision nobody made.
+    const port = fakePort({
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'no window' })
+    })
+    const { runtime } = await runtimeWith({
+      target: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' },
+      port
+    })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: NO_TERMINAL
+    })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses without typing anything when the dwarf has no console at all', async () => {
+    const { runtime, port } = await runtimeWith({
+      target: { kind: 'claude-relay', sessionName: 'x' }
+    })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: NO_TERMINAL
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses when no channel resolves for the dwarf at all', async () => {
+    const { runtime, port } = await runtimeWith({ target: null })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: NO_TERMINAL
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a decision aimed at a prompt that was already not the open one', async () => {
+    // The cheap half of the same rule, taken before the rescan: the card the
+    // person pressed named a prompt the board had already replaced.
+    const { runtime, port } = await runtimeWith()
+
+    await expect(decide(runtime, 'allow', 'toolu_stale')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('types nothing for a dwarf that has left the mine', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    await expect(
+      runtime.answerDwarfPermission({
+        dwarfId: 'claude:ghost',
+        toolUseId: TOOL_USE_ID,
+        decision: 'allow'
+      })
+    ).resolves.toMatchObject({ answered: false })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  it('says the prompt closed for an observed dwarf carrying none, not that it is unheld', async () => {
+    // The card was pressed after main stopped naming a prompt. The held
+    // registry's own refusal — "that session is not one this panel is
+    // holding" — is true and is not what happened.
+    const { runtime, port } = await runtimeWith({ permission: null })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 })
