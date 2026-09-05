@@ -8,7 +8,11 @@ import { BUBBLE_TTL_MS } from '../../lib/overlay/bubbles'
 import { INTERIOR_STATIONS } from '../../lib/scene/interiorMap'
 import { assignScene, type SceneOccupant } from '../../lib/scene/sceneAssignment'
 import { sceneLayout } from '../../lib/scene/sceneLayout'
-import { AUTHORED_INTERIOR_BOX, spriteFootprintPx } from '../../lib/scene/sceneSizing'
+import {
+  AUTHORED_INTERIOR_BOX,
+  MINE_ACTION_SIZE,
+  spriteFootprintPx
+} from '../../lib/scene/sceneSizing'
 import { SPRITE_FRAME_SIZE } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../../testing/factories'
 import type { Dwarf, MineTier } from '../../types'
@@ -646,6 +650,20 @@ describe('MineScene interior shell', () => {
     // than leaving a border round a letterboxed image.
     expect(wrapper.get('.interior').attributes('style')).toContain(
       `--interior-aspect: ${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
+    )
+  })
+
+  /*
+   * #197: Close was 18x18 and Add was 28x28 — 10.8px of glyph against 16.8px
+   * at the shared 60% fill — though `components.md` marks icon sizes
+   * Unspecified. `MINE_ACTION_SIZE` (lib/scene/sceneSizing.ts) is the measured
+   * fix: both glyphs are an 18px circle in the verified Canva export, so all
+   * three round actions now share one size rather than Add standing apart.
+   */
+  it('draws Close, History and Add at the same size', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
+    expect(wrapper.get('.interior').attributes('style')).toContain(
+      `--action-size: ${MINE_ACTION_SIZE}px`
     )
   })
 

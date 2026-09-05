@@ -109,6 +109,21 @@ export const AUTHORED_INTERIOR_BOX: BoxSize = {
 }
 
 /**
+ * Close, History and Add's shared size (#197). `components.md` marks icon
+ * sizes Unspecified, so there is no number to transcribe — this is measured
+ * off the verified Canva export `assets/mine/mine-add-panel-open.png`, where
+ * the interior column renders at very nearly 1:1 against the design's own
+ * 245px (243px measured there, a rounding difference under half a percent).
+ * At that scale Close's round "X" and Add's round "+" are both an 18px
+ * circle; only the export's own black pressed-state backdrop around Add read
+ * larger, which is a hover/press affordance and not the button's own size.
+ * Close and History were already drawn at 18px as a stacked pair; Add now
+ * joins them rather than the other way round, since 18px is what both
+ * glyphs actually measure.
+ */
+export const MINE_ACTION_SIZE = 18
+
+/**
  * How tall a dwarf is, measured in pixels of the painting he stands in.
  *
  * The one calibrated number, and the header explains where it comes from: the
