@@ -1606,6 +1606,118 @@ describe('App feed refresh (#183)', () => {
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
     expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
   })
+
+  /*
+   * The maintainer's follow-up on #195: `readSelectedFeed` used to blank
+   * `selectedFeed` to `undefined` before every await, not only the first one
+   * for a dwarf — so a re-read for the SAME dwarf rebuilt the row list from
+   * nothing while its answer was still in flight. That is what made a busy
+   * session's panel look frozen: rows arrive below the fold and the list
+   * snaps back to empty (and, via DwarfMessagePanel's own scroll, to the top)
+   * before the same words reappear a moment later. The READING note is for
+   * the first read of a dwarf only — a re-read keeps the previous result on
+   * screen until the new one lands.
+   */
+  it('keeps the previous feed on screen while a re-read for the same dwarf is in flight', async () => {
+    let resolveSecond: (value: { readable: boolean; messages: unknown[] }) => void = () => {}
+    const getDwarfFeed = vi
+      .fn()
+      .mockResolvedValueOnce({
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Halfway down the shaft', timestamp: 't1' }]
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ readable: boolean; messages: unknown[] }>((resolve) => {
+            resolveSecond = resolve
+          })
+      )
+    const { wrapper, api } = await openRefreshDwarf({ getDwarfFeed })
+    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({
+      // lastMessage cleared: conversationOf falls back to it while feed is
+      // undefined, and that fallback would otherwise show the very same words
+      // and mask a wrongful blank — this way a regression here has nothing
+      // else to fall back to.
+      mines: [
+        { ...MINE, dwarfs: [{ ...REFRESH_DWARF, lastMessage: '', transcriptUpdatedAt: 1_000 }] }
+      ],
+      tokensObserved: 0
+    })
+    await flushPromises()
+
+    // The second read is in flight and unresolved: the previous message must
+    // stay on screen, and the note must not flash back to "reading" — a
+    // re-read for the SAME dwarf is not a first read.
+    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
+    expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
+
+    resolveSecond({
+      readable: true,
+      messages: [{ role: 'assistant', text: 'Seam exhausted, packing up.', timestamp: 't2' }]
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
+  })
+
+  it('blanks back to the reading note when the panel switches to a different dwarf', async () => {
+    // A change of dwarf IS a first read again — unlike the re-read above, the
+    // previous dwarf's words must not linger under a different dwarf's name.
+    // lastMessage cleared on both: conversationOf otherwise falls back to it
+    // while feed is undefined, which would show a bubble either way and mask
+    // a wrongful non-blank on the switch.
+    const FIRST_DWARF = { ...REFRESH_DWARF, lastMessage: '' }
+    const SECOND_DWARF = {
+      ...REFRESH_DWARF,
+      id: 'claude:s3',
+      sessionId: 's3',
+      name: 'Digger',
+      lastMessage: ''
+    }
+    let resolveSecondDwarfFeed: (value: {
+      readable: boolean
+      messages: unknown[]
+    }) => void = () => {}
+    const getDwarfFeed = vi.fn((dwarfId: string) => {
+      if (dwarfId === REFRESH_DWARF.id) {
+        return Promise.resolve({
+          readable: true,
+          messages: [{ role: 'assistant', text: 'Halfway down the shaft', timestamp: 't1' }]
+        })
+      }
+      return new Promise<{ readable: boolean; messages: unknown[] }>((resolve) => {
+        resolveSecondDwarfFeed = resolve
+      })
+    })
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({
+        mines: [{ ...MINE, dwarfs: [FIRST_DWARF, SECOND_DWARF] }],
+        tokensObserved: 0
+      }),
+      getDwarfFeed
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('[aria-label^="Select Foreman "]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
+
+    await wrapper.find('[aria-label^="Select Digger "]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.bubble').exists()).toBe(false)
+    expect(wrapper.find('.panel-note').text()).toContain('Reading')
+
+    resolveSecondDwarfFeed({
+      readable: true,
+      messages: [{ role: 'assistant', text: 'Just arrived at the seam.', timestamp: 't2' }]
+    })
+    await flushPromises()
+    expect(wrapper.find('.bubble').text()).toBe('Just arrived at the seam.')
+  })
 })
 
 /**

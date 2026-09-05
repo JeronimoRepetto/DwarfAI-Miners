@@ -250,6 +250,14 @@ const openDwarfId = computed(() => launchState.value.launchedDwarfId ?? selected
 const selectedFeed = ref<DwarfFeedResult | undefined>(undefined)
 /** Which read is the current one, so a slow answer cannot land on a later dwarf. */
 let feedToken = 0
+/**
+ * Which dwarf `selectedFeed` currently answers for — so a re-read for that
+ * SAME dwarf can leave the previous result on screen while it is in flight,
+ * and only a genuine switch (or a skip) clears it back to `undefined` (#195).
+ * `null` is "nobody's, blank it on the next read", which is also the reset a
+ * held session or a closed panel leaves behind.
+ */
+let selectedFeedDwarfId: string | null = null
 
 const currentMine = computed<Mine | undefined>(() =>
   viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
@@ -512,10 +520,22 @@ function closeMessages(): void {
  * below, or from an earlier call here — cannot land after a fresher one has
  * started; only the newest token's answer is ever kept (issue #183: the
  * panel's own send is now a second caller of this, beside the watch).
+ *
+ * Blanks `selectedFeed` first only when this is the FIRST read for `dwarfId`
+ * — a change of dwarf, or the very first read after the panel opened. A
+ * re-read for the dwarf `selectedFeed` already answers for leaves the
+ * previous result on screen while this one is in flight (the maintainer's
+ * follow-up on #195): the poll re-reads on every sign of activity, so blanking
+ * unconditionally rebuilt the row list from nothing on EVERY tick, not only
+ * the first one, which is what made a busy session's panel look frozen — rows
+ * arrive below the fold while the list snaps back to empty and then to the
+ * top before the same words reappear a moment later.
  */
 async function readSelectedFeed(dwarfId: string): Promise<void> {
   const token = ++feedToken
-  selectedFeed.value = undefined
+  const isFirstRead = selectedFeedDwarfId !== dwarfId
+  selectedFeedDwarfId = dwarfId
+  if (isFirstRead) selectedFeed.value = undefined
   try {
     const result = await window.api.getDwarfFeed(dwarfId)
     if (feedToken === token) selectedFeed.value = result
@@ -532,10 +552,13 @@ async function readSelectedFeed(dwarfId: string): Promise<void> {
  * snapshot, and reading its transcript would fetch the same words second-hand
  * and a turn behind. Bumps feedToken without reading anything, so a read the
  * watch had already started cannot land after the panel moved to a held
- * session (or off a dwarf entirely).
+ * session (or off a dwarf entirely). Clears `selectedFeedDwarfId` too, so
+ * that dwarf's next observed read (if it ever has one) is a first read again
+ * rather than treated as a re-read of stale words.
  */
 function skipSelectedFeed(): void {
   feedToken++
+  selectedFeedDwarfId = null
   selectedFeed.value = undefined
 }
 

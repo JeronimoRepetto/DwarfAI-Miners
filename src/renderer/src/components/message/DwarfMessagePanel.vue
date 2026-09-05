@@ -12,6 +12,11 @@ import { CONSOLE_HINT, buildActionBar, refusalLine } from '../../lib/delivery/ac
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { authorOf, conversationOf, latestText } from '../../lib/message/conversation'
 import {
+  STICK_TO_BOTTOM_TOLERANCE_PX,
+  nextScrollTop,
+  shouldStickToBottom
+} from '../../lib/message/listScroll'
+import {
   MESSAGE_PANEL_MAX_HEIGHT,
   clampPanelHeight,
   initialPanelHeight
@@ -177,6 +182,42 @@ async function showLatest(): Promise<void> {
 }
 
 onMounted(showLatest)
+
+/*
+ * The row list growing on its own — a re-read landing, or the poll finding
+ * new activity — is the case `showLatest` above cannot reach: it only ever
+ * runs once, on mount, and mount can easily find nothing yet (App.vue reads a
+ * newly-selected dwarf's feed asynchronously, so the first render here is
+ * often an empty list). Two watchers rather than one, deliberately, because
+ * the decision needs a metric from BEFORE Vue patches the new rows in and a
+ * write AFTER it has: `pending` is filled in by the first, on the default
+ * ('pre') flush that runs ahead of the render it is watching for, and spent by
+ * the second, on the 'post' flush that runs once that render has landed.
+ * `lib/message/listScroll` is the actual rule; this is only the plumbing that
+ * feeds it real DOM numbers (#195).
+ */
+let pendingStickToBottom = false
+
+watch(rows, () => {
+  const list = conversationRef.value
+  if (list === null) return
+  pendingStickToBottom = shouldStickToBottom(
+    list.scrollTop,
+    list.clientHeight,
+    list.scrollHeight,
+    STICK_TO_BOTTOM_TOLERANCE_PX
+  )
+})
+
+watch(
+  rows,
+  () => {
+    const list = conversationRef.value
+    if (list === null) return
+    list.scrollTop = nextScrollTop(list.scrollTop, list.scrollHeight, pendingStickToBottom)
+  },
+  { flush: 'post' }
+)
 
 function toggleHistory(): void {
   historyOpen.value = !historyOpen.value
