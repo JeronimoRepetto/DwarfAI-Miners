@@ -1929,10 +1929,22 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     await runtime.refresh()
     const mineId = runtime.getMines()[0]!.id
 
-    // Nothing but the verdict crosses the wire — no pid, no launch id.
+    // Nothing about the PROCESS crosses the wire — no pid, and not this
+    // register's own launch id either.
+    //
+    // AMENDED for #191: the verdict now carries a receipt, which is a
+    // different id for a different job. It names the launch so the panel can
+    // recognise the dwarf that comes back carrying it (`receipt:…`), and it is
+    // deliberately not the kill register's handle (`launch:…`) — that one
+    // exists only where a pid was retained, and it is the thing this test is
+    // about keeping off the wire.
     await expect(
       runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
-    ).resolves.toEqual({ launched: true, provider: 'codex' })
+    ).resolves.toEqual({
+      launched: true,
+      provider: 'codex',
+      launchId: expect.stringMatching(/^receipt:/)
+    })
 
     await runtime.refresh()
     const dwarfs = runtime.getMines()[0]!.dwarfs
@@ -2931,7 +2943,11 @@ describe('AgentRuntime.launchAgent (#86)', () => {
       runtime.launchAgent({ mineId, provider: 'claude', prompt: '  run the tests  ' })
     ).resolves.toEqual({
       launched: true,
-      provider: 'claude'
+      provider: 'claude',
+      // AMENDED for #191. The verdict still claims no dwarf — the id below is
+      // the LAUNCH's, opened so the panel can recognise the dwarf that comes
+      // back carrying it — so the claim this test makes is unchanged.
+      launchId: expect.any(String)
     })
     expect(launchSession).toHaveBeenCalledWith({
       provider: 'claude',
@@ -3081,6 +3097,127 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
 
     expect(runtime.getMines()[0]!.dwarfs).toHaveLength(before)
+  })
+})
+
+/*
+ * The second half of #191. A detached launch leaves no held conversation, so
+ * the panel had nothing to recognise and never handed over — the dwarf
+ * appeared, replied and left while the Add Panel still read "the session
+ * started". The receipt is the session's own opening prompt, matched HERE
+ * against the prompt this runtime sent, and published as a verdict.
+ */
+describe('AgentRuntime proving which dwarf a detached launch became (#191)', () => {
+  const LAUNCH_PATH = 'C:\\work\\project'
+
+  function codexBoard(sessionIds: string[]) {
+    return sessionIds.map((sessionId) => ({
+      provider: 'codex' as const,
+      sessionId,
+      cwd: LAUNCH_PATH,
+      status: 'busy' as const,
+      updatedAt: 1,
+      dwarfs: [
+        {
+          id: `codex:${sessionId}`,
+          provider: 'codex' as const,
+          role: 'foreman' as const,
+          name: sessionId,
+          status: 'working' as const,
+          sessionId
+        }
+      ]
+    }))
+  }
+
+  async function runtimeWith(sessions: string[], firstPrompts: Record<string, string> = {}) {
+    const firstPrompt = vi.fn(async (dwarfId: string) => firstPrompts[dwarfId])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [
+        {
+          kind: 'codex',
+          scan: vi.fn<Provider['scan']>().mockResolvedValue(codexBoard(sessions)),
+          feed: vi.fn().mockResolvedValue([]),
+          firstPrompt
+        }
+      ],
+      launchSession: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' }),
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, firstPrompt, mineId: runtime.getMines()[0]!.id }
+  }
+
+  /** One poll, plus the head read the poll deliberately does not wait for. */
+  async function sweep(runtime: AgentRuntime): Promise<void> {
+    await runtime.refresh()
+    await runtime.settleLaunchReceipts()
+  }
+
+  function launchIdOf(runtime: AgentRuntime, dwarfId: string): string | undefined {
+    return runtime
+      .getMines()
+      .flatMap((mine) => mine.dwarfs)
+      .find((dwarf) => dwarf.id === dwarfId)?.launchId
+  }
+
+  /*
+   * A receipt, never a dwarf. The verdict still claims nothing about the board
+   * — #86's rule — it hands over the id the panel then waits to SEE.
+   */
+  it('answers a detached launch with a receipt the panel can wait on', async () => {
+    const { runtime, mineId } = await runtimeWith(['theirs'])
+
+    const result = await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    expect(result.launched).toBe(true)
+    expect(result.launchId).toEqual(expect.any(String))
+  })
+
+  it('stamps that receipt on the dwarf whose session opened with the prompt it sent', async () => {
+    const { runtime, mineId } = await runtimeWith(['mine', 'theirs'], {
+      'codex:mine': 'dig the east gallery',
+      'codex:theirs': 'shore the north wall'
+    })
+
+    const { launchId } = await runtime.launchAgent({
+      mineId,
+      provider: 'codex',
+      prompt: 'dig the east gallery'
+    })
+    await sweep(runtime)
+    await runtime.refresh()
+
+    expect(launchIdOf(runtime, 'codex:mine')).toBe(launchId)
+    expect(launchIdOf(runtime, 'codex:theirs')).toBeUndefined()
+  })
+
+  it('stamps nobody when no session on the board opened with those words', async () => {
+    const { runtime, mineId } = await runtimeWith(['theirs'], {
+      'codex:theirs': 'shore the north wall'
+    })
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig the east gallery' })
+    await sweep(runtime)
+    await runtime.refresh()
+
+    expect(launchIdOf(runtime, 'codex:theirs')).toBeUndefined()
+  })
+
+  /*
+   * The cost rule. This read walks a transcript's HEAD, which is the one place
+   * the poll's own tail window never goes, so it must never ride the two-second
+   * loop: a machine with no launch waiting pays nothing at all.
+   */
+  it('reads no transcript head on a poll with no launch waiting for its dwarf', async () => {
+    const { runtime, firstPrompt } = await runtimeWith(['theirs'], {
+      'codex:theirs': 'shore the north wall'
+    })
+
+    await sweep(runtime)
+
+    expect(firstPrompt).not.toHaveBeenCalled()
   })
 })
 

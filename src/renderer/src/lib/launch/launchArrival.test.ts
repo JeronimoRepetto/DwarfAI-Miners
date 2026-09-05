@@ -75,3 +75,81 @@ describe('recognising the dwarf a launch just started', () => {
     expect(backwards?.id).toBe('a')
   })
 })
+
+/*
+ * The second receipt (#191). A DETACHED launch leaves no held conversation, so
+ * for a long time nothing on the board could be matched to one and the panel
+ * never handed over. Its evidence is the session's own transcript, whose first
+ * human turn is the prompt that was sent — but that match runs in MAIN, where
+ * both strings are raw and neither has to survive a trip through the wire's
+ * redaction. What reaches here is main's verdict: the receipt it opened for
+ * this launch, stamped on the dwarf it proved.
+ */
+const RECEIPT = 'receipt:1'
+
+function launched(id: string, launchId?: string): Dwarf {
+  return defaultDwarf({
+    id,
+    name: id,
+    sessionId: id,
+    ...(launchId === undefined ? {} : { launchId })
+  })
+}
+
+describe('recognising the dwarf a detached launch became', () => {
+  it('finds the dwarf main stamped with this launch’s own receipt', () => {
+    const found = launchedDwarfIn(mine([launched('a'), launched('b', RECEIPT)]), PROMPT, RECEIPT)
+
+    expect(found?.id).toBe('b')
+  })
+
+  it('ignores a dwarf carrying another launch’s receipt', () => {
+    expect(launchedDwarfIn(mine([launched('a', 'receipt:2')]), PROMPT, RECEIPT)).toBeUndefined()
+  })
+
+  /*
+   * The words are not the receipt here, and that is the whole distinction. A
+   * detached session's conversation is not something this app can read on the
+   * wire at all, so a dwarf whose words happen to match proves nothing — only
+   * main's own verdict does.
+   */
+  it('never adopts on words alone once a receipt is what it is waiting for', () => {
+    expect(launchedDwarfIn(mine([held('a', PROMPT)]), PROMPT, RECEIPT)).toBeUndefined()
+  })
+
+  /*
+   * A session that finished before the poll first drew it is exactly the case
+   * this half of #191 exists to serve: the reply is already written, and the
+   * panel opens on the ended state with it visible.
+   */
+  it('adopts a dwarf whose session has already ended', () => {
+    const ended = { ...launched('a', RECEIPT), status: 'leaving' as const }
+
+    expect(launchedDwarfIn(mine([ended]), PROMPT, RECEIPT)?.id).toBe('a')
+  })
+
+  /*
+   * Two dwarfs cannot honestly carry one receipt — main claims exactly one
+   * session per launch — but if a board ever showed both, the answer must not
+   * depend on the order the poll listed them in. Same tie, same rule.
+   */
+  it('breaks a tie on id, exactly as the held receipt does', () => {
+    const forwards = launchedDwarfIn(
+      mine([launched('b', RECEIPT), launched('a', RECEIPT)]),
+      PROMPT,
+      RECEIPT
+    )
+    const backwards = launchedDwarfIn(
+      mine([launched('a', RECEIPT), launched('b', RECEIPT)]),
+      PROMPT,
+      RECEIPT
+    )
+
+    expect(forwards?.id).toBe('a')
+    expect(backwards?.id).toBe('a')
+  })
+
+  it('recognises nobody in a mine that is not there', () => {
+    expect(launchedDwarfIn(undefined, PROMPT, RECEIPT)).toBeUndefined()
+  })
+})

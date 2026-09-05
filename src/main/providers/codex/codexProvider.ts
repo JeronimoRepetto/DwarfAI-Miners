@@ -7,10 +7,12 @@ import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
 import { readFeedWindow } from '../feedWindow'
+import { readFirstPrompt } from '../firstPrompt'
 import type { Provider } from '../provider'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import {
   extractCodexFeed,
+  firstCodexUserMessage,
   isCodexArtifactStorageCwd,
   parseCodexRolloutContext,
   parseCodexRolloutHead,
@@ -500,6 +502,16 @@ export class CodexProvider implements Provider {
   /** Path backing feed(), used to open a terminal that tails the transcript live. */
   transcriptPath(dwarfId: string): string | undefined {
     return this.feedSources.get(dwarfId)
+  }
+
+  /**
+   * The prompt this thread opened with (#191) — the head of the same rollout
+   * feed() reads the tail of, and never redacted: see firstPrompt.ts.
+   */
+  async firstPrompt(dwarfId: string): Promise<string | undefined> {
+    const path = this.feedSources.get(dwarfId)
+    if (path === undefined) return undefined
+    return readFirstPrompt(this.fs, path, firstCodexUserMessage)
   }
 
   /**

@@ -1108,3 +1108,63 @@ describe('CodexProvider', () => {
     })
   })
 })
+
+/*
+ * The launch receipt's read (#191). A detached Codex launch leaves no held
+ * conversation, so the only evidence that ties a dwarf on the board to the Add
+ * Panel's own launch is the prompt the rollout recorded as its first human
+ * turn — and that sits at the head of the file, where no tail read reaches.
+ */
+describe('CodexProvider.firstPrompt', () => {
+  let fake: FakeFs
+
+  const PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-00-00-${SESSION_ID}.jsonl`
+
+  function makeProvider(): CodexProvider {
+    return new CodexProvider({
+      fs: fake,
+      sessionsRoot: ROOT,
+      livenessWindowS: WINDOW_S,
+      scanDays: 7,
+      idleRetentionS: 0,
+      now: () => NOW
+    })
+  }
+
+  beforeEach(() => {
+    fake = new FakeFs()
+    fake.addFile(PATH, rollout, NOW - 60_000)
+  })
+
+  it('answers the prompt the rollout opened with', async () => {
+    const provider = makeProvider()
+    await provider.scan()
+
+    await expect(provider.firstPrompt(`codex:${SESSION_ID}`)).resolves.toBe(
+      'Placeholder plain message.'
+    )
+  })
+
+  it('knows nothing about a dwarf no scan has seen', async () => {
+    await expect(makeProvider().firstPrompt('codex:nobody')).resolves.toBeUndefined()
+  })
+
+  /*
+   * The one thing this read must NOT do that feed() does. feed() redacts on
+   * the way to the renderer, because a pasted key reaches a screenshot from
+   * there. This string never leaves main — it is compared against the prompt
+   * main itself sent and dropped — so redacting it would only guarantee the
+   * comparison fails for anyone whose prompt looks like key material.
+   */
+  it('answers the raw prompt, because nothing here is ever displayed', async () => {
+    const secret = 'deploy with sk-abcdefghijklmnopqrstuvwxyz012345 now'
+    fake.addFile(PATH, rollout.replace('Placeholder plain message.', secret), NOW - 60_000)
+    const provider = makeProvider()
+    await provider.scan()
+
+    await expect(provider.firstPrompt(`codex:${SESSION_ID}`)).resolves.toBe(secret)
+    // The panel's own read of the same words still redacts them.
+    const shown = await provider.feed(`codex:${SESSION_ID}`, 12)
+    expect(shown?.[0]?.text).toContain('[redacted]')
+  })
+})

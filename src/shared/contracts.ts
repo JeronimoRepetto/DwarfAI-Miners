@@ -861,6 +861,36 @@ export interface Dwarf {
    * session, or it is one that has yet to say anything.
    */
   conversation?: FeedMessage[]
+  /**
+   * The receipt of a launch the Add Panel made itself, once main has PROVED
+   * this dwarf is that launch's session (#191).
+   *
+   * Why the panel needs one at all: submitting has to hand over to this
+   * dwarf's MessagePanel, and the launch verdict deliberately carries no dwarf
+   * id — the session's id is not known at that moment, and claiming one there
+   * would be the second observation path #86 refuses. A HELD launch leaves its
+   * receipt on the board already, because the registry seeds the new session's
+   * conversation with the exact prompt that was sent, so `conversation[0]` IS
+   * the evidence. A DETACHED launch leaves no conversation, and for a long
+   * time that left the panel with nothing to recognise: it stopped at "the
+   * session started" and never handed over.
+   *
+   * The third source of evidence is the session's own transcript, whose first
+   * human turn is the prompt the launch wrote to that child's stdin. Main
+   * performs that match — read once at the head of the file, off the poll,
+   * never on it — and publishes only its VERDICT here. The prompt itself stays
+   * in main: the comparison is between two strings main holds, so it is exact
+   * rather than a reading of a redacted feed, and the renderer's matching logic
+   * never has to hold the user's text at all.
+   *
+   * An id of the LAUNCH, never of the dwarf and never of the session, and that
+   * is what keeps it out of #86's way: the panel is not told which dwarf its
+   * launch became, it recognises the one carrying the receipt it was given.
+   * Absent means what it says — this app did not launch this session, or has
+   * not proved that it did. Evidence, never timing: "the dwarf that was not
+   * here a moment ago" would adopt whatever happened to start next.
+   */
+  launchId?: string
 }
 
 /**
@@ -1270,6 +1300,20 @@ export interface AgentLaunchResult {
   provider: DwarfProvider | 'none'
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /**
+   * The receipt this launch will be recognised by, when main opened one (#191).
+   *
+   * Not a dwarf id and not a session id — see `Dwarf.launchId`, which is where
+   * the same string turns up once main has proved which session this launch
+   * became. The panel holds it while it waits and adopts the dwarf that comes
+   * back carrying it, so the paragraph above still holds in full: no dwarf is
+   * claimed here, and none is known to claim.
+   *
+   * Absent when there is nothing to wait for — a refused launch, or a channel
+   * that leaves a different receipt (a held session is recognised by the
+   * conversation it was seeded with).
+   */
+  launchId?: string
 }
 
 /*

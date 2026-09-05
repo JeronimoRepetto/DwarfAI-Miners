@@ -45,9 +45,15 @@ import type { AgentProviderOption, Mine } from '../types'
  * a program the person named themselves (#194). The design decides between
  * them: submitting has to open the MessagePanel with the submitted prompt as
  * the first message and then show the reply there. Only a stream this panel
- * holds gives it words at all — an observed session is read from a transcript,
- * second-hand and a write behind — so a detached launch would open a panel with
- * nothing in it, and the two held modes both fill it.
+ * holds gives it words FIRST-HAND — an observed session is read from a
+ * transcript, second-hand and a write behind — so where a provider can be
+ * held, it is.
+ *
+ * That is a preference between channels, and #191 settled what it never was:
+ * an excuse for a detached launch to hand over to nothing. A detached session
+ * does reach the MessagePanel, on the receipt below, and the panel then reads
+ * its transcript on its own channel like any other session somebody else
+ * started. Second-hand words beat none.
  *
  * ## Other is a launch now, not a refusal
  *
@@ -197,38 +203,63 @@ export function useAgentLaunch(): AgentLaunch {
         return
       }
 
-      const held = HELDABLE_PROVIDERS.includes(choice)
-      const result = held
-        ? await window.api.launchHeldSession({ mineId: mineId.value, provider: choice, prompt })
-        : await window.api.launchAgent({ mineId: mineId.value, provider: choice, prompt })
+      // Kept as two calls rather than one verdict of a union type, because
+      // the two verdicts differ in what they carry: only the detached one
+      // opens a receipt (#191), and a branch that narrowed on a boolean would
+      // have to assert its way to that field.
+      if (HELDABLE_PROVIDERS.includes(choice)) {
+        const heldResult = await window.api.launchHeldSession({
+          mineId: mineId.value,
+          provider: choice,
+          prompt
+        })
+        // A verdict of `launched: true` says a session STARTED and nothing
+        // more, on every channel. What differs is what can be done with it: a
+        // held launch's dwarf arrives carrying the prompt this panel sent,
+        // seeded into its conversation by main, so it needs nothing else here.
+        if (!heldResult.launched) {
+          state.value = submitRefused(state.value, heldResult.error ?? NOT_LAUNCHED)
+        }
+        return
+      }
 
-      // A verdict of `launched: true` says a session STARTED and nothing more,
-      // on every channel. What differs is what can be done with that fact.
+      const result = await window.api.launchAgent({
+        mineId: mineId.value,
+        provider: choice,
+        prompt
+      })
       if (!result.launched) {
         state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
         return
       }
-      // A held launch waits: its dwarf will arrive carrying the prompt this
-      // panel sent, which is the receipt `observe` recognises. A detached one
-      // never will — a conversation belongs to a stream this panel holds — so
-      // the panel stops here and says so rather than watching for something
-      // that cannot come.
-      if (!held) state.value = startedDetached(state.value)
+      // A detached session carries no conversation at all — that belongs to a
+      // stream this panel holds — so it is recognised by the receipt main
+      // opened here instead, which main stamps on the dwarf it proves from the
+      // session's own opening prompt (#191).
+      state.value = startedDetached(state.value, result.launchId ?? null)
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }
   }
 
   /**
-   * Every poll, while a launch is in flight: has its dwarf arrived.
+   * Every poll, while a launch is still this panel's own: has its dwarf
+   * arrived.
    *
    * Recognised by the receipt the launch left on the board rather than by
-   * timing — see `launchedDwarfIn` for why that distinction is the whole rule.
+   * timing — see `launchedDwarfIn` for why that distinction is the whole rule,
+   * and for the two receipts a launch can hold.
+   *
+   * A detached launch is watched too (#191), which is the change: it is past
+   * `submitting` — main answered the moment the process started — so watching
+   * only in flight is what left Add > Codex stranded on "the session started"
+   * while its dwarf appeared, replied and walked out again.
    */
   function observe(mines: readonly Mine[]): void {
-    if (!state.value.submitting || mineId.value === null) return
+    if (mineId.value === null) return
+    if (!state.value.submitting && !state.value.detached) return
     const mine = mines.find((entry) => entry.id === mineId.value)
-    const dwarf = launchedDwarfIn(mine, launchPrompt(state.value))
+    const dwarf = launchedDwarfIn(mine, launchPrompt(state.value), state.value.launchId)
     if (dwarf === undefined) return
     state.value = adoptLaunchedDwarf(state.value, dwarf.id)
   }
