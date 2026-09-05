@@ -244,12 +244,12 @@ launched session being a foreman by construction.
 
 Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 
-| Channel                                      | Question form                                                        | Available while open?      | Answer path                                                     |
-| -------------------------------------------- | -------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------- |
-| `AskUserQuestion` in an **observed TUI**     | structured — but written to the transcript at **resolve**, backdated | **no**                     | keystrokes at that TUI only → **notify and jump**               |
-| **Cross-session message bus**                | **prose**, options embedded as text                                  | yes, instantly             | prose reply; the peer's human may interpose                     |
-| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                  | yes                        | **full structured loop**, ~6s round trip                        |
-| **Permission prompt** in an **observed TUI** | none — the hook says a dialog is open, never what it asks            | **yes**, as that bare fact | keystrokes at that TUI only → **notify and jump, built (#203)** |
+| Channel                                      | Question form                                                        | Available while open?           | Answer path                                                        |
+| -------------------------------------------- | -------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------ |
+| `AskUserQuestion` in an **observed TUI**     | structured — but written to the transcript at **resolve**, backdated | **no**                          | keystrokes at that TUI only → **notify and jump**                  |
+| **Cross-session message bus**                | **prose**, options embedded as text                                  | yes, instantly                  | prose reply; the peer's human may interpose                        |
+| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                  | yes                             | **full structured loop**, ~6s round trip                           |
+| **Permission prompt** in an **observed TUI** | structured — the `tool_use` is written BEFORE the dialog opens       | **yes**, and so is what it asks | keystrokes at that TUI → **answered from the panel, built (#203)** |
 
 - **Row one revised an assumption three earlier phases were built on.** A menu left open ~5.5
   minutes, transcript scanned twice: **zero `AskUserQuestion` blocks while it was open**; the block
@@ -268,13 +268,33 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
   not invoke `AskUserQuestion` at all** — the model asked in prose and the turn ended. The tool fires
   when a client capable of answering is attached, so structured buttons are exclusive to panel-held
   sessions.
-- **Row four is the only one notify-and-jump was ever actually built for (#203).** A
-  `permission_prompt` Notification is Claude Code's own structured word that a dialog is open for that
-  `session_id` — the one thing about an observed session's question that IS knowable while it is open,
-  which is exactly what row one lacks. So the dwarf is marked `waitingReason: 'approval'` and the
-  MessagePanel offers the console jump, and it stops there. Nothing is typed at that terminal: which
-  keys work the permission picker, and what they do to a session whose dialog was answered at the
-  console a moment earlier, has never been measured on a live build. Row one stays unbuilt.
+- **Row four is the one that turned out to be answerable, and the only one (#203).** It differs from
+  row one on the single axis that decides everything: the assistant's `tool_use` block reaches the
+  transcript BEFORE the CLI draws its dialog, where an `AskUserQuestion` reaches it only on resolve.
+  So while the dialog stands, that call sits in the tail with no `tool_result` — and a
+  `permission_prompt` Notification, Claude Code's own word that a dialog is open for that
+  `session_id`, says the rest. Neither half names a request alone; together they do, and nothing is
+  read out of prose. Where more than one call is open at once — a parallel batch, whose results are
+  all written in one message — the panel refuses to name any of them and falls back to the mark and
+  the console jump, because a card naming a sibling is how somebody approves a command they did not
+  read.
+
+  **The keys, measured [V] on Claude Code 2.1.261, Windows console, 2026-09-05.** The dialog is a
+  **selector**, not the `Confirmation` context the keybindings reference documents — a lone `y` does
+  nothing. A **digit picks that option and fires it immediately**, no Enter; **Esc cancels the
+  prompt**. The option list varies by tool: two options in places, three for a file write, four for
+  a Bash `rm` (`1` Yes, `2` Yes-and-always-allow, `3` Yes-and-switch-to-auto-mode, `4` No). **Yes is
+  always first and No is always last**, which is why **Allow is `1`** and **Deny is `Esc`** rather
+  than a digit — the panel cannot count rows in a dialog it does not draw, and a positional key
+  would eventually press "always allow" for somebody who pressed the button that refuses. The panel
+  offers only those two for the same reason: "always allow" and "auto mode" exist only in that
+  terminal, and nothing the panel sends outlives the prompt.
+
+  **A late keystroke.** The runtime rescans and re-matches the open call immediately before pressing
+  anything, because a key presses whatever dialog is actually up. Past that, a late `1` is one stray
+  character in the session's idle input and a late `Esc` interrupts the running turn — accepted, and
+  said out loud in the panel's status line under a deny. Row one stays unbuilt, and unbuildable from
+  anything this app reads.
 
 ---
 
