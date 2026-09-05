@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAP_BG_SRC } from '../../lib/art'
+import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
 import { MAP_TIME_REFRESH_MS } from '../../lib/map/mapTime'
 import { MAP_TOOLTIP_DELAY_MS } from '../../lib/map/mapTooltip'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
@@ -177,6 +177,25 @@ describe('MapView', () => {
         markerFor(second, name).attributes('style')
       )
     }
+  })
+})
+
+/*
+ * The painting used to fill `.map-view` edge to edge (`.map-art` at
+ * `width: 100%; height: 100%; object-fit: contain`), which letterboxes the
+ * instant the column's own ratio drifts from 1856/2304 — exactly what
+ * `secondaryColumnWidth`'s own 555px floor guarantees on a short window
+ * (#197). The frame that actually holds the painting now carries the
+ * painting's own aspect ratio, the same way the interior's `.interior` does
+ * (MineScene.vue) — so it hugs the art inside whatever column main hands it
+ * rather than stretching wider and leaving a band down the sides.
+ */
+describe('MapView frame', () => {
+  it('gives the frame the painting’s own aspect ratio, so a wider column never letterboxes it', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    expect(wrapper.get('.map-frame').attributes('style')).toContain(
+      `--map-aspect: ${MAP_ART_SIZE.width} / ${MAP_ART_SIZE.height}`
+    )
   })
 })
 
