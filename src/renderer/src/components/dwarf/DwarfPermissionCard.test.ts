@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { PRESS_ENTER_TO_SEND } from '../../lib/question/questionAnswer'
+import { JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
+import {
+  PERMISSION_ESCAPED_LINE,
+  PERMISSION_TYPED_LINE,
+  PRESS_ENTER_TO_SEND
+} from '../../lib/question/questionAnswer'
 import type { DwarfPermissionRequest } from '../../types'
 import DwarfPermissionCard from './DwarfPermissionCard.vue'
 
@@ -12,6 +17,7 @@ function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermi
     title: 'Claude wants to run a command',
     description: 'This command will run on your machine.',
     input: 'rm -rf /tmp/scratch',
+    channel: 'held',
     askedAt: '2026-09-05T09:00:00.000Z',
     ...overrides
   }
@@ -197,5 +203,92 @@ describe('DwarfPermissionCard', () => {
     for (const option of wrapper.findAll('.option-card')) {
       expect(option.attributes('disabled')).toBeUndefined()
     }
+  })
+})
+
+/**
+ * Issue #203. The same card, for a session the panel only OBSERVES: the tool
+ * call is read off an unresolved `tool_use` in the transcript and the
+ * decision is a keystroke into that session's own terminal.
+ *
+ * Identical to draw, deliberately — it is the same prompt, and a second card
+ * would have been two components disagreeing about one thing. What differs is
+ * only what may be claimed afterwards, and where a refusal leaves the person.
+ */
+describe('DwarfPermissionCard on the terminal channel (#203)', () => {
+  const observed = (overrides: Partial<DwarfPermissionRequest> = {}) =>
+    permission({ channel: 'terminal', ...overrides })
+
+  function terminalCard(props: Record<string, unknown> = {}) {
+    return mount(DwarfPermissionCard, { props: { permission: observed(), ...props } })
+  }
+
+  it('draws the prompt and both answers exactly as a held one', () => {
+    const wrapper = terminalCard()
+    expect(wrapper.find('.permission-header').text()).toBe('Bash')
+    expect(wrapper.find('.permission-input').text()).toBe('rm -rf /tmp/scratch')
+    expect(wrapper.findAll('.option-card .option-label').map((node) => node.text())).toEqual([
+      'Allow',
+      'Deny'
+    ])
+  })
+
+  it('claims only that Allow was typed, never that the call was released', () => {
+    // The held channel hands the decision to a stream this panel owns; this
+    // one presses a key in a console it does not. Borrowing the stronger
+    // sentence would be the ✓ claiming the ✓✓.
+    const wrapper = terminalCard({
+      answerState: { phase: 'answered', toolUseId: 'toolu_09', decision: 'allow' }
+    })
+    expect(wrapper.find('.answer-ok').text()).toBe(PERMISSION_TYPED_LINE)
+    expect(wrapper.find('.answer-ok').text()).not.toContain('released')
+  })
+
+  it('warns after a Deny that a late Esc interrupts the turn instead', () => {
+    const wrapper = terminalCard({
+      answerState: { phase: 'answered', toolUseId: 'toolu_09', decision: 'deny' }
+    })
+    expect(wrapper.find('.answer-ok').text()).toBe(PERMISSION_ESCAPED_LINE)
+  })
+
+  it('offers the way to that terminal beside a refusal, since the prompt is still there', () => {
+    const wrapper = terminalCard({
+      answerState: {
+        phase: 'refused',
+        toolUseId: 'toolu_09',
+        decision: 'allow',
+        error: 'Could not reach that terminal. Answer the prompt there.'
+      }
+    })
+    expect(wrapper.find('.answer-error').text()).toContain(
+      'Could not reach that terminal. Answer the prompt there.'
+    )
+    expect(wrapper.find('.answer-jump').text()).toBe(JUMP_TO_TERMINAL_NAME)
+  })
+
+  it('asks for that console when the jump is pressed', async () => {
+    const wrapper = terminalCard({
+      answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
+    })
+    await wrapper.find('.answer-jump').trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+
+  it('offers no jump for a held prompt, which has no second place to answer', () => {
+    const wrapper = mount(DwarfPermissionCard, {
+      props: {
+        permission: permission(),
+        answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
+      }
+    })
+    expect(wrapper.find('.answer-error').text()).toBe('nope')
+    expect(wrapper.find('.answer-jump').exists()).toBe(false)
+  })
+
+  it('offers no jump while a decision stands, only where one was refused', () => {
+    const wrapper = terminalCard({
+      answerState: { phase: 'answered', toolUseId: 'toolu_09', decision: 'allow' }
+    })
+    expect(wrapper.find('.answer-jump').exists()).toBe(false)
   })
 })

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
+import { PERMISSION_INPUT_MAX_CHARS } from '../../domain/permissionSummary'
 import type { Dwarf } from '../../domain/types'
 import { ClaudeProvider } from './claudeProvider'
 
@@ -3074,5 +3075,211 @@ describe('ClaudeProvider.firstPrompt', () => {
     await expect(claude.firstPrompt(`claude:${SESSION_ID}`)).resolves.toBe(secret)
     const shown = await claude.feed(`claude:${SESSION_ID}`, 20)
     expect(shown?.some((message) => message.text.includes('[redacted]'))).toBe(true)
+  })
+})
+
+/**
+ * Issue #203. An observed session's permission prompt, assembled from the two
+ * halves that name each other: Claude Code's own `permission_prompt` hook,
+ * which says a dialog is open for that session and never what it asks, and
+ * the assistant's unresolved `tool_use`, which says what it asks and never
+ * that anybody was asked.
+ *
+ * The hook lookup is handed IN, exactly as `isHeldSession` is, so the provider
+ * never reads the hooks channel itself: what the panel was pushed is not a
+ * fact about the session's own store, which is the only thing a provider is.
+ */
+describe('ClaudeProvider observed permission prompt (#203)', () => {
+  const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+  const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${LIVE_AGENT}.jsonl`
+  // Fixture-shaped fake, never a real credential.
+  const FAKE_KEY = 'sk-FAKEFAKEFAKEFAKEFAKEFAKE1234'
+  let fake: FakeFs
+
+  interface Wiring {
+    promptOpen?: boolean
+    held?: boolean
+  }
+
+  function provider({ promptOpen = true, held = false }: Wiring = {}): ClaudeProvider {
+    return new ClaudeProvider({
+      fs: fake,
+      roots: [ROOT1],
+      isPidAlive: () => true,
+      now: () => 1_800_000_000_000,
+      isHeldSession: () => held,
+      isPermissionPromptOpen: () => promptOpen
+    })
+  }
+
+  /** One `tool_use` block on its own assistant line, as the CLI writes it before the dialog. */
+  function useLine(
+    toolUseId: string,
+    name: string,
+    input: Record<string, unknown>,
+    timestamp: string | null = '2026-09-05T10:00:00.000Z'
+  ): string {
+    return (
+      JSON.stringify({
+        type: 'assistant',
+        ...(timestamp === null ? {} : { timestamp }),
+        message: {
+          role: 'assistant',
+          model: 'claude-fable-5',
+          content: [{ type: 'tool_use', id: toolUseId, name, input }]
+        }
+      }) + '\n'
+    )
+  }
+
+  function resultLine(toolUseId: string): string {
+    return (
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }]
+        }
+      }) + '\n'
+    )
+  }
+
+  async function foremanOf(wiring: Wiring = {}): Promise<Dwarf> {
+    const snapshots = await provider(wiring).scan()
+    return snapshots[0]!.dwarfs[0]!
+  }
+
+  function withCall(...lines: string[]): void {
+    fake.addFile(TRANSCRIPT, parentTranscript + lines.join(''), 42_000)
+  }
+
+  beforeEach(() => {
+    fake = new FakeFs()
+    fake.addFile(`${ROOT1}\\sessions\\32896.json`, sessionEntry, 1_000)
+    fake.addFile(TRANSCRIPT, parentTranscript, 42_000)
+    fake.addFile(SUBAGENT, subagentTranscript, 43_000)
+  })
+
+  it('names the open call on the foreman while the hook says a dialog is up', async () => {
+    withCall(useLine('toolu_p1', 'Bash', { command: 'pnpm test' }))
+
+    expect((await foremanOf()).pendingPermission).toEqual({
+      toolUseId: 'toolu_p1',
+      toolName: 'Bash',
+      input: 'pnpm test',
+      channel: 'terminal',
+      askedAt: '2026-09-05T10:00:00.000Z'
+    })
+  })
+
+  it('carries no title or description, which only the terminal ever rendered', async () => {
+    // The CLI's own prompt sentence is drawn into a console this app cannot
+    // read. A held prompt gets one from the SDK; this one has nothing to pass
+    // through, and composing a sentence here would be the panel inventing the
+    // words it claims to be repeating.
+    withCall(useLine('toolu_p1', 'Bash', { command: 'pnpm test' }))
+    const wire = (await foremanOf()).pendingPermission!
+    expect('title' in wire).toBe(false)
+    expect('description' in wire).toBe(false)
+  })
+
+  it('says nothing when no hook has reported a dialog for this session', async () => {
+    // The unresolved call alone is just a session working. Half the evidence
+    // is not a weaker claim, it is a different one.
+    withCall(useLine('toolu_p1', 'Bash', { command: 'pnpm test' }))
+    expect((await foremanOf({ promptOpen: false })).pendingPermission).toBeUndefined()
+  })
+
+  it('says nothing when the dialog is up but the tail holds no open call', async () => {
+    // The #251 glyph and the MessagePanel's "waiting for your approval in the
+    // terminal" line stand alone in this case, which is the whole point of
+    // that slice: the mark never depended on being able to name the request.
+    expect((await foremanOf()).pendingPermission).toBeUndefined()
+  })
+
+  it('says nothing once the call has its result, even while the hook still says open', async () => {
+    // The hook closes a prompt one poll later than the transcript does (see
+    // PermissionPromptRegistry). The resolved call is what makes the lag
+    // harmless: the card leaves on the same evidence the reaction is read
+    // from, so it can never outlive the dialog it describes.
+    withCall(useLine('toolu_p1', 'Bash', { command: 'pnpm test' }), resultLine('toolu_p1'))
+    expect((await foremanOf()).pendingPermission).toBeUndefined()
+  })
+
+  it('refuses to name the request when several calls are open at once', async () => {
+    // Claude Code writes every result of a parallel batch in one message, so
+    // while one of the batch waits on a person NONE of them is resolved — and
+    // nothing here says which of them the dialog is showing. A card naming a
+    // sibling is how somebody approves a command they did not read, so the
+    // panel falls back to the #251 line rather than guessing.
+    withCall(
+      useLine('toolu_p1', 'Read', { file_path: 'src/a.ts' }),
+      useLine('toolu_p2', 'Bash', { command: 'rm -rf build' })
+    )
+    expect((await foremanOf()).pendingPermission).toBeUndefined()
+  })
+
+  it('never names one for a session the panel HOLDS', async () => {
+    // #246 decides that prompt from `canUseTool`, first-hand and with the
+    // options the SDK handed over. A hook about the same prompt is a second,
+    // weaker claim about a fact the panel already holds exactly — and the
+    // decision would go to the wrong channel besides.
+    withCall(useLine('toolu_p1', 'Bash', { command: 'pnpm test' }))
+    expect((await foremanOf({ held: true })).pendingPermission).toBeUndefined()
+  })
+
+  it('never names one for a worker, whatever its own tail holds', async () => {
+    // A Claude subagent carries its foreman's sessionId, so a stamp keyed on
+    // the id alone would mark every dwarf in the session as the one being
+    // asked — the trap stampHeldQuestions names. The dialog belongs to the
+    // session, and the session's dwarf is the foreman.
+    fake.addFile(
+      SUBAGENT,
+      subagentTranscript + useLine('toolu_w1', 'Bash', { command: 'ls' }),
+      43_000
+    )
+    const snapshots = await provider().scan()
+    const worker = snapshots[0]!.dwarfs[1]!
+    expect(worker.role).toBe('worker')
+    expect(worker.pendingPermission).toBeUndefined()
+  })
+
+  it('summarises the input by the field the tool names its subject with', async () => {
+    withCall(useLine('toolu_p1', 'Edit', { file_path: 'src/a.ts', old_string: 'x' }))
+    expect((await foremanOf()).pendingPermission!.input).toBe('src/a.ts')
+  })
+
+  it('redacts the input before it can reach an always-on-top window', async () => {
+    withCall(useLine('toolu_p1', 'Bash', { command: `curl -H ${FAKE_KEY} https://x` }))
+    const snapshots = await provider().scan()
+    expect(snapshots[0]!.dwarfs[0]!.pendingPermission!.input).toBe('curl -H [redacted] https://x')
+    expect(JSON.stringify(snapshots)).not.toContain(FAKE_KEY)
+  })
+
+  it('caps the input, so a pasted payload never becomes the card', async () => {
+    withCall(useLine('toolu_p1', 'Bash', { command: 'x'.repeat(5_000) }))
+    expect((await foremanOf()).pendingPermission!.input.length).toBe(PERMISSION_INPUT_MAX_CHARS)
+  })
+
+  it("falls back to this host's clock when the calling line carried no timestamp", async () => {
+    withCall(useLine('toolu_p1', 'Bash', { command: 'pnpm test' }, null))
+    expect((await foremanOf()).pendingPermission!.askedAt).toBe(
+      new Date(1_800_000_000_000).toISOString()
+    )
+  })
+
+  it('leaves an AskUserQuestion to the question card and raises no permission for it', async () => {
+    // The one tool that asks rather than acts. Claude Code opens no permission
+    // dialog for it, and the panel already repeats the model's own options —
+    // a permission card here would offer Allow / Deny for a question that
+    // enumerated its own answers.
+    withCall(
+      useLine('toolu_ask', 'AskUserQuestion', {
+        questions: [{ question: 'Which approach?', options: [{ label: 'Accumulate' }] }]
+      })
+    )
+    const foreman = await foremanOf()
+    expect(foreman.pendingPermission).toBeUndefined()
+    expect(foreman.pendingQuestion?.toolUseId).toBe('toolu_ask')
   })
 })

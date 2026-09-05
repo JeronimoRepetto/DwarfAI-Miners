@@ -906,6 +906,7 @@ describe('HeldSessionRegistry permissions (#203)', () => {
         toolName: 'Bash',
         title: 'Claude wants to run pnpm test',
         input: 'pnpm test',
+        channel: 'held',
         askedAt: '2023-11-14T22:13:20.000Z'
       }
     })

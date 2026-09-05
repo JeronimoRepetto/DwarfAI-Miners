@@ -197,6 +197,7 @@ function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermi
     toolUseId: 'toolu_09',
     toolName: 'Bash',
     input: 'rm -rf /tmp/scratch',
+    channel: 'held',
     askedAt: '2026-09-05T09:00:00.000Z',
     ...overrides
   }
@@ -242,14 +243,57 @@ describe('permissionRequest', () => {
 describe('permissionStatusLine', () => {
   it('says the blocked call was released, never what it then did', () => {
     const answered: DwarfAnswerState = { phase: 'answered', toolUseId: 'toolu_09' }
-    const line = permissionStatusLine(answered) ?? ''
+    const line = permissionStatusLine(answered, 'held') ?? ''
     expect(line).toContain('released')
-    expect(line).not.toMatch(/reacted|ran|executed|acted/i)
+    expect(line).not.toMatch(/reacted|ran|executed|acted on/i)
   })
 
   it('has no line to show while the decision is in flight or was refused', () => {
-    expect(permissionStatusLine({ phase: 'answering', toolUseId: 'toolu_09' })).toBeNull()
-    expect(permissionStatusLine({ phase: 'refused', toolUseId: 'toolu_09' })).toBeNull()
-    expect(permissionStatusLine(undefined)).toBeNull()
+    expect(permissionStatusLine({ phase: 'answering', toolUseId: 'toolu_09' }, 'held')).toBeNull()
+    expect(permissionStatusLine({ phase: 'refused', toolUseId: 'toolu_09' }, 'held')).toBeNull()
+    expect(permissionStatusLine(undefined, 'held')).toBeNull()
+  })
+
+  /*
+   * Issue #203. A decision typed at somebody else's terminal has weaker
+   * evidence behind it than one released through a stream this panel holds,
+   * and a different risk if it lands late — so it may not borrow the held
+   * channel's sentence. Delivered is not reacted: the key was pressed, and
+   * the session acting on it is a separate fact the transcript reports later
+   * by dropping the card.
+   */
+  it('says only that Allow was typed, and that the session has yet to act', () => {
+    const line =
+      permissionStatusLine(
+        { phase: 'answered', toolUseId: 'toolu_09', decision: 'allow' },
+        'terminal'
+      ) ?? ''
+    expect(line).toBe('Typed at the terminal — waiting for the session to act on it.')
+    expect(line).not.toContain('released')
+  })
+
+  it('warns that a late Deny interrupts the turn instead, because Esc does', () => {
+    // Deny is Esc (measured, #203). If the prompt was answered at the terminal
+    // a moment earlier, the tool is already running and Esc cuts that turn
+    // short. Bounded and accepted — the person wanted that tool not to run —
+    // but not something to leave them to discover.
+    const line =
+      permissionStatusLine(
+        { phase: 'answered', toolUseId: 'toolu_09', decision: 'deny' },
+        'terminal'
+      ) ?? ''
+    expect(line).toBe(
+      'Typed Esc at the terminal — if the prompt was already answered there, ' +
+        'this interrupts the turn instead.'
+    )
+  })
+
+  it('falls back to the Allow wording when a verdict names no decision', () => {
+    // Cannot happen through `decide`, which always records one. The weaker of
+    // the two sentences is the safe default: it claims a keypress and nothing
+    // about a turn.
+    expect(permissionStatusLine({ phase: 'answered', toolUseId: 'toolu_09' }, 'terminal')).toBe(
+      'Typed at the terminal — waiting for the session to act on it.'
+    )
   })
 })

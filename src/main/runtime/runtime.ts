@@ -19,6 +19,8 @@ import {
   type DwarfKickRequest,
   type DwarfKickResult,
   type DwarfPermissionAnswerRequest,
+  type DwarfPermissionDecision,
+  type DwarfPermissionRequest,
   type DwarfQuestionAnswerRequest,
   type DwarfQuestionAnswerResult,
   type DwarfTextRequest,
@@ -94,6 +96,7 @@ import {
   resolveTextDelivery,
   stampTextDelivery
 } from '../textDelivery/resolve'
+import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
 
@@ -155,6 +158,46 @@ const HELD_KICK_REFUSED = "That session didn't take the interrupt."
  */
 const NO_LAUNCH_INBOX =
   'That session takes no messages: it was launched with a single prompt and exits with its turn.'
+/**
+ * The two refusals for a permission prompt this panel can only answer by
+ * typing at somebody else's terminal (#203).
+ *
+ * CANNOT_REACH_TERMINAL replaces NO_CHANNEL for these, and the difference is
+ * the whole point: "this session type can't receive messages yet" describes a
+ * gap in the app, and what actually happened is that a dialog is up in a
+ * console this machine could not bring forward. So the sentence says where
+ * the prompt is and what to do about it — the panel puts the console jump
+ * beside it, because the one place that answer can be given is still open.
+ *
+ * It is the same sentence whether the console was never reachable or the
+ * keystroke failed once it was, deliberately: both leave the dialog exactly
+ * where it was, and neither is something the person can act on differently.
+ * The relay is never tried, unlike a message that fails at the console — a
+ * relay reaches the session's queue, which is read BETWEEN tool calls, and
+ * this session is stopped inside one.
+ *
+ * PROMPT_NO_LONGER_OPEN deliberately reads exactly as the held registry's own
+ * refusal for a stale id, because it is the same fact. Here it guards more
+ * than bookkeeping: a keystroke answers whatever dialog is really on screen,
+ * so a decision made about a prompt that has since closed would allow the
+ * next one sight unseen.
+ */
+const CANNOT_REACH_TERMINAL = 'Could not reach that terminal. Answer the prompt there.'
+const PROMPT_NO_LONGER_OPEN = 'That permission request is no longer open.'
+/**
+ * The third, and the one that stands today: nobody has measured a keystroke
+ * this dialog accepts on this build (see textDelivery/permissionKeys).
+ *
+ * Names the BUILD rather than the app, because that is the true shape of it —
+ * Claude Code's permission dialog turned out to be a selector rather than the
+ * documented confirmation, so what would work is a question about the CLI in
+ * front of the person, not a feature this panel is missing. And it ends where
+ * every refusal on this route ends: the prompt is still open, at a terminal,
+ * and that is where it can be answered.
+ */
+const KEYSTROKE_UNVERIFIED =
+  'Answering this prompt from the panel is not yet verified for this Claude Code build. ' +
+  'Answer it at the terminal.'
 const LAUNCH_ALREADY_ENDED = 'That session has already ended.'
 const LAUNCH_END_REFUSED = 'That session could not be ended.'
 /**
@@ -293,6 +336,17 @@ export interface RuntimeOptions {
   /** Writes a typed message into a live session; injected for tests. */
   textDelivery?: TextDeliveryPort
   /**
+   * What to type into an observed session's console to answer its permission
+   * dialog, or null while nothing this build accepts has been measured (#203).
+   *
+   * Injected for the reason `textDelivery` is, and one more: the shipped
+   * answer is null today (see textDelivery/permissionKeys), so the route from
+   * a card press to a keystroke would otherwise have no reachable end to
+   * prove. A test hands in a measured answer and pins exactly what reaches
+   * the console; the measurement itself stays one edit in one file.
+   */
+  permissionKeystroke?: (decision: DwarfPermissionDecision) => PermissionKeystroke | null
+  /**
    * Starts a NEW session in a folder (#86); injected for tests, which must
    * never spawn a real agent. The default drives Claude through its own
    * headless interface, over the binary CLI detection (#91) found.
@@ -388,6 +442,9 @@ export class AgentRuntime {
   private readonly focus: (pid: number) => Promise<boolean>
   private readonly launchTerminal: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   private readonly textDelivery: TextDeliveryPort
+  private readonly permissionKeystroke: (
+    decision: DwarfPermissionDecision
+  ) => PermissionKeystroke | null
   private readonly launchSession: SessionLauncher
   /** Sessions this panel started and still holds (#86, #94). */
   private readonly heldSessions: HeldSessionRegistry
@@ -583,7 +640,15 @@ export class AgentRuntime {
           expandPath: (path) => expandHomePath(path, home),
           // Read at scan time, never now: the held registry is composed a few
           // lines below this, and no scan runs before the constructor returns.
-          isHeldSession: (sessionId) => this.heldSessions.holds(sessionId)
+          isHeldSession: (sessionId) => this.heldSessions.holds(sessionId),
+          // The same seam for the hook channel (#203). Read one poll BEHIND
+          // the stamp below, since a scan runs before observe() reconciles
+          // the registry against the board it produced — and that lag is
+          // harmless because the provider needs a second proof the same
+          // transcript move takes away: answering the dialog writes the
+          // `tool_result`, so the open call is gone on exactly the poll that
+          // would otherwise still be reporting a stale prompt.
+          isPermissionPromptOpen: (sessionId) => this.permissionPrompts.isOpen(sessionId)
         },
         options.providerRegistry ?? PROVIDER_REGISTRY
       )
@@ -598,6 +663,7 @@ export class AgentRuntime {
       options.launchTerminal ??
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
+    this.permissionKeystroke = options.permissionKeystroke ?? permissionKeystrokeFor
     this.simulated = simulation !== null
     // Composed here rather than in platformAdapters: holding a session is the
     // same act on all three platforms, so there is no per-OS branch to own.
@@ -1790,25 +1856,176 @@ export class AgentRuntime {
   }
 
   /**
-   * Decide a permission prompt a held session raised (#203).
+   * Decide a permission prompt (#203).
    *
-   * Same shape as answerDwarfQuestion, and for the same reasons: addressed by
-   * DWARF because a prompt can only be decided from where it was shown, the
-   * session id is read off that dwarf rather than travelling on the wire, and
-   * the call is synchronous because releasing a blocked tool call is a local
-   * handover, never a delivery that can fail slowly.
+   * Addressed by DWARF, like answerDwarfQuestion and for the same reason: a
+   * prompt can only be decided from where it was shown, and it is shown on a
+   * dwarf. What the dwarf then decides is which of two very different acts
+   * this is, and the wire says so — `pendingPermission.channel`, derived in
+   * main on the evidence that produced the prompt in the first place, rather
+   * than re-guessed here from the provider or the delivery target (a held
+   * session is a Claude session with a terminal address too).
+   *
+   * - `'held'`: the panel owns the stream, so the blocked call is released
+   *   locally and at once. Unchanged.
+   * - `'terminal'`: the dialog belongs to a console somebody else is running,
+   *   so the decision is a keystroke into it — see typePermissionDecision.
+   *
+   * Asynchronous since the second channel existed. The held path is still the
+   * local handover it always was and resolves immediately; only a keystroke
+   * has a window to focus and a platform to ask.
    */
-  answerDwarfPermission(request: DwarfPermissionAnswerRequest): DwarfQuestionAnswerResult {
+  async answerDwarfPermission(
+    request: DwarfPermissionAnswerRequest
+  ): Promise<DwarfQuestionAnswerResult> {
     const dwarf = this.mines
       .flatMap((mine) => mine.dwarfs)
       .find((item) => item.id === request.dwarfId)
     if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
+
+    const pending = dwarf.pendingPermission
+    if (pending?.channel === 'terminal') return this.typePermissionDecision(dwarf, pending, request)
+    // A dwarf the panel does not hold and is no longer carrying a prompt: the
+    // card was pressed after main stopped naming one. Answered here rather
+    // than left to the held registry, whose refusal for this dwarf would be
+    // "that session is not one this panel is holding" — true, and not what
+    // happened.
+    if (pending === undefined && !this.heldSessions.holds(dwarf.sessionId)) {
+      return { answered: false, error: PROMPT_NO_LONGER_OPEN }
+    }
 
     return this.heldSessions.decidePermission({
       sessionId: dwarf.sessionId,
       toolUseId: request.toolUseId,
       decision: request.decision
     })
+  }
+
+  /**
+   * Answer an OBSERVED session's permission dialog by typing into the console
+   * drawing it (#203).
+   *
+   * ## Which key, and through which door
+   *
+   * `permissionKeystroke` is the seam onto textDelivery/permissionKeys, which
+   * holds the measurement: Allow is the digit `1`, which picks the first
+   * option of Claude Code's permission SELECTOR and fires it, and Deny is
+   * `Esc`, which cancels the prompt. Neither is the documented `y`/`n`, and
+   * neither presses Enter.
+   *
+   * The two go through different port methods, and that is not a detail:
+   * `sendToConsole` types text, and `sendInterrupt` presses a raw Esc into
+   * the focused console — which is Kick's path, already built per platform,
+   * and exactly the key a decline is. Nothing per-OS was added for this.
+   *
+   * The seam is injected rather than read straight off the module so both
+   * branches stay proven from a test, including the refusal a decision with
+   * no measured key still produces.
+   *
+   * ## The board is re-read before anything is pressed
+   *
+   * THE guard, and the reason this method is worth its length. A key presses
+   * whatever dialog is actually up — so a `1` that arrives one dialog late
+   * does not miss, it approves the NEXT tool call, unread. The panel's card
+   * can be up to a poll old, so the board is rescanned here and the request
+   * re-matched against what that scan found: the same dwarf, still carrying a
+   * terminal-channel prompt, still carrying THIS `toolUseId`. Anything else
+   * refuses.
+   *
+   * A full scan is the cost of a deliberate human click, and it is the same
+   * scan the poll runs every two seconds — the precedent is declareMine,
+   * which awaits one rather than racing the board it just changed.
+   *
+   * What no guard can close is the millisecond between that scan and the key
+   * press, and the two decisions carry different worst cases there:
+   *
+   * - A late `1` lands in the session's idle input box as one stray
+   *   character. Nothing is sent, because nothing here presses Enter.
+   * - A late `Esc` INTERRUPTS the running turn: the dialog was answered Yes
+   *   at the terminal and the tool is already running. Accepted, and bounded
+   *   — somebody pressing Deny wanted that tool not to run, and an
+   *   interrupted turn is the nearest thing left to that. It is stated in the
+   *   panel's status line for a deny rather than left to be discovered.
+   *
+   * ## Only the terminal tier, and never a fallback
+   *
+   * A message that fails at the console falls back to the relay (#24); a
+   * decision must not. A relay hands text to the session's QUEUE, which is
+   * read between tool calls — and a session waiting on a permission dialog is
+   * stopped inside one. The sentence would arrive after somebody else had
+   * answered, and `delivered: true` would have claimed a decision nobody made.
+   * Every other tier is refused for the same reason it is not a dialog: a
+   * Codex queue, a held stream and a hosted pipe all take text, and none of
+   * them is a keyboard in front of that prompt.
+   *
+   * `answered: true` means the key was typed and nothing more — the panel's ✓.
+   * The ✓✓ is the transcript showing this call's `tool_result`, which is also
+   * exactly when the card leaves, since a resolved call stops being one the
+   * provider will name (see pendingPermissionField).
+   */
+  private async typePermissionDecision(
+    dwarf: Dwarf,
+    pending: DwarfPermissionRequest,
+    request: DwarfPermissionAnswerRequest
+  ): Promise<DwarfQuestionAnswerResult> {
+    if (pending.toolUseId !== request.toolUseId) {
+      return { answered: false, error: PROMPT_NO_LONGER_OPEN }
+    }
+    // Before the rescan, because it costs nothing and a session with no
+    // console cannot be typed into however fresh the board is.
+    const resolved = resolveTextDelivery(dwarf.id, (id) => this.deliveryTargetOf(id))
+    if (resolved === null || resolved.endpoint.kind !== 'terminal') {
+      return { answered: false, error: CANNOT_REACH_TERMINAL }
+    }
+    const keystroke = this.permissionKeystroke(request.decision)
+    if (keystroke === null) return { answered: false, error: KEYSTROKE_UNVERIFIED }
+
+    if (!(await this.stillTheOpenPrompt(request))) {
+      return { answered: false, error: PROMPT_NO_LONGER_OPEN }
+    }
+
+    const pid = resolved.endpoint.pid
+    let delivered = false
+    try {
+      const outcome = await (keystroke.kind === 'escape'
+        ? this.textDelivery.sendInterrupt({ pid })
+        : // pressEnter is false and not a parameter: a digit fires the
+          // selection by itself, and the flag is what a MESSAGE ends with.
+          this.textDelivery.sendToConsole({ pid, text: keystroke.text, pressEnter: false }))
+      delivered = outcome.delivered
+    } catch (error) {
+      console.warn(`[permission] typing for ${dwarf.id} threw`, error)
+    }
+    // The DECISION, never the payload: the keystroke is a measured constant
+    // and the log stays free of anything a person's own session put on screen,
+    // exactly as the message tier logs a length and never a message.
+    console.log(
+      `[permission] typed ${request.decision} for ${dwarf.id}: ` +
+        `${delivered ? 'delivered' : 'failed'}`
+    )
+    return delivered ? { answered: true } : { answered: false, error: CANNOT_REACH_TERMINAL }
+  }
+
+  /**
+   * Rescan, and answer whether the prompt this decision names is STILL the
+   * open one for that dwarf (#203).
+   *
+   * The freshest reading this app can take without owning the terminal. A
+   * rescan that fails is answered `false`: an unverifiable board is not a
+   * matching one, and refusing costs a person one click where guessing costs
+   * them a tool call they never read.
+   */
+  private async stillTheOpenPrompt(request: DwarfPermissionAnswerRequest): Promise<boolean> {
+    try {
+      await this.refresh()
+    } catch (error) {
+      console.warn('[permission] could not re-read the board before typing', error)
+      return false
+    }
+    const current = this.mines
+      .flatMap((mine) => mine.dwarfs)
+      .find((item) => item.id === request.dwarfId)?.pendingPermission
+    return current?.channel === 'terminal' && current.toolUseId === request.toolUseId
   }
 
   /**

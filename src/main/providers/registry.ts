@@ -54,6 +54,14 @@ export interface ProviderContext {
    * never holds simply does not read it.
    */
   isHeldSession: (sessionId: string) => boolean
+  /**
+   * Whether Claude Code has pushed word that a permission dialog is open for
+   * that session (#203) — PermissionPromptRegistry's answer, for the provider
+   * that can read what the session asked to do but never that anybody was
+   * asked to approve it. A provider whose CLI pushes nothing simply does not
+   * read it.
+   */
+  isPermissionPromptOpen: (sessionId: string) => boolean
 }
 
 /** How one provider is built. */
@@ -79,14 +87,15 @@ export type ProviderRegistry = Readonly<Record<string, ProviderFactory>>
  * joining them, and the runtime owns that choice.
  */
 export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
-  claude: ({ config, fs, platform, expandPath, isHeldSession }) =>
+  claude: ({ config, fs, platform, expandPath, isHeldSession, isPermissionPromptOpen }) =>
     new ClaudeProvider({
       fs,
       roots: config.providers.claude.configDirs.map(expandPath),
       // The pid-reuse guard's source of truth: a registry entry only counts
       // as alive when the pid's real creation time matches its procStart.
       processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid),
-      isHeldSession
+      isHeldSession,
+      isPermissionPromptOpen
     }),
 
   codex: ({ config, fs, sqlite, platform, expandPath }) =>

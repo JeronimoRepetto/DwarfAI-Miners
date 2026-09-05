@@ -298,7 +298,9 @@ describe('parseClaudeTranscriptTail', () => {
       terminalAgentIds: [],
       failedAgents: [],
       pendingBackgroundAgentCount: undefined,
-      tokensObserved: undefined
+      tokensObserved: undefined,
+      pendingQuestion: undefined,
+      unresolvedToolUses: []
     })
   })
 
@@ -1363,5 +1365,142 @@ describe('claudeWaitingReason refined by an outstanding ask (issue #94)', () => 
     ).pendingQuestion
     expect(answered).toBeUndefined()
     expect(claudeWaitingReason(entry('waiting', 'dialog open'), answered)).toBe('unknown')
+  })
+})
+
+/**
+ * Issue #203. The half of an OBSERVED session's permission prompt that the
+ * transcript can answer.
+ *
+ * Claude Code's `permission_prompt` hook says a dialog is open for a session
+ * and never what it asks. The assistant's own `tool_use` block says exactly
+ * what — and it is written to the transcript BEFORE the dialog opens, so it is
+ * readable while the dialog stands, which is precisely what an
+ * `AskUserQuestion` in the same TUI is not (see the docs' channel matrix).
+ * While the prompt is open nothing has resolved that call, so an unresolved
+ * `tool_use` is what the two halves have in common.
+ *
+ * Nothing here claims a prompt is open. This is the WHAT; the hook is the
+ * WHETHER, and the provider is the only place the two meet.
+ */
+describe('parseClaudeTranscriptTail unresolved tool uses (#203)', () => {
+  /** One `tool_use` block on its own assistant line. */
+  function useLine(toolUseId: string, name: string, input: unknown, timestamp?: string): string {
+    return (
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: toolUseId, name, input }]
+        },
+        ...(timestamp === undefined ? {} : { timestamp })
+      }) + '\n'
+    )
+  }
+
+  it('carries the tool, its id, its raw input and the line’s own timestamp', () => {
+    const tail = useLine('toolu_r1', 'Bash', { command: 'pnpm test' }, '2026-09-05T10:00:00.000Z')
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([
+      {
+        toolUseId: 'toolu_r1',
+        toolName: 'Bash',
+        input: { command: 'pnpm test' },
+        askedAt: '2026-09-05T10:00:00.000Z'
+      }
+    ])
+  })
+
+  it('carries no timestamp for a line that wrote none', () => {
+    const tail = useLine('toolu_r1', 'Bash', { command: 'pnpm test' })
+    expect('askedAt' in parseClaudeTranscriptTail(tail).unresolvedToolUses[0]!).toBe(false)
+  })
+
+  it('drops a call the matching tool_result has already answered', () => {
+    const tail = useLine('toolu_r1', 'Bash', { command: 'pnpm test' }) + answerLine('toolu_r1')
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+  })
+
+  it('drops a call the user escaped out of, which is resolved either way', () => {
+    // Same reading pendingQuestion takes of is_error: a denial writes a result,
+    // and a call with a result is not one anybody is still being asked about.
+    const tail =
+      useLine('toolu_r1', 'Bash', { command: 'rm -rf build' }) + answerLine('toolu_r1', true)
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+  })
+
+  it('excludes AskUserQuestion, which travels as pendingQuestion and prompts nobody', () => {
+    // The one tool that is a question rather than an act. Claude Code raises no
+    // permission dialog for it, and the panel already has a card that repeats
+    // the agent's own options — listing it here would let a permission card
+    // invent Allow / Deny for a question that enumerated its own answers.
+    const tail = askLine('toolu_ask', askInput('Which approach?'))
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.toolUseId).toBe('toolu_ask')
+  })
+
+  it('lists several open calls in ask order, so the latest is last', () => {
+    const tail =
+      useLine('toolu_r1', 'Read', { file_path: 'src/a.ts' }) +
+      useLine('toolu_r2', 'Bash', { command: 'pnpm test' })
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses.map((use) => use.toolUseId)).toEqual([
+      'toolu_r1',
+      'toolu_r2'
+    ])
+  })
+
+  it('leaves only the open one when an earlier call in the same tail was answered', () => {
+    const tail =
+      useLine('toolu_r1', 'Read', { file_path: 'src/a.ts' }) +
+      answerLine('toolu_r1') +
+      useLine('toolu_r2', 'Bash', { command: 'pnpm test' })
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses.map((use) => use.toolUseId)).toEqual([
+      'toolu_r2'
+    ])
+  })
+
+  it('ignores a call with no id, which nothing could ever mark resolved', () => {
+    const tail =
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pnpm test' } }]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+  })
+
+  it.each([
+    ['no input at all', undefined],
+    ['a string input', 'pnpm test'],
+    ['an array input', ['pnpm', 'test']]
+  ])('ignores a call whose input is %s', (_label, input) => {
+    const tail = useLine('toolu_r1', 'Bash', input)
+    expect(() => parseClaudeTranscriptTail(tail)).not.toThrow()
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+  })
+
+  it('ignores a call whose tool has no name', () => {
+    const tail =
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'toolu_r1', input: { command: 'pnpm test' } }]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+  })
+
+  it('is empty for a tail that holds no tool call at all', () => {
+    expect(parseClaudeTranscriptTail(parentTranscript).unresolvedToolUses).toEqual([])
+    expect(parseClaudeTranscriptTail('').unresolvedToolUses).toEqual([])
+  })
+
+  it('resolves a call even when its result line arrives before it in the tail', () => {
+    // Cannot happen in a real suffix read, and the rule must not depend on it:
+    // matching is by id over the whole tail, exactly as it is for an ask.
+    const tail = answerLine('toolu_r1') + useLine('toolu_r1', 'Bash', { command: 'pnpm test' })
+    expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
   })
 })

@@ -126,14 +126,18 @@ into `WAITING_ON_HUMAN_REASON` when a registry-proven block coincides with a rea
 from the panel" button is built on for this row. That is exactly why held sessions exist as their own
 mode rather than an enhancement to the ordinary poll.
 
-**What §2's "mechanically present, semantically blind" claim means concretely.** `sendKeys.ts` can
-type escaped text and press Enter (`:60-75`), or send a bare `{ESC}` for Kick (`:87-94`) — nothing else.
-Whether Claude Code's permission/AskUserQuestion picker accepts a typed digit, requires arrow-key
-navigation, or both, is **not established anywhere in this codebase**, and this document does not
-assert an answer either way — it is a gap in what has been measured, not a claim resolved by reading
-the code. Even where a digit-and-Enter keystroke happens to land correctly, nothing here knows which
-digit corresponds to which `DwarfQuestionOption`, since the registry's `waitingFor: 'permission
-prompt'` names no options at all (`parse.ts:205-212`).
+**What §2's "mechanically present, semantically blind" claim means concretely — and the half of it
+that is now measured.** `sendKeys.ts` can type escaped text and press Enter (`:60-75`), or send a
+bare `{ESC}` for Kick (`:87-94`) — nothing else. For an `AskUserQuestion` picker that is still the
+whole story, and the blindness still stands: nothing here knows which key corresponds to which
+`DwarfQuestionOption`, and row one of `docs/console-hosting.md`'s matrix cannot be built anyway,
+because the ask is not on disk while the menu is open.
+
+The **permission** picker is a different dialog and has since been measured — see §4 and the
+matrix's fourth row for the numbers. The short version is that the two mechanisms `sendKeys.ts`
+already has turned out to be exactly the two that dialog takes, and that the registry naming no
+options (`parse.ts:205-212`) stopped mattering the moment the request's content came from the
+transcript instead.
 
 ---
 
@@ -160,15 +164,47 @@ installing a fire-and-forget event) or Codex's own `app-server` JSON-RPC surface
 `docs/console-hosting.md`'s programmatic-interface table lists as "reviewer `user` → server-initiated
 requests" and marks unbuilt. Neither exists in this tree today.
 
-**Half of that row is built since, and deliberately stops short of an answer path (#203).** A
-`permission_prompt` Notification is Claude Code's own structured statement that a dialog is open for
-that `session_id` — not which options it offers, which is what the paragraph above rules out, but
-that one is open at all. The panel now correlates it to that session's foreman and marks the dwarf
-`waitingReason: 'approval'`, with the sentence and a console jump in the MessagePanel
-(`src/main/hooks/permissionPrompts.ts`). That is notify-and-jump, not an answer: nothing is typed at
-that terminal, because the keystroke question §3 leaves open — which digit or arrow works Claude
-Code's permission picker, and what an already-answered dialog does with one — has still never been
-measured on a live build.
+**That row is now built end to end, and the paragraph above was wrong about the reason it could not
+be (#203).** What it ruled out was reading the request's options out of the registry, and that
+still cannot be done. What it missed is that the options were never needed: the request's CONTENT
+is in the transcript, and its two answers are Claude Code's own.
+
+- **Content.** The assistant's `tool_use` block is written to the transcript BEFORE the CLI opens
+  its dialog — the opposite of an `AskUserQuestion`, whose block appears only when the picker
+  resolves (§3), and the whole reason this row is buildable where row one is not. While the dialog
+  stands, that call has no `tool_result`, so `parseClaudeTranscriptTail` reports it in
+  `unresolvedToolUses`. A `permission_prompt` Notification says a dialog is open and never what it
+  asks; an unresolved call says what was asked and never that anybody was asked. Together they name
+  the request, and `ClaudeProvider` is where the two meet (`pendingPermissionField`).
+- **Exactly one open call, or nothing.** Claude Code writes every result of a parallel batch in one
+  message, so while one member waits on a person none of them is resolved. Where several are open
+  the panel cannot say which one the dialog is showing, and it refuses to name any of them rather
+  than draw a sibling of the command somebody is about to approve. The mark and the sentence below
+  are what stands in that case.
+- **Answers, measured [V] on Claude Code 2.1.261, Windows console, 2026-09-05.** The dialog is a
+  **selector**, not the `Confirmation` context the keybindings reference documents: a lone `y` does
+  nothing at all. A **digit picks that option and fires it immediately**, with no Enter, and **Esc
+  cancels the prompt**. The option list varies by tool — two options in places, three for a file
+  write, four for a Bash `rm` (`1` Yes, `2` Yes-and-always-allow, `3` Yes-and-switch-to-auto-mode,
+  `4` No) — but **"Yes" is always first and "No" is always last**. So **Allow is the digit `1`** and
+  **Deny is `Esc`**: no digit can mean No, because the panel cannot count rows in a dialog drawn in
+  a terminal it does not read, and a positional key would eventually press "Yes, and always allow …"
+  for somebody who pressed the button that refuses. Both live in
+  `src/main/textDelivery/permissionKeys.ts`, per decision and with the build they were measured
+  against, because a CLI release can move them.
+- **Only Allow and Deny are offered, deliberately.** "Always allow" and "auto mode" exist only as
+  rows in a dialog this app cannot see, and an option it cannot count is one it must not name.
+  Nothing the panel sends outlives the prompt.
+- **A late keystroke, and what each one costs.** The card can be a poll old, so the runtime rescans
+  and re-matches the open call immediately before pressing anything — a key presses whatever dialog
+  is actually up, so a `1` one dialog late would approve the NEXT tool call rather than miss. What
+  no guard closes is the millisecond after that scan: a late `1` lands in the session's idle input
+  box as one stray character, and a late `Esc` interrupts the running turn. The second is accepted
+  and bounded, and the panel says so in the status line under a deny.
+
+The dwarf is still marked `waitingReason: 'approval'` from the hook alone
+(`src/main/hooks/permissionPrompts.ts`), and the MessagePanel's sentence and console jump are still
+what shows where the content could NOT be named. The card wins wherever it could.
 
 ---
 
@@ -308,10 +344,13 @@ In dependency order — each blocked on the one before it, and on nothing else i
    only if the answer to §4's targeting is also solved, and only after accepting the larger design cost
    §1 describes (a blocking hook transport, not a fire-and-forget one). **Blocked on:** (4), and a
    separate decision that the cost is worth it for sessions the panel does not hold.
-6. **Allow / Deny by keystrokes at an observed terminal**, which is what would turn #203's
-   notify-and-jump into an answer. **Blocked on a live measurement, not on code:** the typed-terminal
-   delivery (#190) already reaches that console. What nobody has established is which keys work
-   Claude Code's permission picker (a digit, an arrow-then-Enter, or both), that the panel can tell
-   Allow from Deny without reading the dialog, and — the one that decides whether this is shippable
-   at all — what those keys do when the dialog has meanwhile been answered at the terminal, since the
-   session then has an ordinary prompt open and a stray keystroke becomes input to it.
+6. **Allow / Deny by keystrokes at an observed terminal — BUILT (#203).** The measurement this was
+   blocked on came back on 2026-09-05 [V, Claude Code 2.1.261, Windows console] and answered all
+   three questions, none of them the way the documentation implied: the dialog is a selector rather
+   than a confirmation, a digit fires an option outright, Esc cancels, the option count varies by
+   tool but Yes is always first and No always last, and a late keystroke costs a stray character
+   (`1`) or an interrupted turn (`Esc`). §4 carries the detail. **What is left is not a keystroke
+   question:** the option layout is measured for Bash, Edit and a two-option case and not for every
+   tool, and the console tier itself is only verified on Windows — macOS and Linux report
+   `supportsConsoleInput: false` or unverified, so those platforms get the refusal and the jump
+   rather than the keys (see `platform-ports`).

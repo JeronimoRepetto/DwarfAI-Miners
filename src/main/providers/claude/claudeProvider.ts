@@ -1,12 +1,14 @@
 import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
 import { filetimeToEpochMs } from '../../platform/processProbe'
+import { permissionInputLine } from '../../domain/permissionSummary'
 import { redactSecrets } from '../../domain/redactSecrets'
 import {
   DWARF_SILENCE_WINDOW_MS,
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowKey,
   type Dwarf,
+  type DwarfPermissionRequest,
   type DwarfQuestion,
   type FeedMessage,
   type ProviderSnapshot,
@@ -28,6 +30,7 @@ import {
   type ClaudeInFlightAgent,
   type ClaudePendingQuestion,
   type ClaudeSessionEntry,
+  type ClaudeToolUse,
   type ClaudeTranscriptInfo
 } from './parse'
 
@@ -194,6 +197,21 @@ export interface ClaudeProviderOptions {
    * snapshotSession. Absent means nothing is held.
    */
   isHeldSession?: (sessionId: string) => boolean
+  /**
+   * Whether Claude Code has told this app a permission dialog is open for that
+   * session right now (#203) — PermissionPromptRegistry's answer, handed in
+   * for the reason `isHeldSession` is: it is a push the panel received, not a
+   * fact about the session's own store, and a provider that read the hooks
+   * channel itself would be a second observer wearing the first one's name.
+   *
+   * Half the evidence a permission card needs. The other half is the tail's
+   * own unresolved `tool_use` (see ClaudeToolUse), and neither half alone
+   * names a request: this one says a dialog is open and never what it asks,
+   * that one says what was asked and never that anybody was asked. Absent
+   * means no hook channel is installed, which is not the same as "no dialog"
+   * and produces no card either way.
+   */
+  isPermissionPromptOpen?: (sessionId: string) => boolean
 }
 
 function defaultIsPidAlive(pid: number): boolean {
@@ -275,6 +293,67 @@ function pendingQuestionField(question: ClaudePendingQuestion | undefined): {
 }
 
 /**
+ * The open permission prompt as a spreadable dwarf field, for a session this
+ * app only OBSERVES (#203).
+ *
+ * Two independent proofs, and no card without both. `promptOpen` is Claude
+ * Code's own `permission_prompt` Notification, which states that a dialog is
+ * up for that session and never what it asks; `unresolved` is the assistant's
+ * own `tool_use`, written to the transcript before the dialog opens and left
+ * without a `tool_result` for as long as it stands, which says exactly what
+ * and never that anybody was asked. Nothing is read out of prose on either
+ * side, and no card is drawn from one of them.
+ *
+ * ## Why exactly one open call, and not the latest of several
+ *
+ * The hook says a dialog is open; it does not say WHICH call opened it. One
+ * open call in the tail leaves no room to be wrong. Several do: Claude Code
+ * writes every result of a parallel batch in one message, so while one member
+ * of a batch waits on a person none of them is resolved, and the card would
+ * be naming a sibling of the command the dialog is actually showing. That is
+ * how somebody comes to approve a command they never read — and on this
+ * channel the decision is a keystroke, which answers whatever dialog is real
+ * regardless of what the panel drew. So the ambiguous case falls back to the
+ * mark and the "waiting for your approval in the terminal" line #251 already
+ * ships, which claims only what the hook proved.
+ *
+ * Absent, therefore, in three cases that are deliberately not distinguished
+ * on the wire: no dialog is open, no open call is in the tail, or more than
+ * one is. All three mean the same thing to the panel — the request cannot be
+ * named — and the #251 glyph and line stand alone in each.
+ *
+ * `title` and `description` are absent by nature rather than by omission: the
+ * CLI renders its own prompt sentence into a terminal this app cannot read,
+ * and composing one here would be the panel inventing the words it claims to
+ * repeat. The input goes through `permissionInputLine`, the SAME summary,
+ * cap and redaction a held session's prompt gets — one Bash call must not
+ * read two ways depending on who is watching it.
+ */
+function pendingPermissionField(
+  unresolved: ClaudeToolUse[],
+  promptOpen: boolean,
+  askedAtFallback: () => string
+): { pendingPermission?: DwarfPermissionRequest } {
+  if (!promptOpen || unresolved.length !== 1) return {}
+  const call = unresolved[0]!
+  return {
+    pendingPermission: {
+      toolUseId: call.toolUseId,
+      toolName: call.toolName,
+      input: permissionInputLine(call.input),
+      // The one channel this prompt can be answered on: keystrokes into the
+      // console drawing the dialog. See DwarfPermissionRequest.channel.
+      channel: 'terminal',
+      // The calling line's own timestamp is the honest clock here, unlike a
+      // held prompt's — the transcript recorded when the session asked, and
+      // this app only learned of it later. The fallback is for a line that
+      // wrote none, where "now" is all anybody has.
+      askedAt: call.askedAt ?? askedAtFallback()
+    }
+  }
+}
+
+/**
  * Detects live Claude Code sessions via the ~/.claude/sessions/<pid>.json
  * registry, then reads each session's transcript tail for model, effort,
  * in-flight subagents and the latest assistant text.
@@ -290,6 +369,7 @@ export class ClaudeProvider implements Provider {
   private readonly foremanSilenceMs: number
   private readonly workerSilenceMs: number
   private readonly isHeldSession: (sessionId: string) => boolean
+  private readonly isPermissionPromptOpen: (sessionId: string) => boolean
   /**
    * "pid|procStart" -> what probing that exact pair concluded.
    *
@@ -426,6 +506,7 @@ export class ClaudeProvider implements Provider {
     this.foremanSilenceMs = options.foremanSilenceMs ?? ATTENDED_SILENCE_MS
     this.workerSilenceMs = options.workerSilenceMs ?? UNATTENDED_SILENCE_MS
     this.isHeldSession = options.isHeldSession ?? (() => false)
+    this.isPermissionPromptOpen = options.isPermissionPromptOpen ?? (() => false)
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -736,6 +817,19 @@ export class ClaudeProvider implements Provider {
         // and this says what it is waiting to hear: one may complete the other,
         // and neither may manufacture it.
         ...pendingQuestionField(info.pendingQuestion),
+        // WHAT it is waiting to be allowed to do, when Claude Code's own hook
+        // says a dialog is open and the tail names exactly one call nothing
+        // has answered (#203). The foreman only, never a worker: a subagent
+        // carries its foreman's sessionId, so a stamp keyed on the id alone
+        // would mark every dwarf in the session as the one being asked — the
+        // trap stampHeldQuestions names. A session this app HOLDS is excluded
+        // outright, because #246 already decides its prompt first-hand and
+        // its answer travels a different channel entirely.
+        ...pendingPermissionField(
+          info.unresolvedToolUses,
+          !this.isHeldSession(session.sessionId) && this.isPermissionPromptOpen(session.sessionId),
+          () => new Date(now).toISOString()
+        ),
         // Redacted BEFORE the renderer's 70-char bubble truncation can ever
         // slice it: a truncated prefix can still contain a whole key.
         lastMessage: redactSecrets(info.lastAssistantText),
