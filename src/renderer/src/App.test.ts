@@ -79,6 +79,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // The message panel reads an observed session's transcript on selection
     // (#159); a readable-but-empty answer is the quiet default.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // One-way, like retireDwarf: the panel reports which observed dwarf it
+    // has open so main can push that dwarf's feed with the poll (#196).
+    setWatchedDwarf: vi.fn(),
     // The Mine History panel reads the mine's transcripts on open (#192); a
     // readable mine nobody has spoken in is the quiet default.
     getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [] }),
@@ -1717,6 +1720,84 @@ describe('App feed refresh (#183)', () => {
     })
     await flushPromises()
     expect(wrapper.find('.bubble').text()).toBe('Just arrived at the seam.')
+  })
+
+  /**
+   * The push riding the SAME snapshot as the board (#196): main reads the
+   * watched dwarf's feed on its own pass and carries it with the poll,
+   * instead of this panel noticing the moved signal and pulling a second
+   * time over its own round trip.
+   */
+  describe('adopting a pushed feed (#196)', () => {
+    it('adopts a pushed feed for the open dwarf without an extra getDwarfFeed call', async () => {
+      const { wrapper, api } = await openRefreshDwarf()
+      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+      const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+      push({
+        mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
+        tokensObserved: 0,
+        watchedFeed: {
+          dwarfId: 'claude:s1',
+          feed: {
+            readable: true,
+            messages: [
+              { role: 'assistant', text: 'Pushed straight from the poll', timestamp: 't2' }
+            ]
+          }
+        }
+      })
+      await flushPromises()
+
+      // The very signal that would ordinarily trigger a pull already arrived
+      // WITH its feed, so the watch must not pull a second time for it.
+      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.bubble').text()).toBe('Pushed straight from the poll')
+    })
+
+    it('still pulls once on the first selection, before any push has arrived', async () => {
+      const { api } = await openRefreshDwarf()
+
+      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+      expect(api.getDwarfFeed).toHaveBeenCalledWith('claude:s1')
+    })
+
+    it('ignores a pushed feed for a dwarf this panel is no longer open on', async () => {
+      const { wrapper, api } = await openRefreshDwarf()
+      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+      await wrapper.find('.panel-close').trigger('click')
+
+      const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+      push({
+        mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
+        tokensObserved: 0,
+        watchedFeed: {
+          dwarfId: 'claude:s1',
+          feed: {
+            readable: true,
+            messages: [{ role: 'assistant', text: 'late arrival', timestamp: 't2' }]
+          }
+        }
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.message-panel').exists()).toBe(false)
+    })
+
+    it('still falls back to a pull when the snapshot carries no watched feed', async () => {
+      const { api } = await openRefreshDwarf()
+      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
+
+      const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+      push({
+        mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
+        tokensObserved: 0
+      })
+      await flushPromises()
+
+      expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
+    })
   })
 })
 

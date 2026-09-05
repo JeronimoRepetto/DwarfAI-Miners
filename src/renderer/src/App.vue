@@ -34,7 +34,8 @@ import type {
   Mine,
   MineHistoryResult,
   MinesSnapshot,
-  ShellArea
+  ShellArea,
+  WatchedFeedPush
 } from './types'
 
 const { state, setMines } = useMines()
@@ -259,6 +260,21 @@ let feedToken = 0
  */
 let selectedFeedDwarfId: string | null = null
 
+/**
+ * The signal a pushed `watchedFeed` last satisfied (#196), so the re-read
+ * watch below can tell "this exact change already arrived with its feed"
+ * apart from "this is a change nothing has answered yet" — the same two
+ * fields that watch itself keys on, folded into one string. Left stale after
+ * use rather than cleared: a LATER change always produces a different key, so
+ * it still pulls exactly as it did before this feature existed.
+ */
+let pushedFeedSignal: string | null = null
+
+/** The composite key both the push-adoption and the pull-watch compare (#196). */
+function watchedFeedSignalKey(dwarfId: string, dwarf: Dwarf | undefined): string {
+  return `${dwarfId}|${dwarf?.lastMessage ?? ''}|${dwarf?.transcriptUpdatedAt ?? ''}`
+}
+
 const currentMine = computed<Mine | undefined>(() =>
   viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
 )
@@ -313,6 +329,25 @@ function raisePanel(): void {
   window.api.raisePanel()
 }
 
+/**
+ * Adopt a feed main pushed with this snapshot (#196), when it is for the
+ * dwarf currently open. A push for a dwarf this panel is no longer on (or
+ * never was) is ignored, exactly as a stale getDwarfFeed answer already is
+ * (see feedToken) — the panel only ever shows a feed for what is open now.
+ *
+ * Bumps `feedToken` so an unrelated pull already in flight for this same
+ * dwarf cannot land after this and clobber it with a stale answer, and
+ * records the signal this push satisfied so the re-read watch below does not
+ * also fire a redundant pull for the very same change.
+ */
+function adoptWatchedFeed(watchedFeed: WatchedFeedPush | undefined): void {
+  if (watchedFeed === undefined || watchedFeed.dwarfId !== openDwarfId.value) return
+  feedToken++
+  selectedFeedDwarfId = watchedFeed.dwarfId
+  selectedFeed.value = watchedFeed.feed
+  pushedFeedSignal = watchedFeedSignalKey(watchedFeed.dwarfId, selectedDwarf.value)
+}
+
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   loading.value = false
@@ -320,6 +355,9 @@ function update(snapshot: MinesSnapshot): void {
   // A launch in flight is watching for its own dwarf, which arrives on an
   // ordinary poll like every other session's — this is that poll.
   observeLaunch(snapshot.mines)
+  // The one dwarf's feed main re-read on the SAME pass (#196), read here
+  // AFTER setMines so `selectedDwarf` already reflects this snapshot.
+  adoptWatchedFeed(snapshot.watchedFeed)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
@@ -597,7 +635,26 @@ watch(
       return
     }
     if (liveSelectedDwarf.value === undefined) return
+    // A push already carried this exact change (#196): adopting it in
+    // update() already set selectedFeed, so pulling again would only re-read
+    // words this panel already has.
+    if (pushedFeedSignal === watchedFeedSignalKey(dwarfId, selectedDwarf.value)) return
     void readSelectedFeed(dwarfId)
+  },
+  { immediate: true }
+)
+
+/**
+ * Tell main which OBSERVED dwarf this panel currently has open, so a poll
+ * that already re-scans its transcript can carry the feed with the snapshot
+ * instead of this panel pulling it a tick later (#196). Never a held
+ * session's: it already carries its own conversation, so main is told null
+ * for one exactly as it would be for no selection at all.
+ */
+watch(
+  [openDwarfId, () => selectedDwarf.value?.conversation !== undefined],
+  ([dwarfId, isHeld]) => {
+    window.api.setWatchedDwarf(dwarfId === null || isHeld ? null : dwarfId)
   },
   { immediate: true }
 )
