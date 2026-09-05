@@ -47,6 +47,8 @@ import {
   stampUnrecorded,
   type DeclaredProject
 } from '../domain/aggregate'
+import type { HookEvent } from '../hooks/hookPayload'
+import { PermissionPromptRegistry, stampPermissionPrompts } from '../hooks/permissionPrompts'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
@@ -413,6 +415,18 @@ export class AgentRuntime {
    * seam is the same shape `heldSessions` uses for the Agent SDK.
    */
   private readonly hosted: HostedProcessRegistry
+  /**
+   * Which sessions this app only OBSERVES have a permission dialog open right
+   * now, as Claude Code's own hooks report it (#203).
+   *
+   * Beside the three registries above and deliberately not inside any of them:
+   * they answer for sessions this app started, and this one answers for a
+   * session somebody is running in their own terminal — the only word the panel
+   * gets about it is a push from the CLI itself. Fed by noteHookEvent and read
+   * once per poll; see permissionPrompts.ts for the correlation and the two
+   * rules that close a prompt.
+   */
+  private readonly permissionPrompts: PermissionPromptRegistry
   /** Which agent CLIs this machine has (#91), asked when the Add Panel opens. */
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
@@ -537,6 +551,7 @@ export class AgentRuntime {
       })
 
     this.now = options.now ?? Date.now
+    this.permissionPrompts = new PermissionPromptRegistry({ now: this.now })
 
     // The development-only simulated valley (#42). Null in every ordinary run,
     // and null in EVERY packaged run whatever the environment says — the two
@@ -900,8 +915,25 @@ export class AgentRuntime {
         // ranked here first would be a worker by the time they looked, and
         // would keep neither its question, nor its telemetry, nor its words,
         // nor its status.
-        const published = stampHeldRank(withStatus, (sessionId) =>
+        const ranked = stampHeldRank(withStatus, (sessionId) =>
           this.heldSessions.crewState(sessionId)
+        )
+        // And what a session this app only OBSERVES is blocked on, when Claude
+        // Code's own hook said so (#203). After every held stamp above, because
+        // it is their opposite: those supersede the provider for a stream this
+        // panel holds, and this one may only ADD a condition to a session
+        // somebody else is running — a held session is excluded outright here,
+        // since #246 already decides its prompt from first-hand evidence.
+        //
+        // observe() runs first and against the same board, so a prompt whose
+        // transcript has moved is closed before it could be stamped on the poll
+        // that closed it. Both calls are plain synchronous lookups over the
+        // board already in hand, so the poll's own budget is unchanged.
+        this.permissionPrompts.observe(ranked)
+        const published = stampPermissionPrompts(
+          ranked,
+          (sessionId) =>
+            !this.heldSessions.holds(sessionId) && this.permissionPrompts.isOpen(sessionId)
         )
         this.mines = published
         pollProfiler.count(
@@ -1325,6 +1357,23 @@ export class AgentRuntime {
    */
   nudge(): void {
     this.poller.nudge()
+  }
+
+  /**
+   * Read one Claude Code hook event for what it says about a session, rather
+   * than only for the rescan it earns (#203).
+   *
+   * The first thing on this callback that is not a plain "something changed":
+   * a `permission_prompt` Notification is Claude Code stating that a dialog is
+   * open for that session id, which is a fact about ONE dwarf and cannot be
+   * re-derived from a rescan — an observed session's transcript records the
+   * `tool_use` and never the dialog. Kept separate from nudge() so the coarse
+   * rescan stays exactly what it was: this records, nudge() republishes, and a
+   * hook naming a session nothing on the board answers to still costs nothing
+   * beyond the rescan it always did.
+   */
+  noteHookEvent(event: HookEvent): void {
+    this.permissionPrompts.note(event)
   }
 
   /**

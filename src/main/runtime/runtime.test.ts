@@ -20,6 +20,7 @@ import {
   type FeedMessage,
   type ProviderSnapshot
 } from '../domain/types'
+import type { HookEvent } from '../hooks/hookPayload'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
@@ -6342,5 +6343,136 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
 
     expect(result.launched).toBe(false)
     expect(port.started).toHaveLength(0)
+  })
+})
+
+describe('AgentRuntime observed permission prompts (#203)', () => {
+  const PROMPT_MINE = 'C:\X\quarry'
+  const CLAUDE_BIN = '/home/j/.local/bin/claude'
+
+  /** A provider reporting one ordinary observed foreman — a session nobody here started. */
+  function observedForeman(): Provider {
+    return {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude' as const,
+          sessionId: 'sess-9',
+          cwd: PROMPT_MINE,
+          status: 'busy' as const,
+          updatedAt: 7,
+          dwarfs: [
+            {
+              id: 'claude:sess-9',
+              provider: 'claude' as const,
+              role: 'foreman' as const,
+              name: 'quarry-1',
+              status: 'working' as const,
+              sessionId: 'sess-9'
+            }
+          ]
+        }
+      ],
+      feed: async () => []
+    }
+  }
+
+  function permissionPrompt(sessionId: string): HookEvent {
+    return {
+      provider: 'claude',
+      event: 'Notification',
+      sessionId,
+      notificationType: 'permission_prompt'
+    }
+  }
+
+  function reasonOf(runtime: AgentRuntime): Dwarf['waitingReason'] {
+    return runtime.getMines()[0]?.dwarfs[0]?.waitingReason
+  }
+
+  it('marks the dwarf of the session Claude Code says has a dialog open', async () => {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [observedForeman()],
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    expect(reasonOf(runtime)).toBeUndefined()
+
+    runtime.noteHookEvent(permissionPrompt('sess-9'))
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(reasonOf(runtime)).toBe('approval')
+  })
+
+  it('marks nothing for a hook that named a session the board does not have', async () => {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [observedForeman()],
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteHookEvent(permissionPrompt('sess-nobody'))
+    await runtime.refresh()
+    runtime.stop()
+
+    // A hook is never grounds for drawing a dwarf: the board is the providers'
+    // to report, and this only ever refines what they already found.
+    expect(runtime.getMines()[0]?.dwarfs).toHaveLength(1)
+    expect(reasonOf(runtime)).toBeUndefined()
+  })
+
+  it('clears the mark when the session reports its turn ended', async () => {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [observedForeman()],
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteHookEvent(permissionPrompt('sess-9'))
+    await runtime.refresh()
+    expect(reasonOf(runtime)).toBe('approval')
+
+    runtime.noteHookEvent({ provider: 'claude', event: 'Stop', sessionId: 'sess-9' })
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(reasonOf(runtime)).toBeUndefined()
+  })
+
+  it('leaves a session this panel holds to its own first-hand evidence', async () => {
+    // A held session's prompt reaches this app through canUseTool and is
+    // decided from the panel (#246). A hook about the same prompt would be a
+    // second, weaker claim about a fact the panel already holds exactly.
+    const fs = new FakeFs()
+    fs.addFile(CLAUDE_BIN, '#!/bin/sh\n')
+    const started: HeldSessionStartRequest[] = []
+    const heldSessions = new HeldSessionRegistry({
+      detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+      start: async (request) => {
+        started.push(request)
+        return { close: () => {}, send: () => true, interrupt: async () => true }
+      },
+      now: () => 1_700_000_000_000,
+      log: () => {}
+    })
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [observedForeman()],
+      heldSessions,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(PROMPT_MINE),
+      prompt: 'dig here'
+    })
+    started[0]!.onSessionId('sess-9')
+
+    runtime.noteHookEvent(permissionPrompt('sess-9'))
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(reasonOf(runtime)).toBeUndefined()
   })
 })

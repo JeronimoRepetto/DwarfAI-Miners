@@ -521,6 +521,11 @@ async function init(): Promise<void> {
       console.log(
         `[hooks] ${event.event}${kind}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`
       )
+      // Recorded before the rescan is asked for, so the poll it triggers is
+      // already the one that draws the mark (#203). What the runtime does with
+      // an event is its own business: this boundary reads the payload and
+      // hands it over whole.
+      runtime?.noteHookEvent(event)
       runtime?.nudge()
     },
     log: (message) => console.log(message),
