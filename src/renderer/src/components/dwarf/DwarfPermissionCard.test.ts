@@ -12,6 +12,7 @@ function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermi
     title: 'Claude wants to run a command',
     description: 'This command will run on your machine.',
     input: 'rm -rf /tmp/scratch',
+    channel: 'held',
     askedAt: '2026-09-05T09:00:00.000Z',
     ...overrides
   }

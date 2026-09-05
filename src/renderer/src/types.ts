@@ -19,6 +19,7 @@ export type {
   DwarfMcpServerStatus,
   DwarfObserver,
   DwarfPermissionAnswerRequest,
+  DwarfPermissionChannel,
   DwarfPermissionDecision,
   DwarfPermissionRequest,
   DwarfProvider,

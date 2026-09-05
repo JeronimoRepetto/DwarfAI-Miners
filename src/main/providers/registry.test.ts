@@ -32,7 +32,8 @@ function context(): ProviderContext {
       }
     } as unknown as ProviderContext['platform'],
     expandPath: (path) => path,
-    isHeldSession: () => false
+    isHeldSession: () => false,
+    isPermissionPromptOpen: () => false
   }
 }
 

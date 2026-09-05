@@ -90,6 +90,37 @@ export interface ClaudePendingQuestion {
   askedAt?: string
 }
 
+/**
+ * A tool call the assistant wrote and that nothing in this tail has answered
+ * (#203).
+ *
+ * The transcript half of an observed session's permission prompt. Claude
+ * Code's `permission_prompt` hook says a dialog is OPEN for a session and
+ * never what it asks; this says what the session asked to do and never
+ * whether anybody was asked to approve it. Only the two together name a
+ * request, and they only ever meet in the provider.
+ *
+ * Readable while the dialog stands, which is the one property that makes this
+ * worth reading at all: the `tool_use` block is written BEFORE the CLI opens
+ * its dialog, unlike an `AskUserQuestion`, whose block reaches the file only
+ * when the picker resolves (docs/console-hosting.md §4, measured). That is
+ * why `AskUserQuestion` is deliberately excluded here as well as carried by
+ * `pendingQuestion`: it raises no permission dialog, and a card offering
+ * Allow / Deny for a question the model wrote its own answers to would be the
+ * invented-options failure DwarfQuestion exists to prevent.
+ *
+ * `input` is the tool's own input object, RAW. Summarising and redacting it
+ * belongs at the provider boundary with every other string that crosses the
+ * wire, not here — see domain/permissionSummary.
+ */
+export interface ClaudeToolUse {
+  toolUseId: string
+  toolName: string
+  input: Record<string, unknown>
+  /** The calling line's own timestamp, when it carried one. */
+  askedAt?: string
+}
+
 /** Everything the provider needs from the tail of a session transcript. */
 export interface ClaudeTranscriptInfo {
   model?: string
@@ -144,6 +175,27 @@ export interface ClaudeTranscriptInfo {
    * are not, which is the direction this codebase takes every time.
    */
   pendingQuestion?: ClaudePendingQuestion
+  /**
+   * Every tool call in this tail that no `tool_result` resolved, in ask order
+   * — so the latest open one is last (#203). Empty rather than absent: "this
+   * tail holds no open call" is a reading the parser always has, unlike
+   * `pendingQuestion`, whose absence also covers an ask older than the window.
+   *
+   * A LIST rather than the latest one alone, because the count is what tells
+   * a card it may name the request at all. One open call and a dialog on
+   * screen is that call; several — the shape a parallel batch takes, since
+   * Claude Code writes every result of a batch in one message and therefore
+   * writes none of them while one of the batch is waiting on a person — could
+   * be any of them, and a card naming the wrong sibling is how somebody
+   * approves a command they did not read. The provider is where that count is
+   * weighed.
+   *
+   * The same truncation asymmetry that makes `pendingQuestion` safe makes this
+   * safe: a tail is a suffix and a result is always written after its call, so
+   * "the call is visible but its result scrolled out" cannot happen. A window
+   * too small can only hide an open call, never invent one.
+   */
+  unresolvedToolUses: ClaudeToolUse[]
 }
 
 type Rec = Record<string, unknown>
@@ -459,6 +511,34 @@ function askedQuestion(block: Rec, askedAt: string | undefined): ClaudePendingQu
 }
 
 /**
+ * The tool call on one content block, or undefined for anything that is not
+ * one this app may ever show as a permission request (#203).
+ *
+ * Refused rather than repaired, on the three grounds `askedQuestion` refuses
+ * an ask: no `id` means no `tool_result` could ever mark it resolved, so it
+ * would sit on the panel forever; no `name` means the card could not say what
+ * the session wants to run, which is the whole content of the request; and an
+ * `input` that is not an object is not a shape `permissionInputLine` can
+ * summarise.
+ *
+ * `AskUserQuestion` is excluded here rather than filtered later, because it
+ * is not a near miss — it is the one tool that asks instead of acting, raises
+ * no permission dialog, and is already carried whole by `pendingQuestion`.
+ */
+function calledTool(block: Rec, askedAt: string | undefined): ClaudeToolUse | undefined {
+  if (block.type !== 'tool_use' || block.name === 'AskUserQuestion') return undefined
+  const toolUseId = asString(block.id)
+  const toolName = asString(block.name)
+  if (toolUseId === undefined || toolName === undefined || !isRecord(block.input)) return undefined
+  return {
+    toolUseId,
+    toolName,
+    input: block.input,
+    ...(askedAt === undefined ? {} : { askedAt })
+  }
+}
+
+/**
  * The tool_use ids this line answers.
  *
  * `is_error` is deliberately NOT consulted: a question the user escaped out of
@@ -578,6 +658,12 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   // latest open question (issue #94).
   const asked = new Map<string, ClaudePendingQuestion>()
   const answered = new Set<string>()
+  // The same bookkeeping again, over every OTHER tool (#203). Its own map
+  // rather than a filter over one shared with `asked`, because the two are
+  // read for opposite purposes: an ask is a question the panel repeats, and a
+  // call is an act somebody may have to approve. Insertion order is ask order,
+  // which is what makes "the latest open call" a position rather than a guess.
+  const called = new Map<string, ClaudeToolUse>()
 
   for (const line of jsonlObjects(tailText)) {
     // Runs for every line, not inside the `user` branch: the envelopes that
@@ -597,6 +683,8 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
       for (const block of contentBlocks(line.message)) {
         const question = askedQuestion(block, asString(line.timestamp))
         if (question !== undefined) asked.set(question.toolUseId, question)
+        const call = calledTool(block, asString(line.timestamp))
+        if (call !== undefined) called.set(call.toolUseId, call)
       }
       continue
     }
@@ -634,7 +722,10 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     tokensObserved,
     // Matched by id over the whole tail rather than by line order: a suffix read
     // cannot show a result before its ask, and the rule must not depend on that.
-    pendingQuestion: [...asked.values()].filter((ask) => !answered.has(ask.toolUseId)).at(-1)
+    pendingQuestion: [...asked.values()].filter((ask) => !answered.has(ask.toolUseId)).at(-1),
+    // Matched by id over the whole tail for the same reason, and kept in ask
+    // order (#203).
+    unresolvedToolUses: [...called.values()].filter((call) => !answered.has(call.toolUseId))
   }
 }
 

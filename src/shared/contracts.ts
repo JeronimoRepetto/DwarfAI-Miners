@@ -580,7 +580,37 @@ export interface DwarfQuestion {
 }
 
 /**
- * A tool call a held session is blocked on until somebody approves it (#203).
+ * How a decision on a permission prompt physically travels back (#203).
+ *
+ * ONE closed field on DwarfPermissionRequest rather than a second wire type,
+ * and the reason is that the two channels differ in exactly one thing the
+ * panel has to know and nothing else. The card is identical — the same tool
+ * name, the same redacted input, the same fixed Allow and Deny — because the
+ * prompt is the same prompt; what differs is what happens after the click and
+ * therefore what the panel may honestly claim afterwards. A second type would
+ * have duplicated every field the card reads in order to carry that one bit,
+ * and the renderer would have had to branch on which type it held before it
+ * could draw anything.
+ *
+ * - `'held'`: the panel owns this session's stream, so the decision releases
+ *   the blocked call through the Agent SDK's `canUseTool` and either succeeds
+ *   or does not, locally and at once (#246).
+ * - `'terminal'`: the panel only WATCHES this session, so the decision is a
+ *   keystroke typed into the console that is drawing the dialog. That can
+ *   fail where the held path cannot — a window that will not focus — and even
+ *   when it succeeds it proves only that the key was typed, never that the
+ *   session acted on it. Both facts are the panel's to say out loud, which is
+ *   why this field is on the wire rather than re-derived in the renderer from
+ *   `provider` or `textDelivery`, neither of which answers the question.
+ *
+ * Derived in main, where the evidence is. Closed rather than optional: every
+ * prompt that reaches the panel arrived by one of these two routes, and a
+ * missing value would be a third state nobody can act on.
+ */
+export type DwarfPermissionChannel = 'held' | 'terminal'
+
+/**
+ * A tool call a session is blocked on until somebody approves it (#203).
  *
  * A SIBLING of DwarfQuestion, deliberately not a variant of it. That type's
  * contract is that the panel repeats the agent's own words — the question and
@@ -590,20 +620,31 @@ export interface DwarfQuestion {
  * meant a `DwarfQuestion` whose option labels this app invented, which is the
  * one thing that type promises never happens.
  *
- * Held sessions ONLY, and that is structural rather than a gap: the prompt
- * reaches this app through the Agent SDK's `canUseTool` callback, which is
- * the one route on this machine that carries a permission request as data
- * and takes a decision back. An observed session's transcript records the
- * `tool_use` but not the prompt, and its hook says only that *a* prompt is
- * open (`permission_prompt`) — see docs/question-capture-evaluation.md §4.
+ * Two sessions can raise one, from two different kinds of evidence — see
+ * `channel` above:
+ *
+ * - A session the panel HOLDS delivers the prompt itself, through the Agent
+ *   SDK's `canUseTool` callback, which carries the request as data and takes
+ *   a decision back.
+ * - A session the panel only OBSERVES delivers it in two halves that name
+ *   each other. Claude Code's `permission_prompt` Notification says a dialog
+ *   is open for that `session_id` and never what it asks; the assistant's own
+ *   `tool_use` block, written to the transcript BEFORE the dialog opens and
+ *   left unresolved by any `tool_result` while it stands, says exactly what.
+ *   Neither half alone names a request; together they do, and nothing in
+ *   either is parsed out of prose.
  *
  * `title` and `description` are the CLI's own rendering of the prompt
  * ("Claude wants to run …"), passed through when the bridge supplied them and
- * absent otherwise; nothing here is composed from prose. `input` is a compact,
- * redacted reading of the tool's structured input — the command, the path,
- * or the whole input as JSON — capped so a pasted file never becomes the
- * card. `toolUseId` makes the round trip observable exactly as it does for an
- * ask: the decision is released against this id and no other.
+ * absent otherwise; nothing here is composed from prose. An observed session
+ * carries neither — the CLI renders that sentence into a terminal this app
+ * cannot read. `input` is a compact, redacted reading of the tool's
+ * structured input — the command, the path, or the whole input as JSON —
+ * capped so a pasted file never becomes the card. `toolUseId` makes the round
+ * trip observable exactly as it does for an ask: on the held channel the
+ * decision is released against this id and no other, and on the terminal
+ * channel it is what a later `tool_result` will name when the session
+ * finally acts.
  */
 export interface DwarfPermissionRequest {
   toolUseId: string
@@ -615,6 +656,8 @@ export interface DwarfPermissionRequest {
   description?: string
   /** A compact, redacted rendering of the tool's input. */
   input: string
+  /** Which way a decision on this prompt travels back. */
+  channel: DwarfPermissionChannel
   /** When this host received the prompt — the only honest clock there is. */
   askedAt: string
 }

@@ -1,3 +1,4 @@
+import { permissionInputLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
 import {
   HELD_CONVERSATION_LIMIT,
@@ -108,13 +109,6 @@ export interface HeldPermission {
  * one: the agent reads it in its own transcript.
  */
 export type HeldPermissionAnswer = { decision: 'allow' } | { decision: 'deny'; reason: string }
-
-/**
- * The main-side cap on a permission prompt's input summary. A pasted file, or
- * a command with a long inline payload, must never become the whole card —
- * the same reasoning HELD_MESSAGE_MAX_CHARS applies to a held message.
- */
-export const PERMISSION_INPUT_MAX_CHARS = 240
 
 /** A live held session, as the registry holds it — nothing about the SDK. */
 export interface HeldSessionHandle {
@@ -476,40 +470,17 @@ export function askToWireQuestion(ask: HeldAsk, askedAt: string): DwarfQuestion 
 }
 
 /**
- * Which field of a tool's input names the thing worth showing on a
- * permission card, checked in this order — the first one present wins. Every
- * tool this app has seen prompt names its subject through exactly one of
- * these, and a tool this list does not recognise falls through to the whole
- * input as JSON rather than showing nothing.
- */
-const PERMISSION_SUMMARY_FIELDS = ['command', 'file_path', 'path', 'url', 'pattern'] as const
-
-/**
- * A short, human string for a tool's input, before redaction and the cap —
- * `permissionToWire`'s two remaining steps. Never the whole input object
- * unless nothing named above is a string: that fallback stays JSON so a tool
- * this table does not recognise still shows SOMETHING, at the cost of
- * reading like a payload rather than a sentence.
- */
-function summarizePermissionInput(input: Record<string, unknown>): string {
-  for (const field of PERMISSION_SUMMARY_FIELDS) {
-    const value = input[field]
-    if (typeof value === 'string') return value
-  }
-  return JSON.stringify(input)
-}
-
-/**
  * The permission prompt as the renderer sees it: summarised, capped,
  * redacted (#203).
  *
  * A SIBLING of askToWireQuestion, not a shared helper with it — the two
  * narrow different things. That one repeats the agent's own words; this one
- * summarises a tool's structured input into one line and redacts the CLI's
- * own rendering of the prompt (`title`, `description`) alongside it, field by
- * field, for the same reason askToWireQuestion never spreads the parsed ask:
- * a field added to HeldPermission later must not ride across unredacted by
- * being forgotten.
+ * redacts the CLI's own rendering of the prompt (`title`, `description`)
+ * field by field, for the same reason askToWireQuestion never spreads the
+ * parsed ask: a field added to HeldPermission later must not ride across
+ * unredacted by being forgotten. The input line itself is
+ * `domain/permissionSummary`'s, shared with the observed-session prompt so
+ * one Bash call cannot read two ways depending on who is watching it (#203).
  *
  * `askedAt` is passed in rather than read from a clock here, for the same
  * reason it is for an ask: the SDK attaches no timestamp to the callback, so
@@ -519,15 +490,15 @@ export function permissionToWire(prompt: HeldPermission, askedAt: string): Dwarf
   const title = prompt.title === undefined ? undefined : redactSecrets(prompt.title)
   const description =
     prompt.description === undefined ? undefined : redactSecrets(prompt.description)
-  const input = redactSecrets(
-    summarizePermissionInput(prompt.input).slice(0, PERMISSION_INPUT_MAX_CHARS)
-  )
   return {
     toolUseId: prompt.toolUseId,
     toolName: prompt.toolName,
     ...(title === undefined ? {} : { title }),
     ...(description === undefined ? {} : { description }),
-    input,
+    input: permissionInputLine(prompt.input),
+    // The panel HOLDS this session, so the decision goes back through the
+    // stream rather than at a keyboard: see DwarfPermissionRequest.channel.
+    channel: 'held',
     askedAt
   }
 }

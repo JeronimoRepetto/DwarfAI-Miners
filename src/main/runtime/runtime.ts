@@ -580,7 +580,15 @@ export class AgentRuntime {
           expandPath: (path) => expandHomePath(path, home),
           // Read at scan time, never now: the held registry is composed a few
           // lines below this, and no scan runs before the constructor returns.
-          isHeldSession: (sessionId) => this.heldSessions.holds(sessionId)
+          isHeldSession: (sessionId) => this.heldSessions.holds(sessionId),
+          // The same seam for the hook channel (#203). Read one poll BEHIND
+          // the stamp below, since a scan runs before observe() reconciles
+          // the registry against the board it produced — and that lag is
+          // harmless because the provider needs a second proof the same
+          // transcript move takes away: answering the dialog writes the
+          // `tool_result`, so the open call is gone on exactly the poll that
+          // would otherwise still be reporting a stale prompt.
+          isPermissionPromptOpen: (sessionId) => this.permissionPrompts.isOpen(sessionId)
         },
         options.providerRegistry ?? PROVIDER_REGISTRY
       )

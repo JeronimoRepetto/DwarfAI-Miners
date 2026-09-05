@@ -4,12 +4,13 @@ import {
   HELD_MESSAGE_MAX_CHARS,
   defaultDwarf,
   defaultMine,
+  type DwarfPermissionRequest,
   type FeedMessage,
   type Mine
 } from '../domain/types'
+import { PERMISSION_INPUT_MAX_CHARS } from '../domain/permissionSummary'
 import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
-  PERMISSION_INPUT_MAX_CHARS,
   askToWireQuestion,
   heldMessageText,
   heldTelemetryToWire,
@@ -742,8 +743,19 @@ describe('permissionToWire', () => {
       toolName: 'Bash',
       title: 'Claude wants to run pnpm test',
       input: 'pnpm test',
+      channel: 'held',
       askedAt: ASKED_AT
     })
+  })
+
+  /*
+   * The one field that says how this decision gets home (#203). A held
+   * prompt's answer never leaves the process, so it can never carry the
+   * terminal channel's caveats — a focus that fails, and a ✓ that means only
+   * "typed".
+   */
+  it('marks the decision as one the panel releases itself', () => {
+    expect(permissionToWire(prompt(), ASKED_AT).channel).toBe('held')
   })
 
   it('omits a title and a description the CLI never rendered', () => {
@@ -791,10 +803,11 @@ describe('permissionToWire', () => {
 })
 
 describe('stampHeldQuestions permission (#203)', () => {
-  const permission = {
+  const permission: DwarfPermissionRequest = {
     toolUseId: 'toolu_p1',
     toolName: 'Bash',
     input: 'pnpm test',
+    channel: 'held',
     askedAt: ASKED_AT
   }
 

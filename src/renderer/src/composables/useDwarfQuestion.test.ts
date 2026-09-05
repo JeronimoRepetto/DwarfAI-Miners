@@ -172,6 +172,7 @@ function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermi
     toolUseId: 'toolu_09',
     toolName: 'Bash',
     input: 'rm -rf /tmp/scratch',
+    channel: 'held',
     askedAt: '2026-09-05T09:00:00.000Z',
     ...overrides
   }

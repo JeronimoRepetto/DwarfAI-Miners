@@ -10,7 +10,7 @@ import {
 import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 import { NO_TRANSCRIPT_NOTE, READING_NOTE } from '../../lib/message/conversation'
 import { defaultDwarf } from '../../testing/factories'
-import { MAX_DWARF_TEXT_CHARS } from '../../types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfPermissionRequest } from '../../types'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
 
 /*
@@ -711,11 +711,12 @@ describe('DwarfMessagePanel question', () => {
  * `initialPanelHeight` in DwarfMessagePanel.vue.
  */
 describe('DwarfMessagePanel permission (#203)', () => {
-  const pendingPermission = {
+  const pendingPermission: DwarfPermissionRequest = {
     toolUseId: 'toolu_09',
     toolName: 'Bash',
     title: 'Claude wants to run a command',
     input: 'rm -rf /tmp/scratch',
+    channel: 'held',
     askedAt: '2026-09-05T09:00:00.000Z'
   }
 
@@ -864,6 +865,7 @@ describe('DwarfMessagePanel awaiting approval', () => {
           toolName: 'Bash',
           title: 'Run a command',
           input: 'pnpm test',
+          channel: 'held',
           askedAt: '2026-09-04T09:00:00.000Z'
         }
       })
