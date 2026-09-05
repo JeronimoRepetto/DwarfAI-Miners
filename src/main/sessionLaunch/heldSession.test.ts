@@ -9,10 +9,12 @@ import {
 } from '../domain/types'
 import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
+  PERMISSION_INPUT_MAX_CHARS,
   askToWireQuestion,
   heldMessageText,
   heldTelemetryToWire,
   parseAskUserQuestion,
+  permissionToWire,
   resolveAnswers,
   retainHeldMessage,
   stampHeldConversation,
@@ -21,6 +23,7 @@ import {
   stampHeldRank,
   stampHeldTelemetry,
   type HeldAsk,
+  type HeldPermission,
   type HeldSessionTelemetryUpdate,
   type HeldTelemetryState
 } from './heldSession'
@@ -711,5 +714,133 @@ describe('stampHeldConversation', () => {
     // panel being told there IS a conversation and it is empty.
     const stamped = stampHeldConversation(board(), () => ({ held: true, conversation: [] }))
     expect('conversation' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+})
+
+/*
+ * Issue #203. A permission prompt a held session raises is a question too —
+ * one whose two answers Claude Code fixed rather than the model — and it
+ * travels as a SIBLING of the ask, never disguised as one: DwarfQuestion's
+ * contract is that the panel repeats the agent's own words, and Allow / Deny
+ * are nobody's words but the CLI's.
+ */
+describe('permissionToWire', () => {
+  function prompt(overrides: Partial<HeldPermission> = {}): HeldPermission {
+    return {
+      toolUseId: 'toolu_p1',
+      toolName: 'Bash',
+      input: { command: 'pnpm test', description: 'Run the suite' },
+      ...overrides
+    }
+  }
+
+  it("names the tool, keeps the CLI's own sentence, and summarises the input", () => {
+    expect(permissionToWire(prompt({ title: 'Claude wants to run pnpm test' }), ASKED_AT)).toEqual({
+      toolUseId: 'toolu_p1',
+      toolName: 'Bash',
+      title: 'Claude wants to run pnpm test',
+      input: 'pnpm test',
+      askedAt: ASKED_AT
+    })
+  })
+
+  it('omits a title and a description the CLI never rendered', () => {
+    const wire = permissionToWire(prompt(), ASKED_AT)
+    expect('title' in wire).toBe(false)
+    expect('description' in wire).toBe(false)
+  })
+
+  it('summarises a file tool by the path it names', () => {
+    const wire = permissionToWire(
+      prompt({
+        toolName: 'Edit',
+        input: { file_path: 'src/a.ts', old_string: 'x', new_string: 'y' }
+      }),
+      ASKED_AT
+    )
+    expect(wire.input).toBe('src/a.ts')
+  })
+
+  it('falls back to the whole input as JSON when it carries no field this knows', () => {
+    const wire = permissionToWire(prompt({ toolName: 'mcp__x__y', input: { a: 1 } }), ASKED_AT)
+    expect(wire.input).toBe('{"a":1}')
+  })
+
+  it('redacts the title, the description and the input alike', () => {
+    const key = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789'
+    const wire = permissionToWire(
+      prompt({
+        title: `Claude wants to run curl -H ${key}`,
+        description: `uses ${key}`,
+        input: { command: `curl -H ${key} https://x` }
+      }),
+      ASKED_AT
+    )
+    expect(wire.title).not.toContain(key)
+    expect(wire.description).not.toContain(key)
+    expect(wire.input).not.toContain(key)
+    expect(wire.input).toContain('curl -H ')
+  })
+
+  it('caps the input summary, so a pasted file never becomes the card', () => {
+    const wire = permissionToWire(prompt({ input: { command: 'x'.repeat(5_000) } }), ASKED_AT)
+    expect(wire.input.length).toBeLessThanOrEqual(PERMISSION_INPUT_MAX_CHARS)
+  })
+})
+
+describe('stampHeldQuestions permission (#203)', () => {
+  const permission = {
+    toolUseId: 'toolu_p1',
+    toolName: 'Bash',
+    input: 'pnpm test',
+    askedAt: ASKED_AT
+  }
+
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'foreman-1', role: 'foreman', sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'worker-1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  it("stamps the held session's live permission request onto its foreman", () => {
+    const stamped = stampHeldQuestions(board(), () => ({ held: true, permission }))
+    expect(stamped[0]!.dwarfs[0]!.pendingPermission).toEqual(permission)
+  })
+
+  it('clears a stale permission once nothing is open, removing the key outright', () => {
+    const mines = board()
+    mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, pendingPermission: permission }
+
+    const stamped = stampHeldQuestions(mines, () => ({ held: true }))
+    expect('pendingPermission' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  it('carries an open ask and an open permission side by side', () => {
+    const question = {
+      toolUseId: 'toolu_30',
+      question: 'Which colour?',
+      multiSelect: false,
+      options: [{ label: 'Green' }]
+    }
+    const stamped = stampHeldQuestions(board(), () => ({ held: true, question, permission }))
+    expect(stamped[0]!.dwarfs[0]!.pendingQuestion).toEqual(question)
+    expect(stamped[0]!.dwarfs[0]!.pendingPermission).toEqual(permission)
+  })
+
+  it("never stamps a worker, which shares its foreman's session id", () => {
+    const stamped = stampHeldQuestions(board(), () => ({ held: true, permission }))
+    expect(stamped[0]!.dwarfs[1]!.pendingPermission).toBeUndefined()
+  })
+
+  it('leaves a session this panel does not hold exactly as the provider reported it', () => {
+    const stamped = stampHeldQuestions(board(), () => ({ held: false }))
+    expect('pendingPermission' in stamped[0]!.dwarfs[0]!).toBe(false)
   })
 })

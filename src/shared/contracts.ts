@@ -579,6 +579,53 @@ export interface DwarfQuestion {
   askedAt?: string
 }
 
+/**
+ * A tool call a held session is blocked on until somebody approves it (#203).
+ *
+ * A SIBLING of DwarfQuestion, deliberately not a variant of it. That type's
+ * contract is that the panel repeats the agent's own words — the question and
+ * the answers the model enumerated. A permission prompt is the other way
+ * round: the model wrote nothing to choose between, and the two answers are
+ * Claude Code's, fixed for every prompt. Folding one into the other would have
+ * meant a `DwarfQuestion` whose option labels this app invented, which is the
+ * one thing that type promises never happens.
+ *
+ * Held sessions ONLY, and that is structural rather than a gap: the prompt
+ * reaches this app through the Agent SDK's `canUseTool` callback, which is
+ * the one route on this machine that carries a permission request as data
+ * and takes a decision back. An observed session's transcript records the
+ * `tool_use` but not the prompt, and its hook says only that *a* prompt is
+ * open (`permission_prompt`) — see docs/question-capture-evaluation.md §4.
+ *
+ * `title` and `description` are the CLI's own rendering of the prompt
+ * ("Claude wants to run …"), passed through when the bridge supplied them and
+ * absent otherwise; nothing here is composed from prose. `input` is a compact,
+ * redacted reading of the tool's structured input — the command, the path,
+ * or the whole input as JSON — capped so a pasted file never becomes the
+ * card. `toolUseId` makes the round trip observable exactly as it does for an
+ * ask: the decision is released against this id and no other.
+ */
+export interface DwarfPermissionRequest {
+  toolUseId: string
+  /** The tool the agent wants to run, as the CLI named it. */
+  toolName: string
+  /** The CLI's own prompt sentence, when it rendered one. */
+  title?: string
+  /** The CLI's own subtitle for the prompt, when it rendered one. */
+  description?: string
+  /** A compact, redacted rendering of the tool's input. */
+  input: string
+  /** When this host received the prompt — the only honest clock there is. */
+  askedAt: string
+}
+
+/**
+ * The two answers a permission prompt takes. Claude Code's own vocabulary,
+ * and deliberately not its third one: "always allow" writes a rule into the
+ * user's settings, and this slice offers nothing that outlives the prompt.
+ */
+export type DwarfPermissionDecision = 'allow' | 'deny'
+
 export interface Dwarf {
   id: string
   /**
@@ -732,6 +779,16 @@ export interface Dwarf {
    * only "not shown to be" — so its absence never unsets a reason either.
    */
   pendingQuestion?: DwarfQuestion
+  /**
+   * The tool call this dwarf's held session is blocked on until the panel
+   * approves or declines it (#203). Beside `pendingQuestion` rather than
+   * inside it — see DwarfPermissionRequest for why the two are siblings —
+   * and the two may be open at once: several tool calls in one assistant
+   * message each prompt on their own id. Absent means nothing is waiting, or
+   * this is not a session the panel holds; the field cannot tell the two
+   * apart and does not try to.
+   */
+  pendingPermission?: DwarfPermissionRequest
   /**
    * The channel a typed message would travel through right now, resolved by
    * the runtime on every poll. Absent means the panel must offer no send
@@ -1350,6 +1407,25 @@ export interface DwarfQuestionAnswerResult {
 }
 
 /**
+ * One decision on a permission prompt a held session raised (#203; see
+ * Dwarf.pendingPermission).
+ *
+ * Addressed by DWARF and by `toolUseId`, exactly as an answer is: a decision
+ * naming a prompt that has since closed is refused, never re-aimed at
+ * whatever is open now — approving the second tool call with a click made
+ * about the first is how a panel comes to run a command nobody read.
+ *
+ * Answered with DwarfQuestionAnswerResult rather than a shape of its own,
+ * because the verdict means the same narrow thing: the agent's blocked call
+ * was released with this decision, and nothing about what it then did.
+ */
+export interface DwarfPermissionAnswerRequest {
+  dwarfId: string
+  toolUseId: string
+  decision: DwarfPermissionDecision
+}
+
+/**
  * Wire payload for both the getMines() pull and the minesUpdated push: the
  * per-mine breakdown plus the cross-mine vault total, so the panel never has
  * to re-derive the grand total from a partial view of the mines.
@@ -1822,6 +1898,14 @@ export const IPC_CHANNELS = {
    */
   launchHeldSession: 'agent:launchHeld',
   answerDwarfQuestion: 'agent:answerQuestion',
+  /**
+   * Deciding a permission prompt a held session raised (#203). Its own
+   * channel beside answerDwarfQuestion for the reason the two wire types are
+   * siblings: one carries the agent's words back, the other carries a fixed
+   * allow/deny, and a channel that took both would have to accept a record
+   * that is sometimes an answer and sometimes a verdict.
+   */
+  answerDwarfPermission: 'agent:answerPermission',
   /**
    * Starting a command of the person's own and holding it over stdio (#194).
    *

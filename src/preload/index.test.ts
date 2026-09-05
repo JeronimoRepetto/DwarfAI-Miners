@@ -326,6 +326,52 @@ describe('preload question-answer contract', () => {
   })
 })
 
+/**
+ * Deciding a permission prompt a held session raised (#203). Rebuilt field by
+ * field, exactly as answerDwarfQuestion's payload is: `decision` is a closed
+ * word main re-checks against DwarfPermissionDecision, so nothing this bridge
+ * could not validate itself is allowed to ride across uncoerced.
+ */
+describe('preload permission-decision contract (#203)', () => {
+  const request = { dwarfId: 'claude:s1', toolUseId: 'toolu_p1', decision: 'allow' as const }
+
+  it('exposes the function beside answerDwarfQuestion', () => {
+    expect(typeof api.answerDwarfPermission).toBe('function')
+  })
+
+  it('decides on the agent:answerPermission channel, naming the dwarf, the tool call and the decision', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await api.answerDwarfPermission(request)
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerPermission', request)
+  })
+
+  it('collapses a non-string dwarf id, tool-use id or decision before it crosses the bridge', async () => {
+    // Same discipline as answerDwarfQuestion: main's boundary check should
+    // only ever have to reason about clean strings, and an empty decision is
+    // refused there rather than defaulted to one the user never chose.
+    invoke.mockResolvedValueOnce({
+      answered: false,
+      error: 'That permission request is no longer open.'
+    })
+    await (api.answerDwarfPermission as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 42,
+      toolUseId: null,
+      decision: undefined
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerPermission', {
+      dwarfId: '',
+      toolUseId: '',
+      decision: ''
+    })
+  })
+
+  it('hands back the refusal and its reason rather than a bare false', async () => {
+    const refused = { answered: false, error: 'That session is not one this panel is holding.' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.answerDwarfPermission(request)).resolves.toEqual(refused)
+  })
+})
+
 describe('preload panel-layout contract (#90, #138)', () => {
   it('asks for the current layout on the panel:layout:get channel with no payload', async () => {
     const layout = { edge: 'right', expanded: false, mineOpen: false }

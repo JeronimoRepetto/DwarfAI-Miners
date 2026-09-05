@@ -30,6 +30,7 @@ import type {
   AppBuild,
   Dwarf,
   DwarfFeedResult,
+  DwarfPermissionDecision,
   Mine,
   MineHistoryResult,
   MinesSnapshot,
@@ -40,7 +41,11 @@ const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
 const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
 const { state: kickingState, kick } = useDwarfKicking()
-const { state: questionState, answer: answerDwarfQuestion } = useDwarfQuestion()
+const {
+  state: questionState,
+  answer: answerDwarfQuestion,
+  decide: decideDwarfPermission
+} = useDwarfQuestion()
 
 /**
  * Launching an agent from inside a mine (#86). App owns this composable — and
@@ -669,6 +674,19 @@ function answerQuestion(dwarf: Dwarf, label: string): void {
   void answerDwarfQuestion(dwarf.id, dwarf.pendingQuestion, label)
 }
 
+/**
+ * Release the tool call that dwarf's held session is blocked on (#203).
+ *
+ * Same shape as answerQuestion, for the same reason: the prompt itself is
+ * never touched here. It is drawn from the dwarf's own `pendingPermission` on
+ * the latest snapshot, and only main's next snapshot may drop it — the
+ * panel's part ends at handing the decision over.
+ */
+function decidePermission(dwarf: Dwarf, decision: DwarfPermissionDecision): void {
+  if (dwarf.pendingPermission === undefined) return
+  void decideDwarfPermission(dwarf.id, dwarf.pendingPermission, decision)
+}
+
 onMounted(() => {
   void load()
   // Adopts the window's REAL shape: which edge it is docked to decides which
@@ -890,6 +908,7 @@ onBeforeUnmount(() => unsubscribe?.())
         @send="sendText(selectedDwarf, $event)"
         @kick="kickDwarf(selectedDwarf)"
         @answer="answerQuestion(selectedDwarf, $event)"
+        @decide="decidePermission(selectedDwarf, $event)"
         @open-console="activate(selectedDwarf)"
         @close="closeMessages"
       />

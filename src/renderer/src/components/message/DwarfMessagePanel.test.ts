@@ -606,6 +606,82 @@ describe('DwarfMessagePanel question', () => {
 })
 
 /**
+ * A permission prompt (#203): the tool call a held session is blocked inside
+ * right now. It takes precedence over an ordinary ask, because it is the
+ * thing keeping the session from moving at all — see the comment beside
+ * `initialPanelHeight` in DwarfMessagePanel.vue.
+ */
+describe('DwarfMessagePanel permission (#203)', () => {
+  const pendingPermission = {
+    toolUseId: 'toolu_09',
+    toolName: 'Bash',
+    title: 'Claude wants to run a command',
+    input: 'rm -rf /tmp/scratch',
+    askedAt: '2026-09-05T09:00:00.000Z'
+  }
+
+  const pendingQuestion = {
+    toolUseId: 'toolu_01',
+    question: 'Which database should the importer write to?',
+    multiSelect: false,
+    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+  }
+
+  function withPermission(props: Record<string, unknown> = {}) {
+    return panel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD, pendingPermission }),
+      ...props
+    })
+  }
+
+  it('opens tall enough to hold the whole prompt, without squashing the conversation', () => {
+    expect(heightOf(withPermission())).toBe(MESSAGE_PANEL_ASK_HEIGHT)
+  })
+
+  it('replaces the composer with the permission card, exactly as an ask would', () => {
+    const wrapper = withPermission()
+    const composer = [...wrapper.find('.panel-composer').element.children]
+    expect(composer[0]?.classList.contains('permission-card')).toBe(true)
+    expect(wrapper.find('.panel-input').exists()).toBe(false)
+    expect(wrapper.find('.panel-composer .control-kick').exists()).toBe(true)
+  })
+
+  it('forwards the chosen decision once Enter confirms it', async () => {
+    const wrapper = withPermission()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.find('.permission-card').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('decide')).toEqual([['allow']])
+  })
+
+  it('shows the permission card, and not the question card, for a dwarf with both open', () => {
+    // The session is blocked on the tool call, not on the ask: the permission
+    // is the thing keeping it from moving, so it wins the composer. The ask
+    // reappears once the permission is decided — main's next snapshot drops
+    // it, not this component.
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        conversation: HELD,
+        pendingPermission,
+        pendingQuestion
+      })
+    })
+    expect(wrapper.find('.permission-card').exists()).toBe(true)
+    expect(wrapper.find('.question-card').exists()).toBe(false)
+  })
+
+  it('routes a free-form reply through the ordinary message path, not the decision', async () => {
+    const wrapper = withPermission()
+    await wrapper.find('.freeform-input').setValue('let me check this first')
+    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toEqual([
+      [{ text: 'let me check this first', pressEnter: true }]
+    ])
+    expect(wrapper.emitted('decide')).toBeUndefined()
+  })
+})
+
+/**
  * What each session type may honestly show. The resolution itself is
  * lib/message/conversation's; what is checked here is that the panel prints
  * the claim rather than dropping it, and never invents a bubble.

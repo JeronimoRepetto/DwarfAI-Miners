@@ -1,4 +1,12 @@
-import type { DwarfAnswerState, DwarfQuestion, DwarfQuestionAnswerRequest } from '../../types'
+import type {
+  DwarfAnswerState,
+  DwarfPermissionAnswerRequest,
+  DwarfPermissionDecision,
+  DwarfPermissionRequest,
+  DwarfQuestion,
+  DwarfQuestionAnswerRequest,
+  DwarfQuestionOption
+} from '../../types'
 
 /**
  * Choosing one of the answers an agent said it would take, and turning that
@@ -121,4 +129,58 @@ export function answerRequest(
 export function answerStatusLine(state: DwarfAnswerState | undefined): string | null {
   if (state?.phase !== 'answered') return null
   return 'Handed to the agent — its blocked ask was released with this choice.'
+}
+
+/**
+ * Claude Code's own two answers to a permission prompt (#203) — fixed rather
+ * than agent-supplied, because a permission's model wrote nothing to choose
+ * between (see DwarfPermissionRequest). Deliberately not a third "always
+ * allow": that answer writes a rule into the user's settings, and this card
+ * offers nothing that outlives the prompt.
+ *
+ * The selection helpers above (selectOption, optionState, canSendAnswer,
+ * isAnswerable, answerStateForAsk) are reused as-is for this list: they are
+ * keyed by toolUseId, and a permission's toolUseId is exactly as good a key
+ * as a question's.
+ */
+export const PERMISSION_OPTIONS: readonly DwarfQuestionOption[] = [
+  { label: 'Allow', description: 'Run this tool call exactly as the agent wrote it.' },
+  { label: 'Deny', description: 'Refuse it. The agent is told the panel declined.' }
+]
+
+/**
+ * The decision one of PERMISSION_OPTIONS' labels names, or null for anything
+ * else. The boundary between a label a person clicked and the closed
+ * vocabulary DwarfPermissionDecision admits — same reason the shared
+ * contracts' `isMineTier` and friends exist as values rather than casts.
+ */
+export function decisionForLabel(label: string): DwarfPermissionDecision | null {
+  if (label === 'Allow') return 'allow'
+  if (label === 'Deny') return 'deny'
+  return null
+}
+
+/**
+ * The request that releases `permission`'s blocked tool call with `decision`.
+ *
+ * Addressed by the prompt's own toolUseId, exactly as answerRequest is by the
+ * question's: a decision naming a prompt that has since closed must be
+ * refused by main rather than re-aimed at whatever is open now.
+ */
+export function permissionRequest(
+  dwarfId: string,
+  permission: DwarfPermissionRequest,
+  decision: DwarfPermissionDecision
+): DwarfPermissionAnswerRequest {
+  return { dwarfId, toolUseId: permission.toolUseId, decision }
+}
+
+/**
+ * The line the panel shows under a released decision. Same narrow claim as
+ * answerStatusLine, and for the same reason: the blocked tool call was
+ * released with this decision, never what the agent then did with it.
+ */
+export function permissionStatusLine(state: DwarfAnswerState | undefined): string | null {
+  if (state?.phase !== 'answered') return null
+  return 'Handed to the agent — its blocked tool call was released with this decision.'
 }

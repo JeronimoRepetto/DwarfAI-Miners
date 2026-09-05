@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfAnswerState, DwarfQuestion } from '../../types'
+import type { DwarfAnswerState, DwarfPermissionRequest, DwarfQuestion } from '../../types'
 import {
+  PERMISSION_OPTIONS,
   answerRequest,
   answerStateForAsk,
   answerStatusLine,
   canSendAnswer,
+  decisionForLabel,
   isAnswerable,
   optionState,
+  permissionRequest,
+  permissionStatusLine,
   selectOption
 } from './questionAnswer'
 
@@ -178,5 +182,74 @@ describe('answerStatusLine', () => {
     expect(answerStatusLine({ phase: 'answering', toolUseId: 'toolu_01' })).toBeNull()
     expect(answerStatusLine({ phase: 'refused', toolUseId: 'toolu_01' })).toBeNull()
     expect(answerStatusLine(undefined)).toBeNull()
+  })
+})
+
+/**
+ * A permission prompt (#203): Claude Code's own fixed two answers, never the
+ * agent's own words. The selection machinery above (selectOption, optionState,
+ * canSendAnswer, isAnswerable, answerStateForAsk) is reused as-is — it is keyed
+ * by toolUseId, and a permission's toolUseId is exactly as good a key as a
+ * question's.
+ */
+function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {
+  return {
+    toolUseId: 'toolu_09',
+    toolName: 'Bash',
+    input: 'rm -rf /tmp/scratch',
+    askedAt: '2026-09-05T09:00:00.000Z',
+    ...overrides
+  }
+}
+
+describe('PERMISSION_OPTIONS', () => {
+  it('offers exactly Allow then Deny, Claude Code’s own fixed vocabulary', () => {
+    expect(PERMISSION_OPTIONS.map((option) => option.label)).toEqual(['Allow', 'Deny'])
+  })
+
+  it('offers no "always allow" — nothing here outlives the prompt', () => {
+    expect(PERMISSION_OPTIONS.some((option) => /always/i.test(option.label))).toBe(false)
+  })
+})
+
+describe('decisionForLabel', () => {
+  it('maps the two option labels to their decision', () => {
+    expect(decisionForLabel('Allow')).toBe('allow')
+    expect(decisionForLabel('Deny')).toBe('deny')
+  })
+
+  it('recognizes nothing else', () => {
+    expect(decisionForLabel('Always Allow')).toBeNull()
+    expect(decisionForLabel('')).toBeNull()
+  })
+})
+
+describe('permissionRequest', () => {
+  it('carries the dwarf, the prompt’s own toolUseId and the chosen decision', () => {
+    expect(permissionRequest('claude:s1', permission(), 'allow')).toEqual({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_09',
+      decision: 'allow'
+    })
+  })
+
+  it('names whichever prompt was actually decided, not a stale one', () => {
+    const later = permission({ toolUseId: 'toolu_10' })
+    expect(permissionRequest('claude:s1', later, 'deny').toolUseId).toBe('toolu_10')
+  })
+})
+
+describe('permissionStatusLine', () => {
+  it('says the blocked call was released, never what it then did', () => {
+    const answered: DwarfAnswerState = { phase: 'answered', toolUseId: 'toolu_09' }
+    const line = permissionStatusLine(answered) ?? ''
+    expect(line).toContain('released')
+    expect(line).not.toMatch(/reacted|ran|executed|acted/i)
+  })
+
+  it('has no line to show while the decision is in flight or was refused', () => {
+    expect(permissionStatusLine({ phase: 'answering', toolUseId: 'toolu_09' })).toBeNull()
+    expect(permissionStatusLine({ phase: 'refused', toolUseId: 'toolu_09' })).toBeNull()
+    expect(permissionStatusLine(undefined)).toBeNull()
   })
 })

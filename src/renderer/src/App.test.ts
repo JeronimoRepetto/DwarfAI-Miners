@@ -89,6 +89,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // test loudly, not be swallowed at every call site.
     retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
+    answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
     // The docked shell (#90). Answers "closed" by default, which is what main
@@ -693,6 +694,71 @@ describe('App answering an agent question', () => {
     expect(wrapper.find('.answer-error').text()).toBe(
       'That session is not one this panel is holding.'
     )
+  })
+})
+
+/**
+ * The whole decision loop through the real components (#203): a permission
+ * prompt reaches the panel on a snapshot, Allow is chosen inside the mine,
+ * and Enter releases the blocked tool call over the permission channel — a
+ * sibling loop to the question one above, over a sibling channel.
+ */
+describe('App deciding a permission prompt', () => {
+  const PENDING_PERMISSION = {
+    toolUseId: 'toolu_09',
+    toolName: 'Bash',
+    input: 'rm -rf /tmp/scratch',
+    askedAt: '2026-09-05T09:00:00.000Z'
+  }
+
+  const BLOCKED_MINE = {
+    id: 'mine:c:\\x\\importer',
+    path: 'C:\\x\\importer',
+    name: 'importer',
+    tier: 'bronze',
+    dwarfs: [
+      {
+        id: 'claude:s1',
+        provider: 'claude',
+        role: 'foreman',
+        name: 'Foreman',
+        status: 'waiting',
+        sessionId: 's1',
+        pendingPermission: PENDING_PERMISSION
+      }
+    ],
+    tokensObserved: 0,
+    updatedAt: 0
+  }
+
+  beforeEach(() => {
+    // Same singleton store the question loop above shares, and the same map.
+    useDwarfQuestion().clearAll()
+    useView().clear()
+  })
+
+  it('shows the permission card, sends the decision over its own channel, and leaves it standing', async () => {
+    const { wrapper, api } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [BLOCKED_MINE], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', BLOCKED_MINE.id)
+    await flushPromises()
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.permission-card').exists()).toBe(true)
+
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.find('.permission-card').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(api.answerDwarfPermission).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_09',
+      decision: 'allow'
+    })
+    // Only main's next snapshot may drop a pendingPermission — the panel's
+    // part ends at handing the decision over.
+    expect(wrapper.find('.permission-card').exists()).toBe(true)
   })
 })
 

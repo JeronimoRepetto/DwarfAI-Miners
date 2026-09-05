@@ -173,10 +173,11 @@ channel beside the detached `agent:launch`, not a replacement.
   redacted forms and **what is sent is the original**, two questions redacting alike refusing rather
   than guessing [#113].
 - Three rules #113 states at length and this page only names: **an open ask dissolves** rather than
-  being answered for the user; **the permission posture starts at a refusal**, since there is no
-  surface to show a prompt on yet (#96); and a held session **registers exactly like any other**, so
-  the poll draws its dwarf with no second path — as `kind: "interactive"`, earning the long
-  _attended_ window, right rather than a leak since a human genuinely can answer it here (#68).
+  being answered for the user; **a permission prompt parks exactly like an ask and reaches the panel**
+  as `Dwarf.pendingPermission`, decided through `agent:answerPermission` — a prompt still open when the
+  session ends dissolves as a denial, never an approval (#203); and a held session **registers exactly
+  like any other**, so the poll draws its dwarf with no second path — as `kind: "interactive"`, earning
+  the long _attended_ window, right rather than a leak since a human genuinely can answer it here (#68).
 
 ### The Codex queue — merged, #110 (#97)
 

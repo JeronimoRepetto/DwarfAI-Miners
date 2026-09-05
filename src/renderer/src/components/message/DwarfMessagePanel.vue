@@ -22,8 +22,10 @@ import {
   type DwarfAnswerState,
   type DwarfFeedResult,
   type DwarfKickState,
+  type DwarfPermissionDecision,
   type DwarfSendState
 } from '../../types'
+import DwarfPermissionCard from '../dwarf/DwarfPermissionCard.vue'
 import DwarfQuestionCard from '../dwarf/DwarfQuestionCard.vue'
 
 /**
@@ -47,9 +49,9 @@ import DwarfQuestionCard from '../dwarf/DwarfQuestionCard.vue'
  * mid-sentence would be worse than one that scrolls, which is exactly why the
  * messages scroll independently.
  *
- * And it never clears the question card on its own, for the reason
- * DwarfQuestionCard states at length: only main's next snapshot may drop a
- * `pendingQuestion`.
+ * And it never clears the question or permission card on its own, for the
+ * reason DwarfQuestionCard states at length: only main's next snapshot may
+ * drop a `pendingQuestion` or a `pendingPermission`.
  */
 
 const props = defineProps<{
@@ -62,7 +64,11 @@ const props = defineProps<{
   feed?: DwarfFeedResult
   sendState?: DwarfSendState
   kickState?: DwarfKickState
-  /** The verdict of the last answer given for this dwarf (see DwarfQuestionCard). */
+  /**
+   * The verdict of the last answer or decision given for this dwarf, whatever
+   * prompt it named (see DwarfQuestionCard and DwarfPermissionCard) — the two
+   * share one store, because a verdict is about a toolUseId either way.
+   */
   answerState?: DwarfAnswerState
 }>()
 
@@ -72,6 +78,8 @@ const emit = defineEmits<{
   close: []
   /** One of the agent's own option labels, once Enter confirmed it. */
   answer: [label: string]
+  /** One of Claude Code's own two answers to a permission prompt (#203). */
+  decide: [decision: DwarfPermissionDecision]
   /** Focus this session's console — where the old bar's fourth icon went. */
   'open-console': []
 }>()
@@ -90,7 +98,10 @@ const conversation = computed(() => conversationOf(props.dwarf, props.feed))
  * because nothing here watches the conversation.
  */
 const height = ref(
-  initialPanelHeight(latestText(conversation.value), props.dwarf.pendingQuestion !== undefined)
+  initialPanelHeight(
+    latestText(conversation.value),
+    props.dwarf.pendingQuestion !== undefined || props.dwarf.pendingPermission !== undefined
+  )
 )
 /** The height to give back when the history tab closes again. */
 const collapsedHeight = ref(height.value)
@@ -352,16 +363,32 @@ watch(
 
     <div class="panel-composer">
       <!--
-        The ask REPLACES the composer while one is open, which is what the
-        design's two question exports draw: the option cards, then `Other
-        Thing` and the card's own box where the panel's input would be. It is
-        never behind a toggle, because it is the reason the dwarf was clicked.
+        A permission prompt REPLACES the composer first, ahead of an ordinary
+        ask, because it is the tool call this held session is blocked INSIDE
+        right now (#203) — the ask can wait a turn, the permission cannot. The
+        ask reappears on its own once the permission is decided: main's next
+        snapshot drops `pendingPermission`, and this component clears neither
+        on its own initiative (see the module comment).
 
-        A free-form reply leaves on the ordinary message channel, because the
-        answer channel takes back only the agent's own words.
+        Absent that, the ask REPLACES the composer while one is open, which is
+        what the design's two question exports draw: the option cards, then
+        `Other Thing` and the card's own box where the panel's input would be.
+        Neither is ever behind a toggle, because each is the reason the dwarf
+        was clicked.
+
+        A free-form reply leaves on the ordinary message channel either way,
+        because neither channel takes back anything but its own fixed answers.
       -->
+      <DwarfPermissionCard
+        v-if="dwarf.pendingPermission"
+        class="panel-ask"
+        :permission="dwarf.pendingPermission"
+        :answer-state="answerState"
+        @decide="emit('decide', $event)"
+        @send-text="emit('send', $event)"
+      />
       <DwarfQuestionCard
-        v-if="dwarf.pendingQuestion"
+        v-else-if="dwarf.pendingQuestion"
         class="panel-ask"
         :question="dwarf.pendingQuestion"
         :answer-state="answerState"
