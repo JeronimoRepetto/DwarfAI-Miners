@@ -65,6 +65,7 @@ import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
+import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
 import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
@@ -289,6 +290,17 @@ export interface RuntimeOptions {
    * real process tree; the default ends it through the platform port.
    */
   launchedSessions?: LaunchedSessionRegistry
+  /**
+   * Where a launch is written down so its exit survives a restart (#231), or
+   * null when this build has no database to write it in.
+   *
+   * Null is a real state rather than an error, exactly as it is for `projects`:
+   * index.ts owns the file, and a database that will not open costs the user
+   * the exit from a session a PREVIOUS run started — never the one this run
+   * started, which the in-memory register still holds. Omitted has the same
+   * effect, so no test reaches a disk.
+   */
+  launchedSessionStore?: LaunchedSessionStore | null
   /**
    * Every command of the person's own this panel is holding (#194). Injected
    * for tests, which must never spawn a process; the default holds real ones.
@@ -556,10 +568,18 @@ export class AgentRuntime {
     // unlike the two registries around it this one takes its per-OS half from
     // platformAdapters — the single composition point — and keeps only the
     // policy here (#217).
+    // The probe is the SECOND per-OS half this register needs (#231), and it
+    // is the one already built: the Claude provider reads it to tell a
+    // registry entry's own process from whatever inherited its recycled pid,
+    // and re-adopting a launch after a restart is the same question asked
+    // about a row instead of a registry entry. No second probe, and no probe
+    // of its own — one port, composed once, in platformAdapters.
     this.launched =
       options.launchedSessions ??
       new LaunchedSessionRegistry({
         endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
+        processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid),
+        ...(options.launchedSessionStore == null ? {} : { store: options.launchedSessionStore }),
         log: (message) => console.log(message)
       })
     // The receipt reader is the provider's own, because only a provider knows
@@ -950,6 +970,24 @@ export class AgentRuntime {
    * user's mines instead of drawing an empty valley and filling it a moment
    * later. Never throws — a store that refuses leaves the cache as it was.
    */
+  /**
+   * Take back the exits this app's PREVIOUS run left behind (#231).
+   *
+   * Awaited by index.ts before start(), beside loadDeclared and for a sharper
+   * reason than "the first poll should be complete": the register must be back
+   * before any launch of THIS run can be retained, so that a restored launch
+   * and a new one can never be handed the same id. Never throws — a database
+   * that refuses costs the restart half and leaves this run's own register,
+   * which is #217's behaviour and not a failure.
+   */
+  async restoreLaunchedSessions(): Promise<void> {
+    try {
+      await this.launched.restore()
+    } catch (error) {
+      console.warn('[launched] Could not read what a previous run started:', error)
+    }
+  }
+
   async loadDeclared(): Promise<void> {
     const store = this.projects
     if (store === null) return
@@ -1168,6 +1206,17 @@ export class AgentRuntime {
    */
   async settleLaunchReceipts(): Promise<void> {
     await this.launchReceiptReads
+  }
+
+  /**
+   * Resolve once the launch register has finished writing itself down (#231).
+   *
+   * The same test seam again, and for the same reason: a row is written when a
+   * poll claims a session, off the poll's own thread, so a test that asked the
+   * database what this run launched right after refresh() would race it.
+   */
+  async settleLaunchedSessions(): Promise<void> {
+    await this.launched.settle()
   }
 
   /**

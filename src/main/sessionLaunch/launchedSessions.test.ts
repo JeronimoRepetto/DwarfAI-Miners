@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
+import { createAppDatabase } from '../appDatabase/appDatabase'
 import type { Dwarf, Mine } from '../domain/types'
+import { createSqliteLaunchedSessionStore, type LaunchedSessionStore } from './launchedSessionStore'
 import { LaunchedSessionRegistry, type LaunchedProcess } from './launchedSessions'
 
 const MINE_PATH = 'C:\\work\\project'
@@ -283,5 +286,323 @@ describe('LaunchedSessionRegistry.end', () => {
     const { registry: launched } = registry()
     await expect(launched.end('launch:nope')).resolves.toBe('already-ended')
     expect(launched.launchIdOf('thread-1')).toBeUndefined()
+  })
+})
+
+/*
+ * #231: a session launched before the panel restarted had no exit, because the
+ * register above is in memory. What survives a restart is a ROW, and the danger
+ * the issue names is exactly why a row is not enough on its own — a pid is
+ * recycled, and this app owns a `taskkill /T` that would take an unrelated
+ * process's children with it.
+ *
+ * So the row carries the pid AND that process's creation time, and the machine
+ * is asked again before the row is believed. Every test below is about one of
+ * the three answers the machine can give: the same process, a different one, or
+ * nothing at all.
+ */
+describe('LaunchedSessionRegistry across a restart (#231)', () => {
+  const PROC_START = 1_788_001_972_136
+
+  /** A probe with a canned answer per pid, and a record of what was asked. */
+  function probe(answers: Record<number, number | null> = {}) {
+    const asked: number[] = []
+    return {
+      asked,
+      answers,
+      processStartTimeMs: async (pid: number): Promise<number | null> => {
+        asked.push(pid)
+        return answers[pid] ?? null
+      }
+    }
+  }
+
+  function store(sqlite = new MemoryWritableSqlite()): {
+    store: LaunchedSessionStore
+    sqlite: MemoryWritableSqlite
+    /** The rows as written, past the store's own defensive read. */
+    rows: () => Promise<Record<string, unknown>[]>
+  } {
+    const database = createAppDatabase({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return {
+      store: createSqliteLaunchedSessionStore({ database }),
+      sqlite,
+      rows: async () => (await database.connect()).all('SELECT * FROM launched_sessions')
+    }
+  }
+
+  /** One run of the app: retain a launch, let the poll claim its session, settle the write. */
+  async function runWithLaunch(
+    launchStore: LaunchedSessionStore,
+    options: { pid?: number; start?: number | null; sessionId?: string } = {}
+  ) {
+    const pid = options.pid ?? 4242
+    const started = options.start === undefined ? PROC_START : options.start
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const launched = new LaunchedSessionRegistry({
+      endProcessTree,
+      processStartTimeMs: probe({ [pid]: started }).processStartTimeMs,
+      store: launchStore
+    })
+    const launchId = launched.retain({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      process: handle(pid).process,
+      knownSessionIds: []
+    })
+    launched.observe([mine(MINE_PATH, [dwarf({ sessionId: options.sessionId ?? 'thread-new' })])])
+    await launched.settle()
+    return { launched, launchId, endProcessTree }
+  }
+
+  it('writes down what it launched, once it knows which session that became', async () => {
+    const { store: launchStore } = store()
+    const { launchId } = await runWithLaunch(launchStore)
+
+    await expect(launchStore.list()).resolves.toEqual([
+      {
+        launchId,
+        provider: 'codex',
+        sessionId: 'thread-new',
+        minePath: MINE_PATH,
+        pid: 4242,
+        processStartTimeMs: PROC_START
+      }
+    ])
+  })
+
+  /*
+   * A launch that has not been matched to a session yet cannot be re-adopted
+   * after a restart under any rule: the claim it is waiting for reads "the
+   * first session root that was not on the board a moment ago", and after a
+   * restart every session was. So nothing is written until there is a session
+   * id to write, and a run that ends before then leaves no row.
+   */
+  it('writes nothing down for a launch whose session it has not claimed yet', async () => {
+    const { store: launchStore } = store()
+    const launched = new LaunchedSessionRegistry({
+      endProcessTree: vi.fn().mockResolvedValue(true),
+      processStartTimeMs: probe({ 4242: PROC_START }).processStartTimeMs,
+      store: launchStore
+    })
+    launched.retain({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      process: handle(4242).process,
+      knownSessionIds: []
+    })
+    await launched.settle()
+
+    await expect(launchStore.list()).resolves.toEqual([])
+  })
+
+  /*
+   * The bare-pid refusal, and the single most load-bearing rule here. A pid on
+   * its own identifies nothing tomorrow, so a launch whose creation time the
+   * machine would not report is not written down at all — an exit that cannot
+   * be offered honestly is better than one aimed at a number.
+   */
+  it('writes nothing down for a launch whose creation time nothing could report', async () => {
+    const { store: launchStore, rows } = store()
+    await runWithLaunch(launchStore, { start: null })
+
+    // Asserted on the raw table as well as through the store, so that the rule
+    // is pinned where it is MADE. The store's own defensive read would drop
+    // such a row on the way back out, and a register that wrote it anyway
+    // would be relying on the reader to undo its mistake.
+    await expect(rows()).resolves.toEqual([])
+    await expect(launchStore.list()).resolves.toEqual([])
+  })
+
+  it('forgets a launch whose process exited on its own', async () => {
+    const { store: launchStore } = store()
+    const gone = handle(4242)
+    const launched = new LaunchedSessionRegistry({
+      endProcessTree: vi.fn().mockResolvedValue(true),
+      processStartTimeMs: probe({ 4242: PROC_START }).processStartTimeMs,
+      store: launchStore
+    })
+    launched.retain({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      process: gone.process,
+      knownSessionIds: []
+    })
+    launched.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+    await launched.settle()
+    gone.exit()
+    await launched.settle()
+
+    await expect(launchStore.list()).resolves.toEqual([])
+  })
+
+  it('forgets a launch it has ended', async () => {
+    const { store: launchStore } = store()
+    const { launched, launchId } = await runWithLaunch(launchStore)
+
+    await expect(launched.end(launchId)).resolves.toBe('ended')
+    await launched.settle()
+
+    await expect(launchStore.list()).resolves.toEqual([])
+  })
+
+  /*
+   * The fix itself. A NEW register over the SAME database offers the exit the
+   * old one had, because the machine still reports that pid's process as the
+   * one the row was written about.
+   */
+  it('offers a previous run’s launch as an exit when the machine still shows that process', async () => {
+    const { store: launchStore, sqlite } = store()
+    const { launchId } = await runWithLaunch(launchStore)
+
+    const { store: reopened } = store(sqlite)
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const machine = probe({ 4242: PROC_START })
+    const nextRun = new LaunchedSessionRegistry({
+      endProcessTree,
+      processStartTimeMs: machine.processStartTimeMs,
+      store: reopened
+    })
+    await nextRun.restore()
+
+    expect(nextRun.launchIdOf('thread-new')).toBe(launchId)
+    nextRun.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+    expect(nextRun.launchIdOfDwarf('codex:thread-new')).toBe(launchId)
+    await expect(nextRun.end(launchId)).resolves.toBe('ended')
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+  })
+
+  /*
+   * The mistake this whole design exists to avoid. The pid is live and belongs
+   * to something else entirely, so nothing is signalled and the row goes: a
+   * dead record kept around is one more chance to kill the wrong tree.
+   */
+  it('signals nothing and forgets the launch when that pid is now a different process', async () => {
+    const { store: launchStore, sqlite } = store()
+    await runWithLaunch(launchStore)
+
+    const { store: reopened } = store(sqlite)
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const nextRun = new LaunchedSessionRegistry({
+      endProcessTree,
+      processStartTimeMs: probe({ 4242: PROC_START + 3_600_000 }).processStartTimeMs,
+      store: reopened
+    })
+    await nextRun.restore()
+
+    expect(nextRun.launchIdOf('thread-new')).toBeUndefined()
+    expect(endProcessTree).not.toHaveBeenCalled()
+    await expect(reopened.list()).resolves.toEqual([])
+  })
+
+  /*
+   * "Cannot answer" never becomes "same process", and here that is the opposite
+   * reading from the Claude registry's own guard (#45), deliberately. There a
+   * null leaves a dwarf on the board — the worst case is a stale dwarf. Here a
+   * null would end a process tree, and the worst case is somebody else's.
+   *
+   * A dead pid is also the ordinary way a probe answers nothing, which is what
+   * every launch of a previous run looks like once its session has finished —
+   * so this is the common path, not the edge.
+   */
+  it('signals nothing and forgets the launch when nothing can be asked about that pid', async () => {
+    const { store: launchStore, sqlite } = store()
+    await runWithLaunch(launchStore)
+
+    const { store: reopened } = store(sqlite)
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const nextRun = new LaunchedSessionRegistry({
+      endProcessTree,
+      processStartTimeMs: probe().processStartTimeMs,
+      store: reopened
+    })
+    await nextRun.restore()
+
+    expect(nextRun.launchIdOf('thread-new')).toBeUndefined()
+    expect(endProcessTree).not.toHaveBeenCalled()
+    await expect(reopened.list()).resolves.toEqual([])
+  })
+
+  /*
+   * A restored launch has no exit handle, so the fact that made an in-run kill
+   * safe — libuv telling this process the child is gone — does not exist for
+   * it. The number is therefore checked AGAIN at the moment of the kill, not
+   * only at startup: a session can finish, and its pid be handed to something
+   * else, in the minutes between the panel starting and somebody pressing Kick.
+   */
+  it('re-checks the process at the moment of the kill, and ends nothing once it has been recycled', async () => {
+    const { store: launchStore, sqlite } = store()
+    const { launchId } = await runWithLaunch(launchStore)
+
+    const { store: reopened } = store(sqlite)
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const machine = probe({ 4242: PROC_START })
+    const nextRun = new LaunchedSessionRegistry({
+      endProcessTree,
+      processStartTimeMs: machine.processStartTimeMs,
+      store: reopened
+    })
+    await nextRun.restore()
+
+    machine.answers[4242] = PROC_START + 3_600_000
+    await expect(nextRun.end(launchId)).resolves.toBe('already-ended')
+    expect(endProcessTree).not.toHaveBeenCalled()
+    await nextRun.settle()
+    await expect(reopened.list()).resolves.toEqual([])
+  })
+
+  /*
+   * The launch id is minted from a counter that starts again every run, so the
+   * first launch of this run would otherwise be handed the id a restored one
+   * already answers to — and the two would share one record.
+   */
+  it('never mints an id a restored launch already answers to', async () => {
+    const { store: launchStore, sqlite } = store()
+    const { launchId: restoredId } = await runWithLaunch(launchStore)
+
+    const { store: reopened } = store(sqlite)
+    const nextRun = new LaunchedSessionRegistry({
+      endProcessTree: vi.fn().mockResolvedValue(true),
+      processStartTimeMs: probe({ 4242: PROC_START, 99: PROC_START }).processStartTimeMs,
+      store: reopened
+    })
+    await nextRun.restore()
+    const freshId = nextRun.retain({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      process: handle(99).process,
+      knownSessionIds: []
+    })
+
+    expect(freshId).not.toBe(restoredId)
+    nextRun.observe([
+      mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' }), dwarf({ sessionId: 'thread-second' })])
+    ])
+    expect(nextRun.launchIdOf('thread-new')).toBe(restoredId)
+    expect(nextRun.launchIdOf('thread-second')).toBe(freshId)
+  })
+
+  /*
+   * #230's register, unchanged: with no store wired the whole restart half is
+   * absent — nothing is probed, nothing is written, and every rule above this
+   * describe block still holds. That is the regression guard, and it is why
+   * both new collaborators are optional.
+   */
+  it('keeps the in-run register whole with no store and no probe at all', async () => {
+    const { registry: launched, endProcessTree } = registry()
+    const launchId = launched.retain({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      process: handle(4242).process,
+      knownSessionIds: []
+    })
+    launched.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+
+    await launched.restore()
+    await launched.settle()
+
+    expect(launched.launchIdOfDwarf('codex:thread-new')).toBe(launchId)
+    await expect(launched.end(launchId)).resolves.toBe('ended')
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
   })
 })

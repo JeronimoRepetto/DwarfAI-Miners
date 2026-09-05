@@ -158,11 +158,25 @@ no terminal window [#86].
   gone, `taskkill` naming each one, and the retained handle's own `exit` observed firing. (The
   same run showed a plain `TerminateProcess` on the intermediary taking the tree with it as well,
   through libuv's KILL_ON_JOB_CLOSE cascade — but only while every link spawns through libuv, and
-  the CLI's own tool processes do not, which is why the tree kill is what ships.) Two honest
-  limits: the register is in memory, so a session launched by a **previous** run of the app has no
-  exit here, and the launch is bound to the first session root of that provider to appear in that
-  mine — a session already on the board is never claimed, because ending somebody else's process
-  is the one mistake this must not make.
+  the CLI's own tool processes do not, which is why the tree kill is what ships.) One honest
+  limit: the launch is bound to the first session root of that provider to appear in that mine —
+  a session already on the board is never claimed, because ending somebody else's process is the
+  one mistake this must not make.
+- **The exit survives a restart, and a bare pid is never what carries it** [#231]. The register
+  used to be in memory only, so a session launched by a **previous** run had no exit at all. It is
+  now written to the app's own database as well [code:
+  `src/main/sessionLaunch/launchedSessionStore.ts`, schema v4] — and never as a pid, because a pid
+  is recycled and this app owns a `taskkill /T` that would take an unrelated process's whole tree
+  with it. What is written is the pid **and the creation time of that exact process**, read from
+  the machine while the panel still held the handle, through the same `processProbe` port the
+  Claude provider's own pid-reuse guard uses (#45). On the next run the machine is asked again and
+  the row is believed only if the answer matches: a different instant means the number belongs to
+  something else now, and **no answer at all is read the same way** — deliberately the opposite of
+  the Claude guard, where an unknown leaves a dwarf on the board and the worst case is a stale
+  dwarf, while here an unknown would end a process tree and the worst case is somebody else's.
+  Either answer deletes the row. A launch whose creation time nothing would report is not written
+  down in the first place. A restored launch has no exit handle, so the same pair is proved once
+  more at the moment Kick would signal, not only at startup.
 
 ### The held session — open, #113
 
@@ -264,13 +278,17 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 | **Held (SDK) session**          | the **persisted** session does; the child does not | the **in-flight turn**; resumable by id after |
 | **Observed (terminal / Herdr)** | yes, including mid-turn                            | nothing — but no structured question channel  |
 
-Surviving the quit is not the same as being beyond reach. A detached launch made **in this run of
-the app** can be ended deliberately from the panel — Kick ends its process tree — because the pid
-it started is retained for as long as the app lives [#217]. Quitting still ends nothing, which is
-the point of detaching in the first place; what changed is that "the app cannot stop what it
-started" stopped being true while it is running. After a restart it is true again, and honestly so:
-the pid died with the process that knew it, and signalling a remembered number is how an unrelated
-process gets killed.
+Surviving the quit is not the same as being beyond reach. A detached launch can be ended
+deliberately from the panel — Kick ends its process tree — because the pid it started is retained
+[#217]. Quitting still ends nothing, which is the point of detaching in the first place; what
+changed is that "the app cannot stop what it started" stopped being true.
+
+It stayed true across a restart for longer, and for a reason worth keeping in view: signalling a
+remembered number is how an unrelated process gets killed. What re-opened that exit was not
+remembering the number harder but remembering something a recycled pid cannot forge — the
+**creation time** of that exact process, checked against the machine again before the row is
+believed and again before anything is signalled [#231]. Where the machine will not answer, the
+panel says so rather than guessing.
 
 Claude and Codex sessions persist to disk and resume by id [V, #95], so a panel restart costs nothing
 already written. Both models are supported; neither had to win.

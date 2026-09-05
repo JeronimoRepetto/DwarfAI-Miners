@@ -8,11 +8,12 @@ import {
  * The one database this app writes: its file, its schema version, and the
  * migrations between versions (#93).
  *
- * It has two tenants — the projects list (src/main/projects/) and the material
- * vault (src/main/ledger/) — and it is a subject of its own precisely because
- * neither owns it. Before this module the schema lived inside the projects
- * store, which was honest while projects were the only rows in the file; a
- * second tenant made it the wrong home for the version stamp both depend on.
+ * It has three tenants — the projects list (src/main/projects/), the material
+ * vault (src/main/ledger/) and the launch register (src/main/sessionLaunch/) —
+ * and it is a subject of its own precisely because none of them owns it. Before
+ * this module the schema lived inside the projects store, which was honest
+ * while projects were the only rows in the file; a second tenant made it the
+ * wrong home for the version stamp they all depend on.
  *
  * ONE HANDLE, SHARED. connect() opens once and hands the same handle to every
  * caller. Two DatabaseSync handles on one file do not share a write queue: in
@@ -40,7 +41,7 @@ import {
 export const APP_DB_FILENAME = 'projects-v1.db'
 
 /** Stamped in PRAGMA user_version. Older versions walk up to it; above is refused. */
-export const APP_SCHEMA_VERSION = 3
+export const APP_SCHEMA_VERSION = 4
 
 /**
  * The version the ledger's tables arrived in.
@@ -143,6 +144,38 @@ CREATE TABLE ledger_meta (
 const ADD_MAP_SITE = `ALTER TABLE projects ADD COLUMN map_site INTEGER`
 
 /**
+ * Schema v4 — what this panel launched, so the exit survives a restart (#231).
+ *
+ * One row per session this app started and can still end. It is the ONLY place
+ * in this database whose rows describe something outside it — a process on this
+ * machine — which is why the identity columns are the two of them rather than
+ * `pid` alone: a pid is recycled, and this app owns a `taskkill /T` that would
+ * take an unrelated process's children with it. `proc_start_ms` is the creation
+ * time of that exact process, read while the panel still held the handle, and a
+ * row is only ever acted on when the probe answers with it again (see
+ * sessionLaunch/launchedSessions.ts).
+ *
+ * `session_id` rather than a dwarf id: a dwarf id is a reading of the board and
+ * is rebuilt every poll, while the session id is the provider's own and is what
+ * the next run will see the same session under. Keyed on the launch, because
+ * that is what `end` names.
+ *
+ * No `started_at` beside `proc_start_ms`: the process's own creation time IS
+ * when the launch happened, to within the spawn, and it is the column that has
+ * to be right. A second one would be a number nothing reads and nothing checks.
+ */
+const CREATE_LAUNCHED_SESSIONS = `
+CREATE TABLE launched_sessions (
+  launch_id TEXT PRIMARY KEY NOT NULL,
+  provider TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  mine_path TEXT NOT NULL,
+  pid INTEGER NOT NULL,
+  proc_start_ms INTEGER NOT NULL
+);
+`
+
+/**
  * One step up from `from` to `from + 1`, applied in order and each in its own
  * transaction — which is what lets a database that has fallen two versions
  * behind catch up in one open without a crash ever leaving a stamp that does
@@ -150,7 +183,8 @@ const ADD_MAP_SITE = `ALTER TABLE projects ADD COLUMN map_site INTEGER`
  */
 const UPGRADES: readonly { from: number; apply: (db: WritableSqliteDb) => void }[] = [
   { from: 1, apply: (db) => db.exec(CREATE_LEDGER) },
-  { from: 2, apply: (db) => db.exec(ADD_MAP_SITE) }
+  { from: 2, apply: (db) => db.exec(ADD_MAP_SITE) },
+  { from: 3, apply: (db) => db.exec(CREATE_LAUNCHED_SESSIONS) }
 ]
 
 export interface AppDatabase {
@@ -276,6 +310,7 @@ export function prepareAppSchema(db: WritableSqliteDb): void {
     inTransaction(db, () => {
       db.exec(CREATE_PROJECTS)
       db.exec(CREATE_LEDGER)
+      db.exec(CREATE_LAUNCHED_SESSIONS)
       db.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION}`)
     })
     return

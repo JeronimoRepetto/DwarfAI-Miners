@@ -31,6 +31,9 @@ describe('app database — a fresh file', () => {
     expect(tables(db)).toContain('materials')
     expect(tables(db)).toContain('session_marks')
     expect(tables(db)).toContain('ledger_meta')
+    // AMENDED for #231: a third tenant, and it has to be created on the v0
+    // path as well as by the upgrade — a fresh install never walks the steps.
+    expect(tables(db)).toContain('launched_sessions')
     expect(version(db)).toBe(APP_SCHEMA_VERSION)
   })
 
@@ -158,13 +161,20 @@ describe('app database — the v2 to v3 upgrade (#136)', () => {
     seeded.close()
   }
 
-  it('adds the map site column and stamps v3, keeping every row', async () => {
+  /*
+    AMENDED for #231: this asserted the literal stamp `3` while v3 was the
+    newest schema, and a v2 database now walks both remaining steps in one
+    open. Subject unchanged — the column arrives and every row survives — with
+    the expectation moved to the current version, as the two v1→v2 tests above
+    already were for the same reason.
+  */
+  it('adds the map site column and stamps up, keeping every row', async () => {
     const sqlite = new MemoryWritableSqlite()
     await seedVersion2(sqlite)
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(3)
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
     expect(db.all('SELECT id, known_tier, map_site FROM projects')).toEqual([
       { id: 'mine:a', known_tier: 'gold', map_site: null }
     ])
@@ -208,6 +218,81 @@ describe('app database — the v2 to v3 upgrade (#136)', () => {
 
     expect(version(db)).toBe(APP_SCHEMA_VERSION)
     expect(db.all('SELECT map_site FROM projects')).toEqual([])
+  })
+})
+
+describe('app database — the v3 to v4 upgrade (#231)', () => {
+  /** A database exactly as the v3 build left it: no launch register anywhere. */
+  async function seedVersion3(sqlite: MemoryWritableSqlite): Promise<void> {
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        origin TEXT NOT NULL,
+        last_provider TEXT,
+        known_tier TEXT,
+        map_site INTEGER
+      );
+      CREATE TABLE materials (
+        mine_id TEXT NOT NULL,
+        material TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (mine_id, material)
+      );
+    `)
+    seeded.run(
+      `INSERT INTO projects (id, path, name, name_norm, added_at, last_opened_at, origin,
+       last_provider, known_tier, map_site) VALUES (?, ?, ?, ?, ?, ?, 'declared', NULL, 'gold', 4)`,
+      ['mine:a', 'C:\\code\\forge', 'forge', 'forge', 10, 20]
+    )
+    seeded.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
+      'mine:a',
+      'gold',
+      7
+    ])
+    seeded.exec('PRAGMA user_version = 3')
+    seeded.close()
+  }
+
+  it('adds the launch register and stamps v4, keeping every row', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await seedVersion3(sqlite)
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(4)
+    expect(tables(db)).toContain('launched_sessions')
+    expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: 4 }])
+    expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
+  })
+
+  it('walks a v1 database through every upgrade in one open', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec('CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL)')
+    seeded.run('INSERT INTO projects (id, path) VALUES (?, ?)', ['mine:a', 'C:\\code\\forge'])
+    seeded.exec('PRAGMA user_version = 1')
+    seeded.close()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(tables(db)).toContain('materials')
+    expect(tables(db)).toContain('launched_sessions')
+    expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: null }])
+  })
+
+  it('leaves the vault where it moved in, whatever the current schema is', () => {
+    // The launch register arriving in v4 must not drag LEDGER_TABLES_SINCE up
+    // with it: openLedgerStore reads that to know whether a database it cannot
+    // open has ever held the vault, and a later bump is not when it moved in.
+    expect(LEDGER_TABLES_SINCE).toBe(2)
+    expect(APP_SCHEMA_VERSION).toBeGreaterThan(LEDGER_TABLES_SINCE)
   })
 })
 
