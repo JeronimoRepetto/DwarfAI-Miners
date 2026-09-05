@@ -59,6 +59,7 @@ import {
   stampHeldCrew,
   stampHeldQuestions,
   stampHeldRank,
+  stampHeldStatus,
   stampHeldTelemetry
 } from '../sessionLaunch/heldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
@@ -829,15 +830,27 @@ export class AgentRuntime {
         const withConversation = stampHeldConversation(withTelemetry, (sessionId) =>
           this.heldSessions.conversationState(sessionId)
         )
+        // What a held session is actually DOING, live (#245). Superseding the
+        // provider's idle reading exactly as stampHeldQuestions supersedes
+        // the tail's ask — an SDK-hosted registry entry never carries a
+        // status at all, so without this every held dwarf read `waiting` and
+        // never `working`, and none ever carried a waitingReason either.
+        // Before stampHeldRank, for the same reason as the three stamps
+        // above: it finds the session's own dwarf by the rank its provider
+        // gave it.
+        const withStatus = stampHeldStatus(withConversation, (sessionId) =>
+          this.heldSessions.activityState(sessionId)
+        )
         // What a held session's dwarf actually IS, last of all (#157). Role is
         // topology, and for a session this panel holds the stream is the
         // topology: it digs alone until it coordinates something and is the
-        // foreman from the moment it has a crew out. Last because all three
+        // foreman from the moment it has a crew out. Last because all four
         // stamps above find the session's own dwarf by the rank its provider
         // gave it, and this is the step that changes it — a solo held session
         // ranked here first would be a worker by the time they looked, and
-        // would keep neither its question, nor its telemetry, nor its words.
-        const published = stampHeldRank(withConversation, (sessionId) =>
+        // would keep neither its question, nor its telemetry, nor its words,
+        // nor its status.
+        const published = stampHeldRank(withStatus, (sessionId) =>
           this.heldSessions.crewState(sessionId)
         )
         this.mines = published

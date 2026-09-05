@@ -21,7 +21,9 @@ import {
   stampHeldCrew,
   stampHeldQuestions,
   stampHeldRank,
+  stampHeldStatus,
   stampHeldTelemetry,
+  type HeldActivityState,
   type HeldAsk,
   type HeldPermission,
   type HeldSessionTelemetryUpdate,
@@ -842,5 +844,82 @@ describe('stampHeldQuestions permission (#203)', () => {
   it('leaves a session this panel does not hold exactly as the provider reported it', () => {
     const stamped = stampHeldQuestions(board(), () => ({ held: false }))
     expect('pendingPermission' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+})
+
+/*
+ * Issue #245. A held session's registry entry never carries a `status` (the
+ * REPL writes that, and a held session has no REPL), so every held dwarf read
+ * `waiting` and never `working` — and nothing ever stamped `waitingReason`
+ * for one either, so a held dwarf blocked on an ask or a permission prompt
+ * never animated as asking. `stampHeldStatus` is the fourth stamp in the
+ * family: same shape, same supersession rule, same delete idiom.
+ */
+describe('stampHeldStatus', () => {
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'foreman-1', role: 'foreman', sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'worker-1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  it('stamps a running turn as working, with no waiting reason', () => {
+    const state: HeldActivityState = { held: true, status: 'working' }
+    const stamped = stampHeldStatus(board(), () => state)
+    expect(stamped[0]!.dwarfs[0]!.status).toBe('working')
+    expect('waitingReason' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  it('stamps a blocked ask as waiting on user-input', () => {
+    const state: HeldActivityState = { held: true, status: 'waiting', waitingReason: 'user-input' }
+    const stamped = stampHeldStatus(board(), () => state)
+    expect(stamped[0]!.dwarfs[0]!.status).toBe('waiting')
+    expect(stamped[0]!.dwarfs[0]!.waitingReason).toBe('user-input')
+  })
+
+  it('stamps a blocked permission prompt as waiting on approval', () => {
+    const state: HeldActivityState = { held: true, status: 'waiting', waitingReason: 'approval' }
+    const stamped = stampHeldStatus(board(), () => state)
+    expect(stamped[0]!.dwarfs[0]!.status).toBe('waiting')
+    expect(stamped[0]!.dwarfs[0]!.waitingReason).toBe('approval')
+  })
+
+  it('stamps idle-between-turns as waiting with no reason', () => {
+    const state: HeldActivityState = { held: true, status: 'waiting' }
+    const stamped = stampHeldStatus(board(), () => state)
+    expect(stamped[0]!.dwarfs[0]!.status).toBe('waiting')
+    expect('waitingReason' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  it('clears a stale waiting reason once nothing is open, removing the key outright', () => {
+    const mines = board()
+    mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, waitingReason: 'user-input' }
+    const stamped = stampHeldStatus(mines, () => ({ held: true, status: 'waiting' }))
+    expect('waitingReason' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  it("never stamps a worker, which shares its foreman's session id", () => {
+    const state: HeldActivityState = { held: true, status: 'working' }
+    const stamped = stampHeldStatus(board(), () => state)
+    expect(stamped[0]!.dwarfs[1]!.status).toBe('waiting')
+    expect(stamped[0]!.dwarfs[1]!.waitingReason).toBeUndefined()
+  })
+
+  it('leaves a session this panel does not hold exactly as its provider reported it', () => {
+    const mines = board()
+    mines[0]!.dwarfs[0] = {
+      ...mines[0]!.dwarfs[0]!,
+      status: 'working',
+      waitingReason: 'unknown'
+    }
+    const stamped = stampHeldStatus(mines, () => ({ held: false }))
+    expect(stamped[0]!.dwarfs[0]!.status).toBe('working')
+    expect(stamped[0]!.dwarfs[0]!.waitingReason).toBe('unknown')
   })
 })

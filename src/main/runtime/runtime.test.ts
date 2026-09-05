@@ -4268,6 +4268,39 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
   })
 
   /*
+   * Issue #245, end to end through the poll. A held session's registry entry
+   * never carries a `status` (no REPL writes one), so before this a held
+   * dwarf read `waiting` from launch to close whatever it was actually doing.
+   */
+  it('reads working right after launch and waiting on user-input once an ask is parked (#245)', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs[0]!.status).toBe('working')
+    expect(runtime.getMines()[0]!.dwarfs[0]!.waitingReason).toBeUndefined()
+
+    void port.ask(0, 'toolu_live')
+    await Promise.resolve()
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs[0]!.status).toBe('waiting')
+    expect(runtime.getMines()[0]!.dwarfs[0]!.waitingReason).toBe('user-input')
+    runtime.stop()
+  })
+
+  /*
    * Issue #191, end to end through main: the Add Panel recognises the dwarf of
    * the session it just launched by the first message of its conversation, so
    * the launch's dwarf has to reach the board AT ALL. It did not. An SDK-hosted

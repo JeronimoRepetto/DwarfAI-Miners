@@ -16,6 +16,7 @@ import {
   prepareHeldPrompt,
   resolveAnswers,
   retainHeldMessage,
+  type HeldActivityState,
   type HeldAnswer,
   type HeldAsk,
   type HeldConversationState,
@@ -151,8 +152,10 @@ interface HeldRecord {
   openPermissions: Map<string, OpenPermission>
   /**
    * Every `init`/`result` field this session's own message loop has reported
-   * so far, merged as it arrives (issue #96). Starts empty rather than
-   * undefined, so a merge never has to branch on "nothing reported yet".
+   * so far, merged as it arrives (issue #96). Starts with `{ turn: 'started'
+   * }` rather than empty (issue #245) — the launch prompt sent before this
+   * record exists IS the first turn's start — so a merge never has to branch
+   * on "nothing reported yet".
    */
   telemetry: HeldSessionTelemetryUpdate
   /**
@@ -283,7 +286,12 @@ export class HeldSessionRegistry {
         handle,
         openAsks: new Map(),
         openPermissions: new Map(),
-        telemetry: {},
+        // Seeded 'started' rather than empty (issue #245): the launch prompt
+        // IS the first turn's start, and it is sent above before this record
+        // even exists — there is no `init` message to wait for, so a held
+        // dwarf would otherwise read idle for the gap between launch and the
+        // CLI's first reported message.
+        telemetry: { turn: 'started' },
         crew,
         // The launch prompt is the record's first message, and the only one
         // seeded rather than watched: it is what this app sent, so it is known
@@ -359,6 +367,37 @@ export class HeldSessionRegistry {
     const record = this.recordFor(sessionId)
     if (record === undefined) return { held: false }
     return { held: true, ...heldTelemetryToWire(record.telemetry) }
+  }
+
+  /**
+   * What the panel should draw for this session's status and waiting reason,
+   * live (issue #245) — `held: false` for a session this panel does not
+   * hold, which leaves the provider's own idle reading alone (see
+   * `holds` on why that reading is wrong for every held session). See
+   * HeldActivityState and stampHeldStatus.
+   *
+   * Precedence, in the order checked below: an open ask or open permission
+   * prompt means the session cannot move until a human decides, which
+   * outranks whether a turn is nominally still running — being blocked on
+   * one IS a kind of turn still running, and the more informative fact is
+   * what it is blocked ON. An ask outranks a permission prompt when both are
+   * open, matching WAITING_ON_HUMAN_REASON's own precedence. With neither
+   * open, a turn still running (nothing has ended it since the last thing
+   * that started one — the launch prompt, a sent message, or an `init`) reads
+   * `working`; anything else is idle between turns.
+   */
+  activityState(sessionId: string): HeldActivityState {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { held: false }
+    if (record.openAsks.size > 0) {
+      return { held: true, status: 'waiting', waitingReason: 'user-input' }
+    }
+    if (record.openPermissions.size > 0) {
+      return { held: true, status: 'waiting', waitingReason: 'approval' }
+    }
+    return record.telemetry.turn === 'started'
+      ? { held: true, status: 'working' }
+      : { held: true, status: 'waiting' }
   }
 
   /**
@@ -465,7 +504,14 @@ export class HeldSessionRegistry {
   sendText(sessionId: string, text: string): boolean {
     const record = this.recordFor(sessionId)
     if (record === undefined) return false
-    return record.handle.send(text)
+    const sent = record.handle.send(text)
+    // A message actually queued onto the stream is a new turn starting
+    // (issue #245) — the same fact the launch prompt states at record
+    // creation, restated here because a session can go idle between turns and
+    // then be spoken to again. Not merged when the stream refused it: a
+    // refused send is not a turn beginning.
+    if (sent) record.telemetry = { ...record.telemetry, turn: 'started' }
+    return sent
   }
 
   /**

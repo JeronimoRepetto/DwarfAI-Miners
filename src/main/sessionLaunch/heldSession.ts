@@ -12,7 +12,8 @@ import type {
   DwarfQuestion,
   DwarfQuestionOption,
   FeedMessage,
-  Mine
+  Mine,
+  WaitingReason
 } from '../domain/types'
 import type { TextDeliveryTarget } from '../textDelivery/port'
 import {
@@ -197,6 +198,19 @@ export interface HeldSessionTelemetryUpdate {
   claudeCodeVersion?: string
   totalCostUsd?: number
   usage?: HeldSessionUsage
+  /**
+   * Which edge of a turn this update reports, when it reports one at all
+   * (issue #245). `init` and `result` sit at OPPOSITE ends of the same turn —
+   * `init` is re-emitted at its start ("the newest frame wins"), `result`
+   * once at its end — but every field above is a plain merge, which is
+   * exactly why none of them can serve as the edge itself: `totalCostUsd`
+   * keeps its last reported value across turns, so its mere presence proves
+   * nothing about whether the CURRENT turn has finished. This field is
+   * carried for that one question and nothing else, and the registry reads
+   * only its latest value, never sums or histories it — the same
+   * running-total reasoning above, applied to a boundary instead of a count.
+   */
+  turn?: 'started' | 'ended'
 }
 
 /** What the port needs to start one held session. */
@@ -818,6 +832,69 @@ export function stampHeldConversation(mines: Mine[], stateOf: HeldConversationLo
       const state = stateOf(dwarf.sessionId)
       if (!state.held || state.conversation.length === 0) return dwarf
       return { ...dwarf, conversation: state.conversation }
+    })
+  }))
+}
+
+/**
+ * What the panel is told about a held session's own status, live (issue
+ * #245) — the same `{held}`-discriminated shape the states above use, and for
+ * the same reason: only a session this panel HOLDS has any of this to report.
+ *
+ * `held: false` leaves the provider's own reading alone. That reading is
+ * wrong for every held session without this: an SDK-hosted registry entry
+ * never carries a `status` at all (the REPL writes that, and a held session
+ * has no REPL — see `HeldSessionRegistry.holds`), so a provider that finds no
+ * status reads the session as idle. `held: true` is this panel's own complete
+ * word on it, and it is never a partial one — unlike telemetry, which only
+ * ever accumulates, a session's activity changes shape entirely from one poll
+ * to the next, so there is no "nothing to stamp" case here.
+ *
+ * `status` is narrower than `DwarfStatus`: this only ever speaks to `working`
+ * or `waiting`, and never to `leaving` — that is the lifecycle's own verdict,
+ * decided earlier in the pipeline than this stamp runs, and it stands exactly
+ * as it was for a session that has actually ended (which this then reports
+ * `held: false` for, since the registry no longer holds it).
+ */
+export type HeldActivityState =
+  { held: false } | { held: true; status: 'working' | 'waiting'; waitingReason?: WaitingReason }
+
+export type HeldActivityLookup = (sessionId: string) => HeldActivityState
+
+/**
+ * Copy `mines` with each held session's own status stamped onto its foreman,
+ * superseding whatever the provider's idle reading put there — the same
+ * supersession stampHeldQuestions already draws, and for the same reason: a
+ * held session's stream is the complete truth about what it is doing, and the
+ * provider's is the post-hoc guess that would otherwise leave every held
+ * dwarf reading `waiting` with nothing to say why.
+ *
+ * `waitingReason` is removed rather than set to undefined when the state
+ * carries none — the same idiom `stampHeldQuestions` uses, and for the same
+ * wire reason: the field's absence is what the contract means by "not
+ * blocked on anything named", and a key carrying `undefined` survives
+ * structured cloning as a present key.
+ *
+ * Only the foreman, never a worker sharing its session id — the same trap
+ * `stampHeldQuestions` names, for the same reason: a Claude worker carries
+ * its foreman's `sessionId`, so keying on the id alone would stamp one
+ * session's status onto every subagent in it.
+ */
+export function stampHeldStatus(mines: Mine[], stateOf: HeldActivityLookup): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      if (dwarf.role !== 'foreman') return dwarf
+      const state = stateOf(dwarf.sessionId)
+      if (!state.held) return dwarf
+      let stamped: Dwarf = { ...dwarf, status: state.status }
+      if (state.waitingReason !== undefined) {
+        stamped = { ...stamped, waitingReason: state.waitingReason }
+      } else if (stamped.waitingReason !== undefined) {
+        stamped = { ...stamped }
+        delete stamped.waitingReason
+      }
+      return stamped
     })
   }))
 }
