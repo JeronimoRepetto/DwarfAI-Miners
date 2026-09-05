@@ -8,6 +8,7 @@ import type {
   DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
+  DwarfPermissionAnswerRequest,
   DwarfQuestionAnswerRequest,
   DwarfQuestionAnswerResult,
   DwarfTextRequest,
@@ -182,6 +183,18 @@ export interface DwarfAiMinersApi {
    */
   answerDwarfQuestion: (request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
   /**
+   * Decide a permission prompt a held session raised (see Dwarf.pendingPermission, #203).
+   *
+   * Addressed by DWARF, like answerDwarfQuestion: a prompt can only be
+   * decided from where it was shown. `decision` is a closed word —
+   * DwarfPermissionDecision's two members — and main re-checks it against
+   * that same closed list, so a value this bridge could not validate itself
+   * is never trusted through unchecked.
+   */
+  answerDwarfPermission: (
+    request: DwarfPermissionAnswerRequest
+  ) => Promise<DwarfQuestionAnswerResult>
+  /**
    * Start the command the person typed into Add > Other, and hold it over its
    * stdio (#194).
    *
@@ -318,7 +331,16 @@ const api: DwarfAiMinersApi = {
       toolUseId: typeof request?.toolUseId === 'string' ? request.toolUseId : '',
       answers
     })
-  }
+  },
+  // Same discipline as answerDwarfQuestion: every field crosses as a real
+  // string or as '', including `decision` — main refuses an empty one rather
+  // than defaulting to a verdict the user never chose.
+  answerDwarfPermission: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.answerDwarfPermission, {
+      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
+      toolUseId: typeof request?.toolUseId === 'string' ? request.toolUseId : '',
+      decision: typeof request?.decision === 'string' ? request.decision : ''
+    })
 }
 
 contextBridge.exposeInMainWorld('api', api)

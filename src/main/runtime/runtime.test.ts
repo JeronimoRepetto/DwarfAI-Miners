@@ -27,6 +27,7 @@ import type { Provider } from '../providers/provider'
 import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
 import type {
   HeldAnswer,
+  HeldPermissionAnswer,
   HeldSessionPort,
   HeldSessionStartRequest,
   HeldSessionTelemetryUpdate
@@ -3863,6 +3864,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     closes: () => number
     reportSessionId: (index: number, sessionId: string) => void
     ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
+    permission: (index: number, toolUseId: string) => Promise<HeldPermissionAnswer>
     reportTelemetry: (index: number, update: HeldSessionTelemetryUpdate) => void
     reportSubagent: (index: number, signal: HeldSessionSubagentSignal) => void
     reportMessage: (index: number, role: 'user' | 'assistant', text: string) => void
@@ -3895,6 +3897,13 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
               options: [{ label: 'Green' }, { label: 'Red' }]
             }
           ]
+        }),
+      // #203: any other tool the CLI decided to prompt about.
+      permission: (index, toolUseId) =>
+        started[index]!.onPermission({
+          toolUseId,
+          toolName: 'Bash',
+          input: { command: 'pnpm test' }
         }),
       reportTelemetry: (index, update) => started[index]!.onTelemetry(update),
       // #157: what the SDK loop forwards when the session's own stream says
@@ -4234,6 +4243,62 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       dwarfId: 'claude:nobody',
       toolUseId: 'toolu_live',
       answers: { 'Which colour?': 'Green' }
+    })
+    runtime.stop()
+
+    expect(result.answered).toBe(false)
+    expect(result.error).not.toBeUndefined()
+  })
+
+  /*
+   * Issue #203. A permission prompt takes the same route an ask does: stamped
+   * on the foreman off the registry, decided by dwarf id, and released in
+   * main where the blocked call is.
+   */
+  it("stamps a held session's live permission prompt on its foreman, and clears it once decided", async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    const asked = port.permission(0, 'toolu_perm')
+    await Promise.resolve()
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs[0]!.pendingPermission).toMatchObject({
+      toolUseId: 'toolu_perm',
+      toolName: 'Bash',
+      input: 'pnpm test'
+    })
+
+    expect(
+      runtime.answerDwarfPermission({
+        dwarfId: 'claude:sess-1',
+        toolUseId: 'toolu_perm',
+        decision: 'allow'
+      })
+    ).toEqual({ answered: true })
+    await expect(asked).resolves.toEqual({ decision: 'allow' })
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs[0]!.pendingPermission).toBeUndefined()
+    runtime.stop()
+  })
+
+  it('refuses a permission decision for a dwarf that is not on the board', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({ heldSessions: heldRegistry(port.port) })
+
+    const result = runtime.answerDwarfPermission({
+      dwarfId: 'claude:nobody',
+      toolUseId: 'toolu_perm',
+      decision: 'deny'
     })
     runtime.stop()
 

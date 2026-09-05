@@ -1,5 +1,6 @@
 import { HELDABLE_PROVIDERS } from '../domain/types'
 import type {
+  DwarfPermissionDecision,
   DwarfProvider,
   DwarfQuestionAnswerResult,
   FeedMessage,
@@ -11,6 +12,7 @@ import {
   askToWireQuestion,
   heldTelemetryToWire,
   parseAskUserQuestion,
+  permissionToWire,
   prepareHeldPrompt,
   resolveAnswers,
   retainHeldMessage,
@@ -18,6 +20,8 @@ import {
   type HeldAsk,
   type HeldConversationState,
   type HeldCrewState,
+  type HeldPermission,
+  type HeldPermissionAnswer,
   type HeldQuestionState,
   type HeldSessionHandle,
   type HeldSessionPort,
@@ -39,12 +43,17 @@ import {
  * provider's own project directory and resumes by id afterwards, so quitting
  * costs the in-flight turn and nothing before it.
  *
- * The one thing that must never be papered over is an ask that was open when
- * the session went. It DISSOLVES: the blocked tool call is released with an
- * explicit "nobody answered", never with an empty answers record, because
- * telling an agent its user chose nothing is a different claim from telling it
- * nobody ever got to choose. Same rule at shutdown, and same rule when the turn
- * simply ends first.
+ * The one thing that must never be papered over is an ask or a permission
+ * prompt that was open when the session went. Both DISSOLVE, and the two
+ * dissolutions are not the same shape. An ask is released with an explicit
+ * "nobody answered", never with an empty answers record, because telling an
+ * agent its user chose nothing is a different claim from telling it nobody
+ * ever got to choose. A permission prompt is released with `{ decision:
+ * 'deny', reason: ... }` — a DENIAL with a stated reason, never an approval:
+ * the tool call is still blocked on a decision, and the only decision this
+ * registry may hand back on its own is the one that leaves nothing running
+ * unattended. Same rule at shutdown, and same rule when the turn simply ends
+ * first.
  *
  * ## Why the id it is keyed by arrives late
  *
@@ -88,8 +97,15 @@ const LAUNCH_FAILED = 'The agent could not be started.'
 const NOT_HELDABLE = 'The panel can only hold a Claude session'
 const NOT_HELD = 'That session is not one this panel is holding.'
 const NO_SUCH_QUESTION = 'That question is no longer open.'
-/** What a dissolved ask tells the agent. Never an answer — see the class comment. */
+const NO_SUCH_PERMISSION = 'That permission request is no longer open.'
+/**
+ * What a dissolved ask, or a dissolved permission prompt, tells the agent —
+ * the same fixed sentence for both, and for a permission prompt it is a
+ * DENIAL with this reason, never an approval. See the class comment.
+ */
 const DISSOLVED = 'The panel closed before this was answered.'
+/** What a user-declined permission prompt tells the agent. */
+const DECLINED_PERMISSION = 'The user declined this from the DwarfAI-Miners panel.'
 
 interface OpenAsk {
   ask: HeldAsk
@@ -97,6 +113,21 @@ interface OpenAsk {
   askedAt: string
   /** Releases the agent's blocked tool call. */
   release: (answer: HeldAnswer) => void
+}
+
+/**
+ * One tool call blocked on a permission decision (#203) — the same shape as
+ * OpenAsk, and deliberately a SEPARATE map on the record rather than a shared
+ * one: an ask and a permission prompt answer through different verdict
+ * shapes, and `decidePermission` must never be able to reach into `openAsks`
+ * however the ids happen to line up.
+ */
+interface OpenPermission {
+  prompt: HeldPermission
+  /** ISO time this host received the prompt; the honest askedAt for a live one. */
+  askedAt: string
+  /** Releases the agent's blocked tool call. */
+  release: (answer: HeldPermissionAnswer) => void
 }
 
 interface HeldRecord {
@@ -111,6 +142,13 @@ interface HeldRecord {
    * latest, and any of them can be answered by naming its id.
    */
   openAsks: Map<string, OpenAsk>
+  /**
+   * Open permission prompts by tool-use id (#203) — the same map shape as
+   * `openAsks`, and the same reason for being one: several tool calls can
+   * genuinely be blocked at once. The panel is shown the latest, and any of
+   * them can be decided by naming its id.
+   */
+  openPermissions: Map<string, OpenPermission>
   /**
    * Every `init`/`result` field this session's own message loop has reported
    * so far, merged as it arrives (issue #96). Starts empty rather than
@@ -236,6 +274,7 @@ export class HeldSessionRegistry {
         onTelemetry: (update) => this.recordTelemetry(key, update),
         onMessage: (role, text) => this.recordMessage(key, role, text),
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
+        onPermission: (prompt) => this.receivePermission(key, prompt),
         onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
         onEnd: (reason) => this.finish(key, reason)
       })
@@ -243,6 +282,7 @@ export class HeldSessionRegistry {
         mineId: request.mineId,
         handle,
         openAsks: new Map(),
+        openPermissions: new Map(),
         telemetry: {},
         crew,
         // The launch prompt is the record's first message, and the only one
@@ -277,22 +317,35 @@ export class HeldSessionRegistry {
   }
 
   /**
-   * What the panel should be told about this session's open asks.
+   * What the panel should be told about this session's open asks and open
+   * permission prompts.
    *
    * `held: false` for a session this panel does not hold, which is the reading
    * that leaves the provider's transcript-derived question alone. `held: true`
-   * with no question is a DIFFERENT statement — this panel holds the stream and
-   * knows nothing is open — and it is what clears a post-hoc question the tail
-   * still carries. See stampHeldQuestions.
+   * with neither field is a DIFFERENT statement — this panel holds the stream
+   * and knows nothing is open — and it is what clears a post-hoc question the
+   * tail still carries. See stampHeldQuestions.
+   *
+   * `question` and `permission` are read independently and may both be
+   * present: an ask and a permission prompt are unrelated tool calls, so
+   * neither's presence says anything about the other's (#203).
    */
   questionState(sessionId: string): HeldQuestionState {
     const record = this.recordFor(sessionId)
     if (record === undefined) return { held: false }
-    // The latest ask, matching the transcript parse's own rule (#94 phase 1):
-    // with several open, the most recent is the one the user is looking at.
-    const latest = [...record.openAsks.values()].pop()
-    if (latest === undefined) return { held: true }
-    return { held: true, question: askToWireQuestion(latest.ask, latest.askedAt) }
+    // The latest of each, matching the transcript parse's own rule (#94 phase
+    // 1): with several open, the most recent is the one the user is looking at.
+    const latestAsk = [...record.openAsks.values()].pop()
+    const latestPermission = [...record.openPermissions.values()].pop()
+    return {
+      held: true,
+      ...(latestAsk === undefined
+        ? {}
+        : { question: askToWireQuestion(latestAsk.ask, latestAsk.askedAt) }),
+      ...(latestPermission === undefined
+        ? {}
+        : { permission: permissionToWire(latestPermission.prompt, latestPermission.askedAt) })
+    }
   }
 
   /**
@@ -362,6 +415,37 @@ export class HeldSessionRegistry {
     record.openAsks.delete(request.toolUseId)
     open.release({ answered: true, answers: resolved.answers })
     this.log(`[held] Answered ${request.toolUseId} in ${record.mineId}`)
+    return { answered: true }
+  }
+
+  /**
+   * Decide one open permission prompt, releasing the agent's blocked tool
+   * call (#203).
+   *
+   * Looks ONLY at `openPermissions`, never `openAsks` — the two maps are kept
+   * apart precisely so a permission decision can never release an ask that
+   * happens to share its tool-use id, and `answer` above keeps the same
+   * discipline in the other direction. A refusal here leaves the call
+   * BLOCKED, for the same reason `answer`'s does: the prompt is still open,
+   * and the panel can decide it again.
+   */
+  decidePermission(request: {
+    sessionId: string
+    toolUseId: string
+    decision: DwarfPermissionDecision
+  }): DwarfQuestionAnswerResult {
+    const record = this.recordFor(request.sessionId)
+    if (record === undefined) return { answered: false, error: NOT_HELD }
+    const open = record.openPermissions.get(request.toolUseId)
+    if (open === undefined) return { answered: false, error: NO_SUCH_PERMISSION }
+
+    record.openPermissions.delete(request.toolUseId)
+    open.release(
+      request.decision === 'allow'
+        ? { decision: 'allow' }
+        : { decision: 'deny', reason: DECLINED_PERMISSION }
+    )
+    this.log(`[held] Decided ${request.toolUseId} (${request.decision}) in ${record.mineId}`)
     return { answered: true }
   }
 
@@ -494,6 +578,30 @@ export class HeldSessionRegistry {
     })
   }
 
+  /**
+   * One tool call reaching the permission callback that is not an ask (#203).
+   * The returned promise is what keeps the agent's tool call blocked, and it
+   * settles exactly once: on a decision, or on the session ending.
+   *
+   * Unlike `receiveAsk`, there is no shape to validate here — a permission
+   * prompt is not parsed out of the model's own output, it is simply
+   * whatever tool call the CLI decided to prompt about, so nothing about it
+   * can be malformed the way an `AskUserQuestion` block can be. A gone record
+   * (the session ended between the callback firing and this running) denies
+   * outright rather than hanging on a prompt nobody holds a session for
+   * any more.
+   */
+  private receivePermission(key: number, prompt: HeldPermission): Promise<HeldPermissionAnswer> {
+    const record = this.held.get(key)
+    if (record === undefined) {
+      return Promise.resolve({ decision: 'deny', reason: DISSOLVED })
+    }
+    const askedAt = new Date(this.now()).toISOString()
+    return new Promise<HeldPermissionAnswer>((release) => {
+      record.openPermissions.set(prompt.toolUseId, { prompt, askedAt, release })
+    })
+  }
+
   private finish(key: number, reason: string): void {
     const record = this.held.get(key)
     if (record === undefined) return
@@ -505,6 +613,13 @@ export class HeldSessionRegistry {
     for (const [toolUseId, open] of record.openAsks) {
       record.openAsks.delete(toolUseId)
       open.release({ answered: false, reason })
+    }
+    // A dissolved permission prompt is a DENIAL with a stated reason, never an
+    // approval — see the class doc comment's "one thing that must never be
+    // papered over".
+    for (const [toolUseId, open] of record.openPermissions) {
+      record.openPermissions.delete(toolUseId)
+      open.release({ decision: 'deny', reason })
     }
   }
 }

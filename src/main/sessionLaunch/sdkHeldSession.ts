@@ -38,7 +38,7 @@ import {
  * label. Both halves are built by the registry from the ask itself, so nothing
  * this app invents is ever sent.
  *
- * ## The permission posture, and why it starts at a refusal
+ * ## The permission posture, now a real prompt (#203)
  *
  * `canUseTool` is where a session's permission prompts arrive — the SDK wires it
  * up as the prompt handler, which is also what makes the model raise
@@ -47,41 +47,38 @@ import {
  * `claude -p --output-format stream-json`).
  *
  * So every prompt an interactive session would have shown its user arrives
- * here, and this panel has no surface to show one on yet (#96). The default is
- * therefore to REFUSE, with a message saying why, and `permissionMode` stays
- * `'default'` — the same posture an interactive session has, where the CLI
- * auto-allows what it considers safe and only prompts for the rest. The
- * alternative was `'bypassPermissions'`, and that would have made "start a
+ * here, and every one of them but `AskUserQuestion` now reaches the panel too
+ * (#203, closing the gap #96 left): the tool call is parked exactly as an ask
+ * is, through `request.onPermission`, and stays blocked until the panel
+ * allows or denies it. Before this, `otherTools` defaulted every one of them
+ * to an immediate refusal — a session launched from the panel could read and
+ * write nothing at all — and that posture and its `SdkHeldSessionOptions`
+ * knob are gone along with it.
+ *
+ * `permissionMode` stays `'default'` regardless — the same posture an
+ * interactive session has, where the CLI auto-allows what it considers safe
+ * and only prompts for the rest, so this module still only decides what
+ * happens to a prompt that reaches it, never which tools reach it at all.
+ * The alternative was `'bypassPermissions'`, and that would have made "start a
  * session in this mine" quietly mean "and let it do anything, unattended,
  * because nobody is watching" — the more surprising of the two surprises by
  * some distance, and the one that cannot be undone after the fact.
  *
- * `'allow'` exists as a posture because the refusal is a consequence of a
- * missing UI rather than a decision about what agents may do, and the day that
- * UI exists this becomes a real approval prompt instead. Which tools reach the
- * callback at all is the CLI's own policy, and this module does not restate it.
+ * Deliberately absent from this slice: "always allow". The SDK's own
+ * `PermissionResult` carries an `updatedPermissions` a caller may return
+ * alongside `'allow'` to have the CLI remember the rule for later calls
+ * (`extras.suggestions` is where it would come from) — and that is a rule
+ * that OUTLIVES this one prompt, written into the session's own permission
+ * state rather than answering the question in front of it. Offering it here
+ * would be a second, quieter kind of approval riding on the first, so this
+ * slice hands back only 'allow' or 'deny' for the prompt actually asked.
  */
 
 /** The tool this whole mode exists for. */
 const ASK_USER_QUESTION = 'AskUserQuestion'
 
-/** What a refused tool is told, phrased for a transcript the user will read. */
-const NO_APPROVAL_SURFACE =
-  'The DwarfAI-Miners panel started this session and has no way to ask the user to approve ' +
-  'that yet, so it is declined. Continue with what you can do without it, or ask a question ' +
-  'the panel can show.'
-
 /** What a malformed or unanswerable ask is told. */
 const ASK_NOT_SHOWN = 'The panel could not put that question to the user.'
-
-export interface SdkHeldSessionOptions {
-  /**
-   * What happens to every tool that is not an ask and that the CLI decided to
-   * prompt about. 'deny' — the default — refuses with a stated reason; 'allow'
-   * approves it unchanged.
-   */
-  otherTools?: 'deny' | 'allow'
-}
 
 /**
  * Statuses a task reaches by being over. `task_updated` and `task_notification`
@@ -221,9 +218,7 @@ class InputStream {
  * relay is: starting a session is the same act on all three platforms, so there
  * is no per-OS branch here to own.
  */
-export function createSdkHeldSession(options: SdkHeldSessionOptions = {}): HeldSessionPort {
-  const otherTools = options.otherTools ?? 'deny'
-
+export function createSdkHeldSession(): HeldSessionPort {
   return async (request: HeldSessionStartRequest): Promise<HeldSessionHandle> => {
     const input = new InputStream()
     input.push(request.prompt)
@@ -239,9 +234,16 @@ export function createSdkHeldSession(options: SdkHeldSessionOptions = {}): HeldS
         ...(request.maxTurns === undefined ? {} : { maxTurns: request.maxTurns }),
         canUseTool: async (toolName, toolInput, extras): Promise<PermissionResult> => {
           if (toolName !== ASK_USER_QUESTION) {
-            return otherTools === 'allow'
+            const verdict = await request.onPermission({
+              toolUseId: extras.toolUseID,
+              toolName,
+              input: toolInput,
+              ...(extras.title === undefined ? {} : { title: extras.title }),
+              ...(extras.description === undefined ? {} : { description: extras.description })
+            })
+            return verdict.decision === 'allow'
               ? { behavior: 'allow', updatedInput: toolInput }
-              : { behavior: 'deny', message: NO_APPROVAL_SURFACE }
+              : { behavior: 'deny', message: verdict.reason }
           }
           const answer = await request.onAsk(extras.toolUseID, toolInput)
           // The answers record is MERGED into the input the model wrote, never

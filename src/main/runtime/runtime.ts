@@ -17,6 +17,7 @@ import {
   type DwarfFeedResult,
   type DwarfKickRequest,
   type DwarfKickResult,
+  type DwarfPermissionAnswerRequest,
   type DwarfQuestionAnswerRequest,
   type DwarfQuestionAnswerResult,
   type DwarfTextRequest,
@@ -1498,6 +1499,28 @@ export class AgentRuntime {
       sessionId: dwarf.sessionId,
       toolUseId: request.toolUseId,
       answers: request.answers
+    })
+  }
+
+  /**
+   * Decide a permission prompt a held session raised (#203).
+   *
+   * Same shape as answerDwarfQuestion, and for the same reasons: addressed by
+   * DWARF because a prompt can only be decided from where it was shown, the
+   * session id is read off that dwarf rather than travelling on the wire, and
+   * the call is synchronous because releasing a blocked tool call is a local
+   * handover, never a delivery that can fail slowly.
+   */
+  answerDwarfPermission(request: DwarfPermissionAnswerRequest): DwarfQuestionAnswerResult {
+    const dwarf = this.mines
+      .flatMap((mine) => mine.dwarfs)
+      .find((item) => item.id === request.dwarfId)
+    if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
+
+    return this.heldSessions.decidePermission({
+      sessionId: dwarf.sessionId,
+      toolUseId: request.toolUseId,
+      decision: request.decision
     })
   }
 

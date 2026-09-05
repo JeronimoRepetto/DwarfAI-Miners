@@ -8,6 +8,7 @@ import {
 import type {
   Dwarf,
   DwarfMcpServerStatus,
+  DwarfPermissionRequest,
   DwarfQuestion,
   DwarfQuestionOption,
   FeedMessage,
@@ -83,6 +84,36 @@ export interface HeldAsk {
  */
 export type HeldAnswer =
   { answered: true; answers: AnswerRecord } | { answered: false; reason: string }
+
+/**
+ * One tool call reaching `canUseTool` that is not `AskUserQuestion` — raw, as
+ * the SDK hands it over (#203). `input` is the model's own tool input, and
+ * `title`/`description` are the CLI's own rendering of the prompt when it
+ * built one; nothing here is composed by this app.
+ */
+export interface HeldPermission {
+  toolUseId: string
+  toolName: string
+  input: Record<string, unknown>
+  title?: string
+  description?: string
+}
+
+/**
+ * What the panel hands back for one permission prompt. Claude Code's own two
+ * answers, and nothing else — see DwarfPermissionDecision for why "always
+ * allow" is deliberately not one of them. `reason` is stated on every denial,
+ * never left implicit, for the same reason an ask's denial always carries
+ * one: the agent reads it in its own transcript.
+ */
+export type HeldPermissionAnswer = { decision: 'allow' } | { decision: 'deny'; reason: string }
+
+/**
+ * The main-side cap on a permission prompt's input summary. A pasted file, or
+ * a command with a long inline payload, must never become the whole card —
+ * the same reasoning HELD_MESSAGE_MAX_CHARS applies to a held message.
+ */
+export const PERMISSION_INPUT_MAX_CHARS = 240
 
 /** A live held session, as the registry holds it — nothing about the SDK. */
 export interface HeldSessionHandle {
@@ -199,6 +230,13 @@ export interface HeldSessionStartRequest {
    */
   onAsk: (toolUseId: string, input: Record<string, unknown>) => Promise<HeldAnswer>
   /**
+   * Any other tool call reaching the permission callback (#203) — the CLI's
+   * own approval prompt, parked exactly as an ask is. The agent's tool call
+   * stays BLOCKED until this resolves, and there is no deadline on it either:
+   * a human decides.
+   */
+  onPermission: (prompt: HeldPermission) => Promise<HeldPermissionAnswer>
+  /**
    * Something in the stream bore on this session's own crew (#157) — a task
    * starting, a task ending, or a tool call made from inside one. Forwarded
    * RAW: the seam translates and decides nothing, so every rule about what
@@ -288,12 +326,18 @@ export function retainHeldMessage(
   return [...kept, { ...message, text }].slice(-HELD_CONVERSATION_LIMIT)
 }
 
-/** What the panel is told about a session's open ask, once it has been redacted. */
+/**
+ * What the panel is told about a session's open ask and open permission
+ * prompt, once both have been redacted. The two travel together because a
+ * held session can have either open, neither, or both at once (#203) — an
+ * assistant message can carry several tool calls, and an ask is not any more
+ * exclusive with a permission prompt than it is with another ask.
+ */
 export type HeldQuestionState =
   /** Not a session this panel holds: whatever the provider derived stands. */
   | { held: false }
   /** Held, and this is the whole truth about its open asks — including none. */
-  | { held: true; question?: DwarfQuestion }
+  | { held: true; question?: DwarfQuestion; permission?: DwarfPermissionRequest }
 
 /** The answers record as the tool takes it: keyed by question TEXT, valued by option LABEL. */
 export type AnswerRecord = Record<string, string>
@@ -418,6 +462,63 @@ export function askToWireQuestion(ask: HeldAsk, askedAt: string): DwarfQuestion 
 }
 
 /**
+ * Which field of a tool's input names the thing worth showing on a
+ * permission card, checked in this order — the first one present wins. Every
+ * tool this app has seen prompt names its subject through exactly one of
+ * these, and a tool this list does not recognise falls through to the whole
+ * input as JSON rather than showing nothing.
+ */
+const PERMISSION_SUMMARY_FIELDS = ['command', 'file_path', 'path', 'url', 'pattern'] as const
+
+/**
+ * A short, human string for a tool's input, before redaction and the cap —
+ * `permissionToWire`'s two remaining steps. Never the whole input object
+ * unless nothing named above is a string: that fallback stays JSON so a tool
+ * this table does not recognise still shows SOMETHING, at the cost of
+ * reading like a payload rather than a sentence.
+ */
+function summarizePermissionInput(input: Record<string, unknown>): string {
+  for (const field of PERMISSION_SUMMARY_FIELDS) {
+    const value = input[field]
+    if (typeof value === 'string') return value
+  }
+  return JSON.stringify(input)
+}
+
+/**
+ * The permission prompt as the renderer sees it: summarised, capped,
+ * redacted (#203).
+ *
+ * A SIBLING of askToWireQuestion, not a shared helper with it — the two
+ * narrow different things. That one repeats the agent's own words; this one
+ * summarises a tool's structured input into one line and redacts the CLI's
+ * own rendering of the prompt (`title`, `description`) alongside it, field by
+ * field, for the same reason askToWireQuestion never spreads the parsed ask:
+ * a field added to HeldPermission later must not ride across unredacted by
+ * being forgotten.
+ *
+ * `askedAt` is passed in rather than read from a clock here, for the same
+ * reason it is for an ask: the SDK attaches no timestamp to the callback, so
+ * the honest value is when this host received it.
+ */
+export function permissionToWire(prompt: HeldPermission, askedAt: string): DwarfPermissionRequest {
+  const title = prompt.title === undefined ? undefined : redactSecrets(prompt.title)
+  const description =
+    prompt.description === undefined ? undefined : redactSecrets(prompt.description)
+  const input = redactSecrets(
+    summarizePermissionInput(prompt.input).slice(0, PERMISSION_INPUT_MAX_CHARS)
+  )
+  return {
+    toolUseId: prompt.toolUseId,
+    toolName: prompt.toolName,
+    ...(title === undefined ? {} : { title }),
+    ...(description === undefined ? {} : { description }),
+    input,
+    askedAt
+  }
+}
+
+/**
  * Turn the panel's answer into the record the tool takes, or refuse it.
  *
  * Two properties make this safe to hand to a live agent:
@@ -494,14 +595,25 @@ export function stampHeldQuestions(mines: Mine[], stateOf: HeldQuestionLookup): 
       if (dwarf.role !== 'foreman') return dwarf
       const state = stateOf(dwarf.sessionId)
       if (!state.held) return dwarf
-      if (state.question !== undefined) return { ...dwarf, pendingQuestion: state.question }
-      if (dwarf.pendingQuestion === undefined) return dwarf
-      // Removed rather than set to undefined: the field's absence is what the
-      // wire contract means by "nothing is being asked", and a key carrying
-      // undefined survives structured cloning as a present key.
-      const cleared = { ...dwarf }
-      delete cleared.pendingQuestion
-      return cleared
+      let stamped = dwarf
+      if (state.question !== undefined) {
+        stamped = { ...stamped, pendingQuestion: state.question }
+      } else if (stamped.pendingQuestion !== undefined) {
+        // Removed rather than set to undefined: the field's absence is what
+        // the wire contract means by "nothing is being asked", and a key
+        // carrying undefined survives structured cloning as a present key.
+        stamped = { ...stamped }
+        delete stamped.pendingQuestion
+      }
+      if (state.permission !== undefined) {
+        stamped = { ...stamped, pendingPermission: state.permission }
+      } else if (stamped.pendingPermission !== undefined) {
+        // Same idiom, same reason: an open ask and an open permission prompt
+        // clear independently, because either can be open without the other.
+        stamped = { ...stamped }
+        delete stamped.pendingPermission
+      }
+      return stamped
     })
   }))
 }

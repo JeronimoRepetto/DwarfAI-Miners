@@ -11,6 +11,8 @@ import type {
   DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
+  DwarfPermissionAnswerRequest,
+  DwarfPermissionDecision,
   DwarfQuestionAnswerRequest,
   DwarfQuestionAnswerResult,
   DwarfTextRequest,
@@ -116,6 +118,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
   ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
+  ipcMain.removeHandler(IPC_CHANNELS.answerDwarfPermission)
   ipcMain.removeHandler(IPC_CHANNELS.launchHostedProcess)
 }
 
@@ -219,6 +222,24 @@ function parseAnswerRequest(payload: unknown): DwarfQuestionAnswerRequest | null
     answers[question] = label
   }
   return { dwarfId: record.dwarfId, toolUseId: record.toolUseId, answers }
+}
+
+const PERMISSION_DECISIONS: readonly DwarfPermissionDecision[] = ['allow', 'deny']
+
+/**
+ * Same boundary discipline as parseAnswerRequest, narrower: a permission
+ * decision carries no record to walk, only `decision` itself, which NAMES A
+ * VERDICT rather than travelling as a value — so it is checked against the
+ * closed list DwarfPermissionDecision allows, the same discipline
+ * parseProjectQuery holds for `sortBy` and `direction`. A decision this build
+ * does not recognise is refused outright rather than passed on as a guess.
+ */
+function parsePermissionRequest(payload: unknown): DwarfPermissionAnswerRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string' || typeof record.toolUseId !== 'string') return null
+  if (!isOneOf(record.decision, PERMISSION_DECISIONS)) return null
+  return { dwarfId: record.dwarfId, toolUseId: record.toolUseId, decision: record.decision }
 }
 
 const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = ['addedAt', 'lastOpenedAt']
@@ -715,6 +736,11 @@ async function init(): Promise<void> {
     const request = parseAnswerRequest(payload)
     if (request === null) return notAnswered
     return runtime?.answerDwarfQuestion(request) ?? notAnswered
+  })
+  ipcMain.handle(IPC_CHANNELS.answerDwarfPermission, (_event, payload: unknown) => {
+    const request = parsePermissionRequest(payload)
+    if (request === null) return notAnswered
+    return runtime?.answerDwarfPermission(request) ?? notAnswered
   })
 
   // Starting a command of the person's own and holding it over stdio (#194).

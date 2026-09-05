@@ -5,6 +5,8 @@ import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import { HeldSessionRegistry } from './heldSessionRegistry'
 import type {
   HeldAnswer,
+  HeldPermission,
+  HeldPermissionAnswer,
   HeldSessionPort,
   HeldSessionStartRequest,
   HeldSessionTelemetryUpdate
@@ -83,6 +85,21 @@ class FakePort {
     const settled = this.started[index]!.onAsk(toolUseId, input)
     void settled.then((answer) => this.answered.push(answer))
     return settled
+  }
+
+  /** Any other tool reaching canUseTool (#203). Resolves when the host decides. */
+  permission(
+    index: number,
+    toolUseId: string,
+    overrides: Partial<HeldPermission> = {}
+  ): Promise<HeldPermissionAnswer> {
+    return this.started[index]!.onPermission({
+      toolUseId,
+      toolName: 'Bash',
+      input: { command: 'pnpm test' },
+      title: 'Claude wants to run pnpm test',
+      ...overrides
+    })
   }
 
   end(index: number, reason = 'the turn finished'): void {
@@ -714,5 +731,176 @@ describe('HeldSessionRegistry conversation', () => {
 
     const state = registry.conversationState('sess-1')
     expect(state.held ? state.conversation : []).toHaveLength(1)
+  })
+})
+
+/*
+ * Issue #203. Before this, canUseTool answered every tool but AskUserQuestion
+ * with an immediate refusal, so a session launched from the panel could read
+ * and write nothing. A permission prompt is now parked exactly as an ask is:
+ * the blocked call waits on the panel, and only the panel (or the session's
+ * own end) releases it.
+ */
+describe('HeldSessionRegistry permissions (#203)', () => {
+  async function launched(port: FakePort) {
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    return registry
+  }
+
+  it("makes an arriving prompt the held session's pending permission, stamped with this host's clock", async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+
+    void port.permission(0, 'toolu_p1')
+    await Promise.resolve()
+
+    expect(registry.questionState('sess-1')).toEqual({
+      held: true,
+      permission: {
+        toolUseId: 'toolu_p1',
+        toolName: 'Bash',
+        title: 'Claude wants to run pnpm test',
+        input: 'pnpm test',
+        askedAt: '2023-11-14T22:13:20.000Z'
+      }
+    })
+  })
+
+  it('releases the blocked call with allow when the panel allows it', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    const asked = port.permission(0, 'toolu_p1')
+    await Promise.resolve()
+
+    expect(
+      registry.decidePermission({ sessionId: 'sess-1', toolUseId: 'toolu_p1', decision: 'allow' })
+    ).toEqual({ answered: true })
+    await expect(asked).resolves.toEqual({ decision: 'allow' })
+    expect(registry.questionState('sess-1')).toEqual({ held: true })
+  })
+
+  it('releases it with deny and a stated reason when the panel denies it', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    const asked = port.permission(0, 'toolu_p1')
+    await Promise.resolve()
+
+    expect(
+      registry.decidePermission({ sessionId: 'sess-1', toolUseId: 'toolu_p1', decision: 'deny' })
+    ).toEqual({ answered: true })
+    const answer = await asked
+    expect(answer.decision).toBe('deny')
+    expect(answer.decision === 'deny' ? answer.reason : '').toContain('panel')
+  })
+
+  it('refuses a decision for a session this panel is not holding', () => {
+    const registry = registryOver(new FakePort())
+    const result = registry.decidePermission({
+      sessionId: 'sess-nobody',
+      toolUseId: 'toolu_p1',
+      decision: 'allow'
+    })
+    expect(result.answered).toBe(false)
+    expect(result.error).not.toBeUndefined()
+  })
+
+  it('refuses a decision naming a prompt that is no longer open, and leaves the call blocked', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    let settled = false
+    void port.permission(0, 'toolu_p1').then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+
+    const result = registry.decidePermission({
+      sessionId: 'sess-1',
+      toolUseId: 'toolu_gone',
+      decision: 'allow'
+    })
+    await Promise.resolve()
+
+    expect(result.answered).toBe(false)
+    expect(settled).toBe(false)
+    expect(registry.questionState('sess-1')).toMatchObject({
+      permission: { toolUseId: 'toolu_p1' }
+    })
+  })
+
+  it('never lets a decision about a permission release an ask, however the ids line up', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    let askSettled = false
+    void port.ask(0, 'toolu_shared').then(() => {
+      askSettled = true
+    })
+    await Promise.resolve()
+
+    const result = registry.decidePermission({
+      sessionId: 'sess-1',
+      toolUseId: 'toolu_shared',
+      decision: 'allow'
+    })
+    await Promise.resolve()
+    expect(result.answered).toBe(false)
+    expect(askSettled).toBe(false)
+  })
+
+  it('shows the latest of two open prompts, and decides either by its own id', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    const first = port.permission(0, 'toolu_first')
+    void port.permission(0, 'toolu_second', { toolName: 'Edit', input: { file_path: 'a.ts' } })
+    await Promise.resolve()
+    expect(registry.questionState('sess-1')).toMatchObject({
+      permission: { toolUseId: 'toolu_second', toolName: 'Edit' }
+    })
+
+    registry.decidePermission({ sessionId: 'sess-1', toolUseId: 'toolu_first', decision: 'deny' })
+    expect((await first).decision).toBe('deny')
+    expect(registry.questionState('sess-1')).toMatchObject({
+      permission: { toolUseId: 'toolu_second' }
+    })
+  })
+
+  it('reports an open ask and an open permission side by side', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    void port.ask(0, 'toolu_ask')
+    void port.permission(0, 'toolu_perm')
+    await Promise.resolve()
+
+    expect(registry.questionState('sess-1')).toMatchObject({
+      held: true,
+      question: { toolUseId: 'toolu_ask' },
+      permission: { toolUseId: 'toolu_perm' }
+    })
+  })
+
+  it('dissolves an open prompt as a denial when the session ends, never as an approval', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    const asked = port.permission(0, 'toolu_p1')
+    await Promise.resolve()
+
+    port.end(0)
+
+    const answer = await asked
+    expect(answer.decision).toBe('deny')
+    expect(registry.questionState('sess-1')).toEqual({ held: false })
+  })
+
+  it('dissolves every open prompt on shutdown', async () => {
+    const port = new FakePort()
+    const registry = await launched(port)
+    const asked = port.permission(0, 'toolu_p1')
+    await Promise.resolve()
+
+    registry.closeAll()
+
+    expect((await asked).decision).toBe('deny')
+    expect(registry.count()).toBe(0)
   })
 })
