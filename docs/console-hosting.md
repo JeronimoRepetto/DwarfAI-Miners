@@ -244,11 +244,12 @@ launched session being a foreman by construction.
 
 Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 
-| Channel                                  | Question form                                                        | Available while open? | Answer path                                       |
-| ---------------------------------------- | -------------------------------------------------------------------- | --------------------- | ------------------------------------------------- |
-| `AskUserQuestion` in an **observed TUI** | structured — but written to the transcript at **resolve**, backdated | **no**                | keystrokes at that TUI only → **notify and jump** |
-| **Cross-session message bus**            | **prose**, options embedded as text                                  | yes, instantly        | prose reply; the peer's human may interpose       |
-| **SDK-held session** (panel-launched)    | structured `tool_use`, streams live                                  | yes                   | **full structured loop**, ~6s round trip          |
+| Channel                                      | Question form                                                        | Available while open?      | Answer path                                                     |
+| -------------------------------------------- | -------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------- |
+| `AskUserQuestion` in an **observed TUI**     | structured — but written to the transcript at **resolve**, backdated | **no**                     | keystrokes at that TUI only → **notify and jump**               |
+| **Cross-session message bus**                | **prose**, options embedded as text                                  | yes, instantly             | prose reply; the peer's human may interpose                     |
+| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                  | yes                        | **full structured loop**, ~6s round trip                        |
+| **Permission prompt** in an **observed TUI** | none — the hook says a dialog is open, never what it asks            | **yes**, as that bare fact | keystrokes at that TUI only → **notify and jump, built (#203)** |
 
 - **Row one revised an assumption three earlier phases were built on.** A menu left open ~5.5
   minutes, transcript scanned twice: **zero `AskUserQuestion` blocks while it was open**; the block
@@ -267,6 +268,13 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
   not invoke `AskUserQuestion` at all** — the model asked in prose and the turn ended. The tool fires
   when a client capable of answering is attached, so structured buttons are exclusive to panel-held
   sessions.
+- **Row four is the only one notify-and-jump was ever actually built for (#203).** A
+  `permission_prompt` Notification is Claude Code's own structured word that a dialog is open for that
+  `session_id` — the one thing about an observed session's question that IS knowable while it is open,
+  which is exactly what row one lacks. So the dwarf is marked `waitingReason: 'approval'` and the
+  MessagePanel offers the console jump, and it stops there. Nothing is typed at that terminal: which
+  keys work the permission picker, and what they do to a session whose dialog was answered at the
+  console a moment earlier, has never been measured on a live build. Row one stays unbuilt.
 
 ---
 

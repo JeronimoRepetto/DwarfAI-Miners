@@ -160,26 +160,43 @@ installing a fire-and-forget event) or Codex's own `app-server` JSON-RPC surface
 `docs/console-hosting.md`'s programmatic-interface table lists as "reviewer `user` → server-initiated
 requests" and marks unbuilt. Neither exists in this tree today.
 
+**Half of that row is built since, and deliberately stops short of an answer path (#203).** A
+`permission_prompt` Notification is Claude Code's own structured statement that a dialog is open for
+that `session_id` — not which options it offers, which is what the paragraph above rules out, but
+that one is open at all. The panel now correlates it to that session's foreman and marks the dwarf
+`waitingReason: 'approval'`, with the sentence and a console jump in the MessagePanel
+(`src/main/hooks/permissionPrompts.ts`). That is notify-and-jump, not an answer: nothing is typed at
+that terminal, because the keystroke question §3 leaves open — which digit or arrow works Claude
+Code's permission picker, and what an already-answered dialog does with one — has still never been
+measured on a live build.
+
 ---
 
 ## 5. Correlation: hook event to dwarf, and its failure mode
 
-**There is none, by design, today.** `HookEvent` carries `sessionId` and `cwd`
-(`hookPayload.ts:22-45`), but `main/index.ts`'s consumer reads them only to build the log line
-(`:410-419`) and then calls `runtime.nudge()`, which takes **no arguments at all**
-(`runtime.ts:733-735`). Every one of the five installed events, for any session, triggers the exact
-same global rescan of every mine. `docs/hook-detection-evaluation.md` chose this shape deliberately —
+**There was none, by design, until #203, and the shape it was added in preserves the reason.**
+`HookEvent` carries `sessionId` and `cwd` (`hookPayload.ts:22-45`), and `main/index.ts`'s consumer
+used to read them only to build the log line before calling `runtime.nudge()`, which takes **no
+arguments at all**. Every one of the five installed events, for any session, triggered the exact same
+global rescan of every mine. `docs/hook-detection-evaluation.md` chose this shape deliberately —
 "debounced-full-rescan," reusing the already-tested `scan()`/`aggregateMines()` path rather than a
 per-session update API — and it is why the design is self-healing: a hook event that names the wrong
 session, or none, costs nothing beyond a slightly wasteful rescan, because the ordinary 2-second poller
 would have produced the same state regardless.
 
-**The failure mode is therefore not "wrong dwarf gets the notification"** — nothing is targeted, so
-nothing can be mistargeted — **it is "no hook event can ever drive a per-dwarf action."** A future
-feature that wanted to say "flash exactly this dwarf, because its Notification just arrived" cannot be
-built on `hookChannel` as it exists: `sessionId` would first have to be matched against a dwarf's own
-`sessionId` field (Claude's `main/providers/claude/claudeProvider.ts:641`, `:707` both stamp it) or
-`cwd` against a mine's path, and neither matching step is written anywhere yet.
+**What #203 added is a second reading of the same event, not a second channel.** `noteHookEvent`
+records what a `permission_prompt` says about one session id; `nudge()` is unchanged and still asks
+for the same global rescan. The correlation happens where every other per-session fact is stamped —
+inside the poll, against the board that poll produced — so a hook naming a session nothing on the
+board answers to still costs nothing beyond the rescan it always did, and no hook can put a dwarf on
+the board. The rescan remains the self-healing part; the correlation only refines what it found.
+
+**The failure mode this leaves is bounded and stated at the decision.** A prompt is remembered for a
+minute against a board that has not drawn its session yet — the hook genuinely beats the poll for a
+fresh session's first tool call — and dropped after that; a notification carrying no session id names
+no session and is discarded rather than matched by `cwd`, which two sessions in one project share.
+Everything the correlation cannot prove stays unclaimed, which is the same rule as everywhere else
+here: a marker that wrongly claims something is worse than one admitting it saw nothing.
 
 ---
 
@@ -281,11 +298,20 @@ In dependency order — each blocked on the one before it, and on nothing else i
    permission prompt a held session raises; it needs a `DwarfQuestion`-shaped sibling for a bare
    allow/deny and a UI, not a new channel (§4). **Blocked on:** (1), since it reuses the same rendering
    surface and the same registry bookkeeping shape.
-4. **Hook-to-dwarf correlation**, matching a `HookEvent.sessionId`/`cwd` against a live dwarf, only if
-   a future feature actually needs per-dwarf targeting rather than the current global rescan (§5).
-   **Blocked on:** a concrete feature that needs it — there is no reason to build this speculatively
-   today, since the global rescan is already self-healing.
+4. **Hook-to-dwarf correlation**, matching a `HookEvent.sessionId` against a live dwarf — **built for
+   `permission_prompt` in #203**, and for nothing else. The feature this waited for arrived: an
+   observed session's open permission dialog is a per-dwarf fact no rescan can re-derive, since the
+   transcript records the `tool_use` and never the dialog. `cwd` matching was still not built and
+   should not be: two sessions in one project share it. **Left open:** every other notification type,
+   which has no per-dwarf action to drive and stays on the global rescan.
 5. **`PermissionRequest` as an installed hook, for observed sessions' approvals** — genuinely useful
    only if the answer to §4's targeting is also solved, and only after accepting the larger design cost
    §1 describes (a blocking hook transport, not a fire-and-forget one). **Blocked on:** (4), and a
    separate decision that the cost is worth it for sessions the panel does not hold.
+6. **Allow / Deny by keystrokes at an observed terminal**, which is what would turn #203's
+   notify-and-jump into an answer. **Blocked on a live measurement, not on code:** the typed-terminal
+   delivery (#190) already reaches that console. What nobody has established is which keys work
+   Claude Code's permission picker (a digit, an arrow-then-Enter, or both), that the panel can tell
+   Allow from Deny without reading the dialog, and — the one that decides whether this is shippable
+   at all — what those keys do when the dialog has meanwhile been answered at the terminal, since the
+   session then has an ordinary prompt open and a stray keystroke becomes input to it.
