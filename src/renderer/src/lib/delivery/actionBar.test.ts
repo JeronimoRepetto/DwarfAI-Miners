@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
-import type { Dwarf } from '../../types'
+import { PANEL_OBSERVER, type Dwarf } from '../../types'
 import {
   buildActionBar,
   CHANNEL_HINT,
@@ -9,6 +9,7 @@ import {
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
   NO_KICK_REASON,
+  oneShotNoExitReason,
   refusalLine,
   SESSION_ENDED_REASON,
   type ActionBarEntry,
@@ -276,6 +277,97 @@ describe('buildActionBar', () => {
       expect(entry.hint).toBe(KICK_HINT['launched-process'])
       expect(entry.hint).toContain('Ends the session')
       expect(entry.hint.toLowerCase()).not.toContain('interrupts the turn')
+    })
+  })
+
+  /**
+   * The same session shape, without the exit (#231). A `codex exec` run this
+   * panel did not start — from a terminal, or by a run of this app that has
+   * restarted since and can no longer prove which process was its — has no
+   * inbox for the same reason a launched one has none, and no kick either.
+   *
+   * The generic "this session type can't receive messages yet" is wrong twice
+   * over for it: nothing is coming, and the sentence describes a gap in this
+   * app rather than the session in front of the reader. Both controls carry
+   * the one sentence that is true of it, because both are refused by the same
+   * fact.
+   */
+  describe('one-shot session this panel did not start', () => {
+    function foreign(overrides: Partial<Dwarf> = {}): Dwarf {
+      return capableDwarf({
+        provider: 'codex',
+        oneShot: true,
+        textDelivery: undefined,
+        capabilities: { sendText: null, cancel: null, adjustEffort: null },
+        ...overrides
+      })
+    }
+
+    it('disables chat with the shape of the session, not the generic refusal', () => {
+      const entry = entryFor('chat', foreign())
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).not.toBe(NO_CHANNEL_REASON)
+      expect(entry.hint).toBe(oneShotNoExitReason('codex'))
+      expect(entry.hint).toContain('codex exec')
+    })
+
+    it('says outright that this panel has no exit for it', () => {
+      const entry = entryFor('kick', foreign())
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).not.toBe(NO_KICK_REASON)
+      expect(entry.hint).toBe(oneShotNoExitReason('codex'))
+    })
+
+    it('is the sentence the panel shows, not one a hover has to be gone looking for', () => {
+      expect(refusalLine(foreign(), IDLE)).toBe(oneShotNoExitReason('codex'))
+    })
+
+    /*
+     * The one this must never displace: a one-shot session this panel DID
+     * start keeps #217's sentence, which ends with "Kick ends it" — a promise
+     * the sentence above deliberately does not make.
+     */
+    it('leaves a launch of this panel’s own saying that Kick ends it', () => {
+      const entry = entryFor(
+        'chat',
+        foreign({
+          capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+        })
+      )
+      expect(entry.hint).toBe(launchedNoInboxReason('codex'))
+      expect(entry.hint).toContain('Kick ends it')
+      expect(oneShotNoExitReason('codex')).not.toContain('Kick ends it')
+    })
+
+    /*
+     * Never the wrong CLI's command, for the reason the launched sentence
+     * names its own: it is copy a person acts on.
+     */
+    it('names the command per provider', () => {
+      expect(oneShotNoExitReason('claude')).toContain('claude -p')
+      expect(oneShotNoExitReason('claude')).not.toContain('codex')
+    })
+
+    /*
+     * The field is a claim about the session, and a session with a working
+     * channel is not making it. Nothing here may override a channel that
+     * resolves — main is what decides there is none.
+     */
+    it('says nothing about a session that does have a channel', () => {
+      const entry = entryFor('chat', capableDwarf({ oneShot: true }))
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(CHANNEL_HINT.terminal)
+    })
+
+    /*
+     * The pairing #194 already drew for the launched sentence, and a real
+     * invariant rather than a cast: a one-shot run is a CLI this app knows how
+     * to read, so a dwarf the PANEL observes is never one, and there is no
+     * launch command to name for it.
+     */
+    it('never names a launch command for a dwarf the panel observes itself', () => {
+      const entry = entryFor('chat', foreign({ provider: PANEL_OBSERVER }))
+      expect(entry.hint).toBe(NO_CHANNEL_REASON)
     })
   })
 

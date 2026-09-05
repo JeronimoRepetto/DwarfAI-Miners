@@ -39,6 +39,8 @@ import {
   type HostedProcessPort,
   type HostedProcessStartRequest
 } from '../sessionLaunch/hostedProcesses'
+import { createAppDatabase } from '../appDatabase/appDatabase'
+import { createSqliteLaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import { LaunchedSessionRegistry, type LaunchedProcess } from '../sessionLaunch/launchedSessions'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { TierService, type TierThresholds } from '../tier/tierService'
@@ -1974,6 +1976,226 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     } finally {
       log.mockRestore()
     }
+  })
+})
+
+/*
+ * #231: the register #217 added lives in memory, so a session launched before
+ * the panel restarted had no exit — its dwarf was drawn, nothing was offered,
+ * and the generic no-channel reason read like a bug.
+ *
+ * Two runtimes over ONE in-memory database stand in for the two runs, which is
+ * the whole subject: the second one has never seen the launch and has only the
+ * row to go on, so what it does with that row is the fix.
+ */
+describe('AgentRuntime giving a previous run’s launch its exit back (#231)', () => {
+  const MINE_PATH = 'C:\\work\\project'
+  const THREAD_ID = 'thread-launched'
+  const DWARF_ID = `codex:${THREAD_ID}`
+  const LAUNCHED_PID = 777
+  const PROC_START = 1_788_001_972_136
+
+  function launchAdapters(processStartTimeMs: number | null): {
+    adapters: PlatformAdapters
+    endProcessTree: ReturnType<typeof vi.fn>
+  } {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    return {
+      endProcessTree,
+      adapters: {
+        platform: 'win32',
+        focusPid: vi.fn().mockResolvedValue(false),
+        launchTranscriptViewer: vi.fn().mockResolvedValue(false),
+        viewerScriptPath: 'C:\\viewer.mjs',
+        textDelivery: {
+          sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+          relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+          sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+        },
+        processProbe: {
+          isCodexProcessRunning: vi.fn().mockResolvedValue(false),
+          processStartTimeMs: vi.fn().mockResolvedValue(processStartTimeMs)
+        },
+        processEnd: { endProcessTree },
+        cliDetector: {
+          detect: vi.fn().mockResolvedValue({ cli: 'codex', installed: false }),
+          peek: vi.fn().mockReturnValue('unprobed')
+        }
+      }
+    }
+  }
+
+  const APP_DB = 'C:\\userData\\projects-v1.db'
+
+  /** One Codex session with no channel of its own, exactly as an exec thread is. */
+  function snapshot(sessionId: string) {
+    return {
+      provider: 'codex' as const,
+      sessionId,
+      cwd: MINE_PATH,
+      status: 'busy' as const,
+      updatedAt: 1,
+      dwarfs: [
+        {
+          id: `codex:${sessionId}`,
+          provider: 'codex' as const,
+          role: 'worker' as const,
+          name: sessionId,
+          status: 'working' as const,
+          sessionId
+        }
+      ]
+    }
+  }
+
+  function execProvider(scan: Provider['scan']): Provider {
+    return { kind: 'codex', scan, feed: vi.fn().mockResolvedValue([]), textDelivery: () => null }
+  }
+
+  function launchStore(sqlite: MemoryWritableSqlite) {
+    return createSqliteLaunchedSessionStore({
+      database: createAppDatabase({ filePath: APP_DB, sqlite })
+    })
+  }
+
+  /** The run that starts the session and writes the register down. */
+  async function firstRun(sqlite: MemoryWritableSqlite): Promise<void> {
+    const { adapters } = launchAdapters(PROC_START)
+    // One session in the mine first, so there is a mine to launch into, then
+    // the launched one arriving on the poll after — the real arrival shape.
+    const scan = vi
+      .fn<Provider['scan']>()
+      .mockResolvedValueOnce([snapshot('was-here-first')])
+      .mockResolvedValue([snapshot('was-here-first'), snapshot(THREAD_ID)])
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [execProvider(scan)],
+      platformAdapters: adapters,
+      launchedSessionStore: launchStore(sqlite),
+      launchSession: vi.fn().mockResolvedValue({
+        launched: true,
+        provider: 'codex',
+        retained: { pid: LAUNCHED_PID, onExit: () => {} } satisfies LaunchedProcess
+      }),
+      projects: null,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    await runtime.refresh()
+    await runtime.settleLaunchedSessions()
+  }
+
+  /** The run after the restart: it has only the row. */
+  async function secondRun(sqlite: MemoryWritableSqlite, probed: number | null) {
+    const { adapters, endProcessTree } = launchAdapters(probed)
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [
+        execProvider(
+          vi
+            .fn<Provider['scan']>()
+            .mockResolvedValue([snapshot('was-here-first'), snapshot(THREAD_ID)])
+        )
+      ],
+      platformAdapters: adapters,
+      launchedSessionStore: launchStore(sqlite),
+      projects: null,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.restoreLaunchedSessions()
+    await runtime.refresh()
+    return { runtime, endProcessTree }
+  }
+
+  function dwarfOf(runtime: AgentRuntime, sessionId: string): Dwarf | undefined {
+    return runtime
+      .getMines()
+      .flatMap((mine) => mine.dwarfs)
+      .find((dwarf) => dwarf.sessionId === sessionId)
+  }
+
+  it('offers the exit again when the machine still shows the process it started', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await firstRun(sqlite)
+
+    const { runtime, endProcessTree } = await secondRun(sqlite, PROC_START)
+
+    expect(dwarfOf(runtime, THREAD_ID)?.capabilities?.cancel).toBe('launched-process')
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
+      delivered: true,
+      via: 'launched-process'
+    })
+    expect(endProcessTree).toHaveBeenCalledWith(LAUNCHED_PID)
+  })
+
+  /*
+   * The mistake the whole design exists to avoid: that pid is live and belongs
+   * to something else, so no exit is offered and nothing is signalled.
+   */
+  it('offers no exit, and signals nothing, when that pid is now a different process', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await firstRun(sqlite)
+
+    const { runtime, endProcessTree } = await secondRun(sqlite, PROC_START + 3_600_000)
+
+    expect(dwarfOf(runtime, THREAD_ID)?.capabilities?.cancel ?? null).toBeNull()
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
+      delivered: false,
+      via: 'none'
+    })
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  it('offers no exit when nothing on the machine can be asked about that pid', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await firstRun(sqlite)
+
+    const { runtime, endProcessTree } = await secondRun(sqlite, null)
+
+    expect(dwarfOf(runtime, THREAD_ID)?.capabilities?.cancel ?? null).toBeNull()
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  /*
+   * A session this panel never started keeps the dead end it always had, and
+   * that is what a restored register must not widen: re-adoption binds one
+   * session id, never every dwarf in the folder.
+   */
+  it('gives the session it never started nothing, restored register or not', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await firstRun(sqlite)
+
+    const { runtime } = await secondRun(sqlite, PROC_START)
+
+    expect(dwarfOf(runtime, 'was-here-first')?.capabilities?.cancel ?? null).toBeNull()
+  })
+
+  it('keeps nothing at all when this build was given no register to keep it in', async () => {
+    // index.ts hands null when the database will not open, exactly as it does
+    // for the projects store. The in-run exit is unaffected; only the restart
+    // half goes, which is #217's behaviour and not a failure.
+    const sqlite = new MemoryWritableSqlite()
+    const { adapters } = launchAdapters(PROC_START)
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [execProvider(vi.fn<Provider['scan']>().mockResolvedValue([snapshot(THREAD_ID)]))],
+      platformAdapters: adapters,
+      launchedSessionStore: null,
+      launchSession: vi.fn().mockResolvedValue({
+        launched: true,
+        provider: 'codex',
+        retained: { pid: LAUNCHED_PID, onExit: () => {} } satisfies LaunchedProcess
+      }),
+      projects: null,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.restoreLaunchedSessions()
+    await runtime.refresh()
+    await runtime.settleLaunchedSessions()
+
+    await expect(launchStore(sqlite).list()).resolves.toEqual([])
   })
 })
 

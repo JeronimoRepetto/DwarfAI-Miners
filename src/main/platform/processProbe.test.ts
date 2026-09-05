@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   CODEX_PROBE_SCRIPT,
+  PROCESS_START_TOLERANCE_MS,
   buildCodexProbeCommand,
   buildProcessStartProbeCommand,
   createProcessProbe,
@@ -9,6 +10,7 @@ import {
   parseDarwinProcessStart,
   parseLinuxProcessStart,
   parseWindowsProcessStart,
+  sameProcessStart,
   type ProbeCommand
 } from './processProbe'
 
@@ -249,5 +251,44 @@ describe('createProcessProbe — processStartTimeMs', () => {
   it('answers null for unparseable output', async () => {
     const probe = createProcessProbe({ platform: 'win32', run: async () => '', selfPid: 999 })
     expect(await probe.processStartTimeMs(4242)).toBeNull()
+  })
+})
+
+/*
+ * The comparison every pid-reuse guard makes, given its own name because two
+ * of them now make it: the Claude registry's procStart check (#45) and the
+ * launch register's re-adoption after a restart (#231).
+ */
+describe('sameProcessStart', () => {
+  it('reads two probes of one process as the same process', () => {
+    expect(sameProcessStart(FIXTURE_EPOCH_MS, FIXTURE_EPOCH_MS)).toBe(true)
+  })
+
+  /*
+   * The whole reason this is not an equality test. `ps -o lstart=` answers in
+   * whole seconds, /proc/<pid>/stat in 10ms ticks against a btime that is
+   * itself recomputed per read, and the FILETIME conversion truncates — so two
+   * honest readings of one process differ by rounding, not by identity.
+   */
+  it('absorbs the rounding each platform probe answers with', () => {
+    for (const drift of [-1_999, -1_000, -10, 10, 1_000, 1_999]) {
+      expect(sameProcessStart(FIXTURE_EPOCH_MS + drift, FIXTURE_EPOCH_MS)).toBe(true)
+    }
+  })
+
+  it('reads a reading past the tolerance as a different process', () => {
+    expect(
+      sameProcessStart(FIXTURE_EPOCH_MS + PROCESS_START_TOLERANCE_MS + 1, FIXTURE_EPOCH_MS)
+    ).toBe(false)
+    expect(sameProcessStart(FIXTURE_EPOCH_MS, FIXTURE_EPOCH_MS + 60_000)).toBe(false)
+  })
+
+  /*
+   * Orders of magnitude tighter than any real pid-recycling interval, which is
+   * what makes a window this wide safe: a recycled pid names a process created
+   * seconds to days later, never 2s later.
+   */
+  it('keeps the window far below any interval a pid is actually recycled over', () => {
+    expect(PROCESS_START_TOLERANCE_MS).toBe(2_000)
   })
 })

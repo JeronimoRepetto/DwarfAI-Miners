@@ -132,6 +132,33 @@ export function filetimeToEpochMs(value: string): number | null {
   return epochMs
 }
 
+/**
+ * How far two readings of one process's creation time may sit apart before
+ * they describe two different processes.
+ *
+ * Not an equality test, because no two probes here answer in the same unit:
+ * `ps -o lstart=` prints whole seconds, /proc/<pid>/stat counts 10ms ticks
+ * against a btime the kernel recomputes per read, and the FILETIME conversion
+ * truncates. 2s absorbs every one of those artifacts while staying orders of
+ * magnitude below any interval a pid is actually recycled over — a recycled pid
+ * names a process created seconds to days later, never 2s later.
+ *
+ * claudeProvider.ts keeps its own PROC_START_TOLERANCE_MS for the registry's
+ * procStart guard (#45); same number, same units, same reasoning, and this is
+ * the home for it now that a second guard (#231) asks the same question.
+ */
+export const PROCESS_START_TOLERANCE_MS = 2_000
+
+/**
+ * Whether two creation-time readings describe the same process — the one
+ * comparison that tells a live launch from an unrelated process wearing its
+ * recycled pid. Both sides must be real readings: a caller with `null` in hand
+ * has no evidence and must not ask.
+ */
+export function sameProcessStart(probedMs: number, recordedMs: number): boolean {
+  return Math.abs(probedMs - recordedMs) <= PROCESS_START_TOLERANCE_MS
+}
+
 /** Parse `(Get-Process -Id <pid>).StartTime.ToFileTime()` output; null when it printed no FILETIME. */
 export function parseWindowsProcessStart(stdout: string): number | null {
   return filetimeToEpochMs(stdout)

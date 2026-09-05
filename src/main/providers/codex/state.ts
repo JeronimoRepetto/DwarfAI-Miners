@@ -45,14 +45,42 @@ export interface CodexThread {
   agentPath?: string
   /**
    * The plain `threads.source` tag — 'cli' for a CLI/TUI session, 'vscode' for
-   * the desktop app. Absent when the column carries the sub-agent spawn blob
-   * instead, which is a different fact and is parsed separately above.
+   * the desktop app, 'exec' for a headless run. Absent when the column carries
+   * the sub-agent spawn blob instead, which is a different fact and is parsed
+   * separately above.
    *
-   * Read for the message-queue capability (#97), which is proven only for
-   * 'cli': the tag is the difference between a queue somebody has watched drain
-   * and one nobody has.
+   * Read for two capabilities, and it answers them separately. The message
+   * queue (#97) is proven only for 'cli': the tag is the difference between a
+   * queue somebody has watched drain and one nobody has. The shape of the
+   * session (#231) is what 'exec' says — see isCodexOneShotThread below.
    */
   sourceTag?: string
+}
+
+/**
+ * The `threads.source` tag a headless `codex exec` run writes, as against the
+ * 'cli' of a TUI somebody is sitting in front of and the 'vscode' of the
+ * desktop app.
+ */
+export const CODEX_EXEC_SOURCE_TAG = 'exec'
+
+/**
+ * Whether this thread's whole life is one prompt and one turn (#231).
+ *
+ * A fact about the SESSION, not about who started it: a headless run reads its
+ * instruction from stdin and exits when it finishes, so nobody can talk to it
+ * whether this panel launched it or somebody typed it in a terminal. That is
+ * what lets the panel refuse a message with the shape of the session rather
+ * than with the generic "can't receive messages yet", which describes a gap in
+ * this app instead.
+ *
+ * Positive evidence only. Every other tag — including one this build has never
+ * seen — is false rather than "probably", because absence here costs the panel
+ * a better sentence while a wrong true would have it tell somebody their live
+ * session cannot be reached.
+ */
+export function isCodexOneShotThread(thread: { sourceTag?: string }): boolean {
+  return thread.sourceTag === CODEX_EXEC_SOURCE_TAG
 }
 
 /** Identity extracted from a `threads.source` value. */

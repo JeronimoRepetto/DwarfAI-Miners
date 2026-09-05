@@ -891,6 +891,29 @@ export interface Dwarf {
    * here a moment ago" would adopt whatever happened to start next.
    */
   launchId?: string
+  /**
+   * True when this session's whole life is ONE prompt and one turn: it was
+   * handed its instruction on stdin and exits when it finishes, so it has no
+   * inbox and never will (#231).
+   *
+   * A fact about the SESSION, not about who started it, and that is what it is
+   * for. The panel already had an honest sentence for a launch of its OWN —
+   * "takes no messages: it reads one prompt and exits with its turn. Kick ends
+   * it." — resolved from `capabilities.cancel` (#217). The same shape started
+   * from a terminal, or by a run of this app that has since restarted and can
+   * no longer prove which process it was, has neither a channel nor an exit,
+   * and fell back to the generic "this session type can't receive messages
+   * yet" — which describes a gap in this app rather than the session in front
+   * of the reader.
+   *
+   * Codex is the one provider that can say it today: `codex exec` writes its
+   * registry row with a `source` tag of its own, distinct from the 'cli' tag
+   * the queue capability is proven against (#97). Absent is the ordinary case
+   * and claims nothing — a build that spells that tag otherwise leaves the
+   * field off, and the panel says what it said before rather than something
+   * wrong.
+   */
+  oneShot?: boolean
 }
 
 /**

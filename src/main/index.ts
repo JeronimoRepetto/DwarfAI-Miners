@@ -56,6 +56,7 @@ import { LEDGER_JSON_FILENAME } from './ledger/ledgerStore'
 import { MaterialLedger } from './ledger/materialLedger'
 import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
+import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -430,10 +431,22 @@ async function init(): Promise<void> {
     warn: (message) => console.warn(message)
   })
 
+  // What this app launched, kept so a session started before the last restart
+  // still has an exit (#231). The third tenant of that same file, and the one
+  // whose rows describe something outside it — see the schema comment on why a
+  // pid is never enough on its own.
+  //
+  // Null on the same terms as `projects`: a database that will not open costs
+  // the exit from a PREVIOUS run's session and nothing else, because the
+  // in-memory register #217 added is unaffected.
+  const launchedSessionStore =
+    projects === null ? null : createSqliteLaunchedSessionStore({ database: appDatabase })
+
   runtime = new AgentRuntime({
     config,
     ledger,
     projects,
+    launchedSessionStore,
     appPaths: {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -450,6 +463,9 @@ async function init(): Promise<void> {
   // exists: the first published poll then already carries the user's own mines
   // instead of drawing an empty valley and filling it a moment later.
   await runtime.loadDeclared()
+  // Before start(), and before anything in this run can be launched: a restored
+  // launch and a new one must never be handed the same id (#231).
+  await runtime.restoreLaunchedSessions()
   runtime.start()
 
   // The historical coal pile, produced once and never again (see #22).
