@@ -9,6 +9,8 @@ import {
   threadInsert
 } from './stateSeed'
 import {
+  CODEX_EXEC_SOURCE_TAG,
+  isCodexOneShotThread,
   normalizeCodexCwd,
   parseCodexThreadSource,
   readCodexCliVersions,
@@ -243,6 +245,22 @@ describe('readCodexThreads', () => {
     ])
   })
 
+  /*
+   * The same tag answering a second question (#231): a headless run reads one
+   * prompt and exits with its turn, so nobody can talk to it whether or not
+   * this app started it — and the panel has to say that rather than the
+   * generic "can't receive messages yet".
+   */
+  it('carries the tag a headless run writes, distinct from the cli one', async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: 'headless', cwd: 'C:\\p', updatedAtMs: NOW, source: 'exec' })
+    )
+    const [thread] = await read(NOW - 60_000)
+    expect(thread?.sourceTag).toBe(CODEX_EXEC_SOURCE_TAG)
+    expect(isCodexOneShotThread(thread ?? {})).toBe(true)
+  })
+
   it('reports no source tag for a sub-agent thread, whose source is the spawn blob', async () => {
     sqlite.exec(
       STATE_DB,
@@ -363,5 +381,32 @@ describe('readCodexHeartbeats', () => {
     bare.define('bare', 'CREATE TABLE unrelated (x TEXT)')
     const db = await bare.openReadOnly('bare')
     expect(readCodexHeartbeats(db!, 0).size).toBe(0)
+  })
+})
+
+/*
+ * #231. The panel needs one fact about a session nobody can talk to: that its
+ * whole life is one prompt and one turn. Absence must claim nothing — a build
+ * spelling the tag otherwise leaves the panel saying what it said before,
+ * rather than something wrong about a session it has misread.
+ */
+describe('isCodexOneShotThread', () => {
+  it('reads the headless tag as a session with no inbox', () => {
+    expect(isCodexOneShotThread({ sourceTag: 'exec' })).toBe(true)
+  })
+
+  it('claims nothing about a session somebody is sitting in front of', () => {
+    // 'cli' is a TUI a human types into, 'vscode' the desktop app. Both take
+    // more than one turn, whatever channel this app has for reaching them.
+    expect(isCodexOneShotThread({ sourceTag: 'cli' })).toBe(false)
+    expect(isCodexOneShotThread({ sourceTag: 'vscode' })).toBe(false)
+  })
+
+  it('claims nothing about a tag it does not recognise, or none at all', () => {
+    expect(isCodexOneShotThread({})).toBe(false)
+    expect(isCodexOneShotThread({ sourceTag: 'something-new' })).toBe(false)
+    // A sub-agent's source column is the spawn blob, so it carries no tag —
+    // and a spawned agent is not a headless run in any case.
+    expect(isCodexOneShotThread({ sourceTag: undefined })).toBe(false)
   })
 })

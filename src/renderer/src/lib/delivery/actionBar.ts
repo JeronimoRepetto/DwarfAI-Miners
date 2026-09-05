@@ -69,6 +69,27 @@ export function launchedNoInboxReason(provider: DwarfProvider): string {
   )
 }
 
+/**
+ * The same shape, without the exit — a one-shot run this panel did not start
+ * (#231).
+ *
+ * `codex exec` from a terminal is one; so is a launch of this app's own from a
+ * run that has restarted since and can no longer PROVE which process was its,
+ * because a pid on its own identifies nothing and this app owns a tree kill.
+ * Both have exactly the refusal above minus its last sentence, and that
+ * omission is the whole difference: "Kick ends it" is a promise, and there is
+ * nothing here to keep it with.
+ *
+ * One sentence for both controls, because one fact refuses both. Said plainly
+ * rather than as a "not yet": nothing about this session is coming later.
+ */
+export function oneShotNoExitReason(provider: DwarfProvider): string {
+  return (
+    `A session run with ${LAUNCH_COMMAND[provider]} takes no messages: it reads one prompt ` +
+    'and exits with its turn. This panel did not start it, so it has no exit here either.'
+  )
+}
+
 /** What each channel means, in the sender's terms. */
 export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   terminal: 'Typed straight into the session console.',
@@ -137,6 +158,20 @@ function hasEnded(dwarf: Dwarf): boolean {
   return dwarf.status === 'leaving'
 }
 
+/**
+ * The one-shot refusal for this dwarf, or null when it does not apply (#231).
+ *
+ * Narrowed on the observer for the reason the launched refusal is: a one-shot
+ * run is a CLI this app knows how to read, so a dwarf the panel observes
+ * itself is never one, and the sentence names a command that would be a
+ * fiction for it.
+ */
+function noOneShotExitReason(dwarf: Dwarf): string | null {
+  const provider = dwarf.provider
+  if (dwarf.oneShot !== true || isPanelObserved(provider)) return null
+  return oneShotNoExitReason(provider)
+}
+
 function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   if (hasEnded(dwarf))
     return { id: 'kick', name: 'Kick', enabled: false, hint: SESSION_ENDED_REASON }
@@ -151,9 +186,12 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   const hint =
     channel !== null
       ? KICK_HINT[channel]
-      : sendChannel === undefined
-        ? NO_KICK_REASON
-        : KICK_HINT[sendChannel]
+      : sendChannel !== undefined
+        ? KICK_HINT[sendChannel]
+        : // A one-shot run nothing here started has no kick for a stated
+          // reason rather than for want of a feature (#231), and it is the
+          // same sentence the composer beside it shows: one fact refuses both.
+          (noOneShotExitReason(dwarf) ?? NO_KICK_REASON)
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
   if (channel === null) return { id: 'kick', name: 'Kick', enabled: false, hint }
   return {
@@ -197,7 +235,9 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
     const hint =
       dwarf.capabilities?.cancel === 'launched-process' && !isPanelObserved(provider)
         ? launchedNoInboxReason(provider)
-        : NO_CHANNEL_REASON
+        : // And the same shape with no exit at all (#231), which the launch
+          // above must win over: a session this panel can end says so.
+          (noOneShotExitReason(dwarf) ?? NO_CHANNEL_REASON)
     return { id: 'chat', name: 'Chat', enabled: false, hint }
   }
   return { id: 'chat', name: 'Chat', enabled: true, hint: CHANNEL_HINT[channel] }

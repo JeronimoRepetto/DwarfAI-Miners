@@ -22,6 +22,7 @@ import {
 } from './parse'
 import { canQueueToCodexThread } from './queue'
 import {
+  isCodexOneShotThread,
   readCodexCliVersions,
   readCodexHeartbeats,
   readCodexSpawnEdges,
@@ -653,6 +654,12 @@ export class CodexProvider implements Provider {
     // spawn, so it has no agent definition behind it and gets no objective —
     // the prompt in its rollout really was the human's.
     if (thread?.agentPath !== undefined) mainDwarf.description = thread.agentPath
+    // Whether this session's whole life is one prompt and one turn (#231).
+    // Keyed on the REGISTRY row for the reason the queue capability is: a
+    // rollout the registry never recorded proves nothing about the shape of
+    // the session that wrote it. Stamped only when true, so absence claims
+    // nothing — see isCodexOneShotThread on why positive evidence only.
+    if (thread !== undefined && isCodexOneShotThread(thread)) mainDwarf.oneShot = true
     if (thread?.tokensUsed !== undefined) {
       mainDwarf.tokensUsed = thread.tokensUsed
       // Mirrors tokensUsed so the ore/vault economy has one field to sum

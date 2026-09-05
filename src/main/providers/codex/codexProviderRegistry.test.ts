@@ -490,4 +490,53 @@ describe('CodexProvider with the Codex SQLite registry', () => {
       expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
     })
   })
+
+  /**
+   * The other question the same registry row answers (#231).
+   *
+   * A headless `codex exec` run has no channel here and, once this app has
+   * restarted, no exit either — and the panel used to meet both with the
+   * generic "this session type can't receive messages yet", which describes a
+   * missing feature rather than a session that reads one prompt and leaves.
+   * What crosses is the FACT, and the sentence is the renderer's.
+   */
+  describe('a session with one prompt and one turn (#231)', () => {
+    async function dwarfFor(overrides: Partial<Parameters<typeof threadInsert>[0]>) {
+      seedLiveThread(overrides)
+      const [snapshot] = await makeProvider().scan()
+      return snapshot?.dwarfs.find((dwarf) => dwarf.sessionId === LIVE_ID)
+    }
+
+    it('says so of a headless run, whoever started it', async () => {
+      expect((await dwarfFor({ source: 'exec' }))?.oneShot).toBe(true)
+    })
+
+    /*
+     * Absence claims nothing, and must not: a TUI somebody is sitting in front
+     * of takes many turns, and so does the desktop app. Saying otherwise would
+     * tell a person their live session cannot be reached.
+     */
+    it('says nothing of a session somebody is sitting in front of', async () => {
+      expect((await dwarfFor({ source: 'cli' }))?.oneShot).toBeUndefined()
+    })
+
+    it('says nothing of the desktop app', async () => {
+      expect((await dwarfFor({ source: 'vscode' }))?.oneShot).toBeUndefined()
+    })
+
+    it('says nothing of a tag this build does not know', async () => {
+      expect((await dwarfFor({ source: 'something-new' }))?.oneShot).toBeUndefined()
+    })
+
+    /*
+     * Read off the REGISTRY row, exactly as the queue capability is (#97): a
+     * rollout the registry never recorded proves nothing about the shape of
+     * the session that wrote it.
+     */
+    it('says nothing of a rollout the registry never recorded', async () => {
+      fake.addFile(LIVE_ROLLOUT, idleRollout(LIVE_ID), NOW - 30_000)
+      const [snapshot] = await makeProvider().scan()
+      expect(snapshot?.dwarfs.find((dwarf) => dwarf.sessionId === LIVE_ID)?.oneShot).toBeUndefined()
+    })
+  })
 })
