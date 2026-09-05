@@ -464,6 +464,7 @@ watch(
         :answer-state="answerState"
         @decide="emit('decide', $event)"
         @send-text="emit('send', $event)"
+        @open-console="emit('open-console')"
       />
       <DwarfQuestionCard
         v-else-if="dwarf.pendingQuestion"

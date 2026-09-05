@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import {
   PERMISSION_OPTIONS,
   PRESS_ENTER_TO_SEND,
@@ -52,6 +53,8 @@ const emit = defineEmits<{
   decide: [decision: DwarfPermissionDecision]
   /** A free-form reply, which travels as a message rather than as a decision. */
   'send-text': [payload: { text: string; pressEnter: boolean }]
+  /** Focus the console drawing this dialog, where a refused decision can still be given. */
+  'open-console': []
 }>()
 
 const selection = ref<QuestionSelection | null>(null)
@@ -66,7 +69,20 @@ const canSend = computed(() =>
 const selectedLabel = computed(() =>
   selection.value?.toolUseId === props.permission.toolUseId ? selection.value.label : null
 )
-const okLine = computed(() => permissionStatusLine(verdict.value))
+const okLine = computed(() => permissionStatusLine(verdict.value, props.permission.channel))
+/*
+ * Where a refused decision leaves the person, and it is not here (#203). A
+ * decision on the terminal channel is a keypress into a console this panel
+ * does not own, so every way it fails — no window to focus, no measured key
+ * for this build, a prompt that has since moved on — leaves the dialog
+ * exactly where it was: open, at that terminal. The jump is the way there,
+ * and it is the same control the #251 line offers for a prompt whose content
+ * this panel could not read. A held prompt has no such second place, so it
+ * gets no button.
+ */
+const showJump = computed(
+  () => props.permission.channel === 'terminal' && verdict.value?.phase === 'refused'
+)
 
 function cardClass(label: string): string {
   return `is-${optionState(selection.value, props.permission.toolUseId, label)}`
@@ -153,7 +169,16 @@ function onFreeformKeydown(event: KeyboardEvent): void {
     ></textarea>
 
     <p v-if="verdict?.phase === 'refused'" class="answer-error" role="alert">
-      {{ verdict.error }}
+      <span>{{ verdict.error }}</span>
+      <button
+        v-if="showJump"
+        class="answer-jump"
+        type="button"
+        :title="CONSOLE_HINT"
+        @click="emit('open-console')"
+      >
+        {{ JUMP_TO_TERMINAL_NAME }}
+      </button>
     </p>
     <p v-else-if="okLine" class="answer-ok" role="status">{{ okLine }}</p>
   </div>
@@ -308,7 +333,26 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   line-height: 1.25;
 }
 .answer-error {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
   color: #8c2f14;
+}
+/* The same underlined text button the MessagePanel's own approval line uses
+   for the same act, so one affordance does not read as two. */
+.answer-jump {
+  flex: none;
+  padding: 0;
+  border: 0;
+  color: var(--color-accent);
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.answer-jump:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 .answer-ok {
   color: #3d6b2f;

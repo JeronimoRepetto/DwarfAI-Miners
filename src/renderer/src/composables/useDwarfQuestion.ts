@@ -78,7 +78,13 @@ export function useDwarfQuestion() {
   ): Promise<void> {
     if (state.byDwarfId[dwarfId]?.phase === 'answering') return
     const toolUseId = permission.toolUseId
-    state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId }
+    // The decision travels with every phase of the verdict, because what the
+    // panel may say about it depends on which one it was: on a terminal
+    // channel an Allow is a keypress waiting to be acted on and a Deny is an
+    // Esc that may have interrupted a turn instead (#203, see
+    // permissionStatusLine). An answer to a QUESTION records none — that
+    // vocabulary is the permission prompt's alone.
+    state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId, decision }
 
     let result: DwarfQuestionAnswerResult
     try {
@@ -90,8 +96,8 @@ export function useDwarfQuestion() {
     }
 
     state.byDwarfId[dwarfId] = result.answered
-      ? { phase: 'answered', toolUseId }
-      : { phase: 'refused', toolUseId, error: result.error ?? NOT_ANSWERED }
+      ? { phase: 'answered', toolUseId, decision }
+      : { phase: 'refused', toolUseId, decision, error: result.error ?? NOT_ANSWERED }
   }
 
   function clear(dwarfId: string): void {

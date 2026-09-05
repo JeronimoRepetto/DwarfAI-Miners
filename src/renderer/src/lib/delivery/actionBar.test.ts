@@ -418,4 +418,22 @@ describe('approvalNote', () => {
     // is no dialog left at that terminal to answer.
     expect(approvalNote(defaultDwarf({ waitingReason: 'approval', status: 'leaving' }))).toBeNull()
   })
+
+  it('stands aside for an OBSERVED prompt the panel could name, too (#203)', () => {
+    // The card wins wherever the request's content is known, whichever channel
+    // answers it. This sentence is for the case main could NOT name — a dialog
+    // the hook proved and the tail did not explain — and a card and a line
+    // about one dialog read as two.
+    const observed = defaultDwarf({
+      waitingReason: 'approval',
+      pendingPermission: {
+        toolUseId: 'tool-1',
+        toolName: 'Bash',
+        input: 'pnpm test',
+        channel: 'terminal',
+        askedAt: '2026-09-05T00:00:00.000Z'
+      }
+    })
+    expect(approvalNote(observed)).toBeNull()
+  })
 })

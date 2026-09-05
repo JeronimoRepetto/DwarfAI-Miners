@@ -189,11 +189,19 @@ describe('useDwarfQuestion decide (#203)', () => {
     const { decide, stateFor } = useDwarfQuestion()
 
     const deciding = decide('claude:s1', permission(), 'allow')
-    expect(stateFor('claude:s1')).toEqual({ phase: 'answering', toolUseId: 'toolu_09' })
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'answering',
+      toolUseId: 'toolu_09',
+      decision: 'allow'
+    })
 
     pending.release({ answered: true })
     await deciding
-    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_09' })
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'answered',
+      toolUseId: 'toolu_09',
+      decision: 'allow'
+    })
   })
 
   it('sends the dwarf, the prompt’s own toolUseId and the chosen decision', async () => {
@@ -221,6 +229,7 @@ describe('useDwarfQuestion decide (#203)', () => {
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_09',
+      decision: 'allow',
       error: 'That prompt is no longer open.'
     })
   })
@@ -233,6 +242,7 @@ describe('useDwarfQuestion decide (#203)', () => {
     expect(stateFor('claude:s1')).toEqual({
       phase: 'refused',
       toolUseId: 'toolu_09',
+      decision: 'allow',
       error: 'The panel lost contact with the app.'
     })
   })
@@ -269,6 +279,39 @@ describe('useDwarfQuestion decide (#203)', () => {
     expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_01' })
 
     await decide('claude:s1', permission(), 'allow')
-    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_09' })
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'answered',
+      toolUseId: 'toolu_09',
+      decision: 'allow'
+    })
+  })
+
+  /*
+   * Issue #203. The decision is kept on the verdict because the panel's own
+   * wording depends on it: on a terminal channel an Allow is a keypress
+   * waiting to be acted on, and a Deny is an Esc that interrupts the turn if
+   * the prompt was already answered there. An ANSWER to a question keeps
+   * none, because that vocabulary is the permission prompt's alone.
+   */
+  it('remembers which decision a verdict was given for', async () => {
+    stubPermissionApi(() => Promise.resolve({ answered: true }))
+    const { decide, stateFor } = useDwarfQuestion()
+
+    await decide('claude:s1', permission(), 'deny')
+    expect(stateFor('claude:s1')?.decision).toBe('deny')
+  })
+
+  it('leaves an answered question carrying no decision at all', async () => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
+        answerDwarfPermission: vi.fn()
+      }
+    })
+    const { answer, stateFor } = useDwarfQuestion()
+
+    await answer('claude:s1', question(), 'SQLite')
+    expect(stateFor('claude:s1')?.decision).toBeUndefined()
   })
 })

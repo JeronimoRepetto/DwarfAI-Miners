@@ -873,3 +873,79 @@ describe('DwarfMessagePanel awaiting approval', () => {
     expect(wrapper.find('.panel-approval').exists()).toBe(false)
   })
 })
+
+/**
+ * Issue #203. A prompt an OBSERVED session raised: main named it from an
+ * unresolved `tool_use`, so the panel can draw the card rather than only the
+ * sentence #251 shipped.
+ *
+ * Which of the two shows is the whole question here, and it is decided by
+ * what is KNOWN. The card wins wherever the request's content is, because it
+ * says what the session wants to do and offers the answer; the sentence stays
+ * where only the hook spoke and the content could not be named. Never both —
+ * they describe one dialog, and two rows about it read as two.
+ */
+describe('DwarfMessagePanel observed permission (#203)', () => {
+  const observedPermission: DwarfPermissionRequest = {
+    toolUseId: 'toolu_09',
+    toolName: 'Bash',
+    input: 'pnpm test',
+    channel: 'terminal',
+    askedAt: '2026-09-05T09:00:00.000Z'
+  }
+
+  function observed(extra: Record<string, unknown> = {}) {
+    return defaultDwarf({
+      waitingReason: 'approval',
+      textDelivery: 'terminal',
+      conversation: HELD,
+      pendingPermission: observedPermission,
+      ...extra
+    })
+  }
+
+  it('draws the card for a session it only watches, exactly as for one it holds', () => {
+    const wrapper = panel({ dwarf: observed() })
+    expect(wrapper.find('.permission-card').exists()).toBe(true)
+    expect(wrapper.find('.permission-input').text()).toBe('pnpm test')
+  })
+
+  it('shows the card instead of the terminal sentence, never both', () => {
+    const wrapper = panel({ dwarf: observed() })
+    expect(wrapper.find('.panel-approval').exists()).toBe(false)
+  })
+
+  it('keeps the sentence where the hook spoke and the content could not be named', () => {
+    // The #251 case, unchanged: a dialog is open and the tail held no single
+    // unresolved call to name it by, so the panel says where it is and stops.
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        waitingReason: 'approval',
+        textDelivery: 'terminal',
+        conversation: HELD
+      })
+    })
+    expect(wrapper.find('.panel-approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
+    expect(wrapper.find('.permission-card').exists()).toBe(false)
+  })
+
+  it('passes a decision made on the card up to whoever owns the channel', async () => {
+    const wrapper = panel({ dwarf: observed() })
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    wrapper
+      .find('.permission-card')
+      .element.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    expect(wrapper.emitted('decide')).toEqual([['deny']])
+  })
+
+  it('forwards the card’s jump, so a refused decision still reaches that console', async () => {
+    const wrapper = panel({
+      dwarf: observed(),
+      answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
+    })
+    await wrapper.find('.answer-jump').trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+})

@@ -1,4 +1,9 @@
-import type { MaterialTotals, Mine, ProjectSummary } from '../../shared/contracts'
+import type {
+  DwarfPermissionDecision,
+  MaterialTotals,
+  Mine,
+  ProjectSummary
+} from '../../shared/contracts'
 import type { ShellArea } from './lib/shell/shellNav'
 
 /** The five areas the shell's navigation stack selects (#90). */
@@ -207,6 +212,18 @@ export interface DwarfAnswerState {
   toolUseId: string
   /** Why main refused it, shown in the panel. */
   error?: string
+  /**
+   * Which decision this verdict was given for, on a permission prompt (#203).
+   * Absent for an answered QUESTION, which has no such vocabulary.
+   *
+   * Here because what the panel may claim afterwards depends on it, and only
+   * on a terminal channel: an Allow typed there is a keypress waiting to be
+   * acted on, and a Deny is an Esc whose second meaning — interrupting a turn
+   * somebody already allowed — the person has to be told about. The verdict
+   * is where it belongs rather than on the card's own selection, which is
+   * state a re-render is free to lose.
+   */
+  decision?: DwarfPermissionDecision
 }
 
 /** Root state for the dwarf-question store, keyed by dwarf id. */

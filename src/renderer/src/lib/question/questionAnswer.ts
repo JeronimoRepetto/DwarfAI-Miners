@@ -1,6 +1,7 @@
 import type {
   DwarfAnswerState,
   DwarfPermissionAnswerRequest,
+  DwarfPermissionChannel,
   DwarfPermissionDecision,
   DwarfPermissionRequest,
   DwarfQuestion,
@@ -176,11 +177,51 @@ export function permissionRequest(
 }
 
 /**
- * The line the panel shows under a released decision. Same narrow claim as
- * answerStatusLine, and for the same reason: the blocked tool call was
- * released with this decision, never what the agent then did with it.
+ * The three things the panel can honestly say under a given decision, one per
+ * channel and — on the terminal channel — one per decision (#203).
+ *
+ * The held sentence is the strongest claim of the three and still a narrow
+ * one: the blocked call was released, never what the agent then did with it.
+ *
+ * Neither terminal sentence may borrow it, because the evidence is weaker.
+ * The panel pressed a key in a console it does not own; the session acting on
+ * that key is a separate fact, and the only proof of it is the transcript
+ * writing the matching `tool_result` — which is exactly when main stops
+ * naming the prompt and the card leaves. So the ✓ here is "typed" and the ✓✓
+ * is the card going.
+ *
+ * The deny sentence carries one more thing, and it is a warning rather than a
+ * verdict: Deny is Esc (measured — see main's textDelivery/permissionKeys),
+ * and Esc has a second meaning on a session whose dialog was answered at the
+ * terminal a moment earlier — it interrupts the turn the allowed tool is
+ * running in. Bounded and accepted, since somebody pressing Deny wanted that
+ * tool not to run, but said out loud rather than left to be discovered.
  */
-export function permissionStatusLine(state: DwarfAnswerState | undefined): string | null {
+export const PERMISSION_RELEASED_LINE =
+  'Handed to the agent — its blocked tool call was released with this decision.'
+export const PERMISSION_TYPED_LINE = 'Typed at the terminal — waiting for the session to act on it.'
+export const PERMISSION_ESCAPED_LINE =
+  'Typed Esc at the terminal — if the prompt was already answered there, ' +
+  'this interrupts the turn instead.'
+
+/**
+ * The line the panel shows under a released decision, or null when there is
+ * nothing yet to say. A refusal is absent on purpose, exactly as in
+ * deliveryVerdict: the panel renders those through its own alert row, which
+ * carries main's reason verbatim.
+ *
+ * `channel` is the request's own, from the wire, rather than anything derived
+ * here — see DwarfPermissionRequest.channel for why main is the only place
+ * that can know it.
+ */
+export function permissionStatusLine(
+  state: DwarfAnswerState | undefined,
+  channel: DwarfPermissionChannel
+): string | null {
   if (state?.phase !== 'answered') return null
-  return 'Handed to the agent — its blocked tool call was released with this decision.'
+  if (channel === 'held') return PERMISSION_RELEASED_LINE
+  // Allow's wording is the fallback for a verdict carrying no decision, which
+  // `decide` never produces: it claims a keypress and nothing about a turn,
+  // so it is the one that cannot overstate.
+  return state.decision === 'deny' ? PERMISSION_ESCAPED_LINE : PERMISSION_TYPED_LINE
 }
