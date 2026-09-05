@@ -57,6 +57,8 @@ class FakePort {
   failWith: Error | undefined = undefined
   /** Set false to make the stream refuse an interrupt, as one already ending would. */
   interruptTakes = true
+  /** Set false to make the stream refuse a send, as one already closing would (#245). */
+  sendTakes = true
 
   readonly start: HeldSessionPort = async (request) => {
     if (this.failWith !== undefined) throw this.failWith
@@ -65,6 +67,7 @@ class FakePort {
     return {
       close: () => this.closed.push(index),
       send: (text: string) => {
+        if (!this.sendTakes) return false
         this.sent.push(text)
         return true
       },
@@ -468,6 +471,146 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
     port.end(0)
 
     expect(registry.telemetryState('sess-1')).toEqual({ held: false })
+  })
+})
+
+/*
+ * Issue #245. A held session's registry entry never carries a `status`, so
+ * the Claude provider read it as idle and every held dwarf drew `waiting`
+ * whatever it was actually doing, with no `waitingReason` for an open ask or
+ * permission prompt either. `activityState` is the fact `stampHeldStatus`
+ * stamps onto the foreman, and these pin the table the issue lays out.
+ */
+describe('HeldSessionRegistry activity (#245)', () => {
+  it('reports not-held for a session this panel does not hold, so the provider stands', () => {
+    const registry = registryOver(new FakePort())
+    expect(registry.activityState('sess-nobody')).toEqual({ held: false })
+  })
+
+  it('reads working from the moment the session is named, before any result', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+
+    // Named or not, the launch prompt already started the first turn.
+    expect(registry.activityState('sess-1')).toEqual({ held: false })
+    port.reportSessionId(0, 'sess-1')
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'working' })
+  })
+
+  it("reads waiting once the turn's result arrives, with no reason", async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, { totalCostUsd: 0.01, turn: 'ended' })
+
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'waiting' })
+  })
+
+  it('reads working again once a next turn starts, whether by init or by a sent message', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { turn: 'ended' })
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'waiting' })
+
+    // An init re-emitted at the start of the next turn.
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5', turn: 'started' })
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'working' })
+
+    // And, independently, a message the panel itself sent.
+    port.reportTelemetry(0, { turn: 'ended' })
+    registry.sendText('sess-1', 'keep going')
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'working' })
+  })
+
+  it('never starts a turn for a send the stream refused', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { turn: 'ended' })
+    port.sendTakes = false
+
+    expect(registry.sendText('sess-1', 'keep going')).toBe(false)
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'waiting' })
+  })
+
+  it('reads user-input while an ask is open, whatever the turn state', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    void port.ask(0, 'toolu_01')
+    await Promise.resolve()
+
+    expect(registry.activityState('sess-1')).toEqual({
+      held: true,
+      status: 'waiting',
+      waitingReason: 'user-input'
+    })
+  })
+
+  it('reads approval while a permission prompt is open', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    void port.permission(0, 'toolu_p1')
+    await Promise.resolve()
+
+    expect(registry.activityState('sess-1')).toEqual({
+      held: true,
+      status: 'waiting',
+      waitingReason: 'approval'
+    })
+  })
+
+  it('reads user-input over approval when both an ask and a permission prompt are open', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    void port.permission(0, 'toolu_p1')
+    void port.ask(0, 'toolu_01')
+    await Promise.resolve()
+
+    expect(registry.activityState('sess-1')).toMatchObject({ waitingReason: 'user-input' })
+  })
+
+  it('reads plain waiting again once every open ask and permission is settled', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { turn: 'ended' })
+
+    void port.ask(0, 'toolu_01')
+    await Promise.resolve()
+    registry.answer({
+      sessionId: 'sess-1',
+      toolUseId: 'toolu_01',
+      answers: { 'Which colour?': 'Green' }
+    })
+
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'waiting' })
+  })
+
+  it('reports not-held once the session ends, dissolved exactly as its telemetry is', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.end(0)
+
+    expect(registry.activityState('sess-1')).toEqual({ held: false })
   })
 })
 

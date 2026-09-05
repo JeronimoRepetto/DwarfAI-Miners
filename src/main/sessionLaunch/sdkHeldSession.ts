@@ -295,7 +295,12 @@ export function createSdkHeldSession(): HeldSessionPort {
               ...(message.effort === undefined || message.effort === null
                 ? {}
                 : { effort: message.effort }),
-              claudeCodeVersion: message.claude_code_version
+              claudeCodeVersion: message.claude_code_version,
+              // `init` is re-emitted at the START of every turn (issue #245).
+              // The merged telemetry fields above cannot serve as that signal
+              // themselves — see HeldSessionTelemetryUpdate.turn — so this is
+              // carried alongside them rather than inferred from them.
+              turn: 'started'
             })
           }
           /*
@@ -330,7 +335,11 @@ export function createSdkHeldSession(): HeldSessionPort {
                 outputTokens: message.usage.output_tokens,
                 cacheCreationInputTokens: message.usage.cache_creation_input_tokens,
                 cacheReadInputTokens: message.usage.cache_read_input_tokens
-              }
+              },
+              // `result` arrives exactly once, at the END of the turn it
+              // closes (issue #245) — the other half of the signal `init`
+              // above starts.
+              turn: 'ended'
             })
           }
         }
