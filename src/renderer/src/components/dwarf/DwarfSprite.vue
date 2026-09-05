@@ -170,6 +170,7 @@ const hasStatusIcon = computed(
   () =>
     Boolean(props.bubbleText) ||
     props.dwarf.pendingQuestion !== undefined ||
+    props.dwarf.waitingReason === 'approval' ||
     props.dwarf.status === 'waiting'
 )
 
@@ -470,6 +471,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       :role="dwarf.role"
       :talking="Boolean(bubbleText)"
       :asking="dwarf.pendingQuestion !== undefined"
+      :awaiting-approval="dwarf.waitingReason === 'approval'"
       :resting="dwarf.status === 'waiting'"
       :expand-label="bubbleLabel"
       :expanded="bubbleExpanded"
