@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
 import type { FeedMessage } from '../domain/types'
-import { FEED_WINDOW_CEILING_BYTES, FEED_WINDOW_STEPS, readFeedWindow } from './feedWindow'
+import {
+  FEED_WINDOW_CEILING_BYTES,
+  FEED_WINDOW_STEPS,
+  readFeedWindow,
+  readFeedWindowWithReachedStart
+} from './feedWindow'
 
 /*
  * Issue #215 and #188, which are one defect seen from two panels: a feed asked
@@ -149,5 +154,70 @@ describe('readFeedWindow', () => {
     for (let index = 1; index < FEED_WINDOW_STEPS.length; index++) {
       expect(FEED_WINDOW_STEPS[index]!).toBeGreaterThan(FEED_WINDOW_STEPS[index - 1]!)
     }
+  })
+})
+
+/*
+ * #227: the walk already knows whether its read reached the file's start —
+ * "came back short of what it asked for" (module comment above) is exactly
+ * that fact — and used to throw it away. `readFeedWindow` keeps its existing
+ * signature for its two live callers (ClaudeProvider.feed, CodexProvider.feed);
+ * this sibling answers the same walk with the fact kept, for the Mine History
+ * panel alone.
+ */
+describe('readFeedWindowWithReachedStart', () => {
+  it('reports reached-start when the narrowest window already holds the whole file', async () => {
+    const fake = new FakeFs()
+    fake.addFile(PATH, record(1) + record(2))
+    const { fs } = spying(fake)
+
+    const result = await readFeedWindowWithReachedStart(fs, PATH, 50, extractLines, [8, 64, 512])
+    expect(result.messages.map((m) => m.text)).toEqual(['1', '2'])
+    expect(result.reachedStart).toBe(true)
+  })
+
+  it('reports not-reached when the widest window filled and still fell short of the count', async () => {
+    // Same fixture as "never asks for more than the widest step": 40 records
+    // fill every step, and the widest one still holds only twelve of them —
+    // there is more file behind it that the walk never read.
+    const fake = new FakeFs()
+    fake.addFile(PATH, Array.from({ length: 40 }, (_, index) => record(index, 40)).join(''))
+    const { fs } = spying(fake)
+
+    const result = await readFeedWindowWithReachedStart(fs, PATH, 50, extractLines, [8, 64, 512])
+    expect(result.messages).toHaveLength(12)
+    expect(result.reachedStart).toBe(false)
+  })
+
+  it('reports reached-start once a middle window fills the file, even after a narrower one came up short', async () => {
+    // 8 records of 5 bytes each (48 bytes): too big for the 8-byte step, which
+    // still leaves it short of the count, but the 64-byte step holds the whole
+    // file — proving the flag reflects the window that actually produced the
+    // answer, not just the first one tried.
+    const fake = new FakeFs()
+    fake.addFile(PATH, Array.from({ length: 8 }, (_, index) => record(index, 5)).join(''))
+    const { fs, reads } = spying(fake)
+
+    const result = await readFeedWindowWithReachedStart(fs, PATH, 3, extractLines, [8, 64, 512])
+    expect(reads()).toEqual([8, 64])
+    expect(result.reachedStart).toBe(true)
+  })
+
+  it('still throws the way the adapter throws, for a file that is gone', async () => {
+    const { fs } = spying(new FakeFs())
+    await expect(readFeedWindowWithReachedStart(fs, PATH, 50, extractLines, [8])).rejects.toThrow()
+  })
+
+  it('does not change what readFeedWindow itself reads or returns', async () => {
+    // The sibling exists so the two live feed() callers never have to change:
+    // proof the plain function still answers exactly the messages it did.
+    const fake = new FakeFs()
+    fake.addFile(PATH, Array.from({ length: 8 }, (_, index) => record(index, 40)).join(''))
+    const { fs: plainFs } = spying(fake)
+    const { fs: richFs } = spying(fake)
+
+    const plain = await readFeedWindow(plainFs, PATH, 5, extractLines, [8, 64, 512])
+    const rich = await readFeedWindowWithReachedStart(richFs, PATH, 5, extractLines, [8, 64, 512])
+    expect(plain).toEqual(rich.messages)
   })
 })

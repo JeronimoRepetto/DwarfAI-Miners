@@ -7,6 +7,7 @@ import {
   historyNote,
   orderSpeakers,
   selectedSpeakerId,
+  speakerHistoryNotice,
   speakerRows
 } from '../../lib/history/mineHistory'
 import type { Mine, MineHistoryResult } from '../../types'
@@ -52,6 +53,8 @@ const selectedId = computed(() => selectedSpeakerId(ordered.value, chosenId.valu
 const selected = computed(() => ordered.value.find((speaker) => speaker.id === selectedId.value))
 const rows = computed(() => (selected.value === undefined ? [] : speakerRows(selected.value)))
 const note = computed(() => historyNote(props.history))
+/** #227: the selected tab's own admission that it does not reach the conversation's start. */
+const notice = computed(() => speakerHistoryNotice(selected.value))
 const timestamp = computed(() =>
   selected.value === undefined ? '' : formatHistoryTimestamp(selected.value.lastMessageAt)
 )
@@ -117,6 +120,16 @@ function choose(id: string): void {
         ></span>
       </button>
     </header>
+
+    <!--
+      #227: an admission the design never asked for, so both the placement —
+      top of the tab, fixed above the scroll rather than inside it, since the
+      panel opens scrolled to the latest message and a notice buried at the
+      scrolled-away top would never be seen — and the copy are this issue's
+      own (see HISTORY_TRUNCATED_NOTE). Only the selected speaker's own flag
+      decides it, so switching tabs shows or hides it with the tab.
+    -->
+    <p v-if="notice !== null" class="history-notice">{{ notice }}</p>
 
     <!--
       The transcript scrolls inside the panel while the tabs and the timestamp
@@ -263,6 +276,20 @@ function choose(id: string): void {
 .history-close:focus-visible {
   outline: 2px solid var(--color-panel);
   outline-offset: 2px;
+}
+/*
+ * The reached-start admission (#227): fixed above the scrolling transcript,
+ * never inside it — the panel opens scrolled to the latest message, and a
+ * notice living at the scrolled-away top would defeat its own purpose.
+ * Muted like the empty-state line, since it is a caveat rather than content.
+ */
+.history-notice {
+  flex: none;
+  margin: 0;
+  padding: 6px 8px 0;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-meta);
+  text-align: center;
 }
 /* The transcript's own scroll, so the tabs and the timestamp stay fixed. */
 .history-transcript {

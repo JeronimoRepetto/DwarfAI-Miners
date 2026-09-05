@@ -6,14 +6,17 @@ import { redactSecrets } from '../domain/redactSecrets'
 import {
   MINE_HISTORY_MESSAGE_LIMIT,
   type DwarfRole,
-  type FeedMessage,
   type MessageIssuer,
   type MineHistorySpeaker
 } from '../domain/types'
 import { currentPlatform, normalizePathKey, type Platform } from '../platform/platform'
 import { encodeClaudeProjectDir, extractClaudeFeed } from '../providers/claude/parse'
 import { extractCodexFeed } from '../providers/codex/parse'
-import { readFeedWindow, type FeedExtractor } from '../providers/feedWindow'
+import {
+  readFeedWindowWithReachedStart,
+  type FeedExtractor,
+  type FeedWindowRead
+} from '../providers/feedWindow'
 import { readCodexThreads, type CodexThread } from '../providers/codex/state'
 import { rankForSpawnDepth } from '../sessionLaunch/heldCrew'
 
@@ -176,12 +179,14 @@ export class MineHistoryReader implements MineHistorySource {
    * feed redacts: preload and renderer never hold the raw string.
    */
   private async readCandidate(candidate: Candidate): Promise<MineHistorySpeaker | null> {
-    let read: FeedMessage[]
+    let read: FeedWindowRead
     try {
       // Bounded by the fifty MESSAGES the panel promises rather than by a byte
       // window that happens to contain some of them (#215): the window walks
-      // outwards until fifty are collected or the file starts.
-      read = await readFeedWindow(
+      // outwards until fifty are collected or the file starts. #227 carries
+      // the walk's own reached-start fact onto the speaker instead of
+      // dropping it, so the panel can say when it did not reach the start.
+      read = await readFeedWindowWithReachedStart(
         this.fs,
         candidate.path,
         MINE_HISTORY_MESSAGE_LIMIT,
@@ -192,7 +197,7 @@ export class MineHistoryReader implements MineHistorySource {
       // deleting a session. Not a speaker, and not an error worth a warning.
       return null
     }
-    const messages = read.map((message) => ({
+    const messages = read.messages.map((message) => ({
       ...message,
       text: redactSecrets(message.text)
     }))
@@ -207,7 +212,10 @@ export class MineHistoryReader implements MineHistorySource {
       // A line that carried no timestamp leaves NaN, and the file's own mtime
       // is the honest stand-in: it is when something was last written here.
       lastMessageAt: Number.isFinite(lastMessageAt) ? lastMessageAt : candidate.mtimeMs,
-      messages
+      messages,
+      // Always set, never left absent: this reader always knows one or the
+      // other (see MineHistorySpeaker.reachedStart in contracts.ts).
+      reachedStart: read.reachedStart
     }
   }
 

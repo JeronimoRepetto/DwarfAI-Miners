@@ -48,9 +48,27 @@ export const FEED_WINDOW_CEILING_BYTES = FEED_WINDOW_STEPS[FEED_WINDOW_STEPS.len
 export type FeedExtractor = (tailText: string, limit: number) => FeedMessage[]
 
 /**
- * The latest `limit` messages of one transcript, reading only as far back as
- * that many messages need.
- *
+ * One walk's answer: the messages, and whether the read behind them reached
+ * the transcript's own start (#227).
+ */
+export interface FeedWindowRead {
+  messages: FeedMessage[]
+  /**
+   * True when the window that produced `messages` came back shorter than the
+   * bytes it asked for — proof the whole file was in hand and no wider step
+   * could have found anything earlier. False when the widest step tried still
+   * filled completely and `messages` still fell short of `limit`: the file
+   * outgrows `FEED_WINDOW_CEILING_BYTES`, and the walk stopped there rather
+   * than reading the rest of it. There is no third value here — the walk
+   * always reads at least one window and always knows which of the two
+   * happened — but the wire type this feeds (`MineHistorySpeaker.reachedStart`
+   * in `contracts.ts`) stays optional for a source that cannot say.
+   */
+  reachedStart: boolean
+}
+
+/**
+ * The walk both `readFeedWindow` and `readFeedWindowWithReachedStart` share.
  * Escalates while the window came up short of `limit` and the file filled it.
  * "Filled it" is measured on the bytes that came back rather than by asking
  * for the file's size: `readTextTail` returns the whole file when the file is
@@ -70,6 +88,34 @@ export type FeedExtractor = (tailText: string, limit: number) => FeedMessage[]
  * between the listing and the read, and a walk that swallowed that would
  * report an empty conversation instead.
  */
+async function walkFeedWindow(
+  fs: FsLike,
+  path: string,
+  limit: number,
+  extract: FeedExtractor,
+  steps: readonly number[]
+): Promise<FeedWindowRead> {
+  let messages: FeedMessage[] = []
+  let reachedStart = false
+  for (const bytes of steps) {
+    const tail = await fs.readTextTail(path, bytes)
+    messages = extract(tail, limit)
+    reachedStart = Buffer.byteLength(tail, 'utf8') < bytes
+    if (messages.length >= limit || reachedStart) break
+  }
+  return { messages, reachedStart }
+}
+
+/**
+ * The latest `limit` messages of one transcript, reading only as far back as
+ * that many messages need. See `walkFeedWindow` for how the walk itself works.
+ *
+ * Kept at exactly this signature for its two live callers — `ClaudeProvider.feed`
+ * and `CodexProvider.feed` — which never needed the reached-start fact and
+ * should not have to change to keep not needing it (#227).
+ * `readFeedWindowWithReachedStart` is the sibling that answers it, for the
+ * Mine History panel alone.
+ */
 export async function readFeedWindow(
   fs: FsLike,
   path: string,
@@ -77,12 +123,21 @@ export async function readFeedWindow(
   extract: FeedExtractor,
   steps: readonly number[] = FEED_WINDOW_STEPS
 ): Promise<FeedMessage[]> {
-  let messages: FeedMessage[] = []
-  for (const bytes of steps) {
-    const tail = await fs.readTextTail(path, bytes)
-    messages = extract(tail, limit)
-    if (messages.length >= limit) break
-    if (Buffer.byteLength(tail, 'utf8') < bytes) break
-  }
-  return messages
+  return (await walkFeedWindow(fs, path, limit, extract, steps)).messages
+}
+
+/**
+ * Same walk as `readFeedWindow`, with the one fact it used to throw away: did
+ * the read reach the transcript's own start, or did it stop at the ceiling
+ * with more file still behind it (#227)? The Mine History panel is the one
+ * caller that needs to say so; nothing else does.
+ */
+export async function readFeedWindowWithReachedStart(
+  fs: FsLike,
+  path: string,
+  limit: number,
+  extract: FeedExtractor,
+  steps: readonly number[] = FEED_WINDOW_STEPS
+): Promise<FeedWindowRead> {
+  return walkFeedWindow(fs, path, limit, extract, steps)
 }

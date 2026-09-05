@@ -151,7 +151,9 @@ describe('MineHistoryReader over Claude transcripts', () => {
         messages: [
           { role: 'user', text: 'dig here', timestamp: AT_9 },
           { role: 'assistant', text: 'Found the seam.', timestamp: AT_10 }
-        ]
+        ],
+        // Small fixture, well inside the narrowest window (#227).
+        reachedStart: true
       }
     ])
   })
@@ -436,6 +438,61 @@ describe('MineHistoryReader over Claude transcripts', () => {
   })
 })
 
+/*
+ * #227: the read behind `messages` already knows whether it reached the
+ * transcript's own start (readFeedWindow's own fact), and the reader now
+ * carries it onto the speaker rather than dropping it.
+ */
+describe('MineHistoryReader and the reached-start flag', () => {
+  function reader(fs: FsLike, roots: string[] = [ROOT]): MineHistoryReader {
+    return new MineHistoryReader({ fs, claudeRoots: roots, platform: 'win32' })
+  }
+
+  it('marks reachedStart true when the whole transcript sits inside the narrowest window', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${PROJECT_DIR}\\${SESSION}.jsonl`,
+      lines(userLine('dig here', AT_9), assistantLine('Found the seam.', AT_10)),
+      1
+    )
+
+    const [speaker] = await reader(fs).read(CWD)
+    expect(speaker?.reachedStart).toBe(true)
+  })
+
+  /*
+   * The real ceiling, not a scaled-down stand-in: FEED_WINDOW_CEILING_BYTES of
+   * tool noise between the launch prompt and the last reply, so even the
+   * widest step the reader ever takes still has file behind it. Slow to build
+   * (a multi-megabyte fixture) but the one place that proves the flag survives
+   * the reader's own plumbing at the size it is meant for, not just the walk
+   * feedWindow.test.ts already proves with injected steps.
+   */
+  it('marks reachedStart false when the transcript outgrows the widest window, and still returns what it did read', async () => {
+    const fs = new FakeFs()
+    const noise: string[] = []
+    let bytes = 0
+    let index = 0
+    while (bytes <= FEED_WINDOW_CEILING_BYTES) {
+      const line = bulkyToolResultLine(new Date(Date.UTC(2026, 8, 1, 9, index)).toISOString())
+      noise.push(line)
+      bytes += Buffer.byteLength(line, 'utf8') + 1
+      index++
+    }
+    fs.addFile(
+      `${PROJECT_DIR}\\${SESSION}.jsonl`,
+      lines(userLine('dig the north seam', AT_9), ...noise, assistantLine('Dug it.', AT_12)),
+      1
+    )
+
+    const [speaker] = await reader(fs).read(CWD)
+    expect(speaker?.reachedStart).toBe(false)
+    // The launch prompt is more than a ceiling's worth of noise behind the
+    // read; only the reply the widest window could still reach comes back.
+    expect(speaker?.messages.map((message) => message.text)).toEqual(['Dug it.'])
+  })
+})
+
 describe('MineHistoryReader over Codex rollouts', () => {
   function readerWith(fs: FsLike, sqlite: MemorySqlite): MineHistoryReader {
     return new MineHistoryReader({
@@ -480,7 +537,9 @@ describe('MineHistoryReader over Codex rollouts', () => {
         messages: [
           { role: 'user', text: 'dig here', timestamp: AT_9 },
           { role: 'assistant', text: 'Found the seam.', timestamp: AT_10 }
-        ]
+        ],
+        // Small fixture, well inside the narrowest window (#227).
+        reachedStart: true
       }
     ])
   })
