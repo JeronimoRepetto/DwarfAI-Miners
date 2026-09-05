@@ -66,6 +66,7 @@ import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
+import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
 import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
 import {
@@ -360,6 +361,20 @@ export class AgentRuntime {
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
   /**
+   * Which dwarf each launch of ours turned out to be, proved from the
+   * session's own opening prompt (#191).
+   *
+   * Beside `launched` and deliberately not inside it: that one answers "what
+   * may this app end", from a retained pid and the sessions that were new, and
+   * refuses a departed dwarf because its pid is stale. This one answers "which
+   * dwarf is this launch's", from evidence, and must admit a departed dwarf —
+   * a session that finished before the poll drew it is exactly the handover
+   * the panel most needs. See launchReceipts.ts.
+   */
+  private readonly launchReceipts: LaunchReceiptRegistry
+  /** The head read one poll started; a test seam, exactly like `projectWrites`. */
+  private launchReceiptReads: Promise<void> = Promise.resolve()
+  /**
    * Every command of the person's own this panel is holding (#194).
    *
    * A third way to own a child and deliberately not a fourth: it takes its
@@ -547,6 +562,17 @@ export class AgentRuntime {
         endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
         log: (message) => console.log(message)
       })
+    // The receipt reader is the provider's own, because only a provider knows
+    // where its store is and how a human turn is written in it. A provider
+    // that has not been taught to read one answers nothing, and a launch on it
+    // simply waits — the same absence rule every optional provider capability
+    // here follows (#191).
+    this.launchReceipts = new LaunchReceiptRegistry({
+      firstPrompt: (dwarf) =>
+        this.providers.find((item) => item.kind === dwarf.provider)?.firstPrompt?.(dwarf.id) ??
+        Promise.resolve(undefined),
+      log: (message) => console.log(message)
+    })
     // The same per-OS half as `launched` above, for the same reason: ending a
     // tree differs by platform and that difference has exactly one owner. The
     // spawn seam is composed here rather than in platformAdapters because
@@ -762,11 +788,21 @@ export class AgentRuntime {
         // rather than a poll later. Claims are made once and kept, so this
         // costs a lookup per launch still waiting for one.
         this.launched.observe(withMaterials)
+        // And which dwarf each launch of ours IS (#191), which is a different
+        // question with a different answer — see launchReceipts.ts. Started on
+        // this board and deliberately NOT awaited: proving it reads the head of
+        // a transcript, and this callback is the thread the panel paints from.
+        // So a launch is proved during one poll and stamped on the next, which
+        // costs the handover one sweep and costs every other poll nothing.
+        this.observeLaunchReceipts(withMaterials)
+        const withReceipts = stampLaunchReceipts(withMaterials, (dwarfId) =>
+          this.launchReceipts.receiptOf(dwarfId)
+        )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
         const delivered = pollProfiler.measureSync('stamp', () =>
-          stampTextDelivery(withMaterials, (dwarfId) => this.deliveryTargetOf(dwarfId))
+          stampTextDelivery(withReceipts, (dwarfId) => this.deliveryTargetOf(dwarfId))
         )
         // What a session the panel HOLDS is asking, live (#94). This runs after
         // the provider has already stamped whatever its transcript tail
@@ -1121,6 +1157,28 @@ export class AgentRuntime {
    */
   async settleProjects(): Promise<void> {
     await this.projectWrites
+  }
+
+  /**
+   * Resolve once the receipt reads this poll started have finished (#191).
+   *
+   * The same test seam as settleProjects, for the same reason: the poll
+   * deliberately does not await them, so a test that asked the board who a
+   * launch became right after refresh() would be racing the read.
+   */
+  async settleLaunchReceipts(): Promise<void> {
+    await this.launchReceiptReads
+  }
+
+  /**
+   * Queue one poll's receipt reads behind the last (#191).
+   *
+   * Serialized rather than fired in parallel, exactly as the project writes
+   * are: the registry drops a re-entrant observe anyway, so overlapping polls
+   * would only throw work away, and a queue keeps the test seam above honest.
+   */
+  private observeLaunchReceipts(mines: Mine[]): void {
+    this.launchReceiptReads = this.launchReceiptReads.then(() => this.launchReceipts.observe(mines))
   }
 
   /**
@@ -1683,9 +1741,27 @@ export class AgentRuntime {
 
     const timer = createStageTimer(this.now)
     try {
-      const { retained, ...result } = await timer.measure('total', () =>
+      const { retained, ...verdict } = await timer.measure('total', () =>
         this.launchSession({ provider: request.provider, minePath: mine.path, prompt })
       )
+      // The receipt this launch will be recognised by (#191). Opened for every
+      // started launch and never for a refused one, and opened here rather
+      // than behind the launcher because proving it needs the board — which
+      // mine, and therefore which dwarfs are even candidates.
+      //
+      // Deliberately not the launch id `launched.retain` hands back below: that
+      // one exists only where a pid was retained, and a launch that started
+      // without one is still a launch whose dwarf the panel must open on.
+      const result: AgentLaunchResult = verdict.launched
+        ? {
+            ...verdict,
+            launchId: this.launchReceipts.issue({
+              provider: request.provider,
+              minePath: mine.path,
+              prompt
+            })
+          }
+        : verdict
       // Keep hold of what was started, so this app can end what it starts
       // (#217). Decided here rather than behind the launcher because deciding
       // needs the board: which sessions were already on it is what tells the

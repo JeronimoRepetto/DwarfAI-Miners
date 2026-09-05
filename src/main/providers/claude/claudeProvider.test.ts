@@ -3021,3 +3021,58 @@ describe('ClaudeProvider', () => {
     })
   })
 })
+
+/*
+ * The launch receipt's read (#191). The panel recognises the dwarf its own
+ * detached launch became by the prompt that session opened with, and that sits
+ * at the head of the transcript — the one place a tail read never reaches.
+ */
+describe('ClaudeProvider.firstPrompt', () => {
+  let fake: FakeFs
+  const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+
+  function provider(): ClaudeProvider {
+    return new ClaudeProvider({
+      fs: fake,
+      roots: [ROOT1],
+      isPidAlive: () => true,
+      now: () => 99_000
+    })
+  }
+
+  beforeEach(() => {
+    fake = new FakeFs()
+    fake.addFile(`${ROOT1}\\sessions\\32896.json`, sessionEntry, 1_000)
+    fake.addFile(TRANSCRIPT, parentTranscript, 42_000)
+  })
+
+  it('answers the prompt the session opened with', async () => {
+    const claude = provider()
+    await claude.scan()
+
+    await expect(claude.firstPrompt(`claude:${SESSION_ID}`)).resolves.toBe(
+      'Placeholder user prompt.'
+    )
+  })
+
+  it('knows nothing about a dwarf no scan has seen', async () => {
+    await expect(provider().firstPrompt('claude:nobody')).resolves.toBeUndefined()
+  })
+
+  /*
+   * feed() redacts because its words reach an always-on-top window and from
+   * there every screenshot. This string never leaves main — it is compared
+   * against the prompt main itself sent, then dropped — so redacting it would
+   * only guarantee the comparison fails for a prompt that looks like a key.
+   */
+  it('answers the raw prompt, because nothing here is ever displayed', async () => {
+    const secret = 'deploy with sk-abcdefghijklmnopqrstuvwxyz012345 now'
+    fake.addFile(TRANSCRIPT, parentTranscript.replace('Placeholder user prompt.', secret), 42_000)
+    const claude = provider()
+    await claude.scan()
+
+    await expect(claude.firstPrompt(`claude:${SESSION_ID}`)).resolves.toBe(secret)
+    const shown = await claude.feed(`claude:${SESSION_ID}`, 20)
+    expect(shown?.some((message) => message.text.includes('[redacted]'))).toBe(true)
+  })
+})

@@ -252,3 +252,56 @@ export function extractCodexFeed(tailText: string, limit: number): FeedMessage[]
   }
   return feed.slice(-limit)
 }
+
+/** The text of a `response_item` message, whichever way its blocks are typed. */
+function messageItemText(payload: Rec): string | undefined {
+  if (!Array.isArray(payload.content)) return undefined
+  const texts = payload.content
+    .filter(isRecord)
+    .map((block) => asString(block.text) ?? '')
+    .filter((text) => text !== '')
+  return texts.length > 0 ? texts.join('\n') : undefined
+}
+
+/**
+ * The FIRST thing a person said in one rollout, for the launch receipt (#191).
+ *
+ * Deliberately not `extractCodexFeed(head, …)[0]`. That reading is the panel's
+ * — user_message events only, because they are what a human typed and an
+ * `agent_message` would duplicate a reply — and it is right for a feed and
+ * incomplete for this. A Codex child thread is a FORK: #218 measured that it
+ * carries no `event_msg/user_message` at all, and its human prompt survives
+ * only as a `response_item` request item. `codex exec`'s own rollout shape has
+ * not been read on this machine, so both are accepted rather than betting on
+ * the one this app happens to have fixtures for.
+ *
+ * The event WINS over an item that precedes it, rather than the two racing on
+ * position. An event is Codex stating outright that a person sent this; a
+ * request item is the model's input, which is the same words for a prompt and
+ * is also where a harness-injected context block would appear. Where both
+ * exist the stronger evidence decides, and the weaker one is only ever reached
+ * for a rollout that carries none.
+ *
+ * Undefined means this rollout has not recorded a human turn yet — an ordinary
+ * state for a thread whose file exists before its first prompt is flushed, and
+ * never proof that its session belongs to somebody else.
+ */
+export function firstCodexUserMessage(text: string): string | undefined {
+  let requested: string | undefined
+  for (const record of jsonlRecords(text)) {
+    if (record.type === 'event_msg' && record.payload.type === 'user_message') {
+      const message = asString(record.payload.message)
+      if (message !== undefined) return message
+      continue
+    }
+    if (
+      requested === undefined &&
+      record.type === 'response_item' &&
+      record.payload.type === 'message' &&
+      record.payload.role === 'user'
+    ) {
+      requested = messageItemText(record.payload)
+    }
+  }
+  return requested
+}

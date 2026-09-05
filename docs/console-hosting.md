@@ -123,6 +123,20 @@ no terminal window [#86].
   a `claude -p` with none reads it from stdin [V, #86].
 - The verdict says a process **started** and refuses to say more; the poll finds the session up to
   2000 ms later, so the panel must acknowledge on the verdict alone.
+- **The panel hands over to the dwarf anyway** [#191]. Acknowledging on the verdict used to be as
+  far as it went: the Add Panel recognises its own launch by evidence rather than by timing, the
+  only evidence was a **held** conversation seeded with the prompt, and a detached session carries
+  none — so Add > Codex stopped at "the session started" while its dwarf appeared, replied and left
+  again. The third source is the session's own transcript, whose **first human turn is the prompt
+  the launch wrote to stdin**. Main runs that match itself, at the head of the file, **once** per
+  candidate and off the poll [code: `src/main/providers/firstPrompt.ts`,
+  `src/main/sessionLaunch/launchReceipts.ts`], and publishes only its verdict as `Dwarf.launchId` —
+  the id of the LAUNCH, never of a dwarf, so the verdict still claims nothing. Both strings stay in
+  main, which is why the comparison is exact: the panel's own copy of the prompt is raw and
+  everything the panel is shown is redacted (#59), so a match made in the renderer would fail for
+  any prompt that looks like key material. The receipt admits a **leaving** dwarf, unlike the
+  in-memory kill register above, because a session that finished before the poll drew it is exactly
+  the handover this fixes — the panel opens on the ended state with the reply already in it.
 - **Detached is console-less, and that is not the same as quiet** [#208]. `detached` becomes
   DETACHED_PROCESS, which makes libuv's `windowsHide` (CREATE_NO_WINDOW) ignored, so the child gets
   no console at all. Fine for a program that is itself the console program. Not fine for the

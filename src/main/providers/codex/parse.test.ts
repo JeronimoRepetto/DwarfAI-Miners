@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   extractCodexFeed,
+  firstCodexUserMessage,
   isCodexArtifactStorageCwd,
   parseCodexRolloutContext,
   parseCodexRolloutHead,
@@ -256,5 +257,67 @@ describe('extractCodexFeed', () => {
 
   it('keeps only the last N messages', () => {
     expect(extractCodexFeed(rollout, 1).map((m) => m.text)).toEqual(['Placeholder text block.'])
+  })
+})
+
+/*
+ * The launch receipt's half of a rollout (#191): the FIRST thing a person said
+ * in this thread, which is what tells the panel which dwarf its own detached
+ * launch became.
+ */
+describe('firstCodexUserMessage', () => {
+  function record(type: string, payload: Record<string, unknown>): string {
+    return JSON.stringify({ timestamp: '2026-09-04T10:00:00.000Z', type, payload })
+  }
+
+  const userEvent = (message: string): string =>
+    record('event_msg', { type: 'user_message', message })
+
+  const userItem = (text: string): string =>
+    record('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text }]
+    })
+
+  it('reads the human turn a rollout records as its own event', () => {
+    expect(firstCodexUserMessage(rollout)).toBe('Placeholder plain message.')
+  })
+
+  it('answers the first human turn, never a later one', () => {
+    expect(firstCodexUserMessage([userEvent('dig'), userEvent('shore')].join('\n'))).toBe('dig')
+  })
+
+  /*
+   * A Codex child thread is a FORK and carries no `event_msg/user_message` at
+   * all (#218) — its human prompt survives only as a response_item. That shape
+   * is the fallback rather than a second first choice: where both exist, the
+   * event is Codex stating outright that a person said this.
+   */
+  it('falls back to the request item for a rollout that records no user event', () => {
+    expect(firstCodexUserMessage(userItem('dig the east gallery'))).toBe('dig the east gallery')
+  })
+
+  it('prefers the human event over an item that precedes it', () => {
+    expect(firstCodexUserMessage([userItem('<context>'), userEvent('dig')].join('\n'))).toBe('dig')
+  })
+
+  it('never reads the agent’s own words as a human turn', () => {
+    const assistant = record('response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'digging' }]
+    })
+
+    expect(firstCodexUserMessage(assistant)).toBeUndefined()
+  })
+
+  /*
+   * A rollout whose first record is present but whose prompt is not yet
+   * written answers nothing, and nothing is not a mismatch: the caller asks
+   * again rather than concluding this thread is somebody else's.
+   */
+  it('answers nothing for a rollout that has only opened', () => {
+    expect(firstCodexUserMessage(rolloutLines[0]!)).toBeUndefined()
   })
 })

@@ -15,6 +15,7 @@ import {
 import { pollProfiler } from '../../runtime/perf'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import { readFeedWindow } from '../feedWindow'
+import { firstUserMessageIn, readFirstPrompt } from '../firstPrompt'
 import type { Provider } from '../provider'
 import {
   claudeSessionAttendance,
@@ -521,6 +522,16 @@ export class ClaudeProvider implements Provider {
   /** Path backing feed(), used to open a terminal that tails the transcript live. */
   transcriptPath(dwarfId: string): string | undefined {
     return this.feedSources.get(dwarfId)
+  }
+
+  /**
+   * The prompt this session opened with (#191) — the head of the same file
+   * feed() reads the tail of, and never redacted: see firstPrompt.ts.
+   */
+  async firstPrompt(dwarfId: string): Promise<string | undefined> {
+    const path = this.feedSources.get(dwarfId)
+    if (path === undefined) return undefined
+    return readFirstPrompt(this.fs, path, firstUserMessageIn(extractClaudeFeed))
   }
 
   private async readSessionEntry(path: string): Promise<ClaudeSessionEntry | null> {
