@@ -19,6 +19,7 @@ import { createWalkBoard, prefersReducedMotion, type WalkState } from '../../lib
 import {
   AUTHORED_INTERIOR_BOX,
   INTERIOR_FIT,
+  MINE_ACTION_SIZE,
   spriteFootprintPx,
   spriteMarginPercent
 } from '../../lib/scene/sceneSizing'
@@ -132,6 +133,13 @@ const spriteMargin = computed(() => spriteMarginPercent(boxSize.value, INTERIOR_
 
 /** The painting's own shape, so the column's frame and the projection agree. */
 const interiorAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
+
+/**
+ * Close, History and Add's shared size in CSS pixels (#197), bound onto the
+ * interior the same way `interiorAspect` is. See `MINE_ACTION_SIZE` for where
+ * the number comes from — nothing in the design source states it.
+ */
+const actionSize = `${MINE_ACTION_SIZE}px`
 
 /**
  * The crew this scene draws: one entry per dwarf id (#165).
@@ -297,7 +305,7 @@ onBeforeUnmount(() => {
     <div
       ref="interiorRef"
       class="interior"
-      :style="{ '--interior-aspect': interiorAspect }"
+      :style="{ '--interior-aspect': interiorAspect, '--action-size': actionSize }"
       :data-fit="INTERIOR_FIT"
     >
       <img class="interior-art" :src="interiorSrc" alt="" aria-hidden="true" draggable="false" />
@@ -551,6 +559,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  /*
+    One size for all three (#197): the design source marks icon sizes
+    Unspecified, and `MINE_ACTION_SIZE` (lib/scene/sceneSizing.ts) is the
+    measured answer — Close's "X" and Add's "+" are the same 18px circle in
+    the verified Canva export, so Add now matches Close and History rather
+    than standing apart at 28px.
+  */
+  width: var(--action-size);
+  height: var(--action-size);
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -560,21 +577,15 @@ onBeforeUnmount(() => {
 .close-mine {
   top: 8px;
   right: 8px;
-  width: 18px;
-  height: 18px;
 }
 /* Close's size and column, one gap below it — the design draws them as a stacked pair. */
 .mine-history {
-  top: calc(8px + 18px + var(--space-nav-gap));
+  top: calc(8px + var(--action-size) + var(--space-nav-gap));
   right: 8px;
-  width: 18px;
-  height: 18px;
 }
 .add-agent {
   right: 8px;
   bottom: 26px;
-  width: 28px;
-  height: 28px;
   background: #12100d;
 }
 .add-agent:disabled {

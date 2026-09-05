@@ -769,6 +769,12 @@ function decidePermission(dwarf: Dwarf, decision: DwarfPermissionDecision): void
 
 onMounted(() => {
   void load()
+  // The map draws every remembered project, not only the live board (#197),
+  // and the map is the DEFAULT area — a read gated on visiting Mines first
+  // left the common case (open the panel, look at the map) stuck on the
+  // board alone. One read at startup, beside the mines poll, is enough:
+  // `selectArea` below still re-reads on every Mines visit to stay fresh.
+  void loadProjects()
   // Adopts the window's REAL shape: which edge it is docked to decides which
   // way the rail's arrow points, and the renderer never chose it.
   void syncLayout()
@@ -813,6 +819,7 @@ onBeforeUnmount(() => unsubscribe?.())
           <MapView
             v-else
             :mines="state.mines"
+            :projects="projects"
             :tokens-observed="state.tokensObserved"
             :materials="state.materials"
             @open="enterMine"

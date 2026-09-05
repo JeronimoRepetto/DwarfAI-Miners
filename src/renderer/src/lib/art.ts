@@ -209,10 +209,11 @@ export const NUGGET_SRC: Record<NuggetMaterial, string> = {
  * The pixel size every map painting is delivered at, measured off the four
  * committed files rather than assumed.
  *
- * Here for the same reason `INTERIOR_ART_SIZE` is: the map is drawn with
- * `object-fit: cover` into a resizable panel, so this ratio is what decides how
- * much of the painting survives the crop — and therefore where a spawn point
- * authored on the painting actually lands in the box (see mapProjection.ts).
+ * Here for the same reason `INTERIOR_ART_SIZE` is: the map is drawn `contain`,
+ * nothing cropped, into a resizable panel whose own frame carries this exact
+ * ratio (#153, #197 — see `.map-frame` in MapView.vue), so this is what
+ * decides where a spawn point authored on the painting actually lands in the
+ * box (see mapProjection.ts).
  *
  * All four variants share it, which is what lets one authored coordinate serve
  * every hour of the day, exactly as the design says it should.

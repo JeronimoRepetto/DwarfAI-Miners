@@ -9,6 +9,12 @@
  * into a position IN the panel; which marker the pointer has been resting on
  * and for how long; and the one tooltip, since only ever one is open and it has
  * to be held inside this box rather than inside a 22px marker.
+ *
+ * `mines` alone used to be everything drawn here — this poll's live board —
+ * while the Mines list drew every remembered project (#197). `population`
+ * below is the fix: `mines` plus a stand-in for every project in `projects`
+ * the board has no live entry for, so the map and the list agree on who is on
+ * it. See lib/map/mapPopulation.ts.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
@@ -22,14 +28,25 @@ import {
 } from '../../lib/map/mapTooltip'
 import type { MapSpawnPoint } from '../../lib/map/spawnPoints.generated'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
+import { mapMines } from '../../lib/map/mapPopulation'
 import { assignSlots } from '../../lib/placement'
-import type { MaterialTotals, Mine } from '../../types'
+import type { MaterialTotals, Mine, ProjectSummary } from '../../types'
 import MineMarker from './MineMarker.vue'
 import VaultChip from '../vault/VaultChip.vue'
 
 const props = withDefaults(
   defineProps<{
     mines: Mine[]
+    /**
+     * Every project the app remembers (#197), the same population the Mines
+     * list draws its cards from (`browseRows`, lib/browse/boardRows.ts). A
+     * project with no live entry in `mines` still gets a marker — see
+     * lib/map/mapPopulation.ts for the rule and why it matches by id rather
+     * than trusting `ProjectSummary.live`. Defaulted to empty rather than
+     * required so every existing `mines`-only caller and test keeps drawing
+     * exactly the board it always did.
+     */
+    projects?: ProjectSummary[]
     tokensObserved?: number
     /**
      * The WHOLE vault by material, not the sum of the mines on screen: main
@@ -38,8 +55,25 @@ const props = withDefaults(
      */
     materials?: MaterialTotals
   }>(),
-  { tokensObserved: 0, materials: undefined }
+  { projects: () => [], tokensObserved: 0, materials: undefined }
 )
+
+/**
+ * What this map actually draws: the board plus a marker-ready stand-in for
+ * every remembered project the board has no live entry for (#197). Everything
+ * below reads THIS rather than `props.mines` directly, so a spawn assignment,
+ * a tooltip or a click target can never quietly disagree about which mine is
+ * on screen.
+ */
+const population = computed(() => mapMines(props.mines, props.projects))
+
+/**
+ * The painting's own shape, bound onto the frame that holds it (#197) exactly
+ * the way `sceneSizing`'s `interiorAspect` is bound onto `.interior` in
+ * MineScene.vue — see that component's own comment for why `aspect-ratio` and
+ * not a computed width is what keeps the two from disagreeing.
+ */
+const mapAspect = `${MAP_ART_SIZE.width} / ${MAP_ART_SIZE.height}`
 
 const emit = defineEmits<{ open: [mineId: string] }>()
 
@@ -55,8 +89,9 @@ const mapArtSrc = computed(() => MAP_BG_SRC[timeVariant.value])
 let clockTick: ReturnType<typeof setInterval> | null = null
 
 /**
- * The rendered size of the map box, which decides how much of the painting the
- * `cover` crop leaves and therefore where every spawn point lands.
+ * The rendered size of the map FRAME — the box that carries the painting's own
+ * aspect ratio (see `mapAspect` above), not the wider column that can stand
+ * around it — which is what decides where every spawn point lands.
  *
  * Zero until something measures it, which is the projection's own documented
  * fallback: an unmeasured box draws the authored coordinates unchanged, so the
@@ -119,7 +154,7 @@ const pointById = new Map(MAP_SPAWN_POINTS.map((point) => [point.id, point]))
  */
 const fallbackSlots = computed(() =>
   assignSlots(
-    props.mines.filter((mine) => mine.mapSite === undefined).map((mine) => mine.id),
+    population.value.filter((mine) => mine.mapSite === undefined).map((mine) => mine.id),
     MAP_SPAWN_POINTS.length
   )
 )
@@ -135,11 +170,11 @@ function pointFor(mine: Mine): MapSpawnPoint {
 /**
  * Where a mine's marker sits in the box, in box percent.
  *
- * Projected from the painting through the same `cover` crop the browser
- * applies, then held inside the box by half a marker: the design's own map
- * container is exactly the painting's ratio and never crops, ours is
- * resizable, and a live mine cropped off the edge is a project the user cannot
- * see. See mapProjection.ts.
+ * Projected from the painting through the same `contain` fit the browser
+ * applies, then held inside the box by half a marker: since the frame now
+ * carries the painting's own aspect ratio (#197) the two agree exactly, but
+ * the clamp still matters for the marker's own half-width hanging over an
+ * edge. See mapProjection.ts.
  */
 function markerPercent(mine: Mine): { x: number; y: number } {
   const box = boxSize.value
@@ -213,7 +248,7 @@ function leaveMarker(): void {
   tooltipMineId.value = null
 }
 
-const tooltipMine = computed(() => props.mines.find((mine) => mine.id === tooltipMineId.value))
+const tooltipMine = computed(() => population.value.find((mine) => mine.id === tooltipMineId.value))
 const tooltipCopy = computed<MineTooltipCopy | null>(() =>
   tooltipMine.value === undefined ? null : mineTooltipCopy(tooltipMine.value)
 )
@@ -231,53 +266,99 @@ const tooltipStyle = computed<Record<string, string>>(() => {
 </script>
 
 <template>
-  <div ref="mapRef" class="map-view" aria-label="World map of active mines">
-    <img
-      class="map-art"
-      :src="mapArtSrc"
-      :data-variant="timeVariant"
-      alt=""
-      aria-hidden="true"
-      draggable="false"
-    />
-    <VaultChip :tokens-observed="tokensObserved" :materials="materials" />
-    <p v-if="mines.length === 0" class="map-empty">
-      The hills are quiet.<br />
-      No agents are mining right now — start a coding session and a mine will appear.
-    </p>
+  <div class="map-view">
     <!--
-      One layer for every marker, so their spawn-point depths (which run to 99)
-      stack against each other and not against the rest of the map: the layer
-      takes its own place in the map's order, under the vault chip and under the
-      tooltip. Without it a marker clamped to the top edge of a wide panel draws
-      over the totals the design puts in that corner.
+      The frame carries the painting's own aspect ratio (#197), so it hugs the
+      art inside whatever column main hands it rather than stretching wider —
+      the way `.interior` does for the mine (MineScene.vue). Everything the
+      painting overlays (the vault chip, the empty state, the markers, the
+      tooltip) lives inside it, so all of it is measured and positioned against
+      the painting's own box rather than a wider phantom one.
     -->
-    <div class="map-markers">
-      <MineMarker
-        v-for="mine in mines"
-        :key="mine.id"
-        :mine="mine"
-        :style="markerStyle(mine)"
-        @open="emit('open', $event)"
-        @mouseenter="hoverMarker(mine.id)"
-        @mouseleave="leaveMarker"
-        @focusin="focusMarker(mine.id)"
-        @focusout="leaveMarker"
+    <div
+      ref="mapRef"
+      class="map-frame"
+      :style="{ '--map-aspect': mapAspect }"
+      aria-label="World map of active mines"
+    >
+      <img
+        class="map-art"
+        :src="mapArtSrc"
+        :data-variant="timeVariant"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
       />
-    </div>
-    <div v-if="tooltipCopy" class="mine-tooltip" role="tooltip" :style="tooltipStyle">
-      <span class="tooltip-tier">{{ tooltipCopy.tier }}</span>
-      <span class="tooltip-name">{{ tooltipCopy.name }}</span>
-      <span class="tooltip-agents">{{ tooltipCopy.agents }}</span>
+      <VaultChip :tokens-observed="tokensObserved" :materials="materials" />
+      <p v-if="population.length === 0" class="map-empty">
+        The hills are quiet.<br />
+        No agents are mining right now — start a coding session and a mine will appear.
+      </p>
+      <!--
+        One layer for every marker, so their spawn-point depths (which run to 99)
+        stack against each other and not against the rest of the map: the layer
+        takes its own place in the map's order, under the vault chip and under the
+        tooltip. Without it a marker clamped to the top edge of a wide panel draws
+        over the totals the design puts in that corner.
+      -->
+      <div class="map-markers">
+        <MineMarker
+          v-for="mine in population"
+          :key="mine.id"
+          :mine="mine"
+          :style="markerStyle(mine)"
+          @open="emit('open', $event)"
+          @mouseenter="hoverMarker(mine.id)"
+          @mouseleave="leaveMarker"
+          @focusin="focusMarker(mine.id)"
+          @focusout="leaveMarker"
+        />
+      </div>
+      <div v-if="tooltipCopy" class="mine-tooltip" role="tooltip" :style="tooltipStyle">
+        <span class="tooltip-tier">{{ tooltipCopy.tier }}</span>
+        <span class="tooltip-name">{{ tooltipCopy.name }}</span>
+        <span class="tooltip-agents">{{ tooltipCopy.agents }}</span>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/*
+ * The outer box PanelFrame hands over: whatever `secondaryColumnWidth`
+ * derived, which is a FLOOR (555px) as well as a fit rule (#153) — a display
+ * short enough to need the floor gets a column wider than the painting's own
+ * ratio wants. `.map-frame` below is what answers that, the same split
+ * MineScene draws between `.mine-scene` and `.interior`.
+ */
 .map-view {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
-  min-height: 100%;
+}
+/*
+ * The frame carries the painting's own aspect ratio, bound from `mapAspect`
+ * (#197): `aspect-ratio` is what keeps it hugging the art rather than
+ * stretching to whatever width the column happens to be and leaving a
+ * letterboxed band down the sides once `secondaryColumnWidth`'s floor binds.
+ * `width: 100%` with `max-height: 100%` lets either axis be the constraint —
+ * a column shorter than the painting's own ratio wants spends its whole
+ * width, a column wider than it (the floored case) spends its whole height
+ * and narrows instead — and `margin: auto` centres whichever axis is left
+ * over, the same rule `.interior` in MineScene.vue evaluates for the mine.
+ */
+.map-frame {
+  position: relative;
+  flex: none;
+  width: 100%;
+  max-height: 100%;
+  aspect-ratio: var(--map-aspect);
+  margin: auto;
+  overflow: hidden;
   background: var(--color-panel-deep);
 }
 .map-art {
@@ -288,9 +369,9 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   /*
     `contain`, not the `cover` screens/map.md asks for: the maintainer's first
     acceptance run ruled that the whole painting must be visible with its aspect
-    preserved and no crop (#153), and the secondary column's own width is derived
-    from the display's height so that the height it is drawn at is the whole of
-    the one it is given (see secondaryColumnWidth in main/shell/panelBounds.ts).
+    preserved and no crop (#153). Since the frame above now carries the
+    painting's own ratio, `contain` never has anything left to letterbox at
+    all — it stays as a defensive fit rather than the load-bearing one.
     Centred on both axes, which is what mapProjection's fit maths assumes.
   */
   object-fit: contain;
