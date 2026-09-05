@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DwarfQuestion, DwarfQuestionAnswerRequest, DwarfQuestionAnswerResult } from '../types'
+import type {
+  DwarfPermissionAnswerRequest,
+  DwarfPermissionRequest,
+  DwarfQuestion,
+  DwarfQuestionAnswerRequest,
+  DwarfQuestionAnswerResult
+} from '../types'
 import { useDwarfQuestion } from './useDwarfQuestion'
 
 function stubApi(
@@ -9,6 +15,18 @@ function stubApi(
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: { answerDwarfQuestion }
+  })
+}
+
+/** Same shape as stubApi, for the permission channel `decide` sends over. */
+function stubPermissionApi(
+  answerDwarfPermission: (
+    request: DwarfPermissionAnswerRequest
+  ) => Promise<DwarfQuestionAnswerResult>
+): void {
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { answerDwarfQuestion: vi.fn(), answerDwarfPermission }
   })
 }
 
@@ -146,5 +164,110 @@ describe('useDwarfQuestion', () => {
 
     await answer('claude:s1', question(), 'SQLite')
     expect(stateFor('claude:s2')).toBeUndefined()
+  })
+})
+
+function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {
+  return {
+    toolUseId: 'toolu_09',
+    toolName: 'Bash',
+    input: 'rm -rf /tmp/scratch',
+    askedAt: '2026-09-05T09:00:00.000Z',
+    ...overrides
+  }
+}
+
+describe('useDwarfQuestion decide (#203)', () => {
+  beforeEach(() => {
+    useDwarfQuestion().clearAll()
+  })
+
+  it('marks the dwarf as answering that prompt until the verdict arrives', async () => {
+    const pending = deferred<DwarfQuestionAnswerResult>()
+    stubPermissionApi(() => pending.promise)
+    const { decide, stateFor } = useDwarfQuestion()
+
+    const deciding = decide('claude:s1', permission(), 'allow')
+    expect(stateFor('claude:s1')).toEqual({ phase: 'answering', toolUseId: 'toolu_09' })
+
+    pending.release({ answered: true })
+    await deciding
+    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_09' })
+  })
+
+  it('sends the dwarf, the prompt’s own toolUseId and the chosen decision', async () => {
+    const sent = vi.fn<
+      (request: DwarfPermissionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
+    >(() => Promise.resolve({ answered: true }))
+    stubPermissionApi(sent)
+    const { decide } = useDwarfQuestion()
+
+    await decide('claude:s1', permission(), 'deny')
+    expect(sent).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_09',
+      decision: 'deny'
+    })
+  })
+
+  it('keeps main’s refusal and its reason so the panel can explain itself', async () => {
+    stubPermissionApi(() =>
+      Promise.resolve({ answered: false, error: 'That prompt is no longer open.' })
+    )
+    const { decide, stateFor } = useDwarfQuestion()
+
+    await decide('claude:s1', permission(), 'allow')
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'refused',
+      toolUseId: 'toolu_09',
+      error: 'That prompt is no longer open.'
+    })
+  })
+
+  it('treats a bridge that never answered as a refusal, not as an answer', async () => {
+    stubPermissionApi(() => Promise.reject(new Error('bridge down')))
+    const { decide, stateFor } = useDwarfQuestion()
+
+    await decide('claude:s1', permission(), 'allow')
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'refused',
+      toolUseId: 'toolu_09',
+      error: 'The panel lost contact with the app.'
+    })
+  })
+
+  it('never releases the same prompt twice while one decision is in flight', async () => {
+    const pending = deferred<DwarfQuestionAnswerResult>()
+    const sent = vi.fn<
+      (request: DwarfPermissionAnswerRequest) => Promise<DwarfQuestionAnswerResult>
+    >(() => pending.promise)
+    stubPermissionApi(sent)
+    const { decide } = useDwarfQuestion()
+
+    const first = decide('claude:s1', permission(), 'allow')
+    await decide('claude:s1', permission(), 'deny')
+    expect(sent).toHaveBeenCalledTimes(1)
+
+    pending.release({ answered: true })
+    await first
+  })
+
+  it('shares one store with answer, keyed by dwarf rather than by kind of prompt', async () => {
+    // #203's whole reason to reuse DwarfAnswerState rather than a shape of its
+    // own: a verdict is about a toolUseId, whichever kind of prompt named it.
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
+        answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true })
+      }
+    })
+    const { answer, decide, stateFor } = useDwarfQuestion()
+
+    await answer('claude:s1', question(), 'SQLite')
+    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_01' })
+
+    await decide('claude:s1', permission(), 'allow')
+    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_09' })
   })
 })
