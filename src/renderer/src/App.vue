@@ -343,9 +343,34 @@ function raisePanel(): void {
 function adoptWatchedFeed(watchedFeed: WatchedFeedPush | undefined): void {
   if (watchedFeed === undefined || watchedFeed.dwarfId !== openDwarfId.value) return
   feedToken++
-  selectedFeedDwarfId = watchedFeed.dwarfId
-  selectedFeed.value = watchedFeed.feed
+  replaceSelectedFeed(watchedFeed.dwarfId, watchedFeed.feed, 'push')
   pushedFeedSignal = watchedFeedSignalKey(watchedFeed.dwarfId, selectedDwarf.value)
+}
+
+/**
+ * Every replacement of `selectedFeed` goes through here (#249), so the one
+ * failure nobody has been able to explain — a panel that lost the words it
+ * was showing while its dwarf stayed live — leaves a line in the dev console
+ * naming which of the two paths did it. Logged only on a LOSS for the same
+ * dwarf: fewer messages than the feed it replaces, or one that stopped being
+ * readable. A feed that grows is the ordinary case and stays silent, and a
+ * change of dwarf is a first read rather than a loss.
+ */
+function replaceSelectedFeed(dwarfId: string, next: DwarfFeedResult, via: 'push' | 'pull'): void {
+  if (import.meta.env.DEV) {
+    const previous = selectedFeed.value
+    const lost =
+      previous !== undefined &&
+      selectedFeedDwarfId === dwarfId &&
+      (next.messages.length < previous.messages.length || (previous.readable && !next.readable))
+    if (lost) {
+      console.warn(
+        `[renderer] feed for ${dwarfId} shrank via ${via}: ${previous.messages.length} -> ${next.messages.length}, readable=${next.readable}`
+      )
+    }
+  }
+  selectedFeedDwarfId = dwarfId
+  selectedFeed.value = next
 }
 
 function update(snapshot: MinesSnapshot): void {
@@ -576,7 +601,7 @@ async function readSelectedFeed(dwarfId: string): Promise<void> {
   if (isFirstRead) selectedFeed.value = undefined
   try {
     const result = await window.api.getDwarfFeed(dwarfId)
-    if (feedToken === token) selectedFeed.value = result
+    if (feedToken === token) replaceSelectedFeed(dwarfId, result, 'pull')
   } catch {
     // The bridge is the only source there is. Saying "no transcript this
     // panel can read" is exactly what happened, and it is what the panel

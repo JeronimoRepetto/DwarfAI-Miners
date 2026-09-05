@@ -524,6 +524,9 @@ export class AgentRuntime {
   private watchedFeedFor: string | null = null
   /** That dwarf's feedSignalOf() as of the last read, so a poll can tell whether it moved. */
   private watchedFeedSignal: string | undefined = undefined
+  /** The shape of the last watched feed pushed, so a poll can notice one that shrank (#249). */
+  private lastWatchedFeedShape: { dwarfId: string; count: number; readable: boolean } | undefined =
+    undefined
 
   constructor(options: RuntimeOptions) {
     const home = options.home ?? homedir()
@@ -960,6 +963,27 @@ export class AgentRuntime {
           watchedDwarf === undefined
             ? undefined
             : { dwarfId: watchedDwarf.id, feed: await this.dwarfFeed(watchedDwarf.id) }
+        // A watched feed that came back SMALLER than the one this poll last
+        // pushed for the same dwarf is the main-side half of #249's unexplained
+        // loss, and nothing else here would say so. One line, only on a loss.
+        if (watchedFeed !== undefined) {
+          const last = this.lastWatchedFeedShape
+          const shrank =
+            last !== undefined &&
+            last.dwarfId === watchedFeed.dwarfId &&
+            (watchedFeed.feed.messages.length < last.count ||
+              (last.readable && !watchedFeed.feed.readable))
+          if (shrank) {
+            console.warn(
+              `[runtime] watched feed for ${watchedFeed.dwarfId} shrank: ${last.count} -> ${watchedFeed.feed.messages.length}, readable=${watchedFeed.feed.readable}`
+            )
+          }
+          this.lastWatchedFeedShape = {
+            dwarfId: watchedFeed.dwarfId,
+            count: watchedFeed.feed.messages.length,
+            readable: watchedFeed.feed.readable
+          }
+        }
         // A poll that re-observed an unchanged world does not wake the panel
         // (#25). getMines() still answers from this.mines, so a renderer that
         // starts or reloads mid-quiet-spell gets the current state regardless.
