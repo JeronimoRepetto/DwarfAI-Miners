@@ -29,7 +29,9 @@ describe('Poller', () => {
       providers,
       intervalMs,
       tierOf: () => 'bronze',
-      onUpdate: (mines) => updates.push(mines),
+      onUpdate: (mines) => {
+        updates.push(mines)
+      },
       logError: (_message, error) => errors.push(error)
     })
   }
@@ -89,6 +91,65 @@ describe('Poller', () => {
     await vi.advanceTimersByTimeAsync(2000)
     expect(updates).toHaveLength(4)
   })
+
+  /**
+   * #196: onUpdate now sometimes does real async work of its own (the runtime
+   * reads a watched dwarf's feed before publishing) rather than being a plain
+   * synchronous callback. `tick()` must stay "in flight" for the whole of
+   * that work, not just for the scan — otherwise the scheduled interval could
+   * fire again, scan, and publish a NEWER snapshot before the slower pass
+   * ever reaches its own publish, so the two would land out of order and
+   * leave PublishGate's `lastPublished` behind a snapshot the panel never saw.
+   */
+  it('keeps a slow async onUpdate from being overtaken by the next scheduled tick', async () => {
+    vi.useFakeTimers()
+    let release: () => void = () => undefined
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let scanCalls = 0
+    let onUpdateCalls = 0
+    const poller = new Poller({
+      providers: [
+        fakeProvider('claude', async () => {
+          scanCalls++
+          return [snapshotAt('C:\\A', scanCalls)]
+        })
+      ],
+      intervalMs: 100,
+      tierOf: () => 'bronze',
+      onUpdate: async (mines) => {
+        onUpdateCalls++
+        updates.push(mines)
+        // Only the first publish is slow, so a second one proves the
+        // interval was free to scan again rather than merely delayed.
+        if (onUpdateCalls === 1) await blocked
+      }
+    })
+    try {
+      poller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(scanCalls).toBe(1)
+      expect(onUpdateCalls).toBe(1) // called, but still awaiting `blocked`
+
+      // The interval would fire twice more in this window if `ticking` had
+      // already cleared after the scan; it must not scan again while the
+      // first pass's publish is still pending.
+      await vi.advanceTimersByTimeAsync(250)
+      expect(scanCalls).toBe(1)
+      expect(onUpdateCalls).toBe(1)
+
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onUpdateCalls).toBe(1) // resolved now; no new call caused by this alone
+
+      // Only now, with the first pass fully finished, may the interval scan again.
+      await vi.advanceTimersByTimeAsync(100)
+      expect(scanCalls).toBe(2)
+    } finally {
+      poller.stop()
+    }
+  })
 })
 
 /**
@@ -105,7 +166,9 @@ describe('Poller.nudge', () => {
       intervalMs: 2000,
       nudgeWindowMs,
       tierOf: () => 'bronze',
-      onUpdate: (mines) => updates.push(mines)
+      onUpdate: (mines) => {
+        updates.push(mines)
+      }
     })
   }
 

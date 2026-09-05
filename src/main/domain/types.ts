@@ -65,7 +65,8 @@ export type {
   SessionStatus,
   ShortcutState,
   TextDeliveryChannel,
-  WaitingReason
+  WaitingReason,
+  WatchedFeedPush
 } from '../../shared/contracts'
 
 /**

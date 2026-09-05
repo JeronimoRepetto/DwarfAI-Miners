@@ -1493,6 +1493,30 @@ export interface DwarfPermissionAnswerRequest {
 }
 
 /**
+ * The one dwarf's feed a poll re-read alongside its snapshot (#196), because
+ * the panel told main which observed dwarf it has open (see
+ * `IPC_CHANNELS.setWatchedDwarf`) and that dwarf's own transcript signal
+ * moved on this pass.
+ *
+ * Lives ON `MinesSnapshot` rather than as a push of its own, and that choice
+ * is what keeps PublishGate honest without teaching it a new field: the gate
+ * already re-publishes whenever `mines` differs from what it last sent, and
+ * the one thing that triggers a read here — `transcriptUpdatedAt` or
+ * `lastMessage` moving — IS a field of a dwarf inside `mines`. A snapshot
+ * that carries a fresh `watchedFeed` has therefore always already changed
+ * `mines` too, so the gate publishes it for that reason alone; a push
+ * channel of its own would have needed a second gate to stay just as honest.
+ *
+ * `dwarfId` names which dwarf this feed answers for, because the panel's
+ * watch can move between one poll and the next: a feed arriving for a dwarf
+ * the renderer is no longer watching must be ignored rather than adopted.
+ */
+export interface WatchedFeedPush {
+  dwarfId: string
+  feed: DwarfFeedResult
+}
+
+/**
  * Wire payload for both the getMines() pull and the minesUpdated push: the
  * per-mine breakdown plus the cross-mine vault total, so the panel never has
  * to re-derive the grand total from a partial view of the mines.
@@ -1514,6 +1538,14 @@ export interface MinesSnapshot {
    * Optional for the same compatibility reason as Mine.materials.
    */
   materials?: MaterialTotals
+  /**
+   * The watched dwarf's feed, read on the SAME pass that already re-scanned
+   * its transcript (#196) — never a second, renderer-driven pull a tick
+   * later. Absent on every poll that carries no watch, or whose watched
+   * dwarf's signal did not move; see WatchedFeedPush for why that absence
+   * still keeps PublishGate honest.
+   */
+  watchedFeed?: WatchedFeedPush
 }
 
 /**
@@ -1874,6 +1906,15 @@ export const IPC_CHANNELS = {
    * the words without either attempt.
    */
   getDwarfFeed: 'dwarf:feed',
+  /**
+   * The renderer reporting which OBSERVED dwarf its message panel currently
+   * has open, or that none is (#196) — never a held session's, which needs
+   * no push because it already carries its own conversation on every
+   * snapshot (see Dwarf.conversation). One-way, like `retireDwarf`: main
+   * folds the watch into its next poll's pass rather than answering a
+   * verdict, so there is nothing here to wait for.
+   */
+  setWatchedDwarf: 'panel:watchDwarfFeed',
   /**
    * Every dwarf that has spoken in one mine, with its latest messages (#192),
    * read from the transcripts under the mine's project folder on request.

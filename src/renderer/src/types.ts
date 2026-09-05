@@ -57,7 +57,8 @@ export type {
   ProjectSummary,
   ShortcutState,
   TextDeliveryChannel,
-  WaitingReason
+  WaitingReason,
+  WatchedFeedPush
 } from '../../shared/contracts'
 
 /**

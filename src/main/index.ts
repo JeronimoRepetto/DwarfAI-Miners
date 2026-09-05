@@ -32,7 +32,8 @@ import type {
   ProjectQuery,
   ProjectQueryResult,
   ProjectSortDirection,
-  ProjectSortKey
+  ProjectSortKey,
+  WatchedFeedPush
 } from '../shared/contracts'
 import { IPC_CHANNELS, isDwarfProvider, isMineTier } from '../shared/contracts'
 import {
@@ -106,6 +107,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
+  ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
@@ -310,11 +312,16 @@ async function chooseProjectDirectory(parent: BrowserWindow): Promise<string | n
  * with no dwarf running right now, and that is exactly where backfilled coal
  * lives.
  */
-function toMinesSnapshot(mines: Mine[], materials: MaterialTotals | undefined): MinesSnapshot {
+function toMinesSnapshot(
+  mines: Mine[],
+  materials: MaterialTotals | undefined,
+  watchedFeed?: WatchedFeedPush
+): MinesSnapshot {
   return {
     mines,
     tokensObserved: sumTokensObserved(mines),
-    ...(materials === undefined ? {} : { materials })
+    ...(materials === undefined ? {} : { materials }),
+    ...(watchedFeed === undefined ? {} : { watchedFeed })
   }
 }
 
@@ -453,9 +460,12 @@ async function init(): Promise<void> {
       appPath: app.getAppPath()
     },
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
-    onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => {
+    onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       if (!mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials))
+        mainWindow.webContents.send(
+          IPC_CHANNELS.minesUpdated,
+          toMinesSnapshot(mines, materials, watchedFeed)
+        )
       }
     }
   })
@@ -629,6 +639,15 @@ async function init(): Promise<void> {
   ipcMain.handle(IPC_CHANNELS.getDwarfFeed, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noFeed
     return runtime?.dwarfFeed(dwarfId) ?? noFeed
+  })
+  // The renderer reporting which observed dwarf its message panel has open,
+  // or that none is (#196). Boundary is string-or-null, unlike every other id
+  // here: null is itself a real answer ("nobody is watched") rather than a
+  // malformed payload collapsed to ''. Anything else is refused outright —
+  // main's watch state changes only from a value this boundary could prove.
+  ipcMain.on(IPC_CHANNELS.setWatchedDwarf, (_event, payload: unknown) => {
+    if (payload !== null && typeof payload !== 'string') return
+    runtime?.watchDwarfFeed(payload)
   })
   // A mine this process could not read history for (#192) — never "nobody has
   // spoken here", which is what an empty list with `readable: true` would say.

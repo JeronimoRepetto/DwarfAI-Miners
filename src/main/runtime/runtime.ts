@@ -13,6 +13,7 @@ import {
   type AgentLaunchRequest,
   type AgentLaunchResult,
   type AgentProviderList,
+  type Dwarf,
   type DwarfActivation,
   type DwarfFeedResult,
   type DwarfKickRequest,
@@ -36,7 +37,8 @@ import {
   type ProjectQuery,
   type ProjectQueryResult,
   type ProjectSummary,
-  type TextDeliveryChannel
+  type TextDeliveryChannel,
+  type WatchedFeedPush
 } from '../domain/types'
 import {
   collapseDuplicateMines,
@@ -98,6 +100,17 @@ const FEED_LIMIT = 12
 /** No transcript this app can read — never the same claim as one that is empty. */
 function unreadableFeed(): DwarfFeedResult {
   return { readable: false, messages: [] }
+}
+
+/**
+ * The one composite signal a watched dwarf's feed is re-read on (#196) — the
+ * same two fields the renderer's own feed watch keys on (see App.vue):
+ * `transcriptUpdatedAt` moves for any writer at all, and `lastMessage` is
+ * carried alongside it for a provider that has not stamped a raw mtime.
+ * Folded into one string so a single comparison catches either moving.
+ */
+function feedSignalOf(dwarf: Dwarf): string {
+  return `${dwarf.transcriptUpdatedAt ?? ''}|${dwarf.lastMessage ?? ''}`
 }
 
 /** No history this app could read for the mine — never "nobody has spoken here" (#192). */
@@ -248,8 +261,13 @@ export interface RuntimeOptions {
    * Publishes one poll's result. `materials` is the WHOLE vault, not the sum
    * of these mines: it includes projects with no crew right now, which is what
    * makes backfilled coal visible in the global chip.
+   *
+   * `watchedFeed` is the one dwarf's feed this pass re-read because the panel
+   * is watching it and its own signal moved (#196) — absent on every poll
+   * that carries no watch, or whose watched dwarf's signal did not move. See
+   * watchDwarfFeed and WatchedFeedPush for the whole rule.
    */
-  onMinesUpdated: (mines: Mine[], materials: MaterialTotals) => void
+  onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => void
   home?: string
   fs?: FsLike
   /** Read-only SQLite access for the Codex registry; injected for tests. */
@@ -480,6 +498,18 @@ export class AgentRuntime {
    * a click landing mid-poll reads a whole generation rather than half of one.
    */
   private heldCrewTargets: ReadonlyMap<string, TextDeliveryTarget> = new Map()
+  /**
+   * The observed dwarf the panel currently has open, or null (#196) — set by
+   * watchDwarfFeed, which the IPC boundary calls whenever the renderer's
+   * selection changes. Never a held session's: those carry their own
+   * conversation and watchedDwarfNeedingRead skips them regardless of this
+   * field.
+   */
+  private watchedDwarfId: string | null = null
+  /** Which dwarf watchedFeedSignal below was last read for, or null before any read. */
+  private watchedFeedFor: string | null = null
+  /** That dwarf's feedSignalOf() as of the last read, so a poll can tell whether it moved. */
+  private watchedFeedSignal: string | undefined = undefined
 
   constructor(options: RuntimeOptions) {
     const home = options.home ?? homedir()
@@ -731,7 +761,7 @@ export class AgentRuntime {
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
       tierOf,
-      onUpdate: (rawMines) => {
+      onUpdate: async (rawMines) => {
         const now = this.now()
         // The board is discovery PLUS declaration (#85), and this is the one
         // place that knows it — aggregateMines stays a projection of the
@@ -878,13 +908,35 @@ export class AgentRuntime {
           'dwarfs',
           published.reduce((total, mine) => total + mine.dwarfs.length, 0)
         )
+        // The one feed the panel is watching (#196), read HERE — on the same
+        // pass that already re-scanned this dwarf's transcript to build
+        // `published` above — rather than left for the renderer to notice the
+        // mtime move and pull a second time over its own IPC round trip.
+        //
+        // watchedDwarfNeedingRead() is a PLAIN synchronous lookup, and the
+        // `await` below is reached only inside the branch that actually needs
+        // a disk read: an unwatched poll (or one whose watched dwarf's signal
+        // did not move) never evaluates an `await` at all, so this stays
+        // exactly as synchronous as the poll always was, all the way through
+        // to the publish below — the same budget discipline #191's launch
+        // receipts and #203's held-permission stamps already hold on this
+        // callback. Only a genuine read costs the one microtask a real await
+        // always does, and it costs it alone: the read is bounded to a single
+        // dwarf's transcript tail (FEED_LIMIT messages), never the board's.
+        const watchedDwarf = this.watchedDwarfNeedingRead(published)
+        const watchedFeed: WatchedFeedPush | undefined =
+          watchedDwarf === undefined
+            ? undefined
+            : { dwarfId: watchedDwarf.id, feed: await this.dwarfFeed(watchedDwarf.id) }
         // A poll that re-observed an unchanged world does not wake the panel
         // (#25). getMines() still answers from this.mines, so a renderer that
         // starts or reloads mid-quiet-spell gets the current state regardless.
         const totals = this.ledger.totals()
         if (this.publishGate.shouldPublish(published, totals)) {
           pollProfiler.count('push')
-          pollProfiler.measureSync('ipc', () => options.onMinesUpdated(published, totals))
+          pollProfiler.measureSync('ipc', () =>
+            options.onMinesUpdated(published, totals, watchedFeed)
+          )
         } else {
           pollProfiler.count('skip')
         }
@@ -1273,6 +1325,48 @@ export class AgentRuntime {
    */
   nudge(): void {
     this.poller.nudge()
+  }
+
+  /**
+   * Told which observed dwarf the panel currently has open, or that none is
+   * (#196) — called from the `panel:watchDwarfFeed` boundary whenever the
+   * renderer's selection changes. Resets the remembered signal so a dwarf
+   * watched again after a gap is read once more rather than assumed
+   * unchanged from whatever the last watch happened to see.
+   */
+  watchDwarfFeed(dwarfId: string | null): void {
+    this.watchedDwarfId = dwarfId
+    this.watchedFeedFor = null
+    this.watchedFeedSignal = undefined
+  }
+
+  /**
+   * The watched dwarf whose feed THIS poll must read, or undefined when
+   * there is nothing to read (#196) — a PLAIN synchronous decision, kept
+   * apart from the actual read so the poll callback can await the read only
+   * when this says so, and stay just as synchronous as it always was on
+   * every other pass (see the call site in the poller's onUpdate).
+   *
+   * Bounded to exactly the one watched dwarf, and true only once its own
+   * feedSignalOf() differs from the one last carried — an idle watch must
+   * cost nothing beyond the scan every other poll already does. A held
+   * session's dwarf is skipped outright: `stampHeldConversation` has already
+   * given it its own first-hand `conversation` by this point in the pass, so
+   * nothing here would tell the panel anything it does not already have.
+   *
+   * Updates the remembered signal eagerly, on the same call that decides to
+   * read: a caller that asks twice in one pass must not read twice.
+   */
+  private watchedDwarfNeedingRead(mines: Mine[]): Dwarf | undefined {
+    const watchedId = this.watchedDwarfId
+    if (watchedId === null) return undefined
+    const dwarf = mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === watchedId)
+    if (dwarf === undefined || dwarf.conversation !== undefined) return undefined
+    const signal = feedSignalOf(dwarf)
+    if (dwarf.id === this.watchedFeedFor && signal === this.watchedFeedSignal) return undefined
+    this.watchedFeedFor = dwarf.id
+    this.watchedFeedSignal = signal
+    return dwarf
   }
 
   getMines(): Mine[] {
