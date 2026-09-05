@@ -199,6 +199,49 @@ describe('MineHistoryPanel with nothing to show', () => {
   })
 })
 
+describe('MineHistoryPanel reached-start notice (#227)', () => {
+  // The design source (`screens/history.md`) never asked for this notice, so
+  // both its placement (top of the tab, above the scrolling transcript) and
+  // its copy are the issue's own — see HISTORY_TRUNCATED_NOTE.
+  it('draws the notice at the top of a tab whose read did not reach the start', () => {
+    const wrapper = panel({
+      history: { readable: true, speakers: [{ ...NEWEST, reachedStart: false }] }
+    })
+    expect(wrapper.find('.history-notice').exists()).toBe(true)
+    expect(wrapper.find('.history-notice').text()).toBe(
+      'This tab does not reach the start of the conversation.'
+    )
+  })
+
+  it('draws no notice when the read reached the start', () => {
+    const wrapper = panel({
+      history: { readable: true, speakers: [{ ...NEWEST, reachedStart: true }] }
+    })
+    expect(wrapper.find('.history-notice').exists()).toBe(false)
+  })
+
+  it('draws no notice when the flag is absent, since absent means unknown', () => {
+    const wrapper = panel({ history: { readable: true, speakers: [NEWEST] } })
+    expect(wrapper.find('.history-notice').exists()).toBe(false)
+  })
+
+  it('follows the selected tab, showing only for the speaker the flag names', async () => {
+    const wrapper = panel({
+      history: {
+        readable: true,
+        speakers: [
+          { ...NEWEST, reachedStart: true },
+          { ...OLDER, reachedStart: false }
+        ]
+      }
+    })
+    expect(wrapper.find('.history-notice').exists()).toBe(false)
+
+    await wrapper.findAll('.history-tab')[1]!.trigger('click')
+    expect(wrapper.find('.history-notice').exists()).toBe(true)
+  })
+})
+
 describe('MineHistoryPanel closing', () => {
   it('closes from its own control at the upper right', async () => {
     const wrapper = panel()

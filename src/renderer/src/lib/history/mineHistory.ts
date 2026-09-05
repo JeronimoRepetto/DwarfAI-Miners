@@ -121,3 +121,27 @@ export function historyNote(history: MineHistoryResult | undefined): string | nu
   if (!history.readable) return HISTORY_UNREADABLE_NOTE
   return history.speakers.length === 0 ? HISTORY_EMPTY_NOTE : null
 }
+
+/**
+ * The one line #227 adds, admitting that a tab's oldest visible message is
+ * not its conversation's first. `screens/history.md` never asked for this —
+ * the design source is silent on both the placement and the copy — so both
+ * are this issue's own invention, the way `panelHeight.ts` names the
+ * constants the design left it to invent rather than pretending they came
+ * from the PDF.
+ */
+export const HISTORY_TRUNCATED_NOTE = 'This tab does not reach the start of the conversation.'
+
+/**
+ * The truncation notice for one tab, or null when there is nothing to admit.
+ *
+ * `speaker.reachedStart` is `false`, `true` or absent (`MineHistorySpeaker` in
+ * `contracts.ts`): only `false` draws the notice. Absent means unknown and
+ * unknown says nothing, exactly like a known `true` — the design's own rule
+ * for this field, so a future source that cannot compute it stays silent by
+ * default rather than accidentally alarming. No selected speaker at all
+ * (`undefined`) has nothing to admit either.
+ */
+export function speakerHistoryNotice(speaker: MineHistorySpeaker | undefined): string | null {
+  return speaker?.reachedStart === false ? HISTORY_TRUNCATED_NOTE : null
+}

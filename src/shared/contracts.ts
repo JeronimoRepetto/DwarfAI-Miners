@@ -1138,6 +1138,18 @@ export const MINE_HISTORY_MESSAGE_LIMIT = 50
  * "everything ever said" never was. `lastMessageAt` is the newest message's
  * own timestamp as epoch ms, falling back to the file's mtime when the line
  * carried none; the panel orders tabs by it, newest first.
+ *
+ * `reachedStart` is the fact `readFeedWindow` (`src/main/providers/feedWindow.ts`)
+ * already computes and used to throw away (#227): whether the bounded read
+ * behind `messages` reached the transcript's own start. `false` means the
+ * widest window still filled completely and came up short of the message
+ * limit — there is more conversation behind the oldest message shown, and the
+ * panel says so. `true` means the read reached the start on its own, before
+ * or at the ceiling; sent explicitly rather than left absent because this
+ * reader always knows one or the other. Absent is reserved for a source that
+ * cannot say, and means UNKNOWN, never "reached" — an absent flag draws no
+ * notice, exactly as a known `true` does, so a future source that cannot
+ * compute this is silent by default rather than accidentally alarming.
  */
 export interface MineHistorySpeaker {
   id: string
@@ -1146,6 +1158,7 @@ export interface MineHistorySpeaker {
   name: string
   lastMessageAt: number
   messages: FeedMessage[]
+  reachedStart?: boolean
 }
 
 /**

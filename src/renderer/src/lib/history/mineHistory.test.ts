@@ -3,12 +3,14 @@ import { MINE_HISTORY_MESSAGE_LIMIT, type FeedMessage, type MineHistorySpeaker }
 import {
   HISTORY_EMPTY_NOTE,
   HISTORY_READING_NOTE,
+  HISTORY_TRUNCATED_NOTE,
   HISTORY_UNREADABLE_NOTE,
   formatHistoryTimestamp,
   historyNote,
   latestMessages,
   orderSpeakers,
   selectedSpeakerId,
+  speakerHistoryNotice,
   speakerRows
 } from './mineHistory'
 
@@ -204,5 +206,32 @@ describe('historyNote', () => {
 
   it('has nothing to say once there is a transcript to show', () => {
     expect(historyNote({ readable: true, speakers: [speaker()] })).toBeNull()
+  })
+})
+
+/*
+ * #227: `screens/history.md` never asked for this notice — the design source
+ * is silent on it (see `skills/ui-rebuild/SKILL.md`) — so both the placement
+ * (top of the tab, in MineHistoryPanel.vue) and this copy are the issue's own,
+ * the way `panelHeight.ts` names the constants the design left it to invent.
+ * Absent means unknown and unknown says nothing, exactly like a known `true`:
+ * only a known `false` is worth admitting to the person reading the tab.
+ */
+describe('speakerHistoryNotice', () => {
+  it('says nothing for a speaker whose read reached the start of its transcript', () => {
+    expect(speakerHistoryNotice(speaker({ reachedStart: true }))).toBeNull()
+  })
+
+  it('says nothing when the flag is absent, since absent means unknown', () => {
+    expect(speakerHistoryNotice(speaker())).toBeNull()
+  })
+
+  it('says nothing when there is no selected speaker at all', () => {
+    expect(speakerHistoryNotice(undefined)).toBeNull()
+  })
+
+  it('admits the tab does not reach the start when the read stopped short of it', () => {
+    expect(speakerHistoryNotice(speaker({ reachedStart: false }))).toBe(HISTORY_TRUNCATED_NOTE)
+    expect(HISTORY_TRUNCATED_NOTE.split('\n')).toHaveLength(1)
   })
 })
