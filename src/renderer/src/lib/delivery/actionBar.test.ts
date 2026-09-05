@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
 import { PANEL_OBSERVER, type Dwarf } from '../../types'
 import {
+  APPROVAL_AT_TERMINAL_NOTE,
+  approvalNote,
   buildActionBar,
   CHANNEL_HINT,
   KICK_HINT,
@@ -378,5 +380,41 @@ describe('buildActionBar', () => {
       expect(entry.name).toBe('Console')
       expect(entry.hint).toBe("Focus this session's console.")
     })
+  })
+})
+
+describe('approvalNote', () => {
+  const asked = defaultDwarf({ waitingReason: 'approval', textDelivery: 'terminal' })
+
+  it('names the terminal for a session whose CLI is asking the person to approve', () => {
+    expect(approvalNote(asked)).toBe(APPROVAL_AT_TERMINAL_NOTE)
+  })
+
+  it('says nothing for a dwarf that is merely waiting', () => {
+    expect(approvalNote(defaultDwarf({ status: 'waiting' }))).toBeNull()
+    expect(approvalNote(defaultDwarf({ waitingReason: 'user-input' }))).toBeNull()
+    expect(approvalNote(defaultDwarf({ waitingReason: 'unknown' }))).toBeNull()
+  })
+
+  it('says nothing where the panel can decide the prompt itself', () => {
+    // A held session's prompt is answered from the card (#246), so pointing
+    // somebody at a terminal would send them away from the control that works.
+    const held = defaultDwarf({
+      waitingReason: 'approval',
+      pendingPermission: {
+        toolUseId: 'tool-1',
+        toolName: 'Bash',
+        title: 'Run a command',
+        input: 'pnpm test',
+        askedAt: '2026-09-04T00:00:00.000Z'
+      }
+    })
+    expect(approvalNote(held)).toBeNull()
+  })
+
+  it('says nothing once the session behind it has ended', () => {
+    // The grace window freezes the last real snapshot, mark and all, and there
+    // is no dialog left at that terminal to answer.
+    expect(approvalNote(defaultDwarf({ waitingReason: 'approval', status: 'leaving' }))).toBeNull()
   })
 })

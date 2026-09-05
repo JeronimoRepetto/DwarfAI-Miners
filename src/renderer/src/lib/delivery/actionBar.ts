@@ -146,6 +146,43 @@ export const NO_EFFORT_REASON = "No provider supports changing a running session
 export const CONSOLE_HINT = "Focus this session's console."
 
 /**
+ * What the panel says about an observed session whose CLI is holding a
+ * permission dialog open (#203).
+ *
+ * Two facts and no third. The dialog IS open — Claude Code said so through its
+ * own hook, which is what put `'approval'` on the dwarf — and the only place it
+ * can be answered is the terminal that is drawing it. So the sentence names the
+ * terminal rather than offering Allow and Deny: the keystrokes that would work
+ * that dialog from here have never been measured on a live build, and a control
+ * that types an unverified key into somebody's console is worse than a sentence
+ * telling them where the dialog is.
+ *
+ * A prompt this panel can decide ITSELF is a different case and never reaches
+ * this: a held session's card answers it structurally (#246), and pointing
+ * somebody at a terminal would send them away from the control that works.
+ */
+export const APPROVAL_AT_TERMINAL_NOTE = 'Waiting for your approval in the terminal.'
+
+/** The action beside that sentence, which is the console focus the panel already has. */
+export const JUMP_TO_TERMINAL_NAME = 'Jump to the terminal'
+
+/**
+ * That sentence for this dwarf, or null when it does not apply.
+ *
+ * Read off `waitingReason` and nothing weaker — the reason is derived from the
+ * provider's own structured evidence, so this repeats a finding rather than
+ * inferring one. A `'leaving'` dwarf is excluded for the reason every other
+ * control here excludes it: the grace window freezes the last real snapshot,
+ * mark and all, and there is no dialog left at that terminal to answer.
+ */
+export function approvalNote(dwarf: Dwarf): string | null {
+  if (dwarf.waitingReason !== 'approval') return null
+  if (dwarf.pendingPermission !== undefined) return null
+  if (hasEnded(dwarf)) return null
+  return APPROVAL_AT_TERMINAL_NOTE
+}
+
+/**
  * A 'leaving' dwarf's agent has already finished (#192): its pid is stale and
  * its session name no longer resolves, which is why main refuses to write to
  * one. The channel it HAD is still on the dwarf — the grace window freezes the

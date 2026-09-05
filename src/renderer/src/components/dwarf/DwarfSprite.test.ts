@@ -395,6 +395,38 @@ describe('DwarfSprite', () => {
       expect(wrapper.find('.status-important').exists()).toBe(false)
     })
 
+    /*
+     * #203's observed half. The design names three status icons and no fourth,
+     * and its important-dialog glyph is "a question/consultation" — a session
+     * asking whether it may proceed is one, so it raises the same glyph rather
+     * than one this repository invented. Only the title tells the two apart,
+     * because only the wording differs.
+     */
+    it('raises the important-dialog glyph for a session asking to be allowed to proceed', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'waiting', waitingReason: 'approval' }) }
+      })
+      expect(wrapper.find('.status-important').exists()).toBe(true)
+      expect(wrapper.get('.status-important').attributes('title')).toMatch(/approv/i)
+    })
+
+    it('raises nothing important for a dwarf whose provider named no condition', () => {
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'waiting', waitingReason: 'unknown' }) }
+      })
+      expect(wrapper.find('.status-important').exists()).toBe(false)
+    })
+
+    it('raises the glyph even where the provider still reads the session as working', () => {
+      // A hook can name the open dialog before the registry records that the
+      // session stopped, and the two facts have two sources: the mark must not
+      // wait on the provider catching up (see stampPermissionPrompts).
+      const wrapper = mount(DwarfSprite, {
+        props: { dwarf: defaultDwarf({ status: 'working', waitingReason: 'approval' }) }
+      })
+      expect(wrapper.find('.status-important').exists()).toBe(true)
+    })
+
     it('colours the message glyph by rank, as the component table states', () => {
       const worker = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'worker' }), bubbleText: 'x' }

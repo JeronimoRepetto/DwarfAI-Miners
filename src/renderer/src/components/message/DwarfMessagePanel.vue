@@ -8,7 +8,13 @@ import {
   USER_PORTRAIT_SRC,
   maskImageValue
 } from '../../lib/art'
-import { CONSOLE_HINT, buildActionBar, refusalLine } from '../../lib/delivery/actionBar'
+import {
+  CONSOLE_HINT,
+  JUMP_TO_TERMINAL_NAME,
+  approvalNote,
+  buildActionBar,
+  refusalLine
+} from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { authorOf, conversationOf, latestText } from '../../lib/message/conversation'
 import {
@@ -122,6 +128,14 @@ const actions = computed(() => buildActionBar(props.dwarf, transient.value))
  * about a capability.
  */
 const refusal = computed(() => refusalLine(props.dwarf, transient.value))
+/*
+ * Where a permission dialog this panel cannot answer is being held open, and
+ * therefore where the person has to go (#203). Its own line rather than the
+ * refusal row's: nothing is refused here — the composer still works, the
+ * session simply has a dialog up somewhere else — and the row below the
+ * composer is for what a control will not do.
+ */
+const approval = computed(() => approvalNote(props.dwarf))
 function action(id: 'kick' | 'boost' | 'chat') {
   return actions.value.find((entry) => entry.id === id)
 }
@@ -401,6 +415,29 @@ watch(
         />
       </article>
     </div>
+
+    <!--
+      A dialog this panel cannot answer, and the way to the one place that can
+      (#203). Above the composer, because it is about the session rather than
+      about a control: the composer below still takes a message, and this says
+      the session will not read it until the dialog is dealt with.
+
+      The jump repeats the console channel the dwarf's own name already carries
+      in the header. Repeated rather than pointed at, because a sentence that
+      names a terminal and then asks somebody to find the control for it has
+      only moved the search.
+    -->
+    <p v-if="approval" class="panel-approval" role="status">
+      <span>{{ approval }}</span>
+      <button
+        class="approval-jump"
+        type="button"
+        :title="CONSOLE_HINT"
+        @click="emit('open-console')"
+      >
+        {{ JUMP_TO_TERMINAL_NAME }}
+      </button>
+    </p>
 
     <div class="panel-composer">
       <!--
@@ -682,6 +719,36 @@ watch(
   white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
+}
+/*
+ * The approval row introduces no new type, colour or spacing either: it is the
+ * note's own rule with the accent ink the design reserves for a control, and
+ * the jump beside it is drawn as the link it is rather than as a fourth button
+ * the design does not have.
+ */
+.panel-approval {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: baseline;
+  margin: 0;
+  padding: 0 8px 4px;
+  color: var(--color-tooltip-text);
+  font-size: 9px;
+  line-height: 1.3;
+}
+.approval-jump {
+  padding: 0;
+  border: 0;
+  color: var(--color-accent);
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.approval-jump:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 /*
  * The composer row: whichever input is current — the ordinary box, or the ask

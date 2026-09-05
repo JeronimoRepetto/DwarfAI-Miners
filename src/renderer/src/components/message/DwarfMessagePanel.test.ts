@@ -7,6 +7,7 @@ import {
   MESSAGE_PANEL_MIN_HEIGHT,
   initialPanelHeight
 } from '../../lib/message/panelHeight'
+import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 import { NO_TRANSCRIPT_NOTE, READING_NOTE } from '../../lib/message/conversation'
 import { defaultDwarf } from '../../testing/factories'
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
@@ -813,5 +814,60 @@ describe('DwarfMessagePanel honesty', () => {
   it('says it is still reading rather than that there is nothing', () => {
     const wrapper = panel({ dwarf: defaultDwarf() })
     expect(wrapper.find('.panel-empty').text()).toBe(READING_NOTE)
+  })
+})
+
+/**
+ * The observed half of #203. A session somebody runs in their own terminal
+ * cannot be answered from here — the keystrokes that would work its dialog have
+ * never been measured on a live build — so the panel says where the dialog is
+ * and offers the jump it already had. No Allow and no Deny.
+ */
+describe('DwarfMessagePanel awaiting approval', () => {
+  const asked = defaultDwarf({
+    waitingReason: 'approval',
+    textDelivery: 'terminal',
+    conversation: HELD
+  })
+
+  it('says where the dialog is, above the composer', () => {
+    const wrapper = panel({ dwarf: asked })
+    expect(wrapper.find('.panel-approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
+  })
+
+  it('jumps to that terminal through the console channel the panel already has', async () => {
+    const wrapper = panel({ dwarf: asked })
+    await wrapper.find('.approval-jump').trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+
+  it('offers no answer of its own: the dialog is not this panel’s to decide', () => {
+    const wrapper = panel({ dwarf: asked })
+    expect(wrapper.find('.permission-card').exists()).toBe(false)
+    expect(wrapper.find('.panel-input').exists()).toBe(true)
+  })
+
+  it('says nothing for a dwarf that is merely waiting', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ status: 'waiting', conversation: HELD }) })
+    expect(wrapper.find('.panel-approval').exists()).toBe(false)
+  })
+
+  it('stands aside for a prompt this panel can decide itself', () => {
+    // A held session's card answers structurally (#246); a line pointing at a
+    // terminal would send somebody away from the control that works.
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        waitingReason: 'approval',
+        conversation: HELD,
+        pendingPermission: {
+          toolUseId: 'toolu_09',
+          toolName: 'Bash',
+          title: 'Run a command',
+          input: 'pnpm test',
+          askedAt: '2026-09-04T09:00:00.000Z'
+        }
+      })
+    })
+    expect(wrapper.find('.panel-approval').exists()).toBe(false)
   })
 })

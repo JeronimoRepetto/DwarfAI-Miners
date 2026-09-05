@@ -39,6 +39,19 @@ const props = defineProps<{
    * reads like a question — the same fact the browse card raises (#125).
    */
   asking: boolean
+  /**
+   * True when this dwarf's session is holding a permission dialog open and
+   * waiting for the person to allow or refuse it (#203).
+   *
+   * The design names three status icons and no fourth, and calls the
+   * important-dialog glyph "a question/consultation" (`screens/mine.md`,
+   * `components.md`). A session asking whether it may proceed is one, so this
+   * raises the SAME glyph rather than one invented here — the design has no
+   * distinct approval mark, and inventing one would be exactly the improvisation
+   * this component replaced. Only the title separates the two, because only the
+   * wording differs.
+   */
+  awaitingApproval: boolean
   /** True when the dwarf is resting rather than working. */
   resting: boolean
   /** Accessible name for the message control, e.g. "Read the full message from Gimli". */
@@ -70,12 +83,18 @@ const sleepMask = maskImageValue(SLEEP_ICON_SRC)
       :aria-expanded="props.expanded"
       @click.stop="emit('expand')"
     ></button>
+    <!--
+      One glyph for both, never two side by side: the design's row has three
+      marks in it and a dwarf that is asking a question AND holding a dialog
+      open is still one dwarf waiting on one person. The ask wins the wording
+      because it is the one whose words the panel can actually repeat.
+    -->
     <img
-      v-if="props.asking"
+      v-if="props.asking || props.awaitingApproval"
       class="status-important"
       :src="IMPORTANT_DIALOG_ICON_SRC"
       alt=""
-      title="Waiting for an answer"
+      :title="props.asking ? 'Waiting for an answer' : 'Waiting for your approval'"
       draggable="false"
     />
     <span
