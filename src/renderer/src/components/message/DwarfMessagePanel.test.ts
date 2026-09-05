@@ -176,6 +176,104 @@ describe('DwarfMessagePanel shape', () => {
 })
 
 /**
+ * #195: the only scroll-to-bottom used to be `showLatest()`, fired on mount
+ * and on the history tab expanding — never when the row list itself grew. A
+ * newly-selected dwarf mounts before its feed comes back (App.vue's read is
+ * async), so that mount-time call was a no-op against an empty list, and
+ * nothing ran again once the feed prop landed on this same instance. These
+ * tests pin the fix: a watch on the row list itself, applying
+ * `lib/message/listScroll`'s pure verdict once new rows are actually in the
+ * DOM.
+ */
+describe('DwarfMessagePanel scroll (#195)', () => {
+  /**
+   * jsdom does no layout, so `scrollHeight` is always 0 unless overridden. A
+   * getter tied to the number of `.message` elements actually in the list lets
+   * it grow the way a real list would once Vue patches new rows in — a static
+   * value would report the SAME height before and after the patch, which is
+   * exactly the distinction these tests exist to tell apart.
+   */
+  function growingScrollHeight(list: Element, perMessage = 40): void {
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () => list.querySelectorAll('.message').length * perMessage
+    })
+  }
+
+  function fixedClientHeight(list: Element, value: number): void {
+    Object.defineProperty(list, 'clientHeight', { value, configurable: true })
+  }
+
+  it('scrolls to the newest message once a delayed read lands, even though the panel mounted with nothing to show', async () => {
+    // The core of #195: a brand new dwarf mounts before its feed has come
+    // back, so onMounted's own scroll-to-bottom is a no-op against an empty
+    // list. App.vue keeps this same component instance once the feed lands
+    // (see its own tests) rather than remounting, so nothing but a watch on
+    // the rows themselves can still catch the moment they arrive.
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: undefined }), feed: undefined })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    fixedClientHeight(list, 30)
+    await wrapper.vm.$nextTick()
+    expect(list.scrollTop).toBe(0)
+
+    await wrapper.setProps({
+      feed: {
+        readable: true,
+        messages: [
+          { role: 'assistant', text: 'Found the seam.', timestamp: 't0' },
+          { role: 'assistant', text: 'Halfway down the shaft.', timestamp: 't1' }
+        ]
+      }
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(80) // 2 rows * 40, the new bottom.
+  })
+
+  it('sticks to the bottom when a new row arrives and the reader was already there', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: HELD }) })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    fixedClientHeight(list, 30)
+    await wrapper.vm.$nextTick()
+    list.scrollTop = 50 // HELD has 2 rows: 80 - 30 - 50 = 0, exactly at the bottom.
+
+    await wrapper.setProps({
+      dwarf: defaultDwarf({
+        conversation: [...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }]
+      })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(120) // 3 rows * 40, the new bottom.
+  })
+
+  it("keeps the reader's own scroll position when a row arrives below where they had scrolled up to", async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: HELD }) })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    fixedClientHeight(list, 30)
+    await wrapper.vm.$nextTick()
+    list.scrollTop = 5 // 80 - 30 - 5 = 45, well past the tolerance: scrolled up.
+
+    await wrapper.setProps({
+      dwarf: defaultDwarf({
+        conversation: [...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }]
+      })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // A row landed below the fold; a reader who had scrolled up must not be
+    // yanked back down to read it (#195).
+    expect(list.scrollTop).toBe(5)
+  })
+})
+
+/**
  * Every sizing rule `screens/mine.md` states, in its own words: the initial
  * height derives from the latest message, new messages never resize the panel,
  * reopening recalculates, and the user may resize it vertically only.

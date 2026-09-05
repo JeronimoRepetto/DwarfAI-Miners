@@ -25,3 +25,29 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
+
+/*
+ * The renderer's own scrollbar, styled once here rather than per component
+ * (#195) — the browser default it replaces is what every scrollable surface
+ * drew before this (`.panel-conversation` chief among them, since a re-read
+ * used to reset it to the top on every poll). `foundations.md` names no
+ * scrollbar recipe, so the width and colours are ours (see
+ * `--size-scrollbar-width` in design-tokens.css); both the standard
+ * properties and the WebKit pseudo-elements are set because Electron's
+ * Chromium renderer honours either, depending on version.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-accent) var(--color-panel-deep);
+}
+*::-webkit-scrollbar {
+  width: var(--size-scrollbar-width);
+  height: var(--size-scrollbar-width);
+}
+*::-webkit-scrollbar-track {
+  background: var(--color-panel-deep);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-accent);
+  border-radius: var(--radius-default);
+}

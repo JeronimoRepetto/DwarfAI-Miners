@@ -164,6 +164,17 @@ describe('design-tokens.css against the design foundations', () => {
     expect(valueOf('--size-history-panel-max-height')).toBe('500px')
   })
 
+  /*
+   * #195: the design source gives no scrollbar recipe, so this width is ours
+   * (see the token's own comment) rather than a transcription — what is
+   * pinned is that ONE value exists here for every scrollable surface, the
+   * same discipline `--elevation-5` already holds for its own undocumented
+   * recipe.
+   */
+  it('carries the scrollbar width the design leaves without a recipe', () => {
+    expect(valueOf('--size-scrollbar-width')).toBe('8px')
+  })
+
   it('keeps one radius for rails, panels, cards, inputs, buttons and dialogs', () => {
     expect(valueOf('--radius-default')).toBe('12px')
   })
