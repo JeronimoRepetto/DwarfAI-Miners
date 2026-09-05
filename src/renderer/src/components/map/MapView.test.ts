@@ -5,7 +5,12 @@ import { MAP_BG_SRC } from '../../lib/art'
 import { MAP_TIME_REFRESH_MS } from '../../lib/map/mapTime'
 import { MAP_TOOLTIP_DELAY_MS } from '../../lib/map/mapTooltip'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
-import { defaultDwarf, defaultMaterials, defaultMine } from '../../testing/factories'
+import {
+  defaultDwarf,
+  defaultMaterials,
+  defaultMine,
+  defaultProject
+} from '../../testing/factories'
 import MapView from './MapView.vue'
 
 const MINES = [
@@ -61,6 +66,26 @@ describe('MapView', () => {
     const wrapper = mount(MapView, { props: { mines: MINES } })
     await markerFor(wrapper, 'beta').find('button').trigger('click')
     expect(wrapper.emitted('open')).toEqual([['C:/dev/beta']])
+  })
+
+  /*
+   * The map used to draw `state.mines` alone (#197), which is the live board
+   * only — a project the app remembers but nobody is working right now stood
+   * on the Mines list and nowhere on the map. `mapMines` (lib/map/mapPopulation)
+   * is the fix; these two cases are the ones the issue names by hand.
+   */
+  it('draws a marker for a remembered project with no live session', () => {
+    const project = defaultProject({ id: 'C:/dev/idle', name: 'idle', knownTier: 'silver' })
+    const wrapper = mount(MapView, { props: { mines: [], projects: [project] } })
+    expect(wrapper.findAll('.mine-marker')).toHaveLength(1)
+    expect(wrapper.get('.mine-marker button').attributes('aria-label')).toContain('idle')
+  })
+
+  it('draws one marker, not two, for a live mine and its remembered project', () => {
+    const mine = defaultMine({ id: 'C:/dev/both', name: 'both' })
+    const project = defaultProject({ id: 'C:/dev/both', name: 'both' })
+    const wrapper = mount(MapView, { props: { mines: [mine], projects: [project] } })
+    expect(wrapper.findAll('.mine-marker')).toHaveLength(1)
   })
 
   /*

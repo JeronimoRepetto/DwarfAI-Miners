@@ -841,6 +841,26 @@ describe('App mines browse', () => {
     expect(wrapper.findAll('.mine-card')).toHaveLength(2)
   })
 
+  /*
+   * #197: the map used to see only `state.mines`, so a remembered project with
+   * no live session stood in the list and nowhere on the map. MapView now
+   * builds its own population from `mines` AND `projects` (lib/map/
+   * mapPopulation.ts) — App's part of the fix is only handing over the SAME
+   * `projects` the list already reads off `useProjectBrowse`.
+   */
+  it('feeds the map the same projects the Mines list draws (#197)', async () => {
+    const projects = [
+      { id: 'a', path: 'a', name: 'Lalolanda', declared: false, addedAt: 1, live: false }
+    ]
+    const { wrapper } = await mountOpenApp({
+      queryProjects: vi.fn().mockResolvedValue({ answered: true, projects })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.find(NAV_MAP).trigger('click')
+    expect(wrapper.findComponent(MapView).props('projects')).toEqual(projects)
+  })
+
   it('sends the typed term straight through to main', async () => {
     const { wrapper, api } = await mountOpenApp()
     await wrapper.find(NAV_MINES).trigger('click')

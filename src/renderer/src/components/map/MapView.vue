@@ -9,6 +9,12 @@
  * into a position IN the panel; which marker the pointer has been resting on
  * and for how long; and the one tooltip, since only ever one is open and it has
  * to be held inside this box rather than inside a 22px marker.
+ *
+ * `mines` alone used to be everything drawn here — this poll's live board —
+ * while the Mines list drew every remembered project (#197). `population`
+ * below is the fix: `mines` plus a stand-in for every project in `projects`
+ * the board has no live entry for, so the map and the list agree on who is on
+ * it. See lib/map/mapPopulation.ts.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
@@ -22,14 +28,25 @@ import {
 } from '../../lib/map/mapTooltip'
 import type { MapSpawnPoint } from '../../lib/map/spawnPoints.generated'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
+import { mapMines } from '../../lib/map/mapPopulation'
 import { assignSlots } from '../../lib/placement'
-import type { MaterialTotals, Mine } from '../../types'
+import type { MaterialTotals, Mine, ProjectSummary } from '../../types'
 import MineMarker from './MineMarker.vue'
 import VaultChip from '../vault/VaultChip.vue'
 
 const props = withDefaults(
   defineProps<{
     mines: Mine[]
+    /**
+     * Every project the app remembers (#197), the same population the Mines
+     * list draws its cards from (`browseRows`, lib/browse/boardRows.ts). A
+     * project with no live entry in `mines` still gets a marker — see
+     * lib/map/mapPopulation.ts for the rule and why it matches by id rather
+     * than trusting `ProjectSummary.live`. Defaulted to empty rather than
+     * required so every existing `mines`-only caller and test keeps drawing
+     * exactly the board it always did.
+     */
+    projects?: ProjectSummary[]
     tokensObserved?: number
     /**
      * The WHOLE vault by material, not the sum of the mines on screen: main
@@ -38,8 +55,17 @@ const props = withDefaults(
      */
     materials?: MaterialTotals
   }>(),
-  { tokensObserved: 0, materials: undefined }
+  { projects: () => [], tokensObserved: 0, materials: undefined }
 )
+
+/**
+ * What this map actually draws: the board plus a marker-ready stand-in for
+ * every remembered project the board has no live entry for (#197). Everything
+ * below reads THIS rather than `props.mines` directly, so a spawn assignment,
+ * a tooltip or a click target can never quietly disagree about which mine is
+ * on screen.
+ */
+const population = computed(() => mapMines(props.mines, props.projects))
 
 const emit = defineEmits<{ open: [mineId: string] }>()
 
@@ -119,7 +145,7 @@ const pointById = new Map(MAP_SPAWN_POINTS.map((point) => [point.id, point]))
  */
 const fallbackSlots = computed(() =>
   assignSlots(
-    props.mines.filter((mine) => mine.mapSite === undefined).map((mine) => mine.id),
+    population.value.filter((mine) => mine.mapSite === undefined).map((mine) => mine.id),
     MAP_SPAWN_POINTS.length
   )
 )
@@ -213,7 +239,7 @@ function leaveMarker(): void {
   tooltipMineId.value = null
 }
 
-const tooltipMine = computed(() => props.mines.find((mine) => mine.id === tooltipMineId.value))
+const tooltipMine = computed(() => population.value.find((mine) => mine.id === tooltipMineId.value))
 const tooltipCopy = computed<MineTooltipCopy | null>(() =>
   tooltipMine.value === undefined ? null : mineTooltipCopy(tooltipMine.value)
 )
@@ -241,7 +267,7 @@ const tooltipStyle = computed<Record<string, string>>(() => {
       draggable="false"
     />
     <VaultChip :tokens-observed="tokensObserved" :materials="materials" />
-    <p v-if="mines.length === 0" class="map-empty">
+    <p v-if="population.length === 0" class="map-empty">
       The hills are quiet.<br />
       No agents are mining right now — start a coding session and a mine will appear.
     </p>
@@ -254,7 +280,7 @@ const tooltipStyle = computed<Record<string, string>>(() => {
     -->
     <div class="map-markers">
       <MineMarker
-        v-for="mine in mines"
+        v-for="mine in population"
         :key="mine.id"
         :mine="mine"
         :style="markerStyle(mine)"

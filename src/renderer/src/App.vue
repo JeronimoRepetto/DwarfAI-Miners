@@ -813,6 +813,7 @@ onBeforeUnmount(() => unsubscribe?.())
           <MapView
             v-else
             :mines="state.mines"
+            :projects="projects"
             :tokens-observed="state.tokensObserved"
             :materials="state.materials"
             @open="enterMine"
