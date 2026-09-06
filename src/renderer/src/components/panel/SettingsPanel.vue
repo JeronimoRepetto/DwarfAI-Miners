@@ -5,6 +5,7 @@ import DataBaseSection from './DataBaseSection.vue'
 import PositionSettings from './PositionSettings.vue'
 import ResetMetricsModal from './ResetMetricsModal.vue'
 import ShortcutSettings from './ShortcutSettings.vue'
+import PanelTransition from '../shell/PanelTransition.vue'
 
 /**
  * The redesigned Settings screen (#138, screens/settings.md), replacing the
@@ -109,13 +110,15 @@ const resetModalOpen = ref(false)
       </div>
     </section>
 
-    <ResetMetricsModal
-      v-if="resetModalOpen"
-      :confirming="resetting"
-      :error="resetError"
-      @confirm="emit('reset-confirm')"
-      @close="resetModalOpen = false"
-    />
+    <PanelTransition axis="vertical">
+      <ResetMetricsModal
+        v-if="resetModalOpen"
+        :confirming="resetting"
+        :error="resetError"
+        @confirm="emit('reset-confirm')"
+        @close="resetModalOpen = false"
+      />
+    </PanelTransition>
   </div>
 </template>
 

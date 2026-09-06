@@ -3,6 +3,8 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import MapView from './components/map/MapView.vue'
+import MineScene from './components/scene/MineScene.vue'
+import { defaultDwarf, defaultMine } from './testing/factories'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -158,6 +160,117 @@ async function mountOpenApp(overrides: Record<string, unknown> = {}) {
  * navigation now leaks and not only the ones that walk into a mine.
  */
 beforeEach(() => useView().clear())
+
+describe('App panel motion (#164)', () => {
+  const animations: { element: HTMLElement; finish: () => void }[] = []
+  const wrappers: VueWrapper[] = []
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    animations.length = 0
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: function (this: HTMLElement) {
+        let finish!: () => void
+        const finished = new Promise<void>((resolve) => {
+          finish = resolve
+        })
+        animations.push({ element: this, finish })
+        return { finished, cancel: () => undefined }
+      }
+    })
+  })
+  afterEach(() => {
+    for (const wrapper of wrappers.splice(0)) wrapper.unmount()
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+    useAgentLaunch().close()
+    vi.useRealTimers()
+  })
+  async function animatedApp(overrides: Record<string, unknown> = {}) {
+    const api = stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT), ...overrides })
+    const wrapper = mount(App, { global: { stubs: { transition: false } } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  it('retains native width until BOTH the page and navigation have finished leaving', async () => {
+    const { wrapper, api } = await animatedApp()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(animations).toHaveLength(2)
+    expect(wrapper.find('.shell-secondary').exists()).toBe(true)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    animations[0]!.finish()
+    await flushPromises()
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    animations[1]!.finish()
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
+    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
+    expect(wrapper.find('.shell-nav').exists()).toBe(false)
+  })
+
+  it('crossfades same-size secondary navigation without another native resize', async () => {
+    const { wrapper, api } = await animatedApp()
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await flushPromises()
+    expect(animations).toHaveLength(2)
+    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.settings-panel').exists()).toBe(true)
+    for (const animation of animations) animation.finish()
+    await flushPromises()
+    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+  })
+
+  it('keeps the mine instance through page and dock swaps, then waits for mine AND message leaves', async () => {
+    const dwarf = defaultDwarf()
+    const mine = defaultMine({ dwarfs: [dwarf] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    async function finishAnimations() {
+      for (const animation of animations.splice(0)) animation.finish()
+      await flushPromises()
+    }
+    wrapper.findComponent(MapView).vm.$emit('open', mine.id)
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
+    expect(animations.map(({ element }) => element.className)).toEqual(['shell-mine'])
+    await finishAnimations()
+    const scene = wrapper.findComponent(MineScene).vm
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await finishAnimations()
+    expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
+    scene.$emit('add')
+    await flushPromises()
+    expect(animations.map(({ element }) => element.className)).toEqual(['message-dock'])
+    await finishAnimations()
+    scene.$emit('history')
+    await flushPromises()
+    expect(animations).toHaveLength(2)
+    await finishAnimations()
+    scene.$emit('select', dwarf)
+    await flushPromises()
+    expect(animations).toHaveLength(2)
+    await finishAnimations()
+    expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
+    api.setPanelLayout.mockClear()
+    scene.$emit('back')
+    await flushPromises()
+    expect(animations.map(({ element }) => element.className).sort()).toEqual([
+      'message-dock',
+      'shell-mine'
+    ])
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    await finishAnimations()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: false })
+    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+  })
+})
 
 /*
  * The pin (#35) outlived the titlebar that carried it (#90).
@@ -926,6 +1039,8 @@ describe('App mines browse', () => {
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
     await wrapper.find('.mine-card button').trigger('click')
+    // The scene enters only after main reserves its native column (#164).
+    await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
   })
 

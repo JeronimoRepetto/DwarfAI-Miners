@@ -118,6 +118,8 @@ explains how the shipped assets are processed.
   appear, no configuration required.
 - **Two illustrated views** — a world map that follows the time of day, with one tier-coloured
   marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
+- **Panel motion** — pages and floating panels open and close in 250 ms, independent of display
+  scale. The system's reduced-motion preference makes these transitions instantaneous.
 - **Send and kick** — deliver a message to a session or kick an agent straight from the panel.
 - **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
   milliseconds.
