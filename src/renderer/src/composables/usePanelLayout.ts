@@ -15,10 +15,13 @@ import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../types'
  * No module-scope singleton: App is the only consumer, so per-call refs keep
  * tests independent without a clearAll() ritual.
  */
-export function usePanelLayout() {
+export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise.resolve()) {
   // Matches main's own starting layout, so the first paint is right before
   // sync() has answered; the design names Right as the default side.
   const layout = ref<PanelLayout>({ edge: 'right', expanded: false, mineOpen: false })
+  // Presentation may put a column away while its last frame still needs native
+  // bounds. This is never evidence that main has already resized the window.
+  const visibleLayout = ref<PanelLayout>({ ...layout.value })
   const applying = ref(false)
 
   /** Adopt the window's real layout; on failure keep the last known one. */
@@ -29,6 +32,7 @@ export function usePanelLayout() {
       // The bridge is unreachable: the last known layout is still the most
       // honest thing to render, and the next successful call corrects it.
     }
+    visibleLayout.value = layout.value
   }
 
   /**
@@ -43,7 +47,29 @@ export function usePanelLayout() {
   async function send(request: PanelLayoutRequest): Promise<void> {
     applying.value = true
     try {
+      const shrinking =
+        (layout.value.expanded && !request.expanded) || (layout.value.mineOpen && !request.mineOpen)
+      const growing =
+        (!layout.value.expanded && request.expanded) || (!layout.value.mineOpen && request.mineOpen)
+      if (shrinking) {
+        // A swap can grow one column while retiring another. Reserve their
+        // union first; neither animation may draw outside the native window.
+        if (growing) {
+          layout.value = await window.api.setPanelLayout({
+            ...request,
+            expanded: layout.value.expanded || request.expanded,
+            mineOpen: layout.value.mineOpen || request.mineOpen
+          })
+        }
+        visibleLayout.value = {
+          ...layout.value,
+          expanded: layout.value.expanded && request.expanded,
+          mineOpen: layout.value.mineOpen && request.mineOpen
+        }
+        await waitForLeave()
+      }
       layout.value = await window.api.setPanelLayout(request)
+      visibleLayout.value = layout.value
     } catch {
       // The failed request may or may not have reached the window before
       // breaking: re-read the real layout rather than assume either outcome.
@@ -61,7 +87,9 @@ export function usePanelLayout() {
 
   /** Open or collapse, keeping whichever mine column the shell currently needs. */
   async function toggle(mineOpen: boolean): Promise<void> {
-    await apply({ expanded: !layout.value.expanded, mineOpen })
+    // Evaluate toggles when dequeued, not against the same stale pre-IPC state.
+    queue = queue.then(() => send({ expanded: !layout.value.expanded, mineOpen }))
+    await queue
   }
 
   /**
@@ -71,8 +99,11 @@ export function usePanelLayout() {
    * whether a mine is held beside it.
    */
   async function setEdge(edge: PanelEdge): Promise<void> {
-    await apply({ expanded: layout.value.expanded, mineOpen: layout.value.mineOpen, edge })
+    queue = queue.then(() =>
+      send({ expanded: layout.value.expanded, mineOpen: layout.value.mineOpen, edge })
+    )
+    await queue
   }
 
-  return { layout, applying, sync, apply, toggle, setEdge }
+  return { layout, visibleLayout, applying, sync, apply, toggle, setEdge }
 }

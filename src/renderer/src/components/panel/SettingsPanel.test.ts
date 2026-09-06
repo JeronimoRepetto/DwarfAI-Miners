@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
 import type { ShortcutState } from '../../types'
+import PanelTransition from '../shell/PanelTransition.vue'
 import SettingsPanel from './SettingsPanel.vue'
 
 /**
@@ -115,6 +116,15 @@ describe('SettingsPanel — the Application section (#142 relocations, #138 rest
 })
 
 describe('SettingsPanel — the reset-metrics modal', () => {
+  it('mounts the reset modal through the shared vertical panel transition', async () => {
+    const wrapper = render()
+    await wrapper.find('.reset-metrics').trigger('click')
+
+    const transition = wrapper.findComponent(PanelTransition)
+    expect(transition.exists()).toBe(true)
+    expect(transition.props('axis')).toBe('vertical')
+  })
+
   it('starts closed', () => {
     expect(render().find('.reset-modal').exists()).toBe(false)
   })

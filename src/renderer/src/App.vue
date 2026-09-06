@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AddPanel from './components/launch/AddPanel.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
@@ -8,6 +8,7 @@ import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import MinesPanel from './components/browse/MinesPanel.vue'
 import PanelFrame from './components/shell/PanelFrame.vue'
+import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import ShellNav from './components/shell/ShellNav.vue'
 import UnavailablePanel from './components/shell/UnavailablePanel.vue'
@@ -82,12 +83,25 @@ const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
  */
 const {
   layout,
+  visibleLayout,
   applying: layoutApplying,
   sync: syncLayout,
   apply: applyLayout,
   toggle: toggleLayout,
   setEdge
-} = usePanelLayout()
+} = usePanelLayout(waitForPanelLeaves)
+
+const panelLeaves = new Set<Promise<void>>()
+function trackPanelLeave(completion: Promise<void>): void {
+  panelLeaves.add(completion)
+  void completion.then(() => panelLeaves.delete(completion))
+}
+async function waitForPanelLeaves(): Promise<void> {
+  // Vue must first start every leaving column, including a dock closed by the
+  // same mine change. Main keeps their last frame inside the window until then.
+  await nextTick()
+  await Promise.all(panelLeaves)
+}
 
 /**
  * Which of the book's three compositions is on screen (#156).
@@ -829,103 +843,109 @@ onBeforeUnmount(() => unsubscribe?.())
     -->
     <EdgeRail :edge="layout.edge" :composition="composition" @toggle="toggleSecondary" />
 
-    <template v-if="layout.expanded || layout.mineOpen">
-      <div v-if="layout.expanded" class="shell-secondary">
-        <!--
+    <PanelTransition @leave="trackPanelLeave">
+      <div v-if="visibleLayout.expanded" class="shell-secondary">
+        <PanelTransition @leave="trackPanelLeave">
+          <!--
           The map container from the design: 21px padding on every side, a 2px
           #fae2b6 border and elevation 5, with the collected-materials totals
           overlaid in its upper-right corner (VaultChip, inside MapView).
         -->
-        <PanelFrame v-if="viewState.area === 'map'" variant="map">
-          <div v-if="loading" class="loading" role="status">
-            <span class="spinner" aria-hidden="true"></span>
-            <p>Scanning the hills for active agents...</p>
-          </div>
-          <MapView
-            v-else
-            :mines="state.mines"
-            :projects="projects"
-            :tokens-observed="state.tokensObserved"
-            :materials="state.materials"
-            @open="enterMine"
-          />
-        </PanelFrame>
+          <PanelFrame v-if="viewState.area === 'map'" variant="map">
+            <div v-if="loading" class="loading" role="status">
+              <span class="spinner" aria-hidden="true"></span>
+              <p>Scanning the hills for active agents...</p>
+            </div>
+            <MapView
+              v-else
+              :mines="state.mines"
+              :projects="projects"
+              :tokens-observed="state.tokensObserved"
+              :materials="state.materials"
+              @open="enterMine"
+            />
+          </PanelFrame>
 
-        <PanelFrame v-else-if="viewState.area === 'mines'">
-          <MinesPanel
-            :projects="projects"
-            :mines="state.mines"
-            :search="browseFilters.search"
-            :tier="browseFilters.tier"
-            :direction="browseFilters.direction"
-            :loading="browseLoading"
-            :error="browseError"
-            :exhausted="browseExhausted"
-            :adding="addingProject"
-            :add-error="addProjectError"
-            @search="setProjectSearch"
-            @tier="setProjectTier"
-            @toggle-direction="toggleProjectOrder"
-            @load-more="loadMoreProjects"
-            @add="addProject"
-            @open="openFromBrowse"
-          />
-        </PanelFrame>
+          <PanelFrame v-else-if="viewState.area === 'mines'">
+            <MinesPanel
+              :projects="projects"
+              :mines="state.mines"
+              :search="browseFilters.search"
+              :tier="browseFilters.tier"
+              :direction="browseFilters.direction"
+              :loading="browseLoading"
+              :error="browseError"
+              :exhausted="browseExhausted"
+              :adding="addingProject"
+              :add-error="addProjectError"
+              @search="setProjectSearch"
+              @tier="setProjectTier"
+              @toggle-direction="toggleProjectOrder"
+              @load-more="loadMoreProjects"
+              @add="addProject"
+              @open="openFromBrowse"
+            />
+          </PanelFrame>
 
-        <!--
+          <!--
           Settings, rebuilt to the design's own screen (#138): the heavy 4px
           frame is PanelFrame's 'settings' variant, and SettingsPanel draws
           everything specific to the screen — its title/divider, the
           shortcut/position/Data-Base sections, and the Application section
           #142 had nowhere else to put pin/hide/version.
         -->
-        <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
-          <SettingsPanel
-            :shortcut-state="shortcutState"
-            :shortcut-error="shortcutError"
-            :shortcut-recording="shortcutRecording"
-            :shortcut-applying="shortcutApplying"
-            :edge="layout.edge"
-            :edge-applying="layoutApplying"
-            :pinned="pinned"
-            :pin-tooltip="pinTooltip"
-            :version-text="versionText"
-            :version-hint="versionHint"
-            :resetting="metricsResetting"
-            :reset-error="metricsResetError"
-            @start-recording="startShortcutRecording"
-            @stop-recording="stopShortcutRecording"
-            @record="recordShortcut"
-            @reset-shortcut="resetShortcut"
-            @close="showMap"
-            @select-edge="setEdge"
-            @toggle-pin="togglePinned"
-            @hide-panel="hidePanel"
-            @reset-confirm="resetMetrics"
-          />
-        </PanelFrame>
+          <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
+            <SettingsPanel
+              :shortcut-state="shortcutState"
+              :shortcut-error="shortcutError"
+              :shortcut-recording="shortcutRecording"
+              :shortcut-applying="shortcutApplying"
+              :edge="layout.edge"
+              :edge-applying="layoutApplying"
+              :pinned="pinned"
+              :pin-tooltip="pinTooltip"
+              :version-text="versionText"
+              :version-hint="versionHint"
+              :resetting="metricsResetting"
+              :reset-error="metricsResetError"
+              @start-recording="startShortcutRecording"
+              @stop-recording="stopShortcutRecording"
+              @record="recordShortcut"
+              @reset-shortcut="resetShortcut"
+              @close="showMap"
+              @select-edge="setEdge"
+              @toggle-pin="togglePinned"
+              @hide-panel="hidePanel"
+              @reset-confirm="resetMetrics"
+            />
+          </PanelFrame>
 
-        <PanelFrame v-else variant="settings">
-          <UnavailablePanel :feature="viewState.area === 'lab' ? 'lab' : 'market'" />
-        </PanelFrame>
+          <PanelFrame v-else :key="viewState.area" variant="settings">
+            <UnavailablePanel :feature="viewState.area === 'lab' ? 'lab' : 'market'" />
+          </PanelFrame>
+        </PanelTransition>
 
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
       </div>
+    </PanelTransition>
 
-      <!--
+    <!--
         The app mark hides the WINDOW (#156), which is the same hidePanel the
         global shortcut and Settings' own hide control already ask for. The
         layout is deliberately untouched: the panel that comes back is the one
         that went away, mine and page and all.
       -->
+    <PanelTransition @leave="trackPanelLeave">
       <ShellNav
+        v-if="visibleLayout.expanded || visibleLayout.mineOpen"
         :area="viewState.area"
         :broken="shortcutBroken"
         @select="selectArea"
         @hide="hidePanel"
       />
+    </PanelTransition>
 
-      <!--
+    <!--
         One mine beside AT MOST one secondary panel: the concurrent model the
         design's exports prove, and no more than that — the source warns in as
         many words against assuming arbitrary multi-panel stacking. The column
@@ -933,7 +953,8 @@ onBeforeUnmount(() => unsubscribe?.())
         `mineOpen` decides is whether this whole block is drawn, so the app mark
         can collapse the shell without the view forgetting its mine (#153).
       -->
-      <div v-if="currentMine" class="shell-mine">
+    <PanelTransition @leave="trackPanelLeave">
+      <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
         <PanelFrame>
           <!--
             Keyed by the mine, so switching from one to another is a fresh
@@ -957,7 +978,7 @@ onBeforeUnmount(() => unsubscribe?.())
           />
         </PanelFrame>
       </div>
-    </template>
+    </PanelTransition>
 
     <!--
       ONE dock, three panels (#86, #159, #192). The design's own transition is
@@ -972,59 +993,69 @@ onBeforeUnmount(() => unsubscribe?.())
       the window is docked to — which is where the design's own
       mine-and-message mock puts it relative to the mine.
     -->
-    <div v-if="launchPhase !== 'closed' && launchPhase !== 'message-panel'" class="message-dock">
-      <AddPanel
-        :chips="launchChips"
-        :phase="launchPhase"
-        :enabled="launchEnabled"
-        :placeholder="launchPlaceholder"
-        :command="launchState.command"
-        :prompt="launchState.prompt"
-        :refusal="launchRefusal"
-        :error="launchState.error"
-        @choose="chooseProvider"
-        @command="setLaunchCommand"
-        @commit="commitLaunchCommand"
-        @prompt="setLaunchPrompt"
-        @submit="submitLaunch"
-        @close="closeLaunchPanel"
-      />
-    </div>
+    <PanelTransition axis="vertical" @leave="trackPanelLeave">
+      <div
+        v-if="launchPhase !== 'closed' && launchPhase !== 'message-panel'"
+        key="launch"
+        class="message-dock"
+      >
+        <AddPanel
+          :chips="launchChips"
+          :phase="launchPhase"
+          :enabled="launchEnabled"
+          :placeholder="launchPlaceholder"
+          :command="launchState.command"
+          :prompt="launchState.prompt"
+          :refusal="launchRefusal"
+          :error="launchState.error"
+          @choose="chooseProvider"
+          @command="setLaunchCommand"
+          @commit="commitLaunchCommand"
+          @prompt="setLaunchPrompt"
+          @submit="submitLaunch"
+          @close="closeLaunchPanel"
+        />
+      </div>
 
-    <!--
+      <!--
       Keyed by mine, so opening it on another mine is a fresh panel and a fresh
       default tab rather than a selection carried over from another folder.
     -->
-    <div v-else-if="historyOpen && currentMine" class="message-dock">
-      <MineHistoryPanel
-        :key="currentMine.id"
-        :mine="currentMine"
-        :history="mineHistory"
-        @close="closeHistory"
-      />
-    </div>
+      <div
+        v-else-if="historyOpen && currentMine"
+        :key="`history:${currentMine.id}`"
+        class="message-dock"
+      >
+        <MineHistoryPanel
+          :key="currentMine.id"
+          :mine="currentMine"
+          :history="mineHistory"
+          @close="closeHistory"
+        />
+      </div>
 
-    <!--
+      <!--
       Keyed by dwarf, so selecting another one is a fresh panel: its opening
       height derives from the latest message and is taken once per open, which
       only holds if reopening is a genuine remount.
     -->
-    <div v-else-if="selectedDwarf" class="message-dock">
-      <DwarfMessagePanel
-        :key="selectedDwarf.id"
-        :dwarf="selectedDwarf"
-        :feed="selectedFeed"
-        :send-state="messagingState.byDwarfId[selectedDwarf.id]"
-        :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
-        :answer-state="questionState.byDwarfId[selectedDwarf.id]"
-        @send="sendText(selectedDwarf, $event)"
-        @kick="kickDwarf(selectedDwarf)"
-        @answer="answerQuestion(selectedDwarf, $event)"
-        @decide="decidePermission(selectedDwarf, $event)"
-        @open-console="activate(selectedDwarf)"
-        @close="closeMessages"
-      />
-    </div>
+      <div v-else-if="selectedDwarf" :key="`message:${selectedDwarf.id}`" class="message-dock">
+        <DwarfMessagePanel
+          :key="selectedDwarf.id"
+          :dwarf="selectedDwarf"
+          :feed="selectedFeed"
+          :send-state="messagingState.byDwarfId[selectedDwarf.id]"
+          :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
+          :answer-state="questionState.byDwarfId[selectedDwarf.id]"
+          @send="sendText(selectedDwarf, $event)"
+          @kick="kickDwarf(selectedDwarf)"
+          @answer="answerQuestion(selectedDwarf, $event)"
+          @decide="decidePermission(selectedDwarf, $event)"
+          @open-console="activate(selectedDwarf)"
+          @close="closeMessages"
+        />
+      </div>
+    </PanelTransition>
   </div>
 </template>
 
@@ -1044,6 +1075,7 @@ onBeforeUnmount(() => unsubscribe?.())
   font-size: var(--text-meta);
 }
 .shell.edge-left {
+  --panel-motion-x: -12px;
   flex-direction: row-reverse;
 }
 /*
@@ -1119,6 +1151,10 @@ onBeforeUnmount(() => unsubscribe?.())
 .shell-secondary > * {
   flex: 1;
   min-height: 0;
+}
+.shell-secondary > .panel-frame {
+  position: absolute;
+  inset: 0;
 }
 /*
  * The mine's own column, outboard of the navigation stack (see the exports).
