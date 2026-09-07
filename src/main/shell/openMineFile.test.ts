@@ -51,14 +51,22 @@ describe('resolveMinePathTarget', () => {
   })
 
   it('refuses a relative target that climbs out of the mine folder with ..', () => {
-    const result = resolveMinePathTarget(MINE_FOLDER_WIN, '..\\..\\Windows\\System32\\cmd.exe', 'win32')
+    const result = resolveMinePathTarget(
+      MINE_FOLDER_WIN,
+      '..\\..\\Windows\\System32\\cmd.exe',
+      'win32'
+    )
     expect(result).toEqual({ ok: false })
   })
 
-  it('refuses a sibling folder whose name merely starts with the mine folder\'s name', () => {
+  it("refuses a sibling folder whose name merely starts with the mine folder's name", () => {
     // "proj" must not admit "projEvil" as a child — the whole reason the
     // containment check requires the folder's own separator right after it.
-    const result = resolveMinePathTarget(MINE_FOLDER_WIN, 'C:\\Users\\j\\projEvil\\secret.txt', 'win32')
+    const result = resolveMinePathTarget(
+      MINE_FOLDER_WIN,
+      'C:\\Users\\j\\projEvil\\secret.txt',
+      'win32'
+    )
     expect(result).toEqual({ ok: false })
   })
 
@@ -73,7 +81,11 @@ describe('resolveMinePathTarget', () => {
   })
 
   it('compares containment case-insensitively on win32', () => {
-    const result = resolveMinePathTarget(MINE_FOLDER_WIN, 'C:\\USERS\\J\\PROJ\\src\\index.ts', 'win32')
+    const result = resolveMinePathTarget(
+      MINE_FOLDER_WIN,
+      'C:\\USERS\\J\\PROJ\\src\\index.ts',
+      'win32'
+    )
     expect(result.ok).toBe(true)
   })
 
@@ -104,7 +116,10 @@ describe('verifyMinePath', () => {
     const fs = new FakeFs()
     fs.addFile('C:\\Users\\j\\proj\\src\\main\\index.ts', 'export {}')
     const verdict = await verifyMinePath(MINE_FOLDER_WIN, 'src\\main\\index.ts', 'win32', fs)
-    expect(verdict).toEqual({ opened: true, absolutePath: 'C:\\Users\\j\\proj\\src\\main\\index.ts' })
+    expect(verdict).toEqual({
+      opened: true,
+      absolutePath: 'C:\\Users\\j\\proj\\src\\main\\index.ts'
+    })
   })
 
   it('refuses a target outside the mine with the fixed sentence, never an OS path', async () => {
@@ -119,7 +134,7 @@ describe('verifyMinePath', () => {
     expect(verdict).toEqual({ opened: false, reason: MINE_PATH_MISSING_REASON })
   })
 
-  it('never leaks the fs adapter\'s own error text as the reason', async () => {
+  it("never leaks the fs adapter's own error text as the reason", async () => {
     const fs = new FakeFs()
     const verdict = await verifyMinePath(MINE_FOLDER_WIN, '..\\escape.ts', 'win32', fs)
     expect(typeof verdict.opened === 'boolean' && !verdict.opened && verdict.reason).toBe(

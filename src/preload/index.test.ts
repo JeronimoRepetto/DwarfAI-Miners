@@ -740,7 +740,10 @@ describe('preload open-path contract (#279)', () => {
   })
 
   it('collapses a non-string mineId or target to an empty string before it crosses the bridge', async () => {
-    invoke.mockResolvedValueOnce({ opened: false, reason: "That path is outside this mine's folder." })
+    invoke.mockResolvedValueOnce({
+      opened: false,
+      reason: "That path is outside this mine's folder."
+    })
     await api.openMinePath({
       mineId: 42 as unknown as string,
       target: undefined as unknown as string

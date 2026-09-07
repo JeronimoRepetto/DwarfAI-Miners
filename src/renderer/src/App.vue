@@ -454,6 +454,34 @@ async function readMineHistory(mineId: string): Promise<void> {
 }
 
 /**
+ * The refusal main gave for the LAST History path click (#279), keyed by the
+ * row so it can only ever land on the row that was clicked — see
+ * MineHistoryPanel's own `pathRefusal` prop. This panel has no status line of
+ * its own, unlike the message panel, so the refusal shows on the row itself.
+ */
+const historyPathRefusal = ref<{ key: string; reason: string } | undefined>(undefined)
+
+/**
+ * Open an activity line's own path from the History panel (#279). Resolved
+ * and verified entirely in main, against the open mine's own folder — this
+ * window only relays the click and hands the verdict back to the row that
+ * asked for it.
+ */
+async function openHistoryPath(payload: { key: string; target: string }): Promise<void> {
+  if (currentMine.value === undefined) return
+  historyPathRefusal.value = undefined
+  try {
+    const result = await window.api.openMinePath({
+      mineId: currentMine.value.id,
+      target: payload.target
+    })
+    if (!result.opened) historyPathRefusal.value = { key: payload.key, reason: result.reason }
+  } catch {
+    historyPathRefusal.value = { key: payload.key, reason: 'That file could not be opened.' }
+  }
+}
+
+/**
  * The signal the history re-reads on while open: the SAME two the message
  * panel's feed watches (#183, see the watch below it), over every dwarf in the
  * mine rather than the one selected — `lastMessage` for an agent that spoke,
@@ -751,7 +779,9 @@ onBeforeUnmount(() => {
           :key="currentMine.id"
           :mine="currentMine"
           :history="mineHistory"
+          :path-refusal="historyPathRefusal"
           @close="closeHistory"
+          @open-path="openHistoryPath"
         />
       </div>
     </PanelTransition>

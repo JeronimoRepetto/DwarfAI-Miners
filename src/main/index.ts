@@ -823,21 +823,29 @@ async function init(): Promise<void> {
   // always this app's own fixed sentence: verifyMinePath never returns the
   // filesystem's wording, and shell.openPath's own error string is swallowed
   // below for the same reason.
-  ipcMain.handle(IPC_CHANNELS.openMinePath, async (_event, payload: unknown): Promise<MineOpenPathResult> => {
-    const request = parseMineOpenPathRequest(payload)
-    const outside: MineOpenPathResult = { opened: false, reason: MINE_PATH_OUTSIDE_REASON }
-    if (request === null) return outside
-    const mineFolder = runtime?.mineFolderOf(request.mineId)
-    if (mineFolder === undefined) return outside
-    const verdict = await verifyMinePath(mineFolder, request.target, currentPlatform(), new NodeFs())
-    if (!verdict.opened) return verdict
-    const openError = await shell.openPath(verdict.absolutePath)
-    if (openError !== '') {
-      console.warn(`[shell] could not open a mine file: ${openError}`)
-      return { opened: false, reason: MINE_PATH_UNOPENABLE_REASON }
+  ipcMain.handle(
+    IPC_CHANNELS.openMinePath,
+    async (_event, payload: unknown): Promise<MineOpenPathResult> => {
+      const request = parseMineOpenPathRequest(payload)
+      const outside: MineOpenPathResult = { opened: false, reason: MINE_PATH_OUTSIDE_REASON }
+      if (request === null) return outside
+      const mineFolder = runtime?.mineFolderOf(request.mineId)
+      if (mineFolder === undefined) return outside
+      const verdict = await verifyMinePath(
+        mineFolder,
+        request.target,
+        currentPlatform(),
+        new NodeFs()
+      )
+      if (!verdict.opened) return verdict
+      const openError = await shell.openPath(verdict.absolutePath)
+      if (openError !== '') {
+        console.warn(`[shell] could not open a mine file: ${openError}`)
+        return { opened: false, reason: MINE_PATH_UNOPENABLE_REASON }
+      }
+      return { opened: true }
     }
-    return { opened: true }
-  })
+  )
 
   const notDelivered: DwarfTextResult = {
     delivered: false,

@@ -226,6 +226,62 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
     expect(wrapper.findAll('.bubble')).toHaveLength(2)
     expect(wrapper.findAll('.activity-line')).toHaveLength(1)
   })
+
+  it('draws a run line as a plain paragraph rather than a clickable control', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    expect(wrapper.find('.activity-line').element.tagName).toBe('P')
+  })
+})
+
+/**
+ * Only an `edit` or `read` activity line's own path opens the file (#279);
+ * `run` and `search` stay the plain paragraph #240 drew, pinned by the sibling
+ * describe block above. Opening itself happens in MAIN, never here: this
+ * component only emits the click and the exact target `FeedActivity` carried.
+ */
+describe('DwarfMessagePanel path-opening lines (#279)', () => {
+  const WITH_EDIT = [
+    { role: 'user' as const, text: 'fix the bug', timestamp: 't0' },
+    {
+      role: 'assistant' as const,
+      text: 'Edited src/main/index.ts',
+      timestamp: 't1',
+      activity: { kind: 'edit' as const, target: 'src/main/index.ts' }
+    }
+  ]
+
+  const WITH_READ = [
+    {
+      role: 'assistant' as const,
+      text: 'Read src/shared/contracts.ts',
+      timestamp: 't0',
+      activity: { kind: 'read' as const, target: 'src/shared/contracts.ts' }
+    }
+  ]
+
+  it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    const line = wrapper.find('.activity-line')
+    expect(line.element.tagName).toBe('BUTTON')
+    expect(line.attributes('type')).toBe('button')
+    expect(line.classes()).toContain('is-openable')
+  })
+
+  it('draws a read line the same way an edit line is drawn', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_READ }) })
+    expect(wrapper.find('.activity-line').element.tagName).toBe('BUTTON')
+  })
+
+  it("emits the activity's own target on click, not the display text", async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    await wrapper.find('.activity-line').trigger('click')
+    expect(wrapper.emitted('open-path')).toEqual([['src/main/index.ts']])
+  })
+
+  it('still carries the full text as the title, same as a plain activity line', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    expect(wrapper.find('.activity-line').attributes('title')).toBe('Edited src/main/index.ts')
+  })
 })
 
 /**

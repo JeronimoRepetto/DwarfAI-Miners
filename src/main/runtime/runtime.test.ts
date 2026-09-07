@@ -6359,7 +6359,7 @@ describe('AgentRuntime.mineFolderOf', () => {
   ])
   const source: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }
 
-  it("resolves a mine on the board to its own folder", async () => {
+  it('resolves a mine on the board to its own folder', async () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [source],

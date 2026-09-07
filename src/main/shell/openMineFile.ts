@@ -34,9 +34,7 @@ function pathFor(platform: Platform): typeof posix {
   return platform === 'win32' ? win32 : posix
 }
 
-export type MinePathResolution =
-  | { ok: true; absolutePath: string }
-  | { ok: false }
+export type MinePathResolution = { ok: true; absolutePath: string } | { ok: false }
 
 /**
  * Resolve one activity line's target against the mine's own folder (#279).
