@@ -50,14 +50,14 @@ export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
 const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
   claude: 'claude -p',
   codex: 'codex exec',
-  // AMENDED for #237, step 4 (was: the bare executable 'agy', because nothing
-  // could reach this sentence — Antigravity was observer-only). A detached,
-  // one-shot launch exists now (buildAntigravityLaunchArgs in launch.ts:
-  // `agy -p --input-format text`), so a launched or one-shot Antigravity
-  // dwarf can carry these sentences for real, and 'agy -p' names the mode
-  // that makes them true — the same shorthand 'claude -p' and 'codex exec'
-  // already are, not the full argv.
-  antigravity: 'agy -p'
+  // AMENDED for #237 (was: 'agy -p' — that flag TAKES A VALUE on this CLI
+  // and swallowed the flag placed after it, so no detached Antigravity
+  // launch could ever start; see buildAntigravityLaunchArgs in launch.ts for
+  // the measured exit codes). 'agy --input-format text' is the shortest
+  // spelling that is actually TRUE of the mode a launched or one-shot
+  // Antigravity dwarf runs in — the same shorthand 'claude -p' and
+  // 'codex exec' already are, not the full argv.
+  antigravity: 'agy --input-format text'
 }
 
 /**

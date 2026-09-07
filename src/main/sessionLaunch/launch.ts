@@ -175,22 +175,28 @@ export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
  *     --output-format string  Output format for print mode (text, json,
  *                             stream-json) (default text)
  *
- * Exactly Claude's own spelling, and for the same reason: `--input-format
- * text` is passed explicitly rather than left to the documented default,
- * because a default can move under us. No `--output-format` is passed —
- * nothing here ever reads the launched process's stdout (launchRunner.ts's
- * `stdio` is `['pipe', 'ignore', 'ignore']`), so there is nothing for a
- * structured output format to serve.
+ * `--input-format text` is passed explicitly rather than left to the
+ * documented default, for the same reason Claude's and Codex's own argv do:
+ * a default can move under us. No `--output-format` is passed — nothing
+ * here ever reads the launched process's stdout (launchRunner.ts's `stdio`
+ * is `['pipe', 'ignore', 'ignore']`), so there is nothing for a structured
+ * output format to serve.
  *
- * Whether a bare `-p` with no positional prompt reads it from stdin was not
- * independently re-tested live — doing so would start a real Antigravity
- * conversation, which this slice's own instructions rule out. It is taken
- * from the validated comment's own claim-by-claim check ("Launch with -p
- * --input-format text | Valid only for detached one-shot launch | It can
- * send one prompt through stdin") and from the identical argv/stdin design
- * this app already ships for Claude and Codex — the runner writes the
- * prompt to the child's stdin and closes it (see runLaunchProcess), which
- * works for any provider because that half is not provider-specific.
+ * `-p` is deliberately ABSENT. The prior slice included it on an unverified
+ * assumption — that a bare `-p` with no positional prompt reads its prompt
+ * from stdin, taken on faith from the observer slice's own claim ("It can
+ * send one prompt through stdin") — and that assumption was wrong. The help
+ * text above documents what `-p` prints; it does not say `-p` TAKES A VALUE.
+ * Proven live against this same machine's Antigravity CLI 1.1.26,
+ * 2026-09-07: `agy -p --input-format stream-json` exits 2 with `-p took
+ * "--input-format" as its prompt`, and a trailing bare `-p` exits 2 with
+ * `flag needs an argument: -p`. So the argv this function used to return —
+ * `['-p', '--input-format', 'text']` — made every detached Antigravity
+ * launch exit 2 before the process ever read stdin. Print mode needs no
+ * `-p` at all: `--input-format` alone enables it — `echo "…" | agy
+ * --input-format text` printed its reply and exited 0, same machine, same
+ * day. The stdin write itself (see runLaunchProcess) is unchanged and
+ * fully provider-agnostic; only the argv was wrong.
  *
  * No tuning parameter, unlike the two functions above: the CLI's own
  * `--effort` (low|medium|high) and `--model` flags exist, but wiring them
@@ -200,7 +206,7 @@ export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * launchable at all.
  */
 export function buildAntigravityLaunchArgs(): string[] {
-  return ['-p', '--input-format', 'text']
+  return ['--input-format', 'text']
 }
 
 /**

@@ -261,15 +261,18 @@ channel beside the detached `agent:launch`, not a replacement.
   row §3's Codex queue table already reads (`threads.model`/`reasoning_effort`), labelled as history
   rather than the CLI's own word, because `codex --help` names no live model-list command; Antigravity's
   stayed empty (`source: 'none'`) even once it gained a launch path — see the next bullet.
-- **A detached, one-shot Antigravity launch shipped in #237's step 4.** `buildAntigravityLaunchArgs` is
-  `-p --input-format text` — Antigravity CLI 1.1.26's own `--help`, re-verified 2026-09-07 (read-only;
-  no conversation was started to check this), documents `-p`/`--print` ("Run a single prompt
-  non-interactively and print the response") and `--input-format` (`text`/`stream-json`, default
-  `text`) exactly as this argv states explicitly, the same reason Claude's and Codex's own argv name
-  their defaults rather than relying on them. No `--output-format` is passed: this app never reads the
-  launched process's stdout (`stdio` is `['pipe', 'ignore', 'ignore']`, same as every other detached
-  launch). Detached only — `LAUNCHABLE_PROVIDERS` gained the name and `HELDABLE_PROVIDERS` did not,
-  because the CLI's documented bidirectional `stream-json` protocol has had no round trip proven
+- **A detached, one-shot Antigravity launch shipped in #237's step 4, and its argv was corrected in a
+  same-day hotfix (#237).** `buildAntigravityLaunchArgs` is `--input-format text`. The original argv also
+  carried `-p`, on the unverified assumption that a bare `-p` reads its prompt from stdin; that
+  assumption was wrong — `-p` TAKES A VALUE on this CLI, so pairing it with `--input-format` made every
+  detached launch exit 2 before ever reading stdin. Measured live against Antigravity CLI 1.1.26,
+  2026-09-07: `agy -p --input-format stream-json` exits 2 with `-p took "--input-format" as its prompt`,
+  and a trailing bare `-p` exits 2 with `flag needs an argument: -p`. `--input-format text` alone enables
+  print mode and is passed explicitly rather than left to the documented default, the same reason
+  Claude's and Codex's own argv name their defaults rather than relying on them. No `--output-format` is
+  passed: this app never reads the launched process's stdout (`stdio` is `['pipe', 'ignore', 'ignore']`,
+  same as every other detached launch). Detached only — `LAUNCHABLE_PROVIDERS` gained the name and
+  `HELDABLE_PROVIDERS` did not, because the CLI's documented bidirectional `stream-json` protocol has had no round trip proven
   through this app yet (that stays step 5). The launched session is discovered the same way a detached
   Codex one is: its own transcript records the prompt as its first `USER_INPUT` step, and
   `AntigravityProvider.firstPrompt` now reads it — envelope stripped, off the same

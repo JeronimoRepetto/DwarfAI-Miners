@@ -81,15 +81,26 @@ describe('buildAntigravityLaunchArgs', () => {
    *   --output-format string Output format for print mode (text, json,
    *                          stream-json) (default text)
    *
-   * Exactly Claude's own spelling. `--input-format text` is passed explicitly
-   * rather than left to the documented default, for the reason Claude's and
-   * Codex's argv already do: a default can move under us. No
+   * AMENDED for #237 hotfix (was: `['-p', '--input-format', 'text']`, on the
+   * unverified assumption that a bare `-p` reads its prompt from stdin). That
+   * assumption was wrong: `-p` TAKES A VALUE on this same CLI 1.1.26,
+   * measured live the same day — `agy -p --input-format stream-json` exits 2
+   * with `-p took "--input-format" as its prompt`, and a trailing bare `-p`
+   * exits 2 with `flag needs an argument: -p`. `--input-format` alone
+   * enables print mode without it: `echo "…" | agy --input-format text`
+   * printed its reply and exited 0. `--input-format text` is passed
+   * explicitly rather than left to the documented default, for the reason
+   * Claude's and Codex's argv already do: a default can move under us. No
    * `--output-format` is passed — nothing here ever reads the launched
    * process's stdout (launchRunner.ts's stdio is `['pipe', 'ignore',
    * 'ignore']`), so there is nothing for a structured output format to serve.
    */
   it('asks for one non-interactive print-mode turn', () => {
-    expect(buildAntigravityLaunchArgs()).toEqual(['-p', '--input-format', 'text'])
+    expect(buildAntigravityLaunchArgs()).toEqual(['--input-format', 'text'])
+  })
+
+  it('never carries -p, which takes a value on this CLI and swallowed --input-format (#237)', () => {
+    expect(buildAntigravityLaunchArgs()).not.toContain('-p')
   })
 
   it('carries no positional prompt, whatever the prompt says', () => {
