@@ -171,6 +171,28 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * to await. No existing assertion changed.
      */
     refreshDwarfTelemetry: vi.fn(),
+    /*
+     * AMENDED for #96's mutating slice (was: absent). The strip's two selects
+     * are fed by #239's catalogue channel and answered through the tuning
+     * one, so both members have to exist even in tests that never enter a
+     * mine. Defaults: one live Claude catalogue, and a change that was
+     * accepted — the verdict that leaves nothing on the strip to say. No
+     * existing assertion changed.
+     */
+    listAgentModels: vi.fn().mockResolvedValue({
+      catalogs: [
+        {
+          provider: 'claude',
+          models: [
+            { value: 'claude-haiku-4-5' },
+            { value: 'claude-sonnet-5', effortLevels: ['low', 'high'] }
+          ],
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          source: 'provider'
+        }
+      ]
+    }),
+    setDwarfTuning: vi.fn().mockResolvedValue({ applied: true }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -1296,6 +1318,20 @@ describe('App selecting a dwarf (#162)', () => {
     lastMessage: 'Halfway down the shaft'
   }
 
+  /**
+   * The same dwarf on a session the panel HOLDS, and whose engine offers both
+   * tuning acts (#96) — the only kind that draws a control at all. Added
+   * beside `OBSERVED_DWARF` rather than replacing it: the read-only refresh
+   * cases above are about a selection changing and do not care which kind of
+   * session it is.
+   */
+  const HELD_DWARF = {
+    ...OBSERVED_DWARF,
+    textDelivery: 'held-session',
+    model: 'claude-haiku-4-5',
+    sessionTuning: { canSetModel: true, canSetEffort: true }
+  }
+
   const MINE = {
     id: 'mine:c:\\x\\anvil',
     path: 'C:\\x\\anvil',
@@ -1358,6 +1394,80 @@ describe('App selecting a dwarf (#162)', () => {
     await flushPromises()
     expect(api.refreshDwarfTelemetry).toHaveBeenCalledTimes(2)
     expect(api.refreshDwarfTelemetry).toHaveBeenLastCalledWith('claude:s2')
+  })
+
+  /*
+   * Issue #96's mutating slice, at the one place that talks to main. The
+   * shell owns the catalogue ask, the request and the refusal; the scene and
+   * the strip below it decide and draw, and neither reaches the bridge.
+   */
+  it('asks for the model catalogue once a mine is open, and not again per selection (#96)', async () => {
+    // A catalogue ask spawns a real CLI process per provider, so it is paid
+    // once for the whole run rather than per mine, per dwarf or per poll.
+    const { wrapper, api } = await openMineWith([HELD_DWARF])
+    expect(api.listAgentModels).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    expect(api.listAgentModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('never asks for the catalogue before a mine has been opened (#96)', async () => {
+    // Nothing outside a mine can draw the strip, and the ask is not free.
+    const { api } = await mountOpenApp()
+    expect(api.listAgentModels).not.toHaveBeenCalled()
+  })
+
+  it('sends a strip control straight to main, for the dwarf it names (#96)', async () => {
+    const { wrapper, api } = await openMineWith([HELD_DWARF])
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('.session-model-select').setValue('claude-sonnet-5')
+    await flushPromises()
+
+    expect(api.setDwarfTuning).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      change: { kind: 'model', model: 'claude-sonnet-5' }
+    })
+    // Accepted, so there is nothing for the strip to explain.
+    expect(wrapper.find('.session-refusal').exists()).toBe(false)
+  })
+
+  it("states a refused change's own reason on the strip (#96)", async () => {
+    const { wrapper } = await openMineWith([HELD_DWARF], {
+      setDwarfTuning: vi
+        .fn()
+        .mockResolvedValue({ applied: false, reason: 'The session did not answer in time.' })
+    })
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('.session-model-select').setValue('claude-sonnet-5')
+    await flushPromises()
+
+    expect(wrapper.get('.session-refusal').text()).toBe('The session did not answer in time.')
+  })
+
+  it('drops a refusal when the strip changes subject, rather than carrying it over (#96)', async () => {
+    // A refusal belongs to one session's own request. Left standing, it would
+    // read as a refusal from the dwarf the reader has just selected.
+    const second = { ...HELD_DWARF, id: 'claude:s2', sessionId: 's2' }
+    const { wrapper, api } = await openMineWith([HELD_DWARF, second], {
+      setDwarfTuning: vi.fn().mockResolvedValue({ applied: false, reason: 'No.' })
+    })
+    const openPanel = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    openPanel({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+    await flushPromises()
+    await wrapper.get('.session-model-select').setValue('claude-sonnet-5')
+    await flushPromises()
+    expect(wrapper.get('.session-refusal').text()).toBe('No.')
+
+    openPanel({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
+    await flushPromises()
+
+    expect(wrapper.find('.session-refusal').exists()).toBe(false)
   })
 
   it('asks main to open the panel window on the dwarf that was clicked', async () => {
