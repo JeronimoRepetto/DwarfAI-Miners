@@ -31,6 +31,14 @@ export interface ClaudeModelInfo {
   value: string
   displayName: string
   supportsEffort: boolean
+  /**
+   * The effort levels this model itself named, off the SDK's own
+   * `supportedEffortLevels` (issue #96) — absent or empty when the answer
+   * carried none, which is a real possibility even on a model that says it
+   * supports effort. `supportsEffort` alone decides WHETHER a control is
+   * offered; this decides which values it offers.
+   */
+  effortLevels?: string[]
 }
 
 /**
@@ -42,19 +50,55 @@ export interface ClaudeModelInfo {
  * a picker with no distinct label just shows the value, and inventing one
  * that matched it anyway would be this app claiming a name the SDK did not
  * give.
+ *
+ * `effortLevels` rides each option since #96, gated on `supportsEffort` and
+ * nothing else — see `modelEffortLevels` below for why the gate is there and
+ * where the values come from when the model named none.
  */
 export function claudeModelCatalog(models: readonly ClaudeModelInfo[]): AgentModelCatalog {
+  const efforts = effortsFor('claude')
   return {
     provider: 'claude',
-    models: models.map((model): ModelOption => ({
-      value: model.value,
-      ...(model.displayName !== '' && model.displayName !== model.value
-        ? { label: model.displayName }
-        : {})
-    })),
-    efforts: effortsFor('claude'),
+    models: models.map((model): ModelOption => {
+      const effortLevels = modelEffortLevels(model, efforts)
+      return {
+        value: model.value,
+        ...(model.displayName !== '' && model.displayName !== model.value
+          ? { label: model.displayName }
+          : {}),
+        ...(effortLevels === undefined ? {} : { effortLevels })
+      }
+    }),
+    efforts,
     source: 'provider'
   }
+}
+
+/**
+ * Which effort levels one model actually offers, or undefined for "offer no
+ * effort control at all" (issue #96).
+ *
+ * The gate is `supportsEffort`, exactly as the maintainer's ruling names it,
+ * and it is a hard one: `applyFlagSettings({ effortLevel })` on a model
+ * without it resolves cleanly and silently does nothing — measured live in
+ * #96's spike — so a control drawn for such a model would answer a click by
+ * doing nothing and reporting success.
+ *
+ * A model that passes the gate but named no levels falls back to the
+ * PROVIDER's own boundary list rather than to nothing. Not an invention: that
+ * list is what every launch of this provider is already checked against
+ * (`PROVIDER_EFFORT_LEVELS`), so the fallback cannot offer a level the
+ * boundary would refuse — and the alternative, no control on a model that
+ * said outright that it takes one, would hide a setting that works. An empty
+ * list is read as "named none", not as "an effort control with nothing in it".
+ */
+function modelEffortLevels(
+  model: ClaudeModelInfo,
+  providerEfforts: readonly string[]
+): string[] | undefined {
+  if (!model.supportsEffort) return undefined
+  const named = model.effortLevels ?? []
+  return named.length > 0 ? [...named] : [...providerEfforts]
 }
 
 /**

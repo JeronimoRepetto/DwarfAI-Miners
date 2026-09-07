@@ -426,10 +426,72 @@ export function createSdkHeldSession(): HeldSessionPort {
       contextUsage: async () => {
         try {
           const usage = await session.getContextUsage({ detail: 'summary' })
-          return { usedTokens: usage.totalTokens, maxTokens: usage.maxTokens }
+          return {
+            usedTokens: usage.totalTokens,
+            maxTokens: usage.maxTokens,
+            // The model the CLI itself believes is in force at this instant
+            // (issue #96's mutating slice) — carried beside the counts by the
+            // SDK's own response, so a reading already answers it. This is
+            // what verifies a `setModel` without spending a paid turn: the
+            // spike watched `model` and `maxTokens` flip 200000 → 1000000
+            // across exactly this call, with no generation in between.
+            model: usage.model
+          }
         } catch (error) {
           console.warn('[held] Could not read the session’s own context usage', error)
           return null
+        }
+      },
+      /*
+       * Change the model this session generates with, from here on (issue
+       * #96). `Query.setModel(model?)`'s own doc comment says it "change[s]
+       * the model used for subsequent responses" and is "only available in
+       * streaming input mode" — which this session is, since its prompt is an
+       * async iterable, the same gate `interrupt` above passes.
+       *
+       * The resolved value is `void`, so accepting is all this can report —
+       * and it is all this handle claims. What actually happened is read back
+       * off the session's own next context reading, in the registry: see
+       * `HeldSessionRegistry.setTuning`. Measured live at ~2 ms, so nothing
+       * here needs to be optimistic about a slow answer.
+       */
+      setModel: async (model: string) => {
+        try {
+          await session.setModel(model)
+          return true
+        } catch (error) {
+          console.warn('[held] The session refused a model change', error)
+          return false
+        }
+      },
+      /*
+       * Change how hard this session thinks, for the rest of its life (issue
+       * #96), through `applyFlagSettings`'s flag-settings layer — which the
+       * SDK documents as session-scoped and "never persisted to settings
+       * files", the one property that makes this safe to offer at all.
+       *
+       * This is the weakest promise on the handle, and knowingly so. The
+       * spike called it with `effortLevel: 'low'` on a model carrying no
+       * `supportsEffort`: it resolved in 21 ms, rejected nothing, and neither
+       * turn's `init` carried an `effort` before or after. So `true` here
+       * means the call was made and not refused, and nothing more — which is
+       * why the ACTIVE model's own `supportsEffort` gates whether a request
+       * is ever offered (see ModelOption.effortLevels), and why the registry
+       * holds the value as "requested" until an `init` echoes it back.
+       *
+       * `effortLevel` is typed as the SDK's own `EffortLevel` union, and this
+       * side of the seam carries a plain string — the same split every other
+       * field of HeldSessionStartRequest draws, and the cast is safe on the
+       * same grounds: the value was already checked against the provider's
+       * own closed list at the boundary that let it in.
+       */
+      setEffort: async (effort: string) => {
+        try {
+          await session.applyFlagSettings({ effortLevel: effort as EffortLevel })
+          return true
+        } catch (error) {
+          console.warn('[held] The session refused an effort change', error)
+          return false
         }
       }
     }
@@ -512,7 +574,16 @@ export function createSdkModelCatalog(): ClaudeModelCatalogPort {
       return models.map((model): ClaudeModelInfo => ({
         value: model.value,
         displayName: model.displayName,
-        supportsEffort: model.supportsEffort === true
+        supportsEffort: model.supportsEffort === true,
+        // Which levels THIS model takes, off the SDK's own answer (issue
+        // #96). Read only when the row also says it supports effort at all:
+        // a level list beside `supportsEffort: false` would be a control the
+        // model discards without a word, which is the exact failure #96's
+        // spike measured. Copied to a plain string[] here, because nothing on
+        // this side of the seam carries the SDK's own EffortLevel union.
+        ...(model.supportsEffort === true && model.supportedEffortLevels !== undefined
+          ? { effortLevels: [...model.supportedEffortLevels] }
+          : {})
       }))
     } finally {
       session.close()

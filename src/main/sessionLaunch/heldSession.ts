@@ -14,6 +14,7 @@ import type {
   DwarfProvider,
   DwarfQuestion,
   DwarfQuestionOption,
+  DwarfSessionTuning,
   FeedActivity,
   FeedMessage,
   Mine,
@@ -120,18 +121,29 @@ export type HeldPermissionAnswer = { decision: 'allow' } | { decision: 'deny'; r
  * A live held session, as the registry holds it — nothing about any one
  * provider's protocol.
  *
- * ## Two required acts, and two that are a protocol's to offer (#237, step 5)
+ * ## Two required acts, and the rest a protocol's to offer (#237, step 5)
+ *
+ * AMENDED for #96 (was: "and two that are a protocol's to offer", when
+ * `interrupt` and `contextUsage` were the only optional pair). `setModel` and
+ * `setEffort` joined them under the identical rule, so the heading counts no
+ * longer. Nothing about the rule itself changed.
  *
  * `close` and `send` are the whole of what holding a session MEANS, and both
  * implementations honour them: a process this app started, and a stream it can
  * write one more turn onto. Everything else here is a capability, declared by
  * being present.
  *
- * `interrupt` and `contextUsage` are OPTIONAL because they are round trips a
- * protocol either documents or does not. The Agent SDK documents both, as
- * control requests over the same streaming connection. Antigravity's
- * bidirectional stream-json protocol documents NEITHER — its input side
- * carries user text events and nothing else — so its handle leaves them off.
+ * `interrupt`, `contextUsage`, `setModel` and `setEffort` are OPTIONAL because
+ * they are round trips a protocol either documents or does not. The Agent SDK
+ * documents all four, as control requests over the same streaming connection.
+ * Antigravity's bidirectional stream-json protocol documents NONE of them —
+ * its input side carries user text events and nothing else — so its handle
+ * leaves them off.
+ *
+ * Each is independent of every other. A handle may offer `setModel` and no
+ * `contextUsage`, which is a real combination and a documented one rather
+ * than a gap: see `HeldSessionRegistry.setTuning`, which accepts the change
+ * anyway and says exactly what then confirms it.
  *
  * Absent rather than a method returning `false`, deliberately. A `false` says
  * "it was tried and refused", which is a fact about this moment; an absent
@@ -179,6 +191,41 @@ export interface HeldSessionHandle {
    * local flag.
    */
   contextUsage?(): Promise<HeldSessionContextUsage | null>
+  /**
+   * Change the model this session generates with, from now on (issue #96),
+   * off its own `setModel()` control request. True when the session ACCEPTED
+   * the request and nothing more — see DwarfSessionTuning on why acceptance is
+   * not the same claim as effect, and `HeldSessionRegistry.setTuning` for what
+   * proves the effect instead.
+   *
+   * OPTIONAL, on exactly the port rule the class comment above states: a
+   * capability is declared by being present, and an engine whose protocol
+   * documents no mid-run model change leaves it off rather than answering
+   * false. Absent is a fact about the protocol and readable without asking,
+   * which is what lets the panel disable the control with a reason instead of
+   * drawing it live and refusing every click.
+   *
+   * INDEPENDENT of `contextUsage`, deliberately. A handle may have this and
+   * not that — see `HeldSessionRegistry.setTuning` for what happens then, and
+   * why the change is still accepted rather than refused.
+   */
+  setModel?(model: string): Promise<boolean>
+  /**
+   * Change how hard this session thinks, for the rest of its life (issue
+   * #96), off its own `applyFlagSettings({ effortLevel })` control request.
+   * Session-scoped by the SDK's own doc comment — never persisted to a
+   * settings file.
+   *
+   * OPTIONAL for the same reason `setModel` is. True says the request was
+   * accepted, and here that claim is weaker than anywhere else on this
+   * handle: `applyFlagSettings` resolves cleanly on a model that supports no
+   * effort at all and silently does nothing, measured live in #96's spike, so
+   * its own resolution proves only that the call was made. Whether the ACTIVE
+   * model can take an effort is decided before a request is ever offered, off
+   * the provider's own catalogue (see ModelOption.effortLevels), and whether
+   * it took hold is only ever read off a later `init`.
+   */
+  setEffort?(effort: string): Promise<boolean>
 }
 
 /**
@@ -232,6 +279,20 @@ export interface HeldSessionUsage {
 export interface HeldSessionContextUsage {
   usedTokens: number
   maxTokens: number
+  /**
+   * The model the CLI itself believes is in force at the moment of this
+   * reading (issue #96) — the SDK's own `SDKControlGetContextUsageResponse`
+   * carries it beside the counts, so asking for a reading already answers it.
+   *
+   * This is the VERIFICATION for a model change, and the reason a change can
+   * be confirmed without spending a paid turn: #96's live-fire spike watched
+   * `setModel` resolve in ~2 ms and the following `getContextUsage()` report
+   * `model` and `maxTokens` flipped, with no generation in between. It stops
+   * at the registry — `heldTelemetryToWire` rebuilds the wire's reading from
+   * the two counts alone, and the model reaches the panel as `Dwarf.model`
+   * like every other report of it.
+   */
+  model?: string
 }
 
 /**
@@ -244,6 +305,21 @@ export interface HeldSessionContextUsage {
  * one that is stuck.
  */
 export const HELD_CONTEXT_USAGE_TIMEOUT_MS = 5_000
+
+/**
+ * How long a tuning change waits for the session to accept it before this app
+ * gives up (issue #96) — the same bound as HELD_CONTEXT_USAGE_TIMEOUT_MS
+ * above, for the same reason, and no retry either.
+ *
+ * Its own name rather than a second use of that one: these are two different
+ * acts on the same stream, and a future measurement that moves one deadline
+ * says nothing about the other — a mid-run model change was measured at ~2 ms
+ * and a full context reading at ~440, so the two have no reason to stay equal
+ * forever. What they DO share is the discipline: one bounded request, and a
+ * deadline that elapses is reported as a refusal the strip can word rather
+ * than retried behind the user's back.
+ */
+export const HELD_TUNING_TIMEOUT_MS = 5_000
 
 /**
  * What a held session's own protocol messages reported about itself, as
@@ -859,7 +935,19 @@ export function heldTelemetryToWire(telemetry: HeldSessionTelemetryUpdate): {
     ...(telemetry.effort === undefined ? {} : { effort: telemetry.effort }),
     ...(mcpServers === undefined ? {} : { mcpServers }),
     ...(telemetry.totalCostUsd === undefined ? {} : { totalCostUsd: telemetry.totalCostUsd }),
-    ...(isRealContextUsage(telemetry.contextUsage) ? { contextUsage: telemetry.contextUsage } : {})
+    // Rebuilt field by field rather than passed through (issue #96's mutating
+    // slice): a pull answers with the model it also read, and `DwarfContextUsage`
+    // is the two counts and nothing else. Spreading the SDK's own answer would
+    // carry that third field across the boundary undeclared, which is the one
+    // thing the wire contract forbids outright.
+    ...(isRealContextUsage(telemetry.contextUsage)
+      ? {
+          contextUsage: {
+            usedTokens: telemetry.contextUsage.usedTokens,
+            maxTokens: telemetry.contextUsage.maxTokens
+          }
+        }
+      : {})
   }
 }
 
@@ -919,6 +1007,53 @@ export type HeldTelemetryLookup = (sessionId: string) => HeldTelemetryState
  * its provider derived from disk stands untouched.
  */
 export type HeldCrewState = { held: false } | { held: true; crew: HeldCrew }
+
+/**
+ * What the panel is told about what a held session will let it CHANGE (issue
+ * #96) — the same `{held}`-discriminated shape the states above use, and
+ * `held: false` means the same thing here as everywhere: not a session this
+ * panel holds, so there is no control to offer.
+ *
+ * Its own state rather than another field on HeldTelemetryState, because the
+ * two are different kinds of fact. Telemetry is what the session REPORTED and
+ * only ever accumulates — nothing un-reports a model. This is what its engine
+ * can do plus one request in flight, and a request in flight CLEARS the
+ * moment something confirms it, which no telemetry field ever does.
+ */
+export type HeldTuningState = { held: false } | { held: true; tuning: DwarfSessionTuning }
+
+export type HeldTuningLookup = (sessionId: string) => HeldTuningState
+
+/**
+ * Copy `mines` with each held session's own tuning controls stamped onto its
+ * foreman (issue #96) — the same shape `stampHeldTelemetry` follows, and the
+ * same two rules: only a session this panel HOLDS has anything to offer, and
+ * only its foreman, never a worker sharing its session id (a Claude worker
+ * carries its foreman's `sessionId`, so keying on the id alone would put a
+ * model control on every subagent in the session).
+ *
+ * Unlike telemetry, the field is REMOVED when the state carries none — the
+ * same idiom `stampHeldQuestions` uses for a question that closed, and for
+ * the same two reasons: the wire means "no control here" by the field's
+ * absence, and a key carrying `undefined` survives structured cloning as a
+ * present key. It matters most for a session that has just ended, since the
+ * lifecycle's grace window keeps drawing its dwarf for a few seconds and a
+ * control left standing there would offer to change a session nothing holds.
+ */
+export function stampHeldTuning(mines: Mine[], stateOf: HeldTuningLookup): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      if (dwarf.role !== 'foreman') return dwarf
+      const state = stateOf(dwarf.sessionId)
+      if (state.held) return { ...dwarf, sessionTuning: state.tuning }
+      if (dwarf.sessionTuning === undefined) return dwarf
+      const stamped = { ...dwarf }
+      delete stamped.sessionTuning
+      return stamped
+    })
+  }))
+}
 
 export type HeldCrewLookup = (sessionId: string) => HeldCrewState
 

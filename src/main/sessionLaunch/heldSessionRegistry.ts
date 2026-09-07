@@ -5,6 +5,8 @@ import type {
   DwarfPermissionDecision,
   DwarfProvider,
   DwarfQuestionAnswerResult,
+  DwarfTuningChange,
+  DwarfTuningResult,
   FeedActivity,
   FeedMessage,
   HeldSessionLaunchResult
@@ -14,6 +16,7 @@ import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
   askToWireQuestion,
   HELD_CONTEXT_USAGE_TIMEOUT_MS,
+  HELD_TUNING_TIMEOUT_MS,
   heldTelemetryToWire,
   parseAskUserQuestion,
   permissionToWire,
@@ -31,7 +34,8 @@ import {
   type HeldSessionHandle,
   type HeldSessionPorts,
   type HeldSessionTelemetryUpdate,
-  type HeldTelemetryState
+  type HeldTelemetryState,
+  type HeldTuningState
 } from './heldSession'
 
 /**
@@ -119,6 +123,24 @@ const DISSOLVED = 'The panel closed before this was answered.'
 /** What a user-declined permission prompt tells the agent. */
 const DECLINED_PERMISSION = 'The user declined this from the DwarfAI-Miners panel.'
 
+/*
+ * The four fixed sentences a refused tuning change is reported with (issue
+ * #96). EXPORTED, unlike the copy above, and for one reason: the panel's
+ * session strip draws these words, so what they say is part of the contract
+ * rather than an implementation detail — a strip that cannot word a refusal
+ * is a control that quietly did nothing, which is the outcome this whole
+ * surface exists to avoid. Each names a different fact, because collapsing
+ * them would tell the reader "it did not work" and nothing they could act on.
+ */
+/** The session is not one this panel holds; there is no stream to ask on. */
+export const TUNING_NOT_HELD = 'The panel is not holding this session.'
+/** The engine behind this session has no such act at all — see HeldSessionHandle. */
+export const TUNING_UNSUPPORTED = 'This session cannot change that while it runs.'
+/** The session was asked and said no: one already closing, above all. */
+export const TUNING_REFUSED = 'The session would not take that change.'
+/** The deadline elapsed with no answer. Never retried — see HELD_TUNING_TIMEOUT_MS. */
+export const TUNING_TIMED_OUT = 'The session did not answer in time.'
+
 interface OpenAsk {
   ask: HeldAsk
   /** ISO time this host received the ask; the honest askedAt for a live one. */
@@ -192,6 +214,27 @@ interface HeldRecord {
    * change anything.
    */
   contextUsagePull?: Promise<void>
+  /**
+   * The model this panel asked for and nothing has confirmed yet (issue #96).
+   *
+   * Held here rather than merged straight onto `telemetry.model`, because the
+   * two are different claims: `telemetry` is what the CLI SAID, and this is
+   * what it was ASKED. Writing a request into the reported field would make
+   * the panel show a change on the strength of having requested it — the one
+   * thing the maintainer's verification rule forbids. Cleared the moment any
+   * report from the session (a context reading, or the next `init`) names
+   * this same model, which is what turns the request into a fact.
+   */
+  requestedModel?: string
+  /**
+   * The effort this panel asked for, on the same terms (issue #96) — with one
+   * difference that matters: this one may never clear. Nothing about
+   * `applyFlagSettings` resolving proves an effect, and the only report that
+   * could confirm it is the next `init`'s own `effort`, which arrives at the
+   * start of the next turn or not at all. A field left standing forever is
+   * the honest reading of a setting nothing echoed back.
+   */
+  requestedEffort?: string
   /**
    * The subagents this session has out, folded from its own stream (#157).
    * Lives on the record rather than in a map keyed by session id, so it dies
@@ -557,6 +600,13 @@ export class HeldSessionRegistry {
    * The pull itself, raced against the deadline. Never rejects: a session
    * whose handle throws is not this method's concern to retry or report, and
    * a rejection here would surface as an unhandled one to every joiner.
+   *
+   * A reading also carries the model the CLI believes is in force (issue
+   * #96's mutating slice), which is merged onto the same telemetry `model`
+   * an `init` writes — the same CLI saying the same thing, only later, so it
+   * supersedes on exactly the terms every other field here does. That merge
+   * IS the verification for a model change, and `confirmTuning` is where a
+   * request stops being pending because of it.
    */
   private async pullContextUsage(record: HeldRecord): Promise<void> {
     const timeout = new Promise<'timeout'>((resolve) => {
@@ -566,7 +616,123 @@ export class HeldSessionRegistry {
     if (pull === undefined) return
     const usage = await Promise.race([pull.call(record.handle), timeout])
     if (usage === 'timeout' || usage === null) return
-    record.telemetry = { ...record.telemetry, contextUsage: usage }
+    record.telemetry = {
+      ...record.telemetry,
+      contextUsage: usage,
+      ...(usage.model === undefined || usage.model === '' ? {} : { model: usage.model })
+    }
+    this.confirmTuning(record)
+  }
+
+  /**
+   * Change a held session's own model or effort while it runs (issue #96).
+   *
+   * WHAT THIS PROMISES, precisely: `applied: true` means the session ACCEPTED
+   * the request. It is not a claim the change took effect, and the difference
+   * is the whole design — `applyFlagSettings({ effortLevel })` was measured
+   * resolving cleanly on a model with no effort support and doing nothing at
+   * all. So the request is recorded as PENDING, and only a later report from
+   * the session itself promotes it to a fact:
+   *
+   * - a model is confirmed by the next context reading (pulled here, right
+   *   after the change) or by the next `init` — both name the model the CLI
+   *   believes is in force, and neither costs a paid turn;
+   * - an effort is confirmed only by the next `init`'s own `effort`, which
+   *   arrives at the start of the next turn or never. No reading is pulled
+   *   for one: a context response says nothing about effort, so asking would
+   *   be a control request that cannot answer the question it was made for.
+   *
+   * Every refusal is one of four fixed sentences and names a different fact
+   * (see the constants above), because the strip shows it. Bounded by
+   * HELD_TUNING_TIMEOUT_MS and never retried, on the same "no retry storm"
+   * ruling `refreshContextUsage` holds: a deadline that elapses is reported
+   * as a refusal the user can act on, not queued behind itself.
+   *
+   * A capability the handle does not declare is refused BEFORE anything is
+   * attempted. That is the whole reason `setModel`/`setEffort` are optional on
+   * the port: an engine with no such act is a fact readable without asking,
+   * so the panel disables the control with a reason instead of offering one
+   * that answers every click with a refusal.
+   */
+  async setTuning(sessionId: string, change: DwarfTuningChange): Promise<DwarfTuningResult> {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { applied: false, reason: TUNING_NOT_HELD }
+    const act =
+      change.kind === 'model'
+        ? record.handle.setModel?.bind(record.handle)
+        : record.handle.setEffort?.bind(record.handle)
+    if (act === undefined) return { applied: false, reason: TUNING_UNSUPPORTED }
+
+    const value = change.kind === 'model' ? change.model : change.effort
+    const timeout = new Promise<'timeout'>((resolve) => {
+      setTimeout(() => resolve('timeout'), HELD_TUNING_TIMEOUT_MS)
+    })
+    const accepted = await Promise.race([act(value), timeout]).catch((error: unknown) => {
+      console.warn(`[held] The session refused a ${change.kind} change`, error)
+      return false
+    })
+    if (accepted === 'timeout') return { applied: false, reason: TUNING_TIMED_OUT }
+    if (!accepted) return { applied: false, reason: TUNING_REFUSED }
+
+    if (change.kind === 'model') {
+      record.requestedModel = change.model
+      // The verification, and the reason a model change needs no paid turn:
+      // the reading names the model the CLI now believes is in force, and
+      // `pullContextUsage` promotes the request the moment it agrees.
+      await this.refreshContextUsage(sessionId)
+    } else {
+      record.requestedEffort = change.effort
+    }
+    this.log(`[held] Asked ${record.mineId} to change its ${change.kind}`)
+    return { applied: true }
+  }
+
+  /**
+   * What the panel may offer to change on this session, and what it has
+   * already been asked to change (issue #96).
+   *
+   * The two capability flags are read off the HANDLE rather than off a
+   * provider name: the port declares what its engine can actually do, so a
+   * held session on an engine with no mid-run model change reports
+   * `canSetModel: false` without this registry knowing which engine that is.
+   * `held: false` for a session this panel does not hold, the same refusal
+   * every other lookup here gives.
+   */
+  tuningState(sessionId: string): HeldTuningState {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { held: false }
+    return {
+      held: true,
+      tuning: {
+        canSetModel: record.handle.setModel !== undefined,
+        canSetEffort: record.handle.setEffort !== undefined,
+        ...(record.requestedModel === undefined ? {} : { pendingModel: record.requestedModel }),
+        ...(record.requestedEffort === undefined ? {} : { pendingEffort: record.requestedEffort })
+      }
+    }
+  }
+
+  /**
+   * Promote whatever the session has now reported from "asked for" to "in
+   * force" (issue #96) — called on every report that could carry either
+   * value, which is every context reading and every `init`.
+   *
+   * Cleared only on an EXACT match. A report naming something else is not a
+   * confirmation of anything: it is the session saying it is running what it
+   * is running, which leaves the request exactly as pending as it was. That
+   * is what keeps the strip honest about an effort the CLI accepted and then
+   * did not adopt — the one failure mode #96's spike actually measured.
+   */
+  private confirmTuning(record: HeldRecord): void {
+    if (record.requestedModel !== undefined && record.telemetry.model === record.requestedModel) {
+      record.requestedModel = undefined
+    }
+    if (
+      record.requestedEffort !== undefined &&
+      record.telemetry.effort === record.requestedEffort
+    ) {
+      record.requestedEffort = undefined
+    }
   }
 
   /**
@@ -751,6 +917,10 @@ export class HeldSessionRegistry {
     const record = this.held.get(key)
     if (record === undefined) return
     record.telemetry = { ...record.telemetry, ...update }
+    // An `init` names the model AND the effort the session will actually use,
+    // so it is the second confirmation route for a model change and the ONLY
+    // one there is for an effort change (issue #96).
+    this.confirmTuning(record)
   }
 
   /**

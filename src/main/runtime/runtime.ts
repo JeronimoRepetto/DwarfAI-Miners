@@ -37,6 +37,8 @@ import {
   type DwarfQuestionAnswerResult,
   type DwarfTextRequest,
   type DwarfTextResult,
+  type DwarfTuningRequest,
+  type DwarfTuningResult,
   type HeldSessionLaunchRequest,
   type HeldSessionLaunchResult,
   type HostedLaunchRequest,
@@ -80,10 +82,11 @@ import {
   stampHeldQuestions,
   stampHeldRank,
   stampHeldStatus,
-  stampHeldTelemetry
+  stampHeldTelemetry,
+  stampHeldTuning
 } from '../sessionLaunch/heldSession'
 import { createAntigravityHeldSession } from '../sessionLaunch/antigravityHeldSession'
-import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
+import { HeldSessionRegistry, TUNING_NOT_HELD } from '../sessionLaunch/heldSessionRegistry'
 import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
@@ -1161,12 +1164,21 @@ export class AgentRuntime {
         const withTelemetry = stampHeldTelemetry(withQuestions, (sessionId) =>
           this.heldSessions.telemetryState(sessionId)
         )
+        // What that session will let the panel CHANGE about itself, and what
+        // it has already been asked to change (issue #96's mutating slice).
+        // Beside the telemetry stamp rather than folded into it, because it
+        // is the other kind of fact: telemetry only ever accumulates, and
+        // this one clears — see stampHeldTuning, which REMOVES the field for
+        // a session the registry no longer holds.
+        const withTuning = stampHeldTuning(withTelemetry, (sessionId) =>
+          this.heldSessions.tuningState(sessionId)
+        )
         // The words that session's own stream carried (#159), which is the
         // only conversation this app has first-hand. Same supersession rule
         // once more, and the same reason it can only ever ADD: a session the
         // panel does not hold has no conversation here at all, and the panel
         // reads its transcript on its own channel instead (see dwarfFeed).
-        const withConversation = stampHeldConversation(withTelemetry, (sessionId) =>
+        const withConversation = stampHeldConversation(withTuning, (sessionId) =>
           this.heldSessions.conversationState(sessionId)
         )
         // What a held session is actually DOING, live (#245). Superseding the
@@ -1727,6 +1739,30 @@ export class AgentRuntime {
     const sessionId = this.heldSessionIdOf(dwarfId)
     if (sessionId === undefined) return
     void this.heldSessions.refreshContextUsage(sessionId)
+  }
+
+  /**
+   * Change a held session's own model or effort while it runs (issue #96) —
+   * the mutating half of the surface `refreshDwarfTelemetry` reads.
+   *
+   * This level owns exactly two things: resolving a DWARF to the session this
+   * process is holding, and refusing anything that is not one. What a change
+   * means, what confirms it, and what a refusal says are all the registry's —
+   * see `HeldSessionRegistry.setTuning`, where the verification rule lives.
+   *
+   * `heldSessionIdOf` draws the same line it draws for `deliveryTargetOf` and
+   * for a context reading, and for the same reason: on either side of it
+   * there is no stream to ask. A dwarf that is not on the board and a dwarf
+   * whose session this panel merely observes get the same refusal, because
+   * the answer for both is the same one — there is nothing here to change.
+   *
+   * Answers rather than no-ops, unlike its read-only sibling: a refused
+   * change is shown on the strip, and nothing else would ever push it.
+   */
+  async setDwarfTuning(request: DwarfTuningRequest): Promise<DwarfTuningResult> {
+    const sessionId = this.heldSessionIdOf(request.dwarfId)
+    if (sessionId === undefined) return { applied: false, reason: TUNING_NOT_HELD }
+    return this.heldSessions.setTuning(sessionId, request.change)
   }
 
   /**

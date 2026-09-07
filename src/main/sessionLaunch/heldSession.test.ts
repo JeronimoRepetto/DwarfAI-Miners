@@ -25,11 +25,13 @@ import {
   stampHeldRank,
   stampHeldStatus,
   stampHeldTelemetry,
+  stampHeldTuning,
   type HeldActivityState,
   type HeldAsk,
   type HeldPermission,
   type HeldSessionTelemetryUpdate,
-  type HeldTelemetryState
+  type HeldTelemetryState,
+  type HeldTuningState
 } from './heldSession'
 
 const ASKED_AT = '2026-09-02T07:00:00.000Z'
@@ -473,6 +475,107 @@ describe('heldTelemetryToWire', () => {
       { name: 'codegraph', status: 'connected' },
       { name: 'https://mcp.example.com/?token=[redacted]', status: 'needs-auth' }
     ])
+  })
+
+  /*
+   * Issue #96's mutating slice. A context pull now answers with the model the
+   * CLI believes is in force as well as the two counts — that is the whole
+   * verification route for a model change, and it costs no paid turn. But the
+   * WIRE's own `DwarfContextUsage` is two counts and nothing else, so the
+   * narrowing has to rebuild the reading field by field rather than pass the
+   * SDK's answer through: an undeclared third field riding a structured clone
+   * onto the panel is exactly the "never copy a shape across the boundary"
+   * rule this module exists to hold. The model reaches the wire the way it
+   * always did — as `model`, which the registry merges the reading into.
+   */
+  it('carries a context reading as the two counts alone, never the model it also named', () => {
+    const telemetry: HeldSessionTelemetryUpdate = {
+      contextUsage: { usedTokens: 41_237, maxTokens: 1_000_000, model: 'claude-sonnet-5' }
+    }
+    expect(heldTelemetryToWire(telemetry).contextUsage).toEqual({
+      usedTokens: 41_237,
+      maxTokens: 1_000_000
+    })
+  })
+})
+
+/*
+ * Issue #96's mutating slice. `stampHeldTuning` is the same shape
+ * `stampHeldTelemetry` follows and holds the same two rules — only a session
+ * this panel HOLDS reports any of this, and only its foreman, never a worker
+ * sharing its session id.
+ *
+ * A separate stamp from telemetry rather than one more field on it, because
+ * the two answer different kinds of question: telemetry is what the session
+ * REPORTED about itself and only ever accumulates, while this is what the
+ * session's own engine CAN do plus one request in flight — a fact that
+ * clears, which is something no telemetry field ever does.
+ */
+describe('stampHeldTuning', () => {
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'claude:sess-1', role: 'foreman', sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'claude:sess-1:a1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  const live: HeldTuningState = {
+    held: true,
+    tuning: { canSetModel: true, canSetEffort: false }
+  }
+
+  it('stamps what a held session can change onto its foreman', () => {
+    const mines = stampHeldTuning(board(), () => live)
+    expect(mines[0]!.dwarfs[0]!.sessionTuning).toEqual({
+      canSetModel: true,
+      canSetEffort: false
+    })
+  })
+
+  it('never stamps a worker sharing its foreman’s session id', () => {
+    // A Claude worker carries its foreman's sessionId, so keying on the id
+    // alone would offer a model control on every subagent in the session.
+    const mines = stampHeldTuning(board(), () => live)
+    expect(mines[0]!.dwarfs[1]!.sessionTuning).toBeUndefined()
+  })
+
+  it('leaves a session this panel does not hold with no controls at all', () => {
+    const mines = stampHeldTuning(board(), () => ({ held: false }))
+    expect(mines[0]!.dwarfs[0]!.sessionTuning).toBeUndefined()
+  })
+
+  it('carries a pending model through, so the strip can draw it as not yet confirmed', () => {
+    const mines = stampHeldTuning(board(), () => ({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true, pendingModel: 'claude-sonnet-5' }
+    }))
+    expect(mines[0]!.dwarfs[0]!.sessionTuning).toEqual({
+      canSetModel: true,
+      canSetEffort: true,
+      pendingModel: 'claude-sonnet-5'
+    })
+  })
+
+  it('removes a stamp that is no longer there rather than leaving the last one standing', () => {
+    // The field's ABSENCE is what the wire means by "no control here", and a
+    // held session that has just ended must not keep offering one from the
+    // previous poll — the same removal idiom stampHeldQuestions holds, and
+    // for the same structured-cloning reason.
+    const stale = board().map((mine) => ({
+      ...mine,
+      dwarfs: mine.dwarfs.map((dwarf) => ({
+        ...dwarf,
+        sessionTuning: { canSetModel: true, canSetEffort: true }
+      }))
+    }))
+    const mines = stampHeldTuning(stale, () => ({ held: false }))
+    expect('sessionTuning' in mines[0]!.dwarfs[0]!).toBe(false)
   })
 })
 

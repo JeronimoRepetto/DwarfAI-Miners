@@ -312,6 +312,90 @@ export interface DwarfContextUsage {
 }
 
 /**
+ * What a held session will let the panel change about ITSELF while it runs,
+ * and what it has already been asked to change but nothing has confirmed yet
+ * (issue #96).
+ *
+ * Two halves, because they answer two different questions and neither implies
+ * the other. `canSetModel`/`canSetEffort` are about the ENGINE behind this
+ * session — a Claude session held over the Agent SDK has `setModel` on its
+ * own handle, and an engine with no such act has none, which is a fact about
+ * the session type rather than about this moment. The two `pending` fields
+ * are about one request in flight, and they exist because **a change is never
+ * shown as done on the strength of having been accepted**:
+ *
+ * - `pendingModel` is the model asked for, held here until the session's own
+ *   next context reading NAMES it (`DwarfContextUsage`'s pull carries the
+ *   model the CLI believes is in force). That reading is the confirmation,
+ *   and it costs no paid turn — issue #96's live-fire spike established the
+ *   route: `setModel` resolved in ~2 ms and the following `getContextUsage()`
+ *   showed `model` and `maxTokens` flipped. Cleared the moment `Dwarf.model`
+ *   agrees with it.
+ * - `pendingEffort` is the effort asked for, and it may never clear at all.
+ *   `applyFlagSettings({ effortLevel })` resolves cleanly on a model that
+ *   does not support one and silently does nothing — measured, same spike —
+ *   so the only confirmation this app can honestly wait for is the next
+ *   `init` re-announcing the session's own effort, which arrives at the START
+ *   of the next turn or never. Until then the panel must say "requested", not
+ *   "set". A field that stayed pending forever is the honest reading of a
+ *   setting nothing echoed back, not a bug to paper over with a timeout.
+ *
+ * Held sessions ONLY, on the same terms as `mcpServers` and `contextUsage`:
+ * every other session type this app runs has no structured route to change
+ * anything mid-run (docs/command-surface-evaluation.md §2b), so the field's
+ * absence means "no such control here" and the panel disables rather than
+ * hides — the idiom the dwarf action bar already holds.
+ */
+export interface DwarfSessionTuning {
+  canSetModel: boolean
+  canSetEffort: boolean
+  pendingModel?: string
+  pendingEffort?: string
+}
+
+/**
+ * One thing the panel asks a held session to change about itself mid-run
+ * (issue #96) — discriminated rather than a record of optional fields, so a
+ * request always names exactly one act and main never has to decide what a
+ * payload carrying both, or neither, meant.
+ *
+ * One channel for two acts rather than two channels, deliberately: every
+ * boundary rule they hold is the same one (held sessions only, one bounded
+ * control request, no retry, the same verdict shape and the same fixed
+ * refusal copy), and the thing that genuinely differs between them — how the
+ * change is CONFIRMED — is not a property of the request at all. See
+ * `DwarfSessionTuning` for the two different confirmations.
+ */
+export type DwarfTuningChange =
+  { kind: 'model'; model: string } | { kind: 'effort'; effort: string }
+
+/**
+ * One request to change a held session's own tuning (issue #96). Named by
+ * DWARF, never by session id, for the reason every other dwarf channel gives:
+ * the dwarf is what the panel has, and main resolves the rest.
+ */
+export interface DwarfTuningRequest {
+  dwarfId: string
+  change: DwarfTuningChange
+}
+
+/**
+ * Verdict of one tuning change (issue #96) — a discriminated pair rather than
+ * `DwarfTextResult`'s `{ delivered, via, error? }`, because there is no
+ * channel to name here: a control request travels the one stream this process
+ * already owns, and `via` would be the same constant on every answer.
+ *
+ * `applied: true` says the session ACCEPTED the request, and nothing more
+ * than that. It is deliberately not a claim that the change took effect —
+ * that is what the next reading proves, and until it does the strip draws the
+ * value as pending (see `DwarfSessionTuning`). `applied: false` always
+ * carries a reason, because the strip shows it: a refusal the panel cannot
+ * word is a control that quietly did nothing, which is the one outcome this
+ * surface exists to avoid.
+ */
+export type DwarfTuningResult = { applied: true } | { applied: false; reason: string }
+
+/**
  * A dwarf's rank, which is TOPOLOGY read off the spawn tree and never a title
  * anything scripted (#86, #157).
  *
@@ -952,6 +1036,18 @@ export interface Dwarf {
    */
   contextUsage?: DwarfContextUsage
   /**
+   * What this session will let the panel change about itself mid-run, and
+   * what it has been asked to change but nothing has confirmed yet (issue
+   * #96) — see DwarfSessionTuning, which carries the whole reasoning.
+   *
+   * Held sessions only, and stamped on every poll beside `contextUsage`.
+   * Absent means one of two things and deliberately does not distinguish
+   * them: this is not a session the panel holds, or it is one whose engine
+   * offers no such act — either way the panel offers no control, which is the
+   * same answer.
+   */
+  sessionTuning?: DwarfSessionTuning
+  /**
    * The exchange this panel itself watched go by on a stream it is HOLDING
    * (#159, #194) — the prompt it sent to start the session, and every message
    * the stream has carried since, oldest first.
@@ -1571,6 +1667,26 @@ export interface AgentProviderList {
 export interface ModelOption {
   value: string
   label?: string
+  /**
+   * The effort levels THIS model accepts, when its own provider says so
+   * (issue #96) — absent when the provider said the model takes none, or
+   * said nothing about it either way.
+   *
+   * Per model, unlike `AgentModelCatalog.efforts`, which is the whole
+   * provider's boundary list. The two are different questions and #96's
+   * live-fire spike is why this one had to exist: Claude's own
+   * `supportedModels()` carries `supportsEffort` per row, and
+   * `applyFlagSettings({ effortLevel })` on a model without it **resolves
+   * cleanly and silently does nothing**. So a surface that offers an effort
+   * control needs the per-model answer; the provider-wide list would have it
+   * offering a setting the active model discards without a word.
+   *
+   * Absence therefore means "offer no effort control", never "offer the
+   * provider's list instead". Values are always a subset of the provider's
+   * own `efforts`, so nothing here can name a level the launch boundary
+   * would refuse.
+   */
+  effortLevels?: string[]
 }
 
 /**
@@ -2511,6 +2627,23 @@ export const IPC_CHANNELS = {
    * session it does not hold, or a dwarf that names no session at all).
    */
   refreshDwarfTelemetry: 'dwarf:refreshTelemetry',
+  /**
+   * Changing a held session's own model or effort while it runs (issue #96) —
+   * the mutating half of the surface `refreshDwarfTelemetry` reads.
+   *
+   * Request/response rather than one-way, unlike its read-only sibling above,
+   * and for the reason `openMinePath` is one: there IS a verdict the strip
+   * has to render. A refused change must show its reason there, and nothing
+   * else pushes that later — a snapshot can say what the session runs, never
+   * why a request was turned down.
+   *
+   * ONE channel for both acts, carrying a discriminated `change` (see
+   * DwarfTuningChange for why). Deliberately not folded into `dwarf:sendText`:
+   * a control request is not text delivered into a session, and forcing it
+   * through that shape would misrepresent what it is — the same ruling
+   * docs/command-surface-evaluation.md §6 item 3 already made for this pair.
+   */
+  setDwarfTuning: 'dwarf:setTuning',
   /**
    * Every dwarf that has spoken in one mine, with its latest messages (#192),
    * read from the transcripts under the mine's project folder on request.

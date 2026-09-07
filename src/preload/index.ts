@@ -14,6 +14,9 @@ import type {
   DwarfQuestionAnswerResult,
   DwarfTextRequest,
   DwarfTextResult,
+  DwarfTuningChange,
+  DwarfTuningRequest,
+  DwarfTuningResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
   HostedLaunchRequest,
@@ -35,6 +38,28 @@ import type {
   ShortcutState
 } from '../shared/contracts'
 import { IPC_CHANNELS, isDwarfProvider, isMessagePanelSurface } from '../shared/contracts'
+
+/**
+ * The one act a tuning request names, rebuilt so main only ever reasons about
+ * a change this build recognises (issue #96).
+ *
+ * An unrecognised `kind` collapses to a shape main REFUSES rather than to
+ * either real act. That is the same ruling #168 made for a launch's provider,
+ * and for the same reason: this changes a session that is already running, so
+ * a default picked here would be the panel altering somebody's session on the
+ * strength of a payload it could not read.
+ */
+function tuningChangeFor(change: unknown): DwarfTuningChange | { kind: ''; value: '' } {
+  const record =
+    typeof change === 'object' && change !== null ? (change as Record<string, unknown>) : {}
+  if (record.kind === 'model' && typeof record.model === 'string') {
+    return { kind: 'model', model: record.model }
+  }
+  if (record.kind === 'effort' && typeof record.effort === 'string') {
+    return { kind: 'effort', effort: record.effort }
+  }
+  return { kind: '', value: '' }
+}
 
 /** API surface exposed to the renderer as `window.api`. */
 export interface DwarfAiMinersApi {
@@ -151,6 +176,22 @@ export interface DwarfAiMinersApi {
    * does not hold — main draws that line, not this bridge.
    */
   refreshDwarfTelemetry: (dwarfId: string) => void
+  /**
+   * Change a held session's own model or effort while it runs (issue #96) —
+   * the mutating half of the surface `refreshDwarfTelemetry` reads.
+   *
+   * Request/response rather than one-way, unlike its sibling above: there IS
+   * a verdict the strip renders. `applied: true` says the session accepted
+   * the request and NOT that the change took effect — what proves that is the
+   * session's own next reading, which arrives on a later `minesUpdated` like
+   * every other change (see DwarfSessionTuning). `applied: false` always
+   * carries a reason, because the panel shows it.
+   *
+   * Named by DWARF, like every other action here, and one act per request.
+   * A no-op on an observed dwarf's id, or one this panel does not hold —
+   * main draws that line, not this bridge.
+   */
+  setDwarfTuning: (request: DwarfTuningRequest) => Promise<DwarfTuningResult>
   /**
    * Every dwarf that has spoken in a mine, with its latest messages, read from
    * the transcripts under the mine's folder (#192) — for the Mine History
@@ -402,6 +443,21 @@ const api: DwarfAiMinersApi = {
       IPC_CHANNELS.refreshDwarfTelemetry,
       typeof dwarfId === 'string' ? dwarfId : ''
     ),
+  // Same field-by-field rebuild as launchAgent, and the same reason it is a
+  // rebuild rather than a forward: this changes a RUNNING session, so what
+  // crosses is exactly a dwarf id and one named act — nothing else a caller
+  // hung off the object comes with it.
+  //
+  // The act itself has NO safe default (#96), on the same reasoning #168
+  // applied to a launch's provider: collapsing an unreadable `kind` to
+  // 'model' or 'effort' would change a session in a way nobody asked for. So
+  // an unrecognised change crosses as a shape main refuses outright, rather
+  // than as a lesser one main would carry out.
+  setDwarfTuning: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setDwarfTuning, {
+      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
+      change: tuningChangeFor(request?.change)
+    }),
   // Same discipline as getDwarfFeed: a mine id crosses as a real string or as
   // '', which main refuses as a mine it does not hold.
   getMineHistory: (mineId) =>
