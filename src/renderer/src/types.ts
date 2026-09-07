@@ -13,6 +13,9 @@ export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
+  AgentModelCatalog,
+  AgentModelCatalogList,
+  AgentModelSource,
   AgentProviderList,
   AgentProviderOption,
   AppBuild,
@@ -45,6 +48,7 @@ export type {
   FeedActivity,
   FeedActivityKind,
   FeedMessage,
+  HeldPermissionMode,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
   HostedLaunchRequest,
@@ -63,6 +67,7 @@ export type {
   MinesSnapshot,
   MineTier,
   MineUndeclareResult,
+  ModelOption,
   PanelEdge,
   PanelLayout,
   PanelLayoutRequest,
@@ -90,6 +95,7 @@ export {
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
   HELDABLE_PROVIDERS,
+  HELD_PERMISSION_MODES,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
   MESSAGE_PANEL_SURFACE,
@@ -103,6 +109,7 @@ export {
   WAITING_ON_HUMAN_REASON,
   dwarfSilenceWindowMs,
   isDwarfProvider,
+  isHeldPermissionMode,
   isMcpConnectionStatus,
   isMessagePanelSurface,
   isMineTier,

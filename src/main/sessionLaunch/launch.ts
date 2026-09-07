@@ -1,3 +1,4 @@
+import type { LaunchTuning } from '../domain/launchTuning'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 
 /**
@@ -12,9 +13,13 @@ import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
  * parent is a root, and role is topology (see contracts.ts) — so there is no
  * role to choose and none is plumbed here.
  *
- * Model and effort are deliberately left to the CLI's own defaults; #86 keeps
- * that an open question, and guessing here would bake an answer into a wire
- * contract before the question is settled.
+ * Model and effort used to be left to the CLI's own defaults outright — #86
+ * kept that an open question, and guessing would have baked an answer into a
+ * wire contract before the question was settled. #239 settled it, and the
+ * answer is not a guess: the request may CARRY a model and an effort, and when
+ * it carries neither the argv below is byte for byte what it always was. So
+ * the default is still the CLI's own, and it is now the CLI's own by omission
+ * rather than by this file having no way to say otherwise.
  *
  * ## The prompt travels on stdin, not in argv
  *
@@ -47,9 +52,34 @@ export function prepareLaunchPrompt(text: string): string {
 /**
  * Argv for one headless turn. It carries no prompt: the text goes down stdin,
  * so nothing a user types is visible in this machine's process list.
+ *
+ * Both tuning flags are read out of the installed CLI's own help, exactly as
+ * the argv above was — Claude Code 2.1.263, 2026-09-07:
+ *
+ *     --model <model>   Model for the current session. Provide an alias for the
+ *                       latest model (e.g. 'fable', 'opus', or 'sonnet') or a
+ *                       model's full name (e.g. 'claude-fable-5').
+ *     --effort <level>  Effort level for the current session (low, medium,
+ *                       high, xhigh, max)
+ *
+ * `--effort` is the fact #239 asked to be verified before anything was wired,
+ * because the issue's own table was unsure of it ("`CLAUDE_EFFORT`-style env
+ * or `--effort` — verify the flag on this build before relying on it"). It is
+ * a documented flag on this build, with its five levels printed beside it, and
+ * those five are also the Agent SDK's `EffortLevel` — so the detached and held
+ * routes take the same vocabulary. See PROVIDER_EFFORT_LEVELS.
+ *
+ * An absent field adds nothing, which is what keeps an untuned launch byte for
+ * byte what it was before #239.
  */
-export function buildClaudeLaunchArgs(): string[] {
-  return ['-p', '--input-format', 'text']
+export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
+  return [
+    '-p',
+    '--input-format',
+    'text',
+    ...(tuning.model === undefined ? [] : ['--model', tuning.model]),
+    ...(tuning.effort === undefined ? [] : ['--effort', tuning.effort])
+  ]
 }
 
 /**
@@ -95,8 +125,35 @@ export function buildClaudeLaunchArgs(): string[] {
  * decision inside somebody's own folder. If Codex refuses, that refusal is
  * Codex's to give.
  */
-export function buildCodexLaunchArgs(): string[] {
-  return ['exec', '-']
+/*
+ * ## The two tuning flags, and why only one of them is a flag (#239)
+ *
+ * Read out of the installed CLI's own help, on 2026-09-07 (codex-cli 0.153.4):
+ *
+ *     -m, --model <MODEL>       Model the agent should use
+ *     -c, --config <key=value>  Override a configuration value that would
+ *                               otherwise be loaded from `~/.codex/config.toml`
+ *                               ... The `value` portion is parsed as TOML. If
+ *                               it fails to parse as TOML, the raw string is
+ *                               used as a literal.
+ *
+ * So the model has a flag of its own and the effort does not: Codex names no
+ * effort option anywhere in `codex --help` or `codex exec --help`, and the
+ * level travels as an override on the key its own config file documents
+ * (`model_reasoning_effort`). A bare level is not valid TOML, so it arrives as
+ * the literal string the help promises, which is the spelling that file uses.
+ *
+ * Both go BEFORE the `-` positional, because the usage line is
+ * `codex exec [OPTIONS] [PROMPT]`: a flag written after the prompt would be
+ * read as an argument to it rather than as an option.
+ */
+export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
+  return [
+    'exec',
+    ...(tuning.model === undefined ? [] : ['-m', tuning.model]),
+    ...(tuning.effort === undefined ? [] : ['-c', `model_reasoning_effort=${tuning.effort}`]),
+    '-'
+  ]
 }
 
 /**
@@ -111,13 +168,19 @@ export function buildCodexLaunchArgs(): string[] {
  * written its spelling down. Argv does not transfer between CLIs, so the thing
  * a default arm would do is lend one CLI's flags to another: either an opaque
  * failure or, worse, a process that starts and is not what the user chose.
+ *
+ * The tuning is dispatched rather than appended (#239), for that same reason
+ * and now with a worked example of it: Claude's effort is `--effort <level>`
+ * and Codex's is `-c model_reasoning_effort=<level>`, which is not a variant
+ * spelling of the same flag but a different mechanism. One shared tail here
+ * would hand each CLI the other's.
  */
-export function buildLaunchArgs(provider: DwarfProvider): string[] {
+export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = {}): string[] {
   switch (provider) {
     case 'claude':
-      return buildClaudeLaunchArgs()
+      return buildClaudeLaunchArgs(tuning)
     case 'codex':
-      return buildCodexLaunchArgs()
+      return buildCodexLaunchArgs(tuning)
     case 'antigravity':
       // The gate above doing its job, on the first provider to reach it (#237).
       // Antigravity arrives as an OBSERVER: this app reads its store and has

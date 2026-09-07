@@ -2,6 +2,7 @@ import type { SpawnOptions } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
+import type { LaunchTuning } from '../domain/launchTuning'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
@@ -68,6 +69,12 @@ function launch(options: {
   env?: NodeJS.ProcessEnv
   platform?: Platform
   fs?: FsLike
+  /**
+   * The model and effort this launch asked for (#239). Spread rather than
+   * always passed, so every test written before that issue exercises the
+   * untuned path exactly as it did.
+   */
+  tuning?: LaunchTuning
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -80,9 +87,16 @@ function launch(options: {
       env: options.env ?? { PATH: '/usr/bin' },
       platform: options.platform ?? 'linux',
       fs: options.fs ?? new FakeFs(),
-      run
+      run,
+      ...(options.tuning === undefined ? {} : options.tuning)
     })
   }
+}
+
+/** The argv the runner handed the spawn seam, for a recording `run` fake. */
+function argvOf(run: LaunchRunner): string[] {
+  const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+  return invocation.args
 }
 
 describe('launchClaudeSession', () => {
@@ -750,5 +764,99 @@ describe('hosting the launched CLI’s console (#208)', () => {
 
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     expect(invocation.viaNodeEntry).toBe(false)
+  })
+})
+
+describe('a detached launch that names a model and an effort (#239)', () => {
+  it('leaves the argv untouched when the request tunes nothing', async () => {
+    // The promise the Add Panel's row rests on: a person who ignores it gets
+    // the launch this app has always made.
+    const { run, result } = launch({ provider: 'claude' })
+    await result
+    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
+  })
+
+  it("carries the model into Claude's argv, and still not the prompt", async () => {
+    const { run, result } = launch({
+      provider: 'claude',
+      prompt: 'rotate the deploy key',
+      tuning: { model: 'sonnet', effort: 'high' }
+    })
+    await result
+
+    expect(argvOf(run)).toEqual([
+      '-p',
+      '--input-format',
+      'text',
+      '--model',
+      'sonnet',
+      '--effort',
+      'high'
+    ])
+    // The argv/stdin split survives the new flags: what a user typed is still
+    // invisible to every other process on this machine.
+    expect(argvOf(run).join(' ')).not.toContain('rotate the deploy key')
+  })
+
+  it("carries the model into Codex's argv in Codex's own spelling", async () => {
+    const { run, result } = launch({
+      provider: 'codex',
+      cli: installedCodex(),
+      tuning: { model: 'gpt-5.6-sol', effort: 'medium' }
+    })
+    await result
+
+    expect(argvOf(run)).toEqual([
+      'exec',
+      '-m',
+      'gpt-5.6-sol',
+      '-c',
+      'model_reasoning_effort=medium',
+      '-'
+    ])
+  })
+
+  it('keeps the tuning behind the shim’s own node entry, not in front of it', async () => {
+    // A shim launch runs `node <entry> <the CLI's own argv>` (#193). The
+    // tuning belongs to the CLI's argv, so it must land after the entry —
+    // in front of it, it would be an argument to node itself.
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs,
+      tuning: { model: 'gpt-5.6-luna' }
+    })
+    await result
+
+    expect(argvOf(run)).toEqual([NPM_ENTRY, 'exec', '-m', 'gpt-5.6-luna', '-'])
+  })
+
+  it('refuses an empty prompt before it looks at the tuning at all', async () => {
+    // The cheapest refusal stays the cheapest: a tuned launch with nothing to
+    // say is still nothing to start, and it must not cost a disk probe.
+    const cli = installed()
+    const { run, result } = launch({
+      prompt: '   ',
+      cli,
+      tuning: { model: 'sonnet', effort: 'max' }
+    })
+
+    await expect(result).resolves.toEqual({
+      launched: false,
+      provider: 'none',
+      error: 'Type a prompt first.'
+    })
+    expect(run).not.toHaveBeenCalled()
+    expect(cli.detect).not.toHaveBeenCalled()
+  })
+
+  it('says nothing about the model in the verdict, because it cannot know', async () => {
+    // What model a session actually ran is the CLI's to report. Repeating the
+    // request back would be a claim dressed as an observation.
+    const { result } = launch({ provider: 'claude', tuning: { model: 'sonnet', effort: 'low' } })
+    await expect(result).resolves.toEqual({ launched: true, provider: 'claude' })
   })
 })

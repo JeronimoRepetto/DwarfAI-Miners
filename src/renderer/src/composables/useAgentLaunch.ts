@@ -3,6 +3,9 @@ import { launchedDwarfIn } from '../lib/launch/launchArrival'
 import {
   adoptLaunchedDwarf,
   canSubmit,
+  chooseEffort,
+  chooseModel,
+  choosePermissionMode,
   chooseProvider,
   closeLaunch,
   closedLaunch,
@@ -10,8 +13,10 @@ import {
   composerEnabled,
   composerPlaceholder,
   launchCommand,
+  launchPermissionMode,
   launchPhase,
   launchPrompt,
+  launchTuning,
   openLaunch,
   startedDetached,
   submitRefused,
@@ -23,9 +28,16 @@ import {
   type LaunchPhase,
   type LaunchState
 } from '../lib/launch/launchState'
+import {
+  effortPicker,
+  modelPicker,
+  permissionsVisible,
+  type EffortPicker,
+  type ModelPicker
+} from '../lib/launch/modelTuning'
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
 import { HELDABLE_PROVIDERS } from '../types'
-import type { AgentProviderOption, Mine } from '../types'
+import type { AgentModelCatalog, AgentProviderOption, HeldPermissionMode, Mine } from '../types'
 
 /**
  * Launching an agent from inside a mine (#86, #194): the IPC, and the state the
@@ -86,6 +98,8 @@ import type { AgentProviderOption, Mine } from '../types'
 const state = ref<LaunchState>(closedLaunch())
 const mineId = ref<string | null>(null)
 const providers = ref<AgentProviderOption[]>([])
+/** What each provider can start on, live (#239) — asked once per open, beside `providers`. */
+const catalogs = ref<AgentModelCatalog[]>([])
 
 const LOST_BRIDGE = 'The panel lost contact with the app.'
 const NOT_LAUNCHED = 'The agent could not be started.'
@@ -101,12 +115,22 @@ export interface AgentLaunch {
   placeholder: ComputedRef<string>
   /** Why the current choice cannot start a session, or null. */
   refusal: ComputedRef<string | null>
+  /** The row under the composer (#239): what the model select should draw. */
+  modelPicker: ComputedRef<ModelPicker>
+  /** What the effort select should draw, empty when the chosen provider has none. */
+  effortPicker: ComputedRef<EffortPicker>
+  /** Whether the Permissions select belongs on screen — held Claude only. */
+  permissionsVisible: ComputedRef<boolean>
   open: (mine: string) => Promise<void>
   close: () => void
   choose: (choice: LaunchChoice) => void
   setCommand: (text: string) => void
   commit: () => void
   setPrompt: (text: string) => void
+  /** Pick a model off the row under the composer. */
+  setModel: (value: string) => void
+  setEffort: (value: string) => void
+  setPermissionMode: (value: HeldPermissionMode) => void
   submit: () => Promise<void>
   observe: (mines: readonly Mine[]) => void
 }
@@ -122,6 +146,13 @@ export function useAgentLaunch(): AgentLaunch {
    * Asked per open rather than held from startup: a CLI installed while the
    * panel was running would otherwise never appear, and detection's own TTL
    * makes reopening cost a map lookup rather than a disk walk.
+   *
+   * The model catalogue is asked alongside the provider list (#239), on the
+   * same per-open cadence rather than per keystroke — see
+   * createSdkModelCatalog's own note on what a live ask costs. A bridge that
+   * cannot answer degrades to no catalogues, which reads as every model
+   * picker showing 'This provider does not report its models.' rather than
+   * the panel failing to open at all.
    */
   async function open(mine: string): Promise<void> {
     mineId.value = mine
@@ -134,12 +165,18 @@ export function useAgentLaunch(): AgentLaunch {
       // offers what the design guarantees is always offered.
       providers.value = []
     }
+    try {
+      catalogs.value = (await window.api.listAgentModels()).catalogs
+    } catch {
+      catalogs.value = []
+    }
   }
 
   function close(): void {
     state.value = closeLaunch(state.value)
     mineId.value = null
     providers.value = []
+    catalogs.value = []
   }
 
   function choose(choice: LaunchChoice): void {
@@ -156,6 +193,18 @@ export function useAgentLaunch(): AgentLaunch {
 
   function setPrompt(text: string): void {
     state.value = typePrompt(state.value, text)
+  }
+
+  function setModel(value: string): void {
+    state.value = chooseModel(state.value, value)
+  }
+
+  function setEffort(value: string): void {
+    state.value = chooseEffort(state.value, value)
+  }
+
+  function setPermissionMode(value: HeldPermissionMode): void {
+    state.value = choosePermissionMode(state.value, value)
   }
 
   /**
@@ -208,10 +257,13 @@ export function useAgentLaunch(): AgentLaunch {
       // opens a receipt (#191), and a branch that narrowed on a boolean would
       // have to assert its way to that field.
       if (HELDABLE_PROVIDERS.includes(choice)) {
+        const permissionMode = launchPermissionMode(state.value)
         const heldResult = await window.api.launchHeldSession({
           mineId: mineId.value,
           provider: choice,
-          prompt
+          prompt,
+          ...launchTuning(state.value),
+          ...(permissionMode === undefined ? {} : { permissionMode })
         })
         // A verdict of `launched: true` says a session STARTED and nothing
         // more, on every channel. What differs is what can be done with it: a
@@ -226,7 +278,8 @@ export function useAgentLaunch(): AgentLaunch {
       const result = await window.api.launchAgent({
         mineId: mineId.value,
         provider: choice,
-        prompt
+        prompt,
+        ...launchTuning(state.value)
       })
       if (!result.launched) {
         state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
@@ -273,12 +326,18 @@ export function useAgentLaunch(): AgentLaunch {
     enabled: computed(() => composerEnabled(state.value)),
     placeholder: computed(() => composerPlaceholder(state.value)),
     refusal,
+    modelPicker: computed(() => modelPicker(catalogs.value, state.value.choice)),
+    effortPicker: computed(() => effortPicker(catalogs.value, state.value.choice)),
+    permissionsVisible: computed(() => permissionsVisible(state.value.choice)),
     open,
     close,
     choose,
     setCommand,
     commit,
     setPrompt,
+    setModel,
+    setEffort,
+    setPermissionMode,
     submit,
     observe
   }

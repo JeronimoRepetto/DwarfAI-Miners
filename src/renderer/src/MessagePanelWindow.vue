@@ -92,12 +92,18 @@ const {
   enabled: launchEnabled,
   placeholder: launchPlaceholder,
   refusal: launchRefusal,
+  modelPicker: launchModelPicker,
+  effortPicker: launchEffortPicker,
+  permissionsVisible: launchPermissionsVisible,
   open: openLaunchPanel,
   close: closeLaunchPanel,
   choose: chooseProvider,
   setCommand: setLaunchCommand,
   commit: commitLaunchCommand,
   setPrompt: setLaunchPrompt,
+  setModel: setLaunchModel,
+  setEffort: setLaunchEffort,
+  setPermissionMode: setLaunchPermissionMode,
   submit: submitLaunch,
   observe: observeLaunch
 } = useAgentLaunch()
@@ -655,10 +661,16 @@ onBeforeUnmount(() => {
         :prompt="launchState.prompt"
         :refusal="launchRefusal"
         :error="launchState.error"
+        :model-picker="launchModelPicker"
+        :effort-picker="launchEffortPicker"
+        :permissions-visible="launchPermissionsVisible"
         @choose="chooseProvider"
         @command="setLaunchCommand"
         @commit="commitLaunchCommand"
         @prompt="setLaunchPrompt"
+        @model="setLaunchModel"
+        @effort="setLaunchEffort"
+        @permission-mode="setLaunchPermissionMode"
         @submit="submitLaunch"
         @close="close"
       />

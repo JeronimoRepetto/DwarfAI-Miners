@@ -8,8 +8,9 @@ import {
   type LaunchChoice,
   type LaunchPhase
 } from '../../lib/launch/launchState'
+import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { MAX_DWARF_TEXT_CHARS } from '../../types'
+import { HELD_PERMISSION_MODES, MAX_DWARF_TEXT_CHARS, type HeldPermissionMode } from '../../types'
 
 /**
  * The design's Add Panel (#86): the surface the mine's Add action opens, where
@@ -47,6 +48,12 @@ const props = defineProps<{
   refusal: string | null
   /** The reason main gave for refusing the last launch, or null. */
   error: string | null
+  /** The row under the composer (#239): what the model select should draw. */
+  modelPicker: ModelPicker
+  /** What the effort select should draw — hidden when the chosen provider has none. */
+  effortPicker: EffortPicker
+  /** Whether the Permissions select belongs on screen — held Claude only. */
+  permissionsVisible: boolean
 }>()
 
 const emit = defineEmits<{
@@ -57,6 +64,10 @@ const emit = defineEmits<{
   commit: []
   /** The composer's text, as it is typed. */
   prompt: [text: string]
+  /** A model picked off the row under the composer. */
+  model: [value: string]
+  effort: [value: string]
+  permissionMode: [value: HeldPermissionMode]
   submit: []
   close: []
 }>()
@@ -170,19 +181,62 @@ function onCommandKeydown(event: KeyboardEvent): void {
       </article>
     </div>
 
-    <textarea
-      v-else
-      class="launch-input is-selectable"
-      rows="2"
-      :value="prompt"
-      :maxlength="MAX_DWARF_TEXT_CHARS"
-      :disabled="!enabled"
-      :placeholder="placeholder"
-      :class="{ 'is-instruction': !enabled }"
-      :aria-label="placeholder"
-      @input="emit('prompt', ($event.target as HTMLTextAreaElement).value)"
-      @keydown="onPromptKeydown"
-    ></textarea>
+    <template v-else>
+      <textarea
+        class="launch-input is-selectable"
+        rows="2"
+        :value="prompt"
+        :maxlength="MAX_DWARF_TEXT_CHARS"
+        :disabled="!enabled"
+        :placeholder="placeholder"
+        :class="{ 'is-instruction': !enabled }"
+        :aria-label="placeholder"
+        @input="emit('prompt', ($event.target as HTMLTextAreaElement).value)"
+        @keydown="onPromptKeydown"
+      ></textarea>
+
+      <!--
+        The row under the composer (#239, launch.md's maintainer amendment):
+        model, effort and permissions, visible once a real provider chip is
+        chosen. Reuses this screen's own chip and input surfaces — nothing
+        new is drawn, per the amendment's own words.
+      -->
+      <div v-if="modelPicker.visible" class="launch-tuning">
+        <select
+          class="tuning-select"
+          :disabled="modelPicker.disabled"
+          aria-label="Model"
+          @change="emit('model', ($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="option in modelPicker.models" :key="option.value" :value="option.value">
+            {{ option.label ?? option.value }}
+          </option>
+        </select>
+        <span v-if="modelPicker.note" class="tuning-note">{{ modelPicker.note }}</span>
+        <select
+          v-if="effortPicker.visible"
+          class="tuning-select"
+          aria-label="Effort"
+          @change="emit('effort', ($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="level in effortPicker.efforts" :key="level" :value="level">
+            {{ level }}
+          </option>
+        </select>
+        <select
+          v-if="permissionsVisible"
+          class="tuning-select"
+          aria-label="Permissions"
+          @change="
+            emit('permissionMode', ($event.target as HTMLSelectElement).value as HeldPermissionMode)
+          "
+        >
+          <option v-for="mode in HELD_PERMISSION_MODES" :key="mode" :value="mode">
+            {{ mode }}
+          </option>
+        </select>
+      </div>
+    </template>
 
     <!--
       One line under the composer, and it is never decoration — the discipline
@@ -402,6 +456,50 @@ function onCommandKeydown(event: KeyboardEvent): void {
 .launch-input:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 1px;
+}
+/*
+ * The row under the composer (#239, launch.md's maintainer amendment):
+ * "Controls use the existing chip and input surfaces of this screen; nothing
+ * new is drawn." So each select borrows the provider chip's own box — 25px
+ * tall, 12px radius, accent border, panel ground, cream 10px text — and the
+ * row shares the chip row's own centred, wrapping layout.
+ */
+.launch-tuning {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--space-nav-gap);
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+}
+.tuning-select {
+  flex: none;
+  height: var(--size-chip-height);
+  padding: 0 10px;
+  border: 2px solid var(--color-accent);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
+  cursor: pointer;
+  background: var(--color-panel);
+  font: inherit;
+  font-size: var(--text-meta);
+}
+.tuning-select:disabled {
+  border-color: var(--color-nav-idle);
+  color: var(--color-nav-idle);
+  cursor: not-allowed;
+}
+.tuning-select:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
+}
+/* The source note beside the model select — its own reason, or where the list came from. */
+.tuning-note {
+  flex: none;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-helper);
+  opacity: 0.75;
 }
 /* The first message, drawn exactly as the MessagePanel draws a user's. */
 .launch-spawning {

@@ -23,7 +23,12 @@ import {
   type ProviderSnapshot
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
+import type { CodexThreadModel } from '../domain/agentModelCatalog'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
+import {
+  MODEL_CATALOG_TIMEOUT_MS,
+  type ClaudeModelCatalogPort
+} from '../sessionLaunch/sdkHeldSession'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
@@ -3465,6 +3470,43 @@ describe('AgentRuntime.launchAgent (#86)', () => {
 
     expect(runtime.getMines()[0]!.dwarfs).toHaveLength(before)
   })
+
+  /*
+   * #239. The request may now name a model and an effort, and both have to
+   * reach the launcher: this is the one hop between the IPC boundary (which
+   * checked them) and the engine (which spends them). Absent means absent,
+   * exactly as an untuned launch always read.
+   */
+  it('forwards a model and an effort the request named, down to the launcher', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({
+      mineId,
+      provider: 'claude',
+      prompt: 'go',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'claude',
+      minePath: 'C:\\work\\project',
+      prompt: 'go',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+  })
+
+  it('leaves model and effort off the launcher call when the request named neither', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+
+    expect('model' in launchSession.mock.calls[0]![0]).toBe(false)
+    expect('effort' in launchSession.mock.calls[0]![0]).toBe(false)
+  })
 })
 
 /*
@@ -5228,6 +5270,89 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       expect(crewOf(runtime)).toEqual([{ id: 'claude:sess-1', role: 'foreman' }])
     })
   })
+
+  /*
+   * #239. Same hop as the detached launcher's: the request may name a model
+   * and an effort, and both have to reach the held session's own start,
+   * unchanged, so PROVIDER_EFFORT_LEVELS.claude's five reach the SDK exactly
+   * as the boundary checked them.
+   */
+  it('forwards a model and an effort the request named, down to the held session', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+    runtime.stop()
+
+    expect(port.started[0]!.model).toBe('sonnet')
+    expect(port.started[0]!.effort).toBe('xhigh')
+  })
+
+  it('leaves model and effort off the held session start when the request named neither', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    runtime.stop()
+
+    expect('model' in port.started[0]!).toBe(false)
+    expect('effort' in port.started[0]!).toBe(false)
+  })
+
+  it('forwards a permission mode the request named, down to the held session', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+    runtime.stop()
+
+    expect(port.started[0]!.permissionMode).toBe('plan')
+  })
+
+  it('leaves the permission mode off the held session start when the request named none', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    runtime.stop()
+
+    expect('permissionMode' in port.started[0]!).toBe(false)
+  })
 })
 
 /**
@@ -5650,6 +5775,187 @@ describe('AgentRuntime provider availability (#86)', () => {
 
     expect(JSON.stringify(list)).not.toContain(HOME)
     expect(JSON.stringify(list)).not.toContain('.local')
+  })
+})
+
+/*
+ * #239. What each provider can start ON, live — beside listAgentProviders for
+ * the same reason. `claudeModelCatalog` and `codexModelHistory` are injected
+ * ports, exactly as `heldSessions`'s `start` is: no unit test may spawn a real
+ * agent or open a real database, so both are hand-rolled fakes here.
+ */
+describe('AgentRuntime.listAgentModels (#239)', () => {
+  const HOME = '/home/j'
+  const CLAUDE_BIN = '/home/j/.local/bin/claude'
+
+  function runtimeWith(options: {
+    claudeInstalled: boolean
+    claudeModelCatalog?: ClaudeModelCatalogPort
+    codexModelHistory?: () => Promise<CodexThreadModel[]>
+  }) {
+    const fs = new FakeFs()
+    if (options.claudeInstalled) fs.addFile(CLAUDE_BIN, '#!/bin/sh\n')
+    const adapters: PlatformAdapters = {
+      platform: 'linux',
+      focusPid: async () => false,
+      launchTranscriptViewer: async () => false,
+      viewerScriptPath: '/viewer.mjs',
+      textDelivery: {
+        sendToConsole: async () => ({ delivered: true }),
+        relayToClaudeSession: async () => ({ delivered: true }),
+        sendInterrupt: async () => ({ delivered: true })
+      },
+      processEnd: { endProcessTree: async () => false },
+      processProbe: {
+        isCodexProcessRunning: async () => false,
+        processStartTimeMs: async () => null
+      },
+      cliDetector: createCliDetector({ home: HOME, platform: 'linux', fs, env: {} })
+    }
+    return new AgentRuntime({
+      config: defaultConfig(),
+      providers: [],
+      fs: new FakeFs(),
+      home: HOME,
+      platformAdapters: adapters,
+      onMinesUpdated: vi.fn(),
+      claudeModelCatalog: options.claudeModelCatalog ?? (async () => []),
+      codexModelHistory: options.codexModelHistory ?? (async () => [])
+    })
+  }
+
+  it('answers one entry per provider, in DWARF_PROVIDERS order', async () => {
+    const list = await runtimeWith({ claudeInstalled: false }).listAgentModels()
+    expect(list.catalogs.map((entry) => entry.provider)).toEqual(['claude', 'codex', 'antigravity'])
+  })
+
+  it("asks the SDK for Claude's own live models when the CLI is installed", async () => {
+    const claudeModelCatalog = vi
+      .fn<ClaudeModelCatalogPort>()
+      .mockResolvedValue([
+        { value: 'claude-sonnet-5', displayName: 'Sonnet', supportsEffort: true }
+      ])
+    const list = await runtimeWith({ claudeInstalled: true, claudeModelCatalog }).listAgentModels()
+
+    expect(claudeModelCatalog).toHaveBeenCalledWith({ executablePath: CLAUDE_BIN })
+    expect(list.catalogs.find((entry) => entry.provider === 'claude')).toEqual({
+      provider: 'claude',
+      models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      source: 'provider'
+    })
+  })
+
+  it('never asks the SDK anything when Claude is not installed', async () => {
+    const claudeModelCatalog = vi.fn<ClaudeModelCatalogPort>().mockResolvedValue([])
+    const list = await runtimeWith({ claudeInstalled: false, claudeModelCatalog }).listAgentModels()
+
+    expect(claudeModelCatalog).not.toHaveBeenCalled()
+    expect(list.catalogs.find((entry) => entry.provider === 'claude')).toEqual({
+      provider: 'claude',
+      models: [],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      source: 'none'
+    })
+  })
+
+  it('answers Claude as source: none, never a rejection, when the live ask itself throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const claudeModelCatalog = vi
+      .fn<ClaudeModelCatalogPort>()
+      .mockRejectedValue(new Error('the CLI would not start'))
+
+    const list = await runtimeWith({ claudeInstalled: true, claudeModelCatalog }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'claude')).toEqual({
+      provider: 'claude',
+      models: [],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      source: 'none'
+    })
+    // Codex and Antigravity still answer: one provider's failure never
+    // silences the other two.
+    expect(list.catalogs).toHaveLength(3)
+    warn.mockRestore()
+  })
+
+  /*
+   * A CLI that spawns but never finishes its own init handshake — a broken
+   * install, a login prompt nothing here can answer — must not leave
+   * listAgentModels, and the Add Panel behind it, waiting forever. The port
+   * itself is what is bounded (MODEL_CATALOG_TIMEOUT_MS, named beside it in
+   * sdkHeldSession.ts), so an injected fake that never resolves is held to
+   * the same bound a real one is.
+   */
+  it('answers Claude as source: none once the catalogue ask outruns its bound, rather than hanging', async () => {
+    vi.useFakeTimers()
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // Never resolves and never rejects — exactly a stuck CLI's own promise.
+      const claudeModelCatalog = vi
+        .fn<ClaudeModelCatalogPort>()
+        .mockReturnValue(new Promise(() => {}))
+
+      const pending = runtimeWith({ claudeInstalled: true, claudeModelCatalog }).listAgentModels()
+      await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS)
+      const list = await pending
+
+      expect(list.catalogs.find((entry) => entry.provider === 'claude')).toEqual({
+        provider: 'claude',
+        models: [],
+        efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'none'
+      })
+      expect(list.catalogs).toHaveLength(3)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("carries Codex's own registry history, deduped, as source: history", async () => {
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      codexModelHistory: async () => [{ model: 'gpt-5.6-sol' }, { model: 'gpt-5.6-sol' }]
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'codex')).toEqual({
+      provider: 'codex',
+      models: [{ value: 'gpt-5.6-sol' }],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+      source: 'history'
+    })
+  })
+
+  it('answers Codex with an empty history, never a rejection, when the registry read throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      codexModelHistory: async () => {
+        throw new Error('the database would not open')
+      }
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'codex')).toEqual({
+      provider: 'codex',
+      models: [],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+      source: 'history'
+    })
+    expect(list.catalogs).toHaveLength(3)
+    warn.mockRestore()
+  })
+
+  it('always answers Antigravity as none, until #237 gives it a launch path', async () => {
+    const list = await runtimeWith({ claudeInstalled: false }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'antigravity')).toEqual({
+      provider: 'antigravity',
+      models: [],
+      efforts: [],
+      source: 'none'
+    })
   })
 })
 

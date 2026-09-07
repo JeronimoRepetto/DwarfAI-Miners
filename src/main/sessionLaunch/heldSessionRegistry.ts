@@ -1,3 +1,4 @@
+import type { LaunchTuning } from '../domain/launchTuning'
 import { HELDABLE_PROVIDERS } from '../domain/types'
 import type {
   DwarfPermissionDecision,
@@ -238,12 +239,20 @@ export class HeldSessionRegistry {
    * returned and none is invented: the poll discovers the session in the mine's
    * folder, on its own schedule, exactly as it discovers one a human started.
    */
-  async launch(request: {
-    mineId: string
-    provider: DwarfProvider
-    minePath: string
-    prompt: string
-  }): Promise<HeldSessionLaunchResult> {
+  async launch(
+    request: {
+      mineId: string
+      provider: DwarfProvider
+      minePath: string
+      prompt: string
+      /**
+       * The permission mode this launch asked for (#239), already checked at
+       * the boundary against `HELD_PERMISSION_MODES` — never `'bypassPermissions'`.
+       * Absent leaves the SDK on its own `'default'`.
+       */
+      permissionMode?: string
+    } & LaunchTuning
+  ): Promise<HeldSessionLaunchResult> {
     // Refused before anything else, because nothing about this machine could
     // change the answer (#168). Holding a session IS an Agent SDK stream, and
     // Claude is the only provider that has one — `docs/command-surface-
@@ -270,6 +279,14 @@ export class HeldSessionRegistry {
       }
     }
 
+    // The request's model wins over the configured one (#239). The configured
+    // value is kept rather than dropped: it is what a launch that names no
+    // model still gets, so an installation that set one goes on getting it and
+    // the Add Panel's row is an override rather than a replacement. Effort has
+    // no configured layer at all — there is nowhere for a stale default to
+    // live, so its only two answers are this launch's and the CLI's own.
+    const model = request.model ?? this.model
+
     const key = this.nextKey++
     // Built BEFORE the port is called, and written to through this reference
     // rather than through the record. `start` is awaited, so a `task_started`
@@ -283,7 +300,9 @@ export class HeldSessionRegistry {
         executablePath: detection.path,
         cwd: request.minePath,
         prompt,
-        ...(this.model === undefined ? {} : { model: this.model }),
+        ...(model === undefined ? {} : { model }),
+        ...(request.effort === undefined ? {} : { effort: request.effort }),
+        ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),

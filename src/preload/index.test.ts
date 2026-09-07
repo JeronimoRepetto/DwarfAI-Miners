@@ -487,6 +487,36 @@ describe('preload provider-availability contract (#86)', () => {
   })
 })
 
+describe('preload model-catalogue contract (#239)', () => {
+  it('asks on the agent:models channel with no payload at all', async () => {
+    invoke.mockResolvedValueOnce({ catalogs: [] })
+    await expect(api.listAgentModels()).resolves.toEqual({ catalogs: [] })
+    expect(invoke).toHaveBeenLastCalledWith('agent:models')
+  })
+
+  it("hands back main's verdict untouched, every provider's source included", async () => {
+    const answered = {
+      catalogs: [
+        {
+          provider: 'claude',
+          models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          source: 'provider'
+        },
+        {
+          provider: 'codex',
+          models: [{ value: 'gpt-5.6-sol' }],
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          source: 'history'
+        },
+        { provider: 'antigravity', models: [], efforts: [], source: 'none' }
+      ]
+    }
+    invoke.mockResolvedValueOnce(answered)
+    await expect(api.listAgentModels()).resolves.toEqual(answered)
+  })
+})
+
 describe('preload launch contract (#168)', () => {
   it('carries the chosen provider alongside the mine and the prompt', async () => {
     // Before #168 this channel took a mine and a prompt only, so the engine had
@@ -544,6 +574,100 @@ describe('preload launch contract (#168)', () => {
     await expect(
       api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
     ).resolves.toEqual(refused)
+  })
+
+  /*
+   * #239. Model and effort are the first fields on either launch channel that
+   * are genuinely OPTIONAL rather than collapsing to a safe default: absent
+   * has to stay absent, because a '' crossing the bridge would be a real
+   * instruction main's own boundary would then have to refuse (see
+   * parseLaunchTuning) rather than the "leave it to the CLI" this field means
+   * when it is missing.
+   */
+  it('carries a model and an effort when the caller named them', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+  })
+
+  it('crosses no model or effort at all when the caller named neither, rather than empty strings', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
+    await api.launchAgent({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('model' in sent).toBe(false)
+    expect('effort' in sent).toBe(false)
+  })
+
+  it('carries a model and an effort on the held channel too', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'max'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'max'
+    })
+  })
+
+  it('crosses no model or effort on the held channel when the caller named neither', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('model' in sent).toBe(false)
+    expect('effort' in sent).toBe(false)
+  })
+
+  /*
+   * #239. Held-only, exactly as HeldSessionLaunchRequest.permissionMode is —
+   * launchAgent carries no such field, and the bridge must not invent one for
+   * it.
+   */
+  it('carries a permission mode on the held channel when the caller named one', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+  })
+
+  it('crosses no permission mode when the caller named none, rather than an empty string', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('permissionMode' in sent).toBe(false)
   })
 })
 

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentLaunchRequest,
   AgentLaunchResult,
+  AgentModelCatalogList,
   AgentProviderList,
   AppBuild,
   DwarfActivation,
@@ -177,6 +178,13 @@ export interface DwarfAiMinersApi {
    * AgentProviderOption for why that stops at the wire.
    */
   listAgentProviders: () => Promise<AgentProviderList>
+  /**
+   * What each provider can start ON, live (#239) — asked beside
+   * listAgentProviders, for the same reason and at the same moment: a model
+   * list is not board state either. No argument and no path, for the same
+   * reason listAgentProviders carries neither.
+   */
+  listAgentModels: () => Promise<AgentModelCatalogList>
   /**
    * Report that a kicked agent was SEEN stopping, so main retires the dwarf
    * (see #46). One-way by design: there is no verdict to wait for, because the
@@ -391,7 +399,15 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.invoke(IPC_CHANNELS.launchAgent, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
       provider: isDwarfProvider(request?.provider) ? request.provider : '',
-      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+      prompt: typeof request?.prompt === 'string' ? request.prompt : '',
+      // The model and effort a launch asked for (#239) — the one pair on this
+      // channel that is genuinely OPTIONAL rather than defaulted: forwarded
+      // only when the caller actually named one, exactly as `edge` is above.
+      // Absent must cross as absent, never as '', because main's own boundary
+      // reads a present-but-empty value as a real instruction and refuses the
+      // whole request for it (see parseLaunchTuning).
+      ...(typeof request?.model === 'string' ? { model: request.model } : {}),
+      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {})
     }),
   // Same discipline as setToggleShortcut: collapse anything that is not a
   // string BEFORE it crosses, so main's boundary check only reasons about one.
@@ -402,6 +418,9 @@ const api: DwarfAiMinersApi = {
   // No payload to coerce: the question is "what does this machine have", and
   // there is nothing about it for a caller to name.
   listAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.listAgentProviders),
+  // Same discipline as listAgentProviders: no argument to coerce, the
+  // question is about this machine.
+  listAgentModels: () => ipcRenderer.invoke(IPC_CHANNELS.listAgentModels),
   // Same discipline as retireDwarf: collapse anything that is not a string
   // BEFORE it crosses, so main's boundary check only reasons about one.
   undeclareMine: (mineId) =>
@@ -424,7 +443,16 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.invoke(IPC_CHANNELS.launchHeldSession, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
       provider: isDwarfProvider(request?.provider) ? request.provider : '',
-      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+      prompt: typeof request?.prompt === 'string' ? request.prompt : '',
+      // Same discipline as launchAgent's, and the same reason (#239).
+      ...(typeof request?.model === 'string' ? { model: request.model } : {}),
+      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
+      // Held-only, for the reason HeldSessionLaunchRequest.permissionMode is:
+      // a detached or hosted launch has no `canUseTool` callback for a mode to
+      // change the behaviour of.
+      ...(typeof request?.permissionMode === 'string'
+        ? { permissionMode: request.permissionMode }
+        : {})
     }),
   // Field by field once more, for the reason the two launch channels above are
   // rebuilt rather than forwarded: this one starts a real process too, and the

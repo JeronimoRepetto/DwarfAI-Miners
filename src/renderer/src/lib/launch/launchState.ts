@@ -1,4 +1,4 @@
-import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../../types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfProvider, type HeldPermissionMode } from '../../types'
 
 /**
  * The Add Panel's gates, as `screens/launch.md` states them (#86).
@@ -79,6 +79,18 @@ export interface LaunchState {
   committedCommand: string
   /** The composer's text, exactly as typed — trimming happens on the way out. */
   prompt: string
+  /**
+   * The model/effort/permission row under the composer (#239), each null
+   * until the user actually touches its select. Null is not "the first
+   * option" — it is "say nothing", which is what keeps a launch nobody tuned
+   * byte for byte what it was before this row existed: the select still
+   * SHOWS its first option by ordinary `<select>` behaviour, but nothing here
+   * claims a choice was made until one actually was.
+   */
+  model: string | null
+  effort: string | null
+  /** Held Claude only — see HeldSessionLaunchRequest.permissionMode. */
+  permissionMode: HeldPermissionMode | null
   /** True from the moment Enter submits until a dwarf is adopted or main refuses. */
   submitting: boolean
   /**
@@ -109,6 +121,9 @@ export function closedLaunch(): LaunchState {
     command: '',
     committedCommand: '',
     prompt: '',
+    model: null,
+    effort: null,
+    permissionMode: null,
     submitting: false,
     detached: false,
     launchId: null,
@@ -134,6 +149,11 @@ export function closeLaunch(_state: LaunchState): LaunchState {
  * and discarding somebody's typing is the one reading that costs them work.
  * The command does not: it belongs to Other, and a commit still standing behind
  * a known provider would be a gate passed by a choice nobody is on.
+ *
+ * Model, effort and permission mode reset too (#239), for the same reason the
+ * command does: they are a different provider's own vocabulary, and a choice
+ * that survived a switch could ask Codex to launch on a Claude model id it
+ * never offered.
  */
 export function chooseProvider(state: LaunchState, choice: LaunchChoice): LaunchState {
   return {
@@ -141,10 +161,31 @@ export function chooseProvider(state: LaunchState, choice: LaunchChoice): Launch
     choice,
     command: choice === OTHER_CHOICE ? state.command : '',
     committedCommand: choice === OTHER_CHOICE ? state.committedCommand : '',
+    model: null,
+    effort: null,
+    permissionMode: null,
     // The refusal was about the choice that has just changed, so it no longer
     // describes anything on screen.
     error: null
   }
+}
+
+/** Pick a model off the row under the composer (#239). */
+export function chooseModel(state: LaunchState, model: string): LaunchState {
+  return { ...state, model }
+}
+
+/** Pick an effort level off the same row. */
+export function chooseEffort(state: LaunchState, effort: string): LaunchState {
+  return { ...state, effort }
+}
+
+/** Pick a permission mode off the same row — held Claude only. */
+export function choosePermissionMode(
+  state: LaunchState,
+  permissionMode: HeldPermissionMode
+): LaunchState {
+  return { ...state, permissionMode }
 }
 
 /**
@@ -186,6 +227,28 @@ export function launchPrompt(state: LaunchState): string {
 /** The custom command as it would be run: trimmed, for the same reason. */
 export function launchCommand(state: LaunchState): string {
   return state.committedCommand
+}
+
+/**
+ * What the model/effort row asks the launch to carry (#239) — the same shape
+ * both `launchAgent` and `launchHeldSession` take. Absent fields stay absent,
+ * which is what keeps a launch nobody tuned identical to one from before this
+ * row existed.
+ */
+export function launchTuning(state: LaunchState): { model?: string; effort?: string } {
+  return {
+    ...(state.model === null ? {} : { model: state.model }),
+    ...(state.effort === null ? {} : { effort: state.effort })
+  }
+}
+
+/**
+ * The permission mode a HELD launch asks to carry, or undefined when the row
+ * named none. Held-only, unlike `launchTuning` — see
+ * `HeldSessionLaunchRequest.permissionMode`.
+ */
+export function launchPermissionMode(state: LaunchState): HeldPermissionMode | undefined {
+  return state.permissionMode ?? undefined
 }
 
 /**

@@ -100,6 +100,131 @@ describe('buildCodexLaunchArgs', () => {
   })
 })
 
+describe('launch argv with a model and an effort (#239)', () => {
+  /*
+   * Both flags are read out of the installed CLIs' own help, on 2026-09-07:
+   *
+   * Claude Code 2.1.263
+   *   --model <model>   Model for the current session. Provide an alias for the
+   *                     latest model (e.g. 'fable', 'opus', or 'sonnet') or a
+   *                     model's full name (e.g. 'claude-fable-5').
+   *   --effort <level>  Effort level for the current session (low, medium,
+   *                     high, xhigh, max)
+   *
+   * codex-cli 0.153.4
+   *   -m, --model <MODEL>       Model the agent should use
+   *   -c, --config <key=value>  Override a configuration value ... The `value`
+   *                             portion is parsed as TOML. If it fails to parse
+   *                             as TOML, the raw string is used as a literal.
+   *
+   * So Codex has no effort FLAG at all — the level travels as a config
+   * override on the key its own `config.toml` documents, and a bare level is
+   * carried as a literal string exactly as the help describes.
+   *
+   * `--effort` being documented on this build is the fact #239 asked to be
+   * verified before wiring anything: the issue's own table marked it
+   * "`CLAUDE_EFFORT`-style env or `--effort` — verify the flag on this build
+   * before relying on it". It is a real flag, with its levels printed beside
+   * it, so it is what is wired.
+   */
+  it('leaves both CLIs exactly as they were when nothing is tuned', () => {
+    // The whole promise of the Add Panel's new row: ignoring it launches
+    // precisely as every launch before #239 did.
+    expect(buildClaudeLaunchArgs()).toEqual(['-p', '--input-format', 'text'])
+    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
+    expect(buildLaunchArgs('claude', {})).toEqual(['-p', '--input-format', 'text'])
+    expect(buildLaunchArgs('codex', {})).toEqual(['exec', '-'])
+  })
+
+  it("names Claude's model with the flag Claude's own help documents", () => {
+    expect(buildClaudeLaunchArgs({ model: 'sonnet' })).toEqual([
+      '-p',
+      '--input-format',
+      'text',
+      '--model',
+      'sonnet'
+    ])
+  })
+
+  it("names Claude's effort with --effort, verified on this build", () => {
+    expect(buildClaudeLaunchArgs({ effort: 'xhigh' })).toEqual([
+      '-p',
+      '--input-format',
+      'text',
+      '--effort',
+      'xhigh'
+    ])
+  })
+
+  it('carries both for Claude, model before effort', () => {
+    expect(buildClaudeLaunchArgs({ model: 'claude-fable-5-1[1m]', effort: 'max' })).toEqual([
+      '-p',
+      '--input-format',
+      'text',
+      '--model',
+      'claude-fable-5-1[1m]',
+      '--effort',
+      'max'
+    ])
+  })
+
+  it("names Codex's model with -m, ahead of the stdin positional", () => {
+    // `codex exec [OPTIONS] [PROMPT]`: the options come first and `-` is the
+    // prompt, so a flag appended after it would be read as an argument to the
+    // positional rather than as an option.
+    expect(buildCodexLaunchArgs({ model: 'gpt-5.6-sol' })).toEqual([
+      'exec',
+      '-m',
+      'gpt-5.6-sol',
+      '-'
+    ])
+  })
+
+  it("carries Codex's effort as the config override its own config.toml documents", () => {
+    expect(buildCodexLaunchArgs({ effort: 'high' })).toEqual([
+      'exec',
+      '-c',
+      'model_reasoning_effort=high',
+      '-'
+    ])
+  })
+
+  it('carries both for Codex, still with the stdin positional last', () => {
+    expect(buildCodexLaunchArgs({ model: 'gpt-5.6-luna', effort: 'medium' })).toEqual([
+      'exec',
+      '-m',
+      'gpt-5.6-luna',
+      '-c',
+      'model_reasoning_effort=medium',
+      '-'
+    ])
+  })
+
+  it('dispatches the tuning to the chosen provider and never lends one CLI the other’s flags', () => {
+    // Argv does not transfer between CLIs — the reason `buildLaunchArgs` is
+    // exhaustive with no default arm. A tuned launch must not become the one
+    // place where it does.
+    expect(buildLaunchArgs('claude', { model: 'sonnet', effort: 'low' })).toEqual(
+      buildClaudeLaunchArgs({ model: 'sonnet', effort: 'low' })
+    )
+    expect(buildLaunchArgs('codex', { model: 'gpt-5.6-sol', effort: 'low' })).toEqual(
+      buildCodexLaunchArgs({ model: 'gpt-5.6-sol', effort: 'low' })
+    )
+    expect(buildLaunchArgs('claude', { effort: 'low' })).not.toContain('model_reasoning_effort=low')
+    expect(buildLaunchArgs('codex', { effort: 'low' })).not.toContain('--effort')
+  })
+
+  it('still carries no positional prompt, whatever is tuned', () => {
+    // The argv/stdin split is the privacy rule at the top of launch.ts, and a
+    // new flag is exactly the kind of change that quietly breaks it.
+    const claude = buildClaudeLaunchArgs({ model: 'sonnet', effort: 'high' })
+    const codex = buildCodexLaunchArgs({ model: 'gpt-5.6-sol', effort: 'high' })
+    expect(claude).not.toContain('dig the east gallery')
+    expect(codex).not.toContain('dig the east gallery')
+    expect(codex.filter((arg) => arg === '-')).toEqual(['-'])
+  })
+})
+
 describe('isShellShim', () => {
   /*
    * Verified against this machine's Node (v24.11.1): `spawn('probe.cmd', [],

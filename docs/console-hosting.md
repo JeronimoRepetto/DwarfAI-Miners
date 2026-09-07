@@ -206,6 +206,20 @@ channel beside the detached `agent:launch`, not a replacement.
   session ends dissolves as a denial, never an approval (#203); and a held session **registers exactly
   like any other**, so the poll draws its dwarf with no second path — as `kind: "interactive"`, earning
   the long _attended_ window, right rather than a leak since a human genuinely can answer it here (#68).
+- **The launch itself gained three knobs, #239.** Both `agent:launch` and `agent:launchHeld` may now
+  name a model and an effort, checked at the boundary (`parseLaunchTuning`, closed per provider for
+  effort, a trimmed non-empty string for model) before either reaches the engine. Detached Claude gets
+  `--model`/`--effort` in its argv — **`--effort` is real, `claude --help` on 2.1.263 documents it**
+  [V, 2026-09-07] — and detached Codex gets `-m`/`-c model_reasoning_effort=<level>`, since its CLI
+  names no effort flag of its own. A held session forwards both into `query()`'s options, and gains a
+  third: `permissionMode`, closed against `HELD_PERMISSION_MODES` (the SDK's own `PermissionMode` minus
+  `'bypassPermissions'`, still refused for the reason this page's §2 already argues at `sdkHeldSession.ts`).
+  A model list travels the other way, live: `agent:models` beside `agent:providers` answers, per
+  provider, what it can start on — Claude's over a short-lived `query()` that exists only long enough
+  for `supportedModels()` to answer and is never sent a turn; Codex's from the same SQLite registry
+  row §3's Codex queue table already reads (`threads.model`/`reasoning_effort`), labelled as history
+  rather than the CLI's own word, because `codex --help` names no live model-list command; Antigravity's
+  is empty until it has a launch path at all.
 
 ### The Codex queue — merged, #110 (#97)
 

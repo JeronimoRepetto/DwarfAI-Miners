@@ -1,9 +1,12 @@
 import {
   query,
+  type EffortLevel,
+  type PermissionMode,
   type PermissionResult,
   type SDKMessage,
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
+import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldSessionSubagentSignal } from './heldCrew'
 import {
   heldMessageEntries,
@@ -21,6 +24,11 @@ import {
  * `AskUserQuestion` to a button in this panel. No unit test comes through here;
  * the registry above it is driven by an injected fake, exactly as the relay and
  * the process probe are.
+ *
+ * A second capability lives here too, since #239: `createSdkModelCatalog`
+ * asks the same SDK what models it can start on, over a SEPARATE short-lived
+ * `query()` rather than the held one above — see its own comment for what
+ * that costs and why nothing it starts ever runs a turn.
  *
  * ## Two things learned the hard way, both load-bearing
  *
@@ -55,14 +63,18 @@ import {
  * write nothing at all — and that posture and its `SdkHeldSessionOptions`
  * knob are gone along with it.
  *
- * `permissionMode` stays `'default'` regardless — the same posture an
+ * `permissionMode` used to stay `'default'` regardless — the same posture an
  * interactive session has, where the CLI auto-allows what it considers safe
- * and only prompts for the rest, so this module still only decides what
- * happens to a prompt that reaches it, never which tools reach it at all.
- * The alternative was `'bypassPermissions'`, and that would have made "start a
- * session in this mine" quietly mean "and let it do anything, unattended,
- * because nobody is watching" — the more surprising of the two surprises by
- * some distance, and the one that cannot be undone after the fact.
+ * and only prompts for the rest. #239 made it the launch's own choice, from
+ * `HELD_PERMISSION_MODES`, still defaulting to `'default'` when the request
+ * names none — so this module still only decides what happens to a prompt
+ * that reaches it, never which tools reach it at all; changing the mode only
+ * changes how OFTEN one does. What has not moved is `'bypassPermissions'`:
+ * it is not a member of that list and never will be from this panel, because
+ * it would make "start a session in this mine" quietly mean "and let it do
+ * anything, unattended, because nobody is watching" — the more surprising of
+ * the two surprises by some distance, and the one that cannot be undone
+ * after the fact.
  *
  * Deliberately absent from this slice: "always allow". The SDK's own
  * `PermissionResult` carries an `updatedPermissions` a caller may return
@@ -229,8 +241,21 @@ export function createSdkHeldSession(): HeldSessionPort {
         cwd: request.cwd,
         // Never the SDK's bundled executable — see the module comment.
         pathToClaudeCodeExecutable: request.executablePath,
-        permissionMode: 'default',
+        // The mode this launch asked for (#239), or the SDK's own 'default'
+        // when it asked for none. The cast is the same liberty `effort`'s
+        // below is: the value was checked against HELD_PERMISSION_MODES at
+        // the boundary, and that list has no 'bypassPermissions' member —
+        // see the module comment for why this app refuses to offer it.
+        permissionMode: (request.permissionMode ?? 'default') as PermissionMode,
         ...(request.model === undefined ? {} : { model: request.model }),
+        // `Options.effort` (#239). The SDK's own `EffortLevel` is
+        // 'low' | 'medium' | 'high' | 'xhigh' | 'max' — the same five
+        // `claude --help` prints for its `--effort` flag on 2.1.263 — and the
+        // cast is the seam's only liberty: the value was checked against
+        // PROVIDER_EFFORT_LEVELS.claude at the boundary, and this module is
+        // the one place with no unit test coming through it, so it recognises
+        // the SDK's shapes and decides nothing about them.
+        ...(request.effort === undefined ? {} : { effort: request.effort as EffortLevel }),
         ...(request.maxTurns === undefined ? {} : { maxTurns: request.maxTurns }),
         canUseTool: async (toolName, toolInput, extras): Promise<PermissionResult> => {
           if (toolName !== ASK_USER_QUESTION) {
@@ -407,6 +432,90 @@ export function createSdkHeldSession(): HeldSessionPort {
           return null
         }
       }
+    }
+  }
+}
+
+/** Ask a short-lived Agent SDK query for its own model list (#239). */
+export type ClaudeModelCatalogPort = (options: {
+  executablePath: string
+}) => Promise<ClaudeModelInfo[]>
+
+/**
+ * How long a model-catalogue ask is given before the caller gives up on it
+ * (#239). A CLI that spawns but never finishes its own init handshake — a
+ * broken install, a login prompt nothing on this side can answer — must not
+ * leave `listAgentModels`, and the Add Panel behind it, waiting forever.
+ *
+ * Named beside the PORT rather than enforced inside `createSdkModelCatalog`
+ * below: the bound is part of what calling this port promises, not a detail
+ * of the one real implementation, so a fake port injected in a test is held
+ * to it exactly as the real one is — see runtime.ts's `listAgentModels`,
+ * where the race actually runs.
+ */
+export const MODEL_CATALOG_TIMEOUT_MS = 5_000
+
+/**
+ * A prompt that never sends anything. Fed to a query that exists only to ask
+ * its CONTROL channel a question — never a turn — so the CLI process starts,
+ * completes its own init handshake, and then sits blocked on this generator
+ * forever, exactly the way a held session's own InputStream blocks before its
+ * first `push`. `close()` on the query is what actually ends it; this never
+ * resolves on its own.
+ */
+async function* silentPrompt(): AsyncGenerator<SDKUserMessage> {
+  await new Promise<never>(() => {})
+}
+
+/**
+ * Build the real model-catalogue port, over a query the caller neither holds
+ * nor sends a turn to (#239).
+ *
+ * **What this costs.** One real CLI process spawn and its init handshake —
+ * the same cost `createSdkHeldSession` pays to start a session, minus the
+ * turn: nothing here is ever a paid model call, because `silentPrompt` above
+ * never sends a user message for one to answer. Composed once per ask rather
+ * than kept open, so the caller decides how often to pay it — see
+ * runtime.ts's own note on caching this per Add Panel open, not per keystroke.
+ *
+ * The message loop is drained in the background for the same reason
+ * `createSdkHeldSession`'s is: `supportedModels()` is a control request
+ * answered over the same connection, and a query nobody is reading from can
+ * leave that answer unclaimed. Nothing the loop reads is kept — a query that
+ * is never sent a turn has nothing to say through it.
+ */
+export function createSdkModelCatalog(): ClaudeModelCatalogPort {
+  return async ({ executablePath }) => {
+    const session = query({
+      prompt: silentPrompt(),
+      options: {
+        // Never the SDK's bundled executable — see the module comment.
+        pathToClaudeCodeExecutable: executablePath,
+        permissionMode: 'default'
+      }
+    })
+    void (async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for await (const _message of session) {
+          // Nothing to read: this query is never sent a turn, so it is never
+          // given anything to reply to.
+        }
+      } catch {
+        // The process ending before this resolves is not a caller-facing
+        // failure — the awaited call below is what states whether the ask
+        // itself succeeded.
+      }
+    })()
+    try {
+      const models = await session.supportedModels()
+      return models.map((model): ClaudeModelInfo => ({
+        value: model.value,
+        displayName: model.displayName,
+        supportsEffort: model.supportsEffort === true
+      }))
+    } finally {
+      session.close()
     }
   }
 }

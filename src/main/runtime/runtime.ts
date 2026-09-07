@@ -4,6 +4,14 @@ import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { agentProviderList } from '../domain/launchProviders'
+import {
+  antigravityModelCatalog,
+  claudeModelCatalog,
+  codexModelCatalog,
+  unavailableClaudeModelCatalog,
+  type ClaudeModelInfo,
+  type CodexThreadModel
+} from '../domain/agentModelCatalog'
 import { MineHistoryReader, type MineHistorySource } from '../history/mineHistory'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
@@ -12,6 +20,7 @@ import {
   MAX_DWARF_TEXT_CHARS,
   type AgentLaunchRequest,
   type AgentLaunchResult,
+  type AgentModelCatalogList,
   type AgentProviderList,
   type Dwarf,
   type DwarfActivation,
@@ -76,7 +85,12 @@ import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
 import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
-import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
+import {
+  createSdkHeldSession,
+  createSdkModelCatalog,
+  MODEL_CATALOG_TIMEOUT_MS,
+  type ClaudeModelCatalogPort
+} from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
 import {
   launchClaudeSession,
@@ -85,6 +99,7 @@ import {
 } from '../sessionLaunch/launchRunner'
 import type { Provider } from '../providers/provider'
 import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
+import { readCodexThreads } from '../providers/codex/state'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
@@ -309,6 +324,25 @@ export function expandHomePath(path: string, home: string = homedir()): string {
   return path
 }
 
+/**
+ * Race a promise against a bound, rejecting when the bound wins (#239).
+ *
+ * The same `Promise.race` plus `clearTimeout`-in-`finally` idiom
+ * `usePanelLayout.ts`'s `boundedLeave` already uses, mirrored here rather
+ * than shared across the process boundary: that one RESOLVES on the bound
+ * (a wait with nothing further to report), this one REJECTS, because a
+ * timed-out ask is exactly the failure `listAgentModels`'s own catch already
+ * turns into `unavailableClaudeModelCatalog()`. The timer is cleared either
+ * way, so a promise that settles first never leaves one running past it.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bound = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([promise, bound]).finally(() => clearTimeout(timer))
+}
+
 export interface RuntimeOptions {
   config: AppConfig
   /**
@@ -368,6 +402,24 @@ export interface RuntimeOptions {
    * binary CLI detection found (#91).
    */
   heldSessions?: HeldSessionRegistry
+  /**
+   * Claude's own live model list (#239) — a short-lived Agent SDK query,
+   * injected for tests, which must never spawn a real agent, exactly as
+   * `heldSessions`'s `start` is. The default drives the real one over the
+   * binary CLI detection found (#91); see createSdkModelCatalog for what it
+   * costs.
+   */
+  claudeModelCatalog?: ClaudeModelCatalogPort
+  /**
+   * Every non-archived thread Codex's own registry remembers, newest activity
+   * first (#239) — the machine's model HISTORY, for the Add Panel's picker.
+   * Injected for tests, which must never open a real database; the default
+   * reads the same state_5.sqlite the Codex provider does and degrades to an
+   * empty list on every failure mode that provider's own registry read
+   * degrades on (#264): no SqliteLike injected, missing database, unknown
+   * schema.
+   */
+  codexModelHistory?: () => Promise<CodexThreadModel[]>
   /**
    * Sessions the panel STARTED detached and still holds the process of, so
    * that it can end one (#217). Injected for tests, which must never end a
@@ -457,6 +509,10 @@ export class AgentRuntime {
   private readonly launchSession: SessionLauncher
   /** Sessions this panel started and still holds (#86, #94). */
   private readonly heldSessions: HeldSessionRegistry
+  /** Claude's own live model list, over a short-lived Agent SDK query (#239). */
+  private readonly claudeModelCatalog: ClaudeModelCatalogPort
+  /** Every model Codex's own registry remembers using, newest first (#239). */
+  private readonly codexModelHistory: () => Promise<CodexThreadModel[]>
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
   /**
@@ -704,6 +760,28 @@ export class AgentRuntime {
         now: this.now,
         log: (message) => console.log(message)
       })
+    // Composed here rather than in platformAdapters, for the same reason
+    // heldSessions is: asking the SDK for its model list is the same act on
+    // all three platforms (#239).
+    this.claudeModelCatalog = options.claudeModelCatalog ?? createSdkModelCatalog()
+    // Codex's own registry, read exactly as the mine-history reader's `codex`
+    // block above reads it — same sqlite adapter, same stateDb path, and the
+    // same degrade-to-empty on every failure that registry read already holds
+    // (#264): no SqliteLike injected, missing database, unknown schema.
+    this.codexModelHistory =
+      options.codexModelHistory ??
+      (async () => {
+        const codexSqlite = options.sqlite ?? new NodeSqlite()
+        const db = await codexSqlite.openReadOnly(
+          expandHomePath(options.config.providers.codex.stateDb, home)
+        )
+        if (db === null) return []
+        try {
+          return readCodexThreads(db, 0)
+        } finally {
+          db.close()
+        }
+      })
     // Ending a process tree is NOT the same act on all three platforms, so
     // unlike the two registries around it this one takes its per-OS half from
     // platformAdapters — the single composition point — and keeps only the
@@ -763,6 +841,12 @@ export class AgentRuntime {
           provider: request.provider,
           minePath: request.minePath,
           prompt: request.prompt,
+          // The model and effort a launch asked for (#239), forwarded exactly
+          // as `provider` above always has been: `ClaudeLaunchOptions` extends
+          // `LaunchTuning` for this reason, and an absent field here is what
+          // keeps an untuned launch byte for byte what it was before #239.
+          ...(request.model === undefined ? {} : { model: request.model }),
+          ...(request.effort === undefined ? {} : { effort: request.effort }),
           detector: platform.cliDetector,
           env: process.env,
           platform: platform.platform,
@@ -1843,6 +1927,14 @@ export class AgentRuntime {
    * (#86's first cut) hands the session over and lets go, so it outlives the
    * panel; a held session's child dies with the panel, and in exchange its asks
    * arrive live rather than post-hoc. Neither replaces the other.
+   *
+   * The model, effort and permission mode (#239) travel through unchanged —
+   * see launchAgent's own note on the same hop. The registry's own configured
+   * model still applies underneath when the request names none; that
+   * fallback is the registry's, not this method's (see
+   * HeldSessionRegistry.launch). Permission mode has no such fallback: this
+   * is the only launch mode that reads one at all, so its only two answers
+   * are this launch's own choice and the SDK's `'default'`.
    */
   async launchHeldSession(request: HeldSessionLaunchRequest): Promise<HeldSessionLaunchResult> {
     // Refused before the mine is even looked up: a demo's mines are invented,
@@ -1856,7 +1948,10 @@ export class AgentRuntime {
       mineId: mine.id,
       provider: request.provider,
       minePath: mine.path,
-      prompt: request.prompt
+      prompt: request.prompt,
+      ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.effort === undefined ? {} : { effort: request.effort }),
+      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode })
     })
   }
 
@@ -2240,6 +2335,57 @@ export class AgentRuntime {
   }
 
   /**
+   * What each provider can start ON, live (#239) — one entry per
+   * DWARF_PROVIDERS member, always, so the Add Panel never has to ask "did
+   * this provider answer at all".
+   *
+   * Pull-only and asked once when the panel opens, for the same reason
+   * listAgentProviders is: a model list is not board state. The three
+   * branches below are three different KINDS of answer rather than one asked
+   * three ways — see AgentModelSource — and domain/agentModelCatalog is where
+   * each is turned into the wire shape; this method only decides which of
+   * Claude's two catalogues applies and asks Codex's registry for its own.
+   *
+   * Claude is checked for installation first so an uninstalled machine never
+   * pays for a doomed process spawn — the same cheapest-refusal-first order
+   * every launch refusal here already holds. A `claudeModelCatalog` that
+   * still throws (a CLI present but unable to start, say) is caught here
+   * rather than left to reject the whole answer: one provider's failure must
+   * never silence the other two.
+   *
+   * The ask is bounded (#239): a CLI that spawns but never finishes its own
+   * init handshake would otherwise leave this method, and the Add Panel
+   * behind it, waiting forever. `MODEL_CATALOG_TIMEOUT_MS` is named beside
+   * the port in sdkHeldSession.ts; `withTimeout` is what enforces it here,
+   * against whatever port is injected — a fake included, which is how the
+   * bound itself is unit tested.
+   */
+  async listAgentModels(): Promise<AgentModelCatalogList> {
+    const claudeDetection = await this.cliDetector.detect('claude')
+    const claude =
+      claudeDetection.installed && claudeDetection.path !== undefined
+        ? await withTimeout(
+            this.claudeModelCatalog({ executablePath: claudeDetection.path }),
+            MODEL_CATALOG_TIMEOUT_MS,
+            `The model catalogue ask took longer than ${MODEL_CATALOG_TIMEOUT_MS}ms`
+          ).then(
+            (models: ClaudeModelInfo[]) => claudeModelCatalog(models),
+            (error: unknown) => {
+              console.warn('[runtime] Could not ask Claude for its own model list', error)
+              return unavailableClaudeModelCatalog()
+            }
+          )
+        : unavailableClaudeModelCatalog()
+
+    const codexThreads = await this.codexModelHistory().catch((error: unknown) => {
+      console.warn("[runtime] Could not read Codex's own registry for its model history", error)
+      return []
+    })
+
+    return { catalogs: [claude, codexModelCatalog(codexThreads), antigravityModelCatalog()] }
+  }
+
+  /**
    * Start a new agent session in a mine's folder (#86).
    *
    * **This resolves when the process has been STARTED, not when its dwarf
@@ -2254,6 +2400,11 @@ export class AgentRuntime {
    * board here, so a launch can only ever start in a place the panel is
    * already showing. Refusals are explicit and cheap for the reason
    * sendDwarfText's are, and nothing here logs the prompt — only its length.
+   *
+   * The model and effort (#239) travel through unchanged, the way `provider`
+   * always has: the IPC boundary in index.ts already checked them against
+   * `parseLaunchTuning` before this method ever sees the request, so this hop
+   * only has to forward, never to validate a second time. Absent stays absent.
    */
   async launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
     const mine = this.mines.find((item) => item.id === request.mineId)
@@ -2265,7 +2416,13 @@ export class AgentRuntime {
     const timer = createStageTimer(this.now)
     try {
       const { retained, ...verdict } = await timer.measure('total', () =>
-        this.launchSession({ provider: request.provider, minePath: mine.path, prompt })
+        this.launchSession({
+          provider: request.provider,
+          minePath: mine.path,
+          prompt,
+          ...(request.model === undefined ? {} : { model: request.model }),
+          ...(request.effort === undefined ? {} : { effort: request.effort })
+        })
       )
       // The receipt this launch will be recognised by (#191). Opened for every
       // started launch and never for a refused one, and opened here rather

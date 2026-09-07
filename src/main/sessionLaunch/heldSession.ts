@@ -269,6 +269,31 @@ export interface HeldSessionStartRequest {
   prompt: string
   /** The model, or undefined to leave it to the CLI's own default. */
   model?: string
+  /**
+   * How hard to think, or undefined to leave it to the CLI's own default
+   * (#239).
+   *
+   * A string rather than the SDK's own `EffortLevel`, deliberately: this side
+   * of the seam is the app's, and nothing in `domain/` or `sessionLaunch/`
+   * imports the Agent SDK except the one module behind this port. The five
+   * levels the SDK accepts are the same five `claude --help` prints and the
+   * same five `PROVIDER_EFFORT_LEVELS.claude` holds, and that table is where a
+   * value gets checked before it ever reaches here.
+   */
+  effort?: string
+  /**
+   * The permission mode to hold this session under, or undefined for the
+   * CLI's own default (#239).
+   *
+   * A string rather than the SDK's own `PermissionMode`, for the same reason
+   * `effort` is one: this side of the seam is the app's, and the value was
+   * already checked against `HELD_PERMISSION_MODES` at the boundary — a list
+   * that has no `'bypassPermissions'` member and never will, from the launch
+   * panel. This module recognises the SDK's shapes and decides nothing about
+   * them, so it takes the plain string on trust from the check that already
+   * ran.
+   */
+  permissionMode?: string
   /** A ceiling on agent turns, or undefined for the CLI's own default. */
   maxTurns?: number
   /** The CLI reporting the session id it chose, once it does. */
