@@ -671,6 +671,40 @@ describe('preload launch contract (#168)', () => {
   })
 })
 
+/**
+ * The failure channel (#263): a launch `agent:launch` already answered
+ * `launched: true` for died almost at once, so main pushes what it learned a
+ * moment later rather than leaving the panel to find out never. One-way,
+ * exactly like `onMessagePanel` and `onDwarfDeliveryReport`: there is no
+ * request the panel makes for this, since main learns of it asynchronously.
+ */
+describe('preload launch-failure contract (#263)', () => {
+  const FAILURE = {
+    launchId: 'receipt:1',
+    provider: 'codex',
+    mineId: 'mine:c:\\x\\anvil',
+    exitCode: 1,
+    stderrTail: 'codex: another instance is already running'
+  }
+
+  it('exposes the subscription beside the other launch members', () => {
+    expect(typeof api.onLaunchFailed).toBe('function')
+  })
+
+  it('subscribes to main’s push on agent:launchFailed, and unsubscribes', () => {
+    const listener = vi.fn()
+    const stop = api.onLaunchFailed(listener)
+    expect(on).toHaveBeenLastCalledWith('agent:launchFailed', expect.any(Function))
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
+    wrapped(null, FAILURE)
+    // The renderer never sees the IpcRendererEvent: it is the push itself
+    // that is the message, exactly as every other subscription here reads.
+    expect(listener).toHaveBeenCalledWith(FAILURE)
+    stop()
+    expect(removeListener).toHaveBeenLastCalledWith('agent:launchFailed', wrapped)
+  })
+})
+
 describe('preload mine-history contract (#192)', () => {
   it('asks on the mine:history channel by mine id, exactly as given', async () => {
     invoke.mockResolvedValueOnce({ readable: true, speakers: [] })

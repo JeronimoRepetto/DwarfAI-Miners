@@ -29,6 +29,7 @@ import type {
   HeldSessionLaunchResult,
   HostedLaunchRequest,
   HostedLaunchResult,
+  LaunchFailedPush,
   MaterialTotals,
   MetricsResetResult,
   Mine,
@@ -539,6 +540,14 @@ async function init(): Promise<void> {
       const snapshot = toMinesSnapshot(mines, materials, watchedFeed)
       for (const contents of appWebContents()) {
         contents.send(IPC_CHANNELS.minesUpdated, snapshot)
+      }
+    },
+    // #263. Both windows, for the same reason `onMinesUpdated` reaches both:
+    // the Add Panel that made the launch lives in whichever window opened it,
+    // and main does not track which one that was.
+    onLaunchFailed: (push: LaunchFailedPush) => {
+      for (const contents of appWebContents()) {
+        contents.send(IPC_CHANNELS.launchFailed, push)
       }
     }
   })

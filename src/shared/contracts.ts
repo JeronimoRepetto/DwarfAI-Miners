@@ -1659,6 +1659,35 @@ export interface AgentLaunchResult {
   launchId?: string
 }
 
+/**
+ * Pushed when a launch this app started exits almost immediately with
+ * something other than a clean 0 (#263) — never for an ordinary session end,
+ * which the poll discovers like any other departure. The verdict
+ * `agent:launch` answered already said `launched: true`, honestly: the
+ * process really did start. This is what happened a moment later, off its
+ * own channel, because nothing else this app runs would ever tell the panel
+ * — stderr was discarded and the exit code went unread before this issue.
+ *
+ * Correlated by the SAME receipt `AgentLaunchResult.launchId` carried — never
+ * a dwarf id and never a session id, for the reason `Dwarf.launchId` never is:
+ * no dwarf exists to have proved this launch's identity, because the whole
+ * point of this push is that none ever will.
+ */
+export interface LaunchFailedPush {
+  launchId: string
+  /** Which CLI this launch was for. Never 'none': a refused launch never spawned anything to fail. */
+  provider: DwarfProvider
+  mineId: string
+  /** The child's own exit code, or null when it went by signal instead. */
+  exitCode: number | null
+  /**
+   * The CLI's own words, redacted and length-capped exactly as every other
+   * transcript text crossing this boundary is (see `redactSecrets`) — empty
+   * when it wrote nothing to stderr before it went.
+   */
+  stderrTail: string
+}
+
 /*
  * ---------------------------------------------------------------------------
  * Held sessions (#86, #94) — the panel STARTING a session and keeping hold of
@@ -2479,6 +2508,14 @@ export const IPC_CHANNELS = {
    * the launched session is discovered by the same poll as every other one.
    */
   launchAgent: 'agent:launch',
+  /**
+   * A launch that failed AFTER `agent:launch` already answered `launched:
+   * true` (#263) — see `LaunchFailedPush`. Push rather than pull, like
+   * `messagePanelChanged` and `dwarfDeliveryReported`: main learns of this
+   * asynchronously, up to `EARLY_FAILURE_WINDOW_MS` after the verdict, so
+   * there is no request for the panel to make and no moment to poll for one.
+   */
+  launchFailed: 'agent:launchFailed',
   /**
    * Which agent CLIs this machine has, and which of them the panel can start
    * (#86, over detection's #91).

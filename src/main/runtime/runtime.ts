@@ -30,6 +30,7 @@ import {
   type DwarfPermissionAnswerRequest,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
+  type DwarfProvider,
   type DwarfQuestionAnswerRequest,
   type DwarfQuestionAnswerResult,
   type DwarfTextRequest,
@@ -38,6 +39,7 @@ import {
   type HeldSessionLaunchResult,
   type HostedLaunchRequest,
   type HostedLaunchResult,
+  type LaunchFailedPush,
   type MaterialTotals,
   type MetricsResetResult,
   type Mine,
@@ -83,7 +85,7 @@ import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
-import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
+import { LaunchedSessionRegistry, type LaunchFailure } from '../sessionLaunch/launchedSessions'
 import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
 import {
   createSdkHeldSession,
@@ -115,8 +117,19 @@ import {
 import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
+import { redactSecrets } from '../domain/redactSecrets'
+import { truncate } from '../../shared/truncate'
 
 const FEED_LIMIT = 12
+
+/**
+ * How much of a launch failure's own stderr the panel actually shows (#263).
+ * Generous next to a speech bubble's 70-char cap — this lands in the Add
+ * Panel's alert line, which has room for a real sentence — but still a cap:
+ * `redactSecrets` runs first, `truncate` after, so nothing this app displays
+ * to answer "why did it fail" can grow without bound off a chatty CLI.
+ */
+const LAUNCH_FAILURE_STDERR_CHARS = 400
 
 /** No transcript this app can read — never the same claim as one that is empty. */
 function unreadableFeed(): DwarfFeedResult {
@@ -356,6 +369,14 @@ export interface RuntimeOptions {
    * watchDwarfFeed and WatchedFeedPush for the whole rule.
    */
   onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => void
+  /**
+   * Pushes a launch failure discovered AFTER `launchAgent` already answered
+   * (#263) — see `LaunchFailedPush`. Optional, unlike `onMinesUpdated`: a
+   * test that never launches anything need not wire one, and a build that
+   * never wires one simply never pushes — the failure still reaches the log,
+   * which is unconditional.
+   */
+  onLaunchFailed?: (push: LaunchFailedPush) => void
   home?: string
   fs?: FsLike
   /** Read-only SQLite access for the Codex registry; injected for tests. */
@@ -515,6 +536,13 @@ export class AgentRuntime {
   private readonly codexModelHistory: () => Promise<CodexThreadModel[]>
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
+  /**
+   * Told of a launch that failed AFTER `launchAgent` already answered
+   * (#263) — see `RuntimeOptions.onLaunchFailed`. A no-op when this build
+   * wired none, exactly as `log` below defaults to one: the failure still
+   * reaches the log unconditionally, and only the push is optional.
+   */
+  private readonly onLaunchFailed: (push: LaunchFailedPush) => void
   /**
    * Which dwarf each launch of ours turned out to be, proved from the
    * session's own opening prompt (#191).
@@ -800,6 +828,10 @@ export class AgentRuntime {
         ...(options.launchedSessionStore == null ? {} : { store: options.launchedSessionStore }),
         log: (message) => console.log(message)
       })
+    // #263. A no-op default, exactly as `log` above defaults to one: nothing
+    // this build ever wires still logs the failure, since that half of
+    // reporting it is unconditional and lives in launchAgent itself.
+    this.onLaunchFailed = options.onLaunchFailed ?? ((): void => {})
     // The receipt reader is the provider's own, because only a provider knows
     // where its store is and how a human turn is written in it. A provider
     // that has not been taught to read one answers nothing, and a launch on it
@@ -2461,6 +2493,18 @@ export class AgentRuntime {
           process: retained,
           knownSessionIds: this.mines.flatMap((item) => item.dwarfs.map((dwarf) => dwarf.sessionId))
         })
+        // #263. Subscribed here, never behind the launcher: the receipt this
+        // failure is correlated by is the one just issued a few lines above,
+        // which the launcher itself has no way to know. `onEarlyFailure` is
+        // optional on the handle — a test fixture built before this issue,
+        // or a hosted/held process that never grows one — so a build with
+        // nothing wired to hold it simply never subscribes.
+        const launchId = result.launchId
+        if (launchId !== undefined) {
+          retained.onEarlyFailure?.((failure) =>
+            this.reportLaunchFailure(launchId, request.provider, mine, failure)
+          )
+        }
       }
       console.log(
         `[runtime] Launch of ${request.provider} in ${mine.id}: ` +
@@ -2475,6 +2519,33 @@ export class AgentRuntime {
       // pressed (#168).
       return { launched: false, provider: request.provider, error: LAUNCH_FAILED }
     }
+  }
+
+  /**
+   * A launch that `launchAgent` already answered `launched: true` for died
+   * almost at once (#263) — see `EARLY_FAILURE_WINDOW_MS`. Told well after
+   * that method returned, off the retained handle's own late notice, so it
+   * gets its own log line rather than folding into the one above.
+   *
+   * `mine` and `provider` are captured by the caller rather than re-read from
+   * the board here: by the time this fires the mine that was launched into
+   * may have moved, merged or dropped off entirely, and what this reports is
+   * a fact about the LAUNCH, not a live reading of the board.
+   */
+  private reportLaunchFailure(
+    launchId: string,
+    provider: DwarfProvider,
+    mine: Mine,
+    failure: LaunchFailure
+  ): void {
+    console.log(`[runtime] Launch of ${provider} in ${mine.id}: failed (exit ${failure.exitCode})`)
+    this.onLaunchFailed({
+      launchId,
+      provider,
+      mineId: mine.id,
+      exitCode: failure.exitCode,
+      stderrTail: truncate(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS)
+    })
   }
 
   /**
