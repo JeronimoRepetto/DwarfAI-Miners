@@ -1,5 +1,12 @@
 import { config as loadDotenv } from 'dotenv'
-import { app, dialog, globalShortcut, ipcMain, type BrowserWindow } from 'electron'
+import {
+  app,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  type BrowserWindow,
+  type WebContents
+} from 'electron'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
@@ -70,13 +77,24 @@ import {
   createMainWindow,
   hidePanel,
   markQuitting,
+  messagePanelState,
+  messagePanelWebContents,
+  mirrorMessagePanelPin,
   panelLayout,
-  raisePanel,
+  raiseWindowOf,
   seedPanelEdge,
+  setMessagePanel,
+  setMessagePanelHeight,
   setPanelLayout,
+  shellWebContents,
   showPanel,
   togglePanel
 } from './shell/window'
+import {
+  parseDwarfDeliveryReport,
+  parseMessagePanelHeight,
+  parseMessagePanelState
+} from './shell/messagePanelState'
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
@@ -102,6 +120,10 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.getPanelLayout)
   ipcMain.removeHandler(IPC_CHANNELS.setPanelLayout)
+  ipcMain.removeHandler(IPC_CHANNELS.getMessagePanel)
+  ipcMain.removeHandler(IPC_CHANNELS.setMessagePanel)
+  ipcMain.removeAllListeners(IPC_CHANNELS.setMessagePanelHeight)
+  ipcMain.removeAllListeners(IPC_CHANNELS.reportDwarfDelivery)
   ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
@@ -325,6 +347,20 @@ function toMinesSnapshot(
   }
 }
 
+/**
+ * Every window of this app whose page is still alive (#162).
+ *
+ * Two surfaces now share one poll and one set of pushes, and both can be gone
+ * — the panel window does not exist until a panel is first opened, and either
+ * page can be mid-teardown on quit. A push to a destroyed webContents throws,
+ * so the check is here once rather than at each of the four call sites.
+ */
+function appWebContents(): WebContents[] {
+  return [shellWebContents(), messagePanelWebContents()].filter(
+    (contents): contents is WebContents => contents !== null
+  )
+}
+
 async function init(): Promise<void> {
   app.setAppUserModelId('com.jeronimorepetto.dwarfaiminers')
 
@@ -461,11 +497,14 @@ async function init(): Promise<void> {
     },
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
-      if (!mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send(
-          IPC_CHANNELS.minesUpdated,
-          toMinesSnapshot(mines, materials, watchedFeed)
-        )
+      // Both windows (#162). The panel window reads the board for the same
+      // reasons the shell does — the open dwarf's own status and words, the
+      // proof a session reacted to a delivery, and the arrival of a dwarf a
+      // launch is waiting for — so one poll feeds two surfaces rather than
+      // the panel asking main for a snapshot main just published.
+      const snapshot = toMinesSnapshot(mines, materials, watchedFeed)
+      for (const contents of appWebContents()) {
+        contents.send(IPC_CHANNELS.minesUpdated, snapshot)
       }
     }
   })
@@ -565,13 +604,20 @@ async function init(): Promise<void> {
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
   // The shell reports every click on itself, because a frameless transparent
   // window is not reliably raised by the platform's own click-to-front (#165).
-  ipcMain.on(IPC_CHANNELS.raisePanel, () => raisePanel())
+  // Answers for the SENDER rather than always for the shell (#162): the panel
+  // is the same frameless transparent window and needs the same help, and a
+  // press on it that raised the shell instead would leave the surface being
+  // typed into exactly where it was.
+  ipcMain.on(IPC_CHANNELS.raisePanel, (event) => raiseWindowOf(event.sender))
   ipcMain.handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
   ipcMain.handle(IPC_CHANNELS.setAlwaysOnTop, async (_event, payload: unknown) => {
     // Boundary discipline as elsewhere: a malformed payload changes nothing
     // and the caller still gets the real state back.
     if (typeof payload !== 'boolean') return mainWindow.isAlwaysOnTop()
     const real = applyAlwaysOnTop(mainWindow, payload)
+    // One surface in two windows, one answer about its stacking (#162): the
+    // panel mirrors what the SHELL actually became, never the request.
+    mirrorMessagePanelPin(real)
     try {
       // Persist what the window actually is, not the request — a declined
       // change must not resurrect itself as a stored preference.
@@ -615,6 +661,54 @@ async function init(): Promise<void> {
       }
     }
     return result
+  })
+  /*
+   * The message panel's own window (#162).
+   *
+   * `setMessagePanel` answers with what main STORED, for the reason the layout
+   * channels do: a real BrowserWindow is created, moved, shown or hidden off
+   * the back of it, and the caller must render the fact. Both windows may send
+   * it — the shell opens the panel on a dwarf or on the mine's Add action, the
+   * panel closes itself and adopts the dwarf a launch produced — so the window
+   * that did NOT ask is told, and neither renderer ever polls state it does
+   * not own. `getMessagePanel` exists for the one moment a push cannot reach:
+   * the panel window's own first mount, when the state that opened it was set
+   * before its page existed.
+   */
+  ipcMain.handle(IPC_CHANNELS.getMessagePanel, () => messagePanelState())
+  ipcMain.handle(IPC_CHANNELS.setMessagePanel, (event, payload: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload opens nothing and
+    // the caller still gets the real state back. See parseMessagePanelState
+    // for the one refusal that is not about types — a surface has to be ABOUT
+    // something, and a message panel open on nobody is not a narrower request.
+    const request = parseMessagePanelState(payload)
+    if (request === null) return messagePanelState()
+    const applied = setMessagePanel(request)
+    for (const contents of appWebContents()) {
+      if (contents !== event.sender) contents.send(IPC_CHANNELS.messagePanelChanged, applied)
+    }
+    return applied
+  })
+  // The design's vertical-only resize reaching the window that has to carry it
+  // (#162): the renderer measures its own surface in DESIGN pixels and main
+  // multiplies by the same uiScale every other dimension goes through. One-way
+  // — there is no verdict, and the first report is also what reveals a window
+  // deliberately created hidden.
+  ipcMain.on(IPC_CHANNELS.setMessagePanelHeight, (_event, payload: unknown) => {
+    const height = parseMessagePanelHeight(payload)
+    if (height === null) return
+    setMessagePanelHeight(height)
+  })
+  // The delivery verdicts the panel window is the only writer of, relayed to
+  // the shell so the mine can draw its markers (#162, see DwarfDeliveryReport).
+  // Relayed rather than held: the stores expire their own entries, so main
+  // keeping a copy would mean main deciding when a marker is stale.
+  ipcMain.on(IPC_CHANNELS.reportDwarfDelivery, (event, payload: unknown) => {
+    const report = parseDwarfDeliveryReport(payload)
+    if (report === null) return
+    for (const contents of appWebContents()) {
+      if (contents !== event.sender) contents.send(IPC_CHANNELS.dwarfDeliveryReported, report)
+    }
   })
   ipcMain.handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
   ipcMain.handle(IPC_CHANNELS.setToggleShortcut, async (_event, payload: unknown) => {

@@ -1775,6 +1775,35 @@ export interface PanelLayoutRequest {
 export type MessagePanelSurface = 'none' | 'launch' | 'message'
 
 /**
+ * Whether a value is one of the three surfaces this build has.
+ *
+ * Exists for the reason isDwarfProvider does: the preload refuses to guess
+ * one. A surface collapsed to a default would be the bridge deciding what the
+ * panel shows — 'none' above all, which would CLOSE a window nobody asked to
+ * close — so an unrecognised value crosses as '' and main refuses the request
+ * outright.
+ */
+export function isMessagePanelSurface(value: unknown): value is MessagePanelSurface {
+  return value === 'none' || value === 'launch' || value === 'message'
+}
+
+/**
+ * Which of the app's two windows a renderer is running in (#162).
+ *
+ * One renderer ENTRY serves both. The panel window is the same page loaded
+ * with the query below, and the renderer picks its root component from it —
+ * one bundle, one stylesheet, one Content-Security-Policy, rather than a
+ * second build target that would duplicate all three for one component.
+ */
+export type RendererSurface = 'shell' | 'message-panel'
+
+/** The query parameter that names the surface (see RendererSurface). */
+export const RENDERER_SURFACE_PARAM = 'surface'
+
+/** The value main loads the message-panel window's page with. */
+export const MESSAGE_PANEL_SURFACE = 'message-panel'
+
+/**
  * What the message-panel window is showing (#162).
  *
  * Held in MAIN and written by BOTH windows, which is the whole reason it is a
@@ -2081,6 +2110,7 @@ export const IPC_CHANNELS = {
    * window: it is created hidden, so nobody sees it at a height nothing had
    * measured yet.
    */
+  getMessagePanel: 'panel:message:get',
   setMessagePanel: 'panel:message:set',
   messagePanelChanged: 'panel:message:changed',
   reportDwarfDelivery: 'panel:message:delivery',

@@ -1,9 +1,18 @@
-import { BrowserWindow, app, screen, shell, type BrowserWindowConstructorOptions } from 'electron'
+import {
+  BrowserWindow,
+  app,
+  screen,
+  shell,
+  type BrowserWindowConstructorOptions,
+  type WebContents
+} from 'electron'
 import { join } from 'node:path'
-import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../domain/types'
+import type { MessagePanelState, PanelEdge, PanelLayout, PanelLayoutRequest } from '../domain/types'
+import { MESSAGE_PANEL_SURFACE, RENDERER_SURFACE_PARAM } from '../domain/types'
 import { currentPlatform } from '../platform/platform'
 import { panelScreenArea, type ScreenRect } from '../platform/screenArea'
-import { panelBounds, uiScale } from './panelBounds'
+import { emptyMessagePanel } from './messagePanelState'
+import { messagePanelBounds, panelBounds, uiScale } from './panelBounds'
 import { resolveResourcePath } from './resourcePaths'
 
 let mainWindow: BrowserWindow | null = null
@@ -202,11 +211,6 @@ export function raisePanelWindow(target: RaiseTarget): void {
   target.focus()
 }
 
-/** Raise and focus the shell window, if there is one (see raisePanelWindow). */
-export function raisePanel(): void {
-  if (mainWindow !== null) raisePanelWindow(mainWindow)
-}
-
 /** The screen rectangle the panel may cover, on the display it is currently on. */
 function currentScreenArea(): ScreenRect {
   const display =
@@ -253,6 +257,11 @@ export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
     // window that happens to be on it.
     applyUiScale(mainWindow.webContents, area)
     applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout))
+    // The panel stands beside the shell, so a shell that moved or changed
+    // width moved the free edge the panel is placed against (#162) — and a
+    // layout change can carry the pair onto another display, which is the
+    // other half of why the scale is re-applied above.
+    placeMessagePanel()
   }
   return panelLayout()
 }
@@ -328,10 +337,23 @@ export function showPanel(): void {
   // click does not bring forward can also come back underneath whatever had the
   // foreground while it was hidden. One rule, one function, both entry points.
   raisePanelWindow(mainWindow)
+  // The panel comes back with the shell, and only if a surface was open when
+  // the pair went away (#162): the tray toggle and the global shortcut mean
+  // the app's surfaces, not the shell alone, and a panel left behind would
+  // float over other programs with nothing beside it.
+  if (messagePanel.surface !== 'none' && messagePanelWindow !== null) {
+    placeMessagePanel()
+    messagePanelWindow.show()
+  }
 }
 
 export function hidePanel(): void {
   mainWindow?.hide()
+  // Hidden WITH the shell, not closed: what the panel is showing is untouched,
+  // so the surface that comes back is the one that went away.
+  if (messagePanelWindow !== null && !messagePanelWindow.isDestroyed()) {
+    messagePanelWindow.hide()
+  }
 }
 
 export function togglePanel(): void {
@@ -341,4 +363,275 @@ export function togglePanel(): void {
   } else {
     showPanel()
   }
+}
+/**
+ * The height the panel window is CREATED at, before the renderer has measured
+ * anything: the design's own base export (`assets/messages/message-panel.png`
+ * is 235px tall).
+ *
+ * Deliberately not a second copy of the renderer's sizing rules, which own the
+ * real number — the floor, the ceiling, the ask's raised floor and the mapping
+ * from a message to a height all live in `lib/message/panelHeight.ts`. This is
+ * only what the window is while it is still HIDDEN: `setMessagePanelHeight`
+ * replaces it with the measured height, and that first report is what reveals
+ * the window, so nobody ever sees a panel at this size.
+ */
+const MESSAGE_PANEL_OPENING_HEIGHT = 235
+
+/**
+ * How the panel window's page is told which surface it is (#162). One renderer
+ * entry serves both windows; see RendererSurface for why that beats a second
+ * build target.
+ */
+const MESSAGE_PANEL_SURFACE_QUERY = `${RENDERER_SURFACE_PARAM}=${MESSAGE_PANEL_SURFACE}`
+
+let messagePanelWindow: BrowserWindow | null = null
+/** What the panel window is showing — see MessagePanelState; main owns it. */
+let messagePanel: MessagePanelState = emptyMessagePanel()
+/** The panel's own height in DESIGN pixels, as its renderer last measured it. */
+let messagePanelDesignHeight = MESSAGE_PANEL_OPENING_HEIGHT
+
+export interface MessagePanelWindowOptionsInput {
+  /** The shell's pin, mirrored rather than owned (see below). */
+  alwaysOnTop: boolean
+  preloadPath: string
+  iconPath: string
+  bounds: ScreenRect
+  /** The shell window, which this one is a child of. */
+  parent: BrowserWindow
+}
+
+/**
+ * Pure options builder for the message panel's own window (#162), split from
+ * its creation for the reason `buildMainWindowOptions` is: the creation-time
+ * contract is the whole of what this window's relationship to the shell is,
+ * and it is assertable without an Electron runtime.
+ *
+ * ## Three decisions live here
+ *
+ * **It is a CHILD of the shell.** Closing the shell closes it, which is the
+ * lifecycle the issue asks for and one Electron gives for free rather than one
+ * this file has to remember. `skipTaskbar` on top of that, because the panel
+ * must never appear as a second application beside the app it belongs to — the
+ * shell already does not.
+ *
+ * **It mirrors the shell's pin; it does not own one.** Pinning is a Settings
+ * control and a property of the app's stacking (#35). A panel that floated
+ * above other windows while the shell did not — or the reverse — would split
+ * one question into two answers, and the user has one switch for it.
+ *
+ * **It is not resizable.** The design's vertical-only resize is the panel's own
+ * top-edge handle: the renderer reports the height it arrived at and main
+ * applies it, so the width can never be dragged away from the 990 the whole
+ * composition is derived from. `resizable: false` is what makes "vertically
+ * only" true of the window rather than merely intended by the component.
+ *
+ * Created hidden, like the shell: nothing has measured the panel at the moment
+ * it is built, and the first height report is what reveals it.
+ */
+export function buildMessagePanelWindowOptions(
+  input: MessagePanelWindowOptionsInput
+): BrowserWindowConstructorOptions {
+  return {
+    ...input.bounds,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    parent: input.parent,
+    // Stated for the same reason the shell states it (#165): a frameless
+    // transparent window that Electron was told not to focus cannot be typed
+    // into, and this one is a composer.
+    focusable: true,
+    alwaysOnTop: input.alwaysOnTop,
+    icon: input.iconPath,
+    webPreferences: {
+      preload: input.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  }
+}
+
+/** What the panel window is showing (#162) — read, never requested. */
+export function messagePanelState(): MessagePanelState {
+  return { ...messagePanel }
+}
+
+/**
+ * Where the panel window belongs right now: beside the shell as the shell
+ * ACTUALLY is, at the height its renderer last measured.
+ *
+ * The shell's real bounds rather than a re-derivation, so a compositor that
+ * placed the shell somewhere else moves the panel with it instead of leaving
+ * the pair apart. With no shell window yet there is nothing to be beside, so
+ * the rectangle main would have given it stands in.
+ */
+function messagePanelRect(): ScreenRect {
+  const area = currentScreenArea()
+  const shell =
+    mainWindow === null ? panelBounds(area, layout.edge, layout) : mainWindow.getBounds()
+  return messagePanelBounds(area, shell, layout.edge, messagePanelDesignHeight)
+}
+
+/**
+ * Re-place and re-scale the panel window, if there is one.
+ *
+ * Both, for the reason `setPanelLayout` does both: the zoom belongs to the
+ * DISPLAY rather than to the window that happens to be on it, and the panel
+ * shares the shell's ui scale exactly — the same 1080-design-world factor,
+ * applied to a second window so the two surfaces are one size.
+ */
+function placeMessagePanel(): void {
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return
+  applyUiScale(messagePanelWindow.webContents, currentScreenArea())
+  applyPanelBounds(messagePanelWindow, messagePanelRect())
+}
+
+function createMessagePanelWindow(parent: BrowserWindow): BrowserWindow {
+  const panel = new BrowserWindow(
+    buildMessagePanelWindowOptions({
+      // Whatever the shell IS, not what the preference said: the user may have
+      // unpinned since it opened.
+      alwaysOnTop: parent.isAlwaysOnTop(),
+      bounds: messagePanelRect(),
+      parent,
+      preloadPath: join(import.meta.dirname, '../preload/index.mjs'),
+      iconPath: resolveResourcePath('app-icon.png', {
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      })
+    })
+  )
+
+  // The scale lands before the first paint, for the reason the shell's does
+  // (#153): Electron resets a page's zoom on every navigation, the window is
+  // created hidden, and a panel flashed at 1x on a 4K display is what setting
+  // it any later would buy.
+  panel.webContents.on('did-finish-load', () => {
+    if (panel.isDestroyed()) return
+    applyUiScale(panel.webContents, currentScreenArea())
+  })
+
+  // The panel closes to NOTHING rather than to a destroyed window: reopening
+  // it on the next dwarf then costs no page load, and the surface it comes
+  // back with is a fresh mount either way (the renderer keys it by dwarf).
+  panel.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    setMessagePanel(emptyMessagePanel())
+  })
+
+  // Any external navigation opens in the default browser, never in the panel.
+  panel.webContents.setWindowOpenHandler((details) => {
+    void shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  const url = process.env.ELECTRON_RENDERER_URL
+  if (url) {
+    void panel.loadURL(`${url}?${MESSAGE_PANEL_SURFACE_QUERY}`)
+  } else {
+    void panel.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
+      search: MESSAGE_PANEL_SURFACE_QUERY
+    })
+  }
+
+  return panel
+}
+
+/**
+ * Apply a state one of the two windows asked for, and answer with what main
+ * now holds (#162).
+ *
+ * Same read-back rule as `setPanelLayout`: the caller renders the fact rather
+ * than the wish. What is applied here is the WINDOW — created on the first
+ * open, re-placed on every later one, hidden when the surface closes. Hidden
+ * rather than destroyed, so the panel that comes back is one page load old
+ * instead of a new one.
+ *
+ * A state that arrives before the shell exists is stored and nothing else: the
+ * panel is a child of a window that is not there yet, and the next open after
+ * the shell is built places it.
+ */
+export function setMessagePanel(state: MessagePanelState): MessagePanelState {
+  const opening = state.surface !== 'none'
+  messagePanel = { ...state }
+  if (!opening) {
+    // The height is a fact about a surface that has closed. Reopening measures
+    // again — which is also the design's own rule, that a reopened panel
+    // recalculates from the latest message.
+    messagePanelDesignHeight = MESSAGE_PANEL_OPENING_HEIGHT
+    if (messagePanelWindow !== null && !messagePanelWindow.isDestroyed()) {
+      messagePanelWindow.hide()
+    }
+    return messagePanelState()
+  }
+  if (mainWindow === null) return messagePanelState()
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) {
+    messagePanelWindow = createMessagePanelWindow(mainWindow)
+  } else {
+    placeMessagePanel()
+  }
+  return messagePanelState()
+}
+
+/**
+ * Adopt the height the panel measured of itself, in design pixels, and reveal
+ * the window if this is the first report since it opened (#162).
+ *
+ * The design's vertical-only resize crosses here: the height derives from the
+ * latest message when the panel opens, a drag on its top edge changes it, and
+ * the history tab opens it to the ceiling — all of that is the renderer's, and
+ * this is the window catching up. Showing on the first report is what keeps
+ * anybody from seeing the panel at a height nothing had measured.
+ */
+export function setMessagePanelHeight(designHeight: number): void {
+  messagePanelDesignHeight = designHeight
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return
+  if (messagePanel.surface === 'none') return
+  placeMessagePanel()
+  if (!messagePanelWindow.isVisible()) messagePanelWindow.show()
+}
+
+/** The panel window's page, for the one push main owes it. Null when there is none. */
+export function messagePanelWebContents(): WebContents | null {
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return null
+  return messagePanelWindow.webContents
+}
+
+/** The shell's page, for the pushes main owes it. Null before it exists. */
+export function shellWebContents(): WebContents | null {
+  if (mainWindow === null || mainWindow.webContents.isDestroyed()) return null
+  return mainWindow.webContents
+}
+
+/**
+ * Raise and focus whichever of the app's windows sent a click (#162, #165).
+ *
+ * The shell reports every press on itself because a frameless transparent
+ * window is not reliably raised by the platform's own click-to-front; the
+ * panel is the same kind of window and needs the same thing, so the channel
+ * answers for the SENDER rather than always for the shell. A press on the
+ * panel that raised the shell instead would leave the surface being typed into
+ * exactly where it was.
+ */
+export function raiseWindowOf(contents: WebContents): void {
+  const target = BrowserWindow.fromWebContents(contents)
+  if (target !== null) raisePanelWindow(target)
+}
+/**
+ * Mirror the shell's pin onto the panel window (#35, #162).
+ *
+ * Called with the state the SHELL actually ended up in, never the request:
+ * one surface in two windows must not answer the stacking question two ways,
+ * and Settings has one switch for it. A panel that does not exist yet adopts
+ * the shell's state when it is built.
+ */
+export function mirrorMessagePanelPin(pinned: boolean): void {
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return
+  messagePanelWindow.setAlwaysOnTop(pinned)
 }
