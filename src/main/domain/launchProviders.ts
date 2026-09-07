@@ -38,16 +38,24 @@ export interface CliPresence {
  * rollout storage. Both are launches; only one can be watched. `launchable`
  * answers the first question and deliberately not the second — what the panel
  * does with each is the renderer's, and it is where that difference is drawn.
+ *
+ * Antigravity is deliberately absent (#237), and the absence is the rule
+ * holding rather than an omission: the observer slice reads the CLI's store
+ * and has proven no `agy` invocation, so a name here would be a chip that
+ * answers Enter with a session nobody starts.
  */
 export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex']
 
 /**
  * What a detected provider with no launch path says for itself.
  *
- * Nothing in this build currently reaches it — every detected provider is
- * launchable since #168 — and it is kept rather than deleted because the
- * condition it answers still exists: the moment `DWARF_PROVIDERS` gains a third
- * name, that provider is detected and not launchable until someone builds it.
+ * Reached at last, and by exactly the case it was kept for (#237). This used
+ * to say nothing in the build could get here, because every detected provider
+ * had been launchable since #168, and predicted that a third name in
+ * `DWARF_PROVIDERS` would be detected and not launchable until someone built
+ * its launch path. Antigravity is that third name: this app reads its store
+ * and has proven no invocation of `agy`, so an installed Antigravity says so
+ * out loud instead of offering a chip with nothing behind it.
  *
  * Fixed copy this app wrote, which is the whole reason it is safe to publish:
  * the detector's own reasons name `~/.local/bin` and, for a configured

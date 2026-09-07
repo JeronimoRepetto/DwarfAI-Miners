@@ -271,6 +271,13 @@ function statusOf(
 /**
  * Which CLI a dwarf belongs to, assigned by position rather than by hash so
  * both sprite sets are guaranteed on screen at any seed.
+ *
+ * Deliberately still the two that can be LAUNCHED (#237). Antigravity joined
+ * `DWARF_PROVIDERS` as an observer, and inventing one here would invent the
+ * facts an observed Antigravity session cannot have: the model line below
+ * would fall through to Claude's list, and the crew would carry tokens the
+ * real provider never reports. A simulated dwarf that lies about a provider is
+ * worse than one this valley simply has none of.
  */
 function providerOf(mine: SimulatedMine, index: number): DwarfProvider {
   return (mine.index + index) % 3 === 0 ? 'codex' : 'claude'

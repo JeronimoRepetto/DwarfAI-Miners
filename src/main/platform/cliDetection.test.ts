@@ -23,6 +23,19 @@ describe('cliExecutableNames', () => {
     expect(cliExecutableNames('codex', 'linux')).toEqual(['codex'])
     expect(cliExecutableNames('codex', 'darwin')).toEqual(['codex'])
   })
+
+  /*
+   * Issue #237. Every provider so far has been named after its own binary, so
+   * the spellings were derived from the provider name directly. Antigravity
+   * breaks that: the provider identity is the harness (`antigravity`, which is
+   * what a dwarf carries on the wire) and the executable is `agy`. Deriving
+   * the filename from the identity would look for a program nobody ships.
+   */
+  it('looks for the agy binary, not for the provider identity', () => {
+    expect(cliExecutableNames('antigravity', 'win32')).toEqual(['agy.exe', 'agy.cmd', 'agy.bat'])
+    expect(cliExecutableNames('antigravity', 'linux')).toEqual(['agy'])
+    expect(cliExecutableNames('antigravity', 'darwin')).toEqual(['agy'])
+  })
 })
 
 describe('conventionalCliPaths', () => {
@@ -42,6 +55,27 @@ describe('conventionalCliPaths', () => {
 
   it('checks the native bin for codex on POSIX', () => {
     expect(conventionalCliPaths('codex', HOME, 'linux')).toEqual(['/home/j/.local/bin/codex'])
+  })
+
+  /*
+   * Both locations are what Antigravity's own installation documentation says,
+   * and the Windows one was verified on this machine against CLI 1.1.26
+   * (#237): `%LOCALAPPDATA%\agy\bin\agy.exe`. It is a location the generic
+   * `~/.local/bin` convention does not reach, which is why adding the provider
+   * name alone would have detected nothing on the one platform the CLI was
+   * actually installed on. POSIX is `~/.local/bin/agy` — the shared native-bin
+   * convention, with the executable's own name.
+   */
+  it('checks the documented agy install location on Windows', () => {
+    expect(conventionalCliPaths('antigravity', HOME, 'win32')).toEqual([
+      '\\home\\j\\.local\\bin\\agy.exe',
+      '\\home\\j\\AppData\\Local\\agy\\bin\\agy.exe'
+    ])
+  })
+
+  it('checks the documented agy install location on macOS and Linux', () => {
+    expect(conventionalCliPaths('antigravity', HOME, 'linux')).toEqual(['/home/j/.local/bin/agy'])
+    expect(conventionalCliPaths('antigravity', HOME, 'darwin')).toEqual(['/home/j/.local/bin/agy'])
   })
 })
 
@@ -66,6 +100,17 @@ describe('pathLookupCandidates', () => {
   it('returns nothing for an empty or missing PATH', () => {
     expect(pathLookupCandidates('claude', '', 'linux')).toEqual([])
     expect(pathLookupCandidates('claude', undefined, 'linux')).toEqual([])
+  })
+
+  it('looks for agy on PATH, whichever OS is asked (#237)', () => {
+    expect(pathLookupCandidates('antigravity', '/usr/local/bin', 'darwin')).toEqual([
+      '/usr/local/bin/agy'
+    ])
+    expect(pathLookupCandidates('antigravity', 'C:\\bin', 'win32')).toEqual([
+      'C:\\bin\\agy.exe',
+      'C:\\bin\\agy.cmd',
+      'C:\\bin\\agy.bat'
+    ])
   })
 })
 
@@ -187,6 +232,43 @@ describe('createCliDetector', () => {
       path: '/home/j/.local/bin/claude',
       source: 'convention'
     })
+  })
+
+  /*
+   * The whole walk on the one platform Antigravity was verified installed on
+   * (#237): the file sits where the CLI's own installer puts it, which the
+   * generic `~/.local/bin` convention does not cover, and the verdict names
+   * the provider identity while the PATH it found is the executable's.
+   */
+  it('finds an agy installed where the Antigravity installer puts it on Windows', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\Users\\j\\AppData\\Local\\agy\\bin\\agy.exe', 'binary')
+    const detector = createCliDetector({
+      home: 'C:\\Users\\j',
+      platform: 'win32',
+      fs,
+      env: {}
+    })
+
+    expect(await detector.detect('antigravity')).toEqual({
+      cli: 'antigravity',
+      installed: true,
+      path: 'C:\\Users\\j\\AppData\\Local\\agy\\bin\\agy.exe',
+      source: 'convention'
+    })
+  })
+
+  it('reports an absent agy as absent, with a reason and no throw', async () => {
+    const detector = createCliDetector({
+      home: HOME,
+      platform: 'linux',
+      fs: new FakeFs(),
+      env: {}
+    })
+
+    const verdict = await detector.detect('antigravity')
+    expect(verdict.installed).toBe(false)
+    expect(verdict.path).toBeUndefined()
   })
 })
 

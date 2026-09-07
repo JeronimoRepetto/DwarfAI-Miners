@@ -49,7 +49,14 @@ export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
  */
 const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
   claude: 'claude -p',
-  codex: 'codex exec'
+  codex: 'codex exec',
+  // Unreachable in this build, and named honestly rather than left blank
+  // (#237): Antigravity is observer-only, so it is absent from
+  // LAUNCHABLE_PROVIDERS, no dwarf of its can carry the launched-process or
+  // one-shot channel these sentences explain, and neither sentence can be
+  // shown. The bare executable is the least-claiming spelling that still reads
+  // correctly the day a launch path lands and picks a real invocation.
+  antigravity: 'agy'
 }
 
 /**

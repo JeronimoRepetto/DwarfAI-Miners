@@ -3,6 +3,7 @@ import type { SqliteLike } from '../adapters/sqliteLike'
 import type { AppConfig } from '../config/config'
 import type { DwarfProvider } from '../domain/types'
 import type { PlatformAdapters } from '../platform/platformAdapters'
+import { AntigravityProvider } from './antigravity/antigravityProvider'
 import { ClaudeProvider } from './claude/claudeProvider'
 import { CodexProvider } from './codex/codexProvider'
 import type { Provider } from './provider'
@@ -110,6 +111,19 @@ export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
       sqlite,
       stateDbPath: expandPath(config.providers.codex.stateDb),
       logsDbPath: expandPath(config.providers.codex.logsDb)
+    }),
+
+  // The row that shows how little a provider is obliged to take (#237). No
+  // sqlite, no process probe, no held-session or permission lookup: an
+  // observer of a file store needs the filesystem seam and its own settings,
+  // and asks for nothing it would not read.
+  antigravity: ({ config, fs, expandPath }) =>
+    new AntigravityProvider({
+      fs,
+      storeRoot: expandPath(config.providers.antigravity.storeRoot),
+      busyWindowS: config.providers.antigravity.busyWindowS,
+      lockGraceS: config.providers.antigravity.lockGraceS,
+      staleLockWindowS: config.providers.antigravity.staleLockWindowS
     })
 }
 

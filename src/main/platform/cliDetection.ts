@@ -57,13 +57,38 @@ function pathModule(platform: Platform): typeof win32 | typeof posix {
 }
 
 /**
+ * What a provider's binary is actually called, where that is not the provider's
+ * own name (#237).
+ *
+ * Every provider until Antigravity was named after its executable, so the
+ * filename was derived from the identity directly and the two questions never
+ * came apart. Antigravity separates them on purpose: the identity is the
+ * harness — what a dwarf carries on the wire — and the program is `agy`.
+ * Deriving one from the other would have this detector look for a file nobody
+ * ships, on every platform, and report a CLI that is installed as absent.
+ *
+ * A table rather than a rule, because there is no rule: what a vendor calls
+ * its binary is a fact to be looked up, not derived. A provider absent here
+ * spells its executable exactly like itself, which is still the common case.
+ */
+const CLI_EXECUTABLE_STEMS: Partial<Record<AgentCli, string>> = {
+  antigravity: 'agy'
+}
+
+/** The filename stem (no extension) of one provider's executable. */
+export function cliExecutableStem(cli: AgentCli): string {
+  return CLI_EXECUTABLE_STEMS[cli] ?? cli
+}
+
+/**
  * The executable spellings to look for, most-native first. On Windows a CLI
  * installed by its own installer is an `.exe`, while an npm-global install is a
  * `.cmd` (or `.bat`) shim on PATH; POSIX has one bare name.
  */
 export function cliExecutableNames(cli: AgentCli, platform: Platform): string[] {
-  if (platform === 'win32') return [`${cli}.exe`, `${cli}.cmd`, `${cli}.bat`]
-  return [cli]
+  const stem = cliExecutableStem(cli)
+  if (platform === 'win32') return [`${stem}.exe`, `${stem}.cmd`, `${stem}.bat`]
+  return [stem]
 }
 
 /**
@@ -75,13 +100,25 @@ export function cliExecutableNames(cli: AgentCli, platform: Platform): string[] 
  * npm-global shim directory on Windows, since codex is commonly an npm install.
  * These are conventions, not guarantees; the PATH fallback and the explicit
  * override are what make an unconventional install reachable.
+ *
+ * antigravity is the one whose Windows location the generic native bin does not
+ * reach (#237). Its own installer writes `%LOCALAPPDATA%\agy\bin\agy.exe` —
+ * documented by the vendor, and verified on this machine against CLI 1.1.26 —
+ * so adding the provider name alone would have detected nothing on the only
+ * platform the CLI was actually installed on. macOS and Linux are
+ * `~/.local/bin/agy`, which is the shared convention with the executable's own
+ * name (see cliExecutableStem), so they need no row of their own.
  */
 export function conventionalCliPaths(cli: AgentCli, home: string, platform: Platform): string[] {
   const path = pathModule(platform)
   const ext = platform === 'win32' ? '.exe' : ''
-  const nativeBin = path.join(home, '.local', 'bin', `${cli}${ext}`)
-  if (cli === 'codex' && platform === 'win32') {
+  const nativeBin = path.join(home, '.local', 'bin', `${cliExecutableStem(cli)}${ext}`)
+  if (platform !== 'win32') return [nativeBin]
+  if (cli === 'codex') {
     return [nativeBin, path.join(home, 'AppData', 'Roaming', 'npm', 'codex.cmd')]
+  }
+  if (cli === 'antigravity') {
+    return [nativeBin, path.join(home, 'AppData', 'Local', 'agy', 'bin', 'agy.exe')]
   }
   return [nativeBin]
 }

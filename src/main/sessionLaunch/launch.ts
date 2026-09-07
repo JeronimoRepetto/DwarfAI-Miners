@@ -118,6 +118,16 @@ export function buildLaunchArgs(provider: DwarfProvider): string[] {
       return buildClaudeLaunchArgs()
     case 'codex':
       return buildCodexLaunchArgs()
+    case 'antigravity':
+      // The gate above doing its job, on the first provider to reach it (#237).
+      // Antigravity arrives as an OBSERVER: this app reads its store and has
+      // proven no invocation of `agy`, so it is absent from
+      // LAUNCHABLE_PROVIDERS and nothing offers a chip that would come here.
+      // A throw rather than a guessed argv, and rather than a `never` cast
+      // that would read as "unreachable" while silently spawning a bare
+      // executable: the caller already turns this into "could not be started",
+      // which is exactly what happened.
+      throw new Error('[launch] antigravity has no launch invocation yet (#237): observer only')
   }
 }
 
