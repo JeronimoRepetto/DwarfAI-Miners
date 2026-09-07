@@ -128,6 +128,46 @@ describe('conversationOf', () => {
       conversationOf(defaultDwarf({ conversation: HELD })).messages[0]!.key
     )
   })
+
+  /**
+   * One tool-call line per call, interleaved between the bubbles (#240). The
+   * wire's `activity` rides straight through `panelMessagesOf` onto the same
+   * `PanelMessage` every other row is, rather than a sibling shape the two
+   * panel components would have to branch on separately.
+   */
+  describe('activity lines', () => {
+    const RUN = { kind: 'run' as const, target: 'pnpm test' }
+
+    it('carries a tool-call line through with its activity attached', () => {
+      const shown = conversationOf(defaultDwarf(), {
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Ran pnpm test', timestamp: 'now', activity: RUN }]
+      })
+      expect(shown.messages).toEqual([
+        { from: 'agent', text: 'Ran pnpm test', key: 'agent-0-now', activity: RUN }
+      ])
+    })
+
+    it('counts a tool-call line as exactly one message, same as a spoken one', () => {
+      const shown = conversationOf(defaultDwarf(), {
+        readable: true,
+        messages: [
+          { role: 'assistant', text: 'Found the seam.', timestamp: 't0' },
+          { role: 'assistant', text: 'Ran pnpm test', timestamp: 't1', activity: RUN },
+          { role: 'assistant', text: 'Tests pass.', timestamp: 't2' }
+        ]
+      })
+      expect(shown.messages).toHaveLength(3)
+    })
+
+    it('leaves an ordinary spoken message with no activity field at all', () => {
+      const shown = conversationOf(defaultDwarf(), {
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Digging.', timestamp: 'now' }]
+      })
+      expect('activity' in shown.messages[0]!).toBe(false)
+    })
+  })
 })
 
 /**
