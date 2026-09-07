@@ -679,12 +679,33 @@ export class HeldSessionRegistry {
       // The verification, and the reason a model change needs no paid turn:
       // the reading names the model the CLI now believes is in force, and
       // `pullContextUsage` promotes the request the moment it agrees.
-      await this.refreshContextUsage(sessionId)
+      await this.pullReadingAfterChange(sessionId)
     } else {
       record.requestedEffort = change.effort
     }
     this.log(`[held] Asked ${record.mineId} to change its ${change.kind}`)
     return { applied: true }
+  }
+
+  /**
+   * A context reading that was STARTED after the change it has to verify
+   * (issue #96).
+   *
+   * `refreshContextUsage` joins a pull already in flight rather than putting
+   * a second control request on the same stream — the no-retry-storm rule,
+   * and the right rule for a refresh. It is the wrong one here: a pull started
+   * before the model changed cannot say anything about the change, so joining
+   * it would leave the request pending until some later trigger happened to
+   * fire, with the strip hedging about a change that had already taken hold.
+   *
+   * The fix is not a concurrent second request. It is waiting for the stale
+   * one to settle — its own deadline bounds how long that is — and then asking
+   * again, which is still one request on the wire at a time.
+   */
+  private async pullReadingAfterChange(sessionId: string): Promise<void> {
+    const inFlight = this.recordFor(sessionId)?.contextUsagePull
+    if (inFlight !== undefined) await inFlight
+    await this.refreshContextUsage(sessionId)
   }
 
   /**

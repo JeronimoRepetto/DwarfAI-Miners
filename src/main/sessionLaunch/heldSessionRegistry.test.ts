@@ -755,6 +755,46 @@ describe('HeldSessionRegistry tuning (#96)', () => {
     })
   })
 
+  it('verifies against a reading started AFTER the change, never one already on the wire', async () => {
+    /*
+     * The trap this closes. A pull already in flight was started BEFORE the
+     * model changed, so its answer cannot speak to the change — and
+     * `refreshContextUsage` deliberately JOINS a pull rather than stacking a
+     * second request on the same stream (the no-retry-storm rule). Joining
+     * one here would leave the change unverified until some later trigger
+     * happened to fire, and the strip stuck on "pending" for a change that had
+     * already taken effect.
+     *
+     * The fix is not a second concurrent request: it is waiting for the stale
+     * one, then asking again.
+     */
+    vi.useFakeTimers()
+    try {
+      const port = new FakePort()
+      const registry = await held(port)
+      port.contextUsageHangs = true
+      const stale = registry.refreshContextUsage('sess-1')
+
+      port.contextUsageHangs = false
+      port.contextUsageAnswer = { usedTokens: 1, maxTokens: 1_000_000, model: 'claude-sonnet-5' }
+      const tuned = registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })
+      await vi.advanceTimersByTimeAsync(HELD_CONTEXT_USAGE_TIMEOUT_MS)
+      await stale
+
+      expect(await tuned).toEqual({ applied: true })
+      // Two asks: the stale one that could say nothing about the change, and
+      // the fresh one that could.
+      expect(port.contextUsageAsks).toEqual([0, 0])
+      expect(registry.telemetryState('sess-1').model).toBe('claude-sonnet-5')
+      expect(registry.tuningState('sess-1')).toEqual({
+        held: true,
+        tuning: { canSetModel: true, canSetEffort: true }
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('holds the model pending while the reading still names the old one', async () => {
     // The one case the whole verification rule exists for: the request was
     // accepted, and the session has not switched yet. Showing the new name
