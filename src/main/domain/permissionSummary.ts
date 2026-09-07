@@ -104,15 +104,22 @@ export const ACTIVITY_VERBS: Readonly<Record<FeedActivityKind, string>> = {
  *
  * - **Not work.** `AskUserQuestion` asks instead of acting and is already
  *   carried whole by `pendingQuestion`; Codex's `wait`, `wait_agent` and
- *   `list_agents` are the agent waiting or looking at itself.
+ *   `list_agents` are the agent waiting or looking at itself; Antigravity's
+ *   `schedule` is the same wait under a different name — a wakeup timer, not
+ *   an act on the workspace.
  * - **Agent traffic, drawn as dwarfs already.** Claude's `Agent` and Codex's
  *   `spawn_agent`, `send_message` and `followup_task` each become a dwarf on
- *   the board, which says more than a line would.
+ *   the board, which says more than a line would; Antigravity's
+ *   `manage_subagents` and `invoke_subagent` are the same two shapes —
+ *   looking at the crew and launching into it — under this CLI's own names.
  * - **No subject a line could name.** `TodoWrite`, `update_plan` and every
  *   MCP tool measured carry none of the fields above, so even a verb for them
  *   would leave `Ran ` with nothing after it. Codex's `exec` is the pointed
  *   case: 5829 of its calls carry a JavaScript program as their input rather
  *   than a command line, and the first line of a program is not `<command>`.
+ *   Antigravity's `call_mcp_tool` is this app's own MCP case again, one layer
+ *   further from the file system: a server name and a tool name, neither a
+ *   path, a command nor a pattern.
  */
 const TOOL_ACTIVITY_KINDS: Readonly<Record<string, FeedActivityKind>> = {
   // Claude Code. Bash 16119, Read 7254, Edit 6449, Write 2574, Grep 2111,
@@ -135,7 +142,23 @@ const TOOL_ACTIVITY_KINDS: Readonly<Record<string, FeedActivityKind>> = {
   // `custom_tool_call` whose target path the codex parser reads off the patch
   // envelope before calling in here (93 calls).
   shell_command: 'run',
-  apply_patch: 'edit'
+  apply_patch: 'edit',
+  // Antigravity CLI 1.1.26 (#280). None of these seven names collide with
+  // Claude's or Codex's above, so one flat table still answers for all three.
+  // `view_file` 93, `run_command` 33, `list_dir` 20, `grep_search` 11 and
+  // `find_by_name` 4 calls in the measured corpus; `write_to_file` (1 call)
+  // and `replace_file_content` (0 in that corpus, present in an earlier
+  // capture of this same store) are this CLI's two ways to put text on disk,
+  // so both get the edit verb. `antigravity/parse.ts`'s `antigravityToolInput`
+  // decodes each call's own double-encoded args into the field names this
+  // table reads — see docs/provider-formats.md §3.1.6.
+  view_file: 'read',
+  list_dir: 'read',
+  run_command: 'run',
+  grep_search: 'search',
+  find_by_name: 'search',
+  write_to_file: 'edit',
+  replace_file_content: 'edit'
 }
 
 /**
