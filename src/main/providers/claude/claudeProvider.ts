@@ -15,6 +15,7 @@ import {
   type WaitingReason
 } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
+import { rankForSpawnDepth } from '../../sessionLaunch/heldCrew'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 import { readFeedWindow } from '../feedWindow'
 import { firstUserMessageIn, readFirstPrompt } from '../firstPrompt'
@@ -33,6 +34,12 @@ import {
   type ClaudeToolUse,
   type ClaudeTranscriptInfo
 } from './parse'
+import {
+  claudeSubagentSidecarPath,
+  claudeSubagentTranscriptPath,
+  readClaudeSubagentSidecar,
+  type ClaudeSubagentSidecar
+} from './subagents'
 
 /**
  * Read at most this many bytes from the end of a transcript per scan.
@@ -146,6 +153,30 @@ interface EndedAgent {
   resumed?: boolean
 }
 
+/**
+ * One launch this session's OWN transcript never declared: an agent a WORKER
+ * launched, found in that worker's tail (#267).
+ */
+interface NestedLaunch {
+  agent: ClaudeInFlightAgent
+  /**
+   * The agent whose transcript carried the launch record. Always a member of
+   * the crew while this launch is believed in — the walk that draws the board
+   * only ever reaches a child from a parent it has already drawn.
+   */
+  parentAgentId: string
+}
+
+/**
+ * One member of the crew snapshotSession walks, and where its launch record
+ * was found: nowhere in particular for a depth-1 agent, whose launch the ROOT
+ * transcript declared, and the launching agent for everything below one (#267).
+ */
+interface CrewMember {
+  agent: ClaudeInFlightAgent
+  parentAgentId?: string
+}
+
 export interface ClaudeProviderOptions {
   fs: FsLike
   /**
@@ -221,15 +252,6 @@ function defaultIsPidAlive(pid: number): boolean {
   } catch {
     return false
   }
-}
-
-/**
- * Where one subagent's own transcript lives. Shared by the worker dwarf's feed
- * source and by the staleness check, which reads that file's mtime as the
- * worker's own proof of life — one path shape, one place to change it.
- */
-function subagentTranscriptPath(projectDir: string, sessionId: string, agentId: string): string {
-  return join(projectDir, sessionId, 'subagents', `agent-${agentId}.jsonl`)
 }
 
 /**
@@ -450,6 +472,28 @@ export class ClaudeProvider implements Provider {
    */
   private readonly rememberedLaunches = new Map<string, Map<string, ClaudeInFlightAgent>>()
   /**
+   * sessionId -> (agentId -> a launch found in a WORKER's transcript instead of
+   * in the root's), the depth-2-and-deeper mirror of rememberedLaunches (#267).
+   *
+   * A DELIBERATELY SEPARATE map, and the separation is the rule rather than
+   * bookkeeping. `pendingBackgroundAgentCount` is the ROOT stating how many
+   * background agents IT has (#36, #45), so it says nothing whatsoever about
+   * what one of those agents launched in turn — and all three readings of it,
+   * the zero that evicts (#28), the shortfall that recovers (#36) and the
+   * ceiling that sheds (#45), read `remembered` alone. A grandchild sharing
+   * that map would be adopted or evicted by a number that never described it;
+   * kept out of it, it cannot be, and no filter has to remember to say so.
+   *
+   * Its exits are in the crew walk instead: the terminal memory every agent
+   * shares (a nested agent's `<task-notification>` reaches the ROOT's
+   * transcript like everybody else's), its own transcript's silence under the
+   * same gates #40 puts on a worker, and its parent leaving — children go with
+   * the parent, since the tail that declared the launch stops being read and
+   * nothing left on the board can address them. Evicted with the session in
+   * scan(), like rememberedLaunches, so an ended session leaks nothing.
+   */
+  private readonly nestedLaunches = new Map<string, Map<string, NestedLaunch>>()
+  /**
    * sessionId -> the pendingBackgroundAgentCount whose shortfall one escalated
    * read already failed to explain (issue #36).
    *
@@ -494,6 +538,18 @@ export class ClaudeProvider implements Provider {
    * smaller number than a previous poll already saw.
    */
   private readonly tokenTotals = new Map<string, number>()
+  /**
+   * agentId -> what that agent's sidecar states, read once and then kept (#267).
+   *
+   * The file is written when the agent launches and never rewritten — not even
+   * when the agent stops (docs/provider-formats.md §1.4, measured across 321 of
+   * them) — so re-reading it every 2s would re-read the same ~150 bytes for the
+   * life of the session. Only a SUCCESSFUL read is remembered: a sidecar that
+   * has not landed yet is retried on the next poll rather than cached as "this
+   * agent has no depth", which would pin a grandchild to the `worker` fallback
+   * for the life of the process. One small record per agent, like terminalAgents.
+   */
+  private readonly sidecars = new Map<string, ClaudeSubagentSidecar>()
 
   constructor(options: ClaudeProviderOptions) {
     this.fs = options.fs
@@ -559,8 +615,10 @@ export class ClaudeProvider implements Provider {
     // to reuse the id must start from what its transcript says, never from
     // stale memory. Only on success, like the swap below — a throwing scan
     // must not evict sessions it never got to look at.
-    for (const sessionId of [...this.rememberedLaunches.keys()]) {
-      if (!seenSessions.has(sessionId)) this.rememberedLaunches.delete(sessionId)
+    for (const memory of [this.rememberedLaunches, this.nestedLaunches]) {
+      for (const sessionId of [...memory.keys()]) {
+        if (!seenSessions.has(sessionId)) memory.delete(sessionId)
+      }
     }
     // Same reasoning for both count rate limits: a returning session id must be
     // free to escalate again rather than inherit a settled verdict about a
@@ -853,9 +911,65 @@ export class ClaudeProvider implements Provider {
         ...this.transcriptUpdatedAtField(transcriptStat?.mtimeMs)
       })
     }
-    for (const agent of inFlightAgents) {
+    // The crew, walked breadth-first from the root: the depth-1 launches the
+    // ROOT's transcript declared, then whatever each member's OWN tail declares
+    // below it (#267). One array that grows while it is being walked, so every
+    // member's transcript is read exactly once and a child is only ever reached
+    // from a parent already on the board.
+    //
+    // Discovery is the launch record rather than the subagents/ directory, and
+    // the reason is the poll: this loop already reads each member's tail for
+    // status and tokens, and that same parse already returns the launches in it
+    // — the provider was computing them and throwing them away
+    // (docs/provider-formats.md, "Depth is real"). So one level down costs
+    // nothing per poll, while listing subagents/ and opening every
+    // agent-*.meta.json in it would cost a readdir plus one read per file that
+    // has EVER existed in the session, every 2 seconds, to learn what the tail
+    // already said. It is also the same extractor, the same terminal-status
+    // rule and the same launch memory the root's own crew is built with, one
+    // level deeper, so there is one description of what "in flight" means.
+    const crew: CrewMember[] = inFlightAgents.map((agent) => ({ agent }))
+    const reached = new Set(crew.map((member) => member.agent.agentId))
+    const nested = this.nestedLaunchesFor(session.sessionId)
+    // Read once for the whole crew: two members of one crew judged against two
+    // readings of the same session is the disagreement this file keeps having.
+    const nothingRuns = this.provesNothingRuns(
+      session,
+      info.pendingQuestion,
+      transcriptStat?.mtimeMs,
+      now
+    )
+    for (let index = 0; index < crew.length; index++) {
+      const member = crew[index]!
+      const agent = member.agent
       const workerId = `${mainDwarfId}:${agent.agentId}`
-      const subagentPath = subagentTranscriptPath(projectDir, session.sessionId, agent.agentId)
+      const subagentPath = claudeSubagentTranscriptPath(
+        projectDir,
+        session.sessionId,
+        agent.agentId
+      )
+      // One stat answers both questions this file raises: whether there is a
+      // tail worth reading at all, and how long this worker itself has been
+      // silent (issue #47). Its mtime is the worker's OWN proof of life —
+      // never its parent's, which is the whole point of naming one agent.
+      const subagentStat = await this.fs.stat(subagentPath)
+      // A NESTED agent's exit by silence, and deliberately the depth-1 rule one
+      // level down: the same three gates on the session (see
+      // provesNothingRuns), then its own transcript against its own window.
+      // #40's exit is the only one it can be given here — the root's count may
+      // never speak for it (see nestedLaunches) and the turn that killed it may
+      // never write a notification — so this is not an expiry but the second
+      // half of the same proof. Sticky, or the next poll merges it straight
+      // back out of the parent's tail (see abandonedAgents).
+      if (
+        member.parentAgentId !== undefined &&
+        nothingRuns &&
+        !this.writtenWithinWindow(subagentStat?.mtimeMs, now, this.workerSilenceMs)
+      ) {
+        nested.delete(agent.agentId)
+        this.abandonedAgents.add(agent.agentId)
+        continue
+      }
       feedSources.set(workerId, subagentPath)
       // A task description is free text the orchestrating session typed, and it
       // reaches the panel twice — as this dwarf's name and as its tooltip — so
@@ -869,32 +983,79 @@ export class ClaudeProvider implements Provider {
       // reach it — and an absent description stays absent rather than
       // inheriting this fallback.
       const workerName = description ?? `agent-${agent.agentId.slice(0, 7)}`
-      // A running subagent has no channel of its own: nothing outside its
-      // parent session can address it. Its foreman reads the message and
-      // routes it, which is exactly how a real crew works.
-      deliveryTargets.set(workerId, {
-        kind: 'foreman-relay',
-        foremanDwarfId: mainDwarfId,
-        workerName
-      })
-      // One stat answers both questions this file raises: whether there is a
-      // tail worth reading at all, and how long this worker itself has been
-      // silent (issue #47). Its mtime is the worker's OWN proof of life —
-      // never its parent's, which is the whole point of naming one agent.
-      const subagentStat = await this.fs.stat(subagentPath)
       // Attributed to the worker when its own subagent tail cheaply carries
       // usage (the common case); when it doesn't, trackTokens simply returns
       // whatever total was already known for this worker id instead of
       // fabricating one, so nothing is double-counted against the foreman.
       const workerInfo = await this.subagentTranscriptInfo(subagentPath, subagentStat !== null)
       const workerTokens = this.trackTokens(workerId, workerInfo.tokensObserved)
+      // What the agent's own sidecar states about it (#267) — the one file the
+      // Mine History panel ranks the same agent from, which is why the rank
+      // below reads that rather than the generation this walk happened to find
+      // it in. Two paths, one piece of evidence, one rule.
+      const sidecar = await this.subagentSidecar(projectDir, session.sessionId, agent.agentId)
+      // Who launched it: the transcript this launch record was found in, which
+      // is a fact the walk proved, and the sidecar's own `parentAgentId` — the
+      // same launch written down — when the walk has none. Absent for a
+      // depth-1 agent, whose depth is its proof: messageIssuer derives its
+      // session's root from the worker's own fields (#175, #189).
+      const parentAgentId = member.parentAgentId ?? sidecar.parentAgentId
+      // A running subagent has no channel of its own: nothing outside its
+      // parent session can address it. Its foreman reads the message and
+      // routes it, which is exactly how a real crew works.
+      //
+      // A worker2 relays through the WORKER that launched it and that worker
+      // relays on to the session, so the prefix names the whole path (#157):
+      // both routes put the text in the same queue, and a session that never
+      // launched this agent has no idea who it is. A named parent that is not
+      // on the board relays straight to the session instead — the honest
+      // degradation heldCrewTargets already picked, since a hop to a dwarf that
+      // is not there resolves to no channel at all and loses the send.
+      deliveryTargets.set(workerId, {
+        kind: 'foreman-relay',
+        foremanDwarfId:
+          parentAgentId !== undefined && reached.has(parentAgentId)
+            ? `${mainDwarfId}:${parentAgentId}`
+            : mainDwarfId,
+        workerName
+      })
+      // What THIS member launched, merged into the session's nested memory
+      // before it is read: a nested launch record is written ONLY to the
+      // transcript of the agent that made it, and it scrolls out of that 64 KiB
+      // window for the very reason #28's scrolls out of the root's.
+      for (const child of workerInfo.inFlightAgents) {
+        if (this.hasEnded(child.agentId)) continue
+        nested.set(child.agentId, { agent: child, parentAgentId: agent.agentId })
+      }
+      for (const [childId, launch] of nested) {
+        if (launch.parentAgentId !== agent.agentId) continue
+        // Ended memory outranks launch memory here as everywhere else, and it
+        // is what retires a grandchild in the ordinary case: its
+        // `<task-notification>` arrives in the ROOT's transcript, so
+        // rememberEndings has already seen it (docs/provider-formats.md).
+        if (this.hasEnded(childId)) {
+          nested.delete(childId)
+          continue
+        }
+        // Agent ids are globally unique, so this only ever refuses a member
+        // already queued — a transcript claiming a cycle cannot spin the walk.
+        if (reached.has(childId)) continue
+        reached.add(childId)
+        crew.push({ agent: launch.agent, parentAgentId: agent.agentId })
+      }
       dwarfs.push({
         id: workerId,
         provider: 'claude',
-        role: 'worker',
+        // Depth decides, through the one rule the held path (#157) and the Mine
+        // History panel already apply to the same number: depth 1 is a worker,
+        // 2 and deeper a worker2, and a depth nothing states falls to `worker`
+        // because being deeper is the stronger claim (see rankForSpawnDepth).
+        role: rankForSpawnDepth(sidecar.spawnDepth),
         // Its own fact, never inherited from the foreman above: nothing outside
         // this subagent's parent session can address it at all, so no human is
-        // typing into it whatever kind of session launched it (issue #68).
+        // typing into it whatever kind of session launched it (issue #68). A
+        // worker2 is exactly as headless as the worker that launched it, which
+        // is why dwarfSilenceWindowKey asks only whether a rank is the root's.
         attendance: 'unattended',
         name: workerName,
         model: agent.resolvedModel,
@@ -905,6 +1066,9 @@ export class ClaudeProvider implements Provider {
         // guessed into waiting. It works until its terminal notification.
         status: 'working',
         description,
+        // The parent EDGE, on the wire so a worker2's prompt is attributed to
+        // the agent that actually wrote it rather than to a human (#175, #189).
+        ...(parentAgentId === undefined ? {} : { parentId: `${mainDwarfId}:${parentAgentId}` }),
         // Falls out of the same parse the foreman's does. Whether a subagent
         // ever asks is left to observation rather than assumed either way: a
         // rule that hid it would be a claim about sessions nobody has watched.
@@ -916,6 +1080,14 @@ export class ClaudeProvider implements Provider {
         ...this.silenceField(subagentStat?.mtimeMs, now),
         ...this.transcriptUpdatedAtField(subagentStat?.mtimeMs)
       })
+    }
+    // Children go with their parent: an entry the walk never reached has no
+    // parent on the board, so nothing can address it and the tail that declared
+    // its launch is no longer read. Forgotten rather than abandoned — a parent
+    // that comes back brings its tail, and with it whatever it still says is
+    // running.
+    for (const childId of [...nested.keys()]) {
+      if (!reached.has(childId)) nested.delete(childId)
     }
 
     return {
@@ -999,7 +1171,7 @@ export class ClaudeProvider implements Provider {
       if (this.abandonedAgents.has(agentId)) continue
       if (ended.failedLaunch?.sessionId !== options.sessionId) continue
       const stat = await this.fs.stat(
-        subagentTranscriptPath(options.projectDir, options.sessionId, agentId)
+        claudeSubagentTranscriptPath(options.projectDir, options.sessionId, agentId)
       )
       if (stat === null || stat.mtimeMs <= ended.seenAtMs) continue
       ended.resumed = true
@@ -1069,13 +1241,13 @@ export class ClaudeProvider implements Provider {
   }): Promise<void> {
     const { session, remembered } = options
     if (remembered.size === 0) return
-    if (claudeWaitingReason(session, options.pendingQuestion) === WAITING_ON_HUMAN_REASON) return
-    if (session.status !== 'idle') return
     const now = this.now()
-    if (this.writtenWithinWindow(options.parentMtimeMs, now, this.sessionSilenceMs(session))) return
+    if (!this.provesNothingRuns(session, options.pendingQuestion, options.parentMtimeMs, now)) {
+      return
+    }
     for (const agentId of [...remembered.keys()]) {
       const stat = await this.fs.stat(
-        subagentTranscriptPath(options.projectDir, session.sessionId, agentId)
+        claudeSubagentTranscriptPath(options.projectDir, session.sessionId, agentId)
       )
       // The worker's own, shorter window: a subagent cannot be waiting on a
       // human the way its foreman can, so its silence is judged sooner.
@@ -1083,6 +1255,55 @@ export class ClaudeProvider implements Provider {
       remembered.delete(agentId)
       this.abandonedAgents.add(agentId)
     }
+  }
+
+  /**
+   * Do this session's own records prove that nothing it launched is running
+   * (issue #40)? The three gates the staleness rule above stands on, each
+   * argued there, extracted so that an agent one level deeper is judged by
+   * exactly the same reading rather than by a second rule of its own (#267) —
+   * two rules disagreeing about one dwarf is the failure this file keeps
+   * coming back to.
+   */
+  private provesNothingRuns(
+    session: ClaudeSessionEntry,
+    pendingQuestion: ClaudePendingQuestion | undefined,
+    parentMtimeMs: number | undefined,
+    now: number
+  ): boolean {
+    if (claudeWaitingReason(session, pendingQuestion) === WAITING_ON_HUMAN_REASON) return false
+    if (session.status !== 'idle') return false
+    return !this.writtenWithinWindow(parentMtimeMs, now, this.sessionSilenceMs(session))
+  }
+
+  /** This session's nested launch memory, created empty on first sight (#267). */
+  private nestedLaunchesFor(sessionId: string): Map<string, NestedLaunch> {
+    const nested = this.nestedLaunches.get(sessionId) ?? new Map<string, NestedLaunch>()
+    this.nestedLaunches.set(sessionId, nested)
+    return nested
+  }
+
+  /**
+   * What one agent's sidecar states, read at most once per agent (#267).
+   *
+   * A sidecar that has not landed yet answers `{}` and is not remembered, so
+   * the next poll asks again — see the `sidecars` cache for why the file may
+   * be trusted not to change once it is there, and why an absent one must not
+   * be cached in its place.
+   */
+  private async subagentSidecar(
+    projectDir: string,
+    sessionId: string,
+    agentId: string
+  ): Promise<ClaudeSubagentSidecar> {
+    const known = this.sidecars.get(agentId)
+    if (known !== undefined) return known
+    const sidecar = await readClaudeSubagentSidecar(
+      this.fs,
+      claudeSubagentSidecarPath(projectDir, sessionId, agentId)
+    )
+    if (Object.keys(sidecar).length > 0) this.sidecars.set(agentId, sidecar)
+    return sidecar
   }
 
   /**

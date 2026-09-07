@@ -18,6 +18,11 @@ import {
   type FeedWindowRead
 } from '../providers/feedWindow'
 import { readCodexThreads, type CodexThread } from '../providers/codex/state'
+import {
+  claudeSubagentDir,
+  claudeSubagentSidecarPath,
+  readClaudeSubagentSidecar
+} from '../providers/claude/subagents'
 import { rankForSpawnDepth } from '../sessionLaunch/heldCrew'
 
 /**
@@ -56,9 +61,6 @@ import { rankForSpawnDepth } from '../sessionLaunch/heldCrew'
  * agents; anything older is left unread rather than sampled.
  */
 export const MINE_HISTORY_TRANSCRIPT_LIMIT = 64
-
-/** Bytes of a Claude subagent sidecar; the real files are ~150 bytes. */
-const SIDECAR_MAX_BYTES = 4 * 1024
 
 /**
  * Where a transcript sits in its session, which is the only thing that decides
@@ -118,17 +120,7 @@ interface Candidate {
   extract: FeedExtractor
 }
 
-interface ClaudeSidecar {
-  description?: string
-  spawnDepth?: number
-  parentAgentId?: string
-}
-
 const CLAUDE_AGENT_RE = /^agent-(.+)\.jsonl$/
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 export class MineHistoryReader implements MineHistorySource {
   private readonly fs: FsLike
@@ -265,7 +257,7 @@ export class MineHistoryReader implements MineHistorySource {
    * one name.
    */
   private async claudeSubagents(projectDir: string, sessionId: string): Promise<Candidate[]> {
-    const dir = join(projectDir, sessionId, 'subagents')
+    const dir = claudeSubagentDir(projectDir, sessionId)
     const candidates: Candidate[] = []
     for (const entry of await this.fs.listDir(dir)) {
       const agentId = CLAUDE_AGENT_RE.exec(entry.name)?.[1]
@@ -273,7 +265,14 @@ export class MineHistoryReader implements MineHistorySource {
       const path = join(dir, entry.name)
       const stat = await this.fs.stat(path)
       if (stat === null) continue
-      const sidecar = await this.readSidecar(join(dir, `agent-${agentId}.meta.json`))
+      // The one sidecar reader, shared with the live board so the panel and
+      // the board can never disagree about one agent's rank or launcher (#267).
+      // No sidecar, or one this app cannot read: the agent is still a speaker,
+      // ranked and named from what its position alone can prove.
+      const sidecar = await readClaudeSubagentSidecar(
+        this.fs,
+        claudeSubagentSidecarPath(projectDir, sessionId, agentId)
+      )
       const position: SpeakerPosition = {
         kind: 'subagent',
         ...(sidecar.spawnDepth === undefined ? {} : { spawnDepth: sidecar.spawnDepth })
@@ -302,29 +301,6 @@ export class MineHistoryReader implements MineHistorySource {
       })
     }
     return candidates
-  }
-
-  private async readSidecar(path: string): Promise<ClaudeSidecar> {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(await this.fs.readTextHead(path, SIDECAR_MAX_BYTES))
-    } catch {
-      // No sidecar, or one this app cannot read: the agent is still a speaker,
-      // ranked and named from what its position alone can prove.
-      return {}
-    }
-    if (!isRecord(parsed)) return {}
-    const sidecar: ClaudeSidecar = {}
-    if (typeof parsed.description === 'string' && parsed.description.trim() !== '') {
-      sidecar.description = parsed.description
-    }
-    if (typeof parsed.spawnDepth === 'number' && Number.isFinite(parsed.spawnDepth)) {
-      sidecar.spawnDepth = parsed.spawnDepth
-    }
-    if (typeof parsed.parentAgentId === 'string' && parsed.parentAgentId !== '') {
-      sidecar.parentAgentId = parsed.parentAgentId
-    }
-    return sidecar
   }
 
   /*

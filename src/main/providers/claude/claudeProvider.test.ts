@@ -11,6 +11,11 @@ const parentTranscript = readFileSync(join(FIXTURES, 'parent-transcript.jsonl'),
 const subagentTranscript = readFileSync(join(FIXTURES, 'subagent-transcript.jsonl'), 'utf8')
 const sessionEntry = readFileSync(join(FIXTURES, 'session-entry.json'), 'utf8')
 const subagentMeta = readFileSync(join(FIXTURES, 'subagent-meta.json'), 'utf8')
+const nestedSubagentMeta = readFileSync(join(FIXTURES, 'nested-subagent-meta.json'), 'utf8')
+const nestedSubagentTranscript = readFileSync(
+  join(FIXTURES, 'nested-subagent-transcript.jsonl'),
+  'utf8'
+)
 
 const ROOT1 = 'C:\\Users\\j\\.claude'
 const ROOT2 = 'C:\\Users\\j\\.claude-work'
@@ -33,6 +38,8 @@ const scrolledTailTranscript = parentLines.slice(0, 4).join('\n') + '\n'
 
 const FINISHED_AGENT = 'a5d803981d4c3340f'
 const LIVE_AGENT = 'a34eaebecc3d57381'
+/** The agent LIVE_AGENT launched: depth 2, and the one the board never drew (#267). */
+const NESTED_AGENT = 'b91f4c07ad5e6238c'
 
 /** A `<task-notification>` line as Claude enqueues it when an agent stops. */
 function notification(agentId: string, status: string): string {
@@ -3191,6 +3198,346 @@ describe('ClaudeProvider', () => {
       fake.addFile(REGISTRY, idleEntryOfKind('interactive'), 1_000)
       fake.removeFile(TRANSCRIPT)
       expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+  })
+
+  /*
+   * Issue #267. An observed session's crew stopped at depth 1. A WORKER's own
+   * `Agent` launches are written to the WORKER's transcript — never to the
+   * root's (docs/provider-formats.md, "Depth is real") — and this provider read
+   * that file for status and tokens while discarding its `inFlightAgents`. So
+   * the `worker2` rank #157 added, which the held path and the Mine History
+   * panel both already draw, was a shape the live board could never produce.
+   */
+  describe("a worker's own subagents (#267)", () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENTS = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    const WORKER_ID = `claude:${SESSION_ID}:${LIVE_AGENT}`
+    const NESTED_ID = `claude:${SESSION_ID}:${NESTED_AGENT}`
+    const NESTED_NAME = 'Placeholder nested agent task'
+
+    /** A `system`/`turn_duration` line, the only record the root's own count rides. */
+    function turnDuration(pendingBackgroundAgentCount: number): string {
+      return (
+        JSON.stringify({
+          type: 'system',
+          subtype: 'turn_duration',
+          durationMs: 1_000,
+          messageCount: 1,
+          pendingBackgroundAgentCount
+        }) + '\n'
+      )
+    }
+
+    /**
+     * The whole shape on disk: the worker's own tail carrying the grandchild's
+     * launch record — the one file that ever carries it — the grandchild's own
+     * transcript, and both sidecars as Claude Code writes them (depth 1 for the
+     * worker, depth 2 and a `parentAgentId` below it).
+     */
+    function nestedAgentOut(nestedMtimeMs = 44_000): void {
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${LIVE_AGENT}.jsonl`,
+        subagentTranscript + launch(NESTED_AGENT, NESTED_NAME),
+        43_000
+      )
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${NESTED_AGENT}.jsonl`,
+        nestedSubagentTranscript,
+        nestedMtimeMs
+      )
+      fake.addFile(`${SUBAGENTS}\\agent-${LIVE_AGENT}.meta.json`, subagentMeta, 43_000)
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`, nestedSubagentMeta, 44_000)
+    }
+
+    it('draws an agent a worker launched as a worker2 in the same mine', async () => {
+      nestedAgentOut()
+      const snapshot = (await makeProvider().scan())[0]!
+      expect(snapshot.sessionId).toBe(SESSION_ID)
+      expect(snapshot.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID, NESTED_ID])
+
+      const nested = snapshot.dwarfs[2]!
+      expect(nested).toMatchObject({
+        id: NESTED_ID,
+        provider: 'claude',
+        // The sidecar says spawnDepth 2, and rankForSpawnDepth is the one rule
+        // the held path and the history already read it with.
+        role: 'worker2',
+        // The worker that launched it, as a dwarf id the board can look up
+        // (#189) — never a raw agent id and never a substring of its own.
+        parentId: WORKER_ID,
+        // Its own fact: a worker2 is as headless as the worker above it.
+        attendance: 'unattended',
+        name: NESTED_NAME,
+        status: 'working',
+        description: NESTED_NAME,
+        lastMessage: 'Nested subagent latest reply placeholder.',
+        sessionId: SESSION_ID,
+        pid: 32896
+      })
+      // Measured against ITS OWN transcript: the clock stands at 99_000 and the
+      // grandchild last wrote at 44_000, while its parent wrote at 43_000.
+      expect(nested.silentForMs).toBe(55_000)
+      expect(nested.transcriptUpdatedAt).toBe(44_000)
+      // Its own usage block: 3 + 512 + 2048 + 31744.
+      expect(nested.tokensObserved).toBe(34_307)
+    })
+
+    it('leaves a depth-1 subagent a worker, which is what its own sidecar says', async () => {
+      nestedAgentOut()
+      const worker = (await makeProvider().scan())[0]!.dwarfs[1]!
+      expect(worker.role).toBe('worker')
+      // No edge is published for it: messageIssuer derives its session's root
+      // from the worker's own fields, and a depth-1 sidecar names no parent.
+      expect('parentId' in worker).toBe(false)
+    })
+
+    it('feeds a worker2 from its own transcript, not from its parent’s', async () => {
+      nestedAgentOut()
+      const provider = makeProvider()
+      await provider.scan()
+      expect((await provider.feed(NESTED_ID, 20))!.map((message) => message.text)).toEqual([
+        'Placeholder nested user prompt.',
+        'Nested subagent latest reply placeholder.'
+      ])
+    })
+
+    it('relays a worker2 up through the worker that launched it, naming the grandchild', async () => {
+      // Nothing outside the root session can address any subagent, so both
+      // hops are foreman-relay and the text lands in the session's own queue
+      // either way. What the chain buys is the phrasing: a session that never
+      // launched this agent has no idea who it is, so the prefix names the
+      // whole path — the rule heldCrewTargets and MAX_FOREMAN_HOPS already
+      // agreed on for a held session's worker2 (#157).
+      nestedAgentOut()
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(NESTED_ID)).toEqual({
+        kind: 'foreman-relay',
+        foremanDwarfId: WORKER_ID,
+        workerName: NESTED_NAME
+      })
+      expect(provider.textDelivery(WORKER_ID)).toEqual({
+        kind: 'foreman-relay',
+        foremanDwarfId: MAIN_ID,
+        workerName: 'Placeholder agent task'
+      })
+    })
+
+    it('keeps a worker2 whose launch record scrolled out of its parent’s tail', async () => {
+      nestedAgentOut()
+      const provider = makeProvider()
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+
+      // The parent kept working and its own tail slid past the launch record —
+      // #28's failure one level down, and the reason this memory exists.
+      fake.addFile(`${SUBAGENTS}\\agent-${LIVE_AGENT}.jsonl`, subagentTranscript, 45_000)
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+    })
+
+    it('never adopts a nested agent whose parent worker is no longer in flight', async () => {
+      nestedAgentOut()
+      const provider = makeProvider()
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+
+      // The worker finishes. Children go with their parent: nothing left on
+      // the board can address the grandchild, and the tail that declared its
+      // launch is no longer read at all.
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + queuedNotification(LIVE_AGENT, 'completed'),
+        45_000
+      )
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+    })
+
+    it('retires a worker2 on its own ending, which arrives in the root transcript', async () => {
+      // The asymmetry measured in docs/provider-formats.md: a nested agent's
+      // launch is written only where it happened, while its `<task-notification>`
+      // reaches the ROOT's transcript like everyone else's — so the terminal
+      // memory this provider already keeps retires it without a new rule.
+      nestedAgentOut()
+      const provider = makeProvider()
+      await provider.scan()
+
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + queuedNotification(NESTED_AGENT, 'completed'),
+        45_000
+      )
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+
+      // ...and it stays gone once that notification scrolls out too.
+      fake.addFile(TRANSCRIPT, parentTranscript, 46_000)
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+    })
+
+    it('lets a worker2 leave on its own silence while its parent keeps working', async () => {
+      // The same three gates #40 puts on a worker, on the grandchild's own
+      // transcript: an idle session that has itself gone a whole window
+      // without writing, and then the agent's own file measured against the
+      // unattended window. The parent wrote a moment ago, so it stays — which
+      // is what proves each transcript is judged on its own.
+      const FOREMAN_WINDOW = 60_000
+      const WORKER_WINDOW = 30_000
+      const clock = 200_000
+      fake.addFile(
+        `${ROOT1}\\sessions\\32896.json`,
+        JSON.stringify({ ...JSON.parse(sessionEntry), status: 'idle' }),
+        1_000
+      )
+      nestedAgentOut(clock - 1_000)
+      fake.addFile(TRANSCRIPT, parentTranscript, clock - FOREMAN_WINDOW)
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${LIVE_AGENT}.jsonl`,
+        subagentTranscript + launch(NESTED_AGENT, NESTED_NAME),
+        clock - 1_000
+      )
+      const provider = new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => clock,
+        foremanSilenceMs: FOREMAN_WINDOW,
+        workerSilenceMs: WORKER_WINDOW
+      })
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+
+      // Only the grandchild goes quiet, and a window that has exactly elapsed
+      // reads as stale — the side writtenWithinWindow already picked.
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${NESTED_AGENT}.jsonl`,
+        nestedSubagentTranscript,
+        clock - WORKER_WINDOW
+      )
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+      // Sticky, like every other abandonment here: the launch record is still
+      // sitting in the parent's tail, so without that the next poll would
+      // merge the grandchild straight back.
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+    })
+
+    it('keeps a silent worker2 while its session is still running a turn', async () => {
+      // The other half of the rule above, and the reason the gates are shared
+      // rather than reinvented: a grandchild grinding through one long tool
+      // call appends nothing at all until that call returns, so silence alone
+      // is not an ending. #40's gates are what make it one — and a busy
+      // session opens none of them.
+      const WORKER_WINDOW = 30_000
+      const clock = 200_000
+      nestedAgentOut(clock - WORKER_WINDOW * 4)
+      fake.addFile(TRANSCRIPT, parentTranscript, clock - 1_000)
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${LIVE_AGENT}.jsonl`,
+        subagentTranscript + launch(NESTED_AGENT, NESTED_NAME),
+        clock - 1_000
+      )
+      const provider = new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => clock,
+        foremanSilenceMs: 60_000,
+        workerSilenceMs: WORKER_WINDOW
+      })
+
+      const dwarfs = (await provider.scan())[0]!.dwarfs
+      expect(dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID, NESTED_ID])
+      // Silence is a number beside an unchanged status, never a fourth one
+      // (#47) — for a worker2 exactly as for the worker above it.
+      expect(dwarfs[2]).toMatchObject({ role: 'worker2', status: 'working' })
+      expect(dwarfs[2]!.silentForMs).toBe(WORKER_WINDOW * 4)
+    })
+
+    it("never lets the root's zero pending count evict a live worker2 (#36, #45)", async () => {
+      // `pendingBackgroundAgentCount` is the ROOT stating how many background
+      // agents IT has. The launch it can speak for is still inside the tail,
+      // so #28's exemption keeps the worker — and the grandchild, which the
+      // count never described at all, may not be touched by any reading of it.
+      fake.addFile(TRANSCRIPT, turnDuration(0) + parentLines.slice(6, 9).join('\n') + '\n', 42_000)
+      nestedAgentOut()
+      expect((await makeProvider().scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+    })
+
+    it('leaves a worker2 out of the ceiling that count puts on the root crew (#45)', async () => {
+      const provider = makeProvider()
+      nestedAgentOut()
+      await provider.scan()
+
+      // The count says ONE background agent while three dwarfs are on the
+      // board, and that is not a contradiction to resolve: one root, one of
+      // its own agents, and one agent belonging to that agent.
+      fake.addFile(TRANSCRIPT, parentLines.slice(0, 2).join('\n') + '\n' + turnDuration(1), 43_000)
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+    })
+
+    it('reads a sidecar that lands a poll later than the launch record did', async () => {
+      // The launch record and the sidecar are two different files, so a poll
+      // can see the first without the second. An absent sidecar is therefore
+      // never remembered as "this agent has no depth": that would pin the
+      // grandchild to the worker fallback for the life of the process, while
+      // the file itself is written once and never rewritten, which is what
+      // makes remembering a successful read safe.
+      nestedAgentOut()
+      fake.removeFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`)
+      const provider = makeProvider()
+      expect((await provider.scan())[0]!.dwarfs[2]!.role).toBe('worker')
+
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`, nestedSubagentMeta, 44_000)
+      expect((await provider.scan())[0]!.dwarfs[2]!.role).toBe('worker2')
+    })
+
+    it('still draws a worker2 whose sidecar it cannot read, at the rank absence proves', async () => {
+      nestedAgentOut()
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`, '{ not json at all', 44_000)
+      const dwarfs = (await makeProvider().scan())[0]!.dwarfs
+      expect(dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID, NESTED_ID])
+
+      // Discovery found the agent; only its DEPTH went unproven, and worker2
+      // is the stronger claim — so the rank falls to worker rather than being
+      // guessed, exactly as rankForSpawnDepth reads an absent depth.
+      expect(dwarfs[2]!.role).toBe('worker')
+      // The edge is not the sidecar's to lose. The launch record was found in
+      // this worker's own transcript, which is the same launch `parentAgentId`
+      // writes down.
+      expect(dwarfs[2]!.parentId).toBe(WORKER_ID)
     })
   })
 })

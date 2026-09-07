@@ -102,6 +102,12 @@ Sidecar metadata — `subagents\agent-<agentId>.meta.json` **[V]**:
 }
 ```
 
+A nested agent's sidecar carries two more keys, `parentAgentId` and a deeper `spawnDepth` — see
+"Depth is real" below, and `providers/claude/subagents.ts`, which is the one reader of this file
+for both the live board and the Mine History panel (#267). All depths sit FLAT in the one
+`subagents/` directory: a grandchild's transcript and sidecar are named exactly like a depth-1
+worker's and are not nested under it **[V]** (2026-09-07).
+
 **It carries no status, no completion flag, and no end timestamp.** Re-checked on 2026-08-29 against every `agent-*.meta.json` in four live `Sample-Project` sessions (12 files, 136–157 bytes each): the only keys ever present are `agentType`, `description`, `toolUseId`, `spawnDepth` and an optional `model` (`"opus"`, `"sonnet"` — the requested alias, not the resolved id). Files for long-finished agents are byte-identical in shape to files for agents still running, and the file is not rewritten when the agent stops. **[V]** So the sidecar is useful for naming a worker, and useless as a completion authority — AgentName keys completion on the task-notification instead (below).
 
 The `.output` sidecar is no better: `%LOCALAPPDATA%\Temp\claude\<encoded-cwd>\<session-uuid>\tasks\<agentId>.output` existed for six agents in one session but was **0 bytes for five of them**, including agents that had completed successfully. Presence and size carry no completion signal. **[V]**
@@ -211,15 +217,22 @@ Three findings from the same pass, over 321 `agent-*.meta.json` sidecars on one 
   `subagents/agent-<parent>.jsonl`, while its `<task-notification>` arrives in the ROOT session's
   transcript as the usual `queue-operation` pair. The asymmetry runs in the safe direction:
   endings are visible session-wide (so `terminalAgents` already retires them), launches only where
-  they happened. `ClaudeProvider` reads each worker's tail but takes only `tokensObserved`,
-  `lastAssistantText` and `pendingQuestion` from it — its `inFlightAgents` are discarded, which is
-  why an OBSERVED session's depth-2 agents are still invisible today.
+  they happened. `ClaudeProvider` read each worker's tail but took only `tokensObserved`,
+  `lastAssistantText` and `pendingQuestion` from it — **its `inFlightAgents` were discarded, which
+  is why an OBSERVED session's depth-2 agents were invisible until #267.** They are now the
+  discovery source: the same tail read, the same extractor and the same terminal-status rule, one
+  level down, so the launch costs no extra read per poll (see `claudeProvider.snapshotSession`'s
+  crew walk, and #267 for why the alternative — a `readdir` of `subagents/` plus a read per
+  `agent-*.meta.json` in it — was refused).
 
 **`pendingBackgroundAgentCount` counts the whole tree, not the direct children.** At one
 `turn_duration` line reporting `pending=3`, exactly three agents were live by launch/notification
 timestamps: two at depth 1 and **one at depth 2**. That is worth knowing before the count is
-reconciled against a crew — the provider believes only depth-1 launches, so a descendant is a
-standing, permanent contribution to the `unexplainedShortfalls` #36 chases.
+reconciled against a crew — the provider believes only depth-1 launches in the map that count
+judges, so a descendant is a standing, permanent contribution to the `unexplainedShortfalls` #36
+chases. #267 keeps it that way ON PURPOSE rather than netting the two off: the count is the root
+stating how many agents IT has, it says how many and never which, and a grandchild kept in a
+separate memory cannot be adopted or evicted by a number that never described it.
 
 #### An ending is "stopped for now" — a resumed agent (2026-09-03, issue #179)
 
