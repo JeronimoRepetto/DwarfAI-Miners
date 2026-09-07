@@ -765,3 +765,52 @@ describe('MineScene single selection', () => {
     expect(wrapper.get('.dwarf-sprite').text()).toContain('First')
   })
 })
+
+/**
+ * Issue #96's read-only command surface, in the place the maintainer put it
+ * on 2026-09-07: the mine view, for the SELECTED dwarf, and not the dwarf
+ * action bar. What the strip itself draws is SessionStrip.test.ts's; these
+ * are about the scene handing it the right dwarf.
+ */
+describe('MineScene session strip (#96)', () => {
+  const held = defaultDwarf({
+    id: 'claude:s1',
+    role: 'foreman',
+    textDelivery: 'held-session',
+    model: 'claude-haiku-4-5',
+    contextUsage: { usedTokens: 41_237, maxTokens: 200_000 }
+  })
+
+  it('draws no strip while nobody is selected', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [held] }) } })
+    expect(wrapper.find('.session-strip').exists()).toBe(false)
+  })
+
+  it("shows the selected held session's own model and context inside the interior", () => {
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [held] }), selectedId: 'claude:s1' }
+    })
+    // Inside the interior, like the vault strip, so it follows the painting's
+    // frame rather than floating in the column around it.
+    expect(wrapper.find('.interior .session-strip').exists()).toBe(true)
+    expect(wrapper.get('.session-model').text()).toBe('claude-haiku-4-5')
+    expect(wrapper.get('.session-context-label').text()).toBe('41.2K / 200K')
+  })
+
+  it('disables the strip for a selected session this panel only observes', () => {
+    const observed = defaultDwarf({ id: 'claude:s2', textDelivery: 'terminal' })
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [observed] }), selectedId: 'claude:s2' }
+    })
+    expect(wrapper.get('.session-strip').classes()).toContain('is-unavailable')
+    expect(wrapper.get('.session-reason').text()).not.toBe('')
+  })
+
+  it('follows the selection from one dwarf to another', () => {
+    const observed = defaultDwarf({ id: 'claude:s2', textDelivery: 'terminal' })
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [held, observed] }), selectedId: 'claude:s1' }
+    })
+    expect(wrapper.get('.session-strip').classes()).not.toContain('is-unavailable')
+  })
+})

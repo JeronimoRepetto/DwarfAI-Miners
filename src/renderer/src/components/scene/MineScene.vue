@@ -23,6 +23,7 @@ import {
 } from '../../lib/scene/sceneSizing'
 import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../../types'
 import DwarfSprite from '../dwarf/DwarfSprite.vue'
+import SessionStrip from './SessionStrip.vue'
 import VaultChip from '../vault/VaultChip.vue'
 
 const props = defineProps<{
@@ -164,6 +165,17 @@ const crew = computed(() => {
     return true
   })
 })
+
+/**
+ * The selected dwarf, resolved from the crew rather than trusted blind
+ * (issue #96) — `selectedId` can outlive the dwarf it named (a departed
+ * session, a stale id from a previous mine), and SessionStrip's own "nothing
+ * selected" reading is for no dwarf at all, not for one that no longer
+ * exists.
+ */
+const selectedDwarf = computed<Dwarf | undefined>(() =>
+  crew.value.find((dwarf) => dwarf.id === props.selectedId)
+)
 
 const layout = computed(() => sceneLayout(props.mine.tier))
 const placements = computed(() => assignScene(crew.value, layout.value))
@@ -349,6 +361,15 @@ onBeforeUnmount(() => {
           />
         </div>
       </div>
+
+      <!--
+        The read-only session strip (#96), for the SELECTED dwarf only — the
+        placement the maintainer named on 2026-09-07: the mine, along the
+        interior's lower edge, above the materials strip below. Everything
+        about which sessions can report anything, and what a reading means,
+        is SessionStrip's own; this only hands it the dwarf.
+      -->
+      <SessionStrip :dwarf="selectedDwarf" />
 
       <!--
         This mine's own vault, along the bottom edge of the interior exactly

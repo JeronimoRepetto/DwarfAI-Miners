@@ -266,6 +266,20 @@ const openDwarfId = computed(() =>
     : null
 )
 
+/**
+ * The mine's session strip needs a held session's own context reading, and
+ * that is the one thing no poll ever volunteers (issue #96) — so main has to
+ * be ASKED, once per subject: a mine opening on a dwarf already selected, and
+ * every later selection, never a repeat for the same one on a poll that
+ * changed nothing. `watch` already gives that for free — it fires only when
+ * `openDwarfId` itself changes, so a poll that leaves the selection alone
+ * never re-triggers it. What keeps the reading fresh AFTER that is main's own
+ * pull at the end of each turn, not this watch.
+ */
+watch(openDwarfId, (dwarfId) => {
+  if (dwarfId !== null) window.api.refreshDwarfTelemetry(dwarfId)
+})
+
 /*
  * WHAT WENT WITH THE PANEL (#162).
  *

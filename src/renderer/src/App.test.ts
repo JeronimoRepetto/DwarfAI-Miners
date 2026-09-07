@@ -163,6 +163,14 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       providers: [{ provider: 'claude', installed: true, launchable: true }]
     }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
+    /*
+     * AMENDED for #96 (was: absent). The mine's session strip asks a held
+     * session for its own context reading when the strip's subject changes,
+     * so the member has to exist even in tests that never enter a mine. A
+     * plain spy, like `retireDwarf`: it is `ipcRenderer.send` with no verdict
+     * to await. No existing assertion changed.
+     */
+    refreshDwarfTelemetry: vi.fn(),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -1311,6 +1319,46 @@ describe('App selecting a dwarf (#162)', () => {
     await flushPromises()
     return { wrapper, api }
   }
+
+  /*
+   * Issue #96. The mine's session strip needs a context reading, and a
+   * reading is the one thing a held session's stream never volunteers — so
+   * the panel has to ASK. Once per subject, never per poll: a mine opening on
+   * a dwarf already selected, and every later selection. What keeps it fresh
+   * after that is main's own pull at the end of each turn.
+   */
+  it("asks for the selected dwarf's context reading, and not before one is selected", async () => {
+    const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
+    expect(api.refreshDwarfTelemetry).not.toHaveBeenCalled()
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    expect(api.refreshDwarfTelemetry).toHaveBeenCalledTimes(1)
+    expect(api.refreshDwarfTelemetry).toHaveBeenLastCalledWith('claude:s1')
+  })
+
+  it('asks again for the next dwarf, and never again for the same one on a poll', async () => {
+    const second = { ...OBSERVED_DWARF, id: 'claude:s2', sessionId: 's2' }
+    const { api } = await openMineWith([OBSERVED_DWARF, second])
+    const openPanel = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    const pollMines = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+
+    openPanel({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+    await flushPromises()
+    expect(api.refreshDwarfTelemetry).toHaveBeenCalledTimes(1)
+
+    // A poll that changed nothing about the selection: still one ask. The
+    // reading must not ride the 2 Hz poll — that is the whole refresh policy.
+    pollMines({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF, second] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(api.refreshDwarfTelemetry).toHaveBeenCalledTimes(1)
+
+    openPanel({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
+    await flushPromises()
+    expect(api.refreshDwarfTelemetry).toHaveBeenCalledTimes(2)
+    expect(api.refreshDwarfTelemetry).toHaveBeenLastCalledWith('claude:s2')
+  })
 
   it('asks main to open the panel window on the dwarf that was clicked', async () => {
     const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
