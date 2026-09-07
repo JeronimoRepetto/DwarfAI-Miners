@@ -397,7 +397,8 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   max-width: 280px;
   margin: 0;
   color: var(--color-tooltip-text);
-  font-size: var(--text-meta);
+  /* Helper, not meta: this was 13px before #198, and the ruling raises type, never lowers it. */
+  font-size: var(--text-helper);
   line-height: 1.6;
   text-align: center;
   text-shadow: 0 1px 4px #000;
