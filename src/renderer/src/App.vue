@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import AddPanel from './components/launch/AddPanel.vue'
-import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapView from './components/map/MapView.vue'
@@ -12,10 +10,8 @@ import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import ShellNav from './components/shell/ShellNav.vue'
 import UnavailablePanel from './components/shell/UnavailablePanel.vue'
-import { useAgentLaunch } from './composables/useAgentLaunch'
-import { useDwarfKicking } from './composables/useDwarfKicking'
-import { useDwarfMessaging } from './composables/useDwarfMessaging'
-import { useDwarfQuestion } from './composables/useDwarfQuestion'
+import { useDwarfDelivery } from './composables/useDwarfDelivery'
+import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
@@ -26,53 +22,41 @@ import { useView } from './composables/useView'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
-import type {
-  AppBuild,
-  Dwarf,
-  DwarfFeedResult,
-  DwarfPermissionDecision,
-  Mine,
-  MineHistoryResult,
-  MinesSnapshot,
-  ShellArea,
-  WatchedFeedPush
-} from './types'
+import type { AppBuild, Dwarf, Mine, MineHistoryResult, MinesSnapshot, ShellArea } from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
-const { state: messagingState, send: sendDwarfText } = useDwarfMessaging()
-const { state: kickingState, kick } = useDwarfKicking()
-const {
-  state: questionState,
-  answer: answerDwarfQuestion,
-  decide: decideDwarfPermission
-} = useDwarfQuestion()
 
 /**
- * Launching an agent from inside a mine (#86). App owns this composable — and
- * therefore the bridge — for the reason it owns every other one, and it owns
- * the DOCK: the Add Panel and the MessagePanel share one slot at the bottom of
- * the shell, which is the design's own transition (submitting replaces one with
- * the other), so which of them is drawn cannot be decided by either.
+ * What the message panel's own window is showing (#162).
+ *
+ * The conversation left this window. The MessagePanel and the Add Panel — which
+ * share one slot, because submitting a launch replaces the first with the
+ * second — are a second BrowserWindow beside the shell now, the way the design
+ * draws them, and everything they need to DO lives there with them: the launch,
+ * the send, the kick, the answers, the observed session's transcript. See
+ * MessagePanelWindow.vue.
+ *
+ * What is left here is the request and one reading. The shell asks for a
+ * surface when a dwarf is clicked or the mine's Add action is pressed, and it
+ * reads this state back to draw the selected dwarf's red halo — including for a
+ * dwarf the shell never chose, because a launch handing over is something only
+ * that window can know. Main holds the state for both.
  */
 const {
-  state: launchState,
-  mineId: launchMineId,
-  chips: launchChips,
-  phase: launchPhase,
-  enabled: launchEnabled,
-  placeholder: launchPlaceholder,
-  refusal: launchRefusal,
-  open: openLaunchPanel,
-  close: closeLaunchPanel,
-  choose: chooseProvider,
-  setCommand: setLaunchCommand,
-  commit: commitLaunchCommand,
-  setPrompt: setLaunchPrompt,
-  submit: submitLaunch,
-  observe: observeLaunch
-} = useAgentLaunch()
+  state: messagePanel,
+  sync: syncMessagePanel,
+  listen: listenMessagePanel,
+  openMessage,
+  openLaunch: openLaunchPanel,
+  close: closeMessagePanel
+} = useMessagePanel()
+
+/**
+ * The send and kick verdicts that window holds (#162), so the mine can draw
+ * each one on the sprite it belongs to. Read-only here — see useDwarfDelivery.
+ */
+const { report: dwarfDelivery, listen: listenDwarfDelivery } = useDwarfDelivery()
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
 /**
@@ -232,62 +216,42 @@ const interiorColumnAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.h
 
 const loading = ref(true)
 const error = ref<string | null>(null)
-const activating = ref<string | null>(null)
 let unsubscribe: (() => void) | undefined
+let unlistenMessagePanel: (() => void) | undefined
+let unlistenDwarfDelivery: (() => void) | undefined
 
 /**
- * The dwarf the message panel is open on (#159).
+ * The dwarf the message panel is open on (#159, #162).
  *
- * At most one in the whole app, which is why it lives here rather than in a
- * sprite: the design docks the panel at the bottom of the screen, not beside
- * the dwarf, so no sprite can hold the fact that it is the selected one.
- */
-const selectedDwarfId = ref<string | null>(null)
-
-/**
- * The dwarf the message panel is actually open on: the one that was clicked, or
- * the one a launch turned out to have started (#86).
+ * At most one in the whole app, which is why it never lived in a sprite: the
+ * design puts the panel beside the mine rather than beside the dwarf, so no
+ * sprite can hold the fact that it is the selected one.
  *
- * DERIVED rather than assigned, and that is the whole point. The design's
- * transition is the Add Panel being replaced by the MessagePanel on the new
- * dwarf, which reads like a moment to react to — but a handover carried out by
- * a watcher is a handover that can be missed, and the launch state is a shared
- * singleton that more than one mounted App can be watching. Reading it is a
- * statement that stays true however many times it is read.
+ * READ from the state main holds rather than kept here, since #162. The panel
+ * is another window now, and it is the one that learns which dwarf a launch
+ * turned out to have started — so a local copy would be a second answer to a
+ * question that already has one, and the halo would be drawn from the older of
+ * the two.
  */
-const openDwarfId = computed(() => launchState.value.launchedDwarfId ?? selectedDwarfId.value)
+const openDwarfId = computed(() =>
+  messagePanel.value.surface === 'message' && messagePanel.value.dwarfId !== ''
+    ? messagePanel.value.dwarfId
+    : null
+)
 
-/**
- * The transcript read for the selected dwarf, for a session this panel only
- * OBSERVES. `undefined` means the read has not come back — which the panel
- * says out loud rather than drawing as an empty conversation.
+/*
+ * WHAT WENT WITH THE PANEL (#162).
+ *
+ * The observed session's transcript and everything around it — `selectedFeed`,
+ * its token, the dwarf it answers for, the pushed-feed signal (#196), the
+ * shrink log (#249) and both re-read watches (#183, #195) — moved to
+ * MessagePanelWindow.vue, whole. They belong to the surface that shows the
+ * words, and that surface is a window of its own; reading a transcript here to
+ * push it across a process boundary would be a round trip for nothing.
+ *
+ * `setWatchedDwarf` went with them for the same reason: it is the panel saying
+ * which dwarf it has open, and it is no longer this window that knows.
  */
-const selectedFeed = ref<DwarfFeedResult | undefined>(undefined)
-/** Which read is the current one, so a slow answer cannot land on a later dwarf. */
-let feedToken = 0
-/**
- * Which dwarf `selectedFeed` currently answers for — so a re-read for that
- * SAME dwarf can leave the previous result on screen while it is in flight,
- * and only a genuine switch (or a skip) clears it back to `undefined` (#195).
- * `null` is "nobody's, blank it on the next read", which is also the reset a
- * held session or a closed panel leaves behind.
- */
-let selectedFeedDwarfId: string | null = null
-
-/**
- * The signal a pushed `watchedFeed` last satisfied (#196), so the re-read
- * watch below can tell "this exact change already arrived with its feed"
- * apart from "this is a change nothing has answered yet" — the same two
- * fields that watch itself keys on, folded into one string. Left stale after
- * use rather than cleared: a LATER change always produces a different key, so
- * it still pulls exactly as it did before this feature existed.
- */
-let pushedFeedSignal: string | null = null
-
-/** The composite key both the push-adoption and the pull-watch compare (#196). */
-function watchedFeedSignalKey(dwarfId: string, dwarf: Dwarf | undefined): string {
-  return `${dwarfId}|${dwarf?.lastMessage ?? ''}|${dwarf?.transcriptUpdatedAt ?? ''}`
-}
 
 const currentMine = computed<Mine | undefined>(() =>
   viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
@@ -343,60 +307,12 @@ function raisePanel(): void {
   window.api.raisePanel()
 }
 
-/**
- * Adopt a feed main pushed with this snapshot (#196), when it is for the
- * dwarf currently open. A push for a dwarf this panel is no longer on (or
- * never was) is ignored, exactly as a stale getDwarfFeed answer already is
- * (see feedToken) — the panel only ever shows a feed for what is open now.
- *
- * Bumps `feedToken` so an unrelated pull already in flight for this same
- * dwarf cannot land after this and clobber it with a stale answer, and
- * records the signal this push satisfied so the re-read watch below does not
- * also fire a redundant pull for the very same change.
- */
-function adoptWatchedFeed(watchedFeed: WatchedFeedPush | undefined): void {
-  if (watchedFeed === undefined || watchedFeed.dwarfId !== openDwarfId.value) return
-  feedToken++
-  replaceSelectedFeed(watchedFeed.dwarfId, watchedFeed.feed, 'push')
-  pushedFeedSignal = watchedFeedSignalKey(watchedFeed.dwarfId, selectedDwarf.value)
-}
-
-/**
- * Every replacement of `selectedFeed` goes through here (#249), so the one
- * failure nobody has been able to explain — a panel that lost the words it
- * was showing while its dwarf stayed live — leaves a line in the dev console
- * naming which of the two paths did it. Logged only on a LOSS for the same
- * dwarf: fewer messages than the feed it replaces, or one that stopped being
- * readable. A feed that grows is the ordinary case and stays silent, and a
- * change of dwarf is a first read rather than a loss.
- */
-function replaceSelectedFeed(dwarfId: string, next: DwarfFeedResult, via: 'push' | 'pull'): void {
-  if (import.meta.env.DEV) {
-    const previous = selectedFeed.value
-    const lost =
-      previous !== undefined &&
-      selectedFeedDwarfId === dwarfId &&
-      (next.messages.length < previous.messages.length || (previous.readable && !next.readable))
-    if (lost) {
-      console.warn(
-        `[renderer] feed for ${dwarfId} shrank via ${via}: ${previous.messages.length} -> ${next.messages.length}, readable=${next.readable}`
-      )
-    }
-  }
-  selectedFeedDwarfId = dwarfId
-  selectedFeed.value = next
-}
-
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   loading.value = false
   syncWithMines(snapshot.mines.map((mine) => mine.id))
   // A launch in flight is watching for its own dwarf, which arrives on an
   // ordinary poll like every other session's — this is that poll.
-  observeLaunch(snapshot.mines)
-  // The one dwarf's feed main re-read on the SAME pass (#196), read here
-  // AFTER setMines so `selectedDwarf` already reflects this snapshot.
-  adoptWatchedFeed(snapshot.watchedFeed)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
@@ -436,52 +352,21 @@ function leaveMine(): void {
   error.value = null
 }
 
-/** The selected dwarf as the CURRENT snapshot reports it, or nothing once the board dropped it. */
-const liveSelectedDwarf = computed<Dwarf | undefined>(() =>
-  openDwarfId.value === null
-    ? undefined
-    : currentMine.value?.dwarfs.find((dwarf) => dwarf.id === openDwarfId.value)
-)
-
-/**
- * The selected dwarf as the board LAST reported it (#192).
- *
- * The panel used to exist only while its dwarf was in the live snapshot, so a
- * session ending — the moment its final reply lands — unmounted the panel and
- * lost the conversation. Main already keeps a finished dwarf on the board as
- * 'leaving' for a grace window, and then drops it; this holds on to that last
- * snapshot so the panel can outlive the drop and be closed by the person.
- *
- * Every real disappearance passes through 'leaving' (see DwarfLifecycleTracker),
- * so the kept dwarf already carries the status the panel reads as "ended". The
- * stamp below is for a board that drops a dwarf without that window — it says
- * the same thing the tracker would have, and nothing the snapshot did not.
- */
-const lastSelectedDwarf = ref<Dwarf | undefined>(undefined)
-
-watch(liveSelectedDwarf, (dwarf, previous) => {
-  if (dwarf !== undefined) {
-    lastSelectedDwarf.value = dwarf
-    return
-  }
-  if (previous !== undefined) lastSelectedDwarf.value = { ...previous, status: 'leaving' }
-})
-
-const selectedDwarf = computed<Dwarf | undefined>(() => {
-  if (liveSelectedDwarf.value !== undefined) return liveSelectedDwarf.value
-  const last = lastSelectedDwarf.value
-  return last !== undefined && last.id === openDwarfId.value ? last : undefined
-})
-
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
 function selectDwarf(dwarf: Dwarf): void {
-  // The three panels share one dock, so opening this one puts the others away.
-  // Deliberately not the launch's own `close()` half-way through a spawn: a
-  // selection during one abandons the handover, which is the user saying they
-  // would rather look at something else, and the session is unaffected.
-  closeLaunchPanel()
+  // The mine's own History panel still shares the shell's dock, and one
+  // conversation surface at a time is the rule whether or not the two overlap
+  // any more: opening this puts that away.
   historyOpen.value = false
-  selectedDwarfId.value = selectedDwarfId.value === dwarf.id ? null : dwarf.id
+  if (openDwarfId.value === dwarf.id) {
+    void closeMessagePanel()
+    return
+  }
+  // Naming the mine as well as the dwarf, because the panel window is opened
+  // on a surface rather than handed a selection: the Add Panel that shares its
+  // slot needs the mine, and a message panel that could not name one would be
+  // a window with no way back to the board it came from.
+  if (viewState.mineId !== null) void openMessage(viewState.mineId, dwarf.id)
 }
 
 /**
@@ -505,10 +390,9 @@ const mineHistory = ref<MineHistoryResult | undefined>(undefined)
 /** Which read is the current one, so a slow answer cannot land on a later mine. */
 let historyToken = 0
 
-/** The mine's History action (#192): the dock is one, so the other two panels go. */
+/** The mine's History action (#192): one conversation surface at a time (#162). */
 function openHistory(): void {
-  closeLaunchPanel()
-  selectedDwarfId.value = null
+  void closeMessagePanel()
   historyOpen.value = true
 }
 
@@ -566,137 +450,15 @@ watch(
  *
  * Re-opening the panel already open on this mine is left alone rather than
  * treated as a toggle: `open()` starts a fresh panel, so a second click would
- * silently discard a prompt somebody was half-way through typing. The panel has
- * its own close, and Escape.
+ * silently discard a prompt somebody was half-way through typing. That guard
+ * moved to the panel window with the launch itself (#162) — it is the side
+ * that knows whether a prompt is half typed. The panel has its own close, and
+ * Escape.
  */
 function openLaunch(mineId: string): void {
-  if (launchMineId.value === mineId && launchPhase.value !== 'closed') return
-  selectedDwarfId.value = null
   historyOpen.value = false
   void openLaunchPanel(mineId)
 }
-
-/**
- * Close the message panel — including one a launch handed over.
- *
- * The launch is closed too, because until it is, `openDwarfId` still reads its
- * adopted dwarf and the panel would reopen on the next render. Closing it is
- * also the honest act: the handover is what the launch was still holding, and
- * the session itself is untouched either way.
- */
-function closeMessages(): void {
-  selectedDwarfId.value = null
-  closeLaunchPanel()
-}
-
-/**
- * (Re-)read the selected dwarf's transcript tail, for a session this panel
- * only observes.
- *
- * Bumps feedToken first, so an answer already in flight — from the watch
- * below, or from an earlier call here — cannot land after a fresher one has
- * started; only the newest token's answer is ever kept (issue #183: the
- * panel's own send is now a second caller of this, beside the watch).
- *
- * Blanks `selectedFeed` first only when this is the FIRST read for `dwarfId`
- * — a change of dwarf, or the very first read after the panel opened. A
- * re-read for the dwarf `selectedFeed` already answers for leaves the
- * previous result on screen while this one is in flight (the maintainer's
- * follow-up on #195): the poll re-reads on every sign of activity, so blanking
- * unconditionally rebuilt the row list from nothing on EVERY tick, not only
- * the first one, which is what made a busy session's panel look frozen — rows
- * arrive below the fold while the list snaps back to empty and then to the
- * top before the same words reappear a moment later.
- */
-async function readSelectedFeed(dwarfId: string): Promise<void> {
-  const token = ++feedToken
-  const isFirstRead = selectedFeedDwarfId !== dwarfId
-  selectedFeedDwarfId = dwarfId
-  if (isFirstRead) selectedFeed.value = undefined
-  try {
-    const result = await window.api.getDwarfFeed(dwarfId)
-    if (feedToken === token) replaceSelectedFeed(dwarfId, result, 'pull')
-  } catch {
-    // The bridge is the only source there is. Saying "no transcript this
-    // panel can read" is exactly what happened, and it is what the panel
-    // already knows how to draw.
-    if (feedToken === token) selectedFeed.value = { readable: false, messages: [] }
-  }
-}
-
-/**
- * Skipped for a held session: it carries its own first-hand exchange on every
- * snapshot, and reading its transcript would fetch the same words second-hand
- * and a turn behind. Bumps feedToken without reading anything, so a read the
- * watch had already started cannot land after the panel moved to a held
- * session (or off a dwarf entirely). Clears `selectedFeedDwarfId` too, so
- * that dwarf's next observed read (if it ever has one) is a first read again
- * rather than treated as a re-read of stale words.
- */
-function skipSelectedFeed(): void {
-  feedToken++
-  selectedFeedDwarfId = null
-  selectedFeed.value = undefined
-}
-
-/**
- * Read the selected dwarf's transcript tail, for a session this panel only
- * OBSERVES. Re-read when either of two signals moves, rather than on every
- * poll, so an idle session still costs no disk at all — and neither signal
- * alone was enough (issue #183). `lastMessage` is the provider reporting the
- * ASSISTANT spoke; it says nothing about a human turn typed into the terminal
- * or sent from this very panel, which sat invisible until the agent next
- * replied. `transcriptUpdatedAt` is the transcript's own raw mtime, and it
- * moves for ANY writer — see Dwarf.transcriptUpdatedAt for why it has to be
- * the raw mtime and not an age derived from it.
- *
- * A third signal, once (#192): the dwarf turning 'leaving'. The final reply
- * and the exit can land inside one poll, so the snapshot that first shows the
- * dwarf leaving is the first that can carry that reply, and neither signal
- * above need have moved for it.
- *
- * Never for a dwarf the board has dropped. Main answers a read only for a
- * dwarf it still has, so a read then would replace the words with "no
- * transcript" — and the kept dwarf's own signals cannot move any more, so the
- * only thing that could still fire this is the leaving signal falling back to
- * false as the live dwarf goes. That is the case the guard is for.
- */
-watch(
-  [
-    openDwarfId,
-    () => selectedDwarf.value?.lastMessage,
-    () => selectedDwarf.value?.transcriptUpdatedAt,
-    () => liveSelectedDwarf.value?.status === 'leaving'
-  ],
-  ([dwarfId]) => {
-    if (dwarfId === null || selectedDwarf.value?.conversation !== undefined) {
-      skipSelectedFeed()
-      return
-    }
-    if (liveSelectedDwarf.value === undefined) return
-    // A push already carried this exact change (#196): adopting it in
-    // update() already set selectedFeed, so pulling again would only re-read
-    // words this panel already has.
-    if (pushedFeedSignal === watchedFeedSignalKey(dwarfId, selectedDwarf.value)) return
-    void readSelectedFeed(dwarfId)
-  },
-  { immediate: true }
-)
-
-/**
- * Tell main which OBSERVED dwarf this panel currently has open, so a poll
- * that already re-scans its transcript can carry the feed with the snapshot
- * instead of this panel pulling it a tick later (#196). Never a held
- * session's: it already carries its own conversation, so main is told null
- * for one exactly as it would be for no selection at all.
- */
-watch(
-  [openDwarfId, () => selectedDwarf.value?.conversation !== undefined],
-  ([dwarfId, isHeld]) => {
-    window.api.setWatchedDwarf(dwarfId === null || isHeld ? null : dwarfId)
-  },
-  { immediate: true }
-)
 
 /*
  * The panel follows its MINE, not the board (#192). Its dwarf walking out no
@@ -710,101 +472,30 @@ watch(
     // The history panel follows its mine the same way (#192): a person closing
     // the mine, or the board dropping it, takes the history with it.
     historyOpen.value = false
-    if (openDwarfId.value === null) return
-    selectedDwarfId.value = null
-    // A launch whose adopted dwarf has lost its mine is over too, or its id
-    // would keep reopening a panel onto a session with nowhere to be shown.
-    if (launchState.value.launchedDwarfId !== null) closeLaunchPanel()
+    // Closes whatever the panel window has open, the launch included: a launch
+    // whose mine went away has nowhere to put the dwarf it is waiting for.
+    if (messagePanel.value.surface !== 'none') void closeMessagePanel()
   }
 )
 
-async function activate(dwarf: Dwarf): Promise<void> {
-  activating.value = dwarf.id
-  error.value = null
-  try {
-    const result = await window.api.activateDwarf(dwarf.id)
-    if (shouldHidePanelAfterActivation(result)) {
-      hidePanel()
-      return
-    }
-    if (result.focused || result.openedTerminal) {
-      // A window was focused, or a new terminal now tails the transcript
-      // live — nothing else to do, and the panel stays visible (it is
-      // alwaysOnTop, so it never needs to get out of the way).
-      return
-    }
-    // The feed fallback has nowhere to go any more, and needs none: the
-    // message panel is already showing this session's latest activity, read on
-    // its own channel. What is left to say is only that the console itself
-    // could not be brought forward (#159).
-    error.value = 'The agent terminal could not be opened; its latest activity is below.'
-  } catch {
-    error.value = 'The agent terminal could not be opened.'
-  } finally {
-    activating.value = null
-  }
-}
-
-/**
- * Delivery runs in the background: the panel stays open and usable, and the
- * verdict lands on the dwarf itself (see DwarfSprite's send-result marker)
- * rather than in a modal.
- */
-function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }): void {
-  void deliverText(dwarf, payload)
-}
-
-/**
- * A delivered send is also a reason to re-read the feed (issue #183): the
- * sending dwarf is always the one this panel has open, so the human's own
- * words are evidence the tail moved, and waiting for `lastMessage` to catch up
- * would mean waiting for the agent to speak next — the bug itself.
+/*
+ * WHAT WENT WITH THE PANEL, PART TWO (#162): `activate` (bringing a session's
+ * own console forward, and the sentence said when it could not be), `sendText`
+ * and `deliverText`, `kickDwarf`, `answerQuestion` and `decidePermission`.
  *
- * Re-checked against the CURRENT selection rather than trusting the one
- * captured before the await: the relay can take seconds, and the user is free
- * to close the panel, or select someone else, while it is in flight. A stale
- * delivery for a dwarf nobody has open any more has nothing left to refresh.
- */
-async function deliverText(
-  dwarf: Dwarf,
-  payload: { text: string; pressEnter: boolean }
-): Promise<void> {
-  const delivered = await sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
-  if (!delivered) return
-  if (openDwarfId.value !== dwarf.id) return
-  if (selectedDwarf.value?.conversation !== undefined) return
-  void readSelectedFeed(dwarf.id)
-}
-
-/** Same reasoning as sendText: fire-and-observe, verdict lands on the dwarf itself. */
-function kickDwarf(dwarf: Dwarf): void {
-  void kick(dwarf.id)
-}
-
-/**
- * Answer the question that dwarf's agent is blocked on (#125).
+ * Every one of them was the panel acting on the dwarf it had open, so all six
+ * moved to the window that now holds that panel. The verdicts come back here
+ * as `dwarfDelivery`, because the marker they draw is on the sprite.
  *
- * The question itself is never touched here. It is drawn from the dwarf's own
- * `pendingQuestion` on the latest snapshot, and only main's next snapshot may
- * drop it — the panel's part ends at handing the choice over.
+ * REMOVED with them, stated rather than passing unseen: MineScene's
+ * `activatingId` prop, which dimmed a sprite while its console was being
+ * raised. The click that starts that is in the other window now, so dimming a
+ * sprite here would be feedback in the place nobody is looking; the panel says
+ * out loud when the console could not be opened, which is the part that
+ * mattered. DwarfSprite keeps its own `activating` prop and its test — nothing
+ * feeds it today, and reviving it would mean publishing the activation the way
+ * the delivery verdicts are published.
  */
-function answerQuestion(dwarf: Dwarf, label: string): void {
-  if (dwarf.pendingQuestion === undefined) return
-  void answerDwarfQuestion(dwarf.id, dwarf.pendingQuestion, label)
-}
-
-/**
- * Release the tool call that dwarf's held session is blocked on (#203).
- *
- * Same shape as answerQuestion, for the same reason: the prompt itself is
- * never touched here. It is drawn from the dwarf's own `pendingPermission` on
- * the latest snapshot, and only main's next snapshot may drop it — the
- * panel's part ends at handing the decision over.
- */
-function decidePermission(dwarf: Dwarf, decision: DwarfPermissionDecision): void {
-  if (dwarf.pendingPermission === undefined) return
-  void decideDwarfPermission(dwarf.id, dwarf.pendingPermission, decision)
-}
 
 onMounted(() => {
   void load()
@@ -825,8 +516,18 @@ onMounted(() => {
   void syncShortcut()
   void loadBuild()
   unsubscribe = window.api.onMinesUpdated(update)
+  // Listening BEFORE the pull, deliberately: the panel window can change what
+  // it is showing at any moment, and a state set between the two would
+  // otherwise be the one change the halo never heard.
+  unlistenMessagePanel = listenMessagePanel()
+  void syncMessagePanel()
+  unlistenDwarfDelivery = listenDwarfDelivery()
 })
-onBeforeUnmount(() => unsubscribe?.())
+onBeforeUnmount(() => {
+  unsubscribe?.()
+  unlistenMessagePanel?.()
+  unlistenDwarfDelivery?.()
+})
 </script>
 
 <template>
@@ -967,9 +668,8 @@ onBeforeUnmount(() => unsubscribe?.())
             :key="currentMine.id"
             :mine="currentMine"
             :arrived="state.arrived"
-            :activating-id="activating"
-            :send-states="messagingState.byDwarfId"
-            :kick-states="kickingState.byDwarfId"
+            :send-states="dwarfDelivery.send"
+            :kick-states="dwarfDelivery.kick"
             :selected-id="openDwarfId"
             @back="leaveMine"
             @select="selectDwarf"
@@ -981,48 +681,25 @@ onBeforeUnmount(() => unsubscribe?.())
     </PanelTransition>
 
     <!--
-      ONE dock, three panels (#86, #159, #192). The design's own transition is
-      the Add Panel being REPLACED by the MessagePanel in the same place, so
-      they share this slot rather than each having one — which is also why
-      opening any of them puts the others away, in App and not in a component.
-      The Mine History panel joins them here because the design floats it over
-      the same ground while the mine stays visible, and two panels in one
-      corner would cover each other.
+      The mine's History panel, and it is what is LEFT of the dock (#162).
 
-      Held against the shell's FREE edge — the side away from the screen edge
-      the window is docked to — which is where the design's own
-      mine-and-message mock puts it relative to the mine.
+      The MessagePanel and the Add Panel used to share this slot; they are a
+      window of their own now, beside the shell, which is how the design draws
+      all three. This one stayed because #162 asked for those two — the same
+      mock does put the history panel out here as well, so moving it is the
+      obvious follow-up rather than something this slot is right about.
+
+      Opening it still closes the panel window and being selected still closes
+      it, even though the two no longer overlap: one conversation surface at a
+      time is a rule about attention, not about geometry.
     -->
     <PanelTransition axis="vertical" @leave="trackPanelLeave">
-      <div
-        v-if="launchPhase !== 'closed' && launchPhase !== 'message-panel'"
-        key="launch"
-        class="message-dock"
-      >
-        <AddPanel
-          :chips="launchChips"
-          :phase="launchPhase"
-          :enabled="launchEnabled"
-          :placeholder="launchPlaceholder"
-          :command="launchState.command"
-          :prompt="launchState.prompt"
-          :refusal="launchRefusal"
-          :error="launchState.error"
-          @choose="chooseProvider"
-          @command="setLaunchCommand"
-          @commit="commitLaunchCommand"
-          @prompt="setLaunchPrompt"
-          @submit="submitLaunch"
-          @close="closeLaunchPanel"
-        />
-      </div>
-
       <!--
-      Keyed by mine, so opening it on another mine is a fresh panel and a fresh
-      default tab rather than a selection carried over from another folder.
-    -->
+        Keyed by mine, so opening it on another mine is a fresh panel and a fresh
+        default tab rather than a selection carried over from another folder.
+      -->
       <div
-        v-else-if="historyOpen && currentMine"
+        v-if="historyOpen && currentMine"
         :key="`history:${currentMine.id}`"
         class="message-dock"
       >
@@ -1031,28 +708,6 @@ onBeforeUnmount(() => unsubscribe?.())
           :mine="currentMine"
           :history="mineHistory"
           @close="closeHistory"
-        />
-      </div>
-
-      <!--
-      Keyed by dwarf, so selecting another one is a fresh panel: its opening
-      height derives from the latest message and is taken once per open, which
-      only holds if reopening is a genuine remount.
-    -->
-      <div v-else-if="selectedDwarf" :key="`message:${selectedDwarf.id}`" class="message-dock">
-        <DwarfMessagePanel
-          :key="selectedDwarf.id"
-          :dwarf="selectedDwarf"
-          :feed="selectedFeed"
-          :send-state="messagingState.byDwarfId[selectedDwarf.id]"
-          :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
-          :answer-state="questionState.byDwarfId[selectedDwarf.id]"
-          @send="sendText(selectedDwarf, $event)"
-          @kick="kickDwarf(selectedDwarf)"
-          @answer="answerQuestion(selectedDwarf, $event)"
-          @decide="decidePermission(selectedDwarf, $event)"
-          @open-console="activate(selectedDwarf)"
-          @close="closeMessages"
         />
       </div>
     </PanelTransition>
@@ -1108,22 +763,22 @@ onBeforeUnmount(() => unsubscribe?.())
   box-shadow: var(--elevation-5);
 }
 /*
- * Where the message panel sits (#159), and the honest reconciliation of the
- * design's 990px.
+ * Where the mine's History panel sits — all that is left of this dock (#162).
  *
- * The source's own mine-and-message mock draws the panel 1026px wide BESIDE
- * the shell on a 1350px screen — a second surface on the desktop, with the
- * mine untouched to its right. This app is one docked window, and only its
- * widest composition (a page and a mine, 1303 design px) has 990 to give; the
- * mine-only composition has 438. So the panel takes the design's width where
- * the composition has it and the composition's where it does not (see the
- * `min()` in DwarfMessagePanel), rather than hanging off the side of a window
- * that cannot grow for it.
+ * It used to hold three panels and the honest reconciliation of the design's
+ * 990px with a window that could not grow for it: the mock draws the panel
+ * BESIDE the shell, this app was one docked window, and only its widest
+ * composition had 990 design pixels to give. That reconciliation is gone with
+ * the compromise it belonged to — the MessagePanel and the Add Panel have a
+ * window of their own now (see main/shell/panelBounds.ts) and take the
+ * design's width beside the shell, not inside it.
  *
- * Held against the FREE edge — the side away from the screen edge the window
- * is docked to — which is the relation the mock draws: panel on one side, mine
- * on the other. `pointer-events` is handed back only to the panel itself, so
- * the strip beside it never swallows a click meant for the mine underneath.
+ * The history panel is still `min(990px, 100%)` of this strip, which is the
+ * same compromise for the one surface #162 did not move. Held against the FREE
+ * edge — the side away from the screen edge the window is docked to — which is
+ * the relation the mock draws: panel on one side, mine on the other.
+ * `pointer-events` is handed back only to the panel itself, so the strip beside
+ * it never swallows a click meant for the mine underneath.
  */
 .message-dock {
   position: absolute;

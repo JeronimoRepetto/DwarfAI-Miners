@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useDwarfKicking } from '../../composables/useDwarfKicking'
-import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
 import {
   ADD_ICON_SRC,
   CLOSE_ICON_SRC,
@@ -29,7 +27,6 @@ import VaultChip from '../vault/VaultChip.vue'
 
 const props = defineProps<{
   mine: Mine
-  activatingId?: string | null
   /** Delivery state per dwarf id, so each sprite can show its own verdict. */
   sendStates?: Record<string, DwarfSendState>
   /** Kick state per dwarf id, so each sprite can show its own kick verdict. */
@@ -268,24 +265,19 @@ const board = createBubbleBoard((visible) => {
   bubbles.value = visible
 })
 
-/**
- * Every poll replaces this list, and it already carries each dwarf's status and
- * last message — which is exactly what tells a delivered Send or Kick whether
- * the session actually reacted (issue #21). Feeding the two delivery stores
- * from here keeps that second verdict phase free of any new IPC.
+/*
+ * REMOVED for #162, stated here rather than passing unseen: this watch also
+ * fed every poll's crew into the two delivery stores, which is what promoted a
+ * delivered Send or Kick to 'reacted' (issue #21).
+ *
+ * Both stores live in the message-panel WINDOW now, because that is the window
+ * that sends and kicks — and a watch for a reaction can only ever be resolved
+ * where it was opened. Feeding them from here would fold snapshots into a copy
+ * of the stores that nobody had opened a watch in. The verdicts arrive back on
+ * this side as props (see `sendStates`/`kickStates`), and the promotion is
+ * pinned in MessagePanelWindow.test.ts's 'publishing the delivery verdicts'.
  */
-const { observe: observeSends } = useDwarfMessaging()
-const { observe: observeKicks } = useDwarfKicking()
-
-watch(
-  crew,
-  (dwarfs) => {
-    board.sync(dwarfs)
-    observeSends(dwarfs)
-    observeKicks(dwarfs)
-  },
-  { immediate: true }
-)
+watch(crew, (dwarfs) => board.sync(dwarfs), { immediate: true })
 onBeforeUnmount(() => {
   board.dispose()
   walkBoard.dispose()
@@ -345,7 +337,6 @@ onBeforeUnmount(() => {
             :dwarf="slot.dwarf"
             :bubble-text="bubbles.get(slot.dwarf.id)"
             :bubble-row="slot.shareIndex"
-            :activating="activatingId === slot.dwarf.id"
             :send-state="sendStates?.[slot.dwarf.id]"
             :kick-state="kickStates?.[slot.dwarf.id]"
             :selected="selectedId === slot.dwarf.id"
