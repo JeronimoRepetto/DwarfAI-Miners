@@ -50,6 +50,64 @@ const ROLLOUT_RE = /^rollout-.*\.jsonl$/
  */
 const DEFAULT_PROCESS_PROBE_CACHE_TTL_S = 15
 
+/**
+ * Debug-only visibility switch for the liveness gate (#264): "why is this
+ * session not on the board" was undiagnosable, because this provider carried
+ * no log statement at all and every refusal below happens in silence.
+ *
+ * Mirrors perf.ts's DWARFAI_PERF and tierService's TIER_DEBUG — read straight
+ * from process.env rather than AppConfig, because this is a debugging device,
+ * not a product setting, and it must be usable without a config round trip
+ * (`CODEX_DEBUG=1 pnpm dev`).
+ */
+const CODEX_DEBUG_ENV_VAR = 'CODEX_DEBUG'
+
+/** Whether this process reports the candidates the Codex liveness gate refused. */
+export function codexDebugEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[CODEX_DEBUG_ENV_VAR]
+  if (raw === undefined) return false
+  const normalized = raw.toLowerCase()
+  return normalized === '1' || normalized === 'true'
+}
+
+/**
+ * Why one candidate rollout did not become a session this scan.
+ *
+ * Every value is a REFUSAL this file actually performs, named after the branch
+ * that performed it, so a line points at one place in the source:
+ *
+ * - `retention-floor` — no signal (growth, heartbeat, registry row, mtime) is
+ *   inside livenessWindowS + idleRetentionS.
+ * - `no-process` — past the liveness window, and no codex process is running
+ *   to justify the extended one.
+ * - `unreadable-rollout` — the file has no session_meta and no registry row
+ *   describes it, so nothing states even a session id.
+ * - `artifact-cwd` — the cwd is Codex's own artifact storage, which is never
+ *   a project (#166). A deliberate drop, and the one hardest to tell from a
+ *   fault without a line saying so.
+ * - `duplicate-session` — a second rollout resolving to a session id this
+ *   scan already reported.
+ */
+export type CodexSkipReason =
+  'retention-floor' | 'no-process' | 'unreadable-rollout' | 'artifact-cwd' | 'duplicate-session'
+
+/** One refused candidate, as reported. */
+export interface CodexSkip {
+  reason: CodexSkipReason
+  path: string
+  /** Whether Codex's own registry had a row for this rollout at all. */
+  registered: boolean
+  /** Seconds since the freshest activity signal; absent when there was none. */
+  activityAgeS?: number
+}
+
+/** One line per refused candidate: the verdict, the number behind it, then the file. */
+export function formatCodexSkip(skip: CodexSkip): string {
+  const age = skip.activityAgeS === undefined ? '' : ` age ${skip.activityAgeS}s`
+  const registry = skip.registered ? ' registry row' : ' registry none'
+  return `[codex] skip ${skip.reason}${age}${registry} ${skip.path}`
+}
+
 export interface CodexProviderOptions {
   fs: FsLike
   /** The ~/.codex/sessions directory. */
@@ -93,6 +151,13 @@ export interface CodexProviderOptions {
    * ticks, in seconds. Defaults to DEFAULT_PROCESS_PROBE_CACHE_TTL_S.
    */
   processProbeCacheTtlS?: number
+  /**
+   * Debug-only: report every candidate the liveness gate refused, and why
+   * (#264). Defaults to CODEX_DEBUG; injected only for tests.
+   */
+  debug?: boolean
+  /** Debug-only: where those refusals are printed. Defaults to console.log. */
+  log?: (line: string) => void
   now?: () => number
 }
 
@@ -201,6 +266,8 @@ export class CodexProvider implements Provider {
   private readonly isCodexProcessRunning: () => Promise<boolean>
   private readonly processProbeCacheTtlS: number
   private readonly platform: Platform
+  private readonly debug: boolean
+  private readonly log: (line: string) => void
   private readonly now: () => number
   /**
    * Rollout path -> size at the previous scan. Growth between two scans is the
@@ -268,7 +335,39 @@ export class CodexProvider implements Provider {
     this.isCodexProcessRunning = options.isCodexProcessRunning ?? defaultIsCodexProcessRunning
     this.processProbeCacheTtlS = options.processProbeCacheTtlS ?? DEFAULT_PROCESS_PROBE_CACHE_TTL_S
     this.platform = options.platform ?? currentPlatform()
+    this.debug = options.debug ?? codexDebugEnabled()
+    this.log = options.log ?? ((line) => console.log(line))
     this.now = options.now ?? Date.now
+  }
+
+  /**
+   * Report one refused candidate, when the debug flag is on (#264).
+   *
+   * Takes primitives so nothing is allocated on the shipped path: with the
+   * flag off this returns before building the CodexSkip that would be
+   * formatted. With it on it is one line per refusal per tick, and a 7-day
+   * window holds dozens of long-dead rollouts — noisy on purpose, exactly as
+   * tierService's skip report is, because a filtered report cannot answer the
+   * one question it exists for.
+   */
+  private reportSkip(
+    reason: CodexSkipReason,
+    path: string,
+    registered: boolean,
+    activityMs: number,
+    nowMs: number
+  ): void {
+    if (!this.debug) return
+    this.log(
+      formatCodexSkip({
+        reason,
+        path,
+        registered,
+        // Zero is "no signal at all", not an age: an activity stamp of 0 would
+        // print as the age of the epoch.
+        ...(activityMs > 0 ? { activityAgeS: Math.round((nowMs - activityMs) / 1_000) } : {})
+      })
+    )
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -332,10 +431,16 @@ export class CodexProvider implements Provider {
       const activityMs = Math.max(stat?.mtimeMs ?? 0, heartbeatMs ?? 0, thread?.updatedAtMs ?? 0)
 
       if (!grew) {
-        if (activityMs < retainAfter) continue
+        if (activityMs < retainAfter) {
+          this.reportSkip('retention-floor', path, thread !== undefined, activityMs, nowMs)
+          continue
+        }
         if (activityMs < freshAfter) {
           codexProcessRunning ??= await this.getCachedProcessRunning(nowMs)
-          if (!codexProcessRunning) continue
+          if (!codexProcessRunning) {
+            this.reportSkip('no-process', path, thread !== undefined, activityMs, nowMs)
+            continue
+          }
         }
       }
 
@@ -348,10 +453,13 @@ export class CodexProvider implements Provider {
           size,
           feedSources,
           queueTargets,
-          cliVersion: thread === undefined ? undefined : registry.cliVersions.get(thread.threadId)
+          cliVersion: thread === undefined ? undefined : registry.cliVersions.get(thread.threadId),
+          nowMs
         }
       )
-      if (discoveredSnapshot === null || seenSessions.has(discoveredSnapshot.snapshot.sessionId)) {
+      if (discoveredSnapshot === null) continue
+      if (seenSessions.has(discoveredSnapshot.snapshot.sessionId)) {
+        this.reportSkip('duplicate-session', path, thread !== undefined, activityMs, nowMs)
         continue
       }
       seenSessions.add(discoveredSnapshot.snapshot.sessionId)
@@ -557,6 +665,8 @@ export class CodexProvider implements Provider {
       queueTargets: Map<string, string>
       /** The Codex build that opened this thread, for the queue's version floor (#97). */
       cliVersion: string | undefined
+      /** This scan's clock, for the debug report's ages only (#264). */
+      nowMs: number
     }
   ): Promise<DiscoveredCodexSnapshot | null> {
     const { path, thread } = candidate
@@ -564,7 +674,10 @@ export class CodexProvider implements Provider {
       unchanged: context.unchanged,
       size: context.size
     })
-    if (rollout === null && thread === undefined) return null
+    if (rollout === null && thread === undefined) {
+      this.reportSkip('unreadable-rollout', path, false, context.activityMs, context.nowMs)
+      return null
+    }
 
     const sessionId = thread?.threadId ?? rollout!.head.sessionId
     const cwd = thread?.cwd ?? rollout!.head.cwd
@@ -574,7 +687,10 @@ export class CodexProvider implements Provider {
     // the real one from — laundering it would invent the exact phantom
     // project the issue reports. Dropped here, before any feed/queue side
     // effect is recorded, exactly like a rollout with no session_meta at all.
-    if (isCodexArtifactStorageCwd(cwd)) return null
+    if (isCodexArtifactStorageCwd(cwd)) {
+      this.reportSkip('artifact-cwd', path, thread !== undefined, context.activityMs, context.nowMs)
+      return null
+    }
     // Growth since the previous scan means the rollout is being appended to
     // right now, which is a running turn even when the tail read cannot prove it.
     const busy = (rollout?.info.busy ?? false) || context.grew
