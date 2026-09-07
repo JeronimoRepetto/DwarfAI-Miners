@@ -419,6 +419,20 @@ export type ClaudeModelCatalogPort = (options: {
 }) => Promise<ClaudeModelInfo[]>
 
 /**
+ * How long a model-catalogue ask is given before the caller gives up on it
+ * (#239). A CLI that spawns but never finishes its own init handshake — a
+ * broken install, a login prompt nothing on this side can answer — must not
+ * leave `listAgentModels`, and the Add Panel behind it, waiting forever.
+ *
+ * Named beside the PORT rather than enforced inside `createSdkModelCatalog`
+ * below: the bound is part of what calling this port promises, not a detail
+ * of the one real implementation, so a fake port injected in a test is held
+ * to it exactly as the real one is — see runtime.ts's `listAgentModels`,
+ * where the race actually runs.
+ */
+export const MODEL_CATALOG_TIMEOUT_MS = 5_000
+
+/**
  * A prompt that never sends anything. Fed to a query that exists only to ask
  * its CONTROL channel a question — never a turn — so the CLI process starts,
  * completes its own init handshake, and then sits blocked on this generator

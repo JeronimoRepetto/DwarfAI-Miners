@@ -88,6 +88,7 @@ import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/lau
 import {
   createSdkHeldSession,
   createSdkModelCatalog,
+  MODEL_CATALOG_TIMEOUT_MS,
   type ClaudeModelCatalogPort
 } from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
@@ -321,6 +322,25 @@ export function expandHomePath(path: string, home: string = homedir()): string {
     return join(home, path.slice(2))
   }
   return path
+}
+
+/**
+ * Race a promise against a bound, rejecting when the bound wins (#239).
+ *
+ * The same `Promise.race` plus `clearTimeout`-in-`finally` idiom
+ * `usePanelLayout.ts`'s `boundedLeave` already uses, mirrored here rather
+ * than shared across the process boundary: that one RESOLVES on the bound
+ * (a wait with nothing further to report), this one REJECTS, because a
+ * timed-out ask is exactly the failure `listAgentModels`'s own catch already
+ * turns into `unavailableClaudeModelCatalog()`. The timer is cleared either
+ * way, so a promise that settles first never leaves one running past it.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bound = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([promise, bound]).finally(() => clearTimeout(timer))
 }
 
 export interface RuntimeOptions {
@@ -2313,12 +2333,23 @@ export class AgentRuntime {
    * still throws (a CLI present but unable to start, say) is caught here
    * rather than left to reject the whole answer: one provider's failure must
    * never silence the other two.
+   *
+   * The ask is bounded (#239): a CLI that spawns but never finishes its own
+   * init handshake would otherwise leave this method, and the Add Panel
+   * behind it, waiting forever. `MODEL_CATALOG_TIMEOUT_MS` is named beside
+   * the port in sdkHeldSession.ts; `withTimeout` is what enforces it here,
+   * against whatever port is injected — a fake included, which is how the
+   * bound itself is unit tested.
    */
   async listAgentModels(): Promise<AgentModelCatalogList> {
     const claudeDetection = await this.cliDetector.detect('claude')
     const claude =
       claudeDetection.installed && claudeDetection.path !== undefined
-        ? await this.claudeModelCatalog({ executablePath: claudeDetection.path }).then(
+        ? await withTimeout(
+            this.claudeModelCatalog({ executablePath: claudeDetection.path }),
+            MODEL_CATALOG_TIMEOUT_MS,
+            `The model catalogue ask took longer than ${MODEL_CATALOG_TIMEOUT_MS}ms`
+          ).then(
             (models: ClaudeModelInfo[]) => claudeModelCatalog(models),
             (error: unknown) => {
               console.warn('[runtime] Could not ask Claude for its own model list', error)

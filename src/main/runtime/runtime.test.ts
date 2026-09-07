@@ -25,7 +25,10 @@ import {
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
-import type { ClaudeModelCatalogPort } from '../sessionLaunch/sdkHeldSession'
+import {
+  MODEL_CATALOG_TIMEOUT_MS,
+  type ClaudeModelCatalogPort
+} from '../sessionLaunch/sdkHeldSession'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
@@ -5809,6 +5812,41 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     // silences the other two.
     expect(list.catalogs).toHaveLength(3)
     warn.mockRestore()
+  })
+
+  /*
+   * A CLI that spawns but never finishes its own init handshake — a broken
+   * install, a login prompt nothing here can answer — must not leave
+   * listAgentModels, and the Add Panel behind it, waiting forever. The port
+   * itself is what is bounded (MODEL_CATALOG_TIMEOUT_MS, named beside it in
+   * sdkHeldSession.ts), so an injected fake that never resolves is held to
+   * the same bound a real one is.
+   */
+  it('answers Claude as source: none once the catalogue ask outruns its bound, rather than hanging', async () => {
+    vi.useFakeTimers()
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // Never resolves and never rejects — exactly a stuck CLI's own promise.
+      const claudeModelCatalog = vi
+        .fn<ClaudeModelCatalogPort>()
+        .mockReturnValue(new Promise(() => {}))
+
+      const pending = runtimeWith({ claudeInstalled: true, claudeModelCatalog }).listAgentModels()
+      await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS)
+      const list = await pending
+
+      expect(list.catalogs.find((entry) => entry.provider === 'claude')).toEqual({
+        provider: 'claude',
+        models: [],
+        efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'none'
+      })
+      expect(list.catalogs).toHaveLength(3)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("carries Codex's own registry history, deduped, as source: history", async () => {
