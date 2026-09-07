@@ -8,6 +8,7 @@ const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
 
 const FOREMAN = DWARF_SHEETS.foreman
 const WORKER = DWARF_SHEETS.worker
+const WORKER2 = DWARF_SHEETS.worker2
 
 /** Every sheet a sequence draws from, in order, so a failure names the art. */
 function sheetsOf(clips: ReturnType<typeof dwarfClips>): string[] {
@@ -197,6 +198,86 @@ describe('dwarfClips', () => {
         sheetsOf([loopOf(FOREMAN.idle)])
       )
       expect(sheetsOf(dwarfClips('foreman', false, false, false, true))).toEqual(
+        sheetsOf([loopOf(FOREMAN.idle)])
+      )
+    })
+  })
+
+  /*
+   * Issue #262 reverses #74's "status decides the sheet" ruling, pinned by
+   * the block above (unchanged — every call there omits `arrived`, which
+   * defaults to `true`, so it keeps meaning exactly what it always did).
+   * Arrival, not status, now gates entry to the working sequence: the sparks
+   * and the strike glow already refused a walking dwarf (see `impactCount`
+   * and `strikeGlow` in DwarfSprite.vue), and the sequence was the one thing
+   * still contradicting the scene.
+   */
+  describe('arrival gates the working sequence (#262)', () => {
+    it('idles a working dwarf that has not arrived yet', () => {
+      // Working status alone used to be enough for #74; it no longer is.
+      expect(sheetsOf(dwarfClips('worker', false, false, true, false, false))).toEqual(
+        sheetsOf([loopOf(WORKER.idle)])
+      )
+    })
+
+    it('starts the working sequence on arrival, the same entry as a dwarf that was already standing', () => {
+      const onArrival = dwarfClips('worker', false, false, true, false, true)
+      expect(sheetsOf(onArrival)).toEqual(
+        sheetsOf([onceOf(WORKER['start-working']!), loopOf(WORKER.working!)])
+      )
+      // Arriving already working and starting to work while already standing
+      // are the same starting line — neither has anything to interrupt.
+      const becameWorkingStanding = dwarfClips('worker', false, false, true, false)
+      expect(sheetsOf(onArrival)).toEqual(sheetsOf(becameWorkingStanding))
+    })
+
+    it('drops a worker that stops mid-walk straight to idle, with no end strip to abandon', () => {
+      // It was never SHOWN working — walking gated it off, the case above —
+      // so there is nothing for an end-working transition to leave.
+      expect(sheetsOf(dwarfClips('worker', false, false, false, false, false))).toEqual(
+        sheetsOf([loopOf(WORKER.idle)])
+      )
+    })
+
+    it('ends the working sequence once a dwarf that was showing it starts walking away', () => {
+      // The symmetric case: a dwarf that WAS at the rock and is re-routed
+      // mid-swing is abandoned exactly the way an ordinary stop abandons it —
+      // the interruption rule from the header applies to arrival too.
+      expect(sheetsOf(dwarfClips('worker', false, false, true, true, false))).toEqual(
+        sheetsOf([onceOf(WORKER['end-working']!), loopOf(WORKER.idle)])
+      )
+    })
+
+    it('keeps every call site written before #262 meaning exactly what it always did', () => {
+      // `arrived` defaults to `true`, so a caller with nothing to say about
+      // travel — every test above this block — gets the pre-#262 behaviour
+      // verbatim.
+      expect(sheetsOf(dwarfClips('worker', false, false, true, false))).toEqual(
+        sheetsOf(dwarfClips('worker', false, false, true, false, true))
+      )
+    })
+
+    it('gates worker2 exactly the same way, having its own working sequence too', () => {
+      // dwarfClips has no per-role branch beyond the DWARF_SHEETS lookup, so
+      // the gate is not something worker2 could opt out of even by accident
+      // — this pins it rather than trusting that by inspection alone.
+      expect(sheetsOf(dwarfClips('worker2', false, false, true, false, false))).toEqual(
+        sheetsOf([loopOf(WORKER2.idle)])
+      )
+      expect(sheetsOf(dwarfClips('worker2', false, false, true, false, true))).toEqual(
+        sheetsOf([onceOf(WORKER2['start-working']!), loopOf(WORKER2.working!)])
+      )
+    })
+
+    it('leaves the foreman untouched, having no working sequence for arrival to gate', () => {
+      // #262 only ever changes a role that draws start-working/working/end-
+      // working; the foreman draws none, so `arrived` has nothing to do for
+      // him and the pre-existing "no working sequence" fallback is unchanged
+      // whether or not he has arrived.
+      expect(sheetsOf(dwarfClips('foreman', false, false, true, false, false))).toEqual(
+        sheetsOf([loopOf(FOREMAN.idle)])
+      )
+      expect(sheetsOf(dwarfClips('foreman', false, false, true, false, true))).toEqual(
         sheetsOf([loopOf(FOREMAN.idle)])
       )
     })

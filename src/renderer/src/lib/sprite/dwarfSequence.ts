@@ -1,5 +1,5 @@
 /**
- * Which strips a dwarf plays, and in what order (issues #74, #87).
+ * Which strips a dwarf plays, and in what order (issues #74, #87, #262).
  *
  * ## The interruption rule
  *
@@ -47,6 +47,18 @@
  * dwarf is in — the `z z z` overlay still marks a resting one and the leaving
  * fade still marks a departure — but the SPRITE says it only where the art
  * exists.
+ *
+ * ## Arrival gates the working sequence (issue #262)
+ *
+ * #74 ruled that STATUS ALONE decided the sheet, so a dwarf already
+ * `working` played its swing while still crossing the floor to it — the
+ * "walking" case above meant only "no walk strip has been drawn", never
+ * "still travelling". #262 reverses that ruling: a dwarf that is walking
+ * plays its IDLE sequence, whatever its status, and the working sequence
+ * only begins on arrival. This was always true of the strike's own sparks
+ * and glow (`DwarfSprite.vue` already refuses both mid-walk); the sequence
+ * was the one thing left contradicting the scene. See `dwarfClips`'s own
+ * note below for what this does to `wasWorking`'s meaning.
  */
 import type { DwarfRole, DwarfStatus, WaitingReason } from '../../types'
 import { WAITING_ON_HUMAN_REASON } from '../../types'
@@ -92,6 +104,25 @@ function transition(sheets: DwarfSheetSet, name: DwarfSheetName): SpriteClip[] {
  * with nothing to say about work — every call site written before this axis
  * existed — gets exactly the sleep-only behaviour it always did.
  *
+ * `arrived` defaults to `true` for the same reason: every call site written
+ * before issue #262 has nothing to say about travel and must keep meaning
+ * exactly what it always did. ARRIVAL, not status, gates entry to the
+ * working sequence — a dwarf that is `working` but has not arrived (`arrived`
+ * false) idles, full stop, whatever `wasWorking` says.
+ *
+ * That gate changes what `wasWorking` has to mean: it is no longer "was the
+ * status `working` last render", it is "was the working sequence actually
+ * being SHOWN last render" (the caller carries this the same way it always
+ * has — as the previous answer on the axis, see the note above). A dwarf
+ * that carries a `working` status through an entire walk never sets it, so
+ * arriving reads as a fresh start — the same pick-up a dwarf gets for
+ * beginning work while already standing still, not a mid-swing resume — and
+ * a dwarf whose status stops being `working` while it was still walking
+ * never earns an end-working transition either, because the walk meant it
+ * was never shown starting one. Walking away from a dwarf that WAS shown
+ * working is the mirror case, and gets the ordinary end-working abandonment,
+ * by the same interruption rule as everything else in this file.
+ *
  * The branch order is load-bearing, not incidental: being asked a question is
  * checked first (current, then its exit) and the working axis only after
  * both. A dwarf can never be CURRENTLY both — `isAwaitingAnswer` already rules
@@ -107,7 +138,8 @@ export function dwarfClips(
   awaiting: boolean,
   wasAwaiting: boolean | undefined,
   working = false,
-  wasWorking: boolean | undefined = undefined
+  wasWorking: boolean | undefined = undefined,
+  arrived = true
 ): readonly SpriteClip[] {
   const sheets = DWARF_SHEETS[role]
   if (awaiting) {
@@ -115,7 +147,10 @@ export function dwarfClips(
     return [...transition(sheets, 'start-sleep'), settleOn(sheets, 'sleeping')]
   }
   if (wasAwaiting === true) return [...transition(sheets, 'end-sleep'), loopOf(sheets.idle)]
-  if (working) {
+  // Arrival gates the working sequence (#262): a dwarf still walking never
+  // shows it, whatever its status — see the note above.
+  const atWork = working && arrived
+  if (atWork) {
     if (wasWorking === true) return [settleOn(sheets, 'working')]
     return [...transition(sheets, 'start-working'), settleOn(sheets, 'working')]
   }
