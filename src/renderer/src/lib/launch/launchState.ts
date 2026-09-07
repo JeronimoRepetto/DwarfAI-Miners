@@ -1,4 +1,9 @@
-import { MAX_DWARF_TEXT_CHARS, type DwarfProvider, type HeldPermissionMode } from '../../types'
+import {
+  MAX_DWARF_TEXT_CHARS,
+  type DwarfProvider,
+  type HeldPermissionMode,
+  type LaunchFailedPush
+} from '../../types'
 
 /**
  * The Add Panel's gates, as `screens/launch.md` states them (#86).
@@ -362,4 +367,81 @@ export function startedDetached(state: LaunchState, launchId: string | null): La
 export function adoptLaunchedDwarf(state: LaunchState, dwarfId: string): LaunchState {
   if (!state.submitting && !state.detached) return state
   return { ...state, submitting: false, launchedDwarfId: dwarfId, error: null }
+}
+
+/*
+ * Issue #263. `started-detached` used to be a dead end with no failure
+ * channel behind it at all: a `codex exec` that started and died at once —
+ * a concurrent instance already holding its lock, a flag it does not
+ * recognise, an auth prompt with nothing attached to answer it — read as
+ * `launched: true`, and the panel parked on "the session started" with no
+ * timeout and no way back to the composer. These two transitions are that
+ * way back, for the two failure modes that leave it stranded: main learning
+ * the CLI actually died (`launchFailed`), and main never learning anything
+ * at all within a generous bound (`detachedTimedOut`).
+ */
+
+/**
+ * The sentence a launch failure becomes on screen (#263).
+ *
+ * The CLI's own words when it left any — nothing this app could invent
+ * explains a refusal better than the refusal itself, and it is exactly what
+ * running the same command by hand in the mine's folder would have shown.
+ * The fallback is for the common case where it wrote nothing before a
+ * signal ended it: naming the provider and the code (when there is one) is
+ * still more than "nothing happened", which is the failure this issue
+ * exists to fix.
+ */
+export function launchFailureMessage(failure: LaunchFailedPush): string {
+  const stderr = failure.stderrTail.trim()
+  if (stderr !== '') return stderr
+  const withCode = failure.exitCode === null ? '' : ` with code ${failure.exitCode}`
+  return `${failure.provider} exited${withCode} before it started.`
+}
+
+/**
+ * Main learned that a detached launch died almost at once (#263) — a PUSH,
+ * arriving well after `startedDetached` already parked the panel here.
+ *
+ * Guarded exactly as `adoptLaunchedDwarf` is, and for the same reason a stray
+ * one must not be allowed to take over a panel that moved on: `launchId`
+ * ties the push to the ONE launch it is about, so a push arriving late for a
+ * launch this panel has since closed or retried is silently ignored, and
+ * `launchedDwarfId` being set already means this launch's dwarf was proved
+ * BEFORE the failure arrived — a session that genuinely started is not made
+ * to un-happen by a stale exit report.
+ *
+ * Drops back to `detached: false` with the typed prompt still standing, so
+ * `launchPhase` reads straight back to `prompt-ready` (or `known-provider-
+ * ready` for an emptied composer) and a retry costs one Enter.
+ */
+export function launchFailed(state: LaunchState, failure: LaunchFailedPush): LaunchState {
+  if (!state.detached || state.launchedDwarfId !== null) return state
+  if (state.launchId !== failure.launchId) return state
+  return { ...state, detached: false, launchId: null, error: launchFailureMessage(failure) }
+}
+
+/**
+ * How long `started-detached` waits with neither a receipt nor a failure
+ * before it gives up and hands the composer back (#263).
+ *
+ * Generous on purpose, past both of the ordinary paths out of this state: a
+ * receipt normally proves a dwarf within a poll or two of it appearing (see
+ * `docs/console-hosting.md` on `#191`), and a genuine failure reports itself
+ * within `EARLY_FAILURE_WINDOW_MS` (3s, main-side). Sixty seconds is
+ * comfortably beyond either, so reaching it means something this app cannot
+ * name went wrong — a hung CLI, a stalled poll — and the honest answer is a
+ * neutral sentence and the composer back, never an indefinite wait with no
+ * way out, which is the exact trap the diagnosis behind this issue named.
+ */
+export const DETACHED_TIMEOUT_MS = 60_000
+
+export const DETACHED_TIMEOUT_MESSAGE =
+  'This is taking longer than usual. The session may still start — check the mine, or try again.'
+
+/** Same guard as `launchFailed`, same shape of exit, a fixed neutral sentence instead of main's own words. */
+export function detachedTimedOut(state: LaunchState, launchId: string | null): LaunchState {
+  if (!state.detached || state.launchedDwarfId !== null) return state
+  if (state.launchId !== launchId) return state
+  return { ...state, detached: false, launchId: null, error: DETACHED_TIMEOUT_MESSAGE }
 }

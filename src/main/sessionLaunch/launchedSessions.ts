@@ -66,6 +66,24 @@ import type { LaunchedSessionStore } from './launchedSessionStore'
  */
 
 /**
+ * What a launch's own child said on stderr before it exited almost at once
+ * (#263) — the CLI's own words for why it declined, when it left any.
+ */
+export interface LaunchFailure {
+  /** The child's own exit code, or null when it went by signal instead. */
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  /**
+   * Bounded, unredacted tail of what the child wrote to stderr — see
+   * `launchRunner.ts`'s `STDERR_TAIL_BYTES`. Redaction and any further
+   * capping for display happen at the boundary this crosses, never here:
+   * this is main's own raw reading, the same discipline `lastMessage` and
+   * every other transcript text hold before `redactSecrets` ever sees them.
+   */
+  stderrTail: string
+}
+
+/**
  * The retained handle on one launched process.
  *
  * `pid` is the process THIS panel spawned, which for a shim launch is the
@@ -75,10 +93,18 @@ import type { LaunchedSessionStore } from './launchedSessionStore'
  * `onExit` is the pid-reuse guard, and it is why a handle rather than a number
  * is retained: the moment that process is gone its number can belong to
  * anything on this machine, so a launch that has ended is never signalled.
+ *
+ * `onEarlyFailure` is optional rather than a sibling of equal weight (#263):
+ * every caller that already holds a handle keeps working unchanged, and a
+ * test fixture built before this issue never has to grow one. Told at most
+ * once, and only when the child exited inside the early-failure window with
+ * something other than a clean 0 — see `launchRunner.ts`'s
+ * `EARLY_FAILURE_WINDOW_MS` for why that window exists and how long it is.
  */
 export interface LaunchedProcess {
   pid: number
   onExit(listener: () => void): void
+  onEarlyFailure?(listener: (failure: LaunchFailure) => void): void
 }
 
 export interface RetainLaunchRequest {

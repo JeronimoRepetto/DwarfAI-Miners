@@ -350,6 +350,30 @@ describe('what the panel says out loud', () => {
     )
   })
 
+  /*
+   * Issue #263. A detached launch that failed after it started drops main
+   * back to the SAME shape a refused launch already renders in: `useAgentLaunch`
+   * and `launchState.launchFailed` do the work of returning `phase` to
+   * `prompt-ready` with `error` set, so this component needs no state of its
+   * own for it — the alert already renders from `error` regardless of which
+   * failure produced it. This pins that the composer is drawn alongside it,
+   * not swallowed by the detached view it just left.
+   */
+  it('shows a launch that failed after it started in the same alert, with the composer back', () => {
+    const wrapper = panel({
+      chosen: 'codex',
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'dig the east gallery',
+      error: 'codex: another instance is already running'
+    })
+
+    expect(wrapper.get('.launch-alert').text()).toBe('codex: another instance is already running')
+    const composer = wrapper.get('.launch-input')
+    expect(composer.attributes('disabled')).toBeUndefined()
+    expect((composer.element as HTMLTextAreaElement).value).toBe('dig the east gallery')
+  })
+
   it('closes when its close control is used', async () => {
     const wrapper = panel()
 

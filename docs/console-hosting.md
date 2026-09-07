@@ -177,6 +177,47 @@ no terminal window [#86].
   Either answer deletes the row. A launch whose creation time nothing would report is not written
   down in the first place. A restored launch has no exit handle, so the same pair is proved once
   more at the moment Kick would signal, not only at startup.
+- **A verdict of `launched: true` used to be the last word this app ever spoke about a launch, and
+  that was a lie whenever the CLI declined** [#263]. `runLaunchProcess` resolved on the `spawn`
+  event alone — stderr discarded (`stdio: ['pipe', 'ignore', 'ignore']`), the exit code never read
+  — so a `codex exec` that started and died at once (a concurrent instance already holding its
+  lock, a flag it does not recognise, an auth prompt with nothing attached to answer it) read
+  exactly like a session that was running fine, and the Add Panel's `started-detached` phase took
+  precedence over every other state with no timeout and no way back to the composer. Diagnosed
+  read-only against `main` at `47b79fe`, 2026-09-07, and split from the receipt-claiming defect
+  found alongside it (also #263, merged separately as the collision-free slice): that one was about
+  the WRONG session being claimed, this one is about no failure ever surfacing at all.
+
+  The fix is a second retained-handle subscription beside the pid-reuse guard's own `onExit`
+  [code: `src/main/sessionLaunch/launchedSessions.ts`'s `LaunchedProcess.onEarlyFailure`, optional so
+  no existing caller or test fixture has to grow one]. stderr is now piped
+  (`stdio: ['pipe', 'ignore', 'pipe']`) and kept as a bounded 4 KiB tail [code:
+  `launchRunner.ts`'s `EarlyFailureWatch`/`TailBuffer`], and a child that exits within
+  `EARLY_FAILURE_WINDOW_MS` (3s — generous past the near-instant refusal case, and short enough
+  that an ordinary session's own turn essentially never finishes inside it) with anything other
+  than a clean `0` latches a `LaunchFailure` the runtime reads once it has issued the launch's
+  receipt (`launchReceipts.issue`'s id — never the pid-tracking registry's own `launch:N`, which
+  the failure has no reason to know). `AgentRuntime.reportLaunchFailure` redacts and caps the
+  stderr tail (`redactSecrets`, then `truncate` to 400 chars) and pushes `LaunchFailedPush` over a
+  new one-way channel, `agent:launchFailed`, on the same `messagePanelChanged`/`dwarfDeliveryReported`
+  pattern — main learns of this asynchronously, well after `agent:launch` already answered, so
+  there is nothing to poll for. The runtime's own log line gains a second statement, `failed (exit
+N)`, off the retained handle's late notice rather than folded into the original `started`/`failed`
+  line, which is logged the moment `launchAgent` returns and cannot yet know this.
+
+  On the renderer side, `launchState.ts` gains `launchFailed` — guarded by the SAME receipt id
+  `started-detached` is already waiting on, and by `launchedDwarfId` still being null, so a stale
+  push for a closed or retried launch is silently ignored and a push arriving after the dwarf was
+  already proved cannot un-happen a session that plainly did start. It sets `error` to the CLI's own
+  stderr tail when there is one, or `"<provider> exited [with code N] before it started."` when
+  there is not, and drops `detached` back to false with the typed prompt untouched, so `launchPhase`
+  reads straight back to `prompt-ready` and a retry costs one Enter — the AddPanel needed no change
+  at all, because its `error` alert already renders regardless of which phase produced it. A second,
+  independent way back: `detachedTimedOut` fires from a 60s timer `useAgentLaunch.submit()` starts
+  alongside a receipted launch (60s being comfortably past both the 3s failure window and the
+  ordinary one-or-two-poll receipt path), for the case where neither a receipt nor a failure ever
+  arrives at all — a hung CLI, a stalled poll — with a fixed neutral sentence rather than main's own
+  words, since main said nothing.
 
 ### The held session — open, #113
 

@@ -20,6 +20,7 @@ import {
   type DwarfPermissionRequest,
   type DwarfQuestion,
   type FeedMessage,
+  type LaunchFailedPush,
   type ProviderSnapshot
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
@@ -51,7 +52,11 @@ import {
 } from '../sessionLaunch/hostedProcesses'
 import { createAppDatabase } from '../appDatabase/appDatabase'
 import { createSqliteLaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
-import { LaunchedSessionRegistry, type LaunchedProcess } from '../sessionLaunch/launchedSessions'
+import {
+  LaunchedSessionRegistry,
+  type LaunchedProcess,
+  type LaunchFailure
+} from '../sessionLaunch/launchedSessions'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { TierService, type TierThresholds } from '../tier/tierService'
 import { AgentRuntime, expandHomePath } from './runtime'
@@ -3506,6 +3511,159 @@ describe('AgentRuntime.launchAgent (#86)', () => {
 
     expect('model' in launchSession.mock.calls[0]![0]).toBe(false)
     expect('effort' in launchSession.mock.calls[0]![0]).toBe(false)
+  })
+})
+
+/*
+ * The failure channel half of #263. `agent:launch` answers `launched: true`
+ * the moment `spawn` succeeds, honestly — but a `codex exec` that then dies
+ * at once (a concurrent instance already holding its lock, a flag it does
+ * not recognise) used to leave the panel with nothing: stderr discarded, the
+ * exit code never read. `LaunchedProcess.onEarlyFailure` is where the runner
+ * reports that now; this is the runtime wiring it into a push and a log line.
+ */
+describe('AgentRuntime reporting a launch that failed after it started (#263)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'codex',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'codex:session-1',
+            provider: 'codex',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  /** A retained handle whose `onEarlyFailure` this test can trigger by hand. */
+  function earlyFailureHandle(pid = 4242): {
+    process: LaunchedProcess
+    fail: (failure: LaunchFailure) => void
+  } {
+    let listener: ((failure: LaunchFailure) => void) | undefined
+    return {
+      process: {
+        pid,
+        onExit: () => {},
+        onEarlyFailure: (l) => {
+          listener = l
+        }
+      },
+      fail: (failure) => listener?.(failure)
+    }
+  }
+
+  async function runtimeWith(
+    launchSession: SessionLauncher,
+    onLaunchFailed?: (push: LaunchFailedPush) => void
+  ) {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      ...(onLaunchFailed === undefined ? {} : { onLaunchFailed })
+    })
+    await runtime.refresh()
+    return { runtime, mineId: runtime.getMines()[0]!.id }
+  }
+
+  it('pushes the failure once, correlated by the receipt the verdict already carried', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+
+    const { launchId } = await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    expect(onLaunchFailed).not.toHaveBeenCalled()
+
+    handle.fail({
+      exitCode: 1,
+      signal: null,
+      stderrTail: 'codex: another instance is already running'
+    })
+
+    expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+    expect(onLaunchFailed).toHaveBeenCalledWith({
+      launchId,
+      provider: 'codex',
+      mineId,
+      exitCode: 1,
+      stderrTail: 'codex: another instance is already running'
+    })
+  })
+
+  it('logs the failure with its exit code, off its own line from the started log', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const { runtime, mineId } = await runtimeWith(launchSession)
+      await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+      handle.fail({ exitCode: 1, signal: null, stderrTail: '' })
+
+      const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
+      expect(lines).toContain('failed (exit 1)')
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('redacts and caps the stderr tail before it crosses the wire', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    const secret = `sk-${'a'.repeat(30)}`
+    handle.fail({ exitCode: 1, signal: null, stderrTail: `auth failed: ${secret}` })
+
+    const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
+    expect(push.stderrTail).not.toContain(secret)
+    expect(push.stderrTail).toContain('[redacted]')
+  })
+
+  it('never pushes when this build has nothing wired to receive it', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    // Nothing to assert against a push — the assertion is that failing here
+    // does not throw with no onLaunchFailed configured.
+    expect(() => handle.fail({ exitCode: 1, signal: null, stderrTail: '' })).not.toThrow()
+  })
+
+  it('never subscribes at all when the launcher retained no process', async () => {
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex' })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    expect(onLaunchFailed).not.toHaveBeenCalled()
   })
 })
 

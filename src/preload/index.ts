@@ -19,6 +19,7 @@ import type {
   HostedLaunchRequest,
   HostedLaunchResult,
   DwarfDeliveryReport,
+  LaunchFailedPush,
   MessagePanelState,
   MetricsResetResult,
   MineDeclareResult,
@@ -168,6 +169,15 @@ export interface DwarfAiMinersApi {
    * poll interval away, so the panel must acknowledge from this and not wait.
    */
   launchAgent: (request: AgentLaunchRequest) => Promise<AgentLaunchResult>
+  /**
+   * A launch `launchAgent` already answered `launched: true` for died almost
+   * at once (#263) — see `LaunchFailedPush`. Push rather than pull, exactly
+   * like `onMessagePanel`: main learns of this asynchronously, well after the
+   * verdict above already answered, so there is no request to make and
+   * nothing to poll for. Returns an unsubscribe function, like every other
+   * subscription here.
+   */
+  onLaunchFailed: (listener: (push: LaunchFailedPush) => void) => () => void
   /**
    * Which agent CLIs this machine has, and which of them the panel can start
    * (#86). Asked when the Add Panel opens: what is installed is not board
@@ -409,6 +419,13 @@ const api: DwarfAiMinersApi = {
       ...(typeof request?.model === 'string' ? { model: request.model } : {}),
       ...(typeof request?.effort === 'string' ? { effort: request.effort } : {})
     }),
+  // Subscription, exactly like onMessagePanel and onDwarfDeliveryReport: the
+  // renderer never sees the IpcRendererEvent, only the push itself.
+  onLaunchFailed: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, push: LaunchFailedPush) => listener(push)
+    ipcRenderer.on(IPC_CHANNELS.launchFailed, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.launchFailed, wrapped)
+  },
   // Same discipline as setToggleShortcut: collapse anything that is not a
   // string BEFORE it crosses, so main's boundary check only reasons about one.
   retireDwarf: (dwarfId) =>
