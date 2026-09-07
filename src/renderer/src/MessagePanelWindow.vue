@@ -559,6 +559,25 @@ async function activate(dwarf: Dwarf): Promise<void> {
   }
 }
 
+/**
+ * Open an activity line's own path in the OS default app (#279).
+ *
+ * Resolved and verified entirely in main, against the mine's own folder —
+ * this window only relays the click and shows whatever main decided, on the
+ * same status line `activate` already uses for "the console could not be
+ * opened" (see the `.notice` element below).
+ */
+async function openPath(target: string): Promise<void> {
+  if (currentMine.value === undefined) return
+  error.value = null
+  try {
+    const result = await window.api.openMinePath({ mineId: currentMine.value.id, target })
+    if (!result.opened) error.value = result.reason
+  } catch {
+    error.value = 'That file could not be opened.'
+  }
+}
+
 /** Close whatever this window has open, which the shell then hears about. */
 function close(): void {
   closeLaunchPanel()
@@ -698,6 +717,7 @@ onBeforeUnmount(() => {
         @answer="answerQuestion(selectedDwarf, $event)"
         @decide="decidePermission(selectedDwarf, $event)"
         @open-console="activate(selectedDwarf)"
+        @open-path="openPath"
         @close="close"
       />
     </div>

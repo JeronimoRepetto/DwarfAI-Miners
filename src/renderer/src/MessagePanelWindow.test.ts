@@ -76,6 +76,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       providers: [{ provider: 'claude', installed: true, launchable: true }]
     }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
+    // A click on an activity line's own path (#279). Opened is the quiet
+    // default; individual tests override it to assert the refusal path.
+    openMinePath: vi.fn().mockResolvedValue({ opened: true }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -344,6 +347,61 @@ describe('the message panel window', () => {
     await flushPromises()
 
     expect(wrapper.find('.notice').text()).toContain('could not be opened')
+  })
+})
+
+/**
+ * A click on an `edit`/`read` activity line's own path (#279). Resolution and
+ * verification both happen in main — this window only relays the mine id and
+ * the target, and renders whatever main decided on the same `.notice` status
+ * line `activate`'s own console-not-opened case already uses.
+ */
+describe('opening an activity line’s path', () => {
+  const WITH_EDIT_ACTIVITY = {
+    ...HELD_DWARF,
+    conversation: [
+      {
+        role: 'assistant' as const,
+        text: 'Edited src/main/index.ts',
+        timestamp: 't0',
+        activity: { kind: 'edit' as const, target: 'src/main/index.ts' }
+      }
+    ]
+  }
+
+  it('asks main with the current mine id and the exact target, not the display text', async () => {
+    const { wrapper, api } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id)
+
+    await wrapper.find('.activity-line').trigger('click')
+    await flushPromises()
+
+    expect(api.openMinePath).toHaveBeenCalledWith({
+      mineId: MINE.id,
+      target: 'src/main/index.ts'
+    })
+  })
+
+  it("says out loud main's fixed refusal when the path could not be opened", async () => {
+    const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id, {
+      openMinePath: vi.fn().mockResolvedValue({
+        opened: false,
+        reason: "That path is outside this mine's folder."
+      })
+    })
+
+    await wrapper.find('.activity-line').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.notice').text()).toBe("That path is outside this mine's folder.")
+  })
+
+  it('says nothing when the file opened successfully', async () => {
+    const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id)
+
+    await wrapper.find('.activity-line').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.notice').exists()).toBe(false)
   })
 })
 

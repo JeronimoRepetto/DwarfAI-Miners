@@ -201,6 +201,70 @@ describe('MineHistoryPanel activity lines (#240)', () => {
     expect(wrapper.findAll('.bubble')).toHaveLength(2)
     expect(wrapper.findAll('.activity-line')).toHaveLength(1)
   })
+
+  it('draws a run line as a plain paragraph rather than a clickable control', () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    expect(wrapper.find('.activity-line').element.tagName).toBe('P')
+  })
+})
+
+/**
+ * Only an `edit`/`read` activity line's own path opens the file (#279); `run`
+ * stays the plain paragraph pinned above. This panel is read-only and has no
+ * IPC of its own (#192) — App.vue owns the open, exactly as it owns
+ * `getMineHistory` — so what is pinned here is the emit's own payload and how
+ * a refusal main handed back is shown on the row's title.
+ */
+describe('MineHistoryPanel path-opening lines (#279)', () => {
+  const WITH_EDIT: MineHistorySpeaker = {
+    ...NEWEST,
+    messages: [
+      ...NEWEST.messages,
+      {
+        role: 'assistant',
+        text: 'Edited src/main/index.ts',
+        timestamp: '2026-09-04T09:06:00Z',
+        activity: { kind: 'edit', target: 'src/main/index.ts' }
+      }
+    ]
+  }
+
+  it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_EDIT] } })
+    const line = wrapper.find('.activity-line')
+    expect(line.element.tagName).toBe('BUTTON')
+    expect(line.attributes('type')).toBe('button')
+    expect(line.classes()).toContain('is-openable')
+  })
+
+  it("emits the row's key and the activity's own target on click, not the display text", async () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_EDIT] } })
+    const line = wrapper.find('.activity-line')
+    await line.trigger('click')
+    const [payload] = wrapper.emitted('open-path')?.[0] as [{ key: string; target: string }]
+    expect(payload.target).toBe('src/main/index.ts')
+  })
+
+  it("shows main's refusal as the row's own title, in place of the display text", () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_EDIT] } })
+    const line = wrapper.find('.activity-line')
+    const key = line.attributes('data-row-key')
+    const withRefusal = panel({
+      history: { readable: true, speakers: [OLDER, WITH_EDIT] },
+      pathRefusal: { key, reason: 'That file no longer exists.' }
+    })
+    expect(withRefusal.find('.activity-line').attributes('title')).toBe(
+      'That file no longer exists.'
+    )
+  })
+
+  it("leaves an unrelated row's title untouched by another row's refusal", () => {
+    const wrapper = panel({
+      history: { readable: true, speakers: [OLDER, WITH_EDIT] },
+      pathRefusal: { key: 'not-this-row', reason: 'That file no longer exists.' }
+    })
+    expect(wrapper.find('.activity-line').attributes('title')).toBe('Edited src/main/index.ts')
+  })
 })
 
 describe('MineHistoryPanel timestamp', () => {

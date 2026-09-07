@@ -4,6 +4,7 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  shell,
   type BrowserWindow,
   type WebContents
 } from 'electron'
@@ -35,6 +36,7 @@ import type {
   Mine,
   MineDeclareResult,
   MineHistoryResult,
+  MineOpenPathResult,
   MinesSnapshot,
   MineUndeclareResult,
   PanelEdge,
@@ -66,6 +68,13 @@ import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
+import {
+  MINE_PATH_OUTSIDE_REASON,
+  MINE_PATH_UNOPENABLE_REASON,
+  parseMineOpenPathRequest,
+  verifyMinePath
+} from './shell/openMineFile'
+import { currentPlatform } from './platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from './appDatabase/appDatabase'
 import { runCoalBackfill } from './ledger/coalBackfill'
 import { LEDGER_JSON_FILENAME } from './ledger/ledgerStore'
@@ -140,6 +149,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.refreshDwarfTelemetry)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
+  ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
@@ -806,6 +816,36 @@ async function init(): Promise<void> {
     if (typeof mineId !== 'string' || mineId === '') return noHistory
     return runtime?.mineHistory(mineId) ?? noHistory
   })
+
+  // A click on an activity line's own path (#279). The mine id resolves to a
+  // folder ONLY through the runtime's own board — never a folder the
+  // renderer could name itself — and the refusal, when there is one, is
+  // always this app's own fixed sentence: verifyMinePath never returns the
+  // filesystem's wording, and shell.openPath's own error string is swallowed
+  // below for the same reason.
+  ipcMain.handle(
+    IPC_CHANNELS.openMinePath,
+    async (_event, payload: unknown): Promise<MineOpenPathResult> => {
+      const request = parseMineOpenPathRequest(payload)
+      const outside: MineOpenPathResult = { opened: false, reason: MINE_PATH_OUTSIDE_REASON }
+      if (request === null) return outside
+      const mineFolder = runtime?.mineFolderOf(request.mineId)
+      if (mineFolder === undefined) return outside
+      const verdict = await verifyMinePath(
+        mineFolder,
+        request.target,
+        currentPlatform(),
+        new NodeFs()
+      )
+      if (!verdict.opened) return verdict
+      const openError = await shell.openPath(verdict.absolutePath)
+      if (openError !== '') {
+        console.warn(`[shell] could not open a mine file: ${openError}`)
+        return { opened: false, reason: MINE_PATH_UNOPENABLE_REASON }
+      }
+      return { opened: true }
+    }
+  )
 
   const notDelivered: DwarfTextResult = {
     delivered: false,

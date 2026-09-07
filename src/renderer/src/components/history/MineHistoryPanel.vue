@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { CLOSE_ICON_SRC, PORTRAIT_SRC, USER_PORTRAIT_SRC, maskImageValue } from '../../lib/art'
+import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   HISTORY_SCOPE_NOTE,
   formatHistoryTimestamp,
@@ -34,10 +35,25 @@ const props = defineProps<{
   mine: Mine
   /** What main read for this mine. Undefined while the read is in flight, which is its own answer. */
   history?: MineHistoryResult
+  /**
+   * The refusal main gave for the LAST path this panel asked it to open
+   * (#279), keyed by the row so a stale refusal cannot land on a different
+   * row than the one that was clicked. Absent means no click has been
+   * refused since this panel opened, or App.vue is still waiting on main.
+   */
+  pathRefusal?: { key: string; reason: string }
 }>()
 
 const emit = defineEmits<{
   close: []
+  /**
+   * An `edit`/`read` activity line's own path was clicked (#279): the row's
+   * own key, so the caller can hand a refusal back to the right row, and the
+   * exact `FeedActivity.target` string. This panel is read-only and has no
+   * IPC of its own — App.vue owns the open, exactly as it owns
+   * `getMineHistory`.
+   */
+  'open-path': [payload: { key: string; target: string }]
 }>()
 
 const ordered = computed(() => orderSpeakers(props.history?.speakers ?? []))
@@ -151,7 +167,25 @@ function choose(id: string): void {
           muted meta line with no icon, no bubble and no portrait, still one
           row of the tab's own message count.
         -->
-        <p v-if="row.activity" class="activity-line" :title="row.text">{{ row.text }}</p>
+        <!--
+          AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
+          FILE, so it draws as a button styled as text rather than an anchor
+          — `run` and `search` stay the plain paragraph #240 drew. A refusal
+          main gave for THIS row (matched by key) replaces the title rather
+          than the display text, since this panel has no status line of its
+          own to show it on.
+        -->
+        <button
+          v-if="row.activity && isOpenablePath(row.activity)"
+          type="button"
+          class="activity-line is-openable"
+          :data-row-key="row.key"
+          :title="pathRefusal?.key === row.key ? pathRefusal.reason : row.text"
+          @click="emit('open-path', { key: row.key, target: row.activity.target })"
+        >
+          {{ row.text }}
+        </button>
+        <p v-else-if="row.activity" class="activity-line" :title="row.text">{{ row.text }}</p>
         <article v-else class="message" :class="row.from === 'agent' ? 'is-agent' : 'is-user'">
           <!--
             The message panel's own portrait treatment (#159), and its own
@@ -334,6 +368,26 @@ function choose(id: string): void {
   font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+ * `screens/mine.md`'s own amendment (#279): a button styled as text, not an
+ * anchor. Same ink as the plain line above — no new colour — until the
+ * reader's pointer or keyboard focus finds it, when it underlines; the
+ * pointer cursor is the only other tell that this one opens something.
+ */
+.activity-line.is-openable {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.activity-line.is-openable:hover,
+.activity-line.is-openable:focus-visible {
+  text-decoration: underline;
 }
 /* 100px, 12px radius, 2px accent border — the source's own portrait treatment. */
 .portrait {

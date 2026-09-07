@@ -729,6 +729,37 @@ describe('preload mine-history contract (#192)', () => {
   })
 })
 
+describe('preload open-path contract (#279)', () => {
+  it('asks on the mine:openPath channel with the mine id and target rebuilt field by field', async () => {
+    invoke.mockResolvedValueOnce({ opened: true })
+    await api.openMinePath({ mineId: 'mine:c:\\x\\anvil', target: 'src\\main\\index.ts' })
+    expect(invoke).toHaveBeenLastCalledWith('mine:openPath', {
+      mineId: 'mine:c:\\x\\anvil',
+      target: 'src\\main\\index.ts'
+    })
+  })
+
+  it('collapses a non-string mineId or target to an empty string before it crosses the bridge', async () => {
+    invoke.mockResolvedValueOnce({
+      opened: false,
+      reason: "That path is outside this mine's folder."
+    })
+    await api.openMinePath({
+      mineId: 42 as unknown as string,
+      target: undefined as unknown as string
+    })
+    expect(invoke).toHaveBeenLastCalledWith('mine:openPath', { mineId: '', target: '' })
+  })
+
+  it("hands back main's verdict untouched, a refusal's fixed reason included", async () => {
+    const refusal = { opened: false, reason: 'That file no longer exists.' }
+    invoke.mockResolvedValueOnce(refusal)
+    await expect(
+      api.openMinePath({ mineId: 'mine:c:\\x\\anvil', target: 'gone.ts' })
+    ).resolves.toEqual(refusal)
+  })
+})
+
 /**
  * The panel telling main which observed dwarf it has open (#196), so the poll
  * can carry that dwarf's feed with its snapshot. One-way, like retireDwarf:

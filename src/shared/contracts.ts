@@ -1332,6 +1332,32 @@ export interface MineHistoryResult {
   speakers: MineHistorySpeaker[]
 }
 
+/**
+ * A click on an activity line's own path (#279): which mine it belongs to, and
+ * the exact `FeedActivity.target` string the line was built from — never a
+ * path the renderer parsed out of anything itself.
+ *
+ * Named by MINE ID, never a folder, for the reason every other mine channel
+ * does: main resolves the folder from the board it already holds, so the
+ * containment check below always runs against a folder THIS process trusts
+ * rather than one a renderer could hand back.
+ */
+export interface MineOpenPathRequest {
+  mineId: string
+  target: string
+}
+
+/**
+ * The verdict of one open-path request (#279).
+ *
+ * `reason` is always fixed copy this app wrote, never `shell.openPath`'s own
+ * return value or a filesystem error's message — the same discipline every
+ * other refusal on this wire holds. A path outside the mine's folder and a
+ * path that no longer exists are told apart in the sentence, never in a
+ * machine-readable code the renderer would have to translate.
+ */
+export type MineOpenPathResult = { opened: true } | { opened: false; reason: string }
+
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
   /** True when an existing terminal window was found and brought to the foreground. */
@@ -2453,6 +2479,19 @@ export const IPC_CHANNELS = {
    * channels give: the id is what both sides already agree on.
    */
   getMineHistory: 'mine:history',
+  /**
+   * A click on an activity line's own path (#279) — resolved and verified in
+   * MAIN, never the renderer: the renderer hands over the mine id and the raw
+   * `target` string and receives only `opened` or a fixed reason, never a
+   * filesystem verdict it could act on itself.
+   *
+   * A request/response channel rather than one-way, unlike `retireDwarf` and
+   * `setWatchedDwarf`: there IS a verdict here the panel must render — the
+   * refusal sentence, shown on the line's own title or the panel's existing
+   * status line (see `screens/mine.md`'s amendment) — and nothing else pushes
+   * it later the way a snapshot would.
+   */
+  openMinePath: 'mine:openPath',
   sendDwarfText: 'dwarf:sendText',
   kickDwarf: 'dwarf:kick',
   /**

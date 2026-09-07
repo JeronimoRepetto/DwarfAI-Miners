@@ -17,6 +17,7 @@ import {
 } from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { authorOf, conversationOf, latestText } from '../../lib/message/conversation'
+import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
   nextScrollTop,
@@ -93,6 +94,13 @@ const emit = defineEmits<{
   decide: [decision: DwarfPermissionDecision]
   /** Focus this session's console — where the old bar's fourth icon went. */
   'open-console': []
+  /**
+   * An `edit`/`read` activity line's own path was clicked (#279) — the exact
+   * `FeedActivity.target` string, never the display text. Opening happens in
+   * MAIN: this component only reports the click, exactly as `open-console`
+   * reports one without itself trying to focus anything.
+   */
+  'open-path': [target: string]
 }>()
 
 const message = ref('')
@@ -392,7 +400,23 @@ watch(
           `screens/mine.md`'s activity-line amendment. Still one row in `rows`,
           so it is still one message in the panel's window.
         -->
-        <p v-if="entry.activity" class="activity-line" :title="entry.text">{{ entry.text }}</p>
+        <!--
+          AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
+          FILE, so it draws as a button styled as text rather than an anchor
+          (`screens/mine.md`'s own amendment: keyboard reachable, same ink,
+          underline only on hover/focus) — `run` and `search` stay the plain
+          paragraph #240 drew.
+        -->
+        <button
+          v-if="entry.activity && isOpenablePath(entry.activity)"
+          type="button"
+          class="activity-line is-openable"
+          :title="entry.text"
+          @click="emit('open-path', entry.activity.target)"
+        >
+          {{ entry.text }}
+        </button>
+        <p v-else-if="entry.activity" class="activity-line" :title="entry.text">{{ entry.text }}</p>
         <article v-else class="message" :class="entry.from === 'agent' ? 'is-agent' : 'is-user'">
           <!--
             Whose face this is, from lib/message/conversation (#175). A prompt an
@@ -718,6 +742,26 @@ watch(
   font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+ * `screens/mine.md`'s own amendment (#279): a button styled as text, not an
+ * anchor. Same ink as the plain line above — no new colour — until the
+ * reader's pointer or keyboard focus finds it, when it underlines; the
+ * pointer cursor is the only other tell that this one opens something.
+ */
+.activity-line.is-openable {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.activity-line.is-openable:hover,
+.activity-line.is-openable:focus-visible {
+  text-decoration: underline;
 }
 /* 100px, 12px radius, 2px accent border — the source's own portrait treatment. */
 .portrait {
