@@ -279,6 +279,23 @@ export interface DwarfMcpServerStatus {
 }
 
 /**
+ * One reading of a held session's own context window, unclamped (issue #96).
+ *
+ * Pulled rather than pushed: unlike `model` and `mcpServers`, no stream
+ * message carries this — `system/init` and `result` are silent on it — so it
+ * is the one telemetry field this app has to ask for, off the session's own
+ * `getContextUsage({ detail: 'summary' })` control request (see
+ * `HeldSessionHandle.contextUsage` and `HeldSessionRegistry.refreshContextUsage`
+ * in `main/sessionLaunch`). `usedTokens` may exceed `maxTokens` — the CLI
+ * reports what it measured, and clamping a bar to its track is the panel's
+ * job, not this reading's.
+ */
+export interface DwarfContextUsage {
+  usedTokens: number
+  maxTokens: number
+}
+
+/**
  * A dwarf's rank, which is TOPOLOGY read off the spawn tree and never a title
  * anything scripted (#86, #157).
  *
@@ -905,6 +922,19 @@ export interface Dwarf {
    * never convert into one another.
    */
   totalCostUsd?: number
+  /**
+   * This held session's own context-window reading, pulled on demand rather
+   * than carried by any stream message (issue #96) — see DwarfContextUsage for
+   * why it needs its own writer instead of riding the `init`/`result` loop
+   * `model`, `mcpServers` and `totalCostUsd` already do.
+   *
+   * Held sessions ONLY, for the same reason those three are. Absent means one
+   * of two things and deliberately does not distinguish them: this is not a
+   * held session, or it is one no reading has been pulled for yet — the same
+   * asymmetry `mcpServers`' own doc comment draws for its absence. Never
+   * `0 / 0`: an untaken measurement is left out rather than drawn as one.
+   */
+  contextUsage?: DwarfContextUsage
   /**
    * The exchange this panel itself watched go by on a stream it is HOLDING
    * (#159, #194) — the prompt it sent to start the session, and every message
@@ -2175,6 +2205,16 @@ export const IPC_CHANNELS = {
    * verdict, so there is nothing here to wait for.
    */
   setWatchedDwarf: 'panel:watchDwarfFeed',
+  /**
+   * The mine asking a held session for its own context reading (issue #96) —
+   * one-way, exactly like `setWatchedDwarf` and for the same reason: this is a
+   * control request main makes on a stream it owns, and the answer arrives on
+   * the next `minesUpdated` snapshot like every other change, so there is no
+   * verdict here to wait for. Named by DWARF, never by session id, because
+   * that is what the mine has; main resolves the rest (and no-ops for a
+   * session it does not hold, or a dwarf that names no session at all).
+   */
+  refreshDwarfTelemetry: 'dwarf:refreshTelemetry',
   /**
    * Every dwarf that has spoken in one mine, with its latest messages (#192),
    * read from the transcripts under the mine's project folder on request.

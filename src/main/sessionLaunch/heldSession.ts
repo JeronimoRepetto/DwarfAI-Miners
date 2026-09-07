@@ -8,6 +8,7 @@ import {
 } from '../domain/types'
 import type {
   Dwarf,
+  DwarfContextUsage,
   DwarfMcpServerStatus,
   DwarfPermissionRequest,
   DwarfQuestion,
@@ -50,6 +51,9 @@ import {
  * carries model, MCP status and running cost on messages this app was already
  * reading for the ask loop above, and this module is where those get narrowed
  * onto the wire too — see HeldSessionTelemetryUpdate and stampHeldTelemetry.
+ * One field in that same telemetry is not read off the stream at all: the
+ * context-window reading arrives on no message, so it is PULLED instead — see
+ * HeldSessionHandle.contextUsage and HeldSessionRegistry.refreshContextUsage.
  */
 
 /** One question inside an ask, exactly as the agent worded it — never redacted. */
@@ -137,6 +141,16 @@ export interface HeldSessionHandle {
    * handle that has to reach the child and be acknowledged.
    */
   interrupt(): Promise<boolean>
+  /**
+   * Pull this session's own context-window reading, off its
+   * `getContextUsage({ detail: 'summary' })` control request (issue #96) —
+   * the one telemetry field no stream message carries, unlike `model` and
+   * `mcpServers` (see HeldSessionTelemetryUpdate.contextUsage). Null when the
+   * session could not say. Async for the same reason `interrupt` is: it is a
+   * control request that has to reach the agent and be acknowledged, not a
+   * local flag.
+   */
+  contextUsage(): Promise<HeldSessionContextUsage | null>
 }
 
 /**
@@ -166,6 +180,30 @@ export interface HeldSessionUsage {
 }
 
 /**
+ * One context-window reading, as `HeldSessionHandle.contextUsage()` answers
+ * it — before the boundary validation `heldTelemetryToWire` applies (issue
+ * #96). Same fields as `DwarfContextUsage`; kept as its own type rather than
+ * reused directly because this is the SDK's raw answer and that is the
+ * validated wire shape, the same split `HeldSessionMcpServer`/
+ * `DwarfMcpServerStatus` already draw.
+ */
+export interface HeldSessionContextUsage {
+  usedTokens: number
+  maxTokens: number
+}
+
+/**
+ * How long a context-usage pull waits for the session to answer before this
+ * app gives up on it (issue #96), per the maintainer's "explicit timeout,
+ * no retry storm" ruling. A session that never answers by this deadline is
+ * left with whatever reading it last gave — never blocked on forever, and
+ * never retried automatically: the next trigger (the mine reopening, or the
+ * next completed turn) gets its own pull rather than piling requests behind
+ * one that is stuck.
+ */
+export const HELD_CONTEXT_USAGE_TIMEOUT_MS = 5_000
+
+/**
  * What a held session's own protocol messages reported about itself, as
  * sdkHeldSession.ts's message loop reads them off `init` and `result` (issue
  * #96) — never anything this app inferred or computed. Every field is
@@ -192,6 +230,15 @@ export interface HeldSessionTelemetryUpdate {
   claudeCodeVersion?: string
   totalCostUsd?: number
   usage?: HeldSessionUsage
+  /**
+   * The session's own context-window reading, when one has been PULLED for it
+   * (issue #96) — never carried by `init` or `result` the way every other
+   * field here is, which is exactly why `HeldSessionRegistry.recordTelemetry`'s
+   * plain merge is still the right idiom: a pull that lands is a later value
+   * replacing an earlier one, same as `model` or `totalCostUsd`. See
+   * `HeldSessionHandle.contextUsage` for where it comes from.
+   */
+  contextUsage?: HeldSessionContextUsage
   /**
    * Which edge of a turn this update reports, when it reports one at all
    * (issue #245). `init` and `result` sit at OPPOSITE ends of the same turn —
@@ -616,22 +663,56 @@ export function stampHeldQuestions(mines: Mine[], stateOf: HeldQuestionLookup): 
  * the CLI's own `init` message types `status` as a plain string, so this is
  * the boundary-validation `isMineTier`/`isDwarfProvider` already hold, applied
  * to a field arriving from the same untrusted-shape direction.
+ *
+ * An MCP server's own NAME goes through `redactSecrets` too, on the
+ * maintainer's 2026-09-07 ruling: it is configuration and is never hidden as
+ * a rule, but a name that happens to be URL-shaped still crosses the same
+ * gate every other string this panel draws does (#59) — the same discipline
+ * `askToWireQuestion` already holds for a label, applied to a field that
+ * usually needs no redaction at all rather than one that always does.
  */
 export function heldTelemetryToWire(telemetry: HeldSessionTelemetryUpdate): {
   model?: string
   effort?: string
   mcpServers?: DwarfMcpServerStatus[]
   totalCostUsd?: number
+  contextUsage?: DwarfContextUsage
 } {
-  const mcpServers = telemetry.mcpServers?.filter((server): server is DwarfMcpServerStatus =>
-    isMcpConnectionStatus(server.status)
-  )
+  const mcpServers = telemetry.mcpServers
+    ?.filter((server): server is DwarfMcpServerStatus => isMcpConnectionStatus(server.status))
+    .map((server) => ({ ...server, name: redactSecrets(server.name) }))
   return {
     ...(telemetry.model === undefined ? {} : { model: telemetry.model }),
     ...(telemetry.effort === undefined ? {} : { effort: telemetry.effort }),
     ...(mcpServers === undefined ? {} : { mcpServers }),
-    ...(telemetry.totalCostUsd === undefined ? {} : { totalCostUsd: telemetry.totalCostUsd })
+    ...(telemetry.totalCostUsd === undefined ? {} : { totalCostUsd: telemetry.totalCostUsd }),
+    ...(isRealContextUsage(telemetry.contextUsage) ? { contextUsage: telemetry.contextUsage } : {})
   }
+}
+
+/**
+ * Whether a pulled context reading is real enough to divide by (issue #96).
+ *
+ * `maxTokens` becomes a bar's own track (`usedTokens / maxTokens` in
+ * `lib/scene/sessionStrip.ts`), so a zero, negative, `NaN` or infinite ceiling
+ * is not a context window at all — the honest wire answer is no reading,
+ * never a division the panel would have to guard against a second time.
+ * `usedTokens` gets the same finite-and-non-negative check, for the same
+ * reason. Deliberately NOT checking `usedTokens <= maxTokens`: a session past
+ * its own window is exactly the reading the CLI reported, and reporting it
+ * unclamped is `heldTelemetryToWire`'s own doc comment's rule for every other
+ * field here too.
+ */
+function isRealContextUsage(
+  usage: HeldSessionContextUsage | undefined
+): usage is HeldSessionContextUsage {
+  if (usage === undefined) return false
+  return (
+    Number.isFinite(usage.maxTokens) &&
+    usage.maxTokens > 0 &&
+    Number.isFinite(usage.usedTokens) &&
+    usage.usedTokens >= 0
+  )
 }
 
 /**
@@ -645,9 +726,16 @@ export function heldTelemetryToWire(telemetry: HeldSessionTelemetryUpdate): {
  * earlier one; nothing un-reports a model once the CLI has named one), so
  * `held: true` with every field absent is simply "nothing has arrived yet",
  * not a fact to stamp over what a session's own provider already read.
+ *
+ * `held: false`'s fields are declared `undefined` rather than left off the
+ * type entirely, purely so a caller may read e.g. `.contextUsage` straight
+ * off a `HeldTelemetryState` without narrowing on `.held` first — the runtime
+ * value is still the bare `{ held: false }` `recordFor` returns; this widens
+ * nothing about it, only what the type checker lets a reader ask of it.
  */
 export type HeldTelemetryState =
-  { held: false } | ({ held: true } & ReturnType<typeof heldTelemetryToWire>)
+  | ({ held: false } & Partial<Record<keyof ReturnType<typeof heldTelemetryToWire>, undefined>>)
+  | ({ held: true } & ReturnType<typeof heldTelemetryToWire>)
 
 export type HeldTelemetryLookup = (sessionId: string) => HeldTelemetryState
 
@@ -765,7 +853,8 @@ export function stampHeldTelemetry(mines: Mine[], stateOf: HeldTelemetryLookup):
         ...(state.model === undefined ? {} : { model: state.model }),
         ...(state.effort === undefined ? {} : { effort: state.effort }),
         ...(state.mcpServers === undefined ? {} : { mcpServers: state.mcpServers }),
-        ...(state.totalCostUsd === undefined ? {} : { totalCostUsd: state.totalCostUsd })
+        ...(state.totalCostUsd === undefined ? {} : { totalCostUsd: state.totalCostUsd }),
+        ...(state.contextUsage === undefined ? {} : { contextUsage: state.contextUsage })
       }
     })
   }))

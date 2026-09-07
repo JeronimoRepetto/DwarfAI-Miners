@@ -10,6 +10,7 @@ import type { CliDetector } from '../platform/cliDetection'
 import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
   askToWireQuestion,
+  HELD_CONTEXT_USAGE_TIMEOUT_MS,
   heldTelemetryToWire,
   parseAskUserQuestion,
   permissionToWire,
@@ -158,6 +159,16 @@ interface HeldRecord {
    * on "nothing reported yet".
    */
   telemetry: HeldSessionTelemetryUpdate
+  /**
+   * The context-usage pull in flight for this session, if any (issue #96) —
+   * so a mine reopened twice in a second, or a turn ending while the last
+   * pull is still on the wire, JOINS that same control request rather than
+   * putting a second one on the stream (the maintainer's "no retry storm"
+   * ruling). Cleared the moment this settles, whether with a real answer or
+   * this app's own timeout — never left pointing at a pull that can no longer
+   * change anything.
+   */
+  contextUsagePull?: Promise<void>
   /**
    * The subagents this session has out, folded from its own stream (#157).
    * Lives on the record rather than in a map keyed by session id, so it dies
@@ -424,6 +435,55 @@ export class HeldSessionRegistry {
     const record = this.recordFor(sessionId)
     if (record === undefined) return { held: false }
     return { held: true, conversation: record.conversation }
+  }
+
+  /**
+   * Pull this session's own context-window reading, on demand (issue #96) —
+   * the one telemetry field no stream message carries (see
+   * HeldSessionHandle.contextUsage). WHEN this is called is the maintainer's
+   * refresh policy, decided above this registry (the mine opening, and the
+   * end of a turn) — this only decides how one pull behaves once asked for.
+   *
+   * A silent no-op for a session this panel does not hold, the same refusal
+   * every other lookup here gives: there is no stream to ask.
+   *
+   * At most one control request in flight per session. A caller that asks
+   * again while one is still on the wire JOINS that same pull instead of
+   * starting a second — the no-retry-storm half of the policy — and every
+   * joiner resolves together once it settles. Bounded by
+   * HELD_CONTEXT_USAGE_TIMEOUT_MS so a session that never answers cannot hang
+   * this forever: a timeout leaves the session's last known reading exactly
+   * as it was, and so does the session answering that it could not say
+   * (`null`) — neither is a fact worth overwriting a real reading with.
+   */
+  async refreshContextUsage(sessionId: string): Promise<void> {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return
+    if (record.contextUsagePull !== undefined) return record.contextUsagePull
+    const pull = this.pullContextUsage(record)
+    record.contextUsagePull = pull
+    try {
+      await pull
+    } finally {
+      // Only clear the slot this pull itself opened: a fresh pull started
+      // after this one settled must not have its own tracking wiped out from
+      // under it by a stale finally block still unwinding.
+      if (record.contextUsagePull === pull) record.contextUsagePull = undefined
+    }
+  }
+
+  /**
+   * The pull itself, raced against the deadline. Never rejects: a session
+   * whose handle throws is not this method's concern to retry or report, and
+   * a rejection here would surface as an unhandled one to every joiner.
+   */
+  private async pullContextUsage(record: HeldRecord): Promise<void> {
+    const timeout = new Promise<'timeout'>((resolve) => {
+      setTimeout(() => resolve('timeout'), HELD_CONTEXT_USAGE_TIMEOUT_MS)
+    })
+    const usage = await Promise.race([record.handle.contextUsage(), timeout])
+    if (usage === 'timeout' || usage === null) return
+    record.telemetry = { ...record.telemetry, contextUsage: usage }
   }
 
   /**

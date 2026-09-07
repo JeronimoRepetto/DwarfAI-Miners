@@ -383,6 +383,24 @@ export function createSdkHeldSession(): HeldSessionPort {
           console.warn('[held] The session refused an interrupt', error)
           return false
         }
+      },
+      /*
+       * The one telemetry field with no message to ride (issue #96): a PULL,
+       * not a read off the loop above. `detail: 'summary'` answers from the
+       * last response's own usage and local estimates rather than the
+       * per-category token-count calls `'full'` (the default) would make —
+       * the cheaper of the two, and this app draws only the one number `/
+       * one number a bar needs, never the category breakdown `'full'` exists
+       * for.
+       */
+      contextUsage: async () => {
+        try {
+          const usage = await session.getContextUsage({ detail: 'summary' })
+          return { usedTokens: usage.totalTokens, maxTokens: usage.maxTokens }
+        } catch (error) {
+          console.warn('[held] Could not read the session’s own context usage', error)
+          return null
+        }
       }
     }
   }

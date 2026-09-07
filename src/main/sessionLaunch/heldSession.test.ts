@@ -401,6 +401,78 @@ describe('heldTelemetryToWire', () => {
     }
     expect('usage' in heldTelemetryToWire(telemetry)).toBe(false)
   })
+
+  /*
+   * The context reading is the one telemetry field that arrives on NO stream
+   * message (issue #96): `init` and `result` carry no context breakdown at
+   * all, so it is PULLED off the session's own `getContextUsage()` control
+   * request and merged onto the same record. It still crosses the wire
+   * through this one narrowing, and it is validated here for the reason the
+   * MCP status is — the numbers are another process's, and the panel draws a
+   * bar from them.
+   */
+  it('carries a context reading through when both counts are real', () => {
+    const telemetry: HeldSessionTelemetryUpdate = {
+      contextUsage: { usedTokens: 41_237, maxTokens: 200_000 }
+    }
+    expect(heldTelemetryToWire(telemetry).contextUsage).toEqual({
+      usedTokens: 41_237,
+      maxTokens: 200_000
+    })
+  })
+
+  it('drops a reading whose max is not a positive number, rather than dividing by it', () => {
+    // A zero or negative ceiling is not a context window, and the panel's bar
+    // is used/max — so the honest wire answer is no reading at all.
+    for (const maxTokens of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const telemetry: HeldSessionTelemetryUpdate = { contextUsage: { usedTokens: 10, maxTokens } }
+      expect(heldTelemetryToWire(telemetry).contextUsage).toBeUndefined()
+    }
+  })
+
+  it('drops a reading whose used count is not a real token count', () => {
+    for (const usedTokens of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const telemetry: HeldSessionTelemetryUpdate = {
+        contextUsage: { usedTokens, maxTokens: 200_000 }
+      }
+      expect(heldTelemetryToWire(telemetry).contextUsage).toBeUndefined()
+    }
+  })
+
+  it('reports a reading past its own ceiling as it arrived, without clamping it', () => {
+    // Clamping is the panel's job for the BAR it draws; clamping here would
+    // hide a session the CLI itself says is over its window, which is exactly
+    // the reading a person most needs to see.
+    const telemetry: HeldSessionTelemetryUpdate = {
+      contextUsage: { usedTokens: 210_000, maxTokens: 200_000 }
+    }
+    expect(heldTelemetryToWire(telemetry).contextUsage).toEqual({
+      usedTokens: 210_000,
+      maxTokens: 200_000
+    })
+  })
+
+  /*
+   * The maintainer's 2026-09-07 ruling on where a URL may appear: an MCP
+   * server NAME is configuration and is never hidden, but a name that is
+   * itself URL-shaped still goes through the same gate every other string
+   * the panel draws does (#59). Nothing about an ordinary name changes.
+   */
+  it('passes an MCP server name through the redaction gate without hiding the name', () => {
+    const telemetry: HeldSessionTelemetryUpdate = {
+      mcpServers: [
+        { name: 'codegraph', status: 'connected' },
+        {
+          name: 'https://mcp.example.com/?token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          status: 'needs-auth'
+        }
+      ]
+    }
+    expect(heldTelemetryToWire(telemetry).mcpServers).toEqual([
+      { name: 'codegraph', status: 'connected' },
+      { name: 'https://mcp.example.com/?token=[redacted]', status: 'needs-auth' }
+    ])
+  })
 })
 
 describe('stampHeldCrew', () => {
@@ -590,6 +662,22 @@ describe('stampHeldTelemetry', () => {
     mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, model: 'tail-derived-model' }
     const stamped = stampHeldTelemetry(mines, () => ({ held: true, model: 'claude-sonnet-5' }))
     expect(stamped[0]!.dwarfs[0]!.model).toBe('claude-sonnet-5')
+  })
+
+  it('stamps the pulled context reading on the foreman, and never on a worker', () => {
+    // Issue #96's read-only surface: the reading is pulled rather than pushed,
+    // but it lands through the same stamp and under the same two rules — only
+    // a held session has one, and only its own dwarf carries it.
+    const withContext: HeldTelemetryState = {
+      held: true,
+      contextUsage: { usedTokens: 41_237, maxTokens: 200_000 }
+    }
+    const stamped = stampHeldTelemetry(board(), () => withContext)
+    expect(stamped[0]!.dwarfs[0]!.contextUsage).toEqual({
+      usedTokens: 41_237,
+      maxTokens: 200_000
+    })
+    expect(stamped[0]!.dwarfs[1]!.contextUsage).toBeUndefined()
   })
 })
 
