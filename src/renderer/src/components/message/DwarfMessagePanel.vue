@@ -384,36 +384,41 @@ watch(
       :aria-label="conversation.note"
     >
       <p v-if="conversation.messages.length === 0" class="panel-empty">{{ conversation.note }}</p>
-      <article
-        v-for="entry in rows"
-        :key="entry.key"
-        class="message"
-        :class="entry.from === 'agent' ? 'is-agent' : 'is-user'"
-      >
+      <template v-for="entry in rows" :key="entry.key">
         <!--
-          Whose face this is, from lib/message/conversation (#175). A prompt an
-          agent issued is drawn as that agent — its rank picks the portrait and
-          its name is the alt text and the tooltip, because the design draws no
-          per-message label and inventing chrome the source does not specify is
-          the one thing `ui-rebuild` refuses.
+          One tool call, drawn as a line rather than a turn (#240): the design's
+          own summary rule spoken in the past tense, in the panel's muted meta
+          ink, with no icon, no bubble surface and no portrait — see
+          `screens/mine.md`'s activity-line amendment. Still one row in `rows`,
+          so it is still one message in the panel's window.
         -->
-        <img
-          v-if="entry.from === 'agent'"
-          class="portrait"
-          :src="PORTRAIT_SRC[entry.author.role]"
-          :alt="`${entry.author.name}, ${entry.author.role}`"
-          :title="`${entry.author.name}, ${entry.author.role}`"
-          draggable="false"
-        />
-        <p class="bubble">{{ entry.text }}</p>
-        <img
-          v-if="entry.from === 'user'"
-          class="portrait"
-          :src="USER_PORTRAIT_SRC"
-          alt="You"
-          draggable="false"
-        />
-      </article>
+        <p v-if="entry.activity" class="activity-line" :title="entry.text">{{ entry.text }}</p>
+        <article v-else class="message" :class="entry.from === 'agent' ? 'is-agent' : 'is-user'">
+          <!--
+            Whose face this is, from lib/message/conversation (#175). A prompt an
+            agent issued is drawn as that agent — its rank picks the portrait and
+            its name is the alt text and the tooltip, because the design draws no
+            per-message label and inventing chrome the source does not specify is
+            the one thing `ui-rebuild` refuses.
+          -->
+          <img
+            v-if="entry.from === 'agent'"
+            class="portrait"
+            :src="PORTRAIT_SRC[entry.author.role]"
+            :alt="`${entry.author.name}, ${entry.author.role}`"
+            :title="`${entry.author.name}, ${entry.author.role}`"
+            draggable="false"
+          />
+          <p class="bubble">{{ entry.text }}</p>
+          <img
+            v-if="entry.from === 'user'"
+            class="portrait"
+            :src="USER_PORTRAIT_SRC"
+            alt="You"
+            draggable="false"
+          />
+        </article>
+      </template>
     </div>
 
     <!--
@@ -696,6 +701,23 @@ watch(
 }
 .message.is-user {
   justify-content: flex-end;
+}
+/*
+ * One tool-call line (#240): the meta size and the panel's muted ink, with no
+ * bubble surface, no icon and no portrait. Offset by the portrait's own width
+ * plus the row gap so it lines up with the BUBBLE, not with where a portrait
+ * would sit — there is no portrait beside it to align with instead. Truncated
+ * to one line with an ellipsis at the panel's width; the full text is `title`.
+ */
+.activity-line {
+  flex: none;
+  margin: 0;
+  margin-left: calc(var(--size-portrait) + var(--space-nav-gap));
+  overflow: hidden;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* 100px, 12px radius, 2px accent border — the source's own portrait treatment. */
 .portrait {

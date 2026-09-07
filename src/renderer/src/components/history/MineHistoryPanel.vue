@@ -145,34 +145,37 @@ function choose(id: string): void {
       :aria-label="HISTORY_SCOPE_NOTE"
     >
       <p v-if="note !== null" class="history-empty">{{ note }}</p>
-      <article
-        v-for="row in rows"
-        :key="row.key"
-        class="message"
-        :class="row.from === 'agent' ? 'is-agent' : 'is-user'"
-      >
+      <template v-for="row in rows" :key="row.key">
         <!--
-          The message panel's own portrait treatment (#159), and its own
-          reading of whose face this is (#175): a prompt another agent issued
-          wears that agent's face, everything else the speaker's own.
+          One tool call, same rule as the interactive MessagePanel (#240): a
+          muted meta line with no icon, no bubble and no portrait, still one
+          row of the tab's own message count.
         -->
-        <img
-          v-if="row.from === 'agent'"
-          class="portrait"
-          :src="PORTRAIT_SRC[row.author.role]"
-          :alt="`${row.author.name}, ${row.author.role}`"
-          :title="`${row.author.name}, ${row.author.role}`"
-          draggable="false"
-        />
-        <p class="bubble">{{ row.text }}</p>
-        <img
-          v-if="row.from === 'user'"
-          class="portrait"
-          :src="USER_PORTRAIT_SRC"
-          alt="You"
-          draggable="false"
-        />
-      </article>
+        <p v-if="row.activity" class="activity-line" :title="row.text">{{ row.text }}</p>
+        <article v-else class="message" :class="row.from === 'agent' ? 'is-agent' : 'is-user'">
+          <!--
+            The message panel's own portrait treatment (#159), and its own
+            reading of whose face this is (#175): a prompt another agent issued
+            wears that agent's face, everything else the speaker's own.
+          -->
+          <img
+            v-if="row.from === 'agent'"
+            class="portrait"
+            :src="PORTRAIT_SRC[row.author.role]"
+            :alt="`${row.author.name}, ${row.author.role}`"
+            :title="`${row.author.name}, ${row.author.role}`"
+            draggable="false"
+          />
+          <p class="bubble">{{ row.text }}</p>
+          <img
+            v-if="row.from === 'user'"
+            class="portrait"
+            :src="USER_PORTRAIT_SRC"
+            alt="You"
+            draggable="false"
+          />
+        </article>
+      </template>
     </div>
 
     <!-- The selected dwarf's last-message time, lower right, in the design's format. -->
@@ -315,6 +318,22 @@ function choose(id: string): void {
 }
 .message.is-user {
   justify-content: flex-end;
+}
+/*
+ * One tool-call line (#240), the same rule the interactive MessagePanel draws
+ * it with: meta size, muted ink, no bubble, no icon, no portrait — offset by
+ * the portrait's width and the row gap so it lines up with the BUBBLE rather
+ * than with where a portrait would sit.
+ */
+.activity-line {
+  flex: none;
+  margin: 0;
+  margin-left: calc(var(--size-portrait) + var(--space-nav-gap));
+  overflow: hidden;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* 100px, 12px radius, 2px accent border — the source's own portrait treatment. */
 .portrait {

@@ -582,6 +582,119 @@ describe('extractClaudeFeed', () => {
   })
 })
 
+/**
+ * One line per tool call, interleaved in call order between the speech either
+ * side of it (#240). The verb and the subject come off
+ * `domain/permissionSummary.ts`'s shared table — the same one a permission
+ * card reads for the SAME call while it is still pending — so a Bash call
+ * cannot read one way on the card and another way in the line it leaves
+ * behind.
+ */
+describe('extractClaudeFeed activity lines (#240)', () => {
+  /** One assistant line carrying an arbitrary content-block array. */
+  function assistantLine(content: unknown[], timestamp = '2026-09-07T10:00:00.000Z'): string {
+    return (
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content }, timestamp }) +
+      '\n'
+    )
+  }
+
+  it('publishes a tool call as its own line, in the summary form the permission card uses', () => {
+    const tail = assistantLine([
+      { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'pnpm test' } }
+    ])
+    expect(extractClaudeFeed(tail, 20)).toEqual([
+      {
+        role: 'assistant',
+        text: 'Ran pnpm test',
+        timestamp: '2026-09-07T10:00:00.000Z',
+        activity: { kind: 'run', target: 'pnpm test' }
+      }
+    ])
+  })
+
+  it('interleaves a tool call between the text either side of it, each on its own line', () => {
+    const tail = assistantLine([
+      { type: 'text', text: 'Let me check the tests.' },
+      { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'pnpm test' } },
+      { type: 'text', text: 'They pass.' }
+    ])
+    const feed = extractClaudeFeed(tail, 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([
+      ['assistant', 'Let me check the tests.'],
+      ['assistant', 'Ran pnpm test'],
+      ['assistant', 'They pass.']
+    ])
+    expect(feed[1]!.activity).toEqual({ kind: 'run', target: 'pnpm test' })
+    expect('activity' in feed[0]!).toBe(false)
+    expect('activity' in feed[2]!).toBe(false)
+  })
+
+  it('carries several tool calls on the same line as text, each its own row and in call order', () => {
+    const tail = assistantLine([
+      { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: 'src/parse.ts' } },
+      { type: 'tool_use', id: 'toolu_2', name: 'Edit', input: { file_path: 'src/parse.ts' } }
+    ])
+    expect(extractClaudeFeed(tail, 20).map((m) => m.text)).toEqual([
+      'Read src/parse.ts',
+      'Edited src/parse.ts'
+    ])
+  })
+
+  it('publishes nothing for a tool this table names no verb for, such as Agent', () => {
+    // Agent traffic is drawn as a dwarf already (see TOOL_ACTIVITY_KINDS), so a
+    // line here would say the same thing twice.
+    const tail = assistantLine([
+      { type: 'tool_use', id: 'toolu_1', name: 'Agent', input: { description: 'survey the seam' } }
+    ])
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+
+  it('publishes nothing for AskUserQuestion, which travels as pendingQuestion instead', () => {
+    const tail = assistantLine([
+      { type: 'tool_use', id: 'toolu_1', name: 'AskUserQuestion', input: askInput('Which?') }
+    ])
+    expect(extractClaudeFeed(tail, 20)).toEqual([])
+  })
+
+  it('redacts a secret in a tool-call line, same as it would in spoken text', () => {
+    const key = ['sk', 'a'.repeat(48)].join('-')
+    const tail = assistantLine([
+      {
+        type: 'tool_use',
+        id: 'toolu_1',
+        name: 'Bash',
+        input: { command: `curl -H "auth: ${key}" x.test` }
+      }
+    ])
+    expect(extractClaudeFeed(tail, 20)[0]!.text).toBe('Ran curl -H "auth: [redacted]" x.test')
+  })
+
+  it('counts a tool-call line toward the same limit as a spoken message', () => {
+    const tail =
+      assistantLine([{ type: 'text', text: 'one' }], '2026-09-07T10:00:00.000Z') +
+      assistantLine(
+        [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'pnpm test' } }],
+        '2026-09-07T10:00:01.000Z'
+      ) +
+      assistantLine([{ type: 'text', text: 'two' }], '2026-09-07T10:00:02.000Z')
+    expect(extractClaudeFeed(tail, 2).map((m) => m.text)).toEqual(['Ran pnpm test', 'two'])
+  })
+
+  it('reads a real transcript unchanged: the Agent calls it carries publish no line of their own', () => {
+    // parentTranscript's only tool_use blocks are Agent calls, which #240
+    // leaves to the dwarf the board already draws — so this pins that the
+    // interleaving above changes nothing for the fixture every other
+    // extractClaudeFeed test in this file already depends on.
+    const feed = extractClaudeFeed(parentTranscript, 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'Placeholder user prompt.'],
+      ['assistant', 'Placeholder text block.'],
+      ['assistant', 'Latest assistant reply placeholder.']
+    ])
+  })
+})
+
 /** The element Claude Code wraps one relayed message in, wherever it lands. */
 function crossSessionEnvelope(text: string): string {
   return (

@@ -1,4 +1,4 @@
-import { permissionInputLine } from '../domain/permissionSummary'
+import { permissionInputLine, toolActivityLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
 import {
   HELD_CONVERSATION_LIMIT,
@@ -13,6 +13,7 @@ import type {
   DwarfPermissionRequest,
   DwarfQuestion,
   DwarfQuestionOption,
+  FeedActivity,
   FeedMessage,
   Mine,
   WaitingReason
@@ -307,8 +308,12 @@ export interface HeldSessionStartRequest {
    * No timestamp: the SDK attaches none to these, so the honest one is when
    * this host saw it, and the caller owns the clock — the same split
    * `askToWireQuestion`'s `askedAt` already draws.
+   *
+   * `activity` is present when this row is a tool call rather than something
+   * said (#240) — one `heldMessageEntries` entry per call, exactly as
+   * `FeedMessage.activity` carries it on the wire.
    */
-  onMessage: (role: FeedMessage['role'], text: string) => void
+  onMessage: (role: FeedMessage['role'], text: string, activity?: FeedActivity) => void
   /** The session finished, one way or another. Always called exactly once. */
   onEnd: (reason: string) => void
 }
@@ -356,6 +361,55 @@ export function heldMessageText(content: unknown): string {
     )
     .map((block) => block.text)
     .join('\n')
+}
+
+/** One entry `heldMessageEntries` publishes: something said, or a tool call it drew a line for. */
+export interface HeldMessageEntry {
+  text: string
+  activity?: FeedActivity
+}
+
+/**
+ * The words AND the tool calls in one message off a held session's stream,
+ * each its own entry in the order the content carried them (#240) — the held
+ * counterpart of `extractClaudeFeed`'s interleaving, off the SAME shared table
+ * (`domain/permissionSummary.ts`'s `toolActivityLine`), so a call reads the
+ * same whether this app is holding the session live or reading its transcript
+ * back off disk.
+ *
+ * `heldMessageText` above still answers "just the words, joined" for whatever
+ * still calls it that way; this is what the message loop needs instead, since
+ * one message can now publish more than one row.
+ *
+ * A `tool_result` block matches neither branch below and simply ends whatever
+ * text run precedes it, same as an unmapped `tool_use` does — a result is
+ * never something a person said or an agent wrote.
+ */
+export function heldMessageEntries(content: unknown): HeldMessageEntry[] {
+  if (typeof content === 'string') return content === '' ? [] : [{ text: content }]
+  if (!Array.isArray(content)) return []
+  const entries: HeldMessageEntry[] = []
+  let buffered: string[] = []
+  const flushText = (): void => {
+    const joined = buffered.filter((text) => text !== '').join('\n')
+    if (joined !== '') entries.push({ text: joined })
+    buffered = []
+  }
+  for (const block of content) {
+    if (!isRecord(block)) continue
+    if (block.type === 'text' && typeof block.text === 'string') {
+      buffered.push(block.text)
+      continue
+    }
+    if (block.type !== 'tool_use') continue
+    flushText()
+    const toolName = typeof block.name === 'string' ? block.name : undefined
+    if (toolName === undefined || !isRecord(block.input)) continue
+    const line = toolActivityLine(toolName, block.input)
+    if (line !== undefined) entries.push({ text: line.text, activity: line.activity })
+  }
+  flushText()
+  return entries
 }
 
 /**

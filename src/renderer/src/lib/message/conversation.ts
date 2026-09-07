@@ -1,4 +1,4 @@
-import type { Dwarf, DwarfFeedResult, FeedMessage, MessageIssuer } from '../../types'
+import type { Dwarf, DwarfFeedResult, FeedActivity, FeedMessage, MessageIssuer } from '../../types'
 
 /**
  * What the message panel may honestly draw for one dwarf (#159).
@@ -39,6 +39,13 @@ export interface PanelMessage {
    * Absent means whichever side `from` says: the human, or this dwarf itself.
    */
   issuer?: MessageIssuer
+  /**
+   * Present when this row is a TOOL CALL rather than something said (#240) —
+   * carried straight off `FeedMessage.activity` so both panel components
+   * branch on the one field the wire already names, rather than each
+   * re-deriving "is this a line" from `text` shape.
+   */
+  activity?: FeedActivity
 }
 
 export interface PanelConversation {
@@ -79,7 +86,8 @@ export function panelMessagesOf(messages: readonly FeedMessage[]): PanelMessage[
       from,
       text: message.text,
       key: `${from}-${index}-${message.timestamp}`,
-      ...(message.issuer === undefined ? {} : { issuer: message.issuer })
+      ...(message.issuer === undefined ? {} : { issuer: message.issuer }),
+      ...(message.activity === undefined ? {} : { activity: message.activity })
     }
   })
 }

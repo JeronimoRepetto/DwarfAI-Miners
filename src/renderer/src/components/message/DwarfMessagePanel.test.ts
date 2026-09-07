@@ -177,6 +177,58 @@ describe('DwarfMessagePanel shape', () => {
 })
 
 /**
+ * One line per tool call, interleaved between the speech bubbles (#240).
+ * `screens/mine.md`'s activity-line amendment: the meta token, no icon, no
+ * bubble surface and no portrait, ellipsis-truncated with the full text as
+ * `title`, aligned with the bubble text rather than the portrait.
+ */
+describe('DwarfMessagePanel activity lines (#240)', () => {
+  const CONVERSATION = [
+    { role: 'user' as const, text: 'dig here', timestamp: 't0' },
+    {
+      role: 'assistant' as const,
+      text: 'Ran pnpm test',
+      timestamp: 't1',
+      activity: { kind: 'run' as const, target: 'pnpm test' }
+    },
+    { role: 'assistant' as const, text: 'Tests pass.', timestamp: 't2' }
+  ]
+
+  it('draws a tool call as its own muted line rather than a bubble', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const line = wrapper.find('.activity-line')
+    expect(line.exists()).toBe(true)
+    expect(line.text()).toBe('Ran pnpm test')
+  })
+
+  it('carries the full text as the title, for the truncated line to expand on hover', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    expect(wrapper.find('.activity-line').attributes('title')).toBe('Ran pnpm test')
+  })
+
+  it('draws no portrait and no bubble surface for a tool-call line', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const line = wrapper.find('.activity-line')
+    expect(line.find('.portrait').exists()).toBe(false)
+    expect(line.classes()).not.toContain('bubble')
+  })
+
+  it('still draws the ordinary bubbles either side of the tool-call line', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    expect(wrapper.findAll('.bubble').map((bubble) => bubble.text())).toEqual([
+      'dig here',
+      'Tests pass.'
+    ])
+  })
+
+  it('counts the tool-call line as one row in the conversation, same as a bubble', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    expect(wrapper.findAll('.bubble')).toHaveLength(2)
+    expect(wrapper.findAll('.activity-line')).toHaveLength(1)
+  })
+})
+
+/**
  * #195: the only scroll-to-bottom used to be `showLatest()`, fired on mount
  * and on the history tab expanding — never when the row list itself grew. A
  * newly-selected dwarf mounts before its feed comes back (App.vue's read is

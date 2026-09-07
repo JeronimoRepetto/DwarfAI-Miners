@@ -6,7 +6,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { HeldSessionSubagentSignal } from './heldCrew'
 import {
-  heldMessageText,
+  heldMessageEntries,
   type HeldSessionHandle,
   type HeldSessionPort,
   type HeldSessionStartRequest
@@ -304,21 +304,26 @@ export function createSdkHeldSession(): HeldSessionPort {
             })
           }
           /*
-           * The words themselves (#159). The loop was already reading every
-           * one of these and throwing them away, which is why the panel had
-           * no conversation to draw for the one session type it holds live.
+           * The words themselves (#159), and since #240 one line per tool call
+           * interleaved among them. The loop was already reading every one of
+           * these and throwing them away, which is why the panel had no
+           * conversation to draw for the one session type it holds live.
            *
-           * Only `assistant` and `user`, and only their text: a
-           * `stream_event` is a partial of an assistant message still being
-           * written, so retaining those alongside the finished one would
-           * write the same reply into the panel several times over. What
-           * counts as text at all is heldMessageText's decision, on the far
-           * side of the seam, so this stays a shape check with no parsing in
-           * it and the rule can be unit-tested without the SDK.
+           * Only `assistant` and `user`: a `stream_event` is a partial of an
+           * assistant message still being written, so retaining those
+           * alongside the finished one would write the same reply into the
+           * panel several times over. What each block of the finished message
+           * becomes — a spoken entry, a tool-call line, or nothing — is
+           * `heldMessageEntries`'s decision, on the far side of the seam, so
+           * this stays a shape check with no parsing in it and the rule can be
+           * unit-tested without the SDK. One message can now publish more than
+           * one row, so this calls onMessage once per entry rather than once
+           * per message.
            */
           if (message.type === 'assistant' || message.type === 'user') {
-            const text = heldMessageText(message.message.content)
-            if (text !== '') request.onMessage(message.type, text)
+            for (const entry of heldMessageEntries(message.message.content)) {
+              request.onMessage(message.type, entry.text, entry.activity)
+            }
           }
           // Once per turn, after every assistant/user/stream_event message of
           // that turn — true of the success subtype and every error subtype

@@ -164,6 +164,45 @@ describe('MineHistoryPanel transcript', () => {
   })
 })
 
+/**
+ * One line per tool call, same rule as the interactive MessagePanel (#240):
+ * `screens/mine.md` draws it in both surfaces from the same wire shape, so a
+ * call reads the same whichever tab shows it.
+ */
+describe('MineHistoryPanel activity lines (#240)', () => {
+  const WITH_ACTIVITY: MineHistorySpeaker = {
+    ...NEWEST,
+    messages: [
+      ...NEWEST.messages,
+      {
+        role: 'assistant',
+        text: 'Ran pnpm test',
+        timestamp: '2026-09-04T09:06:00Z',
+        activity: { kind: 'run', target: 'pnpm test' }
+      }
+    ]
+  }
+
+  it('draws a tool call as its own muted line rather than a bubble', () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    const line = wrapper.find('.activity-line')
+    expect(line.exists()).toBe(true)
+    expect(line.text()).toBe('Ran pnpm test')
+    expect(line.attributes('title')).toBe('Ran pnpm test')
+  })
+
+  it('draws no portrait for a tool-call line', () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    expect(wrapper.find('.activity-line').find('.portrait').exists()).toBe(false)
+  })
+
+  it('counts the tool-call line as one row, alongside the ordinary bubbles', () => {
+    const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    expect(wrapper.findAll('.bubble')).toHaveLength(2)
+    expect(wrapper.findAll('.activity-line')).toHaveLength(1)
+  })
+})
+
 describe('MineHistoryPanel timestamp', () => {
   it("shows the selected dwarf's last-message time in the design's format, lower right", () => {
     const wrapper = panel()

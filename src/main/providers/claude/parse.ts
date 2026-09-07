@@ -1,3 +1,4 @@
+import { toolActivityLine } from '../../domain/permissionSummary'
 import {
   type DwarfAttendance,
   type FeedMessage,
@@ -467,6 +468,42 @@ function assistantText(line: Rec): string | undefined {
 }
 
 /**
+ * One assistant line's content, walked block by block so a tool call
+ * interleaves with the text either side of it in the order it actually
+ * happened (#240) — the design's "between the bubbles", rather than every
+ * text block on the line joined as if nothing ran in between.
+ *
+ * Consecutive text blocks still join with `\n` into one bubble, exactly as
+ * `assistantText` reads them; only a `tool_use` block ends that run. A tool
+ * `toolActivityLine` names no verb for contributes no line of its own, but
+ * still ends the text run it interrupted — the model paused there to act,
+ * whether or not this app draws that pause.
+ */
+function assistantFeedEntries(line: Rec, timestamp: string): FeedMessage[] {
+  const entries: FeedMessage[] = []
+  let buffered: string[] = []
+  const flushText = (): void => {
+    const joined = buffered.filter((text) => text !== '').join('\n')
+    if (joined !== '') entries.push({ role: 'assistant', text: joined, timestamp })
+    buffered = []
+  }
+  for (const block of contentBlocks(line.message)) {
+    if (block.type === 'text') {
+      buffered.push(asString(block.text) ?? '')
+      continue
+    }
+    if (block.type !== 'tool_use') continue
+    flushText()
+    const toolName = asString(block.name)
+    if (toolName === undefined || !isRecord(block.input)) continue
+    const activity = toolActivityLine(toolName, block.input)
+    if (activity !== undefined) entries.push({ ...activity, timestamp })
+  }
+  flushText()
+  return entries
+}
+
+/**
  * The options on one question, or undefined when `options` is not an array at
  * all.
  *
@@ -858,8 +895,11 @@ function typedMidTurnPrompt(line: Rec): string | undefined {
 
 /**
  * The last `limit` human-readable messages of a transcript tail: everything a
- * person typed, however it was delivered, and assistant text replies. Tool
- * results, task notifications and the harness's own meta lines are skipped.
+ * person typed, however it was delivered, assistant text replies, and one
+ * line per tool call the design's four verbs name (#240), interleaved between
+ * the text in call order. Tool results, task notifications and the harness's
+ * own meta lines are skipped, and so is a tool call `toolActivityLine` names
+ * no verb for.
  */
 export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
@@ -876,8 +916,7 @@ export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[
       continue
     }
     if (line.type === 'assistant') {
-      const text = assistantText(line)
-      if (text !== undefined) feed.push({ role: 'assistant', text, timestamp })
+      feed.push(...assistantFeedEntries(line, timestamp))
     }
   }
   return feed.slice(-limit)

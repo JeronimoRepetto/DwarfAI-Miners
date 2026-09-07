@@ -3,6 +3,7 @@ import type {
   DwarfPermissionDecision,
   DwarfProvider,
   DwarfQuestionAnswerResult,
+  FeedActivity,
   FeedMessage,
   HeldSessionLaunchResult
 } from '../domain/types'
@@ -286,7 +287,7 @@ export class HeldSessionRegistry {
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),
-        onMessage: (role, text) => this.recordMessage(key, role, text),
+        onMessage: (role, text, activity) => this.recordMessage(key, role, text, activity),
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
         onPermission: (prompt) => this.receivePermission(key, prompt),
         onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
@@ -643,15 +644,25 @@ export class HeldSessionRegistry {
    * decides WHEN a message is seen — which is the one thing the registry knows
    * and the pure helper does not.
    */
-  private recordMessage(key: number, role: FeedMessage['role'], text: string): void {
+  private recordMessage(
+    key: number,
+    role: FeedMessage['role'],
+    text: string,
+    activity?: FeedActivity
+  ): void {
     const record = this.held.get(key)
     if (record === undefined) return
-    record.conversation = retainHeldMessage(record.conversation, this.message(role, text))
+    record.conversation = retainHeldMessage(record.conversation, this.message(role, text, activity))
   }
 
   /** One message stamped with this host's own clock — the only honest time there is. */
-  private message(role: FeedMessage['role'], text: string): FeedMessage {
-    return { role, text, timestamp: new Date(this.now()).toISOString() }
+  private message(role: FeedMessage['role'], text: string, activity?: FeedActivity): FeedMessage {
+    return {
+      role,
+      text,
+      timestamp: new Date(this.now()).toISOString(),
+      ...(activity === undefined ? {} : { activity })
+    }
   }
 
   /**
