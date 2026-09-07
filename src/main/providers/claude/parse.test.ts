@@ -42,11 +42,15 @@ describe('encodeClaudeProjectDir', () => {
 
 describe('parseClaudeSessionEntry', () => {
   it('parses a real sessions/<pid>.json registry entry', () => {
+    // AMENDED for #255: `statusReported` joined the shape. The assertion is
+    // whole-object on purpose — a field added here has to be declared — and
+    // nothing else about the parse moved.
     expect(parseClaudeSessionEntry(sessionEntryJson)).toEqual({
       pid: 32896,
       sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
       cwd: 'C:\\Users\\j\\Desktop\\Sample-Project',
       status: 'busy',
+      statusReported: true,
       procStart: '134324755721362761',
       kind: 'interactive',
       name: 'sample-project-70',
@@ -99,6 +103,27 @@ describe('parseClaudeSessionEntry', () => {
     const entry = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', status: 'waiting' })
     expect(entry?.status).toBe('waiting')
     expect(entry?.waitingFor).toBeUndefined()
+  })
+
+  /**
+   * Issue #255. An absent status and an unrecognized one both fold to 'idle',
+   * and only one of them means no REPL was ever there to write it — the
+   * difference between a terminal at a prompt and an SDK-hosted session that
+   * has no console at all (#191).
+   */
+  it('records whether the registry reported a status, which the folded value cannot', () => {
+    const reported = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', status: 'idle' })
+    expect(reported).toMatchObject({ status: 'idle', statusReported: true })
+
+    const absent = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c' })
+    expect(absent).toMatchObject({ status: 'idle', statusReported: false })
+  })
+
+  it('does not count a non-string status as reported', () => {
+    // Garbage in that field is not a REPL saying anything, and the folded
+    // value already reads it as idle: both halves stay conservative.
+    const entry = parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', status: 7 })
+    expect(entry).toMatchObject({ status: 'idle', statusReported: false })
   })
 
   it('ignores a non-string waitingFor value', () => {

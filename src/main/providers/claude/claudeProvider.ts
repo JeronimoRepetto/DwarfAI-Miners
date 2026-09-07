@@ -773,8 +773,7 @@ export class ClaudeProvider implements Provider {
     // The foreman is on scene while its session is busy, has agents out, or is
     // provably blocked — registry status 'waiting', written when the session is
     // alive but stopped on user input, an open dialog, or a long tool, with
-    // waitingFor naming the condition (issue #34). Only a truly idle session
-    // with no agents lists no dwarfs, so leaving behavior is unchanged.
+    // waitingFor naming the condition (issue #34).
     //
     // ...or the session is one this app HOLDS (#191). Its registry entry never
     // says busy — an SDK-hosted session writes no status at all, see
@@ -782,10 +781,19 @@ export class ClaudeProvider implements Provider {
     // type there, so it is on the board for as long as it is held. Resting
     // unless the registry proves work, exactly as a waiting one is: the rule
     // below is unchanged, only the door into it is wider.
+    //
+    // ...or a person can still type into its terminal (#255). #34's "only a
+    // truly idle session with no agents lists no dwarfs" was written when the
+    // board's job was to show ACTIVITY; the panel has since become a place to
+    // TALK to sessions, and a dwarf is the only handle it has for sending
+    // text, so an idle session at an open prompt was the one it could never
+    // reach. Same widened door, same resting dwarf — sitsAtAnOpenPrompt
+    // carries the evidence it takes and the bound that keeps it honest.
     if (
       inFlightAgents.length > 0 ||
       session.status !== 'idle' ||
-      this.isHeldSession(session.sessionId)
+      this.isHeldSession(session.sessionId) ||
+      this.sitsAtAnOpenPrompt(session, transcriptStat?.mtimeMs, now)
     ) {
       dwarfs.push({
         id: mainDwarfId,
@@ -1092,6 +1100,42 @@ export class ClaudeProvider implements Provider {
     return dwarfSilenceWindowKey('foreman', claudeSessionAttendance(session)) === 'unattended'
       ? this.workerSilenceMs
       : this.foremanSilenceMs
+  }
+
+  /**
+   * Is this session sitting at a prompt somebody can still type into, so that
+   * it rests on the board although the registry proves no work (issue #255)?
+   *
+   * Three conditions, and each rules out a session the panel could not
+   * actually reach:
+   *
+   * - Attendance must be 'attended'. The registry's own `kind` is the only
+   *   thing that can say a human is there (#68) — rank cannot, because a
+   *   headless `claude -p` run is the root of its own tree and therefore a
+   *   foreman too. 'unknown' does not qualify, and that is the same asymmetry
+   *   that keeps it out of every other recorded decision here: generous is the
+   *   safe side when the cost is a slow departure, and the wrong side when the
+   *   cost is a dwarf on the board that nothing can be sent to.
+   * - The registry must have REPORTED a status. `kind: interactive` is written
+   *   by an SDK-hosted session too, which has no console at all (#191), so
+   *   kind alone would put another tool's SDK session on the board with a
+   *   terminal target that can never land. A status is REPL-written evidence
+   *   that a console exists; the panel's OWN hosted sessions are unaffected,
+   *   because holding the stream is what puts those on the board.
+   * - The transcript must have been written inside this session's silence
+   *   window, the very one the staleness rule already weighs it by, so an open
+   *   terminal nobody touches still leaves (#47/#68). Past the window it drops
+   *   exactly as it did before, and a session with no transcript at all has
+   *   produced no evidence for this to find fresh.
+   */
+  private sitsAtAnOpenPrompt(
+    session: ClaudeSessionEntry,
+    transcriptMtimeMs: number | undefined,
+    now: number
+  ): boolean {
+    if (claudeSessionAttendance(session) !== 'attended') return false
+    if (!session.statusReported) return false
+    return this.writtenWithinWindow(transcriptMtimeMs, now, this.sessionSilenceMs(session))
   }
 
   /**

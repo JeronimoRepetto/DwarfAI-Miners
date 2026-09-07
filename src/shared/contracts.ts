@@ -373,6 +373,15 @@ export const WAITING_ON_HUMAN_REASON: WaitingReason = 'user-input'
  * a deliberate choice about which error costs more, not an equivalence: nothing
  * that RECORDS a decision may resolve 'unknown' into 'attended'.
  *
+ * Since issue #255 it decides more than a window. A root session the registry
+ * calls 'attended' stays on the board while it rests, because a dwarf is the
+ * panel's only handle for sending text and a terminal still at its prompt is
+ * exactly what a person wants to write to next. 'unknown' does not get that,
+ * and this is the rule above rather than an exception to it: keeping a dwarf on
+ * the board RECORDS a decision about who is there, so the placeholder may not
+ * seal it. The window stays generous for an unproven session; its existence
+ * does not.
+ *
  * Deliberately not a boolean, and deliberately not derived from rank: role
  * comes from topology, so every root session is a foreman whether or not there
  * is a keyboard in front of it.

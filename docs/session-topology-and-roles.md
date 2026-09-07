@@ -62,7 +62,13 @@ flickering, not just rank. Reported live on Windows against real Codex sessions,
   place a Codex session stops being live. Only `status` moves between turns, `working` ↔ `waiting`.
   The snapshot's own `status` is unchanged (`busy ? 'busy' : 'idle'`, `:652`) because it answers a
   different question — _is a turn open_ — and listing a dwarf beside an `idle` snapshot is exactly
-  what `claudeProvider` does for a session that is idle with agents out (`:680`).
+  what `claudeProvider` does for a session that is idle with agents out (`:680`) — and, since #255,
+  for an idle session a person can still type into: `kind: interactive` with a REPL-written status
+  rests its foreman rather than dropping it, bounded by the silence window
+  (`claudeProvider.sitsAtAnOpenPrompt`). Claude did not adopt Codex's rule wholesale, and the
+  difference is the point: Codex's existence gate is liveness, so every live root rests, while
+  Claude's is evidence of a KEYBOARD, so a headless `claude -p` run still leaves when its turn
+  ends. Both now agree that stopping work is not leaving the mine.
 - **Rank** is a remembered edge, not a headcount. One `Set<string>` of session ids ever observed as
   a parent (`codexProvider.ts:254`) is read when the dwarf is built (`:615`) and written by
   `linkSubagents` (`:750`), which then applies it to every parent in the scan (`:761`) so an edge
