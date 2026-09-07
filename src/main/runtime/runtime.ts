@@ -1889,10 +1889,13 @@ export class AgentRuntime {
    * panel; a held session's child dies with the panel, and in exchange its asks
    * arrive live rather than post-hoc. Neither replaces the other.
    *
-   * The model and effort (#239) travel through unchanged — see launchAgent's
-   * own note on the same hop. The registry's own configured model still
-   * applies underneath when the request names none; that fallback is the
-   * registry's, not this method's (see HeldSessionRegistry.launch).
+   * The model, effort and permission mode (#239) travel through unchanged —
+   * see launchAgent's own note on the same hop. The registry's own configured
+   * model still applies underneath when the request names none; that
+   * fallback is the registry's, not this method's (see
+   * HeldSessionRegistry.launch). Permission mode has no such fallback: this
+   * is the only launch mode that reads one at all, so its only two answers
+   * are this launch's own choice and the SDK's `'default'`.
    */
   async launchHeldSession(request: HeldSessionLaunchRequest): Promise<HeldSessionLaunchResult> {
     // Refused before the mine is even looked up: a demo's mines are invented,
@@ -1908,7 +1911,8 @@ export class AgentRuntime {
       minePath: mine.path,
       prompt: request.prompt,
       ...(request.model === undefined ? {} : { model: request.model }),
-      ...(request.effort === undefined ? {} : { effort: request.effort })
+      ...(request.effort === undefined ? {} : { effort: request.effort }),
+      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode })
     })
   }
 

@@ -639,6 +639,36 @@ describe('preload launch contract (#168)', () => {
     expect('model' in sent).toBe(false)
     expect('effort' in sent).toBe(false)
   })
+
+  /*
+   * #239. Held-only, exactly as HeldSessionLaunchRequest.permissionMode is —
+   * launchAgent carries no such field, and the bridge must not invent one for
+   * it.
+   */
+  it('carries a permission mode on the held channel when the caller named one', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+  })
+
+  it('crosses no permission mode when the caller named none, rather than an empty string', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('permissionMode' in sent).toBe(false)
+  })
 })
 
 describe('preload mine-history contract (#192)', () => {

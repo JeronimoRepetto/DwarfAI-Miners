@@ -5248,6 +5248,43 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     expect('model' in port.started[0]!).toBe(false)
     expect('effort' in port.started[0]!).toBe(false)
   })
+
+  it('forwards a permission mode the request named, down to the held session', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+    runtime.stop()
+
+    expect(port.started[0]!.permissionMode).toBe('plan')
+  })
+
+  it('leaves the permission mode off the held session start when the request named none', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    runtime.stop()
+
+    expect('permissionMode' in port.started[0]!).toBe(false)
+  })
 })
 
 /**

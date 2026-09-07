@@ -7,14 +7,19 @@ import {
   COMMAND_PLACEHOLDER,
   OTHER_CHOICE,
   adoptLaunchedDwarf,
+  chooseEffort,
+  chooseModel,
+  choosePermissionMode,
   closeLaunch,
   closedLaunch,
   commitCommand,
   composerEnabled,
   composerPlaceholder,
   chooseProvider,
+  launchPermissionMode,
   launchPhase,
   launchPrompt,
+  launchTuning,
   openLaunch,
   submitRefused,
   startedDetached,
@@ -284,5 +289,49 @@ describe('a launch that started detached', () => {
 
   it('stays detached after the handover, because the session still is', () => {
     expect(adoptLaunchedDwarf(started(), 'codex:sess-9').detached).toBe(true)
+  })
+})
+
+/*
+ * The model/effort/permission row under the composer (#239). Additions
+ * asserted in their own describe, in the same style #168's are above.
+ */
+describe('the model, effort and permission row (#239)', () => {
+  it('starts with nothing chosen, so an untouched row sends nothing', () => {
+    const state = withClaude()
+
+    expect(state.model).toBeNull()
+    expect(state.effort).toBeNull()
+    expect(state.permissionMode).toBeNull()
+    expect(launchTuning(state)).toEqual({})
+    expect(launchPermissionMode(state)).toBeUndefined()
+  })
+
+  it('carries a chosen model and effort into launchTuning', () => {
+    const state = chooseEffort(chooseModel(withClaude(), 'sonnet'), 'xhigh')
+
+    expect(launchTuning(state)).toEqual({ model: 'sonnet', effort: 'xhigh' })
+  })
+
+  it('carries a chosen permission mode on its own, never inside launchTuning', () => {
+    const state = choosePermissionMode(withClaude(), 'plan')
+
+    expect(launchPermissionMode(state)).toBe('plan')
+    // Not a launchAgent/launchHeldSession field the same way model/effort are —
+    // see HeldSessionLaunchRequest.permissionMode.
+    expect(launchTuning(state)).toEqual({})
+  })
+
+  it('resets every tuning field when the provider chip changes', () => {
+    const tuned = choosePermissionMode(
+      chooseEffort(chooseModel(withClaude(), 'sonnet'), 'xhigh'),
+      'plan'
+    )
+
+    const switched = chooseProvider(tuned, 'codex')
+
+    expect(switched.model).toBeNull()
+    expect(switched.effort).toBeNull()
+    expect(switched.permissionMode).toBeNull()
   })
 })

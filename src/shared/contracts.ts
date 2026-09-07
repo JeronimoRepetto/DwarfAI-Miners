@@ -1592,6 +1592,33 @@ export interface AgentLaunchResult {
  * already being shown, so this channel cannot be talked into starting a process
  * somewhere the panel is not showing.
  */
+/**
+ * Every permission mode a HELD session may be started under (#239) — the
+ * Agent SDK's own `PermissionMode` MINUS `'bypassPermissions'`, which this
+ * app refuses to offer from the launch panel: see sdkHeldSession.ts's module
+ * comment for why "start a session in this mine" must never quietly mean
+ * "and let it do anything, unattended, because nobody is watching" — that
+ * argument is unchanged by this issue and is not reopened here.
+ *
+ * On the wire, and checked by both processes with it: main refuses a request
+ * naming anything else before it ever reaches the SDK, and the Add Panel
+ * draws its Permissions picker from this same list rather than a second copy
+ * that could drift and offer a mode main would refuse.
+ */
+export const HELD_PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'dontAsk', 'auto'] as const
+
+export type HeldPermissionMode = (typeof HELD_PERMISSION_MODES)[number]
+
+/**
+ * Whether an unknown value names a mode this build will hold a session under.
+ * Same reason `isDwarfProvider`/`isMineTier` are values and not casts: this
+ * reads a value arriving over IPC, and an unrecognised one — `bypassPermissions`
+ * above all — has to read as "not offered" rather than being passed on.
+ */
+export function isHeldPermissionMode(value: unknown): value is HeldPermissionMode {
+  return typeof value === 'string' && (HELD_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
 export interface HeldSessionLaunchRequest {
   mineId: string
   /**
@@ -1622,6 +1649,14 @@ export interface HeldSessionLaunchRequest {
    * lists.
    */
   effort?: string
+  /**
+   * The permission mode to hold this session under, or absent for the CLI's
+   * own default (#239) — checked against `HELD_PERMISSION_MODES` at the
+   * boundary. Held Claude only: a detached or hosted launch has no `canUseTool`
+   * callback for a mode to change the behaviour of, which is why this field
+   * lives here and not on `AgentLaunchRequest`.
+   */
+  permissionMode?: HeldPermissionMode
 }
 
 /**

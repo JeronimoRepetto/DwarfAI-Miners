@@ -233,6 +233,12 @@ export class HeldSessionRegistry {
       provider: DwarfProvider
       minePath: string
       prompt: string
+      /**
+       * The permission mode this launch asked for (#239), already checked at
+       * the boundary against `HELD_PERMISSION_MODES` — never `'bypassPermissions'`.
+       * Absent leaves the SDK on its own `'default'`.
+       */
+      permissionMode?: string
     } & LaunchTuning
   ): Promise<HeldSessionLaunchResult> {
     // Refused before anything else, because nothing about this machine could
@@ -284,6 +290,7 @@ export class HeldSessionRegistry {
         prompt,
         ...(model === undefined ? {} : { model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
+        ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),

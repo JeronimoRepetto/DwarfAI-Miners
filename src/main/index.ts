@@ -43,7 +43,12 @@ import type {
   ProjectSortKey,
   WatchedFeedPush
 } from '../shared/contracts'
-import { IPC_CHANNELS, isDwarfProvider, isMineTier } from '../shared/contracts'
+import {
+  IPC_CHANNELS,
+  isDwarfProvider,
+  isHeldPermissionMode,
+  isMineTier
+} from '../shared/contracts'
 import {
   enable as enableAutostart,
   ensureDefaultAutostart,
@@ -235,7 +240,22 @@ function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | nu
   // Same boundary check as parseLaunchRequest, and for the same reason (#239).
   const tuning = parseLaunchTuning(record.provider, record)
   if (tuning === null) return null
-  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt, ...tuning }
+  // The permission mode this HELD launch asked for (#239), checked against
+  // HELD_PERMISSION_MODES — a list that deliberately has no `bypassPermissions`
+  // member, so a request naming it is refused here exactly as an unrecognised
+  // mode would be, never carried through as a lesser choice. Held-only: a
+  // detached or hosted launch has no `canUseTool` callback for a mode to
+  // change the behaviour of, which is why this channel alone checks it.
+  if (record.permissionMode !== undefined && !isHeldPermissionMode(record.permissionMode)) {
+    return null
+  }
+  return {
+    mineId: record.mineId,
+    provider: record.provider,
+    prompt: record.prompt,
+    ...tuning,
+    ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode })
+  }
 }
 
 /**

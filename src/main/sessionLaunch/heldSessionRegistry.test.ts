@@ -1182,4 +1182,22 @@ describe('a held launch that names a model and an effort (#239)', () => {
     expect(logged.join(' ')).not.toContain('sonnet')
     expect(logged.join(' ')).not.toContain('dig the east gallery')
   })
+
+  it('forwards a permission mode the request named, and none when it named none', async () => {
+    const port = new FakePort()
+    const registry = tunedRegistry(port)
+
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      permissionMode: 'plan'
+    })
+    expect(port.started[0]!.permissionMode).toBe('plan')
+
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    expect(port.started[1]!.permissionMode).toBeUndefined()
+    expect('permissionMode' in port.started[1]!).toBe(false)
+  })
 })

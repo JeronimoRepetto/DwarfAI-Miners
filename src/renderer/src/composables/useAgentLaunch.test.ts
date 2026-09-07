@@ -29,6 +29,10 @@ const UNBUILT = {
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     listAgentProviders: vi.fn().mockResolvedValue({ providers: [CLAUDE, CODEX] }),
+    // #239. Same reason listAgentProviders is named here rather than per
+    // test: an awaited member resolving undefined becomes an unhandled
+    // rejection only the full suite catches.
+    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
     // The detached channel answers with the receipt main opened for this
     // launch (#191) — never a dwarf id, which is not known at that moment.
@@ -121,6 +125,66 @@ describe('opening the Add Panel', () => {
     expect(phase.value).toBe('closed')
     expect(mineId.value).toBeNull()
   })
+
+  /*
+   * #239. Asked alongside listAgentProviders, on the same per-open cadence —
+   * see the composable's own note on why that beats asking per keystroke.
+   */
+  it('asks main for each provider’s own model catalogue too', async () => {
+    const catalogs = [
+      {
+        provider: 'claude' as const,
+        models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
+        efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'provider' as const
+      }
+    ]
+    const api = stubApi({ listAgentModels: vi.fn().mockResolvedValue({ catalogs }) })
+    const { open, choose, modelPicker } = useAgentLaunch()
+
+    await open(MINE)
+    choose('claude')
+
+    expect(api.listAgentModels).toHaveBeenCalledOnce()
+    expect(modelPicker.value).toEqual({
+      visible: true,
+      models: catalogs[0]!.models,
+      disabled: false,
+      note: null
+    })
+  })
+
+  it('opens with no catalogues when the bridge cannot answer, rather than failing to open', async () => {
+    stubApi({ listAgentModels: vi.fn().mockRejectedValue(new Error('bridge down')) })
+    const { open, choose, modelPicker } = useAgentLaunch()
+
+    await open(MINE)
+    choose('claude')
+
+    expect(modelPicker.value.visible).toBe(true)
+    expect(modelPicker.value.disabled).toBe(true)
+  })
+
+  it('forgets the model catalogues when it closes', async () => {
+    stubApi({
+      listAgentModels: vi.fn().mockResolvedValue({
+        catalogs: [
+          { provider: 'claude' as const, models: [], efforts: [], source: 'provider' as const }
+        ]
+      })
+    })
+    const { open, close, choose, modelPicker } = useAgentLaunch()
+    await open(MINE)
+    choose('claude')
+
+    close()
+    choose('claude')
+
+    // catalogs is empty again, which reads as "this provider named none" —
+    // the same shape as a provider main could not ask at all.
+    expect(modelPicker.value.models).toEqual([])
+    expect(modelPicker.value.disabled).toBe(true)
+  })
 })
 
 describe('submitting a launch', () => {
@@ -145,6 +209,29 @@ describe('submitting a launch', () => {
       mineId: MINE,
       provider: 'claude',
       prompt: 'dig the east gallery'
+    })
+  })
+
+  /*
+   * #239. The model/effort row under the composer, forwarded on submit —
+   * absent when untouched (already pinned above, since the object there
+   * carries no `model`/`effort` key at all), present when chosen.
+   */
+  it('carries a chosen model, effort and permission mode to a held launch', async () => {
+    const { api, launch } = await ready()
+    launch.setModel('claude-sonnet-5')
+    launch.setEffort('xhigh')
+    launch.setPermissionMode('plan')
+
+    await launch.submit()
+
+    expect(api.launchHeldSession).toHaveBeenCalledWith({
+      mineId: MINE,
+      provider: 'claude',
+      prompt: 'dig the east gallery',
+      model: 'claude-sonnet-5',
+      effort: 'xhigh',
+      permissionMode: 'plan'
     })
   })
 
@@ -337,6 +424,28 @@ describe('routing a launch to the channel its provider can actually use', () => 
       prompt: 'dig the east gallery'
     })
     expect(api.launchHeldSession).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #239. Model and effort travel to the detached channel too — Codex's own
+   * launch args carry them (buildCodexLaunchArgs, main-side). Permission mode
+   * does not: the row hides it for Codex in the first place (permissionsVisible
+   * is held-Claude-only), so there is nothing here to forward.
+   */
+  it('carries a chosen model and effort to a detached launch', async () => {
+    const { api, launch } = await ready('codex')
+    launch.setModel('gpt-5.6-sol')
+    launch.setEffort('high')
+
+    await launch.submit()
+
+    expect(api.launchAgent).toHaveBeenCalledWith({
+      mineId: MINE,
+      provider: 'codex',
+      prompt: 'dig the east gallery',
+      model: 'gpt-5.6-sol',
+      effort: 'high'
+    })
   })
 
   /*

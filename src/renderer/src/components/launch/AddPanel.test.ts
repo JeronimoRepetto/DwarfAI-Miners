@@ -8,9 +8,18 @@ import {
   OTHER_CHOICE,
   type LaunchPhase
 } from '../../lib/launch/launchState'
+import {
+  MODEL_HISTORY_SOURCE,
+  NO_MODEL_LIST,
+  type EffortPicker,
+  type ModelPicker
+} from '../../lib/launch/modelTuning'
 import { providerChips } from '../../lib/launch/providerChips'
 import { MAX_DWARF_TEXT_CHARS, type AgentProviderOption } from '../../types'
 import AddPanel from './AddPanel.vue'
+
+const HIDDEN_MODEL_PICKER: ModelPicker = { visible: false, models: [], disabled: true, note: null }
+const HIDDEN_EFFORT_PICKER: EffortPicker = { visible: false, efforts: [] }
 
 const CLAUDE: AgentProviderOption = { provider: 'claude', installed: true, launchable: true }
 const CODEX: AgentProviderOption = {
@@ -31,7 +40,10 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       command: (overrides.command ?? '') as string,
       prompt: (overrides.prompt ?? '') as string,
       refusal: (overrides.refusal ?? null) as string | null,
-      error: (overrides.error ?? null) as string | null
+      error: (overrides.error ?? null) as string | null,
+      modelPicker: (overrides.modelPicker ?? HIDDEN_MODEL_PICKER) as ModelPicker,
+      effortPicker: (overrides.effortPicker ?? HIDDEN_EFFORT_PICKER) as EffortPicker,
+      permissionsVisible: (overrides.permissionsVisible ?? false) as boolean
     }
   })
 }
@@ -117,6 +129,167 @@ describe('the custom-command input', () => {
 
     expect(wrapper.emitted('command')?.at(-1)).toEqual(['lalolanda'])
     expect(wrapper.emitted('commit')).toHaveLength(1)
+  })
+})
+
+/*
+ * The row under the composer (#239, launch.md's maintainer amendment): model,
+ * effort and permissions, visible only once a real provider chip is chosen.
+ */
+describe('the model, effort and permission row', () => {
+  const LIVE_MODEL_PICKER: ModelPicker = {
+    visible: true,
+    models: [
+      { value: 'claude-sonnet-5', label: 'Sonnet' },
+      { value: 'claude-haiku-4-5', label: 'Haiku' }
+    ],
+    disabled: false,
+    note: null
+  }
+
+  it('is absent before a real provider chip is chosen', () => {
+    expect(panel().find('.launch-tuning').exists()).toBe(false)
+  })
+
+  it('is absent for Other, which has no provider identity for it', () => {
+    expect(
+      panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
+        .find('.launch-tuning')
+        .exists()
+    ).toBe(false)
+  })
+
+  it('draws one option per model the picker offers, labelled where it has one', () => {
+    const select = panel({
+      chosen: 'claude',
+      phase: 'known-provider-ready',
+      modelPicker: LIVE_MODEL_PICKER
+    }).get('select[aria-label="Model"]')
+
+    expect(select.findAll('option').map((option) => option.text())).toEqual(['Sonnet', 'Haiku'])
+  })
+
+  it('disables the model select with the picker’s own reason for a provider main could not ask', () => {
+    const wrapper = panel({
+      chosen: 'antigravity',
+      phase: 'known-provider-ready',
+      modelPicker: { visible: true, models: [], disabled: true, note: NO_MODEL_LIST }
+    })
+
+    expect(wrapper.get('select[aria-label="Model"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.tuning-note').text()).toBe(NO_MODEL_LIST)
+  })
+
+  it('shows the source note for a history-derived list, without disabling it', () => {
+    const wrapper = panel({
+      chosen: 'codex',
+      phase: 'known-provider-ready',
+      modelPicker: {
+        visible: true,
+        models: [{ value: 'gpt-5.6-sol' }],
+        disabled: false,
+        note: MODEL_HISTORY_SOURCE
+      }
+    })
+
+    expect(wrapper.get('select[aria-label="Model"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.tuning-note').text()).toBe(MODEL_HISTORY_SOURCE)
+  })
+
+  it('reports the model chosen off the select', async () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'known-provider-ready',
+      modelPicker: LIVE_MODEL_PICKER
+    })
+
+    await wrapper.get('select[aria-label="Model"]').setValue('claude-haiku-4-5')
+
+    expect(wrapper.emitted('model')).toEqual([['claude-haiku-4-5']])
+  })
+
+  it('draws no effort select for a provider the picker says has none', () => {
+    const wrapper = panel({
+      chosen: 'antigravity',
+      phase: 'known-provider-ready',
+      modelPicker: { visible: true, models: [], disabled: true, note: NO_MODEL_LIST },
+      effortPicker: { visible: false, efforts: [] }
+    })
+
+    expect(wrapper.find('select[aria-label="Effort"]').exists()).toBe(false)
+  })
+
+  it('draws one option per effort level, and reports the one chosen', async () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'known-provider-ready',
+      modelPicker: LIVE_MODEL_PICKER,
+      effortPicker: { visible: true, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }
+    })
+    const select = wrapper.get('select[aria-label="Effort"]')
+
+    expect(select.findAll('option').map((option) => option.text())).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+
+    await select.setValue('xhigh')
+    expect(wrapper.emitted('effort')).toEqual([['xhigh']])
+  })
+
+  it('draws no permissions select outside a held Claude session', () => {
+    const wrapper = panel({
+      chosen: 'codex',
+      phase: 'known-provider-ready',
+      modelPicker: {
+        visible: true,
+        models: [{ value: 'gpt-5.6-sol' }],
+        disabled: false,
+        note: null
+      },
+      permissionsVisible: false
+    })
+
+    expect(wrapper.find('select[aria-label="Permissions"]').exists()).toBe(false)
+  })
+
+  it('draws every non-bypass permission mode for a held Claude session, and reports the one chosen', async () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'known-provider-ready',
+      modelPicker: LIVE_MODEL_PICKER,
+      permissionsVisible: true
+    })
+    const select = wrapper.get('select[aria-label="Permissions"]')
+
+    expect(select.findAll('option').map((option) => option.text())).toEqual([
+      'default',
+      'acceptEdits',
+      'plan',
+      'dontAsk',
+      'auto'
+    ])
+    expect(select.findAll('option').map((option) => option.text())).not.toContain(
+      'bypassPermissions'
+    )
+
+    await select.setValue('plan')
+    expect(wrapper.emitted('permissionMode')).toEqual([['plan']])
+  })
+
+  it('is absent once the session has launched, alongside the chips and the composer', () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'submitted-spawning',
+      enabled: true,
+      prompt: 'dig the east gallery',
+      modelPicker: LIVE_MODEL_PICKER
+    })
+
+    expect(wrapper.find('.launch-tuning').exists()).toBe(false)
   })
 })
 

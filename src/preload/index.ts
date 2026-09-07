@@ -429,7 +429,13 @@ const api: DwarfAiMinersApi = {
       prompt: typeof request?.prompt === 'string' ? request.prompt : '',
       // Same discipline as launchAgent's, and the same reason (#239).
       ...(typeof request?.model === 'string' ? { model: request.model } : {}),
-      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {})
+      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
+      // Held-only, for the reason HeldSessionLaunchRequest.permissionMode is:
+      // a detached or hosted launch has no `canUseTool` callback for a mode to
+      // change the behaviour of.
+      ...(typeof request?.permissionMode === 'string'
+        ? { permissionMode: request.permissionMode }
+        : {})
     }),
   // Field by field once more, for the reason the two launch channels above are
   // rebuilt rather than forwarded: this one starts a real process too, and the

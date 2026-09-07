@@ -1,6 +1,7 @@
 import {
   query,
   type EffortLevel,
+  type PermissionMode,
   type PermissionResult,
   type SDKMessage,
   type SDKUserMessage
@@ -62,14 +63,18 @@ import {
  * write nothing at all — and that posture and its `SdkHeldSessionOptions`
  * knob are gone along with it.
  *
- * `permissionMode` stays `'default'` regardless — the same posture an
+ * `permissionMode` used to stay `'default'` regardless — the same posture an
  * interactive session has, where the CLI auto-allows what it considers safe
- * and only prompts for the rest, so this module still only decides what
- * happens to a prompt that reaches it, never which tools reach it at all.
- * The alternative was `'bypassPermissions'`, and that would have made "start a
- * session in this mine" quietly mean "and let it do anything, unattended,
- * because nobody is watching" — the more surprising of the two surprises by
- * some distance, and the one that cannot be undone after the fact.
+ * and only prompts for the rest. #239 made it the launch's own choice, from
+ * `HELD_PERMISSION_MODES`, still defaulting to `'default'` when the request
+ * names none — so this module still only decides what happens to a prompt
+ * that reaches it, never which tools reach it at all; changing the mode only
+ * changes how OFTEN one does. What has not moved is `'bypassPermissions'`:
+ * it is not a member of that list and never will be from this panel, because
+ * it would make "start a session in this mine" quietly mean "and let it do
+ * anything, unattended, because nobody is watching" — the more surprising of
+ * the two surprises by some distance, and the one that cannot be undone
+ * after the fact.
  *
  * Deliberately absent from this slice: "always allow". The SDK's own
  * `PermissionResult` carries an `updatedPermissions` a caller may return
@@ -236,7 +241,12 @@ export function createSdkHeldSession(): HeldSessionPort {
         cwd: request.cwd,
         // Never the SDK's bundled executable — see the module comment.
         pathToClaudeCodeExecutable: request.executablePath,
-        permissionMode: 'default',
+        // The mode this launch asked for (#239), or the SDK's own 'default'
+        // when it asked for none. The cast is the same liberty `effort`'s
+        // below is: the value was checked against HELD_PERMISSION_MODES at
+        // the boundary, and that list has no 'bypassPermissions' member —
+        // see the module comment for why this app refuses to offer it.
+        permissionMode: (request.permissionMode ?? 'default') as PermissionMode,
         ...(request.model === undefined ? {} : { model: request.model }),
         // `Options.effort` (#239). The SDK's own `EffortLevel` is
         // 'low' | 'medium' | 'high' | 'xhigh' | 'max' — the same five
