@@ -41,7 +41,7 @@ import {
 export const APP_DB_FILENAME = 'projects-v1.db'
 
 /** Stamped in PRAGMA user_version. Older versions walk up to it; above is refused. */
-export const APP_SCHEMA_VERSION = 4
+export const APP_SCHEMA_VERSION = 5
 
 /**
  * The version the ledger's tables arrived in.
@@ -58,7 +58,7 @@ export const LEDGER_TABLES_SINCE = 2
 export class UnsupportedSchemaError extends Error {}
 
 /**
- * The projects list — slice 1's table, plus the column v3 added.
+ * The projects list — slice 1's table, plus the columns v3 and v5 added.
  *
  * added_at and last_opened_at are separate columns because #92 sorts by either,
  * and they answer different questions: one is provenance, the other recency.
@@ -67,7 +67,8 @@ export class UnsupportedSchemaError extends Error {}
  * three orders #92 asked for; none of them is speculative — and map_site
  * deliberately has none, since the only question asked of it is "which sites
  * are taken", one scan of a table with one row per project the user has ever
- * opened.
+ * opened. hidden_at has none for the same reason: it is read as a predicate
+ * over that same one-row-per-project table, never searched or ordered by.
  */
 const CREATE_PROJECTS = `
 CREATE TABLE projects (
@@ -80,7 +81,8 @@ CREATE TABLE projects (
   origin TEXT NOT NULL,
   last_provider TEXT,
   known_tier TEXT,
-  map_site INTEGER
+  map_site INTEGER,
+  hidden_at INTEGER
 );
 CREATE INDEX projects_name_norm ON projects (name_norm);
 CREATE INDEX projects_added_at ON projects (added_at);
@@ -176,6 +178,25 @@ CREATE TABLE launched_sessions (
 `
 
 /**
+ * Schema v5 — when the user stopped tracking a mine, so deleting one can be
+ * undone (#169).
+ *
+ * A NULLABLE TIMESTAMP, not a boolean. `NULL` is the only reading that means
+ * "the user still tracks this mine", which is what every row that predates
+ * this column has to mean — a `NOT NULL DEFAULT 0` flag would have needed a
+ * backfill in the very transaction that must not fail, and a boolean would
+ * throw away when the decision was made, which is the one fact a support
+ * question about a vanished mine actually asks for.
+ *
+ * DELETION IS LOGICAL HERE AND NOWHERE ELSE. The row stays and its materials
+ * stay: the mine leaves the map, the list and the board, and re-adding the same
+ * folder finds this same row because identity is the path (mineIdForPath). The
+ * only physical delete in the app is Settings → Data Base → Reset metrics, and
+ * that one still touches the ledger alone (see MetricsResetResult).
+ */
+const ADD_HIDDEN_AT = `ALTER TABLE projects ADD COLUMN hidden_at INTEGER`
+
+/**
  * One step up from `from` to `from + 1`, applied in order and each in its own
  * transaction — which is what lets a database that has fallen two versions
  * behind catch up in one open without a crash ever leaving a stamp that does
@@ -184,7 +205,8 @@ CREATE TABLE launched_sessions (
 const UPGRADES: readonly { from: number; apply: (db: WritableSqliteDb) => void }[] = [
   { from: 1, apply: (db) => db.exec(CREATE_LEDGER) },
   { from: 2, apply: (db) => db.exec(ADD_MAP_SITE) },
-  { from: 3, apply: (db) => db.exec(CREATE_LAUNCHED_SESSIONS) }
+  { from: 3, apply: (db) => db.exec(CREATE_LAUNCHED_SESSIONS) },
+  { from: 4, apply: (db) => db.exec(ADD_HIDDEN_AT) }
 ]
 
 export interface AppDatabase {

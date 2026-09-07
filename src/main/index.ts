@@ -705,10 +705,15 @@ async function init(): Promise<void> {
     () => runtime?.listAgentProviders() ?? noProviders
   )
 
-  // Adding and removing a user-declared mine (#85). declare takes no payload:
-  // the folder picker runs here, so there is no path for the renderer to send
-  // and none to validate. Both refusals below are what a runtime that never
-  // came up would say, phrased for the panel rather than left silent.
+  // Adding a mine and removing one (#85, #169). declare takes no payload: the
+  // folder picker runs here, so there is no path for the renderer to send and
+  // none to validate. Both refusals below are what a runtime that never came up
+  // would say, phrased for the panel rather than left silent.
+  //
+  // `undeclare` is the one removal channel and removes any mine the store
+  // holds, declared or discovered, logically rather than physically — see
+  // MineUndeclareResult. Nothing about the boundary changed with #169: the same
+  // id, the same validation, the same refusal for a payload that is not one.
   const notDeclared: MineDeclareResult = {
     outcome: 'failed',
     reason: 'The panel is still starting up.'

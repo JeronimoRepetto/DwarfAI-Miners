@@ -144,35 +144,177 @@ describe('projects store — declaring one that was already discovered', () => {
   })
 })
 
-describe('projects store — removing a declaration (#85)', () => {
-  it('removes a declared project no agent has ever been seen in', async () => {
+describe('projects store — forgetting a mine (#85, #169)', () => {
+  /*
+    AMENDED for #169 (was: 'removes a declared project no agent has ever been
+    seen in', asserting `'removed'` and `get(id)` null). Deleting is LOGICAL
+    now: the row stays, flagged, so the ore that path earned still has a mine
+    to belong to and re-adding the folder finds the same row. The subject is
+    the same act — the user undoing a declaration nobody has worked — and what
+    changed is what the store does about it.
+  */
+  it('flags a declared project no agent has ever been seen in, and keeps its row', async () => {
     const { store } = newStore()
     const id = value(await store.declare({ path: PATH, at: 1_000 })).id
-    expect(value(await store.removeDeclared(id))).toBe('removed')
-    expect(value(await store.get(id))).toBeNull()
+    expect(value(await store.forget({ id, at: 5_000 }))).toBe('forgotten')
+    const project = value(await store.get(id))
+    expect(project?.hiddenAt).toBe(5_000)
+    expect(project?.addedAt).toBe(1_000)
   })
 
-  it('demotes a declared project that has been worked, rather than deleting its history', async () => {
+  /*
+    AMENDED for #169 (was: 'demotes a declared project that has been worked,
+    rather than deleting its history', asserting `'demoted'` and
+    `origin === 'discovered'`). Demotion was the old answer to "this project
+    has history worth keeping", and it left the mine on the map and in the
+    list — a user who asked to stop tracking a mine got a mine that stayed.
+    The flag keeps the history AND removes the mine, so there is nothing left
+    for a demotion to do. Same subject: a declared project that has been
+    worked, and what removing its declaration costs.
+  */
+  it('keeps a worked project’s history when it is forgotten, without demoting it', async () => {
     const { store } = newStore()
     const id = value(await store.declare({ path: PATH, at: 1_000 })).id
     value(await store.upsertObserved({ path: PATH, at: 2_000, provider: 'claude' }))
 
-    expect(value(await store.removeDeclared(id))).toBe('demoted')
+    expect(value(await store.forget({ id, at: 5_000 }))).toBe('forgotten')
     const project = value(await store.get(id))
-    expect(project?.origin).toBe('discovered')
+    expect(project?.hiddenAt).toBe(5_000)
     expect(project?.lastOpenedAt).toBe(2_000)
+    expect(project?.lastProvider).toBe('claude')
+    // Origin is provenance, not visibility: how the app came to know about this
+    // folder did not change because the user stopped tracking it.
+    expect(project?.origin).toBe('declared')
   })
 
-  it('leaves a project that was never declared alone', async () => {
+  /*
+    AMENDED for #169 (was: 'leaves a project that was never declared alone',
+    asserting `'unchanged'`). That refusal is the exact gap the maintainer hit
+    on 2026-09-07: Codex creates an intermediate folder, the observer discovers
+    it, and undeclare refused to touch it — so it could never be removed. A
+    discovered mine is now forgotten like any other.
+  */
+  it('forgets a project that was only ever discovered', async () => {
     const { store } = newStore()
     const id = value(await store.upsertObserved({ path: PATH, at: 2_000 })).id
-    expect(value(await store.removeDeclared(id))).toBe('unchanged')
-    expect(value(await store.get(id))).not.toBeNull()
+    expect(value(await store.forget({ id, at: 5_000 }))).toBe('forgotten')
+    expect(value(await store.get(id))?.hiddenAt).toBe(5_000)
   })
 
   it('says nothing changed for an id it has never heard of', async () => {
     const { store } = newStore()
-    expect(value(await store.removeDeclared('mine:c:\\nowhere'))).toBe('unchanged')
+    expect(value(await store.forget({ id: 'mine:c:\\nowhere', at: 5_000 }))).toBe('unchanged')
+  })
+
+  it('says nothing changed for a mine it has already forgotten', async () => {
+    // Reporting a second removal would let a caller claim it did something.
+    // The first flag is the one that stopped the tracking; nothing here can.
+    const { store } = newStore()
+    const id = value(await store.declare({ path: PATH, at: 1_000 })).id
+    value(await store.forget({ id, at: 5_000 }))
+    expect(value(await store.forget({ id, at: 9_000 }))).toBe('unchanged')
+    expect(value(await store.get(id))?.hiddenAt).toBe(5_000)
+  })
+
+  it('keeps a forgotten mine out of every browse, and in the whole-table read', async () => {
+    // The two reads answer different questions and #169 needs both: the browse
+    // is what the user sees, and the unfiltered read is how main knows which
+    // ids to keep off the board — a flagged row main could not see would stand
+    // on the map with no card, which is the very disagreement #165 closed.
+    const { store } = newStore()
+    const id = value(await store.declare({ path: PATH, at: 1_000 })).id
+    value(await store.declare({ path: OTHER, at: 2_000 }))
+    value(await store.forget({ id, at: 5_000 }))
+
+    const browsed = value(await store.query({ sortBy: 'addedAt', direction: 'desc' }))
+    expect(browsed.map((project) => project.path)).toEqual([OTHER])
+    expect(value(await store.list())).toHaveLength(2)
+  })
+
+  it('never touches the ore that mine produced', async () => {
+    // The maintainer's contract: the ledger's history survives the deletion
+    // untouched. The vault is a tenant of the same file, so a physical delete
+    // here is exactly how it would be lost.
+    const { store, sqlite } = newStore()
+    const id = value(await store.declare({ path: PATH, at: 1_000 })).id
+    const db = await sqlite.open(APP_DB_FILENAME)
+    db.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [id, 'gold', 800])
+
+    value(await store.forget({ id, at: 5_000 }))
+
+    expect(db.all('SELECT tokens FROM materials WHERE mine_id = ?', [id])).toEqual([
+      { tokens: 800 }
+    ])
+    db.close()
+  })
+})
+
+describe('projects store — re-adding a forgotten mine (#169)', () => {
+  it('re-enables the SAME row rather than making a second one', async () => {
+    const { store } = newStore()
+    const declared = value(await store.declare({ path: PATH, at: 1_000 }))
+    value(await store.upsertObserved({ path: PATH, at: 2_000, knownTier: 'gold' }))
+    value(await store.forget({ id: declared.id, at: 5_000 }))
+
+    const readded = value(await store.declare({ path: PATH, at: 9_000 }))
+
+    expect(readded.id).toBe(declared.id)
+    expect(readded.hiddenAt).toBeNull()
+    // Identity is the path, so everything the row already knew is still there:
+    // when it was first seen, the tier a walk measured, where it stands.
+    expect(readded.addedAt).toBe(1_000)
+    expect(readded.knownTier).toBe('gold')
+    expect(readded.mapSite).toBe(declared.mapSite)
+    expect(value(await store.list())).toHaveLength(1)
+  })
+
+  it('brings back the ore that mine had already produced', async () => {
+    const { store, sqlite } = newStore()
+    const id = value(await store.declare({ path: PATH, at: 1_000 })).id
+    const db = await sqlite.open(APP_DB_FILENAME)
+    db.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [id, 'gold', 800])
+    value(await store.forget({ id, at: 5_000 }))
+
+    const readded = value(await store.declare({ path: PATH, at: 9_000 }))
+
+    // Same id, so the vault's rows attach to the re-added mine on their own —
+    // that is what "never a second id scheme" buys here.
+    expect(readded.id).toBe(id)
+    expect(db.all('SELECT tokens FROM materials WHERE mine_id = ?', [id])).toEqual([
+      { tokens: 800 }
+    ])
+    db.close()
+  })
+
+  /*
+   * The re-discovery rule, and it is a product decision rather than a
+   * mechanism: a mine the user forgot stays forgotten until the user re-adds
+   * it EXPLICITLY. Codex writes intermediate project folders and an agent runs
+   * in them, so a sighting that lifted the flag would put every one of them
+   * back on the map by itself — which is the complaint (#169, 2026-09-07), not
+   * the fix. Declaring is the one door back.
+   */
+  it('is not re-enabled by an agent being seen working there again', async () => {
+    const { store } = newStore()
+    const id = value(await store.upsertObserved({ path: PATH, at: 2_000 })).id
+    value(await store.forget({ id, at: 5_000 }))
+
+    value(await store.upsertObserved({ path: PATH, at: 9_000, provider: 'claude' }))
+
+    expect(value(await store.get(id))?.hiddenAt).toBe(5_000)
+    expect(value(await store.query({ sortBy: 'addedAt', direction: 'desc' }))).toEqual([])
+  })
+
+  it('is not re-enabled by a fresh tier measurement either', async () => {
+    const { store } = newStore()
+    const id = value(await store.declare({ path: PATH, at: 1_000 })).id
+    value(await store.forget({ id, at: 5_000 }))
+
+    value(await store.recordMeasuredTier({ path: PATH, knownTier: 'silver' }))
+
+    const project = value(await store.get(id))
+    expect(project?.hiddenAt).toBe(5_000)
+    expect(project?.knownTier).toBe('silver')
   })
 })
 
@@ -244,7 +386,9 @@ describe('projects store — schema version', () => {
     expect(await store.declare({ path: PATH, at: 1 })).toMatchObject({ ok: false })
     expect(await store.upsertObserved({ path: PATH, at: 1 })).toMatchObject({ ok: false })
     expect(await store.get('mine:x')).toMatchObject({ ok: false })
-    expect(await store.removeDeclared('mine:x')).toMatchObject({ ok: false })
+    // AMENDED for #169 (was: `store.removeDeclared('mine:x')`) — the same
+    // operation under the name the one surviving concept carries.
+    expect(await store.forget({ id: 'mine:x', at: 1 })).toMatchObject({ ok: false })
   })
 })
 

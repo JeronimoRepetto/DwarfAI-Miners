@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aggregateMines,
   collapseDuplicateMines,
+  dropForgottenMines,
   mergeDeclaredMines,
   mineIdForPath,
   stampMapSites,
@@ -547,5 +548,38 @@ describe('stampUnrecorded', () => {
     const original = mineOf({ id: 'mine:a' })
     stampUnrecorded([original], new Set<string>())
     expect(original.unrecorded).toBeUndefined()
+  })
+})
+
+describe('dropForgottenMines (#169)', () => {
+  const mineOf = (overrides: Partial<ReturnType<typeof defaultMine>>) => ({
+    ...defaultMine(),
+    ...overrides
+  })
+
+  it('takes a mine the user has stopped tracking off the board', () => {
+    const board = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
+    expect(dropForgottenMines(board, new Set(['mine:a'])).map((mine) => mine.id)).toEqual([
+      'mine:b'
+    ])
+  })
+
+  it('drops it even while a session is working in it', () => {
+    // The whole point of #169's 2026-09-07 motivation: an agent is IN the
+    // folder — that is why it was discovered — and the user still asked for it
+    // gone. A live crew is not a veto.
+    const board = [mineOf({ id: 'mine:a', dwarfs: [defaultDwarf()] })]
+    expect(dropForgottenMines(board, new Set(['mine:a']))).toEqual([])
+  })
+
+  it('returns the board itself when nothing has been forgotten', () => {
+    const board = [mineOf({ id: 'mine:a' })]
+    expect(dropForgottenMines(board, new Set<string>())).toBe(board)
+  })
+
+  it('never mutates the board it was given', () => {
+    const board = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
+    dropForgottenMines(board, new Set(['mine:a']))
+    expect(board.map((mine) => mine.id)).toEqual(['mine:a', 'mine:b'])
   })
 })

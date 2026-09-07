@@ -30,10 +30,31 @@ describe('escapeLikeWildcards', () => {
 })
 
 describe('buildProjectQuery — filtering', () => {
-  it('filters nothing when neither a tier nor a term was asked for', () => {
+  /*
+    AMENDED for #169 (was: `expect(sql).not.toContain('WHERE')`). Every browse
+    now carries one condition the caller never asks for — the mines the user
+    still tracks — so "no filter" means no filter of the CALLER's, which is
+    what this test is about. The parameter list is unchanged: the flag is a
+    NULL test and binds nothing.
+  */
+  it('filters nothing of its own when neither a tier nor a term was asked for', () => {
     const { sql, params } = buildProjectQuery({ sortBy: 'addedAt', direction: 'desc' })
-    expect(sql).not.toContain('WHERE')
+    expect(sql).not.toContain('known_tier')
+    expect(sql).not.toContain('LIKE')
     expect(params).toEqual([PROJECT_QUERY_DEFAULT_LIMIT, 0])
+  })
+
+  it('excludes a mine the user has stopped tracking from every browse (#169)', () => {
+    // Not an option a caller can turn off: a forgotten mine is gone from the
+    // list, and a query shape that could omit this condition would be one page
+    // of the browse that still showed it.
+    for (const query of [
+      { sortBy: 'addedAt', direction: 'desc' },
+      { sortBy: 'lastOpenedAt', direction: 'asc' },
+      { tier: 'gold', nameContains: 'forge', sortBy: 'addedAt', direction: 'desc' }
+    ] as const) {
+      expect(buildProjectQuery(query).sql).toContain('hidden_at IS NULL')
+    }
   })
 
   it('filters on the stored known_tier column, with the tier bound and never interpolated', () => {

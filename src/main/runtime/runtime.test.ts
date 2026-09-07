@@ -3937,7 +3937,16 @@ describe('AgentRuntime declared mines (#85)', () => {
     expect(mines).toEqual([])
   })
 
-  it('reverts a worked mine to an ordinary discovered one instead of hiding it', async () => {
+  /*
+    AMENDED for #169 (was: 'reverts a worked mine to an ordinary discovered one
+    instead of hiding it', asserting `{ outcome: 'reverted' }` and a board that
+    still held the mine and its dwarf). Undeclaring IS the soft delete now, and
+    a live session no longer saves a mine from it: the maintainer's 2026-09-07
+    case is a folder Codex made and is working in RIGHT NOW that could never be
+    removed, so "an agent is in there" had to stop being a veto. Same subject —
+    what undeclaring a mine somebody is working does — and the answer reversed.
+  */
+  it('takes a worked mine off the board too, agent and all', async () => {
     const { provider, setWorking } = toggleProvider(ADOPTED)
     const runtime = declaredRuntime({
       providers: [provider],
@@ -3947,18 +3956,109 @@ describe('AgentRuntime declared mines (#85)', () => {
     setWorking(true)
     const declared = await runtime.declareMine()
     await runtime.refresh()
-    // The store demotes rather than deletes a project it has SEEN worked, so
-    // the sighting has to have reached it before the declaration is undone.
     await runtime.settleProjects()
     const result = await runtime.undeclareMine(declared.mineId!)
     await runtime.refresh()
     const mines = runtime.getMines()
     runtime.stop()
 
-    expect(result).toEqual({ outcome: 'reverted' })
-    expect(mines).toHaveLength(1)
-    expect(mines[0]!.declared).toBeUndefined()
-    expect(mines[0]!.dwarfs).toHaveLength(1)
+    expect(result).toEqual({ outcome: 'removed' })
+    expect(mines).toEqual([])
+  })
+
+  it('keeps a forgotten mine off the board however many polls later (#169)', async () => {
+    // The Codex case in one test: an agent goes on working in the folder, and
+    // the mine does not come back on its own. Discovery still SEES the session
+    // — that is unavoidable, it is a real session — so what matters is that
+    // every poll after the deletion drops it again.
+    const { provider, setWorking } = toggleProvider(ADOPTED)
+    const runtime = declaredRuntime({
+      providers: [provider],
+      chooseDirectory: async () => ADOPTED
+    })
+
+    setWorking(true)
+    const declared = await runtime.declareMine()
+    await runtime.refresh()
+    await runtime.settleProjects()
+    await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    await runtime.refresh()
+    await runtime.settleProjects()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toEqual([])
+  })
+
+  it('puts the mine back when the user adds the same folder again (#169)', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const declared = await runtime.declareMine()
+    await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    expect(runtime.getMines()).toEqual([])
+
+    const readded = await runtime.declareMine()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    // The SAME mine, because identity is the path: whatever the vault accrued
+    // under this id is attached to it again.
+    expect(readded.mineId).toBe(declared.mineId)
+    expect(mines.map((mine) => mine.id)).toEqual([declared.mineId])
+  })
+
+  it('leaves the ore a forgotten mine produced in the vault (#169)', async () => {
+    // Deleting is logical: the ledger's history survives untouched, which is
+    // what makes a re-add find its materials still there.
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
+
+    const declared = await runtime.declareMine()
+    await runtime.undeclareMine(declared.mineId!)
+    await runtime.refresh()
+    const readded = await runtime.declareMine()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(readded.outcome).toBe('added')
+    expect(mines[0]!.materials?.coal).toBe(40_000)
+  })
+
+  it('reads which mines are forgotten before the first poll publishes (#169)', async () => {
+    // The flag has to reach the board from the store on load, not only from a
+    // deletion made in this session: otherwise every restart shows the mines
+    // the user deleted until they delete them again.
+    const projects = projectsStoreFor()
+    const declared = await projects.declare({ path: ADOPTED, at: 1 })
+    await projects.forget({ id: mineIdForPath(ADOPTED), at: 2 })
+    expect(declared.ok).toBe(true)
+    const runtime = declaredRuntime({ projects })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toEqual([])
+  })
+
+  it('never lists a forgotten mine in a browse (#169)', async () => {
+    const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED })
+
+    const declared = await runtime.declareMine()
+    await runtime.undeclareMine(declared.mineId!)
+    const answer = await runtime.queryProjects({ sortBy: 'addedAt', direction: 'desc' })
+    runtime.stop()
+
+    expect(answer.answered).toBe(true)
+    expect(answer.projects).toEqual([])
   })
 
   it('says the picker was cancelled when the user closes it, with no reason to give (#127)', async () => {
