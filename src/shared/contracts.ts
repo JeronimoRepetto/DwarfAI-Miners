@@ -1145,6 +1145,40 @@ export interface MessageIssuer {
   name: string
 }
 
+/**
+ * What KIND of work one tool call did (#240) — the machine-readable half of a
+ * feed activity line, whose human half is the message's own `text`.
+ *
+ * Four values, and they are the four verbs `screens/mine.md`'s activity-line
+ * amendment names: `Edited`, `Ran`, `Read`, `Searched`. Which tool maps to
+ * which is `domain/permissionSummary.ts`'s table — the SAME one a permission
+ * card reads, so a call reads the same before and after it ran.
+ *
+ * On the wire rather than derived in the renderer because `target` alone
+ * cannot say what it is: a path, a command and a glob are all strings, and the
+ * consumer that makes a path clickable has to know which of the three it
+ * holds. Nothing draws differently per kind today; the panel draws one line
+ * for all four.
+ */
+export type FeedActivityKind = 'edit' | 'run' | 'read' | 'search'
+
+/**
+ * The subject of one tool call, beside the kind of call it was (#240).
+ *
+ * `target` is the path, command or pattern itself, capped and redacted at the
+ * same boundary the message's `text` is — it crosses processes exactly as
+ * `lastMessage` does, so it gets `redactSecrets` where the feed text gets it
+ * (see permissionSummary.toolActivityLine).
+ *
+ * Deliberately NOT the verb: the verb is spelled once, in the table that owns
+ * it, and reaches the panel already inside `text`. A second copy here would be
+ * two places to correct a word.
+ */
+export interface FeedActivity {
+  kind: FeedActivityKind
+  target: string
+}
+
 export interface FeedMessage {
   role: 'user' | 'assistant'
   text: string
@@ -1154,6 +1188,24 @@ export interface FeedMessage {
    * ordinary case and means the human — see MessageIssuer.
    */
   issuer?: MessageIssuer
+  /**
+   * Present when this message is a TOOL CALL rather than something said
+   * (#240) — one line the panel draws between the speech bubbles, in the meta
+   * token and the panel's muted ink, with no portrait and no bubble surface.
+   *
+   * An optional field beside `role`/`text` rather than a sibling union, for
+   * the reason `issuer` is one: `role` is the half of the exchange a message
+   * belongs to, and every consumer switches on it. A third role value would
+   * make every one of those switches wrong until it was widened, for a message
+   * that IS an assistant turn — the agent acting rather than speaking.
+   *
+   * So the pair stays meaningful on its own: `role` is `'assistant'` and
+   * `text` is the whole line (`Edited src/main/index.ts`), which is what an
+   * older reader draws — a true sentence in a bubble rather than an empty one.
+   * A reader that knows about this field draws the line instead, and either
+   * way it counts as ONE message in the panel's window.
+   */
+  activity?: FeedActivity
 }
 
 /**

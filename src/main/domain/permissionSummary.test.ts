@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PERMISSION_INPUT_MAX_CHARS, permissionInputLine } from './permissionSummary'
+import {
+  ACTIVITY_VERBS,
+  PERMISSION_INPUT_MAX_CHARS,
+  permissionInputLine,
+  toolActivityLine
+} from './permissionSummary'
 
 const FAKE_SK_KEY = ['sk', 'a'.repeat(48)].join('-')
 
@@ -54,5 +59,96 @@ describe('permissionInputLine', () => {
     const line = permissionInputLine({ command: `${'x'.repeat(200)} ${FAKE_SK_KEY}` })
     expect(line).not.toContain('sk-aaaa')
     expect(line).toContain('[redacted]')
+  })
+
+  /**
+   * #240 moved `pattern` ahead of `path`. Grep is the one tool observed
+   * carrying both (2022 of 2080 calls in the corpus §1.6 tabulates), and the
+   * design's own `Searched <pattern>` settles which of the two names the call.
+   * The card gains the same reading, because there is one rule.
+   */
+  it('names the pattern rather than the directory when a tool carries both', () => {
+    expect(permissionInputLine({ path: 'src', pattern: 'FeedMessage' })).toBe('FeedMessage')
+  })
+})
+
+/**
+ * The same rule spoken as the line a call leaves behind once it has run
+ * (#240). One table serves the card and the feed, so a tool call reads the
+ * same before and after — which is the whole reason this lives here rather
+ * than in the three extractors that call it.
+ */
+describe('toolActivityLine', () => {
+  it.each([
+    ['Edit', { file_path: 'src/main/index.ts' }, 'edit', 'Edited src/main/index.ts'],
+    ['Write', { file_path: 'src/shared/contracts.ts' }, 'edit', 'Edited src/shared/contracts.ts'],
+    ['NotebookEdit', { path: 'notes.ipynb' }, 'edit', 'Edited notes.ipynb'],
+    ['Bash', { command: 'pnpm test' }, 'run', 'Ran pnpm test'],
+    ['PowerShell', { command: 'Get-Process' }, 'run', 'Ran Get-Process'],
+    ['Read', { file_path: 'AGENTS.md' }, 'read', 'Read AGENTS.md'],
+    ['WebFetch', { url: 'https://example.test/docs' }, 'read', 'Read https://example.test/docs'],
+    ['Grep', { pattern: 'FeedMessage', path: 'src' }, 'search', 'Searched FeedMessage'],
+    ['Glob', { pattern: '**/*.test.ts' }, 'search', 'Searched **/*.test.ts'],
+    ['shell_command', { command: 'git status' }, 'run', 'Ran git status'],
+    ['apply_patch', { file_path: 'src/parse.ts' }, 'edit', 'Edited src/parse.ts']
+  ])('speaks a %s call as one line', (toolName, input, kind, text) => {
+    expect(toolActivityLine(toolName, input)).toEqual({
+      role: 'assistant',
+      text,
+      activity: { kind, target: text.slice(text.indexOf(' ') + 1) }
+    })
+  })
+
+  /**
+   * `role: 'assistant'` and a `text` that reads as a sentence are what keep an
+   * older reader honest: it draws the line as something the agent did rather
+   * than as an empty bubble (see FeedMessage.activity).
+   */
+  it('is an assistant turn whose text stands on its own without the activity field', () => {
+    const line = toolActivityLine('Bash', { command: 'pnpm test' })
+    expect(line?.role).toBe('assistant')
+    expect(line?.text).toBe('Ran pnpm test')
+  })
+
+  it.each([
+    ['a tool no verb is known for', 'Agent', { description: 'survey the seam' }],
+    ['an MCP tool', 'mcp__engram__mem_save', { content: 'note' }],
+    ['the one tool that asks instead of acting', 'AskUserQuestion', { questions: [] }],
+    ['a known tool whose input names no subject', 'Bash', { timeout: 5 }],
+    ['a known tool whose subject is not a string', 'Read', { file_path: 42 }],
+    ['a known tool whose subject is only whitespace', 'Bash', { command: '   ' }]
+  ])('answers nothing for %s', (_case, toolName, input) => {
+    expect(toolActivityLine(toolName, input)).toBeUndefined()
+  })
+
+  /**
+   * The design asks for ONE line, truncated at the panel width. A heredoc or a
+   * multi-line patch would otherwise put its own newlines into a row that
+   * cannot show them.
+   */
+  it('collapses a multi-line command into one line', () => {
+    expect(toolActivityLine('Bash', { command: 'git commit -m "one\n\n  two"' })?.text).toBe(
+      'Ran git commit -m "one two"'
+    )
+  })
+
+  it('caps the target exactly where the card caps it', () => {
+    const line = toolActivityLine('Bash', { command: 'x'.repeat(5_000) })
+    expect(line?.activity?.target.length).toBe(PERMISSION_INPUT_MAX_CHARS)
+  })
+
+  it('redacts a secret in the line and in the target it carries', () => {
+    const line = toolActivityLine('Bash', { command: `curl -H "auth: ${FAKE_SK_KEY}" x.test` })
+    expect(line?.text).toBe('Ran curl -H "auth: [redacted]" x.test')
+    expect(line?.activity?.target).not.toContain('sk-aaaa')
+  })
+
+  it('spells each verb once, so the card and the feed cannot drift apart', () => {
+    expect(ACTIVITY_VERBS).toEqual({
+      edit: 'Edited',
+      run: 'Ran',
+      read: 'Read',
+      search: 'Searched'
+    })
   })
 })

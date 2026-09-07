@@ -40,6 +40,8 @@ export type {
   DwarfStatus,
   DwarfTextRequest,
   DwarfTextResult,
+  FeedActivity,
+  FeedActivityKind,
   FeedMessage,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
