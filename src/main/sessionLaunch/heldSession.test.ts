@@ -12,6 +12,7 @@ import { PERMISSION_INPUT_MAX_CHARS } from '../domain/permissionSummary'
 import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
 import {
   askToWireQuestion,
+  heldMessageEntries,
   heldMessageText,
   heldTelemetryToWire,
   parseAskUserQuestion,
@@ -627,6 +628,80 @@ describe('heldMessageText', () => {
     expect(heldMessageText(undefined)).toBe('')
     expect(heldMessageText(42)).toBe('')
     expect(heldMessageText([{ type: 'text' }])).toBe('')
+  })
+})
+
+/**
+ * One line per tool call, interleaved with the text either side of it (#240)
+ * — the held session's own version of what `extractClaudeFeed` does for an
+ * observed one, off the SAME shared table (`domain/permissionSummary.ts`), so
+ * a call reads the same whichever way this app is watching the session.
+ *
+ * `heldMessageText` above still answers "just the words"; this answers "the
+ * words AND the calls, each their own entry, in the order the stream carried
+ * them" — the shape `onMessage` needs to publish more than one row per
+ * message.
+ */
+describe('heldMessageEntries', () => {
+  it('reads a plain string message as one text entry, same as heldMessageText', () => {
+    expect(heldMessageEntries('dig here')).toEqual([{ text: 'dig here' }])
+  })
+
+  it('joins consecutive text blocks into one entry, same as heldMessageText', () => {
+    expect(
+      heldMessageEntries([
+        { type: 'text', text: 'Found the seam.' },
+        { type: 'text', text: 'Digging.' }
+      ])
+    ).toEqual([{ text: 'Found the seam.\nDigging.' }])
+  })
+
+  it('publishes a tool call as its own entry, with the activity attached', () => {
+    expect(
+      heldMessageEntries([
+        { type: 'tool_use', id: 'toolu_01', name: 'Bash', input: { command: 'pnpm test' } }
+      ])
+    ).toEqual([{ text: 'Ran pnpm test', activity: { kind: 'run', target: 'pnpm test' } }])
+  })
+
+  it('interleaves a tool call between the text either side of it', () => {
+    expect(
+      heldMessageEntries([
+        { type: 'text', text: 'Checking the tests.' },
+        { type: 'tool_use', id: 'toolu_01', name: 'Bash', input: { command: 'pnpm test' } },
+        { type: 'text', text: 'They pass.' }
+      ])
+    ).toEqual([
+      { text: 'Checking the tests.' },
+      { text: 'Ran pnpm test', activity: { kind: 'run', target: 'pnpm test' } },
+      { text: 'They pass.' }
+    ])
+  })
+
+  it('publishes nothing for a tool this table names no verb for, such as Agent', () => {
+    expect(
+      heldMessageEntries([
+        {
+          type: 'tool_use',
+          id: 'toolu_01',
+          name: 'Agent',
+          input: { description: 'survey the seam' }
+        }
+      ])
+    ).toEqual([])
+  })
+
+  it('publishes nothing for a tool_result, same as heldMessageText', () => {
+    expect(
+      heldMessageEntries([
+        { type: 'tool_result', tool_use_id: 'toolu_01', content: 'file contents' }
+      ])
+    ).toEqual([])
+  })
+
+  it('answers with nothing for a shape it does not recognise', () => {
+    expect(heldMessageEntries(undefined)).toEqual([])
+    expect(heldMessageEntries(42)).toEqual([])
   })
 })
 

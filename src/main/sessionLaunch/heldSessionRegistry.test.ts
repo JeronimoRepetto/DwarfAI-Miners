@@ -115,8 +115,13 @@ class FakePort {
   }
 
   /** One message the stream carried, as the loop reads it (#159). */
-  reportMessage(index: number, role: 'user' | 'assistant', text: string): void {
-    this.started[index]!.onMessage(role, text)
+  reportMessage(
+    index: number,
+    role: 'user' | 'assistant',
+    text: string,
+    activity?: { kind: 'edit' | 'run' | 'read' | 'search'; target: string }
+  ): void {
+    this.started[index]!.onMessage(role, text, activity)
   }
 }
 
@@ -822,6 +827,28 @@ describe('HeldSessionRegistry conversation', () => {
       { role: 'user', text: 'keep going', timestamp: AT },
       { role: 'assistant', text: 'Digging.', timestamp: AT }
     ])
+  })
+
+  it('carries a tool-call line through with its activity, same as a spoken message (#240)', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportMessage(0, 'assistant', 'Ran pnpm test', { kind: 'run', target: 'pnpm test' })
+
+    const state = registry.conversationState('sess-1')
+    expect(state.held ? state.conversation.at(-1) : undefined).toEqual({
+      role: 'assistant',
+      text: 'Ran pnpm test',
+      timestamp: AT,
+      activity: { kind: 'run', target: 'pnpm test' }
+    })
   })
 
   it('never grows past the retention bound, however long the session runs', async () => {

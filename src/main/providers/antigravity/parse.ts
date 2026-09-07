@@ -178,6 +178,25 @@ function spokenMessage(step: AntigravityStep): FeedMessage | undefined {
  *
  * No issuer is ever stamped (see MessageIssuer): absent means the human, and
  * this store records no evidence that a turn came from anywhere else.
+ *
+ * **No activity line for a `tool_calls` entry (#240) — a decision, not an
+ * oversight.** Claude and Codex each publish one; this format was measured
+ * the same way and left out on purpose. Real corpus, this machine,
+ * 2026-09-07: 180 `tool_calls` across 3 conversations (`view_file` 93,
+ * `run_command` 33, `list_dir` 20, `manage_subagents` 14, `grep_search` 11,
+ * `find_by_name` 4, and five others under 3 each). Every subject field
+ * observed (`AbsolutePath`, `CommandLine`, `Query`, ...) is a DOUBLE-encoded
+ * string — the value itself opens with a literal `"`, i.e. a JSON string
+ * whose content is another JSON string, confirmed on all 105 sampled
+ * occurrences of the three most common tools — so reading one honestly would
+ * add a decode step this format is the only one of the three that needs. Two
+ * things kept that from being worth it here: the corpus is three
+ * conversations on one machine against Claude's ~38 000 blocks and Codex's
+ * ~1 000, and `docs/provider-formats.md` already carries this format under
+ * "no compatibility promise, and it has already changed across CLI versions"
+ * — `run_command`'s own args gained `CommandLine` between the fixture capture
+ * and this measurement. A future implementer has the field mapping above to
+ * start from; this change stops at documenting it.
  */
 export function extractAntigravityFeed(text: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []

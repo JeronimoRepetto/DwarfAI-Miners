@@ -260,6 +260,132 @@ describe('extractCodexFeed', () => {
   })
 })
 
+/**
+ * One line per tool call, interleaved with the speech in call order (#240) —
+ * off the same shared table `domain/permissionSummary.ts` reads for Claude
+ * (`toolActivityLine`), so a call cannot read one way on that provider and
+ * another on this one. Codex names two of the four verbs from real rollouts:
+ * `shell_command` (a `function_call` whose `arguments` is a JSON-encoded
+ * string) and `apply_patch` (a `custom_tool_call` whose `input` is the patch
+ * envelope) — see docs/provider-formats.md §2.2.
+ */
+describe('extractCodexFeed activity lines (#240)', () => {
+  function record(timestamp: string, type: string, payload: Record<string, unknown>): string {
+    return JSON.stringify({ timestamp, type, payload }) + '\n'
+  }
+
+  const assistantLine = (text: string, timestamp: string): string =>
+    record(timestamp, 'response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text }]
+    })
+
+  function shellCall(command: string, timestamp = '2026-09-07T10:00:00.000Z'): string {
+    return record(timestamp, 'response_item', {
+      type: 'function_call',
+      name: 'shell_command',
+      call_id: 'call_1',
+      arguments: JSON.stringify({
+        command,
+        workdir: 'C:\\Users\\j\\Desktop\\Sample-Project',
+        timeout_ms: 20000
+      })
+    })
+  }
+
+  function applyPatchCall(input: string, timestamp = '2026-09-07T10:00:01.000Z'): string {
+    return record(timestamp, 'response_item', {
+      type: 'custom_tool_call',
+      name: 'apply_patch',
+      call_id: 'call_2',
+      status: 'completed',
+      input
+    })
+  }
+
+  it('publishes a shell_command call as a run line, reading the command out of its stringified arguments', () => {
+    expect(extractCodexFeed(shellCall('pnpm test'), 20)).toEqual([
+      {
+        role: 'assistant',
+        text: 'Ran pnpm test',
+        timestamp: '2026-09-07T10:00:00.000Z',
+        activity: { kind: 'run', target: 'pnpm test' }
+      }
+    ])
+  })
+
+  it('publishes an apply_patch call as an edit line, reading the first file out of the patch envelope', () => {
+    const tail = applyPatchCall(
+      '*** Begin Patch\n*** Update File: src/parse.ts\n@@\n-old\n+new\n*** End Patch'
+    )
+    expect(extractCodexFeed(tail, 20)).toEqual([
+      {
+        role: 'assistant',
+        text: 'Edited src/parse.ts',
+        timestamp: '2026-09-07T10:00:01.000Z',
+        activity: { kind: 'edit', target: 'src/parse.ts' }
+      }
+    ])
+  })
+
+  it('takes the first file of a multi-file patch, rather than misreporting the rest', () => {
+    const tail = applyPatchCall(
+      '*** Begin Patch\n*** Add File: docs/a.md\n+a\n*** Update File: docs/b.md\n@@\n-x\n+y\n*** End Patch'
+    )
+    expect(extractCodexFeed(tail, 20)[0]!.text).toBe('Edited docs/a.md')
+  })
+
+  it('interleaves a tool call between the assistant replies either side of it', () => {
+    const tail =
+      assistantLine('Checking.', '2026-09-07T10:00:00.000Z') +
+      shellCall('pnpm test', '2026-09-07T10:00:01.000Z') +
+      assistantLine('Passed.', '2026-09-07T10:00:02.000Z')
+    expect(extractCodexFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
+      ['assistant', 'Checking.'],
+      ['assistant', 'Ran pnpm test'],
+      ['assistant', 'Passed.']
+    ])
+  })
+
+  it('publishes nothing for exec, whose input is a JavaScript program rather than a command line', () => {
+    const tail = record('2026-09-07T10:00:00.000Z', 'response_item', {
+      type: 'custom_tool_call',
+      name: 'exec',
+      call_id: 'call_3',
+      input: 'console.log(1)'
+    })
+    expect(extractCodexFeed(tail, 20)).toEqual([])
+  })
+
+  it('redacts a secret carried in a shell command, same as it would in spoken text', () => {
+    const key = ['sk', 'a'.repeat(48)].join('-')
+    const tail = shellCall(`curl -H "auth: ${key}" x.test`)
+    expect(extractCodexFeed(tail, 20)[0]!.text).toBe('Ran curl -H "auth: [redacted]" x.test')
+  })
+
+  it('publishes nothing for a shell_command call whose arguments are not valid JSON', () => {
+    const tail = record('2026-09-07T10:00:00.000Z', 'response_item', {
+      type: 'function_call',
+      name: 'shell_command',
+      call_id: 'call_1',
+      arguments: 'not json'
+    })
+    expect(extractCodexFeed(tail, 20)).toEqual([])
+  })
+
+  it('publishes nothing for an apply_patch call whose input names no file action', () => {
+    expect(extractCodexFeed(applyPatchCall('*** Begin Patch\n*** End Patch'), 20)).toEqual([])
+  })
+
+  it('reads the shared rollout fixture unchanged: it carries no tool call today', () => {
+    expect(extractCodexFeed(rollout, 20).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'Placeholder plain message.'],
+      ['assistant', 'Placeholder text block.']
+    ])
+  })
+})
+
 /*
  * The launch receipt's half of a rollout (#191): the FIRST thing a person said
  * in this thread, which is what tells the panel which dwarf its own detached

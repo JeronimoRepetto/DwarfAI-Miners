@@ -495,6 +495,39 @@ record — Codex's live feed alone left on a fixed 256 KiB tail while the other 
 is closed. What a rollout's own line shapes do to the walk, and what it measured on real rollouts,
 are in §2.3.
 
+#### One line per tool call (2026-09-07, issue #240)
+
+`extractClaudeFeed` now walks an assistant line's content blocks in order rather than joining every
+`text` block regardless of what sits between them, so a `tool_use` block publishes its own line —
+`Edited <path>`, `Ran <command>`, `Read <path>`, `Searched <pattern>` — interleaved between the text
+on either side of it. The verb and the subject come from `domain/permissionSummary.ts`'s
+`toolActivityLine`, the same table `permissionInputLine` reads for a pending permission card, so one
+Bash call reads the same before and after it runs.
+
+Which of Claude Code's own tool names get a line, counted against every `tool_use` block in every
+transcript on this machine, 2026-09-07 — 568 files, ~629 MiB, 38 573 blocks **[V]**:
+
+| Tool         | Verb       |  Calls |
+| ------------ | ---------- | -----: |
+| `Bash`       | `Ran`      | 16 119 |
+| `Read`       | `Read`     |  7 254 |
+| `Edit`       | `Edited`   |  6 449 |
+| `Write`      | `Edited`   |  2 574 |
+| `Grep`       | `Searched` |  2 111 |
+| `PowerShell` | `Ran`      |    977 |
+| `Glob`       | `Searched` |    328 |
+| `WebFetch`   | `Read`     |    206 |
+
+`MultiEdit`, `NotebookEdit` and `NotebookRead` are named by the CLI's own tool schema but were not
+observed in this corpus; they carry a verb anyway so a notebook edit is not silently dropped once
+one appears. Every other name in the corpus — `Agent`, `AskUserQuestion`, `TaskUpdate`, `Glob`'s MCP
+cousins, every `mcp__*` tool — carries no verb, each for one of the three reasons
+`TOOL_ACTIVITY_KINDS`'s own comment gives: not work, agent traffic already drawn as a dwarf, or an
+input with no field a line could name a subject from.
+
+Both providers read the shared table equally: what Codex measured for `shell_command` and
+`apply_patch` is in §2.2 below.
+
 ---
 
 ## 2. Codex CLI
@@ -519,7 +552,7 @@ Every line: `{"timestamp":"ISO-8601","type":"...","payload":{...}}` **[V]**. Top
   - `message` — `{role: user|assistant|developer, content:[{type:"input_text"|"output_text","text":...}]}` → assistant `output_text` = speech-bubble text **[V]**
   - `reasoning` — `{summary:[], encrypted_content:"gAAAA..."}` — thinking is **encrypted**, only its presence is visible **[V]**
   - `custom_tool_call` — `{id, status, call_id, name, input}` / `custom_tool_call_output` — `{call_id, output}` (linkage via `call_id`) **[V]**
-  - `function_call`/`local_shell_call` variants exist in other Codex versions **[I]** (not present in the two sampled files)
+  - `function_call` — `{id, name, arguments, call_id}`, where `arguments` is a JSON-encoded STRING rather than an object — not present in the original two-file sample, but common in the wider corpus §2.2.1 below measures (1 115 calls across 184 rollouts); `local_shell_call` was not observed at all in that corpus **[V, 2026-09-07]**
   - `agent_message` — multi-agent messages `{author:"/root", recipient:"/root/issue44_docs", content[...encrypted]}` — Codex's own subagent traffic **[V]**
 - **`event_msg`** `payload.type`: `task_started`, `task_complete`, `token_count` ({info.total_token_usage..., model_context_window, rate_limits}), `user_message` ({message}), `agent_message` ({message} — plain-text assistant reply, easiest bubble source), `item_completed`, `mcp_tool_call_end`, `patch_apply_end`, `thread_settings_applied` **[V]**.
 
@@ -538,6 +571,40 @@ Minimal example (trimmed) **[V]**:
   }
 }
 ```
+
+#### 2.2.1 One line per tool call (2026-09-07, issue #240)
+
+`extractCodexFeed` reads two `response_item` shapes into the same activity line `extractClaudeFeed`
+draws, off the same shared table (`domain/permissionSummary.ts`'s `toolActivityLine`):
+
+- **`shell_command`** — a `function_call` (see §2.2 above). `payload.arguments` is a JSON-encoded
+  STRING, not an object, e.g. `"{\"command\":\"pnpm test\",\"workdir\":\"...\",\"timeout_ms\":20000}"`
+  — the parser JSON-parses it a second time and reads `.command`. **[V]**
+- **`apply_patch`** — a `custom_tool_call`. `payload.input` carries no `file_path` field at all; it is
+  the whole patch envelope Codex writes, opening `*** Begin Patch` and then one or more
+  `*** Add File: <path>` / `*** Update File: <path>` / `*** Delete File: <path>` lines. The parser
+  reads the FIRST such line as the target and drops the rest, the same choice `askedQuestion` makes
+  for a different tool's multi-entry input. **[V]**
+
+Every `function_call`/`custom_tool_call` name on this machine, 2026-09-07 — 184 rollouts,
+~584 MiB **[V]**:
+
+| `payload.type`     | `name`                                                                                                                |       Calls | Gets a line?                                                        |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- | ----------: | ------------------------------------------------------------------- |
+| `custom_tool_call` | `exec`                                                                                                                |       5 829 | No — input is a JavaScript program, not a command line              |
+| `function_call`    | `shell_command`                                                                                                       |         404 | `Ran <command>`                                                     |
+| `function_call`    | `wait`                                                                                                                |         294 | No — the agent waiting, not acting                                  |
+| `custom_tool_call` | `apply_patch`                                                                                                         |          93 | `Edited <path>` (first file of the patch)                           |
+| `function_call`    | `wait_agent`                                                                                                          |         143 | No — agent traffic, drawn as a dwarf already                        |
+| `function_call`    | `send_message`                                                                                                        |          69 | No — agent traffic, drawn as a dwarf already                        |
+| `function_call`    | `spawn_agent`                                                                                                         |          58 | No — agent traffic, drawn as a dwarf already                        |
+| `function_call`    | `list_agents`                                                                                                         |          37 | No — the agent looking at itself                                    |
+| `function_call`    | `followup_task`                                                                                                       |          39 | No — agent traffic, drawn as a dwarf already                        |
+| `function_call`    | `js`, `view_image`, `update_plan`, `run`, `request_user_input`, `load_workspace_dependencies`, `_create_pull_request` | 71 combined | No — no subject field a line could name, or not this app's business |
+
+Of the 93 `apply_patch` calls, all 93 open with an action line and 39 name more than one file.
+`domain/permissionSummary.ts`'s `TOOL_ACTIVITY_KINDS` comment cites the same `shell_command` (404)
+and `apply_patch` (93) counts.
 
 ### 2.3 Liveness & turn detection
 
@@ -656,6 +723,8 @@ One JSON object per line, one per STEP, `step_index` ascending across the file w
 - `MODEL` + `PLANNER_RESPONSE` + string `content` → the reply the panel draws.
 
 Everything else is skipped, and each omission is a fact. `GENERIC` is tool output and is most of the file's bytes (84 of 184 records in one conversation). A `PLANNER_RESPONSE` carrying only `tool_calls` is the model acting rather than speaking (73 of 184). `thinking` is a field of its own, so **no tag-stripping heuristic is needed anywhere** — the one thing this format makes easier than Claude's or Codex's. `SYSTEM_MESSAGE` and `ERROR_MESSAGE` are the harness talking to itself, and drawing either as a turn would attribute it to a person.
+
+**Issue #240 draws one feed line per tool call for Claude and Codex; Antigravity's `tool_calls` do not get one, on purpose — not yet measured enough to trust.** `tool_call.args` was sampled on this machine, 2026-09-07, across every real conversation: 180 calls in 3 conversations (`view_file` 93, `run_command` 33, `list_dir` 20, `manage_subagents` 14, `grep_search` 11, `find_by_name` 4, five more under 3 each). Every subject field checked (`AbsolutePath`, `CommandLine`, `Query`) is a DOUBLE-encoded string on all 105 sampled occurrences — the raw value itself opens with a literal `"`, i.e. a JSON string whose own content is another JSON string, needing a second `JSON.parse` this format is alone in needing. Three conversations against Claude's 568 transcripts and Codex's 184 rollouts is not the same order of evidence, and the opening paragraph of this section already warns the shape "has already changed across CLI versions" — `run_command`'s own args gained `CommandLine` between the fixture capture and this measurement. `extractAntigravityFeed`'s own doc comment carries this same note; a future implementer has the field mapping to start from.
 
 **A `USER_INPUT` record's `content` is an envelope, not a prompt** **[V]**. The human's words sit in a `<USER_REQUEST>` block, followed by blocks nobody typed:
 

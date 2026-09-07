@@ -1,3 +1,4 @@
+import { toolActivityLine } from '../../domain/permissionSummary'
 import type { FeedMessage } from '../../domain/types'
 
 /**
@@ -228,10 +229,55 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
   }
 }
 
+/** One `*** Add File:`/`*** Update File:`/`*** Delete File:` line of an apply_patch envelope. */
+const PATCH_FILE_ACTION_RE = /^\*\*\* (?:Add File|Update File|Delete File): (.+)$/m
+
 /**
- * The last `limit` human-readable messages of a rollout: user_message events
- * and assistant response_items. agent_message events are skipped because they
- * duplicate the response_item text of the same reply.
+ * The subject `toolActivityLine` needs for one Codex tool call, read out of
+ * whichever shape that call's own record carries (#240) — two different
+ * shapes for the two tools this app draws a line for.
+ *
+ * `shell_command` is a `function_call`; its command sits inside `arguments`,
+ * which is itself a JSON-encoded STRING rather than an object
+ * (`{"command":"...","workdir":"...","timeout_ms":...}`), so it takes a
+ * second parse. `apply_patch` is a `custom_tool_call`; its target is the
+ * FIRST `*** Add File:`/`*** Update File:`/`*** Delete File:` line of its own
+ * `input`, the patch envelope Codex writes rather than a `file_path` field.
+ * Every apply_patch call measured on this machine on 2026-09-07 opens with
+ * one of those three lines, and 39 of 93 name more than one file — only the
+ * first travels, the same call `askedQuestion` makes for a different tool's
+ * multi-entry input (see docs/provider-formats.md §2.2).
+ */
+function codexToolInput(name: string, payload: Rec): Record<string, unknown> | undefined {
+  if (name === 'shell_command') {
+    const rawArguments = payload.arguments
+    if (typeof rawArguments !== 'string') return undefined
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(rawArguments)
+    } catch {
+      return undefined
+    }
+    if (!isRecord(parsed) || typeof parsed.command !== 'string') return undefined
+    return { command: parsed.command }
+  }
+  if (name === 'apply_patch') {
+    const input = payload.input
+    if (typeof input !== 'string') return undefined
+    const filePath = PATCH_FILE_ACTION_RE.exec(input)?.[1]
+    return filePath === undefined ? undefined : { file_path: filePath }
+  }
+  return undefined
+}
+
+/**
+ * The last `limit` human-readable messages of a rollout: user_message events,
+ * assistant response_items, and one line per tool call the design's four
+ * verbs name (#240), interleaved between them in the order the rollout
+ * carried them. agent_message events are skipped because they duplicate the
+ * response_item text of the same reply, and so is a tool call
+ * `toolActivityLine` names no verb for — `exec`'s 5000-plus calls above all,
+ * whose input is a JavaScript program rather than a command line.
  */
 export function extractCodexFeed(tailText: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
@@ -248,7 +294,20 @@ export function extractCodexFeed(tailText: string, limit: number): FeedMessage[]
     ) {
       const text = outputText(record.payload)
       if (text !== undefined) feed.push({ role: 'assistant', text, timestamp: record.timestamp })
+      continue
     }
+    if (
+      record.type !== 'response_item' ||
+      (record.payload.type !== 'function_call' && record.payload.type !== 'custom_tool_call')
+    ) {
+      continue
+    }
+    const name = asString(record.payload.name)
+    if (name === undefined) continue
+    const input = codexToolInput(name, record.payload)
+    if (input === undefined) continue
+    const line = toolActivityLine(name, input)
+    if (line !== undefined) feed.push({ ...line, timestamp: record.timestamp })
   }
   return feed.slice(-limit)
 }
