@@ -64,8 +64,14 @@ const NAV_MINES = `${NAV}[aria-label="Mines"]`
  * Full window.api stub: App touches the mines surface on mount (load + push
  * subscription), the panel-layout surface for the docked window, the pin
  * surface, the shortcut surface for the settings panel, the build surface for
- * the version and the answer surface for a dwarf's pending question, so every
- * member must exist even in tests that only look at the rail.
+ * the version, and — since #162 — the message-panel surface it asks main to
+ * open and the delivery report it draws its markers from. Every member must
+ * exist even in tests that only look at the rail.
+ *
+ * The members the panel window took with it stay in this stub on purpose: they
+ * are still on the one bridge both windows read, and a stub that answered only
+ * what THIS root happens to call would go quietly wrong the next time a
+ * surface moved.
  *
  * ## Every member that is AWAITED must resolve its real shape
  *
