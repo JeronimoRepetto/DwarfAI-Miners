@@ -1048,3 +1048,138 @@ describe('HeldSessionRegistry permissions (#203)', () => {
     expect(registry.count()).toBe(0)
   })
 })
+
+describe('a held launch that names a model and an effort (#239)', () => {
+  /**
+   * The registry's own configured model, which is what every held session ran
+   * on before this issue. It is deliberately kept: a request that names no
+   * model still gets it.
+   */
+  function tunedRegistry(port: FakePort, options: { model?: string } = {}) {
+    return new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: port.start,
+      now: () => 1_700_000_000_000,
+      log: () => {},
+      ...(options.model === undefined ? {} : { model: options.model })
+    })
+  }
+
+  it('forwards a model the request named, over the registry’s configured one', async () => {
+    // The change #239 made here: the model used to belong to the REGISTRY, so
+    // every session it would ever start ran the same one and the Add Panel had
+    // no way to say anything about the session it was starting.
+    const port = new FakePort()
+    const registry = tunedRegistry(port, { model: 'claude-haiku-4-5' })
+
+    expect(
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig',
+        model: 'sonnet'
+      })
+    ).toEqual({ launched: true })
+    expect(port.started[0]!.model).toBe('sonnet')
+  })
+
+  it('falls back to the configured model when the request names none', async () => {
+    const port = new FakePort()
+    const registry = tunedRegistry(port, { model: 'claude-haiku-4-5' })
+
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    expect(port.started[0]!.model).toBe('claude-haiku-4-5')
+  })
+
+  it('leaves the model unset when neither the request nor the config names one', async () => {
+    // Unset is an instruction, not a gap: it is what leaves the CLI on its own
+    // default, which is what every untuned launch must keep doing.
+    const port = new FakePort()
+    const registry = tunedRegistry(port)
+
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    expect(port.started[0]!.model).toBeUndefined()
+    expect('model' in port.started[0]!).toBe(false)
+  })
+
+  it('forwards an effort the request named, and none when it named none', async () => {
+    const port = new FakePort()
+    const registry = tunedRegistry(port)
+
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      effort: 'xhigh'
+    })
+    expect(port.started[0]!.effort).toBe('xhigh')
+
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    expect(port.started[1]!.effort).toBeUndefined()
+    expect('effort' in port.started[1]!).toBe(false)
+  })
+
+  it('has no configured effort to fall back to, unlike the model', async () => {
+    // Effort has never been a registry-level setting and does not become one:
+    // there is nowhere for a stale default to live, so the only two answers
+    // are the one this launch asked for and the CLI's own.
+    const port = new FakePort()
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: port.start,
+      now: () => 1_700_000_000_000,
+      log: () => {},
+      ...({ effort: 'low' } as object)
+    })
+
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    expect(port.started[0]!.effort).toBeUndefined()
+  })
+
+  it('refuses a provider it cannot hold before it reads any tuning', async () => {
+    // The #168 refusal is unchanged and still comes first: a Codex chip is
+    // answered by name, not by a Claude session tuned the way Codex was.
+    const port = new FakePort()
+    const registry = tunedRegistry(port)
+
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'codex',
+      minePath: MINE,
+      prompt: 'dig',
+      model: 'gpt-5.6-sol',
+      effort: 'high'
+    })
+    expect(result.launched).toBe(false)
+    expect(result.error).toContain('codex')
+    expect(port.started).toHaveLength(0)
+  })
+
+  it('says nothing about the model in the verdict, and logs only the prompt’s length', async () => {
+    const port = new FakePort()
+    const logged: string[] = []
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: port.start,
+      now: () => 1_700_000_000_000,
+      log: (message) => logged.push(message)
+    })
+
+    expect(
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig the east gallery',
+        model: 'sonnet',
+        effort: 'max'
+      })
+    ).toEqual({ launched: true })
+    // What model a session runs is the CLI's to report, through `init` every
+    // turn. Repeating our own request back would be a claim, not a reading.
+    expect(logged.join(' ')).not.toContain('sonnet')
+    expect(logged.join(' ')).not.toContain('dig the east gallery')
+  })
+})

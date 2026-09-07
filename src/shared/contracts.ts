@@ -1456,6 +1456,34 @@ export interface AgentLaunchRequest {
   provider: DwarfProvider
   /** The first thing to say to the new session. Capped like any delivered message. */
   prompt: string
+  /**
+   * The model to start on, or absent for the CLI's own default (#239).
+   *
+   * Absent is not a missing value, it is the instruction "whatever this CLI
+   * would have done", which is what makes a launch that ignores the Add
+   * Panel's model row identical to every launch before this field existed. A
+   * name that IS here is checked for shape at the boundary and against the
+   * catalogue main answered with, then handed to the CLI unchanged.
+   *
+   * A string rather than a union, because the union does not exist to be
+   * written down: model names move whenever a model ships, so they live in the
+   * provider's own answer (see AgentModelCatalog) and never in this file.
+   *
+   * Never echoed back in the verdict, either. What model a session actually
+   * runs is the CLI's to report — Claude says so in `init` every turn, Codex
+   * in its rollout's `turn_context` — and this side repeating its own request
+   * back would be a claim rather than an observation.
+   */
+  model?: string
+  /**
+   * How hard to think, or absent for the CLI's own default (#239).
+   *
+   * Closed per provider and checked at the boundary against
+   * `PROVIDER_EFFORT_LEVELS`, which is a table with each CLI's own help beside
+   * it. Per provider because the lists genuinely differ: Codex accepts one
+   * level Claude has no name for.
+   */
+  effort?: string
 }
 
 /**
@@ -1514,6 +1542,24 @@ export interface HeldSessionLaunchRequest {
   provider: DwarfProvider
   /** The first thing to say to the new session. Capped like any delivered message. */
   prompt: string
+  /**
+   * The model to hold this session on, or absent for the CLI's own default
+   * (#239). Same rule and same reasoning as `AgentLaunchRequest.model`.
+   *
+   * PER REQUEST rather than per registry, which is the change #239 made here.
+   * The held registry took one model for every session it would ever start —
+   * a configured default — so the Add Panel had no way to say anything about
+   * the session it was starting. The configured value remains, underneath: a
+   * request that names no model still gets it.
+   */
+  model?: string
+  /**
+   * How hard the held session should think, or absent for the CLI's own
+   * default (#239). Forwarded to the Agent SDK's `Options.effort`, whose own
+   * `EffortLevel` union is the five levels `PROVIDER_EFFORT_LEVELS.claude`
+   * lists.
+   */
+  effort?: string
 }
 
 /**

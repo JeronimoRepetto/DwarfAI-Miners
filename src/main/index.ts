@@ -55,6 +55,7 @@ import {
   withConfigFileFallback
 } from './config/configFile'
 import { sumTokensObserved } from './domain/aggregate'
+import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
@@ -178,7 +179,14 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   // launch starts a real process, and picking one for a name nobody sent would
   // be starting the wrong agent rather than refusing an unreadable request.
   if (!isDwarfProvider(record.provider)) return null
-  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt }
+  // The model and effort this launch asked for (#239), checked against this
+  // provider's own boundary rule before either is kept: an absent field
+  // degrades to the CLI's own default, and a present-but-unusable one takes
+  // the whole request down rather than being silently dropped — see
+  // parseLaunchTuning for why.
+  const tuning = parseLaunchTuning(record.provider, record)
+  if (tuning === null) return null
+  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt, ...tuning }
 }
 
 /**
@@ -222,7 +230,10 @@ function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | nu
   // provider is being held is checked against this build's own list, and the
   // registry then refuses the ones it has no stream for by name.
   if (!isDwarfProvider(record.provider)) return null
-  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt }
+  // Same boundary check as parseLaunchRequest, and for the same reason (#239).
+  const tuning = parseLaunchTuning(record.provider, record)
+  if (tuning === null) return null
+  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt, ...tuning }
 }
 
 /**

@@ -763,6 +763,12 @@ export class AgentRuntime {
           provider: request.provider,
           minePath: request.minePath,
           prompt: request.prompt,
+          // The model and effort a launch asked for (#239), forwarded exactly
+          // as `provider` above always has been: `ClaudeLaunchOptions` extends
+          // `LaunchTuning` for this reason, and an absent field here is what
+          // keeps an untuned launch byte for byte what it was before #239.
+          ...(request.model === undefined ? {} : { model: request.model }),
+          ...(request.effort === undefined ? {} : { effort: request.effort }),
           detector: platform.cliDetector,
           env: process.env,
           platform: platform.platform,
@@ -1824,6 +1830,11 @@ export class AgentRuntime {
    * (#86's first cut) hands the session over and lets go, so it outlives the
    * panel; a held session's child dies with the panel, and in exchange its asks
    * arrive live rather than post-hoc. Neither replaces the other.
+   *
+   * The model and effort (#239) travel through unchanged — see launchAgent's
+   * own note on the same hop. The registry's own configured model still
+   * applies underneath when the request names none; that fallback is the
+   * registry's, not this method's (see HeldSessionRegistry.launch).
    */
   async launchHeldSession(request: HeldSessionLaunchRequest): Promise<HeldSessionLaunchResult> {
     // Refused before the mine is even looked up: a demo's mines are invented,
@@ -1837,7 +1848,9 @@ export class AgentRuntime {
       mineId: mine.id,
       provider: request.provider,
       minePath: mine.path,
-      prompt: request.prompt
+      prompt: request.prompt,
+      ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.effort === undefined ? {} : { effort: request.effort })
     })
   }
 
@@ -2235,6 +2248,11 @@ export class AgentRuntime {
    * board here, so a launch can only ever start in a place the panel is
    * already showing. Refusals are explicit and cheap for the reason
    * sendDwarfText's are, and nothing here logs the prompt — only its length.
+   *
+   * The model and effort (#239) travel through unchanged, the way `provider`
+   * always has: the IPC boundary in index.ts already checked them against
+   * `parseLaunchTuning` before this method ever sees the request, so this hop
+   * only has to forward, never to validate a second time. Absent stays absent.
    */
   async launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
     const mine = this.mines.find((item) => item.id === request.mineId)
@@ -2246,7 +2264,13 @@ export class AgentRuntime {
     const timer = createStageTimer(this.now)
     try {
       const { retained, ...verdict } = await timer.measure('total', () =>
-        this.launchSession({ provider: request.provider, minePath: mine.path, prompt })
+        this.launchSession({
+          provider: request.provider,
+          minePath: mine.path,
+          prompt,
+          ...(request.model === undefined ? {} : { model: request.model }),
+          ...(request.effort === undefined ? {} : { effort: request.effort })
+        })
       )
       // The receipt this launch will be recognised by (#191). Opened for every
       // started launch and never for a refused one, and opened here rather

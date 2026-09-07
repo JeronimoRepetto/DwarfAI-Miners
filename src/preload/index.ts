@@ -374,7 +374,15 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.invoke(IPC_CHANNELS.launchAgent, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
       provider: isDwarfProvider(request?.provider) ? request.provider : '',
-      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+      prompt: typeof request?.prompt === 'string' ? request.prompt : '',
+      // The model and effort a launch asked for (#239) — the one pair on this
+      // channel that is genuinely OPTIONAL rather than defaulted: forwarded
+      // only when the caller actually named one, exactly as `edge` is above.
+      // Absent must cross as absent, never as '', because main's own boundary
+      // reads a present-but-empty value as a real instruction and refuses the
+      // whole request for it (see parseLaunchTuning).
+      ...(typeof request?.model === 'string' ? { model: request.model } : {}),
+      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {})
     }),
   // Same discipline as setToggleShortcut: collapse anything that is not a
   // string BEFORE it crosses, so main's boundary check only reasons about one.
@@ -407,7 +415,10 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.invoke(IPC_CHANNELS.launchHeldSession, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
       provider: isDwarfProvider(request?.provider) ? request.provider : '',
-      prompt: typeof request?.prompt === 'string' ? request.prompt : ''
+      prompt: typeof request?.prompt === 'string' ? request.prompt : '',
+      // Same discipline as launchAgent's, and the same reason (#239).
+      ...(typeof request?.model === 'string' ? { model: request.model } : {}),
+      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {})
     }),
   // Field by field once more, for the reason the two launch channels above are
   // rebuilt rather than forwarded: this one starts a real process too, and the

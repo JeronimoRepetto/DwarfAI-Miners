@@ -3465,6 +3465,43 @@ describe('AgentRuntime.launchAgent (#86)', () => {
 
     expect(runtime.getMines()[0]!.dwarfs).toHaveLength(before)
   })
+
+  /*
+   * #239. The request may now name a model and an effort, and both have to
+   * reach the launcher: this is the one hop between the IPC boundary (which
+   * checked them) and the engine (which spends them). Absent means absent,
+   * exactly as an untuned launch always read.
+   */
+  it('forwards a model and an effort the request named, down to the launcher', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({
+      mineId,
+      provider: 'claude',
+      prompt: 'go',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'claude',
+      minePath: 'C:\\work\\project',
+      prompt: 'go',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+  })
+
+  it('leaves model and effort off the launcher call when the request named neither', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+
+    expect('model' in launchSession.mock.calls[0]![0]).toBe(false)
+    expect('effort' in launchSession.mock.calls[0]![0]).toBe(false)
+  })
 })
 
 /*
@@ -5162,6 +5199,52 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       // stream it is not reading.
       expect(crewOf(runtime)).toEqual([{ id: 'claude:sess-1', role: 'foreman' }])
     })
+  })
+
+  /*
+   * #239. Same hop as the detached launcher's: the request may name a model
+   * and an effort, and both have to reach the held session's own start,
+   * unchanged, so PROVIDER_EFFORT_LEVELS.claude's five reach the SDK exactly
+   * as the boundary checked them.
+   */
+  it('forwards a model and an effort the request named, down to the held session', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+    runtime.stop()
+
+    expect(port.started[0]!.model).toBe('sonnet')
+    expect(port.started[0]!.effort).toBe('xhigh')
+  })
+
+  it('leaves model and effort off the held session start when the request named neither', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    runtime.stop()
+
+    expect('model' in port.started[0]!).toBe(false)
+    expect('effort' in port.started[0]!).toBe(false)
   })
 })
 

@@ -1,5 +1,6 @@
 import {
   query,
+  type EffortLevel,
   type PermissionResult,
   type SDKMessage,
   type SDKUserMessage
@@ -231,6 +232,14 @@ export function createSdkHeldSession(): HeldSessionPort {
         pathToClaudeCodeExecutable: request.executablePath,
         permissionMode: 'default',
         ...(request.model === undefined ? {} : { model: request.model }),
+        // `Options.effort` (#239). The SDK's own `EffortLevel` is
+        // 'low' | 'medium' | 'high' | 'xhigh' | 'max' — the same five
+        // `claude --help` prints for its `--effort` flag on 2.1.263 — and the
+        // cast is the seam's only liberty: the value was checked against
+        // PROVIDER_EFFORT_LEVELS.claude at the boundary, and this module is
+        // the one place with no unit test coming through it, so it recognises
+        // the SDK's shapes and decides nothing about them.
+        ...(request.effort === undefined ? {} : { effort: request.effort as EffortLevel }),
         ...(request.maxTurns === undefined ? {} : { maxTurns: request.maxTurns }),
         canUseTool: async (toolName, toolInput, extras): Promise<PermissionResult> => {
           if (toolName !== ASK_USER_QUESTION) {

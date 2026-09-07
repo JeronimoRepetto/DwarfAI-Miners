@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import type { FsLike } from '../adapters/fsLike'
+import type { LaunchTuning } from '../domain/launchTuning'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
 import { resolveShimTarget, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
@@ -110,11 +111,13 @@ export type SpawnLaunch = (
  * whatever the panel said. Which CLIs this port can actually honour is still
  * the engine's answer, and it refuses the rest by name rather than substituting.
  */
-export type SessionLauncher = (request: {
-  provider: DwarfProvider
-  minePath: string
-  prompt: string
-}) => Promise<SessionLaunchOutcome>
+export type SessionLauncher = (
+  request: {
+    provider: DwarfProvider
+    minePath: string
+    prompt: string
+  } & LaunchTuning
+) => Promise<SessionLaunchOutcome>
 
 /**
  * The launcher's verdict, plus the handle on what it started (#217).
@@ -309,7 +312,15 @@ function retainedProcess(child: LaunchChild): LaunchedProcess | undefined {
   }
 }
 
-export interface ClaudeLaunchOptions {
+/**
+ * What one detached launch needs.
+ *
+ * Extends `LaunchTuning` (#239), so the model and the effort arrive as the
+ * request's own optional fields rather than as a nested object: both are
+ * absent for an untuned launch, and an untuned launch is the one that has to
+ * stay byte for byte what it was.
+ */
+export interface ClaudeLaunchOptions extends LaunchTuning {
   /** Which CLI to start (#168). Its argv comes from `buildLaunchArgs`. */
   provider: DwarfProvider
   /** The mine's path, resolved by the caller — never a path the renderer supplied. */
@@ -397,7 +408,16 @@ export async function launchClaudeSession(
     }
     const started = await options.run({
       command: program.command,
-      args: [...program.args, ...buildLaunchArgs(options.provider)],
+      // The tuning belongs to the CLI's own argv, so it lands AFTER a shim's
+      // node entry (#239): in front of it, `--model` would be an argument to
+      // node rather than to the program node is about to run.
+      args: [
+        ...program.args,
+        ...buildLaunchArgs(options.provider, {
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.effort === undefined ? {} : { effort: options.effort })
+        })
+      ],
       // The relay's env rule, for the relay's reason: a re-exec of the CLI
       // inside the child must reach the install detection found rather than
       // one that happens to sit earlier on PATH. The detected path, so a shim

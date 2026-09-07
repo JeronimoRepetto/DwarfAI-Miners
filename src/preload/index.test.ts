@@ -545,6 +545,70 @@ describe('preload launch contract (#168)', () => {
       api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
     ).resolves.toEqual(refused)
   })
+
+  /*
+   * #239. Model and effort are the first fields on either launch channel that
+   * are genuinely OPTIONAL rather than collapsing to a safe default: absent
+   * has to stay absent, because a '' crossing the bridge would be a real
+   * instruction main's own boundary would then have to refuse (see
+   * parseLaunchTuning) rather than the "leave it to the CLI" this field means
+   * when it is missing.
+   */
+  it('carries a model and an effort when the caller named them', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'xhigh'
+    })
+  })
+
+  it('crosses no model or effort at all when the caller named neither, rather than empty strings', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
+    await api.launchAgent({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('model' in sent).toBe(false)
+    expect('effort' in sent).toBe(false)
+  })
+
+  it('carries a model and an effort on the held channel too', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'max'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      model: 'sonnet',
+      effort: 'max'
+    })
+  })
+
+  it('crosses no model or effort on the held channel when the caller named neither', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('model' in sent).toBe(false)
+    expect('effort' in sent).toBe(false)
+  })
 })
 
 describe('preload mine-history contract (#192)', () => {
