@@ -55,12 +55,12 @@ const silence = computed(() =>
   color: var(--ink);
   background: #15100bf2;
   box-shadow: 0 4px 14px #000a;
-  font-size: 10px;
+  font-size: var(--text-meta);
   line-height: 1.3;
   text-align: left;
 }
 .dwarf-tooltip strong {
-  font-size: 11px;
+  font-size: var(--text-meta);
 }
 .dwarf-tooltip span {
   color: var(--ink-dim);
@@ -76,7 +76,7 @@ const silence = computed(() =>
 .dwarf-tooltip em {
   color: var(--lantern-soft);
   font-style: normal;
-  font-size: 9px;
+  font-size: var(--text-meta);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }

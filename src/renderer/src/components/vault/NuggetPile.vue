@@ -123,7 +123,7 @@ const nuggetSrc = computed(() => NUGGET_SRC[props.material])
   border-radius: 7px;
   color: var(--ink);
   background: #15100be6;
-  font-size: 9px;
+  font-size: var(--text-meta);
   font-weight: 700;
   white-space: nowrap;
   translate: -50% 0;

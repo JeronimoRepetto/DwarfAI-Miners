@@ -441,7 +441,7 @@ function onCommandKeydown(event: KeyboardEvent): void {
   flex: none;
   margin: 0;
   padding: 0 8px;
-  font-size: 9px;
+  font-size: var(--text-helper);
   line-height: 1.3;
 }
 .launch-note {

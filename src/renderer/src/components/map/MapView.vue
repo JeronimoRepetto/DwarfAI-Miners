@@ -397,7 +397,7 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   max-width: 280px;
   margin: 0;
   color: var(--color-tooltip-text);
-  font-size: 13px;
+  font-size: var(--text-meta);
   line-height: 1.6;
   text-align: center;
   text-shadow: 0 1px 4px #000;

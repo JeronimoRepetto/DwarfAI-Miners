@@ -735,7 +735,7 @@ watch(
   margin: 0;
   padding: 0 8px 4px;
   color: var(--color-tooltip-text);
-  font-size: 9px;
+  font-size: var(--text-helper);
   line-height: 1.3;
 }
 .approval-jump {
@@ -861,7 +861,7 @@ watch(
   flex: none;
   margin: 0;
   padding: 0 8px 8px;
-  font-size: 9px;
+  font-size: var(--text-helper);
   line-height: 1.3;
 }
 /*

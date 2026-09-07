@@ -113,12 +113,18 @@ describe('design-tokens.css against the design foundations', () => {
     expect(valueOf(name)).toBe(value)
   })
 
+  /*
+   * #198: the design source's 10/12/14/19/24px scale read too small on a real
+   * desktop (the 10px meta size above all), and the maintainer's 2026-09-04
+   * ruling raised every rung by 2px rather than one. `foundations.md`'s
+   * Typography table carries the amendment note; this is its transcription.
+   */
   it.each([
-    ['--text-meta', '10px'],
-    ['--text-helper', '12px'],
-    ['--text-section', '14px'],
-    ['--text-title', '19px'],
-    ['--text-headline', '24px']
+    ['--text-meta', '12px'],
+    ['--text-helper', '14px'],
+    ['--text-section', '16px'],
+    ['--text-title', '21px'],
+    ['--text-headline', '26px']
   ])('carries the design type size %s as %s', (name, value) => {
     expect(valueOf(name)).toBe(value)
   })
@@ -229,5 +235,37 @@ describe('design-tokens.css against the design foundations', () => {
     // family means a font that failed to load renders in whatever the platform
     // picked — which for a 10px UI is not a survivable outcome.
     expect(family!.split(',').length).toBeGreaterThan(1)
+  })
+})
+
+/*
+ * #198: raising the scale in this one file is only real if nothing in a
+ * component still spells its own pixel size — a hardcoded `font-size: 10px`
+ * compiles and renders exactly like `font-size: var(--text-meta)`, so no
+ * other check would ever catch a fresh literal landing beside a token. Walked
+ * off disk rather than through a bundler, the same reasoning as the custom
+ * property tests above: a `.vue` file's `<style>` block has no import a test
+ * could assert against.
+ */
+describe('renderer components against the type scale tokens', () => {
+  const RENDERER_SRC = join(ASSETS_DIR, '..')
+
+  function vueFiles(dir: string): string[] {
+    const found: string[] = []
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) found.push(...vueFiles(full))
+      else if (entry.isFile() && entry.name.endsWith('.vue')) found.push(full)
+    }
+    return found
+  }
+
+  it('never sets font-size to a hardcoded pixel literal', () => {
+    const offenders: string[] = []
+    for (const file of vueFiles(RENDERER_SRC)) {
+      const matches = readFileSync(file, 'utf8').match(/font-size\s*:\s*\d+(\.\d+)?px/g)
+      if (matches !== null) offenders.push(`${file}: ${matches.join(', ')}`)
+    }
+    expect(offenders).toEqual([])
   })
 })
