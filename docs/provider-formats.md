@@ -582,9 +582,11 @@ too narrow to find one.
 
 ---
 
-## 3. Gemini CLI
+## 3. Gemini CLI, and the Antigravity CLI that shares its directory
 
 **Plain answer: on this machine, `C:\Users\j\.gemini` contains no Gemini CLI session data at all, and no live-session signal.** **[V]**
+
+What it DOES contain is Antigravity's, and §3.1 below corrects the reading this section had of it: the IDE's conversations really are impractical protobuf blobs, but the Antigravity **CLI** keeps a plain JSONL store, and DwarfAI-Miners reads it (issue #237).
 
 What's actually there:
 
@@ -592,6 +594,103 @@ What's actually there:
 - Antigravity conversations exist as **binary protobuf** blobs: `antigravity\conversations\<uuid>.pb` (up to 22MB, last touched 2026-05-21). Messages/models are not recoverable without Antigravity's proto schema — impractical. **[V binary / I schema]**
 - Gemini CLI's usual artifacts are absent: no `tmp\` (which would hold `tmp\<project-hash>\logs.json` + `chats\` session files **[I — standard Gemini CLI layout]**), no `history\`, no `oauth_creds.json`, no `google_accounts.json`. → Gemini CLI has effectively never been used here. **[V absence]**
 - Recommendation for the monitoring app: implement a Gemini watcher that checks `~/.gemini/tmp/<hash>/` for `logs.json`/`chats/*.json` mtime **if it ever appears**, plus a `gemini` process check; ship it disabled/optional. There is nothing to verify against today.
+
+### 3.1 Antigravity CLI (`agy`) — the store the observer reads (2026-09-07, issue #237)
+
+**The `.pb` conclusion above is about the IDE and does not apply to the CLI.** `agy`, Antigravity's own command-line agent, keeps a plain UTF-8 store beside those blobs, and it is what `src/main/providers/antigravity/` reads. Everything below was read live off **Antigravity CLI 1.1.26** on Windows unless marked otherwise, and sanitized captures of exactly these shapes live in `src/main/providers/__fixtures__/antigravity/`.
+
+**This is a private format with no compatibility promise, and it has already changed across CLI versions.** Treat every claim here as "true of 1.1.26" rather than "true of Antigravity". The parser skips any record it cannot read — unknown `type`, missing field, half-written final line, a byte tail that opened mid-record — rather than throwing inside a poll tick.
+
+#### 3.1.1 Paths & layout
+
+| Path                                                                           | What it is                                                                                                           |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `%LOCALAPPDATA%\agy\bin\agy.exe`                                               | The Windows executable. Vendor-documented, and verified on this machine. macOS/Linux: `~/.local/bin/agy` **[V doc]** |
+| `~/.gemini/antigravity-cli/presence/<conversation-id>.lock`                    | A 0-byte lock, present while that conversation is running **[V]**                                                    |
+| `~/.gemini/antigravity-cli/history.jsonl`                                      | Prompt log, and the only place a conversation's workspace is recorded **[V]**                                        |
+| `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` | The step log, truncated view — what the observer parses **[V]**                                                      |
+| `…/logs/transcript_full.jsonl`                                                 | The same records untruncated, roughly twice the bytes **[V]**                                                        |
+| `…/logs/chunks/transcript{,_full}/<00000000>.jsonl`                            | The same log split into chunks; nothing reads these **[V]**                                                          |
+| `…/.system_generated/steps/<n>/output.txt`, `…/messages/<uuid>.json`           | Per-step tool output and inter-agent messages, one file each **[V]**                                                 |
+| `~/.gemini/antigravity-cli/conversation_summaries.db`                          | SQLite. **Not the join** — see 3.1.5 **[V]**                                                                         |
+
+#### 3.1.2 `transcript.jsonl` record schema
+
+One JSON object per line, one per STEP, `step_index` ascending across the file with gaps (81 → 83 observed) that mean nothing. Complete key inventory across 389 records in three conversations **[V]**:
+
+```json
+{
+  "step_index": 4,
+  "source": "MODEL",
+  "type": "PLANNER_RESPONSE",
+  "status": "DONE",
+  "created_at": "2026-09-04T19:01:18Z",
+  "content": "…",
+  "thinking": "…",
+  "tool_calls": [{ "name": "find_by_name", "args": { "…": "…" } }],
+  "truncated_fields": ["content"]
+}
+```
+
+- `source`: `USER_EXPLICIT`, `MODEL`, `SYSTEM` **[V — complete in this corpus]**
+- `type`: `USER_INPUT`, `PLANNER_RESPONSE`, `GENERIC`, `SYSTEM_MESSAGE`, `ERROR_MESSAGE` **[V — complete in this corpus]**
+- `status`: `DONE`, `RUNNING` **[V]**
+- `content`, `thinking`, `tool_calls`, `truncated_fields` are each optional and independent.
+
+**Only two shapes are somebody speaking**, which is what the feed reads:
+
+- `USER_EXPLICIT` + `USER_INPUT` + string `content` → a human turn.
+- `MODEL` + `PLANNER_RESPONSE` + string `content` → the reply the panel draws.
+
+Everything else is skipped, and each omission is a fact. `GENERIC` is tool output and is most of the file's bytes (84 of 184 records in one conversation). A `PLANNER_RESPONSE` carrying only `tool_calls` is the model acting rather than speaking (73 of 184). `thinking` is a field of its own, so **no tag-stripping heuristic is needed anywhere** — the one thing this format makes easier than Claude's or Codex's. `SYSTEM_MESSAGE` and `ERROR_MESSAGE` are the harness talking to itself, and drawing either as a turn would attribute it to a person.
+
+**A `USER_INPUT` record's `content` is an envelope, not a prompt** **[V]**. The human's words sit in a `<USER_REQUEST>` block, followed by blocks nobody typed:
+
+```text
+<USER_REQUEST>
+What does this project do?
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-04T21:01:13+02:00.
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from None to …
+</USER_SETTINGS_CHANGE>
+```
+
+`antigravityUserRequestText` takes the block and falls back to the whole string where the pair is absent or unclosed. Note what the third block means for the model name: it is a SENTENCE, not a field, so the provider reports no `model` at all rather than parsing prose for one.
+
+**`transcript.jsonl` is the CLI's own truncated view.** Long fields are cut and named in `truncated_fields`; `transcript_full.jsonl` holds the whole record. Across the same 389 records the largest line was **4,844 bytes**, and truncation touched `content` on `GENERIC` (73×), `tool_calls` (4×) and `thinking` (1×) — **never `content` on a `PLANNER_RESPONSE`** **[V]**. So the truncated view loses no displayable message text in this corpus, at half the bytes; the field could in principle name `content` on a reply, and the panel truncates a bubble anyway.
+
+#### 3.1.3 Liveness and turn detection
+
+- **A turn is open** when the NEWEST step says `RUNNING`, and only then. `status` is written once when a step is appended and is **never rewritten**: a `RUNNING` background-task step at index 126 was followed by fourteen `DONE` steps and still reads `RUNNING` today **[V]**. Reading "any `RUNNING` record in the window" would keep a dwarf mining after the turn closed, and forever after a crash — so the word must also be FRESH (`ANTIGRAVITY_BUSY_WINDOW_S`, default 120s).
+- **The transcript growing between two scans** is the other busy signal, and the one a frozen Windows mtime cannot contradict (issue #1).
+- **A session is alive** while its presence lock is listed. This is better evidence than Codex gets: the lock is per conversation and is the CLI's own statement, so an open-but-quiet session stays on the board with no global process probe. It is still not a contract — a crash leaves it behind, and nothing documents when the CLI removes one — so `ANTIGRAVITY_LOCK_GRACE_S` (30s) covers a lock that vanishes between two reads and `ANTIGRAVITY_STALE_LOCK_WINDOW_S` (a day) refuses one over a conversation that has gone silent.
+- **No blocked-on-a-human record of any kind** was found: no approval, elicitation, permission or input-request record or field anywhere in the corpus **[V]**. So this provider never reports a session as `waiting`, exactly as conservatively as Codex — a session at an interactive prompt is indistinguishable on disk from one sitting quietly, and inventing the difference is the failure #60 exists to prevent.
+- **No token usage anywhere** in the transcript **[V]**. An observed Antigravity session therefore mines nothing rather than mining a message count or a byte size wearing a token's name.
+
+#### 3.1.4 `history.jsonl` — the workspace map
+
+```json
+{"display":"/model","timestamp":1788548423541,"workspace":"C:\\Users\\j\\Desktop\\Sample-Project","type":"slash_command"}
+{"display":"What does this project do?","timestamp":1788548473547,"workspace":"C:\\Users\\j\\Desktop\\Sample-Project","conversationId":"…"}
+```
+
+`timestamp` is epoch **ms**; `workspace` is a native path; `conversationId` and `type` are optional. Three shapes are skipped, and all three are ordinary rather than corrupt **[V, all observed]**:
+
+- **no `conversationId`** — a slash command typed before any conversation existed (the first real record on this machine);
+- **no `workspace`** — nothing else in the store recovers one, and a mine invented from a conversation id would be the phantom-project failure of #166 by another route;
+- **unreadable** — a half-written final line, or a bounded tail read that opened mid-record.
+
+Ordering is by `timestamp`, never by line: a conversation resumed elsewhere keeps both records, and the folder it is in NOW is the later one.
+
+#### 3.1.5 What was checked and rejected
+
+- **`conversation_summaries.db` is not the join.** The table carries `conversation_id`, `workspace_uris`, `status`, `parent_conversation_id`, `nesting_depth`, `not_fully_idle`, `killed`, `last_modified_time`, `title` — and **none of the CLI conversation ids on this machine existed in it**, with the sampled rows' status/parent/depth columns blank or default. A schema existing is not proof it describes CLI sessions, so nothing reads it. **[V]**
+- **A global `agy.exe` cannot be mapped to a conversation.** The process tree (`WindowsTerminal.exe` → `powershell.exe` → `agy.exe`) proves a terminal-hosted process exists, not which conversation owns it: the command line carries no conversation id **[V]**. So no pid is published and click-to-focus falls back to tailing the transcript.
+- **Subagent topology is not in the summary DB.** Observed subagents had their own conversation directories; the usable parent evidence is in the parent's own subagent tool events. Nothing reads it yet, so every observed conversation is a `worker` — absence of spawn evidence, never a `foreman` claim.
+- **Detection is not delivery.** The compact tool calls sampled carried no stable DwarfAI-compatible tool-use id, and the documented stream-input protocol covers user text events rather than answers to a question. Nothing here advertises a question answer, a permission answer, a message or an interrupt.
 
 ---
 
@@ -612,19 +711,24 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 
 ## 5. Confidence summary
 
-| Claim                                                                   | Status                                                                                  |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Claude dir encoding lossy; `cwd` field per line                         | Verified                                                                                |
-| Claude line schema, `effort`, model, thinking blocks                    | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)    |
-| `sessions/<pid>.json` busy/idle + PID mapping                           | Verified live (cleanup-on-crash not tested)                                             |
-| Agent async launch / task-notification completion / `subagents\` layout | Verified live + on completed session                                                    |
-| `<status>` is one of completed/failed/killed; all terminal              | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                        |
-| Three delivery envelopes carry the notification; the rest quote it      | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)       |
-| `agent-*.meta.json` and `tasks\*.output` carry no completion state      | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                |
-| `waitingFor` is the six values of §1.5, plus absent                     | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)   |
-| Subagents expose no status or blocked condition anywhere                | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)  |
-| Codex writes no approval / user-input record at all                     | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)    |
-| Codex rollout layout & record types                                     | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred |
-| Codex liveness = mtime + task_started/complete + process                | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap) |
-| Gemini CLI: nothing on disk here                                        | Verified absence                                                                        |
-| Click-to-focus via PPID walk to terminal                                | Process data verified; focusing mechanics inferred                                      |
+| Claim                                                                    | Status                                                                                                   |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Claude dir encoding lossy; `cwd` field per line                          | Verified                                                                                                 |
+| Claude line schema, `effort`, model, thinking blocks                     | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                     |
+| `sessions/<pid>.json` busy/idle + PID mapping                            | Verified live (cleanup-on-crash not tested)                                                              |
+| Agent async launch / task-notification completion / `subagents\` layout  | Verified live + on completed session                                                                     |
+| `<status>` is one of completed/failed/killed; all terminal               | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                         |
+| Three delivery envelopes carry the notification; the rest quote it       | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                        |
+| `agent-*.meta.json` and `tasks\*.output` carry no completion state       | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                 |
+| `waitingFor` is the six values of §1.5, plus absent                      | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                    |
+| Subagents expose no status or blocked condition anywhere                 | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                   |
+| Codex writes no approval / user-input record at all                      | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)                     |
+| Codex rollout layout & record types                                      | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                  |
+| Codex liveness = mtime + task_started/complete + process                 | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                  |
+| Gemini CLI: nothing on disk here                                         | Verified absence                                                                                         |
+| Antigravity CLI store layout, record schema and key inventory            | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise |
+| Antigravity: newest step's RUNNING status is the only open-turn evidence | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                    |
+| Antigravity: no token usage, no blocked-on-a-human record anywhere       | Verified absence in that corpus                                                                          |
+| Antigravity: conversation_summaries.db describes CLI sessions            | **Refuted** - no CLI conversation id was in it; nothing reads it                                         |
+| Antigravity: a running agy.exe can be mapped to a conversation           | **Refuted** - its command line carries no conversation id; no pid is published                           |
+| Click-to-focus via PPID walk to terminal                                 | Process data verified; focusing mechanics inferred                                                       |

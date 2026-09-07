@@ -61,7 +61,11 @@ observer, and eventually part game.
   a terminal emulator. The panel is already the interactive surface for the actions it supports;
   the underlying provider still owns the actual process and terminal.
 
-Claude Code and Codex are the two currently supported providers. More providers can be added once
+Claude Code and Codex are the two providers the panel can drive end to end. Antigravity (`agy`)
+is supported as an OBSERVER: its sessions appear on the board with their conversation, and
+nothing about them can be started or acted on from here. More providers, and more of each,
+can be added once their session artifacts and interaction paths meet the project's
+verification bar.
 their session artifacts and interaction paths meet the project's verification bar.
 
 ### Where it is going
@@ -190,6 +194,7 @@ or Linux desktop, so the table is honest about the difference.
 | --------------------------------------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
 | Overall                                 | **Verified**                  | Built, integration-pending             | Built, integration-pending             |
 | Session detection (Claude Code / Codex) | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
+| Antigravity session detection           | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
 | Codex liveness probe                    | PowerShell `Win32_Process`    | `pgrep -f codex`                       | `pgrep -f codex`                       |
 | Click-to-focus a terminal               | user32 via PowerShell         | `ps` + System Events (`osascript`)     | **Unsupported** — falls back to viewer |
 | Live transcript viewer                  | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
@@ -208,7 +213,7 @@ Notes on the three honest gaps:
   but it is gated off behind `DARWIN_CONSOLE_INPUT_ENABLED` until it has been run on a real Mac —
   it also needs the user to grant Accessibility permission, which the app cannot detect. While it
   is off, Send and Kick render disabled with their reason rather than silently typing nowhere.
-- **Session-data layouts** (`~/.claude`, `~/.codex`) are assumed to be identical on all three
+- **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`) are assumed
   platforms. They are home-relative already and nothing in the formats is Windows-specific, but
   this has not been confirmed against real macOS/Linux fixtures.
 
@@ -283,14 +288,24 @@ twice in a row reproduces every output file byte-for-byte. The README logo
 
 ## Provider support
 
-| Provider    | Support | Liveness and hierarchy                                                                                                                                                                                                                 |
-| ----------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | Active  | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported.                                                                                                |
-| Codex       | Active  | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` is used for verified worker/foreman relationships. |
-| Gemini CLI  | Planned | No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed.                                                                                      |
+| Provider    | Support      | Liveness and hierarchy                                                                                                                                                                                                                                                                                                                                  |
+| ----------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | Active       | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported.                                                                                                                                                                                                                 |
+| Codex       | Active       | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` is used for verified worker/foreman relationships.                                                                                                                  |
+| Antigravity | Observe only | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. Sessions cannot be launched, messaged, interrupted or answered from the panel, and report no tokens — see below. |
+| Gemini CLI  | Planned      | No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed.                                                                                                                                                                                                       |
 
 Codex liveness is heuristic: a recently modified rollout can remain visible until the
 configured liveness window expires after the CLI closes.
+
+Antigravity is deliberately narrower than the other two, and every limit is an absence of
+evidence rather than an unbuilt feature. Its CLI keeps a private on-disk format with no
+compatibility promise, and that format records no token usage, no blocked-on-a-human state, and
+nothing that ties a running `agy` process to a particular conversation. So an Antigravity dwarf
+mines no ore, is never shown as blocked, cannot have its terminal focused, and shows the send,
+kick and boost actions disabled with their reason. Its transcript can still be tailed in a
+terminal, and its conversation still reads in the panel. `docs/provider-formats.md` §3.1 records
+the format and the version it was verified against.
 
 For Claude, the main session dwarf is always the foreman — it is the orchestrator whether or
 not it currently has subagents out — and subagents are always workers. A subagent leaves the
@@ -416,29 +431,34 @@ first.
 Use these names as `.env` keys in a development checkout, and as JSON keys in the config file
 above for an installed app.
 
-| Variable                   | Default                   | Meaning                                                                                               |
-| -------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `POLL_INTERVAL_MS`         | `2000`                    | Provider scan interval in milliseconds.                                                               |
-| `LIVENESS_WINDOW_S`        | `90`                      | Reserved general activity window.                                                                     |
-| `CODEX_LIVENESS_WINDOW_S`  | `300`                     | Maximum rollout mtime age considered live.                                                            |
-| `CODEX_HEARTBEAT_WINDOW_S` | `300`                     | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                            |
-| `CODEX_SCAN_DAYS`          | `7`                       | How many day-directories (today back N-1 days) to scan for rollouts.                                  |
-| `CODEX_IDLE_RETENTION_S`   | `3600`                    | Extra time a quiet-but-open rollout stays visible while a codex process is running.                   |
-| `CODEX_SESSIONS_ROOT`      | `~/.codex/sessions`       | The Codex rollout directory to scan. A leading `~` is expanded.                                       |
-| `CODEX_STATE_DB`           | `~/.codex/state_5.sqlite` | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                      |
-| `CODEX_LOGS_DB`            | `~/.codex/logs_2.sqlite`  | Codex's structured log stream, used read-only as a liveness heartbeat.                                |
-| `DWARF_LEAVE_GRACE_S`      | `20`                      | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                         |
-| `TIER_CACHE_TTL_S`         | `600`                     | Mine-tier cache lifetime.                                                                             |
-| `TIER_COPPER_KB`           | `100`                     | Source-code byte-weight threshold for copper, in KB.                                                  |
-| `TIER_SILVER_KB`           | `500`                     | Source-code byte-weight threshold for silver, in KB.                                                  |
-| `TIER_GOLD_KB`             | `2048`                    | Source-code byte-weight threshold for gold, in KB.                                                    |
-| `TIER_URANIUM_KB`          | `8192`                    | Source-code byte-weight threshold for uranium, in KB.                                                 |
-| `CLAUDE_CONFIG_DIRS`       | `~/.claude`               | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`. |
-| `SENDTEXT_RELAY_MODEL`     | `haiku`                   | Model the one-shot `claude -p` relay runs when delivering a message to a session.                     |
-| `SENDTEXT_TIMEOUT_S`       | `60`                      | How long a message delivery may take before it is reported as timed out.                              |
-| `HOOKS_PORT`               | `47821`                   | Loopback port for instant updates (see above). Nothing binds it until you opt in.                     |
-| `CLAUDE_CLI_PATH`          | _(detect)_                | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.     |
-| `CODEX_CLI_PATH`           | _(detect)_                | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.      |
+| Variable                          | Default                     | Meaning                                                                                               |
+| --------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `POLL_INTERVAL_MS`                | `2000`                      | Provider scan interval in milliseconds.                                                               |
+| `LIVENESS_WINDOW_S`               | `90`                        | Reserved general activity window.                                                                     |
+| `CODEX_LIVENESS_WINDOW_S`         | `300`                       | Maximum rollout mtime age considered live.                                                            |
+| `CODEX_HEARTBEAT_WINDOW_S`        | `300`                       | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                            |
+| `CODEX_SCAN_DAYS`                 | `7`                         | How many day-directories (today back N-1 days) to scan for rollouts.                                  |
+| `CODEX_IDLE_RETENTION_S`          | `3600`                      | Extra time a quiet-but-open rollout stays visible while a codex process is running.                   |
+| `CODEX_SESSIONS_ROOT`             | `~/.codex/sessions`         | The Codex rollout directory to scan. A leading `~` is expanded.                                       |
+| `CODEX_STATE_DB`                  | `~/.codex/state_5.sqlite`   | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                      |
+| `CODEX_LOGS_DB`                   | `~/.codex/logs_2.sqlite`    | Codex's structured log stream, used read-only as a liveness heartbeat.                                |
+| `ANTIGRAVITY_STORE_ROOT`          | `~/.gemini/antigravity-cli` | The Antigravity CLI (`agy`) store to observe. A leading `~` is expanded.                              |
+| `ANTIGRAVITY_BUSY_WINDOW_S`       | `120`                       | How recent a still-`RUNNING` transcript step must be to count as an open turn.                        |
+| `ANTIGRAVITY_LOCK_GRACE_S`        | `30`                        | How long a conversation survives its presence lock no longer being listed.                            |
+| `ANTIGRAVITY_STALE_LOCK_WINDOW_S` | `86400`                     | How silent a locked conversation may be before its lock is read as stale.                             |
+| `DWARF_LEAVE_GRACE_S`             | `20`                        | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                         |
+| `TIER_CACHE_TTL_S`                | `600`                       | Mine-tier cache lifetime.                                                                             |
+| `TIER_COPPER_KB`                  | `100`                       | Source-code byte-weight threshold for copper, in KB.                                                  |
+| `TIER_SILVER_KB`                  | `500`                       | Source-code byte-weight threshold for silver, in KB.                                                  |
+| `TIER_GOLD_KB`                    | `2048`                      | Source-code byte-weight threshold for gold, in KB.                                                    |
+| `TIER_URANIUM_KB`                 | `8192`                      | Source-code byte-weight threshold for uranium, in KB.                                                 |
+| `CLAUDE_CONFIG_DIRS`              | `~/.claude`                 | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`. |
+| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs when delivering a message to a session.                     |
+| `SENDTEXT_TIMEOUT_S`              | `60`                        | How long a message delivery may take before it is reported as timed out.                              |
+| `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                     |
+| `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.     |
+| `CODEX_CLI_PATH`                  | _(detect)_                  | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.      |
+| `ANTIGRAVITY_CLI_PATH`            | _(detect)_                  | Explicit path to the `agy` binary. Blank detects it in the known install locations, then PATH.        |
 
 Tier thresholds must be strictly increasing.
 
