@@ -8,7 +8,9 @@ import {
   antigravityModelCatalog,
   claudeModelCatalog,
   codexModelCatalog,
+  unavailableAntigravityModelCatalog,
   unavailableClaudeModelCatalog,
+  type AntigravityModelInfo,
   type ClaudeModelInfo,
   type CodexThreadModel
 } from '../domain/agentModelCatalog'
@@ -102,6 +104,10 @@ import {
 import type { Provider } from '../providers/provider'
 import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
 import { readCodexThreads } from '../providers/codex/state'
+import {
+  createAntigravityModelCatalog,
+  type AntigravityModelCatalogPort
+} from '../providers/antigravity/models'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
@@ -442,6 +448,14 @@ export interface RuntimeOptions {
    */
   codexModelHistory?: () => Promise<CodexThreadModel[]>
   /**
+   * Antigravity's own live model list (#282) — a short-lived, read-only `agy
+   * models` spawn, injected for tests, which must never spawn a real process,
+   * exactly as `claudeModelCatalog` above is. The default drives the real one
+   * over the binary CLI detection found (#91); see createAntigravityModel-
+   * Catalog for what it costs and what a failure to read the answer becomes.
+   */
+  antigravityModelCatalog?: AntigravityModelCatalogPort
+  /**
    * Sessions the panel STARTED detached and still holds the process of, so
    * that it can end one (#217). Injected for tests, which must never end a
    * real process tree; the default ends it through the platform port.
@@ -534,6 +548,8 @@ export class AgentRuntime {
   private readonly claudeModelCatalog: ClaudeModelCatalogPort
   /** Every model Codex's own registry remembers using, newest first (#239). */
   private readonly codexModelHistory: () => Promise<CodexThreadModel[]>
+  /** Antigravity's own live model list, over a read-only `agy models` spawn (#282). */
+  private readonly antigravityModelCatalog: AntigravityModelCatalogPort
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
   /**
@@ -810,6 +826,13 @@ export class AgentRuntime {
           db.close()
         }
       })
+    // Composed here rather than in platformAdapters, for the reason
+    // claudeModelCatalog above is: asking a CLI for its own model list is the
+    // same act on all three platforms, and the per-OS half it already needs
+    // (which binary to spawn) comes from cliDetector at ask time in
+    // listAgentModels, not from anything built here (#282).
+    this.antigravityModelCatalog =
+      options.antigravityModelCatalog ?? createAntigravityModelCatalog()
     // Ending a process tree is NOT the same act on all three platforms, so
     // unlike the two registries around it this one takes its per-OS half from
     // platformAdapters — the single composition point — and keeps only the
@@ -2417,7 +2440,31 @@ export class AgentRuntime {
       return []
     })
 
-    return { catalogs: [claude, codexModelCatalog(codexThreads), antigravityModelCatalog()] }
+    // AMENDED for #282 (was: `antigravityModelCatalog()` with no argument,
+    // always `source: 'none'` — #237 gave Antigravity a launch path but no
+    // live list). On the same terms as Claude above: bounded by the same
+    // timeout, and a failed OR unparseable ask both fall back to
+    // `unavailableAntigravityModelCatalog()` behind one warn line.
+    const antigravityDetection = await this.cliDetector.detect('antigravity')
+    const antigravity =
+      antigravityDetection.installed && antigravityDetection.path !== undefined
+        ? await withTimeout(
+            this.antigravityModelCatalog({ executablePath: antigravityDetection.path }),
+            MODEL_CATALOG_TIMEOUT_MS,
+            `The model catalogue ask took longer than ${MODEL_CATALOG_TIMEOUT_MS}ms`
+          ).then(
+            (models: AntigravityModelInfo[]) => antigravityModelCatalog(models),
+            (error: unknown) => {
+              console.warn(
+                "[runtime] Could not ask Antigravity's own CLI for its model list",
+                error
+              )
+              return unavailableAntigravityModelCatalog()
+            }
+          )
+        : unavailableAntigravityModelCatalog()
+
+    return { catalogs: [claude, codexModelCatalog(codexThreads), antigravity] }
   }
 
   /**

@@ -30,13 +30,14 @@ describe('PROVIDER_EFFORT_LEVELS', () => {
   })
 
   /*
-   * Antigravity is an observer in this build (#237): it is absent from
-   * LAUNCHABLE_PROVIDERS, so no launch reaches it. An empty list is the
-   * honest entry rather than a borrowed one — see the refusal test below for
-   * what an effort aimed at it does.
+   * AMENDED for #282 (was: 'gives Antigravity none, because no launch can
+   * reach it', asserting `[]` — Antigravity was absent from
+   * LAUNCHABLE_PROVIDERS at #239's time. #237 gave it a launch path and #282
+   * gives it a live model list; `agy --help` on CLI 1.1.26 documents its own
+   * three levels, verified read-only on 2026-09-07.
    */
-  it('gives Antigravity none, because no launch can reach it', () => {
-    expect(PROVIDER_EFFORT_LEVELS.antigravity).toEqual([])
+  it("carries Antigravity's own three documented levels, not borrowed from either neighbour", () => {
+    expect(PROVIDER_EFFORT_LEVELS.antigravity).toEqual(['low', 'medium', 'high'])
   })
 })
 
@@ -81,8 +82,24 @@ describe('parseLaunchTuning', () => {
     expect(parseLaunchTuning('codex', { effort: 'ludicrous' })).toBeNull()
   })
 
-  it('refuses any effort for a provider that has none', () => {
-    expect(parseLaunchTuning('antigravity', { effort: 'high' })).toBeNull()
+  /*
+   * AMENDED for #282 (was: 'refuses any effort for a provider that has
+   * none', asserting `parseLaunchTuning('antigravity', { effort: 'high' })`
+   * was null — Antigravity had no launch path at #239's time, so
+   * PROVIDER_EFFORT_LEVELS.antigravity was `[]` and every effort refused.
+   * #282 gives it its own three documented levels; this now asserts the
+   * level it accepts, and the next test the levels it still does not.
+   */
+  it('carries a level Antigravity documents, now that #282 gives it a list', () => {
+    expect(parseLaunchTuning('antigravity', { effort: 'high' })).toEqual({ effort: 'high' })
+  })
+
+  it('refuses a level Antigravity does not have, even though a neighbour does', () => {
+    // 'xhigh' is real for Claude and Codex; Antigravity's own three stop at
+    // 'high'. Checking against the provider being launched is the point of a
+    // per-provider list.
+    expect(parseLaunchTuning('antigravity', { effort: 'xhigh' })).toBeNull()
+    expect(parseLaunchTuning('antigravity', { effort: 'ultra' })).toBeNull()
   })
 
   it('refuses a level that is not a string, whatever it looks like', () => {

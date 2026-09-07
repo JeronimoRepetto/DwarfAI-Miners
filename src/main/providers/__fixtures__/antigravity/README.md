@@ -21,3 +21,10 @@ degrades on an unknown record rather than throwing. §3.1.6 tabulates the tool-c
 | `transcript-partial-tail.jsonl` | The same shape with a half-written final line, which is what a reader racing the CLI's own append sees                                                                                                                                                         |
 | `transcript-tool-calls.jsonl`   | Issue #280: `run_command`, `list_dir`, `grep_search` and `write_to_file` calls, one tool this app has never mapped (`manage_subagents`), and one call whose subject the CLI's own truncation cut mid-string                                                    |
 | `history.jsonl`                 | The workspace map, including the records that carry no conversation id, no workspace, a duplicate id, and one line that is not JSON at all                                                                                                                     |
+| `models.txt`                    | `agy models`' own stdout, captured verbatim (#282): a status line with no tab, then one `<id>\t<display name>` line per model                                                                                                                                  |
+
+`models.txt` needed no sanitizing: model ids and labels are the CLI's own public vendor names, and
+no account-specific text appears in this output. It is read by `providers/antigravity/models.ts`'s
+`parseAgyModelsOutput`, off a plain `agy models` spawn — a different subject from the
+transcript/history store above: one live CLI answer, not a file the observer polls, so
+`docs/provider-formats.md` §3 (which documents that store's own on-disk schema) does not carry it.
