@@ -4,6 +4,14 @@ import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { agentProviderList } from '../domain/launchProviders'
+import {
+  antigravityModelCatalog,
+  claudeModelCatalog,
+  codexModelCatalog,
+  unavailableClaudeModelCatalog,
+  type ClaudeModelInfo,
+  type CodexThreadModel
+} from '../domain/agentModelCatalog'
 import { MineHistoryReader, type MineHistorySource } from '../history/mineHistory'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
@@ -12,6 +20,7 @@ import {
   MAX_DWARF_TEXT_CHARS,
   type AgentLaunchRequest,
   type AgentLaunchResult,
+  type AgentModelCatalogList,
   type AgentProviderList,
   type Dwarf,
   type DwarfActivation,
@@ -76,7 +85,11 @@ import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import { LaunchedSessionRegistry } from '../sessionLaunch/launchedSessions'
 import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
-import { createSdkHeldSession } from '../sessionLaunch/sdkHeldSession'
+import {
+  createSdkHeldSession,
+  createSdkModelCatalog,
+  type ClaudeModelCatalogPort
+} from '../sessionLaunch/sdkHeldSession'
 import { prepareLaunchPrompt } from '../sessionLaunch/launch'
 import {
   launchClaudeSession,
@@ -85,6 +98,7 @@ import {
 } from '../sessionLaunch/launchRunner'
 import type { Provider } from '../providers/provider'
 import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
+import { readCodexThreads } from '../providers/codex/state'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
@@ -369,6 +383,24 @@ export interface RuntimeOptions {
    */
   heldSessions?: HeldSessionRegistry
   /**
+   * Claude's own live model list (#239) — a short-lived Agent SDK query,
+   * injected for tests, which must never spawn a real agent, exactly as
+   * `heldSessions`'s `start` is. The default drives the real one over the
+   * binary CLI detection found (#91); see createSdkModelCatalog for what it
+   * costs.
+   */
+  claudeModelCatalog?: ClaudeModelCatalogPort
+  /**
+   * Every non-archived thread Codex's own registry remembers, newest activity
+   * first (#239) — the machine's model HISTORY, for the Add Panel's picker.
+   * Injected for tests, which must never open a real database; the default
+   * reads the same state_5.sqlite the Codex provider does and degrades to an
+   * empty list on every failure mode that provider's own registry read
+   * degrades on (#264): no SqliteLike injected, missing database, unknown
+   * schema.
+   */
+  codexModelHistory?: () => Promise<CodexThreadModel[]>
+  /**
    * Sessions the panel STARTED detached and still holds the process of, so
    * that it can end one (#217). Injected for tests, which must never end a
    * real process tree; the default ends it through the platform port.
@@ -457,6 +489,10 @@ export class AgentRuntime {
   private readonly launchSession: SessionLauncher
   /** Sessions this panel started and still holds (#86, #94). */
   private readonly heldSessions: HeldSessionRegistry
+  /** Claude's own live model list, over a short-lived Agent SDK query (#239). */
+  private readonly claudeModelCatalog: ClaudeModelCatalogPort
+  /** Every model Codex's own registry remembers using, newest first (#239). */
+  private readonly codexModelHistory: () => Promise<CodexThreadModel[]>
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
   /**
@@ -703,6 +739,28 @@ export class AgentRuntime {
         start: createSdkHeldSession(),
         now: this.now,
         log: (message) => console.log(message)
+      })
+    // Composed here rather than in platformAdapters, for the same reason
+    // heldSessions is: asking the SDK for its model list is the same act on
+    // all three platforms (#239).
+    this.claudeModelCatalog = options.claudeModelCatalog ?? createSdkModelCatalog()
+    // Codex's own registry, read exactly as the mine-history reader's `codex`
+    // block above reads it — same sqlite adapter, same stateDb path, and the
+    // same degrade-to-empty on every failure that registry read already holds
+    // (#264): no SqliteLike injected, missing database, unknown schema.
+    this.codexModelHistory =
+      options.codexModelHistory ??
+      (async () => {
+        const codexSqlite = options.sqlite ?? new NodeSqlite()
+        const db = await codexSqlite.openReadOnly(
+          expandHomePath(options.config.providers.codex.stateDb, home)
+        )
+        if (db === null) return []
+        try {
+          return readCodexThreads(db, 0)
+        } finally {
+          db.close()
+        }
       })
     // Ending a process tree is NOT the same act on all three platforms, so
     // unlike the two registries around it this one takes its per-OS half from
@@ -2231,6 +2289,46 @@ export class AgentRuntime {
       DWARF_PROVIDERS.map((provider) => this.cliDetector.detect(provider))
     )
     return agentProviderList(detections)
+  }
+
+  /**
+   * What each provider can start ON, live (#239) — one entry per
+   * DWARF_PROVIDERS member, always, so the Add Panel never has to ask "did
+   * this provider answer at all".
+   *
+   * Pull-only and asked once when the panel opens, for the same reason
+   * listAgentProviders is: a model list is not board state. The three
+   * branches below are three different KINDS of answer rather than one asked
+   * three ways — see AgentModelSource — and domain/agentModelCatalog is where
+   * each is turned into the wire shape; this method only decides which of
+   * Claude's two catalogues applies and asks Codex's registry for its own.
+   *
+   * Claude is checked for installation first so an uninstalled machine never
+   * pays for a doomed process spawn — the same cheapest-refusal-first order
+   * every launch refusal here already holds. A `claudeModelCatalog` that
+   * still throws (a CLI present but unable to start, say) is caught here
+   * rather than left to reject the whole answer: one provider's failure must
+   * never silence the other two.
+   */
+  async listAgentModels(): Promise<AgentModelCatalogList> {
+    const claudeDetection = await this.cliDetector.detect('claude')
+    const claude =
+      claudeDetection.installed && claudeDetection.path !== undefined
+        ? await this.claudeModelCatalog({ executablePath: claudeDetection.path }).then(
+            (models: ClaudeModelInfo[]) => claudeModelCatalog(models),
+            (error: unknown) => {
+              console.warn('[runtime] Could not ask Claude for its own model list', error)
+              return unavailableClaudeModelCatalog()
+            }
+          )
+        : unavailableClaudeModelCatalog()
+
+    const codexThreads = await this.codexModelHistory().catch((error: unknown) => {
+      console.warn("[runtime] Could not read Codex's own registry for its model history", error)
+      return []
+    })
+
+    return { catalogs: [claude, codexModelCatalog(codexThreads), antigravityModelCatalog()] }
   }
 
   /**

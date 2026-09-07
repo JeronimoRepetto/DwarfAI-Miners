@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentLaunchRequest,
   AgentLaunchResult,
+  AgentModelCatalogList,
   AgentProviderList,
   AppBuild,
   DwarfActivation,
@@ -167,6 +168,13 @@ export interface DwarfAiMinersApi {
    * AgentProviderOption for why that stops at the wire.
    */
   listAgentProviders: () => Promise<AgentProviderList>
+  /**
+   * What each provider can start ON, live (#239) — asked beside
+   * listAgentProviders, for the same reason and at the same moment: a model
+   * list is not board state either. No argument and no path, for the same
+   * reason listAgentProviders carries neither.
+   */
+  listAgentModels: () => Promise<AgentModelCatalogList>
   /**
    * Report that a kicked agent was SEEN stopping, so main retires the dwarf
    * (see #46). One-way by design: there is no verdict to wait for, because the
@@ -393,6 +401,9 @@ const api: DwarfAiMinersApi = {
   // No payload to coerce: the question is "what does this machine have", and
   // there is nothing about it for a caller to name.
   listAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.listAgentProviders),
+  // Same discipline as listAgentProviders: no argument to coerce, the
+  // question is about this machine.
+  listAgentModels: () => ipcRenderer.invoke(IPC_CHANNELS.listAgentModels),
   // Same discipline as retireDwarf: collapse anything that is not a string
   // BEFORE it crosses, so main's boundary check only reasons about one.
   undeclareMine: (mineId) =>

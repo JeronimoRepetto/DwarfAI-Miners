@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   AgentLaunchRequest,
+  AgentModelCatalogList,
   AgentProviderList,
   AgentLaunchResult,
   AppBuild,
@@ -142,6 +143,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
   ipcMain.removeHandler(IPC_CHANNELS.launchAgent)
   ipcMain.removeHandler(IPC_CHANNELS.listAgentProviders)
+  ipcMain.removeHandler(IPC_CHANNELS.listAgentModels)
   ipcMain.removeHandler(IPC_CHANNELS.launchHeldSession)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfPermission)
@@ -809,6 +811,13 @@ async function init(): Promise<void> {
     IPC_CHANNELS.listAgentProviders,
     () => runtime?.listAgentProviders() ?? noProviders
   )
+
+  // What each provider can start ON, live (#239) — the same reasoning as
+  // listAgentProviders' comment above, applied to a model list instead of a
+  // CLI. No payload to validate, and a runtime that never came up answers
+  // with an empty list rather than a guess.
+  const noModels: AgentModelCatalogList = { catalogs: [] }
+  ipcMain.handle(IPC_CHANNELS.listAgentModels, () => runtime?.listAgentModels() ?? noModels)
 
   // Adding a mine and removing one (#85, #169). declare takes no payload: the
   // folder picker runs here, so there is no path for the renderer to send and

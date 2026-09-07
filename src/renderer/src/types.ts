@@ -13,6 +13,9 @@ export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
+  AgentModelCatalog,
+  AgentModelCatalogList,
+  AgentModelSource,
   AgentProviderList,
   AgentProviderOption,
   AppBuild,
@@ -60,6 +63,7 @@ export type {
   MinesSnapshot,
   MineTier,
   MineUndeclareResult,
+  ModelOption,
   PanelEdge,
   PanelLayout,
   PanelLayoutRequest,

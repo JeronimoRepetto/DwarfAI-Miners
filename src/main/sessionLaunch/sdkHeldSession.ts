@@ -5,6 +5,7 @@ import {
   type SDKMessage,
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
+import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldSessionSubagentSignal } from './heldCrew'
 import {
   heldMessageText,
@@ -22,6 +23,11 @@ import {
  * `AskUserQuestion` to a button in this panel. No unit test comes through here;
  * the registry above it is driven by an injected fake, exactly as the relay and
  * the process probe are.
+ *
+ * A second capability lives here too, since #239: `createSdkModelCatalog`
+ * asks the same SDK what models it can start on, over a SEPARATE short-lived
+ * `query()` rather than the held one above — see its own comment for what
+ * that costs and why nothing it starts ever runs a turn.
  *
  * ## Two things learned the hard way, both load-bearing
  *
@@ -393,6 +399,76 @@ export function createSdkHeldSession(): HeldSessionPort {
           return false
         }
       }
+    }
+  }
+}
+
+/** Ask a short-lived Agent SDK query for its own model list (#239). */
+export type ClaudeModelCatalogPort = (options: {
+  executablePath: string
+}) => Promise<ClaudeModelInfo[]>
+
+/**
+ * A prompt that never sends anything. Fed to a query that exists only to ask
+ * its CONTROL channel a question — never a turn — so the CLI process starts,
+ * completes its own init handshake, and then sits blocked on this generator
+ * forever, exactly the way a held session's own InputStream blocks before its
+ * first `push`. `close()` on the query is what actually ends it; this never
+ * resolves on its own.
+ */
+async function* silentPrompt(): AsyncGenerator<SDKUserMessage> {
+  await new Promise<never>(() => {})
+}
+
+/**
+ * Build the real model-catalogue port, over a query the caller neither holds
+ * nor sends a turn to (#239).
+ *
+ * **What this costs.** One real CLI process spawn and its init handshake —
+ * the same cost `createSdkHeldSession` pays to start a session, minus the
+ * turn: nothing here is ever a paid model call, because `silentPrompt` above
+ * never sends a user message for one to answer. Composed once per ask rather
+ * than kept open, so the caller decides how often to pay it — see
+ * runtime.ts's own note on caching this per Add Panel open, not per keystroke.
+ *
+ * The message loop is drained in the background for the same reason
+ * `createSdkHeldSession`'s is: `supportedModels()` is a control request
+ * answered over the same connection, and a query nobody is reading from can
+ * leave that answer unclaimed. Nothing the loop reads is kept — a query that
+ * is never sent a turn has nothing to say through it.
+ */
+export function createSdkModelCatalog(): ClaudeModelCatalogPort {
+  return async ({ executablePath }) => {
+    const session = query({
+      prompt: silentPrompt(),
+      options: {
+        // Never the SDK's bundled executable — see the module comment.
+        pathToClaudeCodeExecutable: executablePath,
+        permissionMode: 'default'
+      }
+    })
+    void (async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for await (const _message of session) {
+          // Nothing to read: this query is never sent a turn, so it is never
+          // given anything to reply to.
+        }
+      } catch {
+        // The process ending before this resolves is not a caller-facing
+        // failure — the awaited call below is what states whether the ask
+        // itself succeeded.
+      }
+    })()
+    try {
+      const models = await session.supportedModels()
+      return models.map((model): ClaudeModelInfo => ({
+        value: model.value,
+        displayName: model.displayName,
+        supportsEffort: model.supportsEffort === true
+      }))
+    } finally {
+      session.close()
     }
   }
 }

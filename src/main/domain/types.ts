@@ -13,6 +13,9 @@
 export type {
   AgentLaunchRequest,
   AgentLaunchResult,
+  AgentModelCatalog,
+  AgentModelCatalogList,
+  AgentModelSource,
   AgentProviderList,
   AgentProviderOption,
   Dwarf,
@@ -59,6 +62,7 @@ export type {
   MinesSnapshot,
   MineTier,
   MineUndeclareResult,
+  ModelOption,
   PanelEdge,
   PanelLayout,
   PanelLayoutRequest,

@@ -1433,6 +1433,68 @@ export interface AgentProviderList {
   providers: AgentProviderOption[]
 }
 
+/**
+ * One model a provider's own answer named, for the Add Panel's model picker
+ * (#239).
+ *
+ * `value` is exactly what a launch's own `model` field takes — passed
+ * through unchanged and never re-derived, so choosing an option and typing
+ * its value by hand are the same request. `label` is a human name for it,
+ * when the source has one distinct from the value; a source with no names of
+ * its own (Codex's history, today) leaves it off and the panel falls back to
+ * the value itself.
+ */
+export interface ModelOption {
+  value: string
+  label?: string
+}
+
+/**
+ * Where a provider's model list came from (#239) — the same distinction
+ * AgentProviderOption draws between "installed" and "launchable", applied to
+ * a model list rather than a CLI: not every provider can answer this the same
+ * way, and the panel has to say which kind of answer it is showing.
+ *
+ * - `'provider'` — the CLI's or SDK's own structured answer, asked live. The
+ *   strongest claim, because it can never go stale: Claude's own
+ *   `supportedModels()` today.
+ * - `'history'` — inferred from what this machine has actually used, never
+ *   invented: a configured default, or a value a past session recorded. Not a
+ *   promise the list is complete or current, which is why the panel shows the
+ *   source rather than presenting it as the CLI's own word (Codex today).
+ * - `'none'` — nothing to offer. The picker is disabled with a reason rather
+ *   than drawn empty (Antigravity today, until #237 gives it a launch path).
+ */
+export type AgentModelSource = 'provider' | 'history' | 'none'
+
+/**
+ * One provider's whole answer to "what can it run, and how hard can it
+ * think" (#239).
+ *
+ * `efforts` is the same closed list a launch is checked against at the
+ * boundary (`PROVIDER_EFFORT_LEVELS` in main/domain/launchTuning.ts) — sent
+ * here so the Add Panel can draw the effort picker from the one place that
+ * already knows it, rather than a second copy that could drift. Empty means
+ * this provider takes no effort level at all, which is a real answer and not
+ * a gap: the panel draws no effort picker for it.
+ */
+export interface AgentModelCatalog {
+  provider: DwarfProvider
+  models: ModelOption[]
+  efforts: string[]
+  source: AgentModelSource
+}
+
+/**
+ * Every provider's model catalogue, answered on request (#239) — one entry
+ * per DWARF_PROVIDERS member, whatever this build can actually say about it.
+ * See listAgentModels for why this is pull-only, exactly as
+ * listAgentProviders is.
+ */
+export interface AgentModelCatalogList {
+  catalogs: AgentModelCatalog[]
+}
+
 /** One request to start a new agent session in a mine's folder (#86). */
 export interface AgentLaunchRequest {
   /** Which mine to start in. The id, never a path: main resolves the folder. */
@@ -2301,6 +2363,19 @@ export const IPC_CHANNELS = {
    * opens. Answers with AgentProviderList; no path ever crosses.
    */
   listAgentProviders: 'agent:providers',
+  /**
+   * What each provider can start ON, live (#239) — beside listAgentProviders
+   * for the same reason that channel is pull-only: a model list is not board
+   * state, it changes when a provider ships one, and the Add Panel asks once
+   * when it opens rather than keeping it in step at 2Hz.
+   *
+   * Answers with AgentModelCatalogList, one entry per DWARF_PROVIDERS member
+   * whatever this build can actually say about it — see AgentModelSource for
+   * why an entry with an empty `models` list is still an honest answer rather
+   * than an absent one. No payload ever crosses: the question is about this
+   * machine, exactly as listAgentProviders' is.
+   */
+  listAgentModels: 'agent:models',
   /**
    * Starting a session the panel HOLDS, and answering what it asks (#86, #94).
    *

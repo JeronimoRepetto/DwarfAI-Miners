@@ -487,6 +487,36 @@ describe('preload provider-availability contract (#86)', () => {
   })
 })
 
+describe('preload model-catalogue contract (#239)', () => {
+  it('asks on the agent:models channel with no payload at all', async () => {
+    invoke.mockResolvedValueOnce({ catalogs: [] })
+    await expect(api.listAgentModels()).resolves.toEqual({ catalogs: [] })
+    expect(invoke).toHaveBeenLastCalledWith('agent:models')
+  })
+
+  it("hands back main's verdict untouched, every provider's source included", async () => {
+    const answered = {
+      catalogs: [
+        {
+          provider: 'claude',
+          models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          source: 'provider'
+        },
+        {
+          provider: 'codex',
+          models: [{ value: 'gpt-5.6-sol' }],
+          efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          source: 'history'
+        },
+        { provider: 'antigravity', models: [], efforts: [], source: 'none' }
+      ]
+    }
+    invoke.mockResolvedValueOnce(answered)
+    await expect(api.listAgentModels()).resolves.toEqual(answered)
+  })
+})
+
 describe('preload launch contract (#168)', () => {
   it('carries the chosen provider alongside the mine and the prompt', async () => {
     // Before #168 this channel took a mine and a prompt only, so the engine had
