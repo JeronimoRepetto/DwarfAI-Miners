@@ -812,19 +812,21 @@ describe('DwarfSprite kick marker', () => {
  * a bare sprite and still pass.
  */
 describe('DwarfSprite in the scene', () => {
-  it('keeps its own sheet while crossing the floor, having no walk strip', () => {
-    // Was `dwarf-walk-1`. No walk sheet has been drawn (#74), and a dwarf that
-    // slid across the cave on the retired painted frames would be the only
-    // AI-painted thing left on screen. Style consistency over motion fidelity,
-    // chosen deliberately — the crossing itself is unchanged, MineScene still
-    // walks him there. `walking` is a scene prop, not a sequence input: the
-    // STATUS still decides the sheet, so a worker already `working` while
-    // crossing the floor now plays its working sequence rather than idling —
-    // only `waiting`, still undrawn, falls back to idle.
+  // AMENDED for #262 (was: "keeps its own sheet while crossing the floor,
+  // having no walk strip" — asserted that a worker already `working` played
+  // its working sequence while still crossing the floor, because "`walking`
+  // is a scene prop, not a sequence input: the STATUS still decides the
+  // sheet"). #262 reverses that #74 ruling: arrival, not status, now gates
+  // the working sequence, exactly as it always gated the sparks and the
+  // strike glow (see `DwarfSprite strike sparks` / `strike glow` below).
+  it('keeps its own idle loop while crossing the floor, having arrived at nothing yet', () => {
+    // No walk sheet has been drawn (#74) either, so a walking dwarf keeps
+    // reading its rank's idle rather than a strip painted for the crossing —
+    // that part of the original claim is unchanged.
     const working = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
     })
-    expect(sheetOf(working)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
+    expect(sheetOf(working)).toBe(WORKER_IDLE)
 
     const waiting = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'waiting' }), anchored: true, walking: true }
@@ -832,12 +834,20 @@ describe('DwarfSprite in the scene', () => {
     expect(sheetOf(waiting)).toBe(WORKER_IDLE)
   })
 
-  it('drops back into its own loop the moment it arrives', () => {
-    // Arrived and working now means the working sequence, not idle — see the
-    // note above on `walking` being a scene prop rather than a sequence input.
+  // AMENDED for #262 (was: "drops back into its own loop the moment it
+  // arrives" — a static mount already `working` with `walking: false`, which
+  // could not tell "arrived" apart from "born standing at the rock" since a
+  // fresh mount has no previous render either way). This now drives a real
+  // arrival — `walking` flips on an already-mounted, already-walking worker —
+  // which is the one thing a static mount or a pure `dwarfClips` call cannot
+  // exercise: the sequence restarting on the SAME sprite instance.
+  it('starts the working sequence only once it arrives, not on the status alone', async () => {
     const wrapper = mount(DwarfSprite, {
-      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: false }
+      props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true, walking: true }
     })
+    expect(sheetOf(wrapper)).toBe(WORKER_IDLE)
+
+    await wrapper.setProps({ walking: false })
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.worker['start-working']!.src))
   })
 

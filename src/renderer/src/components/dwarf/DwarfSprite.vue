@@ -249,8 +249,37 @@ const awaiting = computed(() => isAwaitingAnswer(props.dwarf.status, props.dwarf
  * straight to `working` (no human ever asked) changes nothing about
  * `awaiting` on either side of that transition, so `dwarfClips` would never
  * be re-run for it if the watch below only tracked `awaiting`.
+ *
+ * Deliberately still just the status. Whether it has actually ARRIVED is a
+ * separate question below (issue #262) — `dwarfClips` is what gates the
+ * working sequence on it, not this computed, so the rule lives in exactly
+ * one place.
  */
 const working = computed(() => props.dwarf.status === 'working')
+
+/**
+ * Whether this dwarf has arrived at its work point — the complement of
+ * `walking` (issue #262). #74 ruled that `working` alone decided the sheet,
+ * so a dwarf already `working` played its swing while still crossing the
+ * floor to it; the sparks and the strike glow below never agreed (both
+ * already refuse a walking dwarf), and #262 brings the sequence in line by
+ * gating it on arrival too. Read as `!== true` rather than negating a
+ * default-`false` prop directly, the same reason `is-flipped` above does:
+ * a sprite mounted outside any scene has no `walking` prop at all and must
+ * still read as arrived.
+ */
+const arrived = computed(() => props.walking !== true)
+
+/**
+ * Whether the working sequence is actually being SHOWN right now (issue
+ * #262) — `working` gated by `arrived`. This exists only so its PREVIOUS
+ * value is available below as `dwarfClips`'s `wasWorking`: a dwarf that
+ * carries a `working` status through an entire walk never sets this, so its
+ * arrival reads as a fresh start rather than a resumed loop, and dwarfClips'
+ * own comment explains why that distinction has to be made from history
+ * rather than guessed from status.
+ */
+const atWork = computed(() => working.value && arrived.value)
 
 /**
  * The strips to play, and how far into them the drawing is.
@@ -279,11 +308,22 @@ function stopCycle(): void {
 }
 
 // Any change of state restarts the sequence at its head, so a dwarf that just
-// picked up a task never starts mid-gesture.
+// picked up a task never starts mid-gesture. `arrived` is tracked alongside
+// `working` — not folded into it — so an arrival re-selects clips even when
+// neither `awaiting` nor the raw `working` status changed a bit (issue #262);
+// `atWork` rides along only to hand `dwarfClips` its previous, already-gated
+// answer as `wasWorking` (see that computed's own note).
 watch(
-  [awaiting, working, () => props.dwarf.role] as const,
-  ([nowAwaiting, nowWorking, role], previous) => {
-    clips.value = dwarfClips(role, nowAwaiting, previous?.[0], nowWorking, previous?.[1])
+  [awaiting, working, () => props.dwarf.role, arrived, atWork] as const,
+  ([nowAwaiting, nowWorking, role, nowArrived], previous) => {
+    clips.value = dwarfClips(
+      role,
+      nowAwaiting,
+      previous?.[0],
+      nowWorking,
+      previous?.[4],
+      nowArrived
+    )
     elapsedMs.value = 0
   },
   { immediate: true }
