@@ -94,13 +94,22 @@ const {
 const panelLeaves = new Set<Promise<void>>()
 function trackPanelLeave(completion: Promise<void>): void {
   panelLeaves.add(completion)
-  void completion.then(() => panelLeaves.delete(completion))
+  const forget = (): void => void panelLeaves.delete(completion)
+  // Settled either way, its say is spent. A rejected leave that stayed in the
+  // set was waited on by every later shrink, and never answered any of them.
+  completion.then(forget, forget)
 }
 async function waitForPanelLeaves(): Promise<void> {
   // Vue must first start every leaving column, including a dock closed by the
   // same mine change. Main keeps their last frame inside the window until then.
   await nextTick()
-  await Promise.all(panelLeaves)
+  // Taken as a BATCH and the set emptied: one leave that never reports
+  // completion is asked once and never again, so it cannot wedge every shrink
+  // after it (#266). `allSettled` for the same reason — a leave that threw has
+  // still had its turn, and usePanelLayout bounds how long the turn lasts.
+  const batch = [...panelLeaves]
+  panelLeaves.clear()
+  await Promise.allSettled(batch)
 }
 
 /**
