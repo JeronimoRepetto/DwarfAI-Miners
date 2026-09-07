@@ -82,6 +82,7 @@ import {
   stampHeldStatus,
   stampHeldTelemetry
 } from '../sessionLaunch/heldSession'
+import { createAntigravityHeldSession } from '../sessionLaunch/antigravityHeldSession'
 import { HeldSessionRegistry } from '../sessionLaunch/heldSessionRegistry'
 import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
@@ -827,7 +828,10 @@ export class AgentRuntime {
         // One engine per provider that has one (#237, step 5). Both are
         // composed here rather than in platformAdapters for the reason stated
         // above: starting a session is the same act on all three platforms.
-        start: { claude: createSdkHeldSession() },
+        start: {
+          claude: createSdkHeldSession(),
+          antigravity: createAntigravityHeldSession()
+        },
         now: this.now,
         log: (message) => console.log(message)
       })

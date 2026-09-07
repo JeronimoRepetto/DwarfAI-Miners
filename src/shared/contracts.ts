@@ -245,7 +245,7 @@ export function isPanelObserved(observer: DwarfObserver): observer is typeof PAN
  * `HeldSessionHandle` in main/sessionLaunch/heldSession.ts), so the panel says
  * "this protocol has no cancel" instead of "the interrupt was refused".
  */
-export const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+export const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'antigravity']
 
 /**
  * Every connection state the Agent SDK reports for one MCP server (issue
@@ -1791,6 +1791,14 @@ export function isHeldPermissionMode(value: unknown): value is HeldPermissionMod
  * held. Offering Claude's words to another CLI would be a control that looks
  * like it works and silently does nothing, which is the failure this whole
  * capability-list family exists to prevent.
+ *
+ * Re-checked against #282, which is the near miss worth naming: that issue DID
+ * give Antigravity a live model catalogue and a real
+ * `PROVIDER_EFFORT_LEVELS.antigravity`, so two of the launch row's three
+ * pickers now draw for it. Permissions is the third and stays out, because
+ * effort and permission mode are different axes: `agy --effort` is this CLI's
+ * own documented three levels, and `agy --mode` is a vocabulary nothing here
+ * has wired. A row filling in beside this one is not evidence for this one.
  */
 export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude']
 

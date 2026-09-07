@@ -120,6 +120,28 @@ export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
 export const NO_KICK_REASON = "This session type can't be canceled yet."
 
 /**
+ * Why a session the panel HOLDS still cannot be kicked (#237, step 5).
+ *
+ * The mirror of `KICK_HINT['codex-queue']`, from the opposite direction: that
+ * channel delivers and cannot interrupt because of when a queue drains, and
+ * this one delivers and cannot interrupt because its protocol has no cancel
+ * event in it at all. Neither of the two sentences already here would be true.
+ * `KICK_HINT['held-session']` promises an interrupt of the turn, which is
+ * exactly the thing that cannot happen; `NO_KICK_REASON`'s "yet" describes a
+ * gap in this app, and this is a fact about the session type.
+ *
+ * So it says what is missing and then what still works, exactly as the queue's
+ * sentence does — a refusal that leaves somebody with only a no sends them
+ * looking for a fault that is not there. Named for the CAPABILITY rather than
+ * for Antigravity: a second held protocol without a cancel gets this sentence
+ * with no edit, and the one provider it applies to today is not what makes it
+ * true.
+ */
+export const HELD_NO_CANCEL_REASON =
+  "This session's protocol has no cancel, so the turn can't be cut short from here. " +
+  'Messages still go straight onto the stream.'
+
+/**
  * What kicking that channel actually does, in honest terms — or, where a
  * channel cannot kick at all, why not: a terminal gets a real interrupt
  * keystroke, a relay tier is a semantic ask the session may decline, a held
@@ -231,12 +253,20 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   const hint =
     channel !== null
       ? KICK_HINT[channel]
-      : sendChannel !== undefined
-        ? KICK_HINT[sendChannel]
-        : // A one-shot run nothing here started has no kick for a stated
-          // reason rather than for want of a feature (#231), and it is the
-          // same sentence the composer beside it shows: one fact refuses both.
-          (noOneShotExitReason(dwarf) ?? NO_KICK_REASON)
+      : // A held session with a send and no cancel is one whose PROTOCOL has
+        // none (#237, step 5) — the only way that pair can arise, since the
+        // channel is stamped from the same walk. Checked before the general
+        // send-channel fallback below, which would otherwise hand it
+        // KICK_HINT['held-session'] and promise the interrupt that cannot
+        // happen.
+        sendChannel === 'held-session'
+        ? HELD_NO_CANCEL_REASON
+        : sendChannel !== undefined
+          ? KICK_HINT[sendChannel]
+          : // A one-shot run nothing here started has no kick for a stated
+            // reason rather than for want of a feature (#231), and it is the
+            // same sentence the composer beside it shows: one fact refuses both.
+            (noOneShotExitReason(dwarf) ?? NO_KICK_REASON)
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
   if (channel === null) return { id: 'kick', name: 'Kick', enabled: false, hint }
   return {
