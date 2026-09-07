@@ -755,6 +755,45 @@ describe('HeldSessionRegistry tuning (#96)', () => {
     })
   })
 
+  it('changes the model on an engine with no context reading, and waits for the next init', async () => {
+    /*
+     * The combination #237 step 5 made possible: `setModel` present,
+     * `contextUsage` absent. The two capabilities are independent, so this is
+     * a real handle shape rather than a gap.
+     *
+     * The change is MADE. Refusing an act this engine can perform, because a
+     * second act it never claimed is missing, would be the panel inventing a
+     * limitation the session does not have. What is missing is only the
+     * cheap witness — so the request stands as pending, no reading is pulled
+     * (there is none to pull), and the next `init` naming the model is what
+     * clears it. Exactly the shape effort already has, for the same reason.
+     */
+    const port = new FakePort()
+    port.offersContextUsage = false
+    const registry = await held(port)
+
+    expect(await registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })).toEqual(
+      { applied: true }
+    )
+
+    expect(port.modelsSet).toEqual(['claude-sonnet-5'])
+    expect(port.contextUsageAsks).toEqual([])
+    // Pending, and honestly so: nothing has confirmed it yet.
+    expect(registry.telemetryState('sess-1').model).toBe('claude-haiku-4-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true, pendingModel: 'claude-sonnet-5' }
+    })
+
+    port.reportTelemetry(0, { model: 'claude-sonnet-5', turn: 'started' })
+
+    expect(registry.telemetryState('sess-1').model).toBe('claude-sonnet-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
   it('verifies against a reading started AFTER the change, never one already on the wire', async () => {
     /*
      * The trap this closes. A pull already in flight was started BEFORE the

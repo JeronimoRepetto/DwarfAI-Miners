@@ -343,11 +343,27 @@ what the engine can do rather than what a provider name suggests — plus `pendi
 piece of work, and it is the natural next one; it is not what this slice did.
 
 **2. The capability is OPTIONAL on the port, and that is load-bearing.**
-`HeldSessionHandle.setModel?`/`setEffort?` are absent where an engine has no such act, exactly as
-`contextUsage`/`interrupt` are heading (the provider-neutral held port, #237 step 5). An engine
-that declares neither is refused BEFORE anything is attempted, with `TUNING_UNSUPPORTED`, and the
-strip disables the control with the reason stated — never a control drawn live that answers every
-click with a refusal.
+`HeldSessionHandle.setModel?`/`setEffort?` are absent where an engine has no such act, under the
+identical rule `interrupt?`/`contextUsage?` already hold since the port went provider-neutral
+(#237 step 5, landed): a capability is declared by being present, and absent is a fact about the
+protocol rather than about this moment. An engine that declares neither is refused BEFORE anything
+is attempted, with `TUNING_UNSUPPORTED`, and the strip disables the control with the reason stated
+— never a control drawn live that answers every click with a refusal. A held **Antigravity**
+session is exactly that case today: its stream's input side has no control channel at all, so its
+handle offers none of the four and both selects draw disabled.
+
+**Each of the four is independent, and one combination needed a ruling.** A handle may offer
+`setModel` and no `contextUsage` — which is to say, an engine that can change its model and cannot
+be asked for a reading. The maintainer's ruling (2026-09-07): the change is **made**, not refused.
+Refusing an act an engine can perform, because a second act it never claimed is missing, would be
+the panel inventing a limitation the session does not have. So there is deliberately **no gate on
+`contextUsage` being present**; what happens instead is what the pending state exists for — the
+change is accepted, `requestedModel` stands, the pull is a silent no-op for a handle with nothing
+to pull, and the request clears only when the next `init` names that model. Until then the strip
+says pending, which is the honest word. That is the same shape effort already has, for the same
+reason: `init` is the only witness either of them gets. Stated at
+`HeldSessionRegistry.setTuning`'s own verification comment, and pinned by "changes the model on an
+engine with no context reading, and waits for the next init".
 
 **The verification rule, which is the whole of why this was safe to ship.** `applied: true` on the
 wire means the session ACCEPTED the request and nothing more. What proves an effect is a later

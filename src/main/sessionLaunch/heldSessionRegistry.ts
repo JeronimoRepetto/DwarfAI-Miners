@@ -676,9 +676,23 @@ export class HeldSessionRegistry {
 
     if (change.kind === 'model') {
       record.requestedModel = change.model
-      // The verification, and the reason a model change needs no paid turn:
+      // THE VERIFICATION, and the reason a model change needs no paid turn:
       // the reading names the model the CLI now believes is in force, and
       // `pullContextUsage` promotes the request the moment it agrees.
+      //
+      // NOT GATED on the handle having a `contextUsage` at all (#237, step 5
+      // made it optional). The two capabilities are independent, so an engine
+      // may accept a model change and expose no reading — and there the change
+      // is still made: refusing an act an engine can perform, because a
+      // SECOND act it never claimed is missing, would be the panel inventing a
+      // limitation the session does not have. What happens instead is exactly
+      // what the pending state is for: the change is accepted, `requestedModel`
+      // stands, `refreshContextUsage` is a silent no-op for a handle with no
+      // reading to pull, and the request clears only when the next `init`
+      // names that model (`recordTelemetry` -> `confirmTuning`). Until then the
+      // strip says pending, which is the honest word — nothing has confirmed
+      // it. That is the same shape effort already has, and for the same
+      // reason: `init` is the only witness either of them gets.
       await this.pullReadingAfterChange(sessionId)
     } else {
       record.requestedEffort = change.effort
