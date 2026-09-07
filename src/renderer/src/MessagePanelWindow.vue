@@ -105,7 +105,8 @@ const {
   setEffort: setLaunchEffort,
   setPermissionMode: setLaunchPermissionMode,
   submit: submitLaunch,
-  observe: observeLaunch
+  observe: observeLaunch,
+  listenFailures: listenLaunchFailures
 } = useAgentLaunch()
 
 const error = ref<string | null>(null)
@@ -623,6 +624,8 @@ watch(
 
 let unsubscribe: (() => void) | undefined
 let unlistenPanel: (() => void) | undefined
+/** Main's launch-failure push (#263), subscribed alongside every other main-side listener. */
+let unlistenLaunchFailures: (() => void) | undefined
 
 onMounted(() => {
   // Listening BEFORE the pull, deliberately: a state set between the two would
@@ -631,6 +634,7 @@ onMounted(() => {
   void syncPanel()
   void load()
   unsubscribe = window.api.onMinesUpdated(update)
+  unlistenLaunchFailures = listenLaunchFailures()
   if (typeof ResizeObserver === 'function') {
     surfaceObserver = new ResizeObserver(reportHeight)
     const element = surfaceRef.value
@@ -642,6 +646,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribe?.()
   unlistenPanel?.()
+  unlistenLaunchFailures?.()
   surfaceObserver?.disconnect()
 })
 </script>

@@ -47,6 +47,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     raisePanel: vi.fn(),
     getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
+    // The launch-failure push (#263), subscribed unconditionally on mount —
+    // see useAgentLaunch's listenFailures. Not wrapped in a try/catch the way
+    // the awaited launch members are, so a missing stub here would break
+    // every test in this file rather than just the ones about a launch.
+    onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone.
     activateDwarf: vi.fn().mockResolvedValue({ focused: true, openedTerminal: false, feed: [] }),
     // An observed session's transcript, read on selection (#159); a
@@ -1262,5 +1267,43 @@ describe('the add panel', () => {
 
     expect(wrapper.find('.add-panel').exists()).toBe(true)
     expect(wrapper.find('.launch-alert').text()).toBe('Claude Code is not installed.')
+  })
+
+  /*
+   * The failure channel (#263), end to end: main pushes what it learned
+   * AFTER `agent:launch` already answered `launched: true`, and the panel
+   * returns to the composer with the CLI's own words rather than staying
+   * parked on "the session started" forever.
+   */
+  it('returns to the composer with the CLI’s own words when the launch fails after it started', async () => {
+    const { wrapper, api } = await openAddPanel({
+      listAgentProviders: vi.fn().mockResolvedValue({
+        providers: [{ provider: 'codex', installed: true, launchable: true }]
+      }),
+      launchAgent: vi
+        .fn()
+        .mockResolvedValue({ launched: true, provider: 'codex', launchId: 'receipt:1' })
+    })
+
+    await submitPrompt(wrapper, 'dig the east gallery')
+    // The detached wait, before anything failed.
+    expect(wrapper.find('.launch-note').exists()).toBe(true)
+    expect(wrapper.find('.launch-alert').exists()).toBe(false)
+
+    const fail = api.onLaunchFailed.mock.calls[0]![0] as (push: unknown) => void
+    fail({
+      launchId: 'receipt:1',
+      provider: 'codex',
+      mineId: MINE.id,
+      exitCode: 1,
+      stderrTail: 'codex: another instance is already running'
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.launch-alert').text()).toBe('codex: another instance is already running')
+    // The composer is back, prompt intact, so a retry costs one click.
+    expect(wrapper.find<HTMLTextAreaElement>('.launch-input').element.value).toBe(
+      'dig the east gallery'
+    )
   })
 })

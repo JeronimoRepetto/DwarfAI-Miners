@@ -1,6 +1,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { launchedDwarfIn } from '../lib/launch/launchArrival'
 import {
+  DETACHED_TIMEOUT_MS,
   adoptLaunchedDwarf,
   canSubmit,
   chooseEffort,
@@ -12,7 +13,9 @@ import {
   commitCommand,
   composerEnabled,
   composerPlaceholder,
+  detachedTimedOut,
   launchCommand,
+  launchFailed,
   launchPermissionMode,
   launchPhase,
   launchPrompt,
@@ -37,7 +40,13 @@ import {
 } from '../lib/launch/modelTuning'
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
 import { HELDABLE_PROVIDERS } from '../types'
-import type { AgentModelCatalog, AgentProviderOption, HeldPermissionMode, Mine } from '../types'
+import type {
+  AgentModelCatalog,
+  AgentProviderOption,
+  HeldPermissionMode,
+  LaunchFailedPush,
+  Mine
+} from '../types'
 
 /**
  * Launching an agent from inside a mine (#86, #194): the IPC, and the state the
@@ -133,6 +142,14 @@ export interface AgentLaunch {
   setPermissionMode: (value: HeldPermissionMode) => void
   submit: () => Promise<void>
   observe: (mines: readonly Mine[]) => void
+  /**
+   * Subscribe to main's launch-failure push (#263). Returns the unsubscribe,
+   * exactly like every other `window.api.on*` member — the caller (the
+   * message-panel window, which owns this composable's lifetime) holds it
+   * and calls it on unmount, the same pattern `useDwarfDelivery.listen()`
+   * already uses.
+   */
+  listenFailures: () => () => void
 }
 
 export function useAgentLaunch(): AgentLaunch {
@@ -289,7 +306,19 @@ export function useAgentLaunch(): AgentLaunch {
       // stream this panel holds — so it is recognised by the receipt main
       // opened here instead, which main stamps on the dwarf it proves from the
       // session's own opening prompt (#191).
-      state.value = startedDetached(state.value, result.launchId ?? null)
+      const launchId = result.launchId ?? null
+      state.value = startedDetached(state.value, launchId)
+      // #263. Only a receipted launch gets a timer. A launch main opened no
+      // receipt for is already the terminal `started-detached` #168 gives
+      // it — "the session started, and nothing can prove which dwarf it
+      // became" — and that reading is not reopened here: there is nothing
+      // for a later receipt or failure to correlate against, so there is
+      // nothing a timeout would honestly add.
+      if (launchId !== null) {
+        setTimeout(() => {
+          state.value = detachedTimedOut(state.value, launchId)
+        }, DETACHED_TIMEOUT_MS)
+      }
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }
@@ -317,6 +346,20 @@ export function useAgentLaunch(): AgentLaunch {
     state.value = adoptLaunchedDwarf(state.value, dwarf.id)
   }
 
+  /**
+   * Main's launch-failure push (#263), subscribed exactly like
+   * `useDwarfDelivery.listen()` subscribes `onDwarfDeliveryReport`. Applies
+   * `launchFailed` unconditionally — its own launchId/launchedDwarfId guard
+   * is what keeps a push for a closed, retried or already-adopted launch
+   * from touching this panel, so nothing here has to re-check what state
+   * the push arrived on.
+   */
+  function listenFailures(): () => void {
+    return window.api.onLaunchFailed((push: LaunchFailedPush) => {
+      state.value = launchFailed(state.value, push)
+    })
+  }
+
   return {
     state,
     mineId,
@@ -339,6 +382,7 @@ export function useAgentLaunch(): AgentLaunch {
     setEffort,
     setPermissionMode,
     submit,
-    observe
+    observe,
+    listenFailures
   }
 }

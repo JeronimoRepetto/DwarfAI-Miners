@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { OTHER_CHOICE } from '../lib/launch/launchState'
+import {
+  DETACHED_TIMEOUT_MESSAGE,
+  DETACHED_TIMEOUT_MS,
+  OTHER_CHOICE
+} from '../lib/launch/launchState'
 import { defaultDwarf, defaultMine } from '../testing/factories'
-import type { Dwarf, Mine } from '../types'
+import type { Dwarf, LaunchFailedPush, Mine } from '../types'
 import { useAgentLaunch } from './useAgentLaunch'
 
 const MINE = 'mine-1'
@@ -45,6 +49,11 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // reason this whole stub exists: an awaited member resolving undefined
     // becomes an unhandled rejection only the full suite catches.
     launchHostedProcess: vi.fn().mockResolvedValue({ launched: true }),
+    // #263. Not awaited, so it carries no unhandled-rejection risk, but
+    // still named here rather than per test: `listenFailures()` needs a real
+    // function to call, and a bare `undefined` would throw before any test
+    // that exercises it got the chance to say why.
+    onLaunchFailed: vi.fn().mockReturnValue(() => {}),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -616,5 +625,122 @@ describe('watching for the dwarf the launch started', () => {
     launch.observe([mineWith([heldDwarf('claude:sess-9', 'dig the east gallery')])])
 
     expect(launch.state.value.launchedDwarfId).toBeNull()
+  })
+})
+
+/*
+ * Issue #263. `started-detached` used to be a dead end: main answering
+ * `launched: true` was the last word this panel ever heard, whatever
+ * happened to the process next. These are the two ways back — main's own
+ * failure push, and the generous timeout for when nothing arrives at all.
+ */
+describe('a detached launch that fails after it started (#263)', () => {
+  async function detachedLaunch(overrides: Record<string, unknown> = {}) {
+    const api = stubApi(overrides)
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose('codex')
+    launch.setPrompt('dig the east gallery')
+    await launch.submit()
+    return { api, launch }
+  }
+
+  function failure(overrides: Partial<LaunchFailedPush> = {}): LaunchFailedPush {
+    return {
+      launchId: 'receipt:1',
+      provider: 'codex',
+      mineId: MINE,
+      exitCode: 1,
+      stderrTail: 'codex: another instance is already running',
+      ...overrides
+    }
+  }
+
+  it('subscribes on the agent:launchFailed channel and hands back the unsubscribe', () => {
+    const api = stubApi()
+    const launch = useAgentLaunch()
+
+    const stop = launch.listenFailures()
+
+    expect(api.onLaunchFailed).toHaveBeenCalledOnce()
+    expect(typeof stop).toBe('function')
+  })
+
+  it('returns the composer with main’s own words when the push names this launch', async () => {
+    const { api, launch } = await detachedLaunch()
+    launch.listenFailures()
+    expect(launch.phase.value).toBe('started-detached')
+
+    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
+    listener(failure())
+
+    expect(launch.phase.value).toBe('prompt-ready')
+    expect(launch.state.value.error).toBe('codex: another instance is already running')
+    // The typed prompt survives, so a retry costs one Enter.
+    expect(launch.state.value.prompt).toBe('dig the east gallery')
+  })
+
+  it('ignores a push naming a launch this panel has already left', async () => {
+    const { api, launch } = await detachedLaunch()
+    launch.listenFailures()
+
+    const listener = api.onLaunchFailed.mock.calls[0]![0] as (push: LaunchFailedPush) => void
+    listener(failure({ launchId: 'receipt:9' }))
+
+    expect(launch.phase.value).toBe('started-detached')
+  })
+
+  it('times out to a neutral sentence when neither a receipt nor a failure ever arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      const { launch } = await detachedLaunch()
+      expect(launch.phase.value).toBe('started-detached')
+
+      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS)
+
+      expect(launch.phase.value).toBe('prompt-ready')
+      expect(launch.state.value.error).toBe(DETACHED_TIMEOUT_MESSAGE)
+      expect(launch.state.value.prompt).toBe('dig the east gallery')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never times out a launch whose dwarf already arrived', async () => {
+    vi.useFakeTimers()
+    try {
+      const { launch } = await detachedLaunch()
+      launch.observe([mineWith([launchedDwarf('codex:sess-9', 'receipt:1')])])
+      expect(launch.phase.value).toBe('message-panel')
+
+      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS)
+
+      expect(launch.phase.value).toBe('message-panel')
+      expect(launch.state.value.error).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /*
+   * The #168 terminal reading is unchanged by this issue: a launch main
+   * opened no receipt for has nothing for a timeout to correlate against, so
+   * none is ever scheduled for one.
+   */
+  it('never schedules a timeout for a launch main opened no receipt for', async () => {
+    vi.useFakeTimers()
+    try {
+      const { launch } = await detachedLaunch({
+        launchAgent: vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+      })
+      expect(launch.state.value.launchId).toBeNull()
+
+      vi.advanceTimersByTime(DETACHED_TIMEOUT_MS)
+
+      expect(launch.phase.value).toBe('started-detached')
+      expect(launch.state.value.error).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

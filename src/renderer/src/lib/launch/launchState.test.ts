@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 // #168 additions are asserted in their own describe at the foot of this file.
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
+import type { LaunchFailedPush } from '../../types'
 import {
   COMPOSER_DISABLED_PLACEHOLDER,
   COMPOSER_ENABLED_PLACEHOLDER,
   COMMAND_PLACEHOLDER,
+  DETACHED_TIMEOUT_MESSAGE,
   OTHER_CHOICE,
   adoptLaunchedDwarf,
   chooseEffort,
@@ -16,6 +18,9 @@ import {
   composerEnabled,
   composerPlaceholder,
   chooseProvider,
+  detachedTimedOut,
+  launchFailed,
+  launchFailureMessage,
   launchPermissionMode,
   launchPhase,
   launchPrompt,
@@ -333,5 +338,119 @@ describe('the model, effort and permission row (#239)', () => {
     expect(switched.model).toBeNull()
     expect(switched.effort).toBeNull()
     expect(switched.permissionMode).toBeNull()
+  })
+})
+
+/*
+ * Issue #263. `started-detached` used to be a dead end with no way back: a
+ * launch main answered `launched: true` for could die almost at once and the
+ * panel would sit there forever with no failure channel and no timeout.
+ * These two transitions are that way back.
+ */
+describe('a detached launch that failed after it started (#263)', () => {
+  const withPrompt = () => typePrompt(chooseProvider(opened(), 'codex'), 'dig here')
+  const started = (launchId: string | null = 'receipt:1') =>
+    startedDetached(submitStarted(withPrompt()), launchId)
+
+  function failure(overrides: Partial<LaunchFailedPush> = {}): LaunchFailedPush {
+    return {
+      launchId: 'receipt:1',
+      provider: 'codex',
+      mineId: 'mine-1',
+      exitCode: 1,
+      stderrTail: 'codex: another instance is already running',
+      ...overrides
+    }
+  }
+
+  describe('launchFailureMessage', () => {
+    it('uses the CLI’s own words when it left any', () => {
+      expect(launchFailureMessage(failure())).toBe('codex: another instance is already running')
+    })
+
+    it('trims the stderr tail rather than showing it with its own whitespace', () => {
+      expect(launchFailureMessage(failure({ stderrTail: '  auth expired\n' }))).toBe('auth expired')
+    })
+
+    it('names the provider and the code when stderr wrote nothing', () => {
+      expect(launchFailureMessage(failure({ stderrTail: '', exitCode: 1 }))).toBe(
+        'codex exited with code 1 before it started.'
+      )
+    })
+
+    it('drops the code entirely for a signal-only exit, rather than saying "code null"', () => {
+      expect(launchFailureMessage(failure({ stderrTail: '', exitCode: null }))).toBe(
+        'codex exited before it started.'
+      )
+    })
+  })
+
+  describe('launchFailed', () => {
+    it('leaves detached, sets the error, and clears the receipt', () => {
+      const failed = launchFailed(started(), failure())
+
+      expect(failed.detached).toBe(false)
+      expect(failed.launchId).toBeNull()
+      expect(failed.error).toBe('codex: another instance is already running')
+    })
+
+    it('returns straight to prompt-ready, prompt intact, so a retry is one Enter', () => {
+      const failed = launchFailed(started(), failure())
+
+      expect(launchPhase(failed)).toBe('prompt-ready')
+      expect(failed.prompt).toBe('dig here')
+    })
+
+    it('never claims a dwarf: this is a failure, not an arrival', () => {
+      expect(launchFailed(started(), failure()).launchedDwarfId).toBeNull()
+    })
+
+    it('ignores a push naming a launch this panel is not waiting on', () => {
+      const state = started('receipt:1')
+
+      const untouched = launchFailed(state, failure({ launchId: 'receipt:9' }))
+
+      expect(untouched).toBe(state)
+    })
+
+    it('ignores a push once the panel has moved on — closed, or never launched', () => {
+      expect(launchFailed(closedLaunch(), failure())).toEqual(closedLaunch())
+      expect(launchFailed(withPrompt(), failure())).toEqual(withPrompt())
+    })
+
+    it('never reopens a launch whose dwarf has already been proved', () => {
+      // A failure arriving after adoption is a report about a session that
+      // plainly did start; un-adopting it would contradict evidence this
+      // panel already has.
+      const adopted = adoptLaunchedDwarf(started(), 'codex:sess-9')
+
+      const untouched = launchFailed(adopted, failure())
+
+      expect(untouched).toBe(adopted)
+      expect(launchPhase(untouched)).toBe('message-panel')
+    })
+  })
+
+  describe('detachedTimedOut', () => {
+    it('leaves detached with the fixed neutral sentence, same shape as a real failure', () => {
+      const timedOut = detachedTimedOut(started(), 'receipt:1')
+
+      expect(timedOut.detached).toBe(false)
+      expect(timedOut.launchId).toBeNull()
+      expect(timedOut.error).toBe(DETACHED_TIMEOUT_MESSAGE)
+      expect(launchPhase(timedOut)).toBe('prompt-ready')
+    })
+
+    it('ignores a stale timer whose launch this panel has since left', () => {
+      const state = started('receipt:1')
+
+      expect(detachedTimedOut(state, 'receipt:0')).toBe(state)
+    })
+
+    it('never fires once the dwarf has already been proved', () => {
+      const adopted = adoptLaunchedDwarf(started(), 'codex:sess-9')
+
+      expect(detachedTimedOut(adopted, 'receipt:1')).toBe(adopted)
+    })
   })
 })
