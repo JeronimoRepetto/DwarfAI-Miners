@@ -11,6 +11,7 @@ import type {
   DwarfContextUsage,
   DwarfMcpServerStatus,
   DwarfPermissionRequest,
+  DwarfProvider,
   DwarfQuestion,
   DwarfQuestionOption,
   FeedActivity,
@@ -115,12 +116,36 @@ export interface HeldPermission {
  */
 export type HeldPermissionAnswer = { decision: 'allow' } | { decision: 'deny'; reason: string }
 
-/** A live held session, as the registry holds it — nothing about the SDK. */
+/**
+ * A live held session, as the registry holds it — nothing about any one
+ * provider's protocol.
+ *
+ * ## Two required acts, and two that are a protocol's to offer (#237, step 5)
+ *
+ * `close` and `send` are the whole of what holding a session MEANS, and both
+ * implementations honour them: a process this app started, and a stream it can
+ * write one more turn onto. Everything else here is a capability, declared by
+ * being present.
+ *
+ * `interrupt` and `contextUsage` are OPTIONAL because they are round trips a
+ * protocol either documents or does not. The Agent SDK documents both, as
+ * control requests over the same streaming connection. Antigravity's
+ * bidirectional stream-json protocol documents NEITHER — its input side
+ * carries user text events and nothing else — so its handle leaves them off.
+ *
+ * Absent rather than a method returning `false`, deliberately. A `false` says
+ * "it was tried and refused", which is a fact about this moment; an absent
+ * method says "this session type has no such act", which is a fact about the
+ * protocol. The panel says different things about the two, and it cannot say
+ * either from a boolean that means both. This is the port rule for the whole
+ * seam: what only one implementation can honestly provide is optional and
+ * simply missing for the other, never faked.
+ */
 export interface HeldSessionHandle {
   /**
    * End the session and let the child go. The transcript on disk survives and
-   * is resumable by id (`claude --resume <id>`, or the SDK's own `resume`
-   * option), so closing loses the in-flight turn and nothing else.
+   * is resumable by id (`claude --resume <id>`, `agy --conversation <id>`), so
+   * closing loses the in-flight turn and nothing else.
    */
   close(): void
   /**
@@ -130,28 +155,30 @@ export interface HeldSessionHandle {
   send(text: string): boolean
   /**
    * Cut the running turn short, leaving the session open for the next one
-   * (#210).
+   * (#210) — or ABSENT when this session's protocol documents no cancellation
+   * (#237).
    *
    * A DIFFERENT act from `close`, and the difference is the whole reason this
    * exists: closing ends the session, interrupting ends the turn. The panel's
-   * Kick means the second, so an implementation that can only do the first must
-   * say which one it did rather than let the panel report the other.
+   * Kick means the second, so an implementation that can only do the first
+   * must offer nothing here rather than let the panel report the other.
    *
    * False when the interrupt did not happen. Async because the mechanism is a
    * control request to the agent, not a local flag: it is the one thing on this
    * handle that has to reach the child and be acknowledged.
    */
-  interrupt(): Promise<boolean>
+  interrupt?(): Promise<boolean>
   /**
    * Pull this session's own context-window reading, off its
    * `getContextUsage({ detail: 'summary' })` control request (issue #96) —
    * the one telemetry field no stream message carries, unlike `model` and
    * `mcpServers` (see HeldSessionTelemetryUpdate.contextUsage). Null when the
-   * session could not say. Async for the same reason `interrupt` is: it is a
+   * session could not say, and ABSENT when the protocol exposes no such
+   * reading at all (#237). Async for the same reason `interrupt` is: it is a
    * control request that has to reach the agent and be acknowledged, not a
    * local flag.
    */
-  contextUsage(): Promise<HeldSessionContextUsage | null>
+  contextUsage?(): Promise<HeldSessionContextUsage | null>
 }
 
 /**
@@ -176,8 +203,22 @@ export interface HeldSessionMcpServer {
 export interface HeldSessionUsage {
   inputTokens: number
   outputTokens: number
-  cacheCreationInputTokens: number
+  /**
+   * AMENDED for #237, step 5 (was: required). Antigravity's `result.usage` has
+   * `input_tokens`, `output_tokens`, `thinking_tokens`, `cache_read_tokens` and
+   * `total_tokens` — no cache-CREATION figure anywhere — so a held Antigravity
+   * session has nothing to put here, and a zero would be this app stating a
+   * count the CLI never gave. Absent beats guessed, as everywhere.
+   */
+  cacheCreationInputTokens?: number
   cacheReadInputTokens: number
+  /**
+   * The reasoning tokens Antigravity's own `result.usage` states (#237, step
+   * 5), and the mirror of the field above: Claude's `result.usage` has no
+   * such figure, so this is absent for a held Claude session. One shape, two
+   * protocols, and every field only present where its own protocol states it.
+   */
+  thinkingTokens?: number
 }
 
 /**
@@ -255,7 +296,32 @@ export interface HeldSessionTelemetryUpdate {
   turn?: 'started' | 'ended'
 }
 
-/** What the port needs to start one held session. */
+/**
+ * What the port needs to start one held session.
+ *
+ * ## Which of these every implementation reads, and which are a protocol's
+ *
+ * `executablePath`, `cwd`, `prompt`, `onSessionId`, `onTelemetry`,
+ * `onMessage`, `onEnd` are the neutral core: both implementations read and
+ * report all seven (#237, step 5).
+ *
+ * The rest are supplied unconditionally by the registry — which knows nothing
+ * about protocols — and read by whichever implementation has somewhere to put
+ * them. `onAsk` and `onPermission` are the pointed case: Antigravity's stream
+ * protocol documents user text events on its input side and NOTHING else, so
+ * its implementation never calls either, and no ask ever reaches the panel for
+ * a held Antigravity session. That is the acceptance gate honoured rather than
+ * a gap: a question this app cannot answer must not appear as one it can. Same
+ * for `onSubagent`, `permissionMode` and `maxTurns`, each of which has an Agent
+ * SDK option behind it and no Antigravity flag.
+ *
+ * They stay REQUIRED rather than optional because the direction matters: these
+ * are callbacks the registry hands DOWN, and the registry can always supply
+ * every one of them. What varies is whether an implementation has anything to
+ * call them with, and a type cannot state that — the module comment on each
+ * implementation does. The capabilities that vary in the answering direction
+ * are on `HeldSessionHandle`, and those are optional.
+ */
 export interface HeldSessionStartRequest {
   /**
    * The CLI binary, as detection found it (#91) — never a path this app
@@ -343,8 +409,36 @@ export interface HeldSessionStartRequest {
   onEnd: (reason: string) => void
 }
 
-/** The seam the Agent SDK sits behind. See sdkHeldSession.ts for the real one. */
+/**
+ * The seam ONE provider's held protocol sits behind.
+ *
+ * AMENDED for #237, step 5 (was: "the seam the Agent SDK sits behind"). The
+ * shape did not move; what it means did. There are two implementations now —
+ * `sdkHeldSession.ts` over the Agent SDK's `query()`, and
+ * `antigravityHeldSession.ts` over `agy --input-format stream-json
+ * --output-format stream-json` on a child process's stdin and stdout — and
+ * neither knows the other exists. What the registry needs from any held
+ * session is exactly the union of what both can honestly do: start with a
+ * prompt, push follow-up text, report what its own protocol says about
+ * itself, and end. See HeldSessionHandle on the two acts that are a
+ * protocol's to offer rather than a port's to require.
+ */
 export type HeldSessionPort = (request: HeldSessionStartRequest) => Promise<HeldSessionHandle>
+
+/**
+ * One held-session engine per provider that has one (#237, step 5).
+ *
+ * A table rather than a single port, because the registry now has to pick.
+ * `HELDABLE_PROVIDERS` on the wire stays the authority on WHETHER a provider
+ * may be held — the renderer reads the same list to choose a launch channel —
+ * and this says which engine answers when it is. A provider in that list with
+ * no row here is refused by name rather than started under another provider's
+ * engine, which is the whole failure #168 fixed for the single-port version.
+ *
+ * Partial on purpose: a test injects the one engine it is about, and the
+ * runtime composes both.
+ */
+export type HeldSessionPorts = Partial<Record<DwarfProvider, HeldSessionPort>>
 
 /**
  * The prompt as it will reach the session: trimmed, and capped at the same

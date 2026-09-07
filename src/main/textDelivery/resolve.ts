@@ -146,6 +146,20 @@ function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint 
 }
 
 /**
+ * Whether a kick would reach anything on a held session (#237, step 5).
+ *
+ * The second protocol-shaped refusal beside the queue's, and the same rule in
+ * one place for the same reason: a held Antigravity session takes MESSAGES on
+ * the stream this panel holds and its documented input side carries no cancel
+ * event, so its kick has to be refused rather than reported. Read off the
+ * endpoint, which carries the answer from the handle that actually knows it —
+ * see TextDeliveryTarget's own `interruptible`.
+ */
+function canInterrupt(endpoint: TextDeliveryEndpoint): boolean {
+  return endpoint.kind !== 'held-session' || endpoint.interruptible
+}
+
+/**
  * The kick endpoint one resolved chain answers with, or null when it has none.
  *
  * Two refusals, and the second is about the hops rather than the endpoint:
@@ -167,6 +181,7 @@ function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint 
  */
 function kickEndpointOf(hops: ForemanHops): KickEndpoint | null {
   if (!canCarryKick(hops.endpoint)) return null
+  if (!canInterrupt(hops.endpoint)) return null
   if (hops.endpoint.kind === 'launched-process' && hops.workerNames.length > 0) return null
   return hops.endpoint
 }

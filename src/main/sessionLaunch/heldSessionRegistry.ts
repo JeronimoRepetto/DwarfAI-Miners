@@ -1,4 +1,5 @@
 import type { LaunchTuning } from '../domain/launchTuning'
+import { notInstalledReason } from '../domain/launchProviders'
 import { HELDABLE_PROVIDERS } from '../domain/types'
 import type {
   DwarfPermissionDecision,
@@ -28,7 +29,7 @@ import {
   type HeldPermissionAnswer,
   type HeldQuestionState,
   type HeldSessionHandle,
-  type HeldSessionPort,
+  type HeldSessionPorts,
   type HeldSessionTelemetryUpdate,
   type HeldTelemetryState
 } from './heldSession'
@@ -95,10 +96,17 @@ import {
 
 /** Refusals, phrased for the panel. */
 const EMPTY_PROMPT = 'Type a prompt first.'
-const NOT_INSTALLED = 'Claude Code is not installed on this machine.'
 const LAUNCH_FAILED = 'The agent could not be started.'
-/** Fixed copy, and it names no path — the wire rule AgentProviderOption states. */
-const NOT_HELDABLE = 'The panel can only hold a Claude session'
+/**
+ * Fixed copy, and it names no path — the wire rule AgentProviderOption states.
+ *
+ * AMENDED for #237, step 5 (was: 'The panel can only hold a Claude session').
+ * Two providers can be held now, so a sentence naming one of them would be
+ * wrong for a chip refused while the other was the reason. The refused
+ * provider's own name is appended by the caller below, which is what #168 made
+ * this refusal for in the first place.
+ */
+const NOT_HELDABLE = 'The panel cannot hold a session for that agent'
 const NOT_HELD = 'That session is not one this panel is holding.'
 const NO_SUCH_QUESTION = 'That question is no longer open.'
 const NO_SUCH_PERMISSION = 'That permission request is no longer open.'
@@ -136,6 +144,19 @@ interface OpenPermission {
 
 interface HeldRecord {
   mineId: string
+  /**
+   * The mine's folder, kept because one provider's own store cannot recover it
+   * (#237, step 5).
+   *
+   * An Antigravity conversation started in stream-json print mode writes NO
+   * `history.jsonl` record — measured on CLI 1.1.26, 2026-09-07 — and that file
+   * is the only thing in its store that says which folder a conversation
+   * belongs to, so its observer drops a held conversation outright. This is the
+   * one fact that recovers it, and it is first-hand rather than inferred: this
+   * app chose the folder, started the process in it, and the CLI's own `init`
+   * message echoed the same path back. See heldWorkspace.
+   */
+  minePath: string
   handle: HeldSessionHandle
   /** Undefined until the CLI reports the session id it chose. */
   sessionId?: string
@@ -188,11 +209,34 @@ interface HeldRecord {
   conversation: FeedMessage[]
 }
 
+/**
+ * What ending a held turn actually did (#237, step 5).
+ *
+ * A verdict rather than a boolean, because a boolean answered two different
+ * questions with one word. `'refused'` is a session that HAS an interrupt and
+ * did not take it — already ending, or a control request that failed — and
+ * `'unsupported'` is a protocol with no cancellation in it at all
+ * (Antigravity's stream-json input side documents user text events and
+ * nothing else). The panel says different things about the two, and telling a
+ * person their kick "didn't take" when nothing could ever take it is the kind
+ * of near-miss sentence this app treats as a lie.
+ */
+export type HeldInterruptVerdict = 'interrupted' | 'refused' | 'unsupported' | 'not-held'
+
 export interface HeldSessionRegistryOptions {
   /** Which CLIs are installed, and where (#91). */
   detector: CliDetector
-  /** The Agent SDK seam. Injected in tests, which never spawn an agent. */
-  start: HeldSessionPort
+  /**
+   * One held-session engine per provider that has one (#237, step 5) —
+   * injected in tests, which never spawn an agent.
+   *
+   * AMENDED for #237, step 5 (was: a single `HeldSessionPort`, which could
+   * only ever be Claude's). A table because there are two engines now and the
+   * registry has to pick; see HeldSessionPorts on why a name in
+   * `HELDABLE_PROVIDERS` with no row here is refused rather than started
+   * under whichever engine happened to be injected.
+   */
+  start: HeldSessionPorts
   /** The model held sessions run, or undefined for the CLI's own default. */
   model?: string
   /** A ceiling on agent turns, or undefined for the CLI's own default. */
@@ -203,7 +247,7 @@ export interface HeldSessionRegistryOptions {
 
 export class HeldSessionRegistry {
   private readonly detector: CliDetector
-  private readonly start: HeldSessionPort
+  private readonly start: HeldSessionPorts
   private readonly model: string | undefined
   private readonly maxTurns: number | undefined
   private readonly now: () => number
@@ -262,7 +306,16 @@ export class HeldSessionRegistry {
     // thing it could do with a Codex chip was start Claude under Codex's name.
     // Naming the refused provider back is the point: the panel can say which
     // chip it was, and no session is substituted for another.
-    if (!HELDABLE_PROVIDERS.includes(request.provider)) {
+    // AMENDED for #237, step 5: the wire list is still the authority on
+    // WHETHER a provider may be held, and the engine table says which
+    // implementation answers when it is. Both are checked here, and a name in
+    // the list with no engine behind it is refused exactly as an unheldable
+    // one is — never started under whichever engine happened to be composed,
+    // which is the substitution #168 removed from this method.
+    const engine = HELDABLE_PROVIDERS.includes(request.provider)
+      ? this.start[request.provider]
+      : undefined
+    if (engine === undefined) {
       return { launched: false, error: `${NOT_HELDABLE} (${request.provider})` }
     }
 
@@ -272,10 +325,13 @@ export class HeldSessionRegistry {
 
     const detection = await this.detector.detect(request.provider)
     if (!detection.installed || detection.path === undefined) {
+      // Named per provider since #237, step 5: "Claude Code is not installed"
+      // shown for an Antigravity chip would send somebody to install the wrong
+      // program at the one moment the sentence was supposed to help.
+      const notInstalled = notInstalledReason(request.provider)
       return {
         launched: false,
-        error:
-          detection.reason === undefined ? NOT_INSTALLED : `${NOT_INSTALLED} ${detection.reason}`
+        error: detection.reason === undefined ? notInstalled : `${notInstalled} ${detection.reason}`
       }
     }
 
@@ -296,7 +352,7 @@ export class HeldSessionRegistry {
     // ask is re-asked; a launch is announced once.
     const crew = new HeldCrew()
     try {
-      const handle = await this.start({
+      const handle = await engine({
         executablePath: detection.path,
         cwd: request.minePath,
         prompt,
@@ -314,6 +370,7 @@ export class HeldSessionRegistry {
       })
       this.held.set(key, {
         mineId: request.mineId,
+        minePath: request.minePath,
         handle,
         openAsks: new Map(),
         openPermissions: new Map(),
@@ -479,6 +536,10 @@ export class HeldSessionRegistry {
   async refreshContextUsage(sessionId: string): Promise<void> {
     const record = this.recordFor(sessionId)
     if (record === undefined) return
+    // A protocol with no context-window reading in it at all (#237, step 5).
+    // Silently nothing, exactly as an unheld session is: there is no request
+    // to put on the wire, so there is no failure to report either.
+    if (record.handle.contextUsage === undefined) return
     if (record.contextUsagePull !== undefined) return record.contextUsagePull
     const pull = this.pullContextUsage(record)
     record.contextUsagePull = pull
@@ -501,7 +562,9 @@ export class HeldSessionRegistry {
     const timeout = new Promise<'timeout'>((resolve) => {
       setTimeout(() => resolve('timeout'), HELD_CONTEXT_USAGE_TIMEOUT_MS)
     })
-    const usage = await Promise.race([record.handle.contextUsage(), timeout])
+    const pull = record.handle.contextUsage
+    if (pull === undefined) return
+    const usage = await Promise.race([pull.call(record.handle), timeout])
     if (usage === 'timeout' || usage === null) return
     record.telemetry = { ...record.telemetry, contextUsage: usage }
   }
@@ -607,10 +670,43 @@ export class HeldSessionRegistry {
    * refused the interrupt. Nothing is retried and nothing else is attempted:
    * see sendText on why there is no second channel to fall back to.
    */
-  async interrupt(sessionId: string): Promise<boolean> {
+  async interrupt(sessionId: string): Promise<HeldInterruptVerdict> {
     const record = this.recordFor(sessionId)
-    if (record === undefined) return false
-    return record.handle.interrupt()
+    if (record === undefined) return 'not-held'
+    // AMENDED for #237, step 5 (was: `Promise<boolean>`). A held session whose
+    // protocol documents no cancellation offers no `interrupt` at all, and
+    // that is a different answer from one that offered it and refused — see
+    // HeldInterruptVerdict, and HeldSessionHandle on why the capability is
+    // absent rather than a method returning false.
+    const cut = record.handle.interrupt
+    if (cut === undefined) return 'unsupported'
+    return (await cut.call(record.handle)) ? 'interrupted' : 'refused'
+  }
+
+  /**
+   * Whether a kick on this held session would reach anything (#237, step 5).
+   *
+   * The same fact `interrupt` above answers, asked BEFORE the act rather than
+   * after it, because the panel has to disable the control the runtime is
+   * bound to refuse — one rule, two readers, which is the discipline
+   * `kickEndpointOf` states. False for a session this panel does not hold, for
+   * the reason every other lookup here answers that way: there is no stream.
+   */
+  canInterrupt(sessionId: string): boolean {
+    return this.recordFor(sessionId)?.handle.interrupt !== undefined
+  }
+
+  /**
+   * The folder a held session was started in, for a provider whose own store
+   * cannot say (#237, step 5).
+   *
+   * Undefined for a session this panel does not hold — the same refusal every
+   * other lookup here gives, and the reading that leaves an observed
+   * conversation's own `history.jsonl` record alone. See HeldRecord.minePath
+   * for why this exists at all and why it is first-hand rather than a guess.
+   */
+  heldWorkspace(sessionId: string): string | undefined {
+    return this.recordFor(sessionId)?.minePath
   }
 
   /**

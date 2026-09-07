@@ -4778,7 +4778,10 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     fs.addFile(CLAUDE, '#!/bin/sh\n')
     return new HeldSessionRegistry({
       detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
-      start: port,
+      // AMENDED for #237, step 5 (was: `start: port`). One engine per provider
+      // now that a second held protocol exists; this fake is still the only
+      // Claude engine and nothing else in this helper changed.
+      start: { claude: port },
       now: () => 1_700_000_000_000,
       log: () => {}
     })
@@ -6608,7 +6611,10 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
       textDelivery: port,
       heldSessions: new HeldSessionRegistry({
         detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
-        start: held.port,
+        // AMENDED for #237, step 5 (was: `start: held.port`). One engine per
+        // provider now that a second held protocol exists; this fake is still
+        // the only Claude engine and nothing else here changed.
+        start: { claude: held.port },
         now: () => 1_700_000_000_000,
         log: () => {}
       }),
@@ -7291,15 +7297,18 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     const started: HeldSessionStartRequest[] = []
     const heldSessions = new HeldSessionRegistry({
       detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
-      start: async (request) => {
-        started.push(request)
-        return {
-          close: () => {},
-          send: () => true,
-          interrupt: async () => true,
-          // #96's addition; this test is about permission prompts, not
-          // telemetry, so the fake only has to satisfy the port.
-          contextUsage: async () => null
+      // AMENDED for #237, step 5: the port is a table keyed by provider.
+      start: {
+        claude: async (request) => {
+          started.push(request)
+          return {
+            close: () => {},
+            send: () => true,
+            interrupt: async () => true,
+            // #96's addition; this test is about permission prompts, not
+            // telemetry, so the fake only has to satisfy the port.
+            contextUsage: async () => null
+          }
         }
       },
       now: () => 1_700_000_000_000,

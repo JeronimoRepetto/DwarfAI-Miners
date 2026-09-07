@@ -4,6 +4,7 @@ import { closeSync, fstatSync, openSync, readSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
+import { PRODUCT_NAME, notInstalledReason } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
 import { resolveShimTarget, type CliDetector } from '../platform/cliDetection'
@@ -209,26 +210,11 @@ class EarlyFailureWatch {
   }
 }
 
-/**
- * What each CLI is called when the panel has to name it.
- *
- * Per provider rather than one string, because these are the sentences a user
- * acts on: "Claude Code is not installed" shown for a Codex chip would send
- * somebody to install the wrong program at the one moment the message was
- * supposed to help (#168).
+/*
+ * `PRODUCT_NAME` moved to domain/launchProviders.ts for #237, step 5: the held
+ * registry needs the same table now that a second provider can be held, and
+ * two copies is how the same missing CLI comes to be named two ways.
  */
-const PRODUCT_NAME: Record<DwarfProvider, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex CLI',
-  // Reachable since #237 step 4: a detached Antigravity launch runs through
-  // this same engine, and a refusal — not installed, could not be started —
-  // must name the product, not its `agy` executable.
-  antigravity: 'Antigravity CLI'
-}
-
-function notInstalled(provider: DwarfProvider): string {
-  return `${PRODUCT_NAME[provider]} is not installed on this machine.`
-}
 
 function couldNotStart(provider: DwarfProvider): string {
   return `${PRODUCT_NAME[provider]} could not be started.`
@@ -650,7 +636,7 @@ export async function launchClaudeSession(
 
   const detection = await options.detector.detect(options.provider)
   if (!detection.installed || detection.path === undefined) {
-    const reason = notInstalled(options.provider)
+    const reason = notInstalledReason(options.provider)
     return {
       launched: false,
       provider: options.provider,

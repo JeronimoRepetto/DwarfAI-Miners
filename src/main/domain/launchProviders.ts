@@ -74,6 +74,35 @@ export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex'
 export const NOT_LAUNCHABLE = 'That agent cannot be started from the panel yet.'
 
 /**
+ * What each CLI is called when the panel has to name it.
+ *
+ * Per provider rather than one string, because these are the sentences a user
+ * acts on: "Claude Code is not installed" shown for a Codex chip would send
+ * somebody to install the wrong program at the one moment the message was
+ * supposed to help (#168).
+ *
+ * Moved here from launchRunner.ts for #237, step 5, unchanged. It had two
+ * readers by then — the detached engine and the held registry, which could
+ * only ever say "Claude Code" before a second provider could be held — and a
+ * second copy is how the same missing CLI comes to be named two ways. `domain/`
+ * because it is a table about providers and nothing else, with no `node:`
+ * import behind it.
+ */
+export const PRODUCT_NAME: Readonly<Record<DwarfProvider, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex CLI',
+  // Reachable since #237 step 4: a detached Antigravity launch runs through
+  // the same engine, and a refusal — not installed, could not be started —
+  // must name the product, not its `agy` executable.
+  antigravity: 'Antigravity CLI'
+}
+
+/** That name inside the one sentence both launch engines say about a missing CLI. */
+export function notInstalledReason(provider: DwarfProvider): string {
+  return `${PRODUCT_NAME[provider]} is not installed on this machine.`
+}
+
+/**
  * Every known provider, in the contract's own order.
  *
  * Ordered by `DWARF_PROVIDERS` rather than by whatever order the detections

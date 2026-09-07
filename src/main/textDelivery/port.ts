@@ -58,7 +58,29 @@ export type TextDeliveryTarget =
   | { kind: 'claude-relay'; sessionName: string }
   | { kind: 'foreman-relay'; foremanDwarfId: string; workerName: string }
   | { kind: 'codex-queue'; threadId: string }
-  | { kind: 'held-session'; sessionId: string }
+  | {
+      kind: 'held-session'
+      sessionId: string
+      /**
+       * Whether this session's own protocol documents a way to cut the
+       * running turn short (#237, step 5).
+       *
+       * Carried rather than derived from the KIND, because two providers can
+       * be held and their protocols disagree: the Agent SDK documents an
+       * `interrupt` control request, and the Antigravity CLI's bidirectional
+       * stream documents user text events on its input side and nothing else.
+       * A held session is still the strongest SEND channel there is either
+       * way — the difference is only about the kick.
+       *
+       * `HeldSessionHandle` is where the fact actually lives (the capability
+       * is absent from the handle rather than a method returning false), and
+       * `HeldSessionRegistry.canInterrupt` is what reads it. This field is
+       * that answer travelling to the one rule both the panel's capability
+       * matrix and the runtime's own kick routing read — see `kickEndpointOf`
+       * in resolve.ts on why there must be exactly one.
+       */
+      interruptible: boolean
+    }
   | { kind: 'launched-process'; launchId: string }
   | { kind: 'hosted-stdin'; hostedId: string }
 
@@ -111,7 +133,9 @@ export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-proce
  *
  * 'held-session' is the strongest of them: the panel holds the session's own
  * stream, so a kick there is a real interrupt of the running turn rather than an
- * instruction the session may decline (#210).
+ * instruction the session may decline (#210) — for a session whose protocol has
+ * one at all, which since #237 step 5 is a question the endpoint answers with
+ * `interruptible` rather than something its kind settles.
  *
  * A queued item is drained at the thread's next idle boundary, so an interrupt
  * sent that way would arrive precisely when the turn it meant to cut short had

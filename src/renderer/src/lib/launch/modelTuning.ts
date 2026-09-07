@@ -1,4 +1,4 @@
-import { HELDABLE_PROVIDERS } from '../../types'
+import { PERMISSION_MODE_PROVIDERS } from '../../types'
 import type { AgentModelCatalog, DwarfProvider, ModelOption } from '../../types'
 import { OTHER_CHOICE, type LaunchChoice } from './launchState'
 
@@ -79,12 +79,19 @@ export function effortPicker(
 
 /**
  * Whether the row's Permissions select belongs on screen: `launch.md` —
- * "Permissions appears only for a held Claude session." Held, not merely
- * Claude, because the reasoning is the SDK's `canUseTool` callback existing
- * at all; if a second provider ever became heldable this reads for it too,
- * with no edit here.
+ * "Permissions appears only for a held Claude session."
+ *
+ * AMENDED for #237, step 5 (was: read off `HELDABLE_PROVIDERS`). That reading
+ * came with a prediction — "if a second provider ever became heldable this
+ * reads for it too, with no edit here" — and the prediction was wrong. A
+ * second provider became heldable, and `HELD_PERMISSION_MODES` is the Agent
+ * SDK's own five words: the Antigravity CLI's `--mode` takes `accept-edits` or
+ * `plan` instead, so the select would have offered a held Antigravity launch
+ * five values meaning nothing to it. Heldability is necessary and not
+ * sufficient, and `PERMISSION_MODE_PROVIDERS` is the sufficient half — see its
+ * own comment in contracts.ts.
  */
 export function permissionsVisible(choice: LaunchChoice | null): boolean {
   if (choice === null || choice === OTHER_CHOICE) return false
-  return (HELDABLE_PROVIDERS as readonly DwarfProvider[]).includes(choice)
+  return (PERMISSION_MODE_PROVIDERS as readonly DwarfProvider[]).includes(choice)
 }

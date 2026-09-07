@@ -63,6 +63,23 @@ export interface ProviderContext {
    * read it.
    */
   isPermissionPromptOpen: (sessionId: string) => boolean
+  /**
+   * The folder a session this panel HOLDS was started in, or undefined for one
+   * it does not hold (#237, step 5) — the held registry's answer, for the
+   * provider whose own store cannot recover it.
+   *
+   * The narrowest possible seam for a measured gap rather than a general
+   * escape hatch. An Antigravity conversation started in stream-json print
+   * mode writes no `history.jsonl` record (CLI 1.1.26, 2026-09-07), and that
+   * file is the only thing in its store mapping a conversation to a folder —
+   * so its observer drops a held conversation outright and the session this
+   * panel launched never becomes a dwarf. This is first-hand, not a guess:
+   * the app chose the folder and the CLI's own `init` echoed it back.
+   *
+   * A provider whose store already says where its sessions are simply does not
+   * read it, exactly as Codex reads neither of the two above.
+   */
+  heldWorkspaceOf: (sessionId: string) => string | undefined
 }
 
 /** How one provider is built. */
@@ -113,14 +130,19 @@ export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
       logsDbPath: expandPath(config.providers.codex.logsDb)
     }),
 
-  // The row that shows how little a provider is obliged to take (#237). No
-  // sqlite, no process probe, no held-session or permission lookup: an
-  // observer of a file store needs the filesystem seam and its own settings,
-  // and asks for nothing it would not read.
-  antigravity: ({ config, fs, expandPath }) =>
+  // AMENDED for #237, step 5. This row was the example of how little a
+  // provider is obliged to take — filesystem seam and its own settings, no
+  // sqlite, no process probe, no held-session lookup. It takes one held-session
+  // lookup now, and only because a MEASUREMENT forced it: a conversation this
+  // panel holds writes no workspace record for the observer to read, so the
+  // held registry is the only thing that knows which mine it belongs to. Still
+  // no sqlite, no process probe and no permission lookup — it asks for nothing
+  // else it would not read.
+  antigravity: ({ config, fs, expandPath, heldWorkspaceOf }) =>
     new AntigravityProvider({
       fs,
       storeRoot: expandPath(config.providers.antigravity.storeRoot),
+      heldWorkspaceOf,
       busyWindowS: config.providers.antigravity.busyWindowS,
       lockGraceS: config.providers.antigravity.lockGraceS,
       staleLockWindowS: config.providers.antigravity.staleLockWindowS

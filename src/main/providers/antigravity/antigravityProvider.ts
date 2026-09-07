@@ -59,6 +59,20 @@ export interface AntigravityProviderOptions {
   lockGraceS: number
   /** How silent a locked conversation may be before the lock is treated as stale, in seconds. */
   staleLockWindowS: number
+  /**
+   * The folder a conversation this panel HOLDS was started in, or undefined
+   * for one it does not hold (#237, step 5).
+   *
+   * The one thing this observer cannot read for itself, and it is a
+   * measurement rather than an oversight: a conversation started in
+   * stream-json print mode — which is what a held session IS — writes no
+   * `history.jsonl` record at all (CLI 1.1.26, 2026-09-07, four probe
+   * conversations, four presence locks, zero workspace records). See the class
+   * comment on why that leaves a held session invisible without this.
+   *
+   * Optional so a build that holds nothing composes exactly as before.
+   */
+  heldWorkspaceOf?: (conversationId: string) => string | undefined
   now?: () => number
 }
 
@@ -119,6 +133,22 @@ export interface AntigravityProviderOptions {
  * than placed: that file is the only thing that says which folder a
  * conversation belongs to, and a mine invented from a conversation id would be
  * the phantom-project failure of #166 by another route.
+ *
+ * ## The one exception, and the measurement behind it (#237, step 5)
+ *
+ * A conversation THIS PANEL is holding gets its folder from the held registry
+ * instead, because the store does not describe it. `agy --input-format
+ * stream-json` writes a presence lock and a `brain/<id>/…/transcript.jsonl`
+ * and no `history.jsonl` record — measured across four probe conversations on
+ * CLI 1.1.26 — so the rule above would drop the one Antigravity session this
+ * app knows the most about.
+ *
+ * That is not the #166 guard weakening. The guard is against a folder this app
+ * INVENTED; the held registry's answer is the folder this app chose itself,
+ * started the process in, and had echoed back by the CLI's own `init` message.
+ * The store's own record still wins where one exists — a resumed conversation
+ * may have moved, and the CLI's writing about it is later evidence than a
+ * launch.
  */
 export class AntigravityProvider implements Provider {
   readonly kind = 'antigravity' as const
@@ -128,6 +158,7 @@ export class AntigravityProvider implements Provider {
   private readonly busyWindowS: number
   private readonly lockGraceS: number
   private readonly staleLockWindowS: number
+  private readonly heldWorkspaceOf: (conversationId: string) => string | undefined
   private readonly now: () => number
   /**
    * conversationId -> the last time a presence lock for it was actually READ.
@@ -171,6 +202,7 @@ export class AntigravityProvider implements Provider {
     this.busyWindowS = options.busyWindowS
     this.lockGraceS = options.lockGraceS
     this.staleLockWindowS = options.staleLockWindowS
+    this.heldWorkspaceOf = options.heldWorkspaceOf ?? (() => undefined)
     this.now = options.now ?? Date.now
   }
 
@@ -196,7 +228,13 @@ export class AntigravityProvider implements Provider {
     const snapshots: ProviderSnapshot[] = []
     const sizesThisScan = new Map<string, number>()
     for (const [index, conversationId] of candidates.entries()) {
-      const workspace = workspaces.get(conversationId)
+      // The store's own record first; the folder this panel started a held
+      // conversation in second (#237, step 5) — see the class comment on the
+      // order and on why the second is evidence rather than a guess. A held
+      // conversation's activity is stamped from the transcript and the lock
+      // alone, which is why the fallback carries `nowMs`: a launch has no
+      // history timestamp to contribute, and 0 would read as the epoch.
+      const workspace = workspaces.get(conversationId) ?? this.heldWorkspace(conversationId, nowMs)
       if (workspace === undefined) continue
       const path = paths[index]!
       const stat = stats[index] ?? null
@@ -261,6 +299,23 @@ export class AntigravityProvider implements Provider {
       live.push(id)
     }
     return live.sort()
+  }
+
+  /**
+   * The folder a held conversation was started in, as an `AntigravityWorkspace`
+   * (#237, step 5).
+   *
+   * `timestampMs` is THIS SCAN's clock rather than a launch time, and the
+   * reason is the staleness bound below: `activityMs` is the newest of the
+   * transcript's own step time, the history record's timestamp and the file's
+   * mtime, and a held conversation contributes no history record at all. A
+   * session this panel is holding right now is alive by the strongest evidence
+   * there is — this process has its stdin — so it must never be dropped as a
+   * stale lock while the transcript catches up.
+   */
+  private heldWorkspace(conversationId: string, nowMs: number): AntigravityWorkspace | undefined {
+    const workspace = this.heldWorkspaceOf(conversationId)
+    return workspace === undefined ? undefined : { workspace, timestampMs: nowMs }
   }
 
   /**

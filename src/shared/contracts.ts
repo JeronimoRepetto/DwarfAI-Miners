@@ -216,21 +216,34 @@ export function isPanelObserved(observer: DwarfObserver): observer is typeof PAN
  * "can this provider be watched", and the panel would eventually offer a chip
  * whose only outcome is a refusal from the other side.
  *
- * Claude alone, and this is a capability rather than a preference: holding a
- * session IS that stream, and Codex has no held-session engine in this app —
+ * Membership is a capability rather than a preference: holding a session IS
+ * such a stream. Codex has no held-session engine in this app at all —
  * `docs/command-surface-evaluation.md` records it, and the question-capture
  * matrix marks the `codex exec` row No for live capture and No for answering.
  * A provider missing here can still be LAUNCHED; it is started detached and
  * discovered by the ordinary poll, which is a real launch and simply not a
  * watched one.
  *
- * Antigravity is missing here for a third reason, and it is worth telling
- * apart from Codex's (#237). Codex could be held and has no engine; the
- * Antigravity CLI documents a bidirectional stream-json protocol that could
- * carry one, and no round trip through it has been PROVEN by this app. A
- * capability list is not a plan: the observer slice reads the store, and this
- * name arrives here on the day a live stream has actually been held, not on
- * the day one looks possible.
+ * AMENDED for #237, step 5 (was: `['claude']`). This comment used to say
+ * Antigravity's name would arrive "on the day a live stream has actually been
+ * held, not on the day one looks possible". That day was 2026-09-07: a
+ * two-turn round trip was held on this machine against Antigravity CLI 1.1.26
+ * — one `agy --input-format stream-json --output-format stream-json` process,
+ * one NDJSON user event per turn on its stdin, the same `conversation_id`
+ * across both turns, a `result` for each — and its stdout is committed as
+ * `main/providers/__fixtures__/antigravity/held-stream.jsonl`.
+ *
+ * Two providers, two engines, ONE port: `sdkHeldSession.ts` over the Agent
+ * SDK's `query()` and `antigravityHeldSession.ts` over that child process's
+ * stdin and stdout. What they share is what this list promises and no more —
+ * a session started with a prompt, kept open, spoken to again, and ended.
+ * Everything past that is per-protocol and declared rather than assumed: a
+ * held Antigravity session offers no turn cancellation and no context
+ * reading, and answers no question or permission prompt, because its
+ * documented input side carries user text events and nothing else. Those are
+ * absent from its handle rather than refused at runtime (see
+ * `HeldSessionHandle` in main/sessionLaunch/heldSession.ts), so the panel says
+ * "this protocol has no cancel" instead of "the interrupt was refused".
  */
 export const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
 
@@ -1758,6 +1771,28 @@ export type HeldPermissionMode = (typeof HELD_PERMISSION_MODES)[number]
 export function isHeldPermissionMode(value: unknown): value is HeldPermissionMode {
   return typeof value === 'string' && (HELD_PERMISSION_MODES as readonly string[]).includes(value)
 }
+
+/**
+ * The heldable providers whose held engine reads a permission mode at all
+ * (#237, step 5).
+ *
+ * A second list beside `HELDABLE_PROVIDERS` because a prediction turned out to
+ * be wrong, and it is worth recording which. `permissionsVisible` in the
+ * renderer used to read heldability alone, on the reasoning that "if a second
+ * provider ever became heldable this reads for it too, with no edit here".
+ * One did, and it does not: `HELD_PERMISSION_MODES` above is the **Agent SDK's
+ * own vocabulary**, and the Antigravity CLI has a different one — `--mode`
+ * takes `accept-edits` or `plan`, and blanket approval is a
+ * `--dangerously-skip-permissions` flag rather than a mode name. Not one of
+ * the five words above would mean anything to it.
+ *
+ * So the picker is drawn from THIS list, and a provider arrives here when its
+ * own permission vocabulary has been wired — never merely because it can be
+ * held. Offering Claude's words to another CLI would be a control that looks
+ * like it works and silently does nothing, which is the failure this whole
+ * capability-list family exists to prevent.
+ */
+export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude']
 
 export interface HeldSessionLaunchRequest {
   mineId: string

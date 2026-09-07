@@ -176,6 +176,22 @@ const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 const HELD_STREAM_CLOSED = 'That session is no longer taking messages.'
 const HELD_KICK_REFUSED = "That session didn't take the interrupt."
 /**
+ * The third one, added for #237, step 5: a held session whose PROTOCOL has no
+ * cancellation in it at all.
+ *
+ * Told apart from the refusal above on purpose. That one is a stream that has
+ * an interrupt and would not take it — usually a session on its way out, and
+ * worth trying again. This is a fact about the session type, so trying again
+ * is pointless and saying "didn't take it" would send somebody looking for a
+ * fault that is not there. Antigravity's bidirectional stream documents user
+ * text events on its input side and nothing else; the messages this session
+ * takes still go straight onto that stream, which is why the sentence says so
+ * rather than leaving the reader with only a no.
+ */
+const HELD_KICK_UNSUPPORTED =
+  "This session's protocol has no cancel, so the panel can't cut its turn short. " +
+  'Messages still reach it.'
+/**
  * The three refusals for a session this panel LAUNCHED and can only end
  * (#217).
  *
@@ -766,6 +782,14 @@ export class AgentRuntime {
           // Read at scan time, never now: the held registry is composed a few
           // lines below this, and no scan runs before the constructor returns.
           isHeldSession: (sessionId) => this.heldSessions.holds(sessionId),
+          // The same seam, for the one fact a provider's own store cannot
+          // recover (#237, step 5): an Antigravity conversation started in
+          // stream-json print mode writes NO `history.jsonl` record, and that
+          // file is the only thing in its store that says which folder a
+          // conversation belongs to — so without this a session this panel
+          // launched and holds would be dropped by its own observer. Read at
+          // scan time for the same reason the line above is.
+          heldWorkspaceOf: (sessionId) => this.heldSessions.heldWorkspace(sessionId),
           // The same seam for the hook channel (#203). Read one poll BEHIND
           // the stamp below, since a scan runs before observe() reconciles
           // the registry against the board it produced — and that lag is
@@ -800,7 +824,10 @@ export class AgentRuntime {
       options.heldSessions ??
       new HeldSessionRegistry({
         detector: platform.cliDetector,
-        start: createSdkHeldSession(),
+        // One engine per provider that has one (#237, step 5). Both are
+        // composed here rather than in platformAdapters for the reason stated
+        // above: starting a session is the same act on all three platforms.
+        start: { claude: createSdkHeldSession() },
         now: this.now,
         log: (message) => console.log(message)
       })
@@ -1777,7 +1804,17 @@ export class AgentRuntime {
     // it addresses a queue no REPL drains. Both were tried live and both
     // reported the wrong thing, one by failing focus and one by exiting 0.
     const heldSessionId = this.heldSessionIdOf(dwarfId)
-    if (heldSessionId !== undefined) return { kind: 'held-session', sessionId: heldSessionId }
+    if (heldSessionId !== undefined) {
+      return {
+        kind: 'held-session',
+        sessionId: heldSessionId,
+        // Asked of the handle rather than assumed from the kind (#237, step
+        // 5): two providers can be held and only one of their protocols
+        // documents a cancel. This is what lets the bar disable a kick the
+        // runtime would only refuse.
+        interruptible: this.heldSessions.canInterrupt(heldSessionId)
+      }
+    }
     // Ownership again, and the same reason as the line above: this process is
     // holding that pipe, and no provider can know it because no provider ever
     // saw this dwarf at all (#194). Ahead of the provider loop because it can
@@ -1848,8 +1885,18 @@ export class AgentRuntime {
    * must not show a ✓ for a turn that is still running.
    */
   private async interruptHeldSession(sessionId: string): Promise<TextDeliveryOutcome> {
-    const interrupted = await this.heldSessions.interrupt(sessionId)
-    return interrupted ? { delivered: true } : { delivered: false, error: HELD_KICK_REFUSED }
+    // AMENDED for #237, step 5 (was: a boolean). A protocol with no
+    // cancellation and a stream that refused one are different facts, and the
+    // sentence a person reads has to be the one that is true — see
+    // HELD_KICK_UNSUPPORTED. 'not-held' keeps the refusal it always had:
+    // reaching here at all means the endpoint named a held session, so a
+    // record that has gone since is the same terminal no.
+    const verdict = await this.heldSessions.interrupt(sessionId)
+    if (verdict === 'interrupted') return { delivered: true }
+    return {
+      delivered: false,
+      error: verdict === 'unsupported' ? HELD_KICK_UNSUPPORTED : HELD_KICK_REFUSED
+    }
   }
 
   /**
