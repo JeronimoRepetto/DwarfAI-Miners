@@ -61,20 +61,22 @@ jobs:
       #    reading, never by CI. That is routine, not exceptional — one reached
       #    HEAD in docs/performance.md, and four more in src/** comments, fixed
       #    in 3a8b0e3.
-      # 2. This file is excluded, because a grep for a string has to contain
-      #    the string. The exclusion is forced, but its consequence is not
-      #    obvious and is not an oversight: the one file that names every
-      #    identifier is the one file never scanned. Building the patterns from
-      #    fragments, or from an encoded blob, was considered for #54 and
-      #    turned down — it obscures rather than removes, a failing run prints
-      #    the matching line into a public build log regardless, and every
-      #    revision of this file since the guard landed already carries them in
-      #    the history. That history is issue #51's subject, and it is now
-      #    decided: the history goes public unchanged, so those copies stay
-      #    and the plaintext here is never the last one. Anyone who reopens the
-      #    decision must read its comment first — a blind --replace-text over
-      #    these patterns rewrites the line below into a grep for the
-      #    placeholder, and the build stays green on anything.
+      # 2. The patterns live in the PRIVACY_GUARD_PATTERN repository secret,
+      #    not in this file. Until the repository went public this step spelled
+      #    them out and excluded itself from the scan, so the one file that
+      #    named every identifier was the one file never scanned — and the one
+      #    file every visitor would read. Building the patterns from fragments
+      #    or an encoded blob was considered for #54 and turned down because it
+      #    obscures rather than removes; a secret removes. Two consequences,
+      #    both deliberate: a MISSING secret fails the run rather than passing
+      #    it, because a guard that cannot look must not report clean; and a
+      #    pull request from a fork, which gets no secrets, is skipped with a
+      #    notice, because the push to main after its merge runs the guard
+      #    with the secret and goes red if anything got in. A failing run still
+      #    prints the matching line into the build log, as it always did — the
+      #    line is the finding. The history is issue #51's subject and stays
+      #    published as it was: earlier revisions of this file carry the
+      #    patterns, and that was accepted knowingly before going public.
       # 3. Images are invisible to it. `-I` skips binary files, so an
       #    identifier legible in a committed screenshot passes green. Issue #18
       #    was a screenshot leak and a human caught it, not CI. Screenshots
@@ -82,9 +84,19 @@ jobs:
       #    lists what to read in one before it is staged.
       - name: Privacy guard (no machine-specific identifiers)
         shell: bash
+        env:
+          PATTERN: ${{ secrets.PRIVACY_GUARD_PATTERN }}
+          FROM_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
         run: |
-          ! git grep -n -I -E '[Uu]sers[/\\-]+jeron|[Hh]ome[/\\-]+jeron|m435tr0|claude-multitec' \
-            -- . ':(exclude).github/workflows/ci.yml'
+          if [ -z "$PATTERN" ]; then
+            if [ "$FROM_FORK" = "true" ]; then
+              echo "::notice::Privacy guard skipped: a fork's pull request gets no secrets. The push to main after merge runs it."
+              exit 0
+            fi
+            echo "::error::PRIVACY_GUARD_PATTERN is not set; the privacy guard cannot run and must not pass silently."
+            exit 1
+          fi
+          ! git grep -n -I -E "$PATTERN" -- .
 
       # pnpm/action-setup does not support pnpm v11 (this repo pins pnpm 11
       # via `allowBuilds` conventions and the committed lockfile) — its own
