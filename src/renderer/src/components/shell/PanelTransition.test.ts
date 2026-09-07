@@ -3,8 +3,21 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PanelTransition from './PanelTransition.vue'
+import { PANEL_MOTION_WATCHDOG_MS } from '../../lib/shell/panelMotion'
 
-afterEach(() => vi.unstubAllGlobals())
+// AMENDED for #266 (was: `afterEach(() => vi.unstubAllGlobals())`) — the
+// watchdog owns a timer and the hidden-window release reads `document.hidden`,
+// and neither may outlive the test that set it.
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+  Reflect.deleteProperty(document, 'hidden')
+})
+
+/** Report the window as Chromium sees it once another program occludes it. */
+function occlude(hidden: boolean): void {
+  Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
+}
 
 function harness(reduced = false, axis?: 'horizontal' | 'vertical') {
   const media = new EventTarget() as MediaQueryList
@@ -125,6 +138,61 @@ describe('PanelTransition', () => {
     expect((test.wrapper.find('div').element as HTMLElement).inert).toBe(false)
     test.wrapper.unmount()
     expect(test.animations[2]!.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('releases a leave whose animation never reports finishing, once the watchdog elapses (#266)', async () => {
+    // Chromium freezes the document timeline for an occluded window: the last
+    // frame lands on the compositor and `finished` never settles. Waiting on
+    // it alone wedged the layout queue and stranded the shell as a yellow box.
+    vi.useFakeTimers()
+    const test = harness()
+    test.shown.value = true
+    await nextTick()
+    test.animations[0]!.finish()
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    expect(test.leaves).toHaveLength(1)
+    let released = false
+    void test.leaves[0]!.then(() => {
+      released = true
+    })
+    await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+    await nextTick()
+    expect(released).toBe(true)
+    expect(test.animations[1]!.cancel).toHaveBeenCalledOnce()
+    expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  it('finishes an active leave the moment the window becomes hidden (#266)', async () => {
+    const test = harness()
+    test.shown.value = true
+    await nextTick()
+    test.animations[0]!.finish()
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    occlude(true)
+    document.dispatchEvent(new Event('visibilitychange'))
+    await test.leaves[0]
+    await nextTick()
+    expect(test.animations[1]!.cancel).toHaveBeenCalledOnce()
+    expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  it('never starts an animation the hidden window cannot advance, and waits on nothing (#266)', async () => {
+    occlude(true)
+    const test = harness()
+    test.shown.value = true
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    expect(test.animate).not.toHaveBeenCalled()
+    expect(test.leaves).toHaveLength(0)
+    expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
   })
 
   it('uses the same fixed timing for a vertical dock and releases its leave on teardown', async () => {

@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { usePanelLayout } from './usePanelLayout'
+import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
+
+/** A leave the frozen document timeline will never report as finished (#266). */
+const stalledLeave = (): Promise<void> => new Promise<void>(() => undefined)
 
 const CLOSED = { edge: 'right' as const, expanded: false, mineOpen: false }
 const OPEN = { edge: 'right' as const, expanded: true, mineOpen: false }
@@ -151,6 +155,51 @@ describe('usePanelLayout', () => {
     expect(panel.layout.value).toEqual(CLOSED)
   })
 
+  it('lands the shrink on the bound when the last leave never reports completion (#266)', async () => {
+    // An occluded window freezes Chromium's document timeline, so the leave
+    // finishes on screen and never says so. Waiting on it forever left the
+    // shell painting its amber ground over columns nothing would remove.
+    vi.useFakeTimers()
+    try {
+      const api = stubApi({
+        getPanelLayout: vi.fn().mockResolvedValue(OPEN),
+        setPanelLayout: vi.fn().mockResolvedValue(CLOSED)
+      })
+      const panel = usePanelLayout(stalledLeave)
+      await panel.sync()
+      const closing = panel.toggle(false)
+      await Promise.resolve()
+      expect(api.setPanelLayout).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+      expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({
+        expanded: false,
+        mineOpen: false
+      })
+      await closing
+      expect(panel.layout.value).toEqual(CLOSED)
+      expect(panel.visibleLayout.value).toEqual(panel.layout.value)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reconciles presentation to the real layout when a leave rejects instead of resolving (#266)', async () => {
+    // A thrown leave is not evidence the shrink should be abandoned: dropping
+    // it left the window at its old width with nothing drawn in the width.
+    const api = stubApi({
+      getPanelLayout: vi.fn().mockResolvedValue(OPEN),
+      setPanelLayout: vi.fn().mockResolvedValue(CLOSED)
+    })
+    const panel = usePanelLayout(() => Promise.reject(new Error('leave torn down')))
+    await panel.sync()
+    await panel.toggle(false)
+    expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({
+      expanded: false,
+      mineOpen: false
+    })
+    expect(panel.visibleLayout.value).toEqual(CLOSED)
+  })
+
   it('does not mount opening content before main has reserved its bounds', async () => {
     let answer!: (value: typeof OPEN) => void
     stubApi({
@@ -192,6 +241,32 @@ describe('usePanelLayout', () => {
     finish()
     await changing
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
+  })
+
+  it('finishes a column swap on the bound when the outgoing leave never finishes (#266)', async () => {
+    vi.useFakeTimers()
+    try {
+      const api = stubApi({
+        getPanelLayout: vi.fn().mockResolvedValue(OPEN),
+        setPanelLayout: vi.fn(async (request) => ({ edge: 'right', ...request }))
+      })
+      const panel = usePanelLayout(stalledLeave)
+      await panel.sync()
+      const changing = panel.apply({ expanded: false, mineOpen: true })
+      await Promise.resolve()
+      await Promise.resolve()
+      // The union is reserved and neither column is presented: exactly the
+      // intermediate #266 got stuck in, and it may only last the bound.
+      expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ expanded: true, mineOpen: true })
+      expect(panel.visibleLayout.value).toEqual({ ...CLOSED, mineOpen: true })
+      await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+      expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
+      await changing
+      expect(panel.layout.value).toEqual({ ...CLOSED, mineOpen: true })
+      expect(panel.visibleLayout.value).toEqual(panel.layout.value)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('interprets rapid double toggles as open then closed rather than two stale opens', async () => {

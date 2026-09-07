@@ -5,6 +5,7 @@ import App from './App.vue'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
+import { PANEL_LEAVE_BOUND_MS } from './lib/shell/panelMotion'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -223,6 +224,40 @@ describe('App panel motion (#164)', () => {
     await flushPromises()
     expect(wrapper.find('.map-view').exists()).toBe(false)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
+  })
+
+  it('never strands the shell as an empty amber frame when the leaves stop reporting (#266)', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    async function finishAnimations() {
+      for (const animation of animations.splice(0)) animation.finish()
+      await flushPromises()
+    }
+    wrapper.findComponent(MapView).vm.$emit('open', mine.id)
+    await flushPromises()
+    await finishAnimations()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    await finishAnimations()
+    // The design's own mine mock: a mine alone on the amber ground.
+    expect(wrapper.find('.shell').classes()).toContain('is-mine')
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    api.setPanelLayout.mockClear()
+    // The window is occluded from here on, so not one of the leaves this
+    // snapshot starts will ever report itself finished. Before #266 that left
+    // the mine column invisible inside a window still sized to hold it, with
+    // the amber ground painted over the whole of it and nothing to remove.
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [], tokensObserved: 0 })
+    await flushPromises()
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
+    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.shell').classes()).toContain('is-rail')
   })
 
   it('keeps the mine instance through page and dock swaps, then waits for mine AND message leaves', async () => {

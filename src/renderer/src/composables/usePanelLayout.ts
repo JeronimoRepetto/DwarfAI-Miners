@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../types'
+import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
 
 /**
  * State for the docked shell's own shape (#90).
@@ -44,6 +45,35 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
    */
   let queue: Promise<void> = Promise.resolve()
 
+  /**
+   * `visibleLayout` may diverge from `layout` only for a BOUNDED time (#266).
+   *
+   * The divergence is the shell drawn as its widest composition with a column
+   * on its way out, and it is the one state in which the amber ground can be
+   * painted over nothing at all. Presentation asked to end it and nothing here
+   * can make it: a leave reports completion from an animation whose timeline
+   * the platform is free to freeze, and one that never reports held this queue
+   * open forever — so the rail stopped answering too, and the window kept the
+   * width of a column it was no longer showing.
+   *
+   * A leave that overruns therefore loses its say rather than the shrink. Its
+   * rejection is swallowed for the same reason: a torn-down leave is not
+   * evidence that the layout it was retiring should stay.
+   */
+  async function boundedLeave(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        waitForLeave().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, PANEL_LEAVE_BOUND_MS)
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async function send(request: PanelLayoutRequest): Promise<void> {
     applying.value = true
     try {
@@ -66,9 +96,11 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
           expanded: layout.value.expanded && request.expanded,
           mineOpen: layout.value.mineOpen && request.mineOpen
         }
-        await waitForLeave()
+        await boundedLeave()
       }
       layout.value = await window.api.setPanelLayout(request)
+      // The one place the divergence above is closed: whatever presentation
+      // was showing mid-shrink, what stands afterwards is what main reported.
       visibleLayout.value = layout.value
     } catch {
       // The failed request may or may not have reached the window before
