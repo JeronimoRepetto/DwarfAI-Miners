@@ -219,7 +219,25 @@ channel beside the detached `agent:launch`, not a replacement.
   for `supportedModels()` to answer and is never sent a turn; Codex's from the same SQLite registry
   row §3's Codex queue table already reads (`threads.model`/`reasoning_effort`), labelled as history
   rather than the CLI's own word, because `codex --help` names no live model-list command; Antigravity's
-  is empty until it has a launch path at all.
+  stayed empty (`source: 'none'`) even once it gained a launch path — see the next bullet.
+- **A detached, one-shot Antigravity launch shipped in #237's step 4.** `buildAntigravityLaunchArgs` is
+  `-p --input-format text` — Antigravity CLI 1.1.26's own `--help`, re-verified 2026-09-07 (read-only;
+  no conversation was started to check this), documents `-p`/`--print` ("Run a single prompt
+  non-interactively and print the response") and `--input-format` (`text`/`stream-json`, default
+  `text`) exactly as this argv states explicitly, the same reason Claude's and Codex's own argv name
+  their defaults rather than relying on them. No `--output-format` is passed: this app never reads the
+  launched process's stdout (`stdio` is `['pipe', 'ignore', 'ignore']`, same as every other detached
+  launch). Detached only — `LAUNCHABLE_PROVIDERS` gained the name and `HELDABLE_PROVIDERS` did not,
+  because the CLI's documented bidirectional `stream-json` protocol has had no round trip proven
+  through this app yet (that stays step 5). The launched session is discovered the same way a detached
+  Codex one is: its own transcript records the prompt as its first `USER_INPUT` step, and
+  `AntigravityProvider.firstPrompt` now reads it — envelope stripped, off the same
+  `extractAntigravityFeed` the live feed already uses — so the Add Panel's receipt registry
+  (`LaunchReceiptRegistry`) can prove which dwarf on the board its launch became, exactly as it already
+  does for Claude and Codex. `agy help models`/`agy models --help` document a `models` subcommand
+  ("List available models"), but this slice's own instructions authorized only read-only `--help`
+  probing and ruled out starting a conversation, so the live subcommand was never invoked to see what
+  it actually returns; `antigravityModelCatalog()` is therefore left unchanged, still `source: 'none'`.
 
 ### The Codex queue — merged, #110 (#97)
 

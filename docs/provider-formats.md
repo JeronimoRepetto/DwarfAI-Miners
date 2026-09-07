@@ -774,6 +774,34 @@ Ordering is by `timestamp`, never by line: a conversation resumed elsewhere keep
 - **Subagent topology is not in the summary DB.** Observed subagents had their own conversation directories; the usable parent evidence is in the parent's own subagent tool events. Nothing reads it yet, so every observed conversation is a `worker` — absence of spawn evidence, never a `foreman` claim.
 - **Detection is not delivery.** The compact tool calls sampled carried no stable DwarfAI-compatible tool-use id, and the documented stream-input protocol covers user text events rather than answers to a question. Nothing here advertises a question answer, a permission answer, a message or an interrupt.
 
+#### 3.1.6 Mine History (2026-09-07, issue #237 step 3)
+
+`history.jsonl` (§3.1.4) is also what `MineHistoryReader` reads to find every Antigravity conversation that ever belonged to a mine — not just the ones currently locked. Every `[conversationId, workspace]` pair `parseAntigravityHistory` maps is a candidate; one whose `workspace` matches the mine's path (compared through `normalizePathKey`, the same fold Codex's `cwd` gets, because this is a native path rather than a lossy encoded directory name) is read at `antigravityTranscriptPath(storeRoot, conversationId)` through the same `extractAntigravityFeed` the live feed uses — no second parser. A conversation the file names but whose transcript is gone from disk is skipped, the same fail-safe every other candidate list here already has.
+
+**Rank is `worker`, never `foreman`, for every Antigravity speaker — matching §3.1.5's own "no parent edge is read" finding rather than reopening it for history.** The reader has no separate root/subagent position for this store, so `MineHistoryReader`'s `SpeakerPosition` type is reused for its EFFECT rather than its literal meaning: `{ kind: 'subagent' }` with no stated depth resolves to `worker` through the same `rankForSpawnDepth` the live board's crew ranking already uses, and no `issuerId` is ever set. The live provider and the history panel therefore can never disagree about one conversation's rank, which was worth more than inventing a third `SpeakerPosition` kind for a rank that was already exactly right.
+
+Coal/token backfill stays unsupported for Antigravity, unchanged from §3.1.3's own finding: the store records no usage figure anywhere, so a history read mines nothing rather than a message count or a byte size wearing a token's name.
+
+#### 3.1.7 Detached launch (2026-09-07, issue #237 step 4)
+
+A one-shot, DETACHED launch only — `LAUNCHABLE_PROVIDERS` gained `antigravity`, `HELDABLE_PROVIDERS` did not, because no round trip through the CLI's documented bidirectional `stream-json` protocol has been proven by this app (that stays step 5). Re-verified live against Antigravity CLI 1.1.26 on this machine, 2026-09-07, with `agy --help` and `agy -p --help` — both read-only; **no Antigravity conversation was started to verify this section**, per this slice's own instructions:
+
+```
+-p, --print              Run a single prompt non-interactively and print the response
+--input-format string    Input format for print mode (text, stream-json) (default text)
+--output-format string   Output format for print mode (text, json, stream-json) (default text)
+--effort string          Reasoning effort for the current CLI session (low|medium|high)
+--model string           Model for the current CLI session
+```
+
+Every flag documented in the validated plan's claim-by-claim check is still there on 1.1.26, unchanged since the observer slice's own capture. `buildAntigravityLaunchArgs()` is `['-p', '--input-format', 'text']` — exactly Claude's own spelling, and `--input-format text` is passed explicitly rather than left to the documented default for the same reason Claude's and Codex's argv do: a default can move under us. No `--output-format` is passed, because nothing here ever reads the launched process's stdout (`launchRunner.ts`'s `stdio` is `['pipe', 'ignore', 'ignore']` for every provider, unconditionally). Whether a bare `-p` with no positional prompt reads it from stdin was **not** independently re-tested live — starting a real conversation to check would have violated the read-only constraint above — so this is taken from the validated plan's own claim ("It can send one prompt through stdin") and from the identical argv/stdin design this app already ships for Claude and Codex; the stdin write itself (`runLaunchProcess`) is fully provider-agnostic and needed no change.
+
+**`--effort` and `--model` exist and are documented, but neither is wired for Antigravity in this slice.** `PROVIDER_EFFORT_LEVELS.antigravity` stays `[]`, so the Add Panel's effort picker still shows nothing for it and `antigravityModelCatalog()` still answers `source: 'none'` — see the next paragraph for why. That is a scope choice, not a missing flag: the CLI's own vocabulary (`low|medium|high`) is a real, verified three-value set distinct from Claude's five and Codex's six, and wiring it is future work rather than something this slice's own instructions asked for.
+
+**A `models` subcommand exists** (`agy models` / `Usage: agy.exe models [flags]` — "List available models"), discovered via `agy help models` and `agy models --help`, both of which only print the subcommand's own flag list rather than any model data. Whether the live subcommand needs network access, authentication, or actually enumerates real models was **not checked**: invoking it live was outside what this slice's read-only verification was authorized to do (only `agy --help` and `agy -p --help` were named), and it is a plainly different command from `-p`/`--print`, so probing it would have been reaching past the given authorization rather than reading a flag's documentation. `listAgentModels` therefore keeps Antigravity's catalogue exactly as it already was — `antigravityModelCatalog()` unmodified, `source: 'none'`, `models: []` — and a future slice that wants Claude-style live model discovery for Antigravity has this subcommand as its starting point.
+
+**Discovery, not a new mechanism.** A launched `agy -p` session is found by the ordinary poll like any other detached launch, through the same observer store §3.1.1–§3.1.3 already read; nothing about launching one changes how it is later read. What launching adds is the receipt a launched session needs to be recognised by the Add Panel at all (#191): `AntigravityProvider.firstPrompt` now reads the transcript's opening `USER_INPUT` step, off the exact same `extractAntigravityFeed`/`antigravityUserRequestText` envelope-stripping the live feed already used, so `LaunchReceiptRegistry`'s exact-string match works for Antigravity precisely as it already does for Claude and Codex.
+
 ---
 
 ## 4. Matching session files to live processes (click-to-focus)
@@ -793,24 +821,27 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 
 ## 5. Confidence summary
 
-| Claim                                                                    | Status                                                                                                   |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Claude dir encoding lossy; `cwd` field per line                          | Verified                                                                                                 |
-| Claude line schema, `effort`, model, thinking blocks                     | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                     |
-| `sessions/<pid>.json` busy/idle + PID mapping                            | Verified live (cleanup-on-crash not tested)                                                              |
-| Agent async launch / task-notification completion / `subagents\` layout  | Verified live + on completed session                                                                     |
-| `<status>` is one of completed/failed/killed; all terminal               | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                         |
-| Three delivery envelopes carry the notification; the rest quote it       | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                        |
-| `agent-*.meta.json` and `tasks\*.output` carry no completion state       | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                 |
-| `waitingFor` is the six values of §1.5, plus absent                      | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                    |
-| Subagents expose no status or blocked condition anywhere                 | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                   |
-| Codex writes no approval / user-input record at all                      | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)                     |
-| Codex rollout layout & record types                                      | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                  |
-| Codex liveness = mtime + task_started/complete + process                 | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                  |
-| Gemini CLI: nothing on disk here                                         | Verified absence                                                                                         |
-| Antigravity CLI store layout, record schema and key inventory            | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise |
-| Antigravity: newest step's RUNNING status is the only open-turn evidence | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                    |
-| Antigravity: no token usage, no blocked-on-a-human record anywhere       | Verified absence in that corpus                                                                          |
-| Antigravity: conversation_summaries.db describes CLI sessions            | **Refuted** - no CLI conversation id was in it; nothing reads it                                         |
-| Antigravity: a running agy.exe can be mapped to a conversation           | **Refuted** - its command line carries no conversation id; no pid is published                           |
-| Click-to-focus via PPID walk to terminal                                 | Process data verified; focusing mechanics inferred                                                       |
+| Claim                                                                                         | Status                                                                                                   |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Claude dir encoding lossy; `cwd` field per line                                               | Verified                                                                                                 |
+| Claude line schema, `effort`, model, thinking blocks                                          | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                     |
+| `sessions/<pid>.json` busy/idle + PID mapping                                                 | Verified live (cleanup-on-crash not tested)                                                              |
+| Agent async launch / task-notification completion / `subagents\` layout                       | Verified live + on completed session                                                                     |
+| `<status>` is one of completed/failed/killed; all terminal                                    | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                         |
+| Three delivery envelopes carry the notification; the rest quote it                            | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                        |
+| `agent-*.meta.json` and `tasks\*.output` carry no completion state                            | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                 |
+| `waitingFor` is the six values of §1.5, plus absent                                           | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                    |
+| Subagents expose no status or blocked condition anywhere                                      | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                   |
+| Codex writes no approval / user-input record at all                                           | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)                     |
+| Codex rollout layout & record types                                                           | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                  |
+| Codex liveness = mtime + task_started/complete + process                                      | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                  |
+| Gemini CLI: nothing on disk here                                                              | Verified absence                                                                                         |
+| Antigravity CLI store layout, record schema and key inventory                                 | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise |
+| Antigravity: newest step's RUNNING status is the only open-turn evidence                      | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                    |
+| Antigravity: no token usage, no blocked-on-a-human record anywhere                            | Verified absence in that corpus                                                                          |
+| Antigravity: conversation_summaries.db describes CLI sessions                                 | **Refuted** - no CLI conversation id was in it; nothing reads it                                         |
+| Antigravity: a running agy.exe can be mapped to a conversation                                | **Refuted** - its command line carries no conversation id; no pid is published                           |
+| Antigravity: `-p`/`--input-format`/`--output-format`/`--effort`/`--model` all exist on 1.1.26 | Verified live, 2026-09-07, `agy --help` (read-only, no conversation started)                             |
+| Antigravity: bare `-p` with no positional prompt reads it from stdin                          | **Not independently re-tested** (would have started a conversation); taken from the validated plan       |
+| Antigravity: a `models` subcommand exists and lists available models                          | Its own `--help` verified; **live output not checked** — outside this slice's read-only authorization    |
+| Click-to-focus via PPID walk to terminal                                                      | Process data verified; focusing mechanics inferred                                                       |

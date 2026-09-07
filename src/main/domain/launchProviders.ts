@@ -39,23 +39,31 @@ export interface CliPresence {
  * answers the first question and deliberately not the second — what the panel
  * does with each is the renderer's, and it is where that difference is drawn.
  *
- * Antigravity is deliberately absent (#237), and the absence is the rule
- * holding rather than an omission: the observer slice reads the CLI's store
- * and has proven no `agy` invocation, so a name here would be a chip that
- * answers Enter with a session nobody starts.
+ * AMENDED for #237, step 4 (was: `['claude', 'codex']`, with Antigravity
+ * deliberately absent because the observer slice had proven no `agy`
+ * invocation). It has one now — see `buildAntigravityLaunchArgs` in
+ * launch.ts for the verified argv — so a chip for it answers Enter with a
+ * real, DETACHED, one-shot session, discovered afterwards by the ordinary
+ * poll exactly as a detached Codex launch is. That is a different claim from
+ * membership in `HELDABLE_PROVIDERS` (shared/contracts.ts): this list says a
+ * launch can be STARTED, that one says it can be WATCHED, and Antigravity
+ * stays out of the second — no round trip through its documented
+ * stream-json protocol has been proven by this app.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex']
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex', 'antigravity']
 
 /**
  * What a detected provider with no launch path says for itself.
  *
- * Reached at last, and by exactly the case it was kept for (#237). This used
- * to say nothing in the build could get here, because every detected provider
- * had been launchable since #168, and predicted that a third name in
- * `DWARF_PROVIDERS` would be detected and not launchable until someone built
- * its launch path. Antigravity is that third name: this app reads its store
- * and has proven no invocation of `agy`, so an installed Antigravity says so
- * out loud instead of offering a chip with nothing behind it.
+ * AMENDED for #237, step 4. This comment used to record the one case this
+ * constant had been reached for: an installed Antigravity, detected but not
+ * yet launchable. That case is gone now that every `DWARF_PROVIDERS` member
+ * is also a `LAUNCHABLE_PROVIDERS` member — so this string is, once again,
+ * unreachable through any real provider in this build. It is kept exactly
+ * as #168's own original comment kept it: for the next provider that can be
+ * READ but has no launch invocation yet, so a detected-but-unlaunchable CLI
+ * always has honest copy waiting rather than a hole that needs filling under
+ * pressure.
  *
  * Fixed copy this app wrote, which is the whole reason it is safe to publish:
  * the detector's own reasons name `~/.local/bin` and, for a configured

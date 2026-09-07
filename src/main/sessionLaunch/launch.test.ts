@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
+  buildAntigravityLaunchArgs,
   buildClaudeLaunchArgs,
   buildCodexLaunchArgs,
   buildLaunchArgs,
@@ -49,6 +50,54 @@ describe('buildLaunchArgs', () => {
 
   it("answers Codex with Codex's own non-interactive argv", () => {
     expect(buildLaunchArgs('codex')).toEqual(buildCodexLaunchArgs())
+  })
+
+  /*
+   * AMENDED for #237, step 4 (was: asserted `buildLaunchArgs('antigravity')`
+   * THREW "observer only"). The detached launch landed, so this dispatch now
+   * answers instead of refusing — see buildAntigravityLaunchArgs for the
+   * verified argv.
+   */
+  it("answers Antigravity with Antigravity's own print-mode argv, now that it is launchable", () => {
+    expect(buildLaunchArgs('antigravity')).toEqual(buildAntigravityLaunchArgs())
+  })
+})
+
+/*
+ * #237, step 4. A one-shot, DETACHED launch only: the CLI's documented
+ * bidirectional stream-json protocol is what a HELD session would need, and
+ * no round trip through it has been proven by this app (see
+ * HELDABLE_PROVIDERS in shared/contracts.ts) — that stays step 5.
+ */
+describe('buildAntigravityLaunchArgs', () => {
+  /*
+   * Re-verified against the installed Antigravity CLI on this machine,
+   * 2026-09-07 — `agy --help` (read-only; no conversation was started):
+   *
+   *   -p, --print            Run a single prompt non-interactively and print
+   *                          the response
+   *   --input-format string  Input format for print mode (text, stream-json)
+   *                          (default text)
+   *   --output-format string Output format for print mode (text, json,
+   *                          stream-json) (default text)
+   *
+   * Exactly Claude's own spelling. `--input-format text` is passed explicitly
+   * rather than left to the documented default, for the reason Claude's and
+   * Codex's argv already do: a default can move under us. No
+   * `--output-format` is passed — nothing here ever reads the launched
+   * process's stdout (launchRunner.ts's stdio is `['pipe', 'ignore',
+   * 'ignore']`), so there is nothing for a structured output format to serve.
+   */
+  it('asks for one non-interactive print-mode turn', () => {
+    expect(buildAntigravityLaunchArgs()).toEqual(['-p', '--input-format', 'text'])
+  })
+
+  it('carries no positional prompt, whatever the prompt says', () => {
+    // Same argv/stdin split as Claude and Codex: the prompt travels on stdin,
+    // never in argv another process on this machine could read.
+    expect(buildAntigravityLaunchArgs().some((arg) => !arg.startsWith('-') && arg !== 'text')).toBe(
+      false
+    )
   })
 })
 

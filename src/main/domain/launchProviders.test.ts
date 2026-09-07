@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DWARF_PROVIDERS, type DwarfProvider } from './types'
-import {
-  LAUNCHABLE_PROVIDERS,
-  NOT_LAUNCHABLE,
-  agentProviderList,
-  type CliPresence
-} from './launchProviders'
+import { LAUNCHABLE_PROVIDERS, agentProviderList, type CliPresence } from './launchProviders'
 
 // AMENDED for #237 (was: 'claude' | 'codex'). Widened to the provider table
 // itself so an observer-only identity can be handed in as a detection.
@@ -80,28 +75,30 @@ describe('agentProviderList', () => {
   })
 
   it('names every provider a launch can actually be started for (#168)', () => {
-    // Unchanged by #237 on purpose: Antigravity is an OBSERVER first, and a
-    // name here that no launch path answers is a chip that responds to Enter
-    // with a session nobody starts.
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex'])
+    // AMENDED for #237, step 4 (was: ['claude', 'codex']). Antigravity gained
+    // a DETACHED, one-shot launch — the verified `agy -p --input-format text`
+    // argv — while staying out of HELDABLE_PROVIDERS: this list only answers
+    // "can a launch be started", never "can it be watched".
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'antigravity'])
   })
 
   /*
-   * The condition `NOT_LAUNCHABLE` was written for, finally reached (#237).
-   * Its comment said nothing in the build could get there because every
-   * detected provider was launchable — true until a provider arrived that this
-   * app can only read. An installed Antigravity says so out loud instead of
-   * offering a chip with nothing behind it.
+   * AMENDED for #237, step 4 (was: asserted a detected Antigravity was
+   * REFUSED, with NOT_LAUNCHABLE as its reason — the state this test now
+   * proves is the opposite of). The launch path landed, so a detected
+   * Antigravity is launchable exactly as Claude and Codex are, with no
+   * refusal to explain.
+   *
+   * That leaves NOT_LAUNCHABLE with no real provider left to prove it against
+   * — every DWARF_PROVIDERS member is launchable now — so the reason goes back
+   * to what its own comment already says happened once before: unreachable in
+   * this build, kept for whichever provider arrives next with a store this
+   * app can read but no launch invocation yet.
    */
-  it('refuses to start a detected provider whose launch path does not exist yet', () => {
+  it('marks a detected Antigravity launchable now that #237 gives it a detached launch', () => {
     const [, , antigravity] = agentProviderList([found('antigravity')]).providers
 
-    expect(antigravity).toEqual({
-      provider: 'antigravity',
-      installed: true,
-      launchable: false,
-      reason: NOT_LAUNCHABLE
-    })
+    expect(antigravity).toEqual({ provider: 'antigravity', installed: true, launchable: true })
   })
 
   it('offers no refusal copy for an Antigravity nobody has installed', () => {

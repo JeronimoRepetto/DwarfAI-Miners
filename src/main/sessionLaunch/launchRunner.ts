@@ -32,10 +32,9 @@ const EMPTY_PROMPT = 'Type a prompt first.'
 const PRODUCT_NAME: Record<DwarfProvider, string> = {
   claude: 'Claude Code',
   codex: 'Codex CLI',
-  // Present because the map is total, and correct for the day it is needed:
-  // the product is Antigravity, whichever way its `agy` binary is eventually
-  // started. Nothing reaches it in this build, because #237 ships the observer
-  // without a launch path.
+  // Reachable since #237 step 4: a detached Antigravity launch runs through
+  // this same engine, and a refusal — not installed, could not be started —
+  // must name the product, not its `agy` executable.
   antigravity: 'Antigravity CLI'
 }
 

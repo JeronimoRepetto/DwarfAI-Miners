@@ -98,6 +98,39 @@ function codexAssistantLine(text: string, timestamp: string): string {
   })
 }
 
+/** One `history.jsonl` record — docs/provider-formats.md §3.1.4. */
+function antigravityHistoryLine(
+  conversationId: string,
+  workspace: string,
+  timestamp: number
+): string {
+  return JSON.stringify({ display: 'hi', timestamp, workspace, conversationId })
+}
+
+/** One `USER_INPUT` transcript step, envelope and all — docs/provider-formats.md §3.1.2. */
+function antigravityUserStep(text: string, createdAt: string, stepIndex: number): string {
+  return JSON.stringify({
+    step_index: stepIndex,
+    source: 'USER_EXPLICIT',
+    type: 'USER_INPUT',
+    status: 'DONE',
+    created_at: createdAt,
+    content: `<USER_REQUEST>\n${text}\n</USER_REQUEST>`
+  })
+}
+
+/** One `PLANNER_RESPONSE` transcript step. */
+function antigravityAssistantStep(text: string, createdAt: string, stepIndex: number): string {
+  return JSON.stringify({
+    step_index: stepIndex,
+    source: 'MODEL',
+    type: 'PLANNER_RESPONSE',
+    status: 'DONE',
+    created_at: createdAt,
+    content: text
+  })
+}
+
 function lines(...records: string[]): string {
   return records.join('\n') + '\n'
 }
@@ -597,5 +630,144 @@ describe('MineHistoryReader over Codex rollouts', () => {
     fs.addFile(`${PROJECT_DIR}\\${SESSION}.jsonl`, lines(userLine('dig here', AT_9)), 1)
     const speakers = await readerWith(fs, new MemorySqlite()).read(CWD)
     expect(speakers.map((speaker) => speaker.id)).toEqual([`claude:${SESSION}`])
+  })
+})
+
+/*
+ * #237, step 3. Antigravity's own store has no session file per project the
+ * way Claude does and no registry table the way Codex does — history.jsonl
+ * is the only place a conversation's workspace is recorded at all (see
+ * providers/antigravity/discovery.ts), so it is what this reads, defensively
+ * parsed the same way the live observer parses it.
+ */
+describe('MineHistoryReader over Antigravity conversations', () => {
+  const ANTIGRAVITY_ROOT = 'C:\\antigravity-home'
+  const CONVERSATION = 'aaaaaaaa-1111-4111-8111-111111111111'
+  const OTHER_CONVERSATION = 'bbbbbbbb-2222-4222-8222-222222222222'
+  const TRANSCRIPT = (id: string): string =>
+    `${ANTIGRAVITY_ROOT}\\brain\\${id}\\.system_generated\\logs\\transcript.jsonl`
+
+  function reader(fs: FsLike): MineHistoryReader {
+    return new MineHistoryReader({
+      fs,
+      claudeRoots: [],
+      antigravity: { storeRoot: ANTIGRAVITY_ROOT },
+      platform: 'win32'
+    })
+  }
+
+  it("finds a conversation through history.jsonl's workspace map and reads its transcript", async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${ANTIGRAVITY_ROOT}\\history.jsonl`,
+      lines(antigravityHistoryLine(CONVERSATION, CWD, 1)),
+      1
+    )
+    fs.addFile(
+      TRANSCRIPT(CONVERSATION),
+      lines(
+        antigravityUserStep('dig here', AT_9, 0),
+        antigravityAssistantStep('Found the seam.', AT_10, 1)
+      ),
+      1
+    )
+
+    await expect(reader(fs).read(CWD)).resolves.toEqual([
+      {
+        id: `antigravity:${CONVERSATION}`,
+        provider: 'antigravity',
+        // No parent edge is read from this store (see AntigravityProvider's
+        // own class comment): every conversation ranks the same way the live
+        // board draws it — absence of spawn evidence, never a foreman claim.
+        role: 'worker',
+        name: `agy-${CONVERSATION.slice(0, 8)}`,
+        lastMessageAt: Date.parse(AT_10),
+        messages: [
+          { role: 'user', text: 'dig here', timestamp: AT_9 },
+          { role: 'assistant', text: 'Found the seam.', timestamp: AT_10 }
+        ],
+        // Small fixture, well inside the narrowest window (#227).
+        reachedStart: true
+      }
+    ])
+  })
+
+  it('ignores a conversation history.jsonl records for a different workspace', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${ANTIGRAVITY_ROOT}\\history.jsonl`,
+      lines(antigravityHistoryLine(CONVERSATION, 'C:\\work\\other', 1)),
+      1
+    )
+    fs.addFile(TRANSCRIPT(CONVERSATION), lines(antigravityUserStep('dig here', AT_9, 0)), 1)
+
+    await expect(reader(fs).read(CWD)).resolves.toEqual([])
+  })
+
+  it('skips a conversation history.jsonl names whose transcript is gone from disk', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${ANTIGRAVITY_ROOT}\\history.jsonl`,
+      lines(antigravityHistoryLine(CONVERSATION, CWD, 1)),
+      1
+    )
+    await expect(reader(fs).read(CWD)).resolves.toEqual([])
+  })
+
+  it('answers nothing for Antigravity when this build has no store root for it', async () => {
+    const fs = new FakeFs()
+    fs.addFile(`${PROJECT_DIR}\\${SESSION}.jsonl`, lines(userLine('dig here', AT_9)), 1)
+    const speakers = await new MineHistoryReader({
+      fs,
+      claudeRoots: [ROOT],
+      platform: 'win32'
+    }).read(CWD)
+    expect(speakers.map((speaker) => speaker.id)).toEqual([`claude:${SESSION}`])
+  })
+
+  it('finds every conversation history.jsonl maps to the same mine', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${ANTIGRAVITY_ROOT}\\history.jsonl`,
+      lines(
+        antigravityHistoryLine(CONVERSATION, CWD, 1),
+        antigravityHistoryLine(OTHER_CONVERSATION, CWD, 2)
+      ),
+      1
+    )
+    fs.addFile(TRANSCRIPT(CONVERSATION), lines(antigravityUserStep('dig here', AT_9, 0)), 1)
+    fs.addFile(TRANSCRIPT(OTHER_CONVERSATION), lines(antigravityUserStep('map there', AT_10, 0)), 1)
+
+    const speakers = await reader(fs).read(CWD)
+    expect(speakers.map((speaker) => speaker.id).sort()).toEqual(
+      [`antigravity:${CONVERSATION}`, `antigravity:${OTHER_CONVERSATION}`].sort()
+    )
+  })
+
+  it('is not a speaker when the transcript holds nothing a person could read', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${ANTIGRAVITY_ROOT}\\history.jsonl`,
+      lines(antigravityHistoryLine(CONVERSATION, CWD, 1)),
+      1
+    )
+    // A GENERIC tool-output step: nobody speaking, by the same rule
+    // extractAntigravityFeed already holds live.
+    fs.addFile(
+      TRANSCRIPT(CONVERSATION),
+      lines(
+        JSON.stringify({
+          step_index: 0,
+          source: 'MODEL',
+          type: 'GENERIC',
+          status: 'DONE',
+          created_at: AT_9,
+          content: 'tool output'
+        })
+      ),
+      1
+    )
+
+    await expect(reader(fs).read(CWD)).resolves.toEqual([])
   })
 })

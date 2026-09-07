@@ -123,10 +123,13 @@ export type MaterialTotals = Record<Material, number>
  * HARNESS, not its binary: `agy` is only what the executable is called, and
  * the CLI can front models other than Gemini, so calling the provider either
  * of those would name the wrong thing. What this app can do with it is
- * narrower than what it can do with the other two — it reads the store and
- * nothing more, which is why the name is absent from `HELDABLE_PROVIDERS` and
- * from `LAUNCHABLE_PROVIDERS`. Membership here says a store can be READ; it
- * has never said a session can be reached.
+ * narrower than what it can do with the other two: step 3 gave it explicit
+ * Mine History discovery, step 4 gave it a DETACHED one-shot launch (see
+ * `LAUNCHABLE_PROVIDERS` in main/domain/launchProviders.ts), and it is still
+ * absent from `HELDABLE_PROVIDERS` — no round trip through its documented
+ * stream-json protocol has been proven by this app. Membership in
+ * `DWARF_PROVIDERS` alone says only that a store can be READ; the other two
+ * lists are what say how far past reading this app may go.
  */
 export const DWARF_PROVIDERS = ['claude', 'codex', 'antigravity'] as const
 

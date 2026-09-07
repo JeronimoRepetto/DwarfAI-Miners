@@ -894,6 +894,9 @@ export class AgentRuntime {
           sqlite: options.sqlite ?? new NodeSqlite(),
           stateDbPath: expandHomePath(options.config.providers.codex.stateDb, home)
         },
+        antigravity: {
+          storeRoot: expandHomePath(options.config.providers.antigravity.storeRoot, home)
+        },
         platform: platform.platform
       })
     /*

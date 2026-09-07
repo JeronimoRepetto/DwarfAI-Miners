@@ -321,15 +321,23 @@ describe('AntigravityProvider.scan', () => {
     expect(snapshot?.dwarfs[0]?.pid).toBeUndefined()
   })
 
-  it('offers no channel into a session it cannot reach', () => {
+  /*
+   * AMENDED for #237, step 4 (was: also asserted `port.firstPrompt` was
+   * undefined, pinning the observer slice's own scope). A detached launch
+   * needs the receipt firstPrompt supplies (#191) — the panel's own proof of
+   * which dwarf on the board is the session it just started — so it is
+   * implemented now; see the firstPrompt describe block below. What is still
+   * true, and still asserted here, is that no SEND channel exists: detection
+   * is not delivery.
+   */
+  it('offers no send channel into a session it cannot reach', () => {
     // No textDelivery method at all: the runtime resolves the whole capability
     // matrix to null, and the action bar disables every control with its own
-    // reason. Detection is not delivery. Read through the port rather than the
-    // class, because the port is what the runtime holds.
+    // reason. Read through the port rather than the class, because the port
+    // is what the runtime holds.
     const port: Provider = provider(store())
 
     expect(port.textDelivery).toBeUndefined()
-    expect(port.firstPrompt).toBeUndefined()
   })
 })
 
@@ -375,6 +383,59 @@ describe('AntigravityProvider.feed', () => {
 
     fs.removeFile(antigravityTranscriptPath(ROOT, CONVERSATION))
     expect(await agy.feed(`antigravity:${CONVERSATION}`, 12)).toEqual([])
+  })
+})
+
+/*
+ * #237, step 4. The receipt a detached launch is recognised by (#191): the
+ * opening prompt the child's session recorded, off the head of the same
+ * transcript feed() reads the tail of — envelope stripped by the same
+ * extractAntigravityFeed the live feed uses, so a match here is a match
+ * against the words a person actually typed rather than the CLI's own
+ * <USER_REQUEST> wrapper.
+ */
+describe('AntigravityProvider.firstPrompt', () => {
+  it("reads the opening prompt off the transcript's own head, envelope stripped", async () => {
+    const agy = provider(store())
+    await agy.scan()
+
+    await expect(agy.firstPrompt(`antigravity:${CONVERSATION}`)).resolves.toBe(
+      'What does this project do?'
+    )
+  })
+
+  it('answers undefined for a dwarf no scan has seen', async () => {
+    await expect(provider(store()).firstPrompt('antigravity:nobody')).resolves.toBeUndefined()
+  })
+
+  it('answers undefined when the transcript has gone away', async () => {
+    const fs = store()
+    const agy = provider(fs)
+    await agy.scan()
+    fs.removeFile(antigravityTranscriptPath(ROOT, CONVERSATION))
+
+    await expect(agy.firstPrompt(`antigravity:${CONVERSATION}`)).resolves.toBeUndefined()
+  })
+
+  it('answers raw, unredacted text — the same rule every other firstPrompt implementation holds', async () => {
+    const secret = `sk-ant-${'a'.repeat(40)}`
+    const fs = store({
+      transcripts: {
+        [CONVERSATION]:
+          JSON.stringify({
+            step_index: 0,
+            source: 'USER_EXPLICIT',
+            type: 'USER_INPUT',
+            status: 'DONE',
+            created_at: '2026-09-04T19:01:13Z',
+            content: `<USER_REQUEST>\nmy key is ${secret}\n</USER_REQUEST>`
+          }) + '\n'
+      }
+    })
+    const agy = provider(fs)
+    await agy.scan()
+
+    await expect(agy.firstPrompt(`antigravity:${CONVERSATION}`)).resolves.toContain(secret)
   })
 })
 

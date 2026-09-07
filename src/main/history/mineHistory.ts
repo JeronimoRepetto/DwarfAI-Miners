@@ -5,11 +5,18 @@ import { attributeIssuedMessages } from '../domain/messageIssuer'
 import { redactSecrets } from '../domain/redactSecrets'
 import {
   MINE_HISTORY_MESSAGE_LIMIT,
+  type DwarfProvider,
   type DwarfRole,
   type MessageIssuer,
   type MineHistorySpeaker
 } from '../domain/types'
 import { currentPlatform, normalizePathKey, type Platform } from '../platform/platform'
+import {
+  antigravityHistoryPath,
+  antigravityTranscriptPath,
+  parseAntigravityHistory
+} from '../providers/antigravity/discovery'
+import { extractAntigravityFeed } from '../providers/antigravity/parse'
 import { encodeClaudeProjectDir, extractClaudeFeed } from '../providers/claude/parse'
 import { extractCodexFeed } from '../providers/codex/parse'
 import {
@@ -63,6 +70,14 @@ import { rankForSpawnDepth } from '../sessionLaunch/heldCrew'
 export const MINE_HISTORY_TRANSCRIPT_LIMIT = 64
 
 /**
+ * How much of Antigravity's `history.jsonl` one read asks for, from the END —
+ * the same bound and the same reasoning as AntigravityProvider's own
+ * `HISTORY_TAIL_BYTES`: the mapping that matters is the newest record for a
+ * conversation, and the file only grows.
+ */
+const ANTIGRAVITY_HISTORY_TAIL_BYTES = 1024 * 1024
+
+/**
  * Where a transcript sits in its session, which is the only thing that decides
  * its rank here. `spawnDepth` is what the subagent's own sidecar states, and it
  * is absent when the sidecar is missing or does not say.
@@ -92,6 +107,13 @@ export interface MineHistoryReaderOptions {
    * (Codex before 0.150) gets Claude history alone.
    */
   codex?: { sqlite: SqliteLike; stateDbPath: string }
+  /**
+   * The Antigravity CLI's own store root, already home-expanded; omitted
+   * means Antigravity history is not offered at all — the same opt-out shape
+   * Codex's registry option has, for a store this build may never see the
+   * config default of (issue #237).
+   */
+  antigravity?: { storeRoot: string }
   /** Decides how the mine's path and a registry row's cwd are compared; defaults to this machine's. */
   platform?: Platform
 }
@@ -103,7 +125,7 @@ export interface MineHistorySource {
 
 /** One transcript found for the mine, before its tail is read. */
 interface Candidate {
-  provider: 'claude' | 'codex'
+  provider: DwarfProvider
   id: string
   name: string
   path: string
@@ -126,17 +148,23 @@ export class MineHistoryReader implements MineHistorySource {
   private readonly fs: FsLike
   private readonly claudeRoots: string[]
   private readonly codex?: { sqlite: SqliteLike; stateDbPath: string }
+  private readonly antigravity?: { storeRoot: string }
   private readonly platform: Platform
 
   constructor(options: MineHistoryReaderOptions) {
     this.fs = options.fs
     this.claudeRoots = options.claudeRoots
     this.codex = options.codex
+    this.antigravity = options.antigravity
     this.platform = options.platform ?? currentPlatform()
   }
 
   async read(cwd: string): Promise<MineHistorySpeaker[]> {
-    const candidates = [...(await this.claudeCandidates(cwd)), ...(await this.codexCandidates(cwd))]
+    const candidates = [
+      ...(await this.claudeCandidates(cwd)),
+      ...(await this.codexCandidates(cwd)),
+      ...(await this.antigravityCandidates(cwd))
+    ]
     // Newest first, so the cap below drops the oldest files and nothing else.
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const chosen = candidates.slice(0, MINE_HISTORY_TRANSCRIPT_LIMIT)
@@ -345,6 +373,62 @@ export class MineHistoryReader implements MineHistorySource {
           ? {}
           : { issuerId: `codex:${thread.parentThreadId}` }),
         extract: extractCodexFeed
+      })
+    }
+    return candidates
+  }
+
+  /*
+   * Antigravity: neither a session file per project (Claude) nor a registry
+   * table (Codex) exists for it — `history.jsonl` is the only place a
+   * conversation's workspace is recorded at all (docs/provider-formats.md
+   * §3.1.4), so it is what this reads, defensively parsed the same way the
+   * live observer parses it (parseAntigravityHistory).
+   *
+   * No parent edge is read from this store — AntigravityProvider's own class
+   * comment states why, and the reason does not change for a conversation
+   * that is merely OLD rather than live. So every candidate ranks as a
+   * WORKER: `{ kind: 'subagent' }` with no stated depth is used for its
+   * EFFECT, not because this is literally a subagent transcript —
+   * `rankForSpawnDepth(undefined)` is 'worker', the same absence-of-spawn-
+   * evidence reading the live board gives every Antigravity dwarf. issuerId
+   * is never set, for the same reason.
+   */
+  private async antigravityCandidates(cwd: string): Promise<Candidate[]> {
+    if (this.antigravity === undefined) return []
+    let text: string
+    try {
+      text = await this.fs.readTextTail(
+        antigravityHistoryPath(this.antigravity.storeRoot),
+        ANTIGRAVITY_HISTORY_TAIL_BYTES
+      )
+    } catch {
+      // No history.jsonl at all: the CLI is installed and has never run, or
+      // this machine's store root is wrong. Not an error, exactly the
+      // fail-safe the live provider's own readWorkspaces() takes.
+      return []
+    }
+    const workspaces = parseAntigravityHistory(text)
+    const wanted = normalizePathKey(cwd, this.platform)
+    const candidates: Candidate[] = []
+    for (const [conversationId, workspace] of workspaces) {
+      if (normalizePathKey(workspace.workspace, this.platform) !== wanted) continue
+      const path = antigravityTranscriptPath(this.antigravity.storeRoot, conversationId)
+      const stat = await this.fs.stat(path)
+      // history.jsonl named it; its transcript never landed, or is gone —
+      // the CLI's own cleanup, same as a vanished Claude/Codex file.
+      if (stat === null) continue
+      candidates.push({
+        provider: 'antigravity',
+        id: `antigravity:${conversationId}`,
+        // The same fallback the live board draws a conversation under
+        // (AntigravityProvider.snapshotConversation): the store records no
+        // name of its own for one.
+        name: `agy-${conversationId.slice(0, 8)}`,
+        path,
+        mtimeMs: stat.mtimeMs,
+        position: { kind: 'subagent' },
+        extract: extractAntigravityFeed
       })
     }
     return candidates
