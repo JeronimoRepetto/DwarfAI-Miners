@@ -5,6 +5,7 @@ import { browseRows } from '../../lib/browse/boardRows'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
 import MineCard from './MineCard.vue'
+import RemoveMineModal from './RemoveMineModal.vue'
 
 const props = defineProps<{
   projects: ProjectSummary[]
@@ -20,6 +21,10 @@ const props = defineProps<{
   adding: boolean
   /** Why the last adopt did not happen; null for a cancelled picker as well as for a success. */
   addError: string | null
+  /** True while main is carrying out a confirmed removal (#169). */
+  removing?: boolean
+  /** Why the last removal did not happen; null for a success and before any attempt. */
+  removeError?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -29,6 +34,7 @@ const emit = defineEmits<{
   'load-more': []
   add: []
   open: [projectId: string]
+  remove: [projectId: string]
 }>()
 
 /*
@@ -45,6 +51,37 @@ const emit = defineEmits<{
 const rows = computed(() => browseRows(props.projects, props.mines, props))
 
 const empty = computed(() => !props.loading && props.error === null && rows.value.length === 0)
+
+/**
+ * Which mine is awaiting its removal confirmation (#169), or null.
+ *
+ * Kept LOCAL, exactly as SettingsPanel keeps whether the reset modal is open:
+ * it is display state nothing outside this screen ever reads, while the
+ * confirmed intent leaves as an event so App goes on owning the IPC.
+ *
+ * The id rather than the row, so the row is looked up against the CURRENT list
+ * below — which is what closes the modal by itself once the card is gone.
+ */
+const removingId = ref<string | null>(null)
+
+/**
+ * The row the confirmation is about, or undefined when there is none to ask
+ * about any more.
+ *
+ * Resolved from the rows on screen rather than remembered: once the removal
+ * lands and the list reloads without that card, the modal has nothing left to
+ * name and closes. A remembered copy would keep asking about a mine that is no
+ * longer there.
+ */
+const pendingRemoval = computed(() =>
+  removingId.value === null ? undefined : rows.value.find((row) => row.id === removingId.value)
+)
+
+function confirmRemoval(): void {
+  const pending = removingId.value
+  if (pending === null) return
+  emit('remove', pending)
+}
 
 const sortLabel = computed(() =>
   props.direction === 'desc' ? 'Most recent activity first' : 'Least recent activity first'
@@ -190,6 +227,7 @@ onBeforeUnmount(stopWatching)
           :active-agents="activeAgentsFor(row, mines)"
           :status="cardStatusFor(row, mines)"
           @open="emit('open', $event)"
+          @remove="removingId = $event"
         />
       </ul>
       <p v-if="loading" class="panel-loading" role="status">Reading your projects...</p>
@@ -200,11 +238,28 @@ onBeforeUnmount(stopWatching)
         aria-hidden="true"
       ></div>
     </div>
+    <!--
+      The removal confirmation (#169), over the panel it belongs to. Keyed by
+      the mine, so asking about another one is a fresh dialog rather than the
+      same one with a different name in it.
+    -->
+    <RemoveMineModal
+      v-if="pendingRemoval"
+      :key="pendingRemoval.id"
+      :name="pendingRemoval.name"
+      :removing="removing === true"
+      :error="removeError ?? null"
+      @confirm="confirmRemoval"
+      @close="removingId = null"
+    />
   </section>
 </template>
 
 <style scoped>
 .mines-panel {
+  /* The removal confirmation centres itself inside this box, the same way the
+     reset modal does inside the Settings panel. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;

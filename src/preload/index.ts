@@ -148,10 +148,15 @@ export interface DwarfAiMinersApi {
    */
   declareMine: () => Promise<MineDeclareResult>
   /**
-   * Undo a declaration, by MINE ID and never by path — the id is what both
+   * Remove a mine, by MINE ID and never by path — the id is what both
    * processes already agree on, and a path would be a second key to keep in
-   * step. A mine a session is still working reverts to a discovered one rather
-   * than disappearing, which is what the resolved outcome distinguishes.
+   * step.
+   *
+   * The app's one removal (#169), under the name the undeclare flow already
+   * had: it takes a discovered mine as readily as a declared one, it does not
+   * spare a mine somebody is working, and it removes LOGICALLY — the ore that
+   * mine produced stays, and `declareMine` on the same folder brings the mine
+   * back with it. See MineUndeclareResult.
    */
   undeclareMine: (mineId: string) => Promise<MineUndeclareResult>
   /**

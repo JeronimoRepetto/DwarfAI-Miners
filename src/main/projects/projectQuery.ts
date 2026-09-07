@@ -95,6 +95,14 @@ export function buildProjectQuery(query: ProjectQuery): ProjectQuerySql {
   const conditions: string[] = []
   const params: SqliteParam[] = []
 
+  // Every browse is a browse of the mines the user still TRACKS (#169), and no
+  // caller can ask otherwise. Soft deletion keeps the row so the ore it earned
+  // survives and re-adding the folder finds it again, which means the row is
+  // still here to be selected — so the exclusion has to live where every page
+  // of the browse goes through, rather than in each caller. It binds nothing:
+  // NULL is what "still tracked" is, so this is a predicate and not a value.
+  conditions.push('hidden_at IS NULL')
+
   if (query.tier !== undefined) {
     // The MEASURED tier only. A row whose known_tier is NULL matches no tier,
     // because `NULL = 'bronze'` is NULL and never true — which is the intended
@@ -114,7 +122,9 @@ export function buildProjectQuery(query: ProjectQuery): ProjectQuerySql {
     params.push(`%${escapeLikeWildcards(term)}%`)
   }
 
-  const where = conditions.length === 0 ? '' : ` WHERE ${conditions.join(' AND ')}`
+  // Always a WHERE now: the tracking condition above is in every browse, so an
+  // empty-conditions branch would be a shape this function can no longer build.
+  const where = ` WHERE ${conditions.join(' AND ')}`
   // The sort key and the direction are the only things here that become SQL
   // TEXT rather than a bound parameter, so both are resolved through a closed
   // table and a comparison instead of being written in. The IPC boundary

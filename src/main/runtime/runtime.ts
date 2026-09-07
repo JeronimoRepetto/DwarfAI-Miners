@@ -44,6 +44,7 @@ import {
 } from '../domain/types'
 import {
   collapseDuplicateMines,
+  dropForgottenMines,
   mergeDeclaredMines,
   stampMapSites,
   stampUnrecorded,
@@ -229,7 +230,15 @@ const NO_PICKER = "This build can't open a folder picker."
 const PICKER_FAILED = 'The folder picker could not be opened.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
 const UNDECLARE_FAILED = 'That mine could not be removed.'
-const NOT_DECLARED = 'That mine is not one you added.'
+/**
+ * AMENDED for #169 (was NOT_DECLARED, "That mine is not one you added.").
+ *
+ * The old sentence described the old refusal — a project the user had not
+ * DECLARED was untouchable — and that refusal is gone. What is left is a mine
+ * the store holds no row for at all, or one it has already removed, and neither
+ * is about who added it.
+ */
+const NOT_RECORDED = 'That mine is not one this app is tracking.'
 /** Settings' "Reset metrics" refusal (#138). */
 const RESET_FAILED = 'The metrics could not be reset. Nothing was deleted.'
 /** #92's browse refusal. Stated for the same reason: a list that is empty because nothing could be read looks like a list with nothing in it. */
@@ -557,6 +566,22 @@ export class AgentRuntime {
    * unrecorded — see stampUnrecorded.
    */
   private recorded: Set<string> | null = null
+  /**
+   * Every project id the user has stopped tracking, as of the last read of the
+   * store (#169).
+   *
+   * Cached and rebuilt from the SAME whole-table read `declared` and `recorded`
+   * come from — no second query — because the poll loop is synchronous and the
+   * store is not, and because this changes only when the user deletes or
+   * re-adds a mine.
+   *
+   * An EMPTY set, never null, and the difference from `recorded` is worth
+   * stating: a store that never answered has told us of no deletions, and
+   * "drop nothing" is the safe reading of that — the failure mode of guessing
+   * wrong here is a mine the user deleted reappearing for a poll, whereas the
+   * opposite guess would sweep mines off a board on a momentary lock.
+   */
+  private forgotten = new Set<string>()
   private mines: Mine[] = []
   /**
    * Where a held session's own crew can be written to, rebuilt every poll by
@@ -847,12 +872,19 @@ export class AgentRuntime {
       tierOf,
       onUpdate: async (rawMines) => {
         const now = this.now()
+        // Mines the user has deleted go FIRST, before anything else in this
+        // callback can see them (#169) — see dropForgottenMines for why the
+        // board is the half that needs saying and why a live crew is not a
+        // veto. Ahead of the merge because a deleted project is not a declared
+        // one, and ahead of the lifecycle, the ledger and the observer because
+        // "stop tracking this mine" means all three stop as well.
+        const tracked = dropForgottenMines(rawMines, this.forgotten)
         // The board is discovery PLUS declaration (#85), and this is the one
         // place that knows it — aggregateMines stays a projection of the
         // snapshots alone. Merged before the lifecycle and the ledger see it,
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
-        const merged = mergeDeclaredMines(rawMines, this.declared, tierOf)
+        const merged = mergeDeclaredMines(tracked, this.declared, tierOf)
         // Every command of the person's own this panel is holding (#194) —
         // dwarfs no provider can see either, and for a stronger reason than a
         // held session's crew: nothing observes these at all except this
@@ -1198,10 +1230,22 @@ export class AgentRuntime {
     // "which projects does the store hold", and a row that has gone must stop
     // counting as one (#165). The read succeeded, so it is the whole truth.
     this.recorded = new Set(result.value.map((project) => project.id))
+    // REPLACED as well, and off the same read (#169). The store's list() is
+    // deliberately the one unfiltered read precisely so this set can exist: a
+    // flagged row is what tells the poll to keep that mine off the board, and a
+    // list that hid it would leave main unable to tell a deleted project from
+    // one it has never seen.
+    this.forgotten = new Set(
+      result.value.filter((project) => project.hiddenAt !== null).map((project) => project.id)
+    )
     // Keeping the previous cache on a failure rather than emptying it: a
     // momentary lock must not sweep the user's mines off the board.
+    //
+    // A forgotten project is not declared for the board's purposes, whatever
+    // its origin column says: leaving it here would put the mine back on the
+    // map on the next poll as a declared one with no crew (#169).
     this.declared = result.value
-      .filter((project) => project.origin === 'declared')
+      .filter((project) => project.origin === 'declared' && project.hiddenAt === null)
       .map((project) => ({
         path: project.path,
         // null means never measured, and mergeDeclaredMines falls back to the
@@ -1268,28 +1312,42 @@ export class AgentRuntime {
   }
 
   /**
-   * Undo a declaration, by mine id and never by path (#85).
+   * Stop tracking a mine, by mine id and never by path (#85, #169).
+   *
+   * ONE CONCEPT. This was "undo a declaration", and #169's first design
+   * question was whether the soft delete becomes this or stands beside it. It
+   * became this, because the two would have been the same button with two
+   * behaviours: undeclaring refused a project that was only ever DISCOVERED,
+   * and that refusal is the bug the maintainer reported on 2026-09-07 — Codex
+   * writes an intermediate project folder, an agent works there, the observer
+   * records it, and nothing in the app could remove it. The channel keeps its
+   * wire name (`mine:undeclare`) rather than gaining a second one beside it,
+   * which is the same "one concept" rule applied to the boundary.
    *
    * The ledger is never touched: the ore that mine produced is history, and
-   * history is immutable here (#22). A mine a session is still working simply
-   * goes back to being a discovered one — the user asked to undo their
-   * declaration, not to hide a running agent.
+   * history is immutable here (#22). Neither is the row — the store flags it,
+   * so adding the folder again re-enables the same mine with its materials
+   * still on it.
+   *
+   * A live session no longer saves the mine. The user asked to stop tracking a
+   * folder, and "an agent is in there" was exactly the state they could not get
+   * out of; the session itself is untouched, only this app's memory of it.
    */
   async undeclareMine(mineId: string): Promise<MineUndeclareResult> {
     const store = this.projects
     if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
 
-    const result = await store.removeDeclared(mineId)
+    const result = await store.forget({ id: mineId, at: this.now() })
     if (!result.ok) {
       console.warn(`[projects] Could not remove a mine (${result.failure}):`, result.message)
       return { outcome: 'failed', reason: UNDECLARE_FAILED }
     }
-    if (result.value === 'unchanged') return { outcome: 'unchanged', reason: NOT_DECLARED }
+    if (result.value === 'unchanged') return { outcome: 'unchanged', reason: NOT_RECORDED }
 
     await this.loadDeclared()
     // Awaited for the reason declareMine's rescan is.
     await this.refresh()
-    return { outcome: result.value === 'removed' ? 'removed' : 'reverted' }
+    return { outcome: 'removed' }
   }
 
   /**

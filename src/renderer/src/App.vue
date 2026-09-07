@@ -166,12 +166,15 @@ const {
   exhausted: browseExhausted,
   adding: addingProject,
   addError: addProjectError,
+  removing: removingMine,
+  removeError: removeMineError,
   load: loadProjects,
   loadMore: loadMoreProjects,
   setSearch: setProjectSearch,
   setTier: setProjectTier,
   toggleDirection: toggleProjectOrder,
-  addProject
+  addProject,
+  removeProject
 } = useProjectBrowse()
 
 /**
@@ -205,6 +208,21 @@ function selectArea(area: ShellArea): void {
 function openFromBrowse(projectId: string): void {
   openMine(projectId)
   error.value = null
+}
+
+/**
+ * Remove the mine a card asked about, once MinesPanel has had it confirmed
+ * (#169).
+ *
+ * Nothing else to do here, and two things deliberately not done. The map is not
+ * told: it draws the board, and the poll main publishes as part of the removal
+ * no longer carries this mine. Neither is the mine held open beside the list —
+ * `syncWithMines` already lets go of an open mine that has left the board, on
+ * that same push, and a second path closing it here would be a rule with two
+ * homes.
+ */
+function removeFromBrowse(projectId: string): void {
+  void removeProject(projectId)
 }
 
 /**
@@ -878,12 +896,15 @@ onBeforeUnmount(() => unsubscribe?.())
               :exhausted="browseExhausted"
               :adding="addingProject"
               :add-error="addProjectError"
+              :removing="removingMine"
+              :remove-error="removeMineError"
               @search="setProjectSearch"
               @tier="setProjectTier"
               @toggle-direction="toggleProjectOrder"
               @load-more="loadMoreProjects"
               @add="addProject"
               @open="openFromBrowse"
+              @remove="removeFromBrowse"
             />
           </PanelFrame>
 

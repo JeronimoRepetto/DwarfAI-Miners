@@ -1764,18 +1764,32 @@ export interface MineDeclareResult {
 }
 
 /**
- * Verdict of undoing a declaration (#85). Keyed by mine id, never by path:
- * the id is what the board, the ledger and the projects store already agree on.
+ * Verdict of removing a mine (#85, #169). Keyed by mine id, never by path: the
+ * id is what the board, the ledger and the projects store already agree on.
  *
- * 'removed' means the mine leaves the board. 'reverted' means a live session is
- * still working it, so it stays as an ordinary discovered mine — the user asked
- * to undo their declaration, not to hide a running agent. 'unchanged' is an id
- * the store holds no declaration for, and 'failed' is a store that refused.
- * Neither of the last two ever removes anything, and both carry a reason.
+ * 'removed' means the mine is gone from the map, the list and the board. It
+ * does NOT mean the row was deleted — deletion is logical (#169): the row stays
+ * flagged, its materials are untouched, and adding the same folder again
+ * re-enables that same mine with its ore still on it. The one physical delete
+ * in the app is Settings → Data Base → Reset metrics (see MetricsResetResult),
+ * and it touches the vault rather than this list.
+ *
+ * 'unchanged' is a mine this app is not tracking — an id the store holds no row
+ * for, or one already removed. 'failed' is a store that refused. Neither ever
+ * removes anything, and both carry a reason.
+ *
+ * AMENDED for #169: 'reverted' is gone from the union. It meant "a live session
+ * is still working this mine, so it stays as an ordinary discovered one", and
+ * that outcome no longer exists — a running agent was precisely the state the
+ * maintainer could not get a mine out of (Codex creates an intermediate project
+ * folder and works in it), so removing is now unconditional. The name of this
+ * type and of its channel are deliberately unchanged: undeclaring BECAME the
+ * removal rather than gaining a sibling, and a second channel meaning the same
+ * thing is the two-parallel-concepts outcome #169 ruled out.
  */
 export interface MineUndeclareResult {
-  outcome: 'removed' | 'reverted' | 'unchanged' | 'failed'
-  /** Why nothing changed; absent exactly when the outcome is 'removed' or 'reverted'. */
+  outcome: 'removed' | 'unchanged' | 'failed'
+  /** Why nothing changed; absent exactly when the outcome is 'removed'. */
   reason?: string
 }
 
@@ -2007,7 +2021,7 @@ export const IPC_CHANNELS = {
    */
   getAppBuild: 'app:build',
   /**
-   * Adopting a folder as a mine, and undoing that (#85).
+   * Adopting a folder as a mine, and removing one (#85, #169).
    *
    * declare carries NO payload in either direction beyond its verdict: the
    * native folder picker is opened in main, so the renderer asks for one and
@@ -2015,6 +2029,12 @@ export const IPC_CHANNELS = {
    * mine. undeclare carries a mine id and never a path, for the same reason
    * every other dwarf channel does — the id is the thing both sides already
    * agree on, and a path would be a second key to keep in step.
+   *
+   * `undeclareMine` is the app's ONE removal (#169), whatever its name says:
+   * it removes a discovered mine as readily as a declared one, and it removes
+   * logically — see MineUndeclareResult. The name stayed because a second
+   * channel meaning the same thing is what #169 forbade; declare is the way
+   * back for a mine that was removed.
    */
   declareMine: 'mine:declare',
   undeclareMine: 'mine:undeclare',

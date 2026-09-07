@@ -17,8 +17,14 @@ function stubQuery(queryProjects: unknown) {
   Object.defineProperty(window, 'api', { configurable: true, value: { queryProjects } })
 }
 
-/** Both halves of the browse surface, for the tests that adopt a folder (#85). */
-function stubApi(api: { queryProjects?: unknown; declareMine?: unknown }) {
+/**
+ * Every half of the browse surface, for the tests that adopt a folder (#85) or
+ * remove a mine (#169).
+ *
+ * AMENDED for #169: `undeclareMine` joined the accepted keys. No assertion
+ * changed — the helper only widened.
+ */
+function stubApi(api: { queryProjects?: unknown; declareMine?: unknown; undeclareMine?: unknown }) {
   Object.defineProperty(window, 'api', { configurable: true, value: api })
 }
 
@@ -506,5 +512,107 @@ describe('useProjectBrowse add project', () => {
     await addProject()
     await addProject()
     expect(addError.value).toBeNull()
+  })
+})
+
+/**
+ * Removing a mine (#169). App owns this composable and therefore the IPC, so
+ * MinesPanel stays presentational and the "render only what main verified"
+ * rule stays in one place — the same split the add half already keeps.
+ */
+describe('useProjectBrowse removing a mine', () => {
+  it('names the mine by id and reloads the list main just changed', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(0))
+    const undeclareMine = vi.fn().mockResolvedValue({ outcome: 'removed' })
+    stubApi({ queryProjects, undeclareMine })
+    const { removeProject } = useProjectBrowse()
+
+    await removeProject('mine:lalo')
+
+    expect(undeclareMine).toHaveBeenCalledWith('mine:lalo')
+    // The row is flagged in the database, so the page on screen is stale: the
+    // reload is what takes the card away.
+    expect(queryProjects).toHaveBeenCalled()
+  })
+
+  it('resolves true and carries no notice when the mine was removed', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      undeclareMine: vi.fn().mockResolvedValue({ outcome: 'removed' })
+    })
+    const { removeError, removeProject } = useProjectBrowse()
+
+    await expect(removeProject('mine:lalo')).resolves.toBe(true)
+    expect(removeError.value).toBeNull()
+  })
+
+  it('resolves false with main’s reason when the store refused', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(0))
+    stubApi({
+      queryProjects,
+      undeclareMine: vi.fn().mockResolvedValue({ outcome: 'failed', reason: 'Locked.' })
+    })
+    const { removeError, removeProject } = useProjectBrowse()
+
+    await expect(removeProject('mine:lalo')).resolves.toBe(false)
+    expect(removeError.value).toBe('Locked.')
+    // Nothing changed, so there is nothing to re-read: a reload here would
+    // repaint the same list and hide that the removal did not happen.
+    expect(queryProjects).not.toHaveBeenCalled()
+  })
+
+  it('reports the bridge itself being unreachable', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      undeclareMine: vi.fn().mockRejectedValue(new Error('bridge down'))
+    })
+    const { removeError, removeProject } = useProjectBrowse()
+
+    await expect(removeProject('mine:lalo')).resolves.toBe(false)
+    expect(removeError.value).toBeTruthy()
+  })
+
+  it('marks removing while the request is in flight', async () => {
+    const pending = deferred<{ outcome: 'removed' }>()
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      undeclareMine: vi.fn().mockReturnValue(pending.promise)
+    })
+    const { removing, removeProject } = useProjectBrowse()
+
+    const inFlight = removeProject('mine:lalo')
+    expect(removing.value).toBe(true)
+    pending.release({ outcome: 'removed' })
+    await inFlight
+    expect(removing.value).toBe(false)
+  })
+
+  it('ignores a second removal while one is already in flight', async () => {
+    // Confirm is a destructive action; a double press must not fire twice.
+    const pending = deferred<{ outcome: 'removed' }>()
+    const undeclareMine = vi.fn().mockReturnValue(pending.promise)
+    stubApi({ queryProjects: vi.fn().mockResolvedValue(page(0)), undeclareMine })
+    const { removeProject } = useProjectBrowse()
+
+    const first = removeProject('mine:lalo')
+    await expect(removeProject('mine:other')).resolves.toBe(false)
+    expect(undeclareMine).toHaveBeenCalledTimes(1)
+    pending.release({ outcome: 'removed' })
+    await first
+  })
+
+  it('clears a past removal failure when the next one is attempted', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      undeclareMine: vi
+        .fn()
+        .mockResolvedValueOnce({ outcome: 'failed', reason: 'Locked.' })
+        .mockResolvedValueOnce({ outcome: 'removed' })
+    })
+    const { removeError, removeProject } = useProjectBrowse()
+
+    await removeProject('mine:lalo')
+    await removeProject('mine:lalo')
+    expect(removeError.value).toBeNull()
   })
 })

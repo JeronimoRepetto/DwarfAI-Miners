@@ -160,6 +160,35 @@ export function stampUnrecorded(mines: Mine[], recorded: ReadonlySet<string> | n
 }
 
 /**
+ * Take every mine the user has stopped tracking off the board (#169).
+ *
+ * "The mine leaves the map, the list AND the board" is the maintainer's own
+ * wording, and the board is the half that is easy to miss: the list is a store
+ * read and simply stops selecting the row, but the board is assembled from the
+ * provider snapshots, and a session running in the folder puts the mine back on
+ * it every two seconds no matter what the database says. That is not a corner
+ * case — it is the reported one. Codex creates an intermediate project folder,
+ * works in it, the observer records it, and the user cannot get rid of it.
+ *
+ * So a live crew is not a veto. The mine goes, its dwarfs with it, and it stays
+ * gone until the user adds the folder back explicitly (see ProjectsStore.forget
+ * for why a fresh sighting must not do that for them).
+ *
+ * Applied FIRST, before every other step in the poll: everything downstream —
+ * the lifecycle grace, the ledger's accrual, the project observer's sighting,
+ * the placement — is about mines this app is tracking, and a forgotten one
+ * should reach none of them. Accrual stopping is the honest reading of "stop
+ * tracking this mine"; what was already mined is in the vault and stays there.
+ *
+ * The input is never mutated, and a board with nothing to drop comes back as
+ * itself.
+ */
+export function dropForgottenMines(mines: Mine[], forgotten: ReadonlySet<string>): Mine[] {
+  if (forgotten.size === 0) return mines
+  return mines.filter((mine) => !forgotten.has(mine.id))
+}
+
+/**
  * One mine per project id, whatever the board was assembled from (#156).
  *
  * The second acceptance run photographed four markers over three projects. The

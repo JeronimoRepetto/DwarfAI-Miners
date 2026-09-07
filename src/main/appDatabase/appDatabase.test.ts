@@ -259,13 +259,20 @@ describe('app database — the v3 to v4 upgrade (#231)', () => {
     seeded.close()
   }
 
+  /*
+    AMENDED for #169 (was: `expect(version(db)).toBe(4)`). v4 is no longer the
+    newest schema, so a v3 database now walks the hidden_at step as well in the
+    same open. Subject unchanged — the launch register arrives and every row
+    survives — with the literal stamp moved to the current version, exactly as
+    the v2→v3 test above was amended for #231 for the same reason.
+  */
   it('adds the launch register and stamps v4, keeping every row', async () => {
     const sqlite = new MemoryWritableSqlite()
     await seedVersion3(sqlite)
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(4)
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
     expect(tables(db)).toContain('launched_sessions')
     expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: 4 }])
     expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
@@ -293,6 +300,108 @@ describe('app database — the v3 to v4 upgrade (#231)', () => {
     // open has ever held the vault, and a later bump is not when it moved in.
     expect(LEDGER_TABLES_SINCE).toBe(2)
     expect(APP_SCHEMA_VERSION).toBeGreaterThan(LEDGER_TABLES_SINCE)
+  })
+})
+
+describe('app database — the v4 to v5 upgrade (#169)', () => {
+  /** A database exactly as the v4 build left it: no hidden_at column anywhere. */
+  async function seedVersion4(sqlite: MemoryWritableSqlite): Promise<void> {
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        origin TEXT NOT NULL,
+        last_provider TEXT,
+        known_tier TEXT,
+        map_site INTEGER
+      );
+      CREATE TABLE materials (
+        mine_id TEXT NOT NULL,
+        material TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (mine_id, material)
+      );
+      CREATE TABLE launched_sessions (
+        launch_id TEXT PRIMARY KEY NOT NULL,
+        provider TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        mine_path TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        proc_start_ms INTEGER NOT NULL
+      );
+    `)
+    seeded.run(
+      `INSERT INTO projects (id, path, name, name_norm, added_at, last_opened_at, origin,
+       last_provider, known_tier, map_site) VALUES (?, ?, ?, ?, ?, ?, 'declared', NULL, 'gold', 4)`,
+      ['mine:a', 'C:\\code\\forge', 'forge', 'forge', 10, 20]
+    )
+    seeded.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
+      'mine:a',
+      'gold',
+      7
+    ])
+    seeded.exec('PRAGMA user_version = 4')
+    seeded.close()
+  }
+
+  it('adds the tracking flag and stamps v5, keeping every row', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await seedVersion4(sqlite)
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(db.all('SELECT id, known_tier, map_site, hidden_at FROM projects')).toEqual([
+      { id: 'mine:a', known_tier: 'gold', map_site: 4, hidden_at: null }
+    ])
+    expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
+  })
+
+  /*
+   * The migration flags nothing, and that is the point: NULL means "the user
+   * still tracks this mine", so every project somebody already has stays on the
+   * map and in the list. A default of anything else would delete the user's
+   * whole valley on the upgrade that added the ability to delete one.
+   */
+  it('leaves every project the user already had tracked', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await seedVersion4(sqlite)
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(db.all('SELECT hidden_at FROM projects')).toEqual([{ hidden_at: null }])
+  })
+
+  it('walks a v1 database through every upgrade in one open', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec('CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL)')
+    seeded.run('INSERT INTO projects (id, path) VALUES (?, ?)', ['mine:a', 'C:\\code\\forge'])
+    seeded.exec('PRAGMA user_version = 1')
+    seeded.close()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(tables(db)).toContain('materials')
+    expect(tables(db)).toContain('launched_sessions')
+    expect(db.all('SELECT id, map_site, hidden_at FROM projects')).toEqual([
+      { id: 'mine:a', map_site: null, hidden_at: null }
+    ])
+  })
+
+  it('creates a fresh database with the column already there', async () => {
+    const sqlite = new MemoryWritableSqlite()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(db.all('SELECT hidden_at FROM projects')).toEqual([])
   })
 })
 

@@ -90,6 +90,18 @@ export interface ProjectRecord {
    * places the mine itself, and nothing is written.
    */
   mapSite: number | null
+  /**
+   * When the user stopped tracking this mine, or null while they still do
+   * (#169).
+   *
+   * The whole of soft deletion: a flagged row is off the map, out of the list
+   * and off the board, and it is still a row — its materials are untouched, and
+   * re-adding the same folder re-enables THIS row because identity is the path.
+   *
+   * A date rather than a boolean because it costs nothing and answers "since
+   * when" as well as "whether"; nothing branches on the value, only on null.
+   */
+  hiddenAt: number | null
 }
 
 /** One sighting of a project: a session was seen working in it. */
@@ -116,16 +128,34 @@ export interface ProjectMeasurement {
 }
 
 /**
- * What removing a declaration did (#85).
+ * What asking the store to stop tracking a mine did (#169).
  *
- * 'demoted' is the case that matters: a project the user declared AND has
- * worked in keeps its dates, its provider and its measured tier, and simply
- * stops being user-declared. Deleting the row would throw away history the
- * user never asked to lose. 'unchanged' covers both a project that was never
- * declared and an id the store has never held — neither changes the declared
- * list, and the caller has nothing different to do about them.
+ * ONE CONCEPT, not two. This replaced `ProjectRemoval` and its
+ * 'removed' | 'demoted' | 'unchanged' — #169's first design question was
+ * whether undeclaring becomes the soft delete or stays beside it, and the
+ * answer had to be one of them, because two acts that both mean "take this
+ * mine away" is how a user ends up with a mine they cannot take away. Each of
+ * the old three verdicts was wrong under the maintainer's contract: 'removed'
+ * physically deleted the row (so the ore that path earned lost its mine),
+ * 'demoted' left the mine standing on the map and in the list, and 'unchanged'
+ * was the refusal that made a DISCOVERED project unremovable — the exact
+ * failure the maintainer hit on 2026-09-07, where Codex writes an intermediate
+ * project folder, the observer records it, and nothing could ever get rid of it.
+ *
+ * 'forgotten' is the row flagged: still there, still holding its materials,
+ * gone from everywhere the user looks. 'unchanged' now means only "there was
+ * nothing to flag" — an id the store has never held, or one it has already
+ * forgotten. Both of those are honestly nothing, and neither is a refusal.
  */
-export type ProjectRemoval = 'removed' | 'demoted' | 'unchanged'
+export type ProjectForget = 'forgotten' | 'unchanged'
+
+/** One request to stop tracking a mine, by the id everything else agrees on. */
+export interface ProjectForgetRequest {
+  /** mineIdForPath, never a path: the id is what the board and the ledger use. */
+  id: string
+  /** When the user stopped tracking it, in epoch milliseconds. */
+  at: number
+}
 
 /** Every way this store can fail to answer. */
 export type ProjectsFailure = SqliteFailure | 'unsupported-schema'
@@ -142,7 +172,13 @@ export type ProjectsResult<T> =
   { ok: true; value: T } | { ok: false; failure: ProjectsFailure; message: string }
 
 export interface ProjectsStore {
-  /** Record a project the user added; promotes one that was already discovered. */
+  /**
+   * Record a project the user added; promotes one that was already discovered,
+   * and re-enables one that was forgotten (#169).
+   *
+   * Declaring is the ONE door back for a mine the user stopped tracking, and
+   * that is a product decision rather than a convenience: see `forget`.
+   */
   declare(declaration: ProjectDeclaration): Promise<ProjectsResult<ProjectRecord>>
   /** Record a sighting; creates the project as discovered when it is new. */
   upsertObserved(observation: ProjectObservation): Promise<ProjectsResult<ProjectRecord>>
@@ -164,10 +200,37 @@ export interface ProjectsStore {
    * null for a path the store has never been shown.
    */
   recordMeasuredTier(measurement: ProjectMeasurement): Promise<ProjectsResult<ProjectRecord | null>>
-  /** Undo a declaration. Never touches a project that was only ever discovered. */
-  removeDeclared(id: string): Promise<ProjectsResult<ProjectRemoval>>
+  /**
+   * Stop tracking a mine: flag the row, never delete it (#169).
+   *
+   * Works on ANY project the store holds, declared or only ever discovered —
+   * that breadth is the point, since the folders a user most wants rid of are
+   * the intermediate ones an agent created and the observer picked up.
+   *
+   * Three things survive it, and each is deliberate. The row survives, so the
+   * materials keyed to its mine id have a mine to belong to and a re-add finds
+   * the same one. `origin` survives, because how the app came to know about a
+   * folder is provenance and did not change. And the flag survives a later
+   * SIGHTING: only `declare` clears it, so a mine the user forgot stays
+   * forgotten until they ask for it back explicitly. An agent working there
+   * again is precisely the case that must NOT bring it back — otherwise the
+   * intermediate folders this exists to remove reappear on their own.
+   */
+  forget(request: ProjectForgetRequest): Promise<ProjectsResult<ProjectForget>>
+  /** One project by id, whether or not the user still tracks it. */
   get(id: string): Promise<ProjectsResult<ProjectRecord | null>>
-  /** Every project, newest-added first — the whole table, and the only unfiltered read. */
+  /**
+   * Every project, newest-added first — the whole table, and the only
+   * unfiltered read.
+   *
+   * Unfiltered INCLUDES the mines the user has forgotten (#169), and that is
+   * not an oversight in the one read the browse does not use: main needs to
+   * know which ids are flagged in order to keep those mines off the board. A
+   * list that hid them would leave main unable to tell a forgotten project from
+   * one it has never seen, and the mine would stand on the map with no card
+   * beside it — the exact disagreement #165 closed. Callers that answer the
+   * user's question use `query`, which excludes them.
+   */
   list(): Promise<ProjectsResult<ProjectRecord[]>>
   /**
    * One filtered, ordered page of projects (#92).
@@ -176,6 +239,9 @@ export interface ProjectsStore {
    * why, and for the rules the query itself carries. This method exists so no
    * caller has to read list() and filter it in JavaScript, which would use none
    * of the three indexes the schema was given for exactly this.
+   *
+   * Excludes the mines the user has forgotten, on every page and with no way
+   * for a caller to ask otherwise (#169).
    */
   query(query: ProjectQuery): Promise<ProjectsResult<ProjectRecord[]>>
   close(): Promise<void>
@@ -212,7 +278,7 @@ export type ProjectsStoreOptions = (
 }
 
 const COLUMNS =
-  'id, path, name, name_norm, added_at, last_opened_at, origin, last_provider, known_tier, map_site'
+  'id, path, name, name_norm, added_at, last_opened_at, origin, last_provider, known_tier, map_site, hidden_at'
 
 export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStore {
   const database = 'database' in options ? options.database : createAppDatabase(options)
@@ -274,15 +340,23 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
         // seen when it was first seen, and declaring it is not opening it.
         // map_site is COALESCEd from the row's OWN value first, so a mine the
         // user re-adds stays exactly where it has always stood (#136).
+        //
+        // hidden_at is CLEARED, and this is the only statement that clears it
+        // (#169): adding a folder is the user asking for that mine back, so a
+        // mine they had forgotten comes back with its dates, its measured tier,
+        // its location and its ore — the same row, re-enabled. Neither of the
+        // other two writers touches the column, which is what keeps a
+        // re-discovered folder from letting itself back in.
         db.run(
           `INSERT INTO projects (${COLUMNS})
-           VALUES (?, ?, ?, ?, ?, NULL, 'declared', NULL, NULL, ?)
+           VALUES (?, ?, ?, ?, ?, NULL, 'declared', NULL, NULL, ?, NULL)
            ON CONFLICT(id) DO UPDATE SET
              path = excluded.path,
              name = excluded.name,
              name_norm = excluded.name_norm,
              origin = 'declared',
-             map_site = COALESCE(projects.map_site, excluded.map_site)`,
+             map_site = COALESCE(projects.map_site, excluded.map_site),
+             hidden_at = NULL`,
           [id, declaration.path, name, normalizeProjectName(name), declaration.at, freeSite(db)]
         )
         return required(readOne(db, id))
@@ -303,9 +377,17 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
         // the two COALESCEs above it: a mine that has been placed never moves,
         // and one that has not — a project migrated in from v2, or one placed
         // when every location was taken — is placed by this write (#136).
+        //
+        // hidden_at is absent from the UPDATE for the strongest reason of the
+        // three (#169): a sighting must not undo the user's decision to stop
+        // tracking a mine. An agent working in a forgotten folder again is the
+        // normal case, not the exception — Codex creates intermediate project
+        // folders and works in them — so re-enabling on a sighting would put
+        // back exactly the mines this feature exists to remove. A NEW row still
+        // inserts NULL, because a project nobody has forgotten is tracked.
         db.run(
           `INSERT INTO projects (${COLUMNS})
-           VALUES (?, ?, ?, ?, ?, ?, 'discovered', ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, 'discovered', ?, ?, ?, NULL)
            ON CONFLICT(id) DO UPDATE SET
              path = excluded.path,
              name = excluded.name,
@@ -343,16 +425,21 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
       })
     },
 
-    async removeDeclared(id) {
-      return withDb((db): ProjectRemoval => {
-        const existing = readOne(db, id)
-        if (existing === null || existing.origin !== 'declared') return 'unchanged'
-        if (existing.lastOpenedAt === null) {
-          db.run('DELETE FROM projects WHERE id = ?', [id])
-          return 'removed'
-        }
-        db.run("UPDATE projects SET origin = 'discovered' WHERE id = ?", [id])
-        return 'demoted'
+    async forget(request) {
+      return withDb((db): ProjectForget => {
+        // Read first rather than writing and counting changes, because the two
+        // 'unchanged' cases have to be told apart from a success and from each
+        // other in the log: an id nobody holds, and a mine already forgotten.
+        // Neither is a refusal, and neither may report a removal.
+        const existing = readOne(db, request.id)
+        if (existing === null || existing.hiddenAt !== null) return 'unchanged'
+        // ONE column, and DELETE appears nowhere in this method. Everything
+        // else the row carries — its dates, its origin, its measured tier, its
+        // location — is what makes re-adding the folder a re-enable instead of
+        // a fresh start, and the materials keyed to this mine id in the vault
+        // are never in reach of this statement at all.
+        db.run('UPDATE projects SET hidden_at = ? WHERE id = ?', [request.at, request.id])
+        return 'forgotten'
       })
     },
 
@@ -426,7 +513,10 @@ function toRecord(row: SqliteRow): ProjectRecord {
     // Same discipline for the map location: a site id this build has no place
     // for — a hand-edited row, or one written by a build with a larger map —
     // reads as unplaced rather than being drawn somewhere arbitrary.
-    mapSite: asMapSite(row.map_site)
+    mapSite: asMapSite(row.map_site),
+    // No range to check and nothing to validate: any stored number is a moment
+    // the user stopped tracking this mine, and only its presence is read (#169).
+    hiddenAt: asNumber(row.hidden_at)
   }
 }
 
