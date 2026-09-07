@@ -279,6 +279,45 @@ In dependency order, each blocked on the one before it and named reasons only:
    spawn-per-check cost (§2a, "Detached" row) is worth paying for a capability the held-session path
    gets for free.
 
+### Status update, 2026-09-07 (#96)
+
+AMENDED for #96 (was: items 1-4 above all read "not started"). Items (1)-(3) landed in an earlier
+slice — `sdkHeldSession.ts` reads `model`, `mcp_servers` and the latest `total_cost_usd`/`usage` off
+`init`/`result` (§4 items 1-2), and `heldTelemetryToWire`/`stampHeldTelemetry` in
+`main/sessionLaunch/heldSession.ts` narrow them onto `Dwarf.model`/`Dwarf.effort`/`Dwarf.mcpServers`/
+`Dwarf.totalCostUsd` (§4 item 3, first two bullets). The cost field's own open question (§7, "is cost
+worth showing at all") was answered **no** for this surface by the maintainer's 2026-09-07 ruling:
+the mine's session strip shows no currency figure at all, so `totalCostUsd` stays wired but undrawn —
+present on the wire for a future surface, absent from this one on purpose.
+
+This change ships item (4)'s read-only rendering, scoped exactly to the maintainer's ruling rather
+than to §2a's full row: model and MCP status (both already flowing, per above) plus context usage,
+in the **mine view** (not the dwarf action bar, not the MessagePanel), for **held sessions only** —
+see `docs/dwarfai-miners-design/screens/mine.md`, "Session strip", and
+`renderer/src/lib/scene/sessionStrip.ts`.
+
+One finding this document did not anticipate: **context usage needed a mechanism §1 never named**,
+because it is the one field of the three that arrives on no stream message at all — neither `init`
+nor `result` carries a context breakdown, confirmed against the same `sdk.d.ts` this document already
+cites. So unlike `model`/`mcpServers`/`totalCostUsd`, it cannot ride the existing passive loop; it is
+PULLED on demand, off `Query.getContextUsage({ detail: 'summary' })` (§1's own table, row already
+named), through a new `HeldSessionHandle.contextUsage()` port method and
+`HeldSessionRegistry.refreshContextUsage()`. The maintainer's refresh policy — on the mine opening and
+after each completed turn, never per poll, with an explicit timeout
+(`HELD_CONTEXT_USAGE_TIMEOUT_MS`) and no retry storm — governs WHEN a pull happens; the registry only
+governs how one pull behaves once asked for, joining a pull already in flight rather than starting a
+second one on the same stream.
+
+`mcpServerStatus()` (§1's second table) was deliberately **not** wired for an on-demand pull: MCP
+status already flows passively off `init.mcp_servers` on every turn (§4 item 1, confirmed live by the
+spike this document names in item 1), so a second control-request round trip for the same answer
+would be redundant cost for nothing the passive read does not already give. This is the "prefer
+stamping from the stream where it already flows" half of the build call the maintainer's brief for
+this slice named explicitly.
+
+Item (5) (mutating actions) and item (6) (effort control) remain exactly where this document left
+them — untouched, and out of scope for a read-only slice by the maintainer's own ruling.
+
 ---
 
 ## 7. Open questions this document leaves to implementation, on purpose
@@ -287,10 +326,12 @@ Carried over from #96 because verifying the code does not answer them:
 
 - **Is cost worth showing at all**, given the vault already expresses spend as materials (#22)? §6
   item 3 states the unit mismatch; it does not resolve whether showing both is clarity or a second,
-  competing economy in one panel.
+  competing economy in one panel. AMENDED for #96 (was: open) — answered **no** by the maintainer's
+  2026-09-07 ruling: the session strip shows no currency figure at all (see the status update above).
 - **Where does this surface live** — the dwarf action bar (#27) or the mine view? #90 is redesigning
   both, and `docs/question-capture-evaluation.md` §8 already deferred its own renderer slice to the same
-  design source for the same reason.
+  design source for the same reason. AMENDED for #96 (was: open) — answered **the mine view**, per
+  `docs/dwarfai-miners-design/screens/mine.md`'s "Session strip" amendment, not the action bar.
 - **Is usage per-session, per-project, or global**, and which does the panel actually want?
   `SDKControlGetUsageResponse.session` (`sdk.d.ts:3702-3713`) is scoped to the one `query()` call; the
   rate-limit windows it also carries (`five_hour`, `seven_day`, …) are account-wide, a different scope
