@@ -544,12 +544,16 @@ watch(
  * The design's panel: 990px, 12px radius, a 2px accent border, #2b2119 and
  * elevation 5 — every one of them a token rather than a literal.
  *
- * `min()` against the width available is the reconciliation (#159). The
- * design's own mine-and-message mock draws this panel 1026px wide BESIDE the
- * shell on a 1350px screen, i.e. as a second surface on the desktop; this app
- * is one docked window, and only its widest composition has 990 design pixels
- * to give. So the panel takes the design's width where the composition has it
- * and the composition's where it does not, rather than hanging off the side.
+ * `min()` against the width available is what is left of #159's
+ * reconciliation, and it now means something else (#162). The panel has a
+ * WINDOW of its own beside the shell, the way the design's own
+ * mine-and-message mock draws it, and main sizes that window to the design's
+ * 990 — so `100%` is normally 990 and the `min()` does nothing.
+ *
+ * It still earns its place: main shrinks the window when the display has no
+ * 990 beside the shell (see messagePanelWidth in main/shell/panelBounds.ts),
+ * and this is what makes the panel fit the room it was given rather than hang
+ * off the side of it.
  */
 .message-panel {
   position: relative;

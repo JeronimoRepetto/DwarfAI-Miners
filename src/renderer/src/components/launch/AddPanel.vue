@@ -216,14 +216,17 @@ function onCommandKeydown(event: KeyboardEvent): void {
 /*
  * The MessagePanel's own frame, deliberately to the pixel: 990px capped at what
  * the composition has, 12px radius, a 2px accent border, #2b2119 and elevation
- * 5. Submitting replaces one with the other in the same dock, and a frame that
- * changed under the swap would read as two panels rather than one flow.
+ * 5. Submitting replaces one with the other in the same slot — one window, one
+ * place in it (#162) — and a frame that changed under the swap would read as
+ * two panels rather than one flow.
  *
  * The height is content-driven rather than fixed. The MessagePanel derives its
  * opening height from the latest message and can be dragged; there is no
  * message here to derive one from and nothing stated about resizing this panel,
  * so it is as tall as the chips and the composer make it — which is what the
- * source's own export shows.
+ * source's own export shows. Since #162 that height is also the WINDOW's: the
+ * panel window measures the surface it drew, so this panel growing a command
+ * box grows the window with it.
  */
 .add-panel {
   position: relative;

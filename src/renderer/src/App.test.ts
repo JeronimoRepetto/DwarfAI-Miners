@@ -9,7 +9,6 @@ import { PANEL_LEAVE_BOUND_MS } from './lib/shell/panelMotion'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
-import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useView } from './composables/useView'
 
 const DEFAULT_SHORTCUT = {
@@ -39,12 +38,41 @@ const NAV_SETTINGS = `${NAV}[aria-label="Settings"]`
 const NAV_MAP = `${NAV}[aria-label="Map"]`
 const NAV_MINES = `${NAV}[aria-label="Mines"]`
 
+/*
+ * WHAT LEFT THIS FILE FOR #162, and where each block went.
+ *
+ * The MessagePanel and the Add Panel are a second BrowserWindow beside the
+ * shell now, the way the design draws them, so a test that clicked a dwarf in
+ * the mine and then read the panel was asserting across two processes. Five
+ * blocks moved WHOLE to MessagePanelWindow.test.ts, keeping every assertion and
+ * changing only the opening gesture:
+ *
+ *   'App answering an agent question'     -> 'answering an agent question'
+ *   'App deciding a permission prompt'    -> 'deciding a permission prompt'
+ *   'App message panel'                   -> 'the message panel window'
+ *   'App feed refresh (#183)'             -> 'feed refresh (#183)', with its
+ *                                            'adopting a pushed feed (#196)'
+ *   'App add panel'                       -> 'the add panel'
+ *
+ * What stands in their place here is the SHELL's half of the same behaviour,
+ * which is now a real thing to test on its own: the mine asks main for a
+ * surface, and the halo on the sprite is drawn from the state main reports —
+ * never from a local guess, because a launch handing over is something only the
+ * other window can know.
+ */
+
 /**
  * Full window.api stub: App touches the mines surface on mount (load + push
  * subscription), the panel-layout surface for the docked window, the pin
  * surface, the shortcut surface for the settings panel, the build surface for
- * the version and the answer surface for a dwarf's pending question, so every
- * member must exist even in tests that only look at the rail.
+ * the version, and — since #162 — the message-panel surface it asks main to
+ * open and the delivery report it draws its markers from. Every member must
+ * exist even in tests that only look at the rail.
+ *
+ * The members the panel window took with it stay in this stub on purpose: they
+ * are still on the one bridge both windows read, and a stub that answered only
+ * what THIS root happens to call would go quietly wrong the next time a
+ * surface moved.
  *
  * ## Every member that is AWAITED must resolve its real shape
  *
@@ -98,6 +126,15 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),
     setAlwaysOnTop: vi.fn().mockResolvedValue(false),
+    // The message panel own window (#162). The shell asks main to open it and
+    // reads the state back to draw the selected dwarf halo, so both the pull
+    // and the two subscriptions must exist even in tests that never open one.
+    // setMessagePanel answers with the state it was given, which is what main
+    // does when it can satisfy the request.
+    getMessagePanel: vi.fn().mockResolvedValue({ surface: 'none', mineId: '', dwarfId: '' }),
+    setMessagePanel: vi.fn().mockImplementation((state: unknown) => Promise.resolve(state)),
+    onMessagePanel: vi.fn().mockReturnValue(() => undefined),
+    onDwarfDeliveryReport: vi.fn().mockReturnValue(() => undefined),
     // The docked shell (#90). Answers "closed" by default, which is what main
     // actually creates the window as; mountOpenApp expands it.
     getPanelLayout: vi.fn().mockResolvedValue({ edge: 'right', expanded: false, mineOpen: false }),
@@ -279,26 +316,30 @@ describe('App panel motion (#164)', () => {
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await finishAnimations()
     expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
+    /*
+     * AMENDED for #162 (was: 'add' animating the dock, then 'history' and
+     * 'select' each crossfading two panels in it). Two of the three panels
+     * that shared this dock are a window of their own now, so Add animates
+     * nothing here at all and History is the only one left to enter and leave.
+     * What the case is about is unchanged: the mine instance survives every
+     * swap, and the native resize waits for every leave.
+     */
     scene.$emit('add')
+    await flushPromises()
+    expect(animations).toHaveLength(0)
+    scene.$emit('history')
     await flushPromises()
     expect(animations.map(({ element }) => element.className)).toEqual(['message-dock'])
     await finishAnimations()
-    scene.$emit('history')
-    await flushPromises()
-    expect(animations).toHaveLength(2)
-    await finishAnimations()
     scene.$emit('select', dwarf)
     await flushPromises()
-    expect(animations).toHaveLength(2)
+    expect(animations.map(({ element }) => element.className)).toEqual(['message-dock'])
     await finishAnimations()
     expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
     api.setPanelLayout.mockClear()
     scene.$emit('back')
     await flushPromises()
-    expect(animations.map(({ element }) => element.className).sort()).toEqual([
-      'message-dock',
-      'shell-mine'
-    ])
+    expect(animations.map(({ element }) => element.className)).toEqual(['shell-mine'])
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     await finishAnimations()
@@ -751,167 +792,6 @@ describe('App version label', () => {
  * the panel on a snapshot, an option is chosen inside the mine, and Enter
  * releases the agent's blocked ask over the bridge.
  */
-describe('App answering an agent question', () => {
-  const PENDING_QUESTION = {
-    toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
-    multiSelect: false,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
-  }
-
-  const ASKING_MINE = {
-    id: 'mine:c:\\x\\importer',
-    path: 'C:\\x\\importer',
-    name: 'importer',
-    tier: 'bronze',
-    dwarfs: [
-      {
-        id: 'claude:s1',
-        provider: 'claude',
-        role: 'foreman',
-        name: 'Foreman',
-        status: 'waiting',
-        sessionId: 's1',
-        pendingQuestion: PENDING_QUESTION
-      }
-    ],
-    tokensObserved: 0,
-    updatedAt: 0
-  }
-
-  beforeEach(() => {
-    // Both stores are module-scope singletons, so a test that walked into a
-    // mine would leave the next one already there, with no map to click.
-    useDwarfQuestion().clearAll()
-    useView().clear()
-  })
-
-  /**
-   * Mount, open the panel, walk into the asking mine, and select that dwarf —
-   * which is what opens the MessagePanel its question card now lives in (#159).
-   */
-  async function openAskingDwarf(overrides: Record<string, unknown> = {}) {
-    const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [ASKING_MINE], tokensObserved: 0 }),
-      ...overrides
-    })
-    wrapper.findComponent(MapView).vm.$emit('open', ASKING_MINE.id)
-    await flushPromises()
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    return { wrapper, api }
-  }
-
-  it('answers the ask with the agent’s own words, over the answer channel', async () => {
-    const { wrapper, api } = await openAskingDwarf()
-    await wrapper.findAll('.option-card')[1]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_01',
-      answers: { 'Which database should the importer write to?': 'SQLite' }
-    })
-    // Free text is a different channel; answering must not have used it.
-    expect(api.sendDwarfText).not.toHaveBeenCalled()
-  })
-
-  it('leaves the question standing after the answer was released', async () => {
-    // Only main's next snapshot may drop a pendingQuestion. Clearing it here
-    // would claim the ask was closed on the panel's own say-so.
-    const { wrapper } = await openAskingDwarf()
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    expect(wrapper.find('.question-card .question-text').text()).toBe(
-      'Which database should the importer write to?'
-    )
-    expect(wrapper.find('.answer-ok').exists()).toBe(true)
-  })
-
-  it('shows main’s reason when the answer was refused', async () => {
-    const { wrapper } = await openAskingDwarf({
-      answerDwarfQuestion: vi.fn().mockResolvedValue({
-        answered: false,
-        error: 'That session is not one this panel is holding.'
-      })
-    })
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    expect(wrapper.find('.answer-error').text()).toBe(
-      'That session is not one this panel is holding.'
-    )
-  })
-})
-
-/**
- * The whole decision loop through the real components (#203): a permission
- * prompt reaches the panel on a snapshot, Allow is chosen inside the mine,
- * and Enter releases the blocked tool call over the permission channel — a
- * sibling loop to the question one above, over a sibling channel.
- */
-describe('App deciding a permission prompt', () => {
-  const PENDING_PERMISSION = {
-    toolUseId: 'toolu_09',
-    toolName: 'Bash',
-    input: 'rm -rf /tmp/scratch',
-    askedAt: '2026-09-05T09:00:00.000Z'
-  }
-
-  const BLOCKED_MINE = {
-    id: 'mine:c:\\x\\importer',
-    path: 'C:\\x\\importer',
-    name: 'importer',
-    tier: 'bronze',
-    dwarfs: [
-      {
-        id: 'claude:s1',
-        provider: 'claude',
-        role: 'foreman',
-        name: 'Foreman',
-        status: 'waiting',
-        sessionId: 's1',
-        pendingPermission: PENDING_PERMISSION
-      }
-    ],
-    tokensObserved: 0,
-    updatedAt: 0
-  }
-
-  beforeEach(() => {
-    // Same singleton store the question loop above shares, and the same map.
-    useDwarfQuestion().clearAll()
-    useView().clear()
-  })
-
-  it('shows the permission card, sends the decision over its own channel, and leaves it standing', async () => {
-    const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [BLOCKED_MINE], tokensObserved: 0 })
-    })
-    wrapper.findComponent(MapView).vm.$emit('open', BLOCKED_MINE.id)
-    await flushPromises()
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.permission-card').exists()).toBe(true)
-
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.permission-card').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    expect(api.answerDwarfPermission).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      toolUseId: 'toolu_09',
-      decision: 'allow'
-    })
-    // Only main's next snapshot may drop a pendingPermission — the panel's
-    // part ends at handing the decision over.
-    expect(wrapper.find('.permission-card').exists()).toBe(true)
-  })
-})
 
 /*
  * The browse over every project the app remembers (#92). App owns the
@@ -1397,7 +1277,7 @@ describe('App concurrent mine', () => {
  * was — the source is explicit that a selected dwarf is not paused and its
  * mine stays visible.
  */
-describe('App message panel', () => {
+describe('App selecting a dwarf (#162)', () => {
   const OBSERVED_DWARF = {
     id: 'claude:s1',
     provider: 'claude',
@@ -1406,14 +1286,6 @@ describe('App message panel', () => {
     status: 'working',
     sessionId: 's1',
     lastMessage: 'Halfway down the shaft'
-  }
-
-  const HELD_DWARF = {
-    ...OBSERVED_DWARF,
-    id: 'claude:s2',
-    sessionId: 's2',
-    name: 'Held',
-    conversation: [{ role: 'user', text: 'dig here', timestamp: 'then' }]
   }
 
   const MINE = {
@@ -1426,14 +1298,9 @@ describe('App message panel', () => {
     updatedAt: 0
   }
 
-  beforeEach(() => {
-    useView().clear()
-    // Both delivery stores are module-scope singletons that hold a verdict for
-    // a minute while they watch for a reaction, so a test that sent or kicked
-    // would leave its marker sitting in the next test's panel.
-    useDwarfMessaging().clearAll()
-    useDwarfKicking().clearAll()
-  })
+  const CLOSED_PANEL = { surface: 'none', mineId: '', dwarfId: '' }
+
+  beforeEach(() => useView().clear())
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
@@ -1445,564 +1312,117 @@ describe('App message panel', () => {
     return { wrapper, api }
   }
 
-  it('opens the panel on the dwarf that was clicked, and leaves the mine standing', async () => {
-    const { wrapper } = await openMineWith([OBSERVED_DWARF])
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+  it('asks main to open the panel window on the dwarf that was clicked', async () => {
+    const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
+    expect(api.setMessagePanel).not.toHaveBeenCalled()
 
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
-    // The mine is still drawn, and its crew still in it.
+    // Naming the mine as well as the dwarf: the panel window is opened on a
+    // SURFACE, and the Add Panel that shares its slot needs the mine.
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
+      surface: 'message',
+      mineId: MINE.id,
+      dwarfId: 'claude:s1'
+    })
+    // The mine is still drawn, and its crew still in it: the panel is beside
+    // the shell now, not over it.
     expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
+  })
+
+  it('draws the halo from the state main reported, never from the click', async () => {
+    const { wrapper } = await openMineWith([OBSERVED_DWARF])
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
     expect(wrapper.find('.dwarf-sprite').classes()).toContain('is-selected')
   })
 
-  it('closes the panel from its own close control', async () => {
-    const { wrapper } = await openMineWith([OBSERVED_DWARF])
+  it('leaves the halo off a dwarf main refused to open the panel on', async () => {
+    // Main creates and shows a real window off this request, so it may answer
+    // with something else — and a halo drawn from the wish would point at a
+    // panel that is not there.
+    const { wrapper } = await openMineWith([OBSERVED_DWARF], {
+      setMessagePanel: vi.fn().mockResolvedValue(CLOSED_PANEL)
+    })
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
-
-    await wrapper.find('.panel-close').trigger('click')
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
     expect(wrapper.find('.dwarf-sprite').classes()).not.toContain('is-selected')
   })
 
-  it('closes it again when the same dwarf is clicked a second time', async () => {
-    const { wrapper } = await openMineWith([OBSERVED_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
-  })
-
-  it("reads an observed session's transcript, and shows what came back", async () => {
-    const { wrapper, api } = await openMineWith([OBSERVED_DWARF], {
-      getDwarfFeed: vi.fn().mockResolvedValue({
-        readable: true,
-        messages: [{ role: 'assistant', text: 'Blasting the last metre', timestamp: 'now' }]
-      })
-    })
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-
-    expect(api.getDwarfFeed).toHaveBeenCalledWith('claude:s1')
-    expect(wrapper.find('.bubble').text()).toBe('Blasting the last metre')
-    expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
-  })
-
-  it('never reads a transcript for a session it is holding: it has the words first-hand', async () => {
-    const { wrapper, api } = await openMineWith([HELD_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
-    expect(wrapper.find('.bubble').text()).toBe('dig here')
-    expect(wrapper.find('.panel-note').text()).toContain('holding this session')
-  })
-
-  it('sends what was typed over the ordinary message channel', async () => {
-    const { wrapper, api } = await openMineWith([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }])
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    expect(api.sendDwarfText).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      text: 'dig deeper',
-      pressEnter: true
-    })
-    // The verdict has to LAND, not just be asked for. Asserting it is what
-    // makes a stub that resolves the wrong shape fail this test outright,
-    // instead of rejecting into the void after it has already passed: the send
-    // is fire-and-forget, so nothing else in the app would ever notice.
-    expect(wrapper.find('.panel-status').text()).toContain('Handed over via terminal')
-  })
-
-  it('kicks through the panel, and the verdict lands where it was asked for', async () => {
-    const { wrapper, api } = await openMineWith([
-      {
-        ...OBSERVED_DWARF,
-        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
-      }
-    ])
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-
-    // Arm, then fire — the confirmation the old action bar carried.
-    await wrapper.find('.control-kick').trigger('click')
-    await wrapper.find('.control-kick').trigger('click')
-    await flushPromises()
-
-    expect(api.kickDwarf).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
-    // Handed over, never "reacted": only a session SEEN stopping earns that.
-    expect(wrapper.find('.panel-status').text()).toContain('Kick handed over via terminal')
-    expect(wrapper.find('.panel-status').text()).not.toContain('the session reacted')
-  })
-
-  /*
-   * AMENDED (#192). This used to assert the panel DROPPED when its dwarf left
-   * the board, which threw the conversation away — final reply included — at
-   * the one moment a person is most likely to be reading it. The panel now
-   * stays on the dwarf as the board last reported it, says the session has
-   * ended, and waits to be closed by hand. What the test protected survives:
-   * main still owns which dwarfs exist, and the panel still follows the
-   * snapshot — it just no longer forgets the last one it was given.
-   */
-  it('keeps the panel on the last known dwarf when it walks out of the mine, and says so', async () => {
-    const { wrapper, api } = await openMineWith([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }], {
-      getDwarfFeed: vi.fn().mockResolvedValue({
-        readable: true,
-        messages: [{ role: 'assistant', text: 'Blasting the last metre', timestamp: 'now' }]
-      })
-    })
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
-
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
-    await flushPromises()
-
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
-    expect(wrapper.find('.bubble').text()).toBe('Blasting the last metre')
-    // Ended is said in words, and typing into a session that is gone is
-    // refused with the same words rather than handed to main to refuse.
-    expect(wrapper.find('.panel-note').text()).toContain('ended')
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.panel-input').attributes('title')).toContain('ended')
-  })
-
-  it("leaves closing an ended session's panel to the person", async () => {
+  it('closes the panel when the same dwarf is clicked a second time', async () => {
     const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
 
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
+    await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
 
-    await wrapper.find('.panel-close').trigger('click')
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith(CLOSED_PANEL)
+    expect(wrapper.find('.dwarf-sprite').classes()).not.toContain('is-selected')
+  })
+
+  it('halos a dwarf the panel window opened on by itself', async () => {
+    // Which dwarf a launch produced is decided by the launch's own arrival
+    // rules, in the other window. The shell hears it as a pushed state, and
+    // that is the only way it ever could.
+    const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
+    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+    await flushPromises()
+    expect(wrapper.find('.dwarf-sprite').classes()).toContain('is-selected')
+  })
+
+  it('draws the delivery marker the panel window published', async () => {
+    // The send happens over there and the marker is drawn here, so the verdict
+    // travels; a second store in this window could only disagree with the one
+    // that is actually watching for a reaction.
+    const { wrapper, api } = await openMineWith([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }])
+    expect(wrapper.find('.send-result').exists()).toBe(false)
+
+    const push = api.onDwarfDeliveryReport.mock.calls[0]![0] as (report: unknown) => void
+    push({ send: { 'claude:s1': { phase: 'delivered', via: 'terminal' } }, kick: {} })
+    await flushPromises()
+
+    expect(wrapper.find('.send-result').classes()).toContain('is-delivered')
+  })
+
+  it('clears a marker the panel window stopped reporting', async () => {
+    // Both stores expire their own entries on a timer, over there. A report
+    // without a verdict in it is the only thing that can say so here.
+    const { wrapper, api } = await openMineWith([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }])
+    const push = api.onDwarfDeliveryReport.mock.calls[0]![0] as (report: unknown) => void
+    push({ send: { 'claude:s1': { phase: 'delivered', via: 'terminal' } }, kick: {} })
+    await flushPromises()
+    expect(wrapper.find('.send-result').exists()).toBe(true)
+
+    push({ send: {}, kick: {} })
+    await flushPromises()
+
+    expect(wrapper.find('.send-result').exists()).toBe(false)
   })
 
   it('still lets go of the panel with the mine it was opened in', async () => {
     // The panel outlives its dwarf, not its mine: closing the mine is the
-    // person's own act, and a conversation docked to nothing has no place.
-    const { wrapper } = await openMineWith([OBSERVED_DWARF])
+    // person's own act, and a conversation beside nothing has no place.
+    const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
 
     await wrapper.find('.close-mine').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith(CLOSED_PANEL)
   })
 })
 
 /**
- * The feed for an observed dwarf used to refresh only when `lastMessage`
- * changed — the assistant's own last text — so a human turn typed into the
- * terminal, or sent from this panel, sat invisible until the agent next spoke
- * (#183). Two remedies, smallest first: re-read on the panel's OWN successful
- * send, and watch a second signal — `transcriptUpdatedAt`, the transcript's
- * raw mtime — that moves for any writer, not only the assistant.
+ * The mine's Add action, which is all of the launch flow that is still the
+ * shell's (#86, #162): it asks main for the launch surface, and the panel
+ * window does the rest — the chips, the gate, the prompt, the spawn and the
+ * handover. See 'the add panel' in MessagePanelWindow.test.ts.
  */
-describe('App feed refresh (#183)', () => {
-  const REFRESH_DWARF = {
-    id: 'claude:s1',
-    provider: 'claude',
-    role: 'foreman',
-    name: 'Foreman',
-    status: 'working',
-    sessionId: 's1',
-    lastMessage: 'Halfway down the shaft',
-    textDelivery: 'terminal'
-  }
-
-  const HELD_REFRESH_DWARF = {
-    ...REFRESH_DWARF,
-    id: 'claude:s2',
-    sessionId: 's2',
-    conversation: [{ role: 'user', text: 'dig here', timestamp: 'then' }]
-  }
-
-  const MINE = {
-    id: 'mine:c:\\x\\anvil',
-    path: 'C:\\x\\anvil',
-    name: 'anvil',
-    tier: 'bronze',
-    dwarfs: [REFRESH_DWARF],
-    tokensObserved: 0,
-    updatedAt: 0
-  }
-
-  beforeEach(() => {
-    useView().clear()
-    useDwarfMessaging().clearAll()
-  })
-
-  async function openRefreshDwarf(overrides: Record<string, unknown> = {}) {
-    const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
-      ...overrides
-    })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
-    await flushPromises()
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    return { wrapper, api }
-  }
-
-  async function sendFromPanel(wrapper: VueWrapper, text: string) {
-    await wrapper.find('.panel-input').setValue(text)
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-  }
-
-  it("re-reads the feed once the panel's own send lands, without waiting for the agent to reply", async () => {
-    const { wrapper, api } = await openRefreshDwarf()
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-    await sendFromPanel(wrapper, 'dig deeper')
-
-    expect(api.sendDwarfText).toHaveBeenCalledWith({
-      dwarfId: 'claude:s1',
-      text: 'dig deeper',
-      pressEnter: true
-    })
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-    expect(api.getDwarfFeed).toHaveBeenLastCalledWith('claude:s1')
-  })
-
-  it('does not re-read a failed delivery: nothing proves the tail moved', async () => {
-    const { wrapper, api } = await openRefreshDwarf({
-      sendDwarfText: vi.fn().mockResolvedValue({
-        delivered: false,
-        via: 'terminal',
-        error: 'The terminal would not come forward.'
-      })
-    })
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-    await sendFromPanel(wrapper, 'dig deeper')
-
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-  })
-
-  it('never reads a transcript for a session it is holding, even from its own send', async () => {
-    // Held sessions carry their exchange first-hand on `conversation`; a
-    // delivered send must not open a second, second-hand channel for it.
-    const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
-        mines: [{ ...MINE, dwarfs: [HELD_REFRESH_DWARF] }],
-        tokensObserved: 0
-      })
-    })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
-    await flushPromises()
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
-
-    await sendFromPanel(wrapper, 'dig deeper')
-
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
-  })
-
-  it('drops a delivered send’s refresh once the panel is no longer open on that dwarf', async () => {
-    // The relay can take seconds; the user is free to close the panel, or pick
-    // another dwarf, before it answers. A stale delivery must not fetch a feed
-    // nobody is looking at any more.
-    let resolveSend: (value: { delivered: boolean; via: string }) => void = () => {}
-    const sendDwarfText = vi.fn(
-      () =>
-        new Promise<{ delivered: boolean; via: string }>((resolve) => {
-          resolveSend = resolve
-        })
-    )
-    const { wrapper, api } = await openRefreshDwarf({ sendDwarfText })
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    await wrapper.find('.panel-close').trigger('click')
-    resolveSend({ delivered: true, via: 'terminal' })
-    await flushPromises()
-
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-  })
-
-  it('re-reads when the transcript-movement signal changes, even when lastMessage does not', async () => {
-    const { api } = await openRefreshDwarf()
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({
-      mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
-      tokensObserved: 0
-    })
-    await flushPromises()
-
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-  })
-
-  it('stays put on an ordinary poll where neither signal moved', async () => {
-    const { api } = await openRefreshDwarf()
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({ mines: [MINE], tokensObserved: 0 })
-    await flushPromises()
-
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-  })
-
-  /*
-   * #192: the assistant's final reply and the session's end can land inside
-   * one poll, so the snapshot that first shows the dwarf leaving is the first
-   * that can read that reply — and the last: once the grace window drops the
-   * dwarf, main no longer answers for it, and a read then would replace the
-   * words with "no transcript". One more read, at the leaving edge, never after.
-   */
-  it('re-reads once when the dwarf turns leaving, and not again once the board drops it', async () => {
-    const getDwarfFeed = vi
-      .fn()
-      .mockResolvedValueOnce({
-        readable: true,
-        messages: [{ role: 'assistant', text: 'Halfway down the shaft', timestamp: 't1' }]
-      })
-      .mockResolvedValue({
-        readable: true,
-        messages: [{ role: 'assistant', text: 'Seam exhausted, packing up.', timestamp: 't2' }]
-      })
-    const { wrapper, api } = await openRefreshDwarf({ getDwarfFeed })
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({
-      mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, status: 'leaving' }] }],
-      tokensObserved: 0
-    })
-    await flushPromises()
-
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
-
-    push({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
-    await flushPromises()
-
-    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
-  })
-
-  /*
-   * The maintainer's follow-up on #195: `readSelectedFeed` used to blank
-   * `selectedFeed` to `undefined` before every await, not only the first one
-   * for a dwarf — so a re-read for the SAME dwarf rebuilt the row list from
-   * nothing while its answer was still in flight. That is what made a busy
-   * session's panel look frozen: rows arrive below the fold and the list
-   * snaps back to empty (and, via DwarfMessagePanel's own scroll, to the top)
-   * before the same words reappear a moment later. The READING note is for
-   * the first read of a dwarf only — a re-read keeps the previous result on
-   * screen until the new one lands.
-   */
-  it('keeps the previous feed on screen while a re-read for the same dwarf is in flight', async () => {
-    let resolveSecond: (value: { readable: boolean; messages: unknown[] }) => void = () => {}
-    const getDwarfFeed = vi
-      .fn()
-      .mockResolvedValueOnce({
-        readable: true,
-        messages: [{ role: 'assistant', text: 'Halfway down the shaft', timestamp: 't1' }]
-      })
-      .mockImplementationOnce(
-        () =>
-          new Promise<{ readable: boolean; messages: unknown[] }>((resolve) => {
-            resolveSecond = resolve
-          })
-      )
-    const { wrapper, api } = await openRefreshDwarf({ getDwarfFeed })
-    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
-
-    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({
-      // lastMessage cleared: conversationOf falls back to it while feed is
-      // undefined, and that fallback would otherwise show the very same words
-      // and mask a wrongful blank — this way a regression here has nothing
-      // else to fall back to.
-      mines: [
-        { ...MINE, dwarfs: [{ ...REFRESH_DWARF, lastMessage: '', transcriptUpdatedAt: 1_000 }] }
-      ],
-      tokensObserved: 0
-    })
-    await flushPromises()
-
-    // The second read is in flight and unresolved: the previous message must
-    // stay on screen, and the note must not flash back to "reading" — a
-    // re-read for the SAME dwarf is not a first read.
-    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
-    expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
-
-    resolveSecond({
-      readable: true,
-      messages: [{ role: 'assistant', text: 'Seam exhausted, packing up.', timestamp: 't2' }]
-    })
-    await flushPromises()
-
-    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
-  })
-
-  it('blanks back to the reading note when the panel switches to a different dwarf', async () => {
-    // A change of dwarf IS a first read again — unlike the re-read above, the
-    // previous dwarf's words must not linger under a different dwarf's name.
-    // lastMessage cleared on both: conversationOf otherwise falls back to it
-    // while feed is undefined, which would show a bubble either way and mask
-    // a wrongful non-blank on the switch.
-    const FIRST_DWARF = { ...REFRESH_DWARF, lastMessage: '' }
-    const SECOND_DWARF = {
-      ...REFRESH_DWARF,
-      id: 'claude:s3',
-      sessionId: 's3',
-      name: 'Digger',
-      lastMessage: ''
-    }
-    let resolveSecondDwarfFeed: (value: {
-      readable: boolean
-      messages: unknown[]
-    }) => void = () => {}
-    const getDwarfFeed = vi.fn((dwarfId: string) => {
-      if (dwarfId === REFRESH_DWARF.id) {
-        return Promise.resolve({
-          readable: true,
-          messages: [{ role: 'assistant', text: 'Halfway down the shaft', timestamp: 't1' }]
-        })
-      }
-      return new Promise<{ readable: boolean; messages: unknown[] }>((resolve) => {
-        resolveSecondDwarfFeed = resolve
-      })
-    })
-    const { wrapper } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({
-        mines: [{ ...MINE, dwarfs: [FIRST_DWARF, SECOND_DWARF] }],
-        tokensObserved: 0
-      }),
-      getDwarfFeed
-    })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
-    await flushPromises()
-    await wrapper.find('[aria-label^="Select Foreman "]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
-
-    await wrapper.find('[aria-label^="Select Digger "]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('.bubble').exists()).toBe(false)
-    expect(wrapper.find('.panel-note').text()).toContain('Reading')
-
-    resolveSecondDwarfFeed({
-      readable: true,
-      messages: [{ role: 'assistant', text: 'Just arrived at the seam.', timestamp: 't2' }]
-    })
-    await flushPromises()
-    expect(wrapper.find('.bubble').text()).toBe('Just arrived at the seam.')
-  })
-
-  /**
-   * The push riding the SAME snapshot as the board (#196): main reads the
-   * watched dwarf's feed on its own pass and carries it with the poll,
-   * instead of this panel noticing the moved signal and pulling a second
-   * time over its own round trip.
-   */
-  describe('adopting a pushed feed (#196)', () => {
-    it('adopts a pushed feed for the open dwarf without an extra getDwarfFeed call', async () => {
-      const { wrapper, api } = await openRefreshDwarf()
-      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-      const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-      push({
-        mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
-        tokensObserved: 0,
-        watchedFeed: {
-          dwarfId: 'claude:s1',
-          feed: {
-            readable: true,
-            messages: [
-              { role: 'assistant', text: 'Pushed straight from the poll', timestamp: 't2' }
-            ]
-          }
-        }
-      })
-      await flushPromises()
-
-      // The very signal that would ordinarily trigger a pull already arrived
-      // WITH its feed, so the watch must not pull a second time for it.
-      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-      expect(wrapper.find('.bubble').text()).toBe('Pushed straight from the poll')
-    })
-
-    it('still pulls once on the first selection, before any push has arrived', async () => {
-      const { api } = await openRefreshDwarf()
-
-      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-      expect(api.getDwarfFeed).toHaveBeenCalledWith('claude:s1')
-    })
-
-    it('ignores a pushed feed for a dwarf this panel is no longer open on', async () => {
-      const { wrapper, api } = await openRefreshDwarf()
-      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-      await wrapper.find('.panel-close').trigger('click')
-
-      const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-      push({
-        mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
-        tokensObserved: 0,
-        watchedFeed: {
-          dwarfId: 'claude:s1',
-          feed: {
-            readable: true,
-            messages: [{ role: 'assistant', text: 'late arrival', timestamp: 't2' }]
-          }
-        }
-      })
-      await flushPromises()
-
-      expect(wrapper.find('.message-panel').exists()).toBe(false)
-    })
-
-    it('still falls back to a pull when the snapshot carries no watched feed', async () => {
-      const { api } = await openRefreshDwarf()
-      expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-
-      const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
-      push({
-        mines: [{ ...MINE, dwarfs: [{ ...REFRESH_DWARF, transcriptUpdatedAt: 1_000 }] }],
-        tokensObserved: 0
-      })
-      await flushPromises()
-
-      expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-    })
-  })
-})
-
-/**
- * The Add Panel, wired end to end (#86): the mine's Add action opens it in the
- * MessagePanel's own dock, submitting starts a held session in that mine's
- * folder, and the panel hands over to the MessagePanel when the dwarf it
- * started turns up on an ordinary poll.
- */
-describe('App add panel', () => {
+describe('App add action (#162)', () => {
   const MINE = {
     id: 'mine:c:\\x\\anvil',
     path: 'C:\\x\\anvil',
@@ -2013,39 +1433,11 @@ describe('App add panel', () => {
     updatedAt: 0
   }
 
-  const OTHER_DWARF = {
-    id: 'claude:s1',
-    provider: 'claude',
-    role: 'foreman',
-    name: 'Foreman',
-    status: 'working',
-    sessionId: 's1',
-    lastMessage: 'Halfway down the shaft'
-  }
+  beforeEach(() => useView().clear())
 
-  /** The dwarf a launch of `prompt` leaves behind: held, and seeded with it. */
-  function launchedDwarf(prompt: string) {
-    return {
-      id: 'claude:s9',
-      provider: 'claude',
-      role: 'foreman',
-      name: 'Newcomer',
-      status: 'working',
-      sessionId: 's9',
-      conversation: [{ role: 'user', text: prompt, timestamp: 'then' }]
-    }
-  }
-
-  beforeEach(() => {
-    useView().clear()
-    // Module-scope singleton, exactly as the view and the delivery stores are:
-    // a test that opened the panel would leave it open in the next one.
-    useAgentLaunch().close()
-  })
-
-  async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
+  async function openMine(overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
-      getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
       ...overrides
     })
     wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
@@ -2053,164 +1445,31 @@ describe('App add panel', () => {
     return { wrapper, api }
   }
 
-  async function openAddPanel(overrides: Record<string, unknown> = {}) {
-    const mounted = await openMineWith([], overrides)
-    await mounted.wrapper.find('.add-agent').trigger('click')
-    await flushPromises()
-    return mounted
-  }
-
-  async function submitPrompt(wrapper: VueWrapper, prompt: string) {
-    await wrapper.findAll('.provider-chip')[0]!.trigger('click')
-    await wrapper.find('.launch-input').setValue(prompt)
-    await wrapper.find('.launch-input').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-  }
-
-  function pushSnapshot(api: Record<string, ReturnType<typeof vi.fn>>, dwarfs: unknown[]) {
-    const push = api.onMinesUpdated!.mock.calls[0]![0] as (snapshot: unknown) => void
-    push({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 })
-  }
-
-  it('opens the Add Panel from the mine own action, mine still standing', async () => {
-    const { wrapper } = await openMineWith([])
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
+  it('asks main for the launch surface, mine still standing', async () => {
+    const { wrapper, api } = await openMine()
 
     await wrapper.find('.add-agent').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    // A launch names the mine and no dwarf: there is none yet.
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
+      surface: 'launch',
+      mineId: MINE.id,
+      dwarfId: ''
+    })
     expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
   })
 
-  it('asks main which providers this machine has when it opens', async () => {
-    const { api, wrapper } = await openAddPanel()
-
-    expect(api.listAgentProviders).toHaveBeenCalled()
-    expect(wrapper.findAll('.provider-chip').map((chip) => chip.text())).toEqual([
-      'claude',
-      'Other'
-    ])
-  })
-
-  /*
-   * The design docks both panels in the same slot — the transition is one
-   * replacing the other — so they cannot both be there. Opening either closes
-   * the other rather than stacking two surfaces in one place.
-   */
-  it('takes the dock from an open MessagePanel', async () => {
-    const { wrapper } = await openMineWith([OTHER_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
+  it('puts the mine History panel away, which is the one panel still docked here', async () => {
+    const { wrapper } = await openMine()
+    await wrapper.find('.mine-history').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(wrapper.find('.history-panel').exists()).toBe(true)
 
     await wrapper.find('.add-agent').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
-  })
-
-  it('gives the dock back when a dwarf is selected instead', async () => {
-    const { wrapper } = await openMineWith([OTHER_DWARF])
-    await wrapper.find('.add-agent').trigger('click')
-    await flushPromises()
-
-    await wrapper.find('.dwarf-hit').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-  })
-
-  it('closes from its own close control', async () => {
-    const { wrapper } = await openAddPanel()
-
-    await wrapper.find('.launch-close').trigger('click')
-
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
-  })
-
-  it('starts a held session in the mine it was opened from', async () => {
-    const { wrapper, api } = await openAddPanel()
-
-    await submitPrompt(wrapper, 'dig the east gallery')
-
-    expect(api.launchHeldSession).toHaveBeenCalledWith({
-      mineId: MINE.id,
-      provider: 'claude',
-      prompt: 'dig the east gallery'
-    })
-  })
-
-  /*
-   * The verdict says a session STARTED and claims no dwarf, so the panel
-   * acknowledges from the verdict and waits — it must not look like nothing
-   * happened for the two seconds before the poll finds the session.
-   */
-  it('acknowledges the launch and keeps the prompt on screen while it spawns', async () => {
-    const { wrapper } = await openAddPanel()
-
-    await submitPrompt(wrapper, 'dig the east gallery')
-
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.launch-first-message').text()).toBe('dig the east gallery')
-  })
-
-  it('hands the dock to the MessagePanel when the launched dwarf arrives', async () => {
-    const { wrapper, api } = await openAddPanel()
-    await submitPrompt(wrapper, 'dig the east gallery')
-
-    pushSnapshot(api, [launchedDwarf('dig the east gallery')])
-    await flushPromises()
-
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Newcomer')
-  })
-
-  /*
-   * The reconciliation. The held registry seeds the new session's conversation
-   * with the prompt this panel sent, so the MessagePanel already draws it —
-   * prepending a second copy here would show the user's own first words twice,
-   * and the copy that survives is main's record rather than this panel's
-   * optimism about it.
-   */
-  it('shows the first message exactly once after the transition', async () => {
-    const { wrapper, api } = await openAddPanel()
-    await submitPrompt(wrapper, 'dig the east gallery')
-
-    pushSnapshot(api, [launchedDwarf('dig the east gallery')])
-    await flushPromises()
-
-    const said = wrapper
-      .findAll('.message .bubble')
-      .filter((bubble) => bubble.text() === 'dig the east gallery')
-    expect(said).toHaveLength(1)
-  })
-
-  it('keeps waiting while only an unrelated session turns up', async () => {
-    const { wrapper, api } = await openAddPanel()
-    await submitPrompt(wrapper, 'dig the east gallery')
-
-    pushSnapshot(api, [OTHER_DWARF])
-    await flushPromises()
-
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
-  })
-
-  it('stays open with main own reason when the launch is refused', async () => {
-    const { wrapper } = await openAddPanel({
-      launchHeldSession: vi
-        .fn()
-        .mockResolvedValue({ launched: false, error: 'Claude Code is not installed.' })
-    })
-
-    await submitPrompt(wrapper, 'dig the east gallery')
-
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.launch-alert').text()).toBe('Claude Code is not installed.')
+    expect(wrapper.find('.history-panel').exists()).toBe(false)
   })
 })
 
@@ -2300,12 +1559,12 @@ describe('App exclusive selection (#165)', () => {
   })
 
   async function openCrewedMine() {
-    const { wrapper } = await mountOpenApp({
+    const { wrapper, api } = await mountOpenApp({
       getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
     })
     wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
     await flushPromises()
-    return wrapper
+    return { wrapper, api }
   }
 
   /** Every sprite currently wearing the selection halo. */
@@ -2330,18 +1589,33 @@ describe('App exclusive selection (#165)', () => {
     return hit
   }
 
-  it('selects exactly one dwarf, and opens exactly one panel', async () => {
-    const wrapper = await openCrewedMine()
+  /*
+   * AMENDED for #162. All three cases asserted the halo AND the panel in one
+   * tree; the panel is another window now, so the halo half stays here — it is
+   * the mine's own drawing, and exactly one sprite may wear it — and what
+   * replaces the panel half is the request that opened it, which is the only
+   * thing this window can say about a panel it does not hold.
+   *
+   * That one panel is open at a time is not weakened by the split: there is
+   * one state in main and one window reading it, so it cannot be two.
+   */
+  it('selects exactly one dwarf, and asks for exactly one panel', async () => {
+    const { wrapper, api } = await openCrewedMine()
 
     await hitFor(wrapper, 'One').trigger('click')
     await flushPromises()
 
     expect(selectedSprites(wrapper)).toHaveLength(1)
-    expect(wrapper.findAll('.message-panel')).toHaveLength(1)
+    expect(api.setMessagePanel).toHaveBeenCalledTimes(1)
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
+      surface: 'message',
+      mineId: MINE.id,
+      dwarfId: 'claude:s1'
+    })
   })
 
   it('clears the first dwarf when the second is selected, in one move', async () => {
-    const wrapper = await openCrewedMine()
+    const { wrapper, api } = await openCrewedMine()
 
     await hitFor(wrapper, 'One').trigger('click')
     await flushPromises()
@@ -2351,22 +1625,29 @@ describe('App exclusive selection (#165)', () => {
     const selected = selectedSprites(wrapper)
     expect(selected).toHaveLength(1)
     expect(selected[0]!.text()).toContain('Two')
-    expect(wrapper.findAll('.message-panel')).toHaveLength(1)
-    expect(wrapper.get('.message-panel').text()).toContain('second')
+    // One move, not a close and an open: the state names the new dwarf, and
+    // the old halo goes because the state is where it came from.
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
+      surface: 'message',
+      mineId: MINE.id,
+      dwarfId: 'claude:s2'
+    })
   })
 
-  it('leaves nobody selected and no panel open once the last one is closed', async () => {
-    const wrapper = await openCrewedMine()
+  it('leaves nobody selected once the panel window says it closed', async () => {
+    const { wrapper, api } = await openCrewedMine()
 
     await hitFor(wrapper, 'One').trigger('click')
     await flushPromises()
-    await hitFor(wrapper, 'Two').trigger('click')
-    await flushPromises()
-    await wrapper.find('.panel-close').trigger('click')
+    expect(selectedSprites(wrapper)).toHaveLength(1)
+
+    // The panel's own close control is over there, and this is how it reaches
+    // the sprite that is still wearing the halo.
+    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    push({ surface: 'none', mineId: '', dwarfId: '' })
     await flushPromises()
 
     expect(selectedSprites(wrapper)).toHaveLength(0)
-    expect(wrapper.findAll('.message-panel')).toHaveLength(0)
   })
 })
 
@@ -2515,21 +1796,36 @@ describe('App mine history', () => {
     expect(wrapper.find('.history-empty').exists()).toBe(true)
   })
 
-  it('shares the dock: opening history puts the message panel away, and selecting a dwarf puts history away', async () => {
-    const { wrapper } = await openMineWith([CREW_DWARF])
+  /*
+   * AMENDED for #162 (was: 'shares the dock', asserting `.message-panel`
+   * appearing and disappearing in this tree). The two no longer share a place —
+   * the message panel is a window beside the shell — so what is left is the
+   * rule itself, which was never about geometry: one conversation surface at a
+   * time. Opening history closes the panel window, and selecting a dwarf
+   * closes history.
+   */
+  it('keeps one conversation surface at a time, across the two windows', async () => {
+    const { wrapper, api } = await openMineWith([CREW_DWARF])
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
 
     await wrapper.find('.mine-history').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
+      surface: 'none',
+      mineId: '',
+      dwarfId: ''
+    })
     expect(wrapper.find('.history-panel').exists()).toBe(true)
 
     await wrapper.find('.dwarf-hit').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-panel').exists()).toBe(false)
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
+      surface: 'message',
+      mineId: MINE.id,
+      dwarfId: 'claude:s1'
+    })
   })
 
   it('closes from its own control, and from the mine closing', async () => {

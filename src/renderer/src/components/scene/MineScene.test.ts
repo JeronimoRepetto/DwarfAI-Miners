@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useDwarfKicking } from '../../composables/useDwarfKicking'
-import { useDwarfMessaging } from '../../composables/useDwarfMessaging'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HISTORY_ICON_SRC, INTERIOR_ART_SIZE, INTERIOR_SRC, maskImageValue } from '../../lib/art'
 import { BUBBLE_TTL_MS } from '../../lib/overlay/bubbles'
 import { INTERIOR_STATIONS } from '../../lib/scene/interiorMap'
@@ -282,78 +280,20 @@ describe('MineScene bubble stacking', () => {
   })
 })
 
-/**
- * The scene is the one place that already receives a fresh snapshot of every
- * dwarf on each poll, so it is what feeds reaction detection (issue #21). No
- * new IPC and no new main-process field: the panel simply watches the stream it
- * was already rendering.
+/*
+ * MOVED to MessagePanelWindow.test.ts for #162, stated rather than passing
+ * unseen: 'MineScene reaction feed' and its three cases — 'promotes a
+ * delivered kick when the next poll shows the session stopped', 'promotes a
+ * delivered message when the next poll shows new output', and 'leaves a
+ * delivery alone while nothing about the session changed' — plus this file's
+ * own window.api stub and the two store imports they needed.
+ *
+ * They belonged to the scene while the scene was the one place that saw every
+ * poll AND the panel that sent. The send and the kick are in a window of their
+ * own now, so the stores are too, and the promotion is asserted where the
+ * watch is actually opened. This scene draws the verdicts it is handed and
+ * folds nothing in.
  */
-describe('MineScene reaction feed', () => {
-  const WORKING = defaultDwarf({ id: 'claude:s1', status: 'working', lastMessage: 'a' })
-
-  function stubApi(): void {
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: {
-        kickDwarf: () => Promise.resolve({ delivered: true, via: 'claude-relay' }),
-        sendDwarfText: () => Promise.resolve({ delivered: true, via: 'claude-relay' }),
-        // A promoted kick retires its dwarf through this (issue #46). Stubbed
-        // rather than made optional in the composable: a missing member should
-        // fail a test loudly here, not be swallowed at every call site.
-        retireDwarf: () => undefined
-      }
-    })
-  }
-
-  beforeEach(() => {
-    vi.useFakeTimers()
-    stubApi()
-    useDwarfKicking().clearAll()
-    useDwarfMessaging().clearAll()
-  })
-
-  afterEach(() => {
-    useDwarfKicking().clearAll()
-    useDwarfMessaging().clearAll()
-    vi.useRealTimers()
-  })
-
-  it('promotes a delivered kick when the next poll shows the session stopped', async () => {
-    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [WORKING] }) } })
-    const { kick, stateFor } = useDwarfKicking()
-
-    await kick('claude:s1')
-    expect(stateFor('claude:s1')?.phase).toBe('delivered')
-
-    await wrapper.setProps({
-      mine: defaultMine({ dwarfs: [{ ...WORKING, status: 'waiting' }] })
-    })
-    expect(stateFor('claude:s1')?.phase).toBe('reacted')
-  })
-
-  it('promotes a delivered message when the next poll shows new output', async () => {
-    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [WORKING] }) } })
-    const { send, stateFor } = useDwarfMessaging()
-
-    await send('claude:s1', 'hi', true)
-    expect(stateFor('claude:s1')?.phase).toBe('delivered')
-
-    await wrapper.setProps({
-      mine: defaultMine({ dwarfs: [{ ...WORKING, lastMessage: 'on it' }] })
-    })
-    expect(stateFor('claude:s1')?.phase).toBe('reacted')
-  })
-
-  it('leaves a delivery alone while nothing about the session changed', async () => {
-    const wrapper = mount(MineScene, { props: { mine: defaultMine({ dwarfs: [WORKING] }) } })
-    const { kick, stateFor } = useDwarfKicking()
-
-    await kick('claude:s1')
-    await wrapper.setProps({ mine: defaultMine({ dwarfs: [{ ...WORKING }] }) })
-
-    expect(stateFor('claude:s1')?.phase).toBe('delivered')
-  })
-})
 
 /*
  * Issue #19 — the crew stopped being a row along the bottom edge and started

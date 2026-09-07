@@ -11,6 +11,14 @@ import type { DwarfAiMinersApi } from './index'
 const exposed = new Map<string, unknown>()
 const invoke = vi.fn<(channel: string, ...args: unknown[]) => Promise<unknown>>()
 const send = vi.fn()
+/*
+ * AMENDED for #162 (was: two bare inline spies in the mock factory below). Two of the new message-panel members are
+ * SUBSCRIPTIONS, and what has to be asserted about one is the channel it
+ * listens on plus the wrapper it hands to ipcRenderer — so the two spies have
+ * to be reachable from the tests. No existing assertion changed.
+ */
+const on = vi.fn<(channel: string, listener: (...args: unknown[]) => void) => void>()
+const removeListener = vi.fn()
 
 vi.mock('electron', () => ({
   contextBridge: {
@@ -21,8 +29,9 @@ vi.mock('electron', () => ({
   ipcRenderer: {
     invoke: (channel: string, ...args: unknown[]) => invoke(channel, ...args),
     send: (channel: string, ...args: unknown[]) => send(channel, ...args),
-    on: vi.fn(),
-    removeListener: vi.fn()
+    on: (channel: string, listener: (...args: unknown[]) => void) => on(channel, listener),
+    removeListener: (channel: string, listener: (...args: unknown[]) => void) =>
+      removeListener(channel, listener)
   }
 }))
 
@@ -581,5 +590,130 @@ describe('preload watched-dwarf-feed contract (#196)', () => {
   it('collapses anything that is not a string to null before it crosses the bridge', () => {
     ;(api.setWatchedDwarf as unknown as (value: unknown) => void)(42)
     expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
+  })
+})
+/**
+ * The message panel's own window (#162).
+ *
+ * Two renderers read this one bridge now, and the members below are the whole
+ * of what they say to each other: what the panel shows, how tall it is, and
+ * the delivery verdicts only the panel window writes. Main is between them
+ * both ways — neither window ever talks to the other.
+ */
+describe('preload message-panel contract (#162)', () => {
+  const OPEN = { surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' } as const
+
+  it('exposes the whole surface beside the members that were already there', () => {
+    expect(typeof api.getMessagePanel).toBe('function')
+    expect(typeof api.setMessagePanel).toBe('function')
+    expect(typeof api.onMessagePanel).toBe('function')
+    expect(typeof api.setMessagePanelHeight).toBe('function')
+    expect(typeof api.reportDwarfDelivery).toBe('function')
+    expect(typeof api.onDwarfDeliveryReport).toBe('function')
+  })
+
+  it('asks for the current state on the panel:message:get channel with no payload', async () => {
+    invoke.mockResolvedValueOnce(OPEN)
+    await expect(api.getMessagePanel()).resolves.toEqual(OPEN)
+    expect(invoke).toHaveBeenLastCalledWith('panel:message:get')
+  })
+
+  it('rebuilds the state field by field on panel:message:set', async () => {
+    invoke.mockResolvedValueOnce(OPEN)
+    await api.setMessagePanel(OPEN)
+    expect(invoke).toHaveBeenLastCalledWith('panel:message:set', {
+      surface: 'message',
+      mineId: 'mine:a',
+      dwarfId: 'claude:s1'
+    })
+  })
+
+  it('collapses a non-string id to an empty string before it crosses the bridge', async () => {
+    invoke.mockResolvedValueOnce(OPEN)
+    await api.setMessagePanel({
+      surface: 'message',
+      mineId: 7,
+      dwarfId: null
+    } as unknown as Parameters<typeof api.setMessagePanel>[0])
+    expect(invoke).toHaveBeenLastCalledWith('panel:message:set', {
+      surface: 'message',
+      mineId: '',
+      dwarfId: ''
+    })
+  })
+
+  it('crosses an unrecognised surface as nothing, so main refuses rather than guessing', async () => {
+    // The same ruling launchAgent's provider carries (#168): a surface
+    // collapsed to a default would be the bridge deciding what the panel
+    // shows — 'none' above all, which would CLOSE a window nobody asked to
+    // close.
+    invoke.mockResolvedValueOnce(OPEN)
+    await api.setMessagePanel({
+      surface: 'history',
+      mineId: 'mine:a',
+      dwarfId: ''
+    } as unknown as Parameters<typeof api.setMessagePanel>[0])
+    expect(invoke).toHaveBeenLastCalledWith('panel:message:set', {
+      surface: '',
+      mineId: 'mine:a',
+      dwarfId: ''
+    })
+  })
+
+  it('hands back the REAL state main applied, never the wish', async () => {
+    // Main creates, moves, shows and hides an actual window off the back of
+    // this, and it may answer with something else entirely — the panel closed
+    // by the other window between the click and the call.
+    const closed = { surface: 'none', mineId: '', dwarfId: '' }
+    invoke.mockResolvedValueOnce(closed)
+    await expect(api.setMessagePanel(OPEN)).resolves.toEqual(closed)
+  })
+
+  it('subscribes to main’s push on panel:message:changed, and unsubscribes', () => {
+    const listener = vi.fn()
+    const stop = api.onMessagePanel(listener)
+    expect(on).toHaveBeenLastCalledWith('panel:message:changed', expect.any(Function))
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, state: unknown) => void
+    wrapped(null, OPEN)
+    // The renderer never sees the IpcRendererEvent: it is the state that is
+    // the message.
+    expect(listener).toHaveBeenCalledWith(OPEN)
+    stop()
+    expect(removeListener).toHaveBeenLastCalledWith('panel:message:changed', wrapped)
+  })
+
+  it('reports the measured height on panel:message:height as a number', () => {
+    api.setMessagePanelHeight(235)
+    expect(send).toHaveBeenLastCalledWith('panel:message:height', 235)
+  })
+
+  it('crosses anything that is not a number as one main refuses', () => {
+    // Never 0 and never a default: both are heights a window could be given,
+    // and a bridge that invented one would resize the panel off a payload
+    // nobody could read.
+    api.setMessagePanelHeight('235' as unknown as number)
+    expect(send).toHaveBeenLastCalledWith('panel:message:height', Number.NaN)
+  })
+
+  it('reports the delivery verdicts on panel:message:delivery, uncoerced', () => {
+    // Forwarded whole for the reason queryProjects is: a nested record cannot
+    // be collapsed to a safe default the way a stray string can, so main
+    // validates it and refuses what it cannot read (see
+    // parseDwarfDeliveryReport).
+    const report = { send: { 'claude:s1': { phase: 'delivered' } }, kick: {} }
+    api.reportDwarfDelivery(report as unknown as Parameters<typeof api.reportDwarfDelivery>[0])
+    expect(send).toHaveBeenLastCalledWith('panel:message:delivery', report)
+  })
+
+  it('subscribes to the relayed verdicts on panel:message:delivery:changed', () => {
+    const listener = vi.fn()
+    const report = { send: {}, kick: { 'claude:s1': { phase: 'reacted' } } }
+    const stop = api.onDwarfDeliveryReport(listener)
+    expect(on).toHaveBeenLastCalledWith('panel:message:delivery:changed', expect.any(Function))
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
+    wrapped(null, report)
+    expect(listener).toHaveBeenCalledWith(report)
+    stop()
+    expect(removeListener).toHaveBeenLastCalledWith('panel:message:delivery:changed', wrapped)
   })
 })

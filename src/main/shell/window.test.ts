@@ -1,13 +1,18 @@
+import type { BrowserWindow } from 'electron'
 import { describe, expect, it } from 'vitest'
+import { emptyMessagePanel } from './messagePanelState'
 import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
 import {
   applyAlwaysOnTop,
+  buildMessagePanelWindowOptions,
   applyPanelBounds,
   applyUiScale,
   buildMainWindowOptions,
+  messagePanelState,
   panelLayout,
   raisePanelWindow,
   seedPanelEdge,
+  setMessagePanel,
   setPanelLayout,
   type AlwaysOnTopTarget,
   type PanelBoundsTarget,
@@ -21,6 +26,13 @@ import {
  * through untouched.
  */
 const RAIL_BOUNDS = { x: 1900, y: 0, width: RAIL_WIDTH, height: 1032 }
+
+/**
+ * The message panel beside it (#162) — a rectangle main derived from the
+ * display and from where the shell actually is, which this file, again, only
+ * carries through untouched.
+ */
+const MESSAGE_PANEL_BOUNDS = { x: 8, y: 797, width: 990, height: 235 }
 
 /**
  * Deterministic BrowserWindow stand-in for the always-on-top surface: it
@@ -331,5 +343,121 @@ describe('the shell window can be focused at all', () => {
       bounds: RAIL_BOUNDS
     })
     expect(options.focusable).toBe(true)
+  })
+})
+/**
+ * The message panel as a window of its own (#162).
+ *
+ * The design draws it as a second surface beside the shell, so it is a second
+ * BrowserWindow — and every question that raises is about how it relates to the
+ * shell rather than about what it contains. Same discipline as the block above:
+ * no real BrowserWindow exists here, so the builder is asserted on its own and
+ * the state is asserted on what it stores.
+ */
+describe('buildMessagePanelWindowOptions', () => {
+  /** Stands in for the shell window, which is all the parent slot is. */
+  const shell = {} as unknown as BrowserWindow
+
+  const input = {
+    alwaysOnTop: true,
+    preloadPath: 'C:/app/out/preload/index.mjs',
+    iconPath: 'C:/app/resources/app-icon.png',
+    bounds: MESSAGE_PANEL_BOUNDS,
+    parent: shell
+  }
+
+  it('opens hidden, on the rectangle it was handed', () => {
+    const options = buildMessagePanelWindowOptions(input)
+    // Hidden because nothing has measured the panel yet: the renderer reports
+    // its own height and that first report is what reveals the window.
+    expect(options.show).toBe(false)
+    expect({
+      x: options.x,
+      y: options.y,
+      width: options.width,
+      height: options.height
+    }).toEqual(MESSAGE_PANEL_BOUNDS)
+  })
+
+  it('is the same frameless floating surface the shell is', () => {
+    const options = buildMessagePanelWindowOptions(input)
+    expect(options.frame).toBe(false)
+    expect(options.transparent).toBe(true)
+    expect(options.focusable).toBe(true)
+  })
+
+  it('is a CHILD of the shell, so it cannot outlive it', () => {
+    // Closing the shell closes this window, and it never becomes a second
+    // entry in the taskbar or Alt-Tab beside the app it belongs to.
+    expect(buildMessagePanelWindowOptions(input).parent).toBe(shell)
+    expect(buildMessagePanelWindowOptions(input).skipTaskbar).toBe(true)
+  })
+
+  it('mirrors the shell’s pin rather than owning a second one', () => {
+    // Pinning is the shell's control and the tray's business (#35). A panel
+    // that floated while the shell did not — or the other way round — would
+    // split one window's stacking into two answers.
+    expect(buildMessagePanelWindowOptions({ ...input, alwaysOnTop: true }).alwaysOnTop).toBe(true)
+    expect(buildMessagePanelWindowOptions({ ...input, alwaysOnTop: false }).alwaysOnTop).toBe(false)
+  })
+
+  it('gives the panel no size for a user to drag, because main owns its rectangle', () => {
+    // The design's vertical-only resize is the panel's own top-edge handle: it
+    // reports a height and main applies it, so the window's width can never be
+    // dragged away from the 990 the composition is derived from.
+    const options = buildMessagePanelWindowOptions(input)
+    expect(options.resizable).toBe(false)
+    expect(options.minWidth).toBeUndefined()
+    expect(options.minHeight).toBeUndefined()
+  })
+
+  it('wires the SAME preload, so the panel reads one typed API', () => {
+    const options = buildMessagePanelWindowOptions(input)
+    expect(options.webPreferences?.preload).toBe(input.preloadPath)
+    expect(options.icon).toBe(input.iconPath)
+  })
+
+  it('keeps the second renderer sandboxed from Node and isolated from the preload world', () => {
+    const options = buildMessagePanelWindowOptions(input)
+    expect(options.webPreferences?.contextIsolation).toBe(true)
+    expect(options.webPreferences?.nodeIntegration).toBe(false)
+  })
+})
+
+/**
+ * The state both windows write and both read (#162).
+ *
+ * The shell opens the panel on a dwarf or on the mine's Add action; the panel
+ * window closes itself, and adopts the dwarf a launch produced. Main is the one
+ * serialization point, so the answer is always what it STORED — the same
+ * read-back rule `setPanelLayout` above follows.
+ */
+describe('setMessagePanel', () => {
+  it('answers with what it stored, and stores what it answered', () => {
+    const opened = setMessagePanel({
+      surface: 'message',
+      mineId: 'mine:a',
+      dwarfId: 'claude:s1'
+    })
+    expect(opened).toEqual({ surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' })
+    expect(messagePanelState()).toEqual(opened)
+  })
+
+  it('takes the launch surface, which names a mine and no dwarf yet', () => {
+    const launching = setMessagePanel({ surface: 'launch', mineId: 'mine:a', dwarfId: '' })
+    expect(launching).toEqual({ surface: 'launch', mineId: 'mine:a', dwarfId: '' })
+  })
+
+  it('closes back to nothing, which is the window hidden rather than destroyed', () => {
+    setMessagePanel({ surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' })
+    expect(setMessagePanel(emptyMessagePanel())).toEqual(emptyMessagePanel())
+    expect(messagePanelState()).toEqual(emptyMessagePanel())
+  })
+
+  it('hands out a copy, so a reader cannot change what main holds', () => {
+    setMessagePanel({ surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' })
+    const read = messagePanelState()
+    read.dwarfId = 'claude:someone-else'
+    expect(messagePanelState().dwarfId).toBe('claude:s1')
   })
 })

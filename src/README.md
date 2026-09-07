@@ -66,7 +66,8 @@ src/
 │   ├── textDelivery/ getting text into a running session, and knowing which channel can
 │   └── tier/        measuring a project to a tier
 └── renderer/src/
-    ├── App.vue      the root component; types.ts beside it is this process's type barrel
+    ├── App.vue      the SHELL window's root; types.ts beside it is this process's type barrel
+    ├── MessagePanelWindow.vue  the message panel's own window (#162) — the second root, one entry
     ├── assets/      processed art and css
     ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern

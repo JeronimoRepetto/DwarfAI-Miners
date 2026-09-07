@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { PanelEdge } from '../domain/types'
 import type { ScreenRect } from '../platform/screenArea'
 import {
   DESIGN_INTERIOR_WIDTH,
@@ -12,9 +13,12 @@ import {
   DESIGN_SCREEN_HEIGHT,
   DESIGN_SECONDARY_WIDTH,
   MAP_FRAME_INSET,
+  MESSAGE_PANEL_DESIGN_WIDTH,
+  MESSAGE_PANEL_GAP,
   MIN_WINDOW_WIDTH,
   RAIL_WIDTH,
   expandedWidth,
+  messagePanelBounds,
   mineColumnWidth,
   mineOnlyWidth,
   panelBounds,
@@ -439,5 +443,183 @@ describe('the mine column against the panel it opens beside', () => {
     for (const height of [600, DESIGN_COMPOSITION_HEIGHT, 1392, 2160]) {
       expect(interiorColumnWidth(height)).toBeLessThan(height)
     }
+  })
+})
+/*
+ * The message panel is its OWN window beside the shell (#162), so its rectangle
+ * is derived here rather than reconciled inside the shell's CSS. #159 shipped
+ * the honest single-window compromise — a band docked at the shell's free edge,
+ * `min(990, available)` — and flagged this as the follow-up; the design's own
+ * `assets/mine/mine-and-message-panel.png` draws the panel as a second surface
+ * on the desktop, beside an untouched shell, aligned to its bottom.
+ */
+describe('messagePanelBounds', () => {
+  /** The shell as `panelBounds` places it, so the two derivations are used together. */
+  function shellAt(area: ScreenRect, edge: PanelEdge, layout = OPEN_WITH_MINE): ScreenRect {
+    return panelBounds(area, edge, layout)
+  }
+
+  /** The panel's own opening height, in design pixels (see lib/message/panelHeight). */
+  const DESIGN_HEIGHT = 235
+
+  /** The composition the design's own mock draws the panel beside. */
+  const MINE_ONLY = { expanded: false, mineOpen: true }
+
+  it('takes the design’s own 990px, scaled onto this display, when the room is there', () => {
+    // The mine-only composition is what the design's mock draws beside it, and
+    // it leaves well over 990 design pixels on a 1080-tall display.
+    for (const area of [AT_1X, AT_2X]) {
+      const shell = shellAt(area, 'right', MINE_ONLY)
+      const bounds = messagePanelBounds(area, shell, 'right', DESIGN_HEIGHT)
+      expect(bounds.width).toBe(scaled(area, MESSAGE_PANEL_DESIGN_WIDTH))
+    }
+  })
+
+  it('sits at the shell’s FREE edge, one gap away, on both docked sides', () => {
+    const gap = scaled(AT_1X, MESSAGE_PANEL_GAP)
+
+    const rightShell = shellAt(AT_1X, 'right', MINE_ONLY)
+    const beside = messagePanelBounds(AT_1X, rightShell, 'right', DESIGN_HEIGHT)
+    // A right-docked shell puts the panel to its left, and the two never touch.
+    expect(beside.x + beside.width).toBe(rightShell.x - gap)
+
+    const leftShell = shellAt(AT_1X, 'left', MINE_ONLY)
+    const mirrored = messagePanelBounds(AT_1X, leftShell, 'left', DESIGN_HEIGHT)
+    expect(mirrored.x).toBe(leftShell.x + leftShell.width + gap)
+  })
+
+  it('aligns its bottom with the shell’s, which is what the mock draws', () => {
+    for (const edge of ['left', 'right'] as const) {
+      const shell = shellAt(AT_1X, edge)
+      const bounds = messagePanelBounds(AT_1X, shell, edge, DESIGN_HEIGHT)
+      expect(bounds.y + bounds.height).toBe(shell.y + shell.height)
+    }
+  })
+
+  it('spends the design’s height through the SAME scale the shell is zoomed by', () => {
+    // The 1080-design-world zoom applies to this window identically: the
+    // renderer draws the design's own 235px and main multiplies once.
+    for (const area of [AT_1X, AT_1_333X, AT_2X]) {
+      const shell = shellAt(area, 'right')
+      const bounds = messagePanelBounds(area, shell, 'right', DESIGN_HEIGHT)
+      expect(bounds.height).toBe(Math.round(DESIGN_HEIGHT * uiScale(area)))
+    }
+  })
+
+  it('carries a dragged height through unchanged, because the resize is vertical only', () => {
+    const shell = shellAt(AT_1X, 'right', MINE_ONLY)
+    const short = messagePanelBounds(AT_1X, shell, 'right', 235)
+    const tall = messagePanelBounds(AT_1X, shell, 'right', 578)
+    expect(tall.height).toBeGreaterThan(short.height)
+    // Only the height moves: the panel is resizable vertically ONLY.
+    expect(tall.width).toBe(short.width)
+    expect(tall.x).toBe(short.x)
+    // And it grows UPWARD, because the bottom edge is the one that is aligned.
+    expect(tall.y).toBeLessThan(short.y)
+  })
+
+  /*
+   * The multi-display honesty the issue asks for, decided and pinned here.
+   *
+   * Of the three candidates — shrink to the room available, flip to the shell's
+   * other side, or fall back to #159's docked band — this takes the FIRST, and
+   * the other two are refused on purpose:
+   *
+   * Flipping moves the panel across the desktop as the shell grows, and "the
+   * other side" of a shell docked against a screen edge is off the display; the
+   * panel would also leave the mine it belongs to.
+   *
+   * Re-docking inside the shell is what this issue removes, and it would need
+   * the shell to grow for the panel — the missing third dimension of
+   * PanelLayoutRequest that dies with this.
+   *
+   * Shrinking is already this file's answer to a composition a display cannot
+   * hold (see panelWidth's clamp and secondaryColumnWidth's floor) and is what
+   * #159's band already shipped, so it is the narrowing the user has already
+   * seen rather than a new behaviour.
+   */
+  describe('when the display has no 990px of room beside the shell', () => {
+    it('shrinks to the room it has rather than hanging off the display', () => {
+      const shell = shellAt(AT_1X, 'right', OPEN_WITH_MINE)
+      const bounds = messagePanelBounds(AT_1X, shell, 'right', DESIGN_HEIGHT)
+      // The widest composition — a page and a mine — leaves less than 990.
+      expect(bounds.width).toBeLessThan(scaled(AT_1X, MESSAGE_PANEL_DESIGN_WIDTH))
+      expect(bounds.width).toBe(shell.x - AT_1X.x - scaled(AT_1X, MESSAGE_PANEL_GAP))
+      expect(bounds.x).toBe(AT_1X.x)
+    })
+
+    it('never flips to the shell’s other side, and never covers it', () => {
+      for (const layout of [OPEN, OPEN_WITH_MINE, MINE_ONLY]) {
+        const rightShell = shellAt(AT_1X, 'right', layout)
+        const beside = messagePanelBounds(AT_1X, rightShell, 'right', DESIGN_HEIGHT)
+        expect(beside.x + beside.width).toBeLessThanOrEqual(rightShell.x)
+
+        const leftShell = shellAt(AT_1X, 'left', layout)
+        const mirrored = messagePanelBounds(AT_1X, leftShell, 'left', DESIGN_HEIGHT)
+        expect(mirrored.x).toBeGreaterThanOrEqual(leftShell.x + leftShell.width)
+      }
+    })
+
+    it('still asks for a window the platform will actually make', () => {
+      // A display the whole shell spans leaves nothing beside it. A window of
+      // no width is not a narrow panel, it is a panel that looks as if it never
+      // opened, so the platform floor MIN_WINDOW_WIDTH applies here too — the
+      // one case where the panel may overlap the shell, by at most 32px.
+      const cramped = { x: 0, y: 0, width: 320, height: 768 }
+      for (const edge of ['left', 'right'] as const) {
+        const shell = shellAt(cramped, edge, OPEN_WITH_MINE)
+        expect(shell.width).toBe(cramped.width)
+        const bounds = messagePanelBounds(cramped, shell, edge, DESIGN_HEIGHT)
+        expect(bounds.width).toBe(MIN_WINDOW_WIDTH)
+      }
+    })
+  })
+
+  it('stays inside the rectangle it was handed, on both edges and every composition', () => {
+    for (const area of [
+      AT_1X,
+      AT_1_333X,
+      AT_2X,
+      { x: 0, y: 48, width: 1920, height: 984 },
+      { x: 2560, y: 357, width: 1920, height: 1032 },
+      { x: -1920, y: 0, width: 1920, height: 1080 },
+      { x: 0, y: 0, width: 1024, height: 768 }
+    ]) {
+      for (const edge of ['left', 'right'] as const) {
+        for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+          const shell = shellAt(area, edge, layout)
+          for (const height of [235, 578]) {
+            const bounds = messagePanelBounds(area, shell, edge, height)
+            expect(bounds.x).toBeGreaterThanOrEqual(area.x)
+            expect(bounds.x + bounds.width).toBeLessThanOrEqual(area.x + area.width)
+            expect(bounds.y).toBeGreaterThanOrEqual(area.y)
+            expect(bounds.y + bounds.height).toBeLessThanOrEqual(area.y + area.height)
+          }
+        }
+      }
+    }
+  })
+
+  it('never asks for more height than the display has', () => {
+    // The design's own ceiling always fits, because the whole surface is scaled
+    // onto the display: 578 design pixels on a 200-tall screen is 107 real
+    // ones. This is the guard for a height that is not the design's — main
+    // takes the number the renderer measured, and a window taller than the
+    // display would put the panel's own controls off the top of it.
+    const shortest = { x: 0, y: 0, width: 1920, height: 200 }
+    const shell = shellAt(shortest, 'right')
+    expect(messagePanelBounds(shortest, shell, 'right', 578).height).toBe(
+      Math.round(578 * uiScale(shortest))
+    )
+    const absurd = messagePanelBounds(shortest, shell, 'right', 99_999)
+    expect(absurd.height).toBe(200)
+    expect(absurd.y).toBe(0)
+  })
+
+  it('returns whole pixels, which is all Electron accepts for bounds', () => {
+    const odd = { x: 0, y: 0, width: 1367, height: 769 }
+    const shell = shellAt(odd, 'right')
+    const bounds = messagePanelBounds(odd, shell, 'right', 237)
+    for (const value of Object.values(bounds)) expect(Number.isInteger(value)).toBe(true)
   })
 })

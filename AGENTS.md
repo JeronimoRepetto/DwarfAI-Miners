@@ -185,9 +185,9 @@ adding a file. This is the index — one line per group, so you can tell what a 
 
 <!-- END GENERATED: main-tree -->
 
-- **`renderer/src/`** — `components/` is thin and decides nothing, `lib/` is the framework-agnostic
-  logic, and the two share the family names `shell`, `map`, `scene` and `vault` on purpose. `composables/`
-  is the Vue-bound state; `types.ts` is this process's barrel onto `contracts.ts`.
+- **`renderer/src/`** — TWO roots, one entry: `App.vue` is the shell and `MessagePanelWindow.vue` the
+  message panel's own window beside it (`lib/shell/surface.ts` picks). `components/` is thin and
+  decides nothing, `lib/` framework-agnostic; `composables/` is Vue-bound state, `types.ts` the barrel.
 
 **Where the next file goes:** name a directory for the subject it is about, never for the kind of
 module it holds — `utils/`, `helpers/`, `types/` are refused on sight.

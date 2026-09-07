@@ -1338,6 +1338,71 @@ export interface DwarfKickResult {
 }
 
 /**
+ * What the panel shows about one dwarf's most recent message: in flight, or
+ * the verdict, kept just long enough to be read.
+ *
+ * 'delivered' and 'reacted' are two different facts, and the panel must never
+ * blur them (issue #21): delivered means the text reached the session's queue,
+ * reacted means the session was then SEEN acting on it. A delivery that is
+ * never observed reacting stays 'delivered' — it never promotes on a guess.
+ *
+ * On the wire since #162, having been a renderer-local type until then. The
+ * send happens in the message-panel WINDOW and the marker is drawn on the
+ * dwarf's sprite in the SHELL window, so this verdict now crosses a process
+ * boundary — see DwarfDeliveryReport, which is the one direction it travels.
+ */
+export interface DwarfSendState {
+  phase: 'sending' | 'delivered' | 'reacted' | 'failed'
+  /** The channel the delivery used, once one was chosen. */
+  via?: string
+  /** Why it failed, shown on the marker. */
+  error?: string
+  /**
+   * True while a delivered message is still watching its dwarf's snapshots for
+   * proof the session acted. False once that bounded window closed unobserved.
+   */
+  awaitingReaction?: boolean
+}
+
+/**
+ * What the panel shows about one dwarf's most recent kick: in flight, or the
+ * verdict. Same two-phase honesty as DwarfSendState — an interrupt handed to a
+ * session is not the same as a session that stopped.
+ */
+export interface DwarfKickState {
+  phase: 'kicking' | 'delivered' | 'reacted' | 'failed'
+  /** The channel the kick used, once one was chosen. */
+  via?: string
+  /** Why it failed, shown on the marker. */
+  error?: string
+  /** True while a delivered kick is still watching for proof the session stopped. */
+  awaitingReaction?: boolean
+}
+
+/**
+ * Every delivery verdict the message-panel window currently holds, reported to
+ * the shell so the mine can draw its markers (#162).
+ *
+ * One writer, one reader, one direction. The composer and the kick control
+ * live in the panel window, so that window owns both stores — including the
+ * reaction watch, which folds each poll's snapshot in (see the renderer's
+ * `useDwarfMessaging`). The marker is drawn on the dwarf's own sprite, inside
+ * the mine, which is in the shell window. So the state is published rather
+ * than duplicated: the shell renders these and writes none of them, and a
+ * second store there could only ever disagree with this one.
+ *
+ * Whole maps rather than deltas, because the stores expire their own entries
+ * on timers: a delta stream would need the shell to run the same timers to
+ * know when a marker should be gone, which is the duplication this avoids.
+ */
+export interface DwarfDeliveryReport {
+  /** Send verdicts, keyed by dwarf id. */
+  send: Record<string, DwarfSendState>
+  /** Kick verdicts, keyed by dwarf id. */
+  kick: Record<string, DwarfKickState>
+}
+
+/**
  * One provider the Add Panel may draw a chip for (#86, over detection's #91).
  *
  * Two facts, and they are not the same fact. `installed` is whether the CLI is
@@ -1704,11 +1769,79 @@ export interface PanelLayout {
  * has", which is what the rail toggle and the mine-open resize both do — they
  * are not the position control and must never nudge the docked side by
  * accident. Only the position control's Left/Right segments ever set it.
+ *
+ * Two dimensions, and there is no third (#162). #159's report named one that
+ * was missing: the message panel was a band docked INSIDE this window, so the
+ * shell had to grow to host it and nothing here could ask for that. The panel
+ * is a window of its own now (see MessagePanelState) and the shell never grows
+ * for it, so the gap closed by the request staying exactly this shape.
  */
 export interface PanelLayoutRequest {
   expanded: boolean
   mineOpen: boolean
   edge?: PanelEdge
+}
+
+/**
+ * Which of the message-panel window's two surfaces is open, or neither (#162).
+ *
+ * The two SHARE one window because they share one slot in the design: the Add
+ * Panel is replaced by the MessagePanel when a launch is submitted, which is
+ * one surface changing rather than two surfaces swapping. 'none' is the window
+ * closed — hidden, not destroyed, so reopening costs no page load.
+ */
+export type MessagePanelSurface = 'none' | 'launch' | 'message'
+
+/**
+ * Whether a value is one of the three surfaces this build has.
+ *
+ * Exists for the reason isDwarfProvider does: the preload refuses to guess
+ * one. A surface collapsed to a default would be the bridge deciding what the
+ * panel shows — 'none' above all, which would CLOSE a window nobody asked to
+ * close — so an unrecognised value crosses as '' and main refuses the request
+ * outright.
+ */
+export function isMessagePanelSurface(value: unknown): value is MessagePanelSurface {
+  return value === 'none' || value === 'launch' || value === 'message'
+}
+
+/**
+ * Which of the app's two windows a renderer is running in (#162).
+ *
+ * One renderer ENTRY serves both. The panel window is the same page loaded
+ * with the query below, and the renderer picks its root component from it —
+ * one bundle, one stylesheet, one Content-Security-Policy, rather than a
+ * second build target that would duplicate all three for one component.
+ */
+export type RendererSurface = 'shell' | 'message-panel'
+
+/** The query parameter that names the surface (see RendererSurface). */
+export const RENDERER_SURFACE_PARAM = 'surface'
+
+/** The value main loads the message-panel window's page with. */
+export const MESSAGE_PANEL_SURFACE = 'message-panel'
+
+/**
+ * What the message-panel window is showing (#162).
+ *
+ * Held in MAIN and written by BOTH windows, which is the whole reason it is a
+ * wire type: the shell opens the panel (a dwarf was clicked, or the mine's Add
+ * action was pressed) and the panel window closes itself and adopts the dwarf
+ * a launch produced. Main is the single serialization point, so the last write
+ * wins and both windows are told what it became — the same read-back rule
+ * `PanelLayout` follows, for the same reason.
+ *
+ * `mineId` and `dwarfId` are '' rather than absent where they do not apply,
+ * matching how every id already crosses this bridge (see the preload's own
+ * collapsing): a surface of 'none' names neither, and 'launch' names only the
+ * mine, because the dwarf does not exist yet.
+ */
+export interface MessagePanelState {
+  surface: MessagePanelSurface
+  /** The mine the surface belongs to; '' when nothing is open. */
+  mineId: string
+  /** The dwarf a message surface is open on; '' for the other two. */
+  dwarfId: string
 }
 
 /**
@@ -1985,6 +2118,36 @@ export const IPC_CHANNELS = {
    */
   getPanelLayout: 'panel:layout:get',
   setPanelLayout: 'panel:layout:set',
+  /**
+   * The message-panel window: what it shows, what it reports, and how tall it
+   * is (#162).
+   *
+   * `setMessagePanel` answers with the REAL MessagePanelState after main
+   * applied it, for the reason the layout channels do — main creates, moves,
+   * shows and hides an actual window off the back of it. Both windows may
+   * send it: the shell opens the panel, and the panel closes itself and adopts
+   * the dwarf a launch produced. `messagePanelChanged` is how the OTHER window
+   * hears about it, so neither has to poll the state it does not own.
+   *
+   * `reportDwarfDelivery` carries the send and kick verdicts the panel window
+   * is the only writer of, so the mine in the shell window can draw its
+   * markers (see DwarfDeliveryReport). One-way: there is no verdict about a
+   * verdict.
+   *
+   * `setMessagePanelHeight` is the design's vertical-only resize reaching the
+   * window that has to carry it. The renderer measures its own surface in
+   * DESIGN pixels — the height derived from the latest message, or the one a
+   * drag left behind — and main multiplies by the same `uiScale` every other
+   * dimension goes through. One-way, and the first one also reveals the
+   * window: it is created hidden, so nobody sees it at a height nothing had
+   * measured yet.
+   */
+  getMessagePanel: 'panel:message:get',
+  setMessagePanel: 'panel:message:set',
+  messagePanelChanged: 'panel:message:changed',
+  reportDwarfDelivery: 'panel:message:delivery',
+  dwarfDeliveryReported: 'panel:message:delivery:changed',
+  setMessagePanelHeight: 'panel:message:height',
   /**
    * User-configurable panel toggle, see #17. Both channels answer with the
    * REAL ShortcutState after the registration attempt — never the requested
