@@ -64,16 +64,22 @@
   --color-marker-gold: #ffde59;
   --color-marker-uranium: #00bf63;
 
+  /*
+   * Every rung raised 2px over the source table (#198, maintainer ruling
+   * 2026-09-04): the 10px meta size read too small on a real desktop, and the
+   * fix was to the whole scale rather than to that one rung alone. See
+   * `foundations.md`'s Typography table for the amendment note.
+   */
   /* Dense labels, controls and metadata. */
-  --text-meta: 10px;
+  --text-meta: 12px;
   /* Confirmation helper copy. */
-  --text-helper: 12px;
+  --text-helper: 14px;
   /* Settings section labels. */
-  --text-section: 14px;
+  --text-section: 16px;
   /* Settings title, mine type and project name. */
-  --text-title: 19px;
+  --text-title: 21px;
   /* Modal and empty-state headline. */
-  --text-headline: 24px;
+  --text-headline: 26px;
 
   /* One radius across rails, panels, cards, inputs, buttons and dialogs. */
   --radius-default: 12px;

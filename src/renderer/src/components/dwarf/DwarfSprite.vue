@@ -649,7 +649,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   margin-top: 2px;
   overflow: hidden;
   color: var(--ink-dim);
-  font-size: 10px;
+  font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -861,7 +861,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   border-radius: 10px;
   color: var(--parchment-ink);
   background: var(--parchment);
-  font-size: 11px;
+  font-size: var(--text-meta);
   line-height: 1.4;
   text-align: left;
   white-space: pre-wrap;
@@ -882,7 +882,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   border: 1px solid #000000a6;
   border-radius: 50%;
   color: #14100b;
-  font-size: 10px;
+  font-size: var(--text-meta);
   font-weight: 700;
   line-height: 1;
   pointer-events: none;
@@ -922,7 +922,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
   border: 1px solid #000000a6;
   border-radius: 50%;
   color: #14100b;
-  font-size: 10px;
+  font-size: var(--text-meta);
   font-weight: 700;
   line-height: 1;
   pointer-events: none;

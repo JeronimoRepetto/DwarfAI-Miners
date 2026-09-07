@@ -148,7 +148,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 .question-header {
   margin: 0;
   color: var(--color-accent);
-  font-size: 10px;
+  font-size: var(--text-meta);
   font-weight: 700;
 }
 /* The agent message surface from the design: cream, accent border, dark ink. */
@@ -161,7 +161,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   border-radius: 12px;
   color: var(--color-panel);
   background: var(--color-cream);
-  font-size: 10px;
+  font-size: var(--text-meta);
   line-height: 1.35;
   user-select: text;
   -webkit-user-select: text;
@@ -190,7 +190,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   cursor: pointer;
   background: var(--color-cream);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--text-meta);
   line-height: 1.3;
   text-align: left;
 }
@@ -218,7 +218,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 .freeform-label {
   margin: 2px 0 0;
   color: var(--color-cream);
-  font-size: 9px;
+  font-size: var(--text-meta);
   font-weight: 700;
 }
 .freeform-input {
@@ -228,7 +228,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   color: var(--color-panel);
   background: #fff;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--text-meta);
   resize: none;
   user-select: text;
   -webkit-user-select: text;
@@ -246,14 +246,14 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   border-radius: 12px;
   color: var(--color-panel);
   background: var(--color-cream);
-  font-size: 10px;
+  font-size: var(--text-meta);
   font-weight: 700;
   text-align: center;
 }
 .answer-error,
 .answer-ok {
   margin: 0;
-  font-size: 9px;
+  font-size: var(--text-helper);
   line-height: 1.25;
 }
 .answer-error {
