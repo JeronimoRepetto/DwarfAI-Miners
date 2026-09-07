@@ -280,7 +280,12 @@ describe('buildActionBar', () => {
      * a real Antigravity dwarf rather than merely present in the map.
      */
     it("names Antigravity's launch command too, now that #237 gives it one", () => {
-      expect(entryFor('chat', launched({ provider: 'antigravity' })).hint).toContain('agy -p')
+      // AMENDED for #237 (was: toContain('agy -p') — that flag takes a value
+      // on this CLI and swallowed --input-format, breaking every detached
+      // launch; see LAUNCH_COMMAND in actionBar.ts).
+      expect(entryFor('chat', launched({ provider: 'antigravity' })).hint).toContain(
+        'agy --input-format text'
+      )
       expect(launchedNoInboxReason('antigravity')).not.toContain('codex')
       expect(launchedNoInboxReason('antigravity')).not.toContain('claude')
     })
@@ -363,7 +368,9 @@ describe('buildActionBar', () => {
     })
 
     it("names Antigravity's command too", () => {
-      expect(oneShotNoExitReason('antigravity')).toContain('agy -p')
+      // AMENDED for #237 (was: toContain('agy -p') — same fix as the launched
+      // case above).
+      expect(oneShotNoExitReason('antigravity')).toContain('agy --input-format text')
       expect(oneShotNoExitReason('antigravity')).not.toContain('codex')
     })
 

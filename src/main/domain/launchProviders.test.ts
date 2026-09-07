@@ -76,9 +76,11 @@ describe('agentProviderList', () => {
 
   it('names every provider a launch can actually be started for (#168)', () => {
     // AMENDED for #237, step 4 (was: ['claude', 'codex']). Antigravity gained
-    // a DETACHED, one-shot launch — the verified `agy -p --input-format text`
-    // argv — while staying out of HELDABLE_PROVIDERS: this list only answers
-    // "can a launch be started", never "can it be watched".
+    // a DETACHED, one-shot launch — the verified `agy --input-format text`
+    // argv (`-p` was dropped in a same-day hotfix: it takes a value on this
+    // CLI and swallowed --input-format, see launch.ts) — while staying out
+    // of HELDABLE_PROVIDERS: this list only answers "can a launch be
+    // started", never "can it be watched".
     expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'antigravity'])
   })
 

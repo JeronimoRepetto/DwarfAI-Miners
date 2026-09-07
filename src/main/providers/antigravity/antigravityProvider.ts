@@ -387,11 +387,12 @@ export class AntigravityProvider implements Provider {
    * design) — the head of the same transcript feed() reads the tail of, and
    * never redacted: see firstPrompt.ts.
    *
-   * This is what lets a detached `agy -p` launch be recognised on the board
-   * at all: the launcher writes its prompt to the child's stdin and nothing
-   * else identifies the session it becomes, so the Add Panel's own receipt
-   * (LaunchReceiptRegistry) reads this and matches it against the exact text
-   * it sent. `firstUserMessageIn(extractAntigravityFeed)` reuses the observer
+   * This is what lets a detached `agy --input-format text` launch be
+   * recognised on the board at all: the launcher writes its prompt to the
+   * child's stdin and nothing else identifies the session it becomes, so
+   * the Add Panel's own receipt (LaunchReceiptRegistry) reads this and
+   * matches it against the exact text it sent.
+   * `firstUserMessageIn(extractAntigravityFeed)` reuses the observer
    * slice's own envelope-stripping (`antigravityUserRequestText`) rather than
    * a second reading of `<USER_REQUEST>`: the same rule that turns a step
    * into a feed message is what turns one into a receipt.
