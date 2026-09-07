@@ -2204,7 +2204,13 @@ export class AgentRuntime {
             launchId: this.launchReceipts.issue({
               provider: request.provider,
               minePath: mine.path,
-              prompt
+              prompt,
+              // The same board reading `launched.retain` takes below, and for
+              // the same reason (#263): a session already on it predates this
+              // prompt, so matching words must not let it claim the receipt.
+              knownSessionIds: this.mines.flatMap((item) =>
+                item.dwarfs.map((dwarf) => dwarf.sessionId)
+              )
             })
           }
         : verdict

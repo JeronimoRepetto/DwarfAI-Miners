@@ -40,8 +40,21 @@ import type { Dwarf, DwarfProvider, Mine } from '../domain/types'
  * before", refuses a 'leaving' dwarf because a departed session's retained pid
  * is stale, and is right to. This one has to admit a leaving dwarf — a session
  * that finished before the poll first drew it is the case the panel most needs
- * to open on — and it will not claim on absence of a prior sighting at all.
- * Two questions, two answers, and neither is safe as the other's.
+ * to open on. Two questions, two answers, and neither is safe as the other's.
+ *
+ * AMENDED for #263. This paragraph used to end "and it will not claim on
+ * absence of a prior sighting at all", and the half of that sentence which
+ * still holds is the half that matters: absence claims NOBODY here — the words
+ * are the whole proof, and a session nobody had seen whose prompt does not
+ * match gets no receipt. What was wrong was reading it as "prior sightings are
+ * none of this registry's business". Presence at issue time is not evidence of
+ * a claim, it is a DISQUALIFICATION: a session already on the board when the
+ * prompt was sent cannot be the session that prompt started, whatever it opened
+ * with. Without that, launching Codex in a folder that already held a Codex
+ * session claimed the OLD dwarf — a relaunch is usually the same words, and
+ * candidates are ordered by id, which for Codex is a chronological uuid-v7 —
+ * and the panel opened on it, so the session that had just started read as one
+ * that never started at all (#263).
  */
 
 /** What a launch leaves behind for its dwarf to be recognised by. */
@@ -51,6 +64,16 @@ export interface LaunchReceiptRequest {
   minePath: string
   /** The prompt exactly as it went to the child's stdin, trimmed and capped. */
   prompt: string
+  /**
+   * Every session id already on the board when the launch was made (#263).
+   *
+   * A session in this list predates the prompt, so it cannot be the session
+   * the prompt started — whatever it opened with, and whatever folder it turns
+   * up in. Stated by the caller rather than remembered here, exactly as
+   * `RetainLaunchRequest.knownSessionIds` is, because the board is the
+   * runtime's and a launch is decided against the board it was made on.
+   */
+  knownSessionIds: readonly string[]
 }
 
 export interface LaunchReceiptOptions {
@@ -83,6 +106,8 @@ interface LaunchRecord {
   provider: DwarfProvider
   minePath: string
   prompt: string
+  /** Frozen at issue time: the sessions this launch may never claim (#263). */
+  knownSessionIds: Set<string>
   /** The dwarf this launch turned out to be, once one has been proved. */
   dwarfId?: string
 }
@@ -108,7 +133,15 @@ export class LaunchReceiptRegistry {
   issue(request: LaunchReceiptRequest): string {
     this.sequence += 1
     const launchId = `receipt:${this.sequence}`
-    this.launches.set(launchId, { launchId, ...request })
+    // Copied into a Set here, so a board that moves on cannot change what this
+    // launch was allowed to claim.
+    this.launches.set(launchId, {
+      launchId,
+      provider: request.provider,
+      minePath: request.minePath,
+      prompt: request.prompt,
+      knownSessionIds: new Set(request.knownSessionIds)
+    })
     return launchId
   }
 
@@ -146,6 +179,12 @@ export class LaunchReceiptRegistry {
               // carries the human's original prompt in its own rollout (#218).
               // Absent means root (see Dwarf.parentId).
               dwarf.parentId === undefined &&
+              // Already on the board when this launch was made, so it predates
+              // the prompt and cannot be what the prompt started (#263). The
+              // one guard this shares with the kill register, and for the same
+              // reason: matching words cannot separate a relaunch from the
+              // session it was relaunched after.
+              !launch.knownSessionIds.has(dwarf.sessionId) &&
               !this.claimed.has(dwarf.id)
           )
           .sort((left, right) => left.id.localeCompare(right.id))
