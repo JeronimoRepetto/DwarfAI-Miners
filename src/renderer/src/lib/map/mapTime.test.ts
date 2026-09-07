@@ -11,6 +11,10 @@ describe('mapVariantAt', () => {
     The design's table, read as four closed ranges. Every boundary is checked
     from BOTH sides, because an off-by-one hour here is invisible for 23 hours
     a day and the table is the only place the answer is written down.
+
+    AMENDED for #289 (was: day ended 15:59, sunset began 16:00). The maintainer
+    moved sunset to 17:00 on 2026-09-07 after seeing the map go orange at 16:19
+    in broad daylight; the design source's table carries the amendment.
   */
   it.each([
     ['morning', 7, 0],
@@ -18,8 +22,8 @@ describe('mapVariantAt', () => {
     ['morning', 11, 59],
     ['day', 12, 0],
     ['day', 12, 34],
-    ['day', 15, 59],
-    ['sunset', 16, 0],
+    ['day', 16, 59],
+    ['sunset', 17, 0],
     ['sunset', 18, 15],
     ['sunset', 19, 59],
     ['night', 20, 0],
@@ -54,11 +58,13 @@ describe('mapVariantAt', () => {
       const variant = mapVariantAt(at(hours, 0))
       hoursPerVariant.set(variant, (hoursPerVariant.get(variant) ?? 0) + 1)
     }
+    // AMENDED for #289 (was: day 4, sunset 4): sunset starts at 17:00, so the day owns
+    // one more hour and the sunset one fewer; night and morning are untouched.
     expect([...hoursPerVariant.entries()].sort()).toEqual([
-      ['day', 4],
+      ['day', 5],
       ['morning', 5],
       ['night', 11],
-      ['sunset', 4]
+      ['sunset', 3]
     ])
   })
 
