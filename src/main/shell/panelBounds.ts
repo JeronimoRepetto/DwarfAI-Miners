@@ -234,3 +234,102 @@ export function panelBounds(
     height: area.height
   }
 }
+/**
+ * The design's message panel: `990px` wide (`components.md`, "Dwarf message
+ * panel"), and now the width of a window of its own (#162).
+ */
+export const MESSAGE_PANEL_DESIGN_WIDTH = 990
+
+/**
+ * Air between the shell and the panel standing beside it.
+ *
+ * Unspecified in the source. The mock leaves roughly 17px on its own 768-tall
+ * composition, which is about 24 design pixels at 1080 — but it is a margin
+ * nobody measured on purpose, so this takes the shell's OWN 8px gap
+ * (`--space-nav-gap`, the same `COLUMN_GAP` the mine column is separated by)
+ * rather than inventing a second spacing vocabulary for one edge.
+ */
+export const MESSAGE_PANEL_GAP = COLUMN_GAP
+
+/**
+ * How much room is left beside the shell, on the side away from the edge it is
+ * docked to — the panel's own side, in the display's real pixels.
+ *
+ * Never negative: a shell that spans the whole display leaves nothing, which is
+ * a real state on a small screen and not an error.
+ */
+function messagePanelRoom(area: ScreenRect, shell: ScreenRect, edge: PanelEdge): number {
+  const gap = Math.round(MESSAGE_PANEL_GAP * uiScale(area))
+  const room =
+    edge === 'right' ? shell.x - area.x - gap : area.x + area.width - (shell.x + shell.width) - gap
+  return Math.max(0, room)
+}
+
+/**
+ * How wide the message panel's window should be, in the display's own pixels
+ * (#162).
+ *
+ * ## What happens when the design's 990 does not fit
+ *
+ * The panel SHRINKS to the room beside the shell. It does not flip to the
+ * shell's other side, and it does not fall back to #159's band docked inside
+ * the shell — the two other candidates, both refused:
+ *
+ * - Flipping would move the panel across the desktop every time the shell
+ *   grows, and the "other side" of a shell docked against a screen edge is off
+ *   the display. It would also take the conversation away from the mine it is
+ *   about, which is the one relation the design's mock draws.
+ * - Re-docking inside the shell is exactly what this issue removes, and it
+ *   would need the shell to grow to host the panel — the missing third
+ *   dimension of `PanelLayoutRequest` that dies here.
+ *
+ * Shrinking is also already this file's answer to a composition a display
+ * cannot hold (see `panelWidth`'s clamp), and it is what #159's docked band
+ * shipped, so the narrowing is one the user has already met rather than a new
+ * behaviour. It is self-explanatory too: the shell is what ate the room, and
+ * collapsing the secondary panel with the rail gives it straight back.
+ *
+ * One floor, and it is the platform's rather than the design's: a window of no
+ * width is not a narrow panel, it is a panel that looks as though it never
+ * opened. `MIN_WINDOW_WIDTH` is the narrowest window Windows will actually
+ * make (measured, see its own comment), so a display with less room than that
+ * beside the shell gets a panel overlapping it by at most those 32 pixels.
+ */
+export function messagePanelWidth(area: ScreenRect, shell: ScreenRect, edge: PanelEdge): number {
+  const design = Math.round(MESSAGE_PANEL_DESIGN_WIDTH * uiScale(area))
+  const room = messagePanelRoom(area, shell, edge)
+  return Math.min(area.width, Math.max(MIN_WINDOW_WIDTH, Math.min(design, room)))
+}
+
+/**
+ * The message-panel window's rectangle, given where the shell actually is
+ * (#162).
+ *
+ * Takes the shell's REAL bounds rather than re-deriving them, because that is
+ * the rectangle the panel is placed against: a compositor that put the shell
+ * somewhere else (see `applyPanelBounds`) moves the panel with it instead of
+ * leaving the pair apart.
+ *
+ * `designHeight` is the panel's own height in DESIGN pixels — derived from the
+ * latest message when it opens and then dragged (see the renderer's
+ * `lib/message/panelHeight`) — multiplied here by the one factor `uiScale`
+ * returns, exactly as every width in this file is. The bottom edge is what is
+ * aligned, so a taller panel grows upward and the composition the mock draws
+ * holds at any height.
+ */
+export function messagePanelBounds(
+  area: ScreenRect,
+  shell: ScreenRect,
+  edge: PanelEdge,
+  designHeight: number
+): ScreenRect {
+  const width = messagePanelWidth(area, shell, edge)
+  const height = Math.min(area.height, Math.max(1, Math.round(designHeight * uiScale(area))))
+  const gap = Math.round(MESSAGE_PANEL_GAP * uiScale(area))
+  const x =
+    edge === 'right'
+      ? Math.max(area.x, shell.x - gap - width)
+      : Math.min(area.x + area.width - width, shell.x + shell.width + gap)
+  const bottom = Math.min(shell.y + shell.height, area.y + area.height)
+  return { x, y: Math.max(area.y, bottom - height), width, height }
+}

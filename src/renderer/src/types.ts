@@ -1,5 +1,7 @@
 import type {
+  DwarfKickState,
   DwarfPermissionDecision,
+  DwarfSendState,
   MaterialTotals,
   Mine,
   ProjectSummary
@@ -18,9 +20,11 @@ export type {
   DwarfActivation,
   DwarfAttendance,
   DwarfCapabilities,
+  DwarfDeliveryReport,
   DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
+  DwarfKickState,
   DwarfMcpServerStatus,
   DwarfObserver,
   DwarfPermissionAnswerRequest,
@@ -33,6 +37,7 @@ export type {
   DwarfQuestionAnswerResult,
   DwarfQuestionOption,
   DwarfRole,
+  DwarfSendState,
   DwarfStatus,
   DwarfTextRequest,
   DwarfTextResult,
@@ -45,6 +50,8 @@ export type {
   MaterialTotals,
   McpConnectionStatus,
   MessageIssuer,
+  MessagePanelState,
+  MessagePanelSurface,
   MetricsResetResult,
   Mine,
   MineDeclareResult,
@@ -135,27 +142,18 @@ export function defaultMinesState(): MinesState {
   return { mines: [], tokensObserved: 0, arrived: new Set() }
 }
 
-/**
- * What the panel shows about one dwarf's most recent message: in flight, or
- * the verdict, kept just long enough to be read.
+/*
+ * MOVED to shared/contracts.ts for #162, stated here rather than passing
+ * unseen: DwarfSendState and DwarfKickState were declared in this file, with
+ * the doc comments they still carry there.
  *
- * 'delivered' and 'reacted' are two different facts, and the panel must never
- * blur them (issue #21): delivered means the text reached the session's queue,
- * reacted means the session was then SEEN acting on it. A delivery that is
- * never observed reacting stays 'delivered' — it never promotes on a guess.
+ * They cross a process boundary now. The composer and the kick control live in
+ * the message-panel WINDOW, which owns both stores; the marker each verdict
+ * drives is drawn on the dwarf's sprite inside the mine, which is in the SHELL
+ * window. So the verdicts travel — see DwarfDeliveryReport — and a wire shape
+ * belongs at the one declaration point. The two store roots below stay here:
+ * they are this process's own state, and nothing sends a whole store.
  */
-export interface DwarfSendState {
-  phase: 'sending' | 'delivered' | 'reacted' | 'failed'
-  /** The channel the delivery used, once one was chosen. */
-  via?: string
-  /** Why it failed, shown on the marker. */
-  error?: string
-  /**
-   * True while a delivered message is still watching its dwarf's snapshots for
-   * proof the session acted. False once that bounded window closed unobserved.
-   */
-  awaitingReaction?: boolean
-}
 
 /** Root state for the dwarf-messaging store, keyed by dwarf id. */
 export interface DwarfMessagingState {
@@ -164,21 +162,6 @@ export interface DwarfMessagingState {
 
 export function defaultDwarfMessagingState(): DwarfMessagingState {
   return { byDwarfId: {} }
-}
-
-/**
- * What the panel shows about one dwarf's most recent kick: in flight, or the
- * verdict. Same two-phase honesty as DwarfSendState — an interrupt handed to a
- * session is not the same as a session that stopped.
- */
-export interface DwarfKickState {
-  phase: 'kicking' | 'delivered' | 'reacted' | 'failed'
-  /** The channel the kick used, once one was chosen. */
-  via?: string
-  /** Why it failed, shown on the marker. */
-  error?: string
-  /** True while a delivered kick is still watching for proof the session stopped. */
-  awaitingReaction?: boolean
 }
 
 /** Root state for the dwarf-kicking store, keyed by dwarf id. */
