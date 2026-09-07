@@ -22,7 +22,16 @@ import { useView } from './composables/useView'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import type { AppBuild, Dwarf, Mine, MineHistoryResult, MinesSnapshot, ShellArea } from './types'
+import type {
+  AgentModelCatalog,
+  AppBuild,
+  Dwarf,
+  DwarfTuningRequest,
+  Mine,
+  MineHistoryResult,
+  MinesSnapshot,
+  ShellArea
+} from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -278,7 +287,70 @@ const openDwarfId = computed(() =>
  */
 watch(openDwarfId, (dwarfId) => {
   if (dwarfId !== null) window.api.refreshDwarfTelemetry(dwarfId)
+  // A refusal belongs to one session's own request (issue #96). Carried over
+  // to the next selection it would read as a refusal from the dwarf the
+  // reader has only just picked, which is a claim about a session nobody
+  // asked anything of.
+  tuningRefusal.value = undefined
 })
+
+/**
+ * What each provider can run, for the strip's model select (issue #96) —
+ * #239's own catalogue channel, reused rather than asked a second time, so
+ * there is exactly one answer in this app to "what can a session switch to".
+ *
+ * Asked ONCE per run, lazily, the first time a mine is opened. Both halves of
+ * that matter and neither is a guess: the ask spawns a real CLI process per
+ * provider (see `createSdkModelCatalog`), so it must not ride a selection, a
+ * mine, or the 2 Hz poll — and nothing outside a mine can draw the strip, so
+ * paying for it at startup would charge every run that never opens one. What
+ * a machine has installed changes when somebody installs a CLI, which is not
+ * something to keep in step within one run of a floating panel.
+ */
+const catalogs = ref<readonly AgentModelCatalog[]>([])
+let catalogsAsked = false
+
+/** Why the last tuning change was refused, until the strip changes subject. */
+const tuningRefusal = ref<string | undefined>(undefined)
+
+watch(
+  () => viewState.mineId,
+  (mineId) => {
+    if (mineId === null || catalogsAsked) return
+    catalogsAsked = true
+    void window.api
+      .listAgentModels()
+      .then((list) => {
+        catalogs.value = list.catalogs
+      })
+      .catch(() => {
+        // A catalogue nobody could answer is a strip with no select on it,
+        // which is what an unanswered one already looks like — and it is the
+        // honest rendering, so there is nothing to report here.
+      })
+  }
+)
+
+/**
+ * Ask main to change a held session's model or effort (issue #96).
+ *
+ * The one place in the renderer that talks to main about this. The scene and
+ * the strip decide and draw; neither reaches the bridge, for the reason the
+ * send and kick verdicts already live up here — a control's verdict has to be
+ * shown beside the control, and the surface below it is redrawn from every
+ * poll.
+ *
+ * `applied: true` is deliberately NOT acted on. It means the session accepted
+ * the request, not that anything changed, and what changed arrives on a later
+ * snapshot as the session's own report (see `DwarfSessionTuning`). Drawing
+ * anything off this verdict would be the panel claiming a change on the
+ * strength of having asked for one.
+ */
+async function tuneSession(request: DwarfTuningRequest): Promise<void> {
+  tuningRefusal.value = undefined
+  const verdict = await window.api.setDwarfTuning(request)
+  if (!verdict.applied) tuningRefusal.value = verdict.reason
+}
 
 /*
  * WHAT WENT WITH THE PANEL (#162).
@@ -743,10 +815,13 @@ onBeforeUnmount(() => {
             :send-states="dwarfDelivery.send"
             :kick-states="dwarfDelivery.kick"
             :selected-id="openDwarfId"
+            :catalogs="catalogs"
+            :tuning-refusal="tuningRefusal"
             @back="leaveMine"
             @select="selectDwarf"
             @add="openLaunch(currentMine.id)"
             @history="openHistory"
+            @tune="tuneSession"
           />
         </PanelFrame>
       </div>

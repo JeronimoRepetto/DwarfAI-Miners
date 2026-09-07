@@ -804,6 +804,77 @@ describe('preload session-telemetry refresh contract (#96)', () => {
     expect(send).toHaveBeenLastCalledWith('dwarf:refreshTelemetry', '')
   })
 })
+
+/**
+ * The panel CHANGING a held session's own model or effort (#96).
+ *
+ * Request/response, unlike its read-only sibling above: there is a verdict
+ * the strip has to render — a refusal's reason — and nothing else pushes that
+ * later. One channel carrying a discriminated `change`, rebuilt field by
+ * field here so a caller cannot attach anything past the one act it names.
+ */
+describe('preload session-tuning contract (#96)', () => {
+  it('sends a model change on the dwarf:setTuning channel and answers the verdict', async () => {
+    invoke.mockResolvedValueOnce({ applied: true })
+    await expect(
+      api.setDwarfTuning({
+        dwarfId: 'claude:s1',
+        change: { kind: 'model', model: 'claude-sonnet-5' }
+      })
+    ).resolves.toEqual({ applied: true })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
+      dwarfId: 'claude:s1',
+      change: { kind: 'model', model: 'claude-sonnet-5' }
+    })
+  })
+
+  it('sends an effort change on the same channel, as its own kind', async () => {
+    invoke.mockResolvedValueOnce({ applied: true })
+    await api.setDwarfTuning({ dwarfId: 'claude:s1', change: { kind: 'effort', effort: 'high' } })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
+      dwarfId: 'claude:s1',
+      change: { kind: 'effort', effort: 'high' }
+    })
+  })
+
+  it('rebuilds the request rather than forwarding whatever the caller attached', async () => {
+    // Same discipline as launchAgent's own field-by-field rebuild: nothing
+    // beyond the one act may cross, whatever else is hung off the object.
+    invoke.mockResolvedValueOnce({ applied: false, reason: 'no' })
+    await api.setDwarfTuning({
+      dwarfId: 'claude:s1',
+      change: { kind: 'model', model: 'claude-sonnet-5' },
+      cwd: '/home/j/secrets'
+    } as unknown as Parameters<typeof api.setDwarfTuning>[0])
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
+      dwarfId: 'claude:s1',
+      change: { kind: 'model', model: 'claude-sonnet-5' }
+    })
+  })
+
+  it('collapses a change it cannot read to a kind main refuses, rather than guessing one', () => {
+    // A tuning change NAMES AN ACT, so there is no safe default — picking one
+    // would change a running session in a way nobody asked for. An
+    // unrecognised kind crosses as `''`, which main refuses outright, the
+    // same treatment launchAgent gives an unrecognised provider.
+    ;(api.setDwarfTuning as unknown as (value: unknown) => void)({
+      dwarfId: 'claude:s1',
+      change: { kind: 'temperature', model: 'hot' }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
+      dwarfId: 'claude:s1',
+      change: { kind: '', value: '' }
+    })
+  })
+
+  it('collapses a missing payload to one main refuses, without throwing', () => {
+    ;(api.setDwarfTuning as unknown as (value: unknown) => void)(undefined)
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setTuning', {
+      dwarfId: '',
+      change: { kind: '', value: '' }
+    })
+  })
+})
 /**
  * The message panel's own window (#162).
  *

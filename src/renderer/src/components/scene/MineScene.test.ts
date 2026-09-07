@@ -813,4 +813,55 @@ describe('MineScene session strip (#96)', () => {
     })
     expect(wrapper.get('.session-strip').classes()).not.toContain('is-unavailable')
   })
+
+  /*
+   * Issue #96's mutating slice. The scene neither builds a model list nor
+   * makes a request: it hands the strip what the shell already asked for and
+   * passes a use of a control back up. Everything about which control exists,
+   * and what happens to a request, is on either side of this.
+   */
+  const tunable = defaultDwarf({
+    ...held,
+    sessionTuning: { canSetModel: true, canSetEffort: true }
+  })
+  const catalogs = [
+    {
+      provider: 'claude' as const,
+      models: [{ value: 'claude-haiku-4-5' }, { value: 'claude-sonnet-5' }],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      source: 'provider' as const
+    }
+  ]
+
+  it("hands the strip the shell's own catalogue rather than building a list of its own", () => {
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [tunable] }), selectedId: 'claude:s1', catalogs }
+    })
+    expect(wrapper.findAll('.session-model-select option').map((o) => o.text())).toEqual([
+      'claude-haiku-4-5',
+      'claude-sonnet-5'
+    ])
+  })
+
+  it('passes a use of a control up to the shell, which owns the request', async () => {
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ dwarfs: [tunable] }), selectedId: 'claude:s1', catalogs }
+    })
+    await wrapper.get('.session-model-select').setValue('claude-sonnet-5')
+    expect(wrapper.emitted('tune')).toEqual([
+      [{ dwarfId: 'claude:s1', change: { kind: 'model', model: 'claude-sonnet-5' } }]
+    ])
+  })
+
+  it("shows the shell's refusal on the strip rather than swallowing it", () => {
+    const wrapper = mount(MineScene, {
+      props: {
+        mine: defaultMine({ dwarfs: [tunable] }),
+        selectedId: 'claude:s1',
+        catalogs,
+        tuningRefusal: 'The session did not answer in time.'
+      }
+    })
+    expect(wrapper.get('.session-refusal').text()).toBe('The session did not answer in time.')
+  })
 })

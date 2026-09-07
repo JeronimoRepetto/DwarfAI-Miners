@@ -4703,27 +4703,50 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
   const MINE_PATH = 'C:\\X\\anvil'
   const CLAUDE = '/home/j/.local/bin/claude'
 
-  /** The Agent SDK seam. No runtime test starts a real agent. */
-  function heldPort(): {
+  /**
+   * The Agent SDK seam. No runtime test starts a real agent.
+   *
+   * AMENDED for #96's mutating slice: the shape was an inline return type,
+   * and is a named one now purely so the object below can be held in a
+   * `const` — `contextUsageModel` is read from inside the handle it is
+   * declared beside, which an anonymous return-position literal cannot do.
+   * No existing member changed.
+   */
+  interface HeldPortFake {
     port: HeldSessionPort
     started: HeldSessionStartRequest[]
     closes: () => number
     /** AMENDED for #96: which sessions were asked for a context reading, in order. */
     contextUsageAsks: number[]
+    /*
+     * AMENDED for #96's mutating slice: the tuning half of the same surface.
+     * `modelsSet` records what the session was asked to switch to, and
+     * `contextUsageModel` is what its next reading will then NAME — which is
+     * the thing that verifies a model change without spending a paid turn, so
+     * a test has to be able to set the two independently. No existing
+     * assertion changed.
+     */
+    modelsSet: string[]
+    contextUsageModel: string
     reportSessionId: (index: number, sessionId: string) => void
     ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
     permission: (index: number, toolUseId: string) => Promise<HeldPermissionAnswer>
     reportTelemetry: (index: number, update: HeldSessionTelemetryUpdate) => void
     reportSubagent: (index: number, signal: HeldSessionSubagentSignal) => void
     reportMessage: (index: number, role: 'user' | 'assistant', text: string) => void
-  } {
+  }
+
+  function heldPort(): HeldPortFake {
     const started: HeldSessionStartRequest[] = []
     const contextUsageAsks: number[] = []
+    const modelsSet: string[] = []
     let closed = 0
-    return {
+    const fake: HeldPortFake = {
       started,
       closes: () => closed,
       contextUsageAsks,
+      modelsSet,
+      contextUsageModel: 'claude-haiku-4-5',
       port: async (request) => {
         const index = started.length
         started.push(request)
@@ -4743,8 +4766,23 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
            */
           contextUsage: async () => {
             contextUsageAsks.push(index)
-            return { usedTokens: 41_237, maxTokens: 200_000 }
-          }
+            return {
+              usedTokens: 41_237,
+              maxTokens: 200_000,
+              // The model the CLI says is in force at this reading (#96) —
+              // what the strip's own verification rule reads.
+              model: fake.contextUsageModel
+            }
+          },
+          // The two OPTIONAL tuning capabilities (#96). Present here because
+          // the engine behind a held Claude session has both; a fake that
+          // leaves one off is what an engine without it looks like, and that
+          // case is pinned in heldSessionRegistry.test.ts.
+          setModel: async (model: string) => {
+            modelsSet.push(model)
+            return true
+          },
+          setEffort: async () => true
         }
       },
       reportSessionId: (index, sessionId) => started[index]!.onSessionId(sessionId),
@@ -4771,6 +4809,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       reportSubagent: (index, signal) => started[index]!.onSubagent(signal),
       reportMessage: (index, role, text) => started[index]!.onMessage(role, text)
     }
+    return fake
   }
 
   function heldRegistry(port: HeldSessionPort): HeldSessionRegistry {
@@ -5010,6 +5049,109 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     runtime.refreshDwarfTelemetry('nobody')
 
     expect(port.contextUsageAsks).toEqual([])
+    runtime.stop()
+  })
+
+  /*
+   * Issue #96's MUTATING half. The channel is one act per request over a
+   * discriminated payload, and this level owns exactly two things: resolving
+   * a DWARF to the session this process holds, and refusing everything that
+   * is not one. What a change means, what confirms it and what a refusal says
+   * all belong to the registry.
+   */
+  it('changes the model of the held session behind a dwarf, and publishes the controls (#96)', async () => {
+    const port = heldPort()
+    const registry = heldRegistry(port.port)
+    const runtime = heldRuntime({ heldSessions: registry, providers: [foremanProvider()] })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+    await runtime.refresh()
+
+    // What the strip needs before it may draw a control at all: the engine's
+    // own answer about what it can change, stamped on the foreman.
+    expect(runtime.getMines()[0]!.dwarfs[0]!.sessionTuning).toEqual({
+      canSetModel: true,
+      canSetEffort: true
+    })
+
+    port.contextUsageModel = 'claude-sonnet-5'
+    const verdict = await runtime.setDwarfTuning({
+      dwarfId: 'claude:sess-1',
+      change: { kind: 'model', model: 'claude-sonnet-5' }
+    })
+    await runtime.refresh()
+
+    expect(verdict).toEqual({ applied: true })
+    expect(port.modelsSet).toEqual(['claude-sonnet-5'])
+    // Confirmed by the reading, so the board carries the new model and
+    // nothing is left pending for the strip to hedge about.
+    expect(runtime.getMines()[0]!.dwarfs[0]!.model).toBe('claude-sonnet-5')
+    expect(runtime.getMines()[0]!.dwarfs[0]!.sessionTuning).toEqual({
+      canSetModel: true,
+      canSetEffort: true
+    })
+    runtime.stop()
+  })
+
+  it('publishes a model this panel asked for as pending until a reading names it (#96)', async () => {
+    const port = heldPort()
+    const registry = heldRegistry(port.port)
+    const runtime = heldRuntime({ heldSessions: registry, providers: [foremanProvider()] })
+    await runtime.refresh()
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+
+    // The session has not switched yet, and says so.
+    await runtime.setDwarfTuning({
+      dwarfId: 'claude:sess-1',
+      change: { kind: 'model', model: 'claude-sonnet-5' }
+    })
+    await runtime.refresh()
+
+    const dwarf = runtime.getMines()[0]!.dwarfs[0]!
+    expect(dwarf.model).toBe('claude-haiku-4-5')
+    expect(dwarf.sessionTuning).toEqual({
+      canSetModel: true,
+      canSetEffort: true,
+      pendingModel: 'claude-sonnet-5'
+    })
+    runtime.stop()
+  })
+
+  it('refuses a tuning change for a dwarf whose session this panel does not hold (#96)', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    const observed = await runtime.setDwarfTuning({
+      dwarfId: 'claude:sess-1',
+      change: { kind: 'model', model: 'claude-sonnet-5' }
+    })
+    const absent = await runtime.setDwarfTuning({
+      dwarfId: 'nobody',
+      change: { kind: 'effort', effort: 'high' }
+    })
+
+    expect(observed.applied).toBe(false)
+    expect(absent.applied).toBe(false)
+    expect(port.modelsSet).toEqual([])
+    // And no control is offered on a session that cannot serve one.
+    expect(runtime.getMines()[0]!.dwarfs[0]!.sessionTuning).toBeUndefined()
     runtime.stop()
   })
 
@@ -6001,17 +6143,25 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
   })
 
   it("asks the SDK for Claude's own live models when the CLI is installed", async () => {
-    const claudeModelCatalog = vi
-      .fn<ClaudeModelCatalogPort>()
-      .mockResolvedValue([
-        { value: 'claude-sonnet-5', displayName: 'Sonnet', supportsEffort: true }
-      ])
+    // AMENDED for #96 (was: the SDK answer carried no `effortLevels` and the
+    // expected option was `{ value, label }` alone). A per-model effort list
+    // now rides each option — see ModelOption.effortLevels — and this case
+    // carries one through end to end. Nothing about the port call, the
+    // provider-wide `efforts` or the source changed.
+    const claudeModelCatalog = vi.fn<ClaudeModelCatalogPort>().mockResolvedValue([
+      {
+        value: 'claude-sonnet-5',
+        displayName: 'Sonnet',
+        supportsEffort: true,
+        effortLevels: ['low', 'high']
+      }
+    ])
     const list = await runtimeWith({ claudeInstalled: true, claudeModelCatalog }).listAgentModels()
 
     expect(claudeModelCatalog).toHaveBeenCalledWith({ executablePath: CLAUDE_BIN })
     expect(list.catalogs.find((entry) => entry.provider === 'claude')).toEqual({
       provider: 'claude',
-      models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }],
+      models: [{ value: 'claude-sonnet-5', label: 'Sonnet', effortLevels: ['low', 'high'] }],
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       source: 'provider'
     })

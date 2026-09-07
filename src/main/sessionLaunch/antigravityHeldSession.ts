@@ -112,6 +112,11 @@ import type {
  *   "this protocol has no cancel" rather than "the interrupt was refused". See
  *   `HeldSessionHandle` on why absent and `false` are different claims.
  * - **No `contextUsage`.** There is no control channel to pull one over.
+ * - **No `setModel` and no `setEffort`** (issue #96). Same reason again: those
+ *   are control requests, and this stream's input side has no control channel
+ *   at all. So the mine's session strip draws both selects DISABLED with the
+ *   reason stated, off `Dwarf.sessionTuning`'s two `false` flags — never live
+ *   controls that would accept a click and change nothing.
  * - **`onAsk` and `onPermission` are never called.** Antigravity's own
  *   `ask_question` and `ask_permission` tools exist — they are in the `init`
  *   tool list — and nothing in this stream hands one to a host, so no question

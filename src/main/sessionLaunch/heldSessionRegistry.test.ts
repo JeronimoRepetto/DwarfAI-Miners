@@ -2,8 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import { HELD_CONVERSATION_LIMIT } from '../domain/types'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
-import { HeldSessionRegistry } from './heldSessionRegistry'
-import { HELD_CONTEXT_USAGE_TIMEOUT_MS } from './heldSession'
+import {
+  HeldSessionRegistry,
+  TUNING_NOT_HELD,
+  TUNING_REFUSED,
+  TUNING_TIMED_OUT,
+  TUNING_UNSUPPORTED
+} from './heldSessionRegistry'
+import { HELD_CONTEXT_USAGE_TIMEOUT_MS, HELD_TUNING_TIMEOUT_MS } from './heldSession'
 import type {
   HeldAnswer,
   HeldPermission,
@@ -83,6 +89,26 @@ class FakePort {
   contextUsageAnswer: HeldSessionContextUsage | null = { usedTokens: 41_237, maxTokens: 200_000 }
   /** Set true to make the pull hang, as a session that never answers would. */
   contextUsageHangs = false
+  /*
+   * AMENDED for #96's mutating slice (was: a handle carrying
+   * close/send/interrupt/contextUsage). `setModel` and `setEffort` are
+   * OPTIONAL capabilities of the engine behind a session, so the fake has to
+   * be able to leave either one OFF — that absence is what a held session on
+   * an engine with no such act looks like, and it is a case with its own
+   * tests. No existing assertion changed.
+   */
+  /** Which models this session was asked to switch to, in order. */
+  readonly modelsSet: string[] = []
+  /** Which efforts this session was asked to switch to, in order. */
+  readonly effortsSet: string[] = []
+  /** Set false to leave `setModel` off the handle, as an engine without one has it. */
+  offersSetModel = true
+  /** Set false to leave `setEffort` off the handle, on the same terms. */
+  offersSetEffort = true
+  /** Set false to make the session refuse a tuning change, as a closing one would. */
+  tuningTakes = true
+  /** Set true to make a tuning change hang, as a session that never answers would. */
+  tuningHangs = false
 
   readonly start: HeldSessionPort = async (request) => {
     if (this.failWith !== undefined) throw this.failWith
@@ -109,6 +135,24 @@ class FakePort {
               this.contextUsageAsks.push(index)
               if (this.contextUsageHangs) return new Promise<never>(() => {})
               return Promise.resolve(this.contextUsageAnswer)
+            }
+          }
+        : {}),
+      ...(this.offersSetModel
+        ? {
+            setModel: (model: string) => {
+              this.modelsSet.push(model)
+              if (this.tuningHangs) return new Promise<never>(() => {})
+              return Promise.resolve(this.tuningTakes)
+            }
+          }
+        : {}),
+      ...(this.offersSetEffort
+        ? {
+            setEffort: (effort: string) => {
+              this.effortsSet.push(effort)
+              if (this.tuningHangs) return new Promise<never>(() => {})
+              return Promise.resolve(this.tuningTakes)
             }
           }
         : {})
@@ -658,6 +702,340 @@ describe('HeldSessionRegistry context usage (#96)', () => {
     port.end(0)
 
     expect(registry.telemetryState('sess-1')).toEqual({ held: false })
+  })
+})
+
+/*
+ * Issue #96's MUTATING slice. Changing a running session's model is one
+ * control request on the stream this process already owns — ~2 ms, measured
+ * live — and the thing that makes it safe to offer is not the request but its
+ * VERIFICATION: the session's own next context reading names the model the CLI
+ * believes is in force, so the change is proved without spending a paid turn.
+ *
+ * Effort is the other half and it is deliberately weaker. `applyFlagSettings`
+ * resolves cleanly on a model that supports no effort and silently does
+ * nothing, so nothing about accepting the request proves anything; the only
+ * confirmation is the next `init` re-announcing the session's own effort, and
+ * until that arrives the panel says "requested".
+ */
+describe('HeldSessionRegistry tuning (#96)', () => {
+  async function held(port: FakePort): Promise<HeldSessionRegistry> {
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+    return registry
+  }
+
+  it('forwards a model change to the session and re-pulls the reading that proves it', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    // What the session will report once it has switched: the SDK's context
+    // response carries the model beside the counts, which is the whole route.
+    port.contextUsageAnswer = {
+      usedTokens: 41_237,
+      maxTokens: 1_000_000,
+      model: 'claude-sonnet-5'
+    }
+
+    const verdict = await registry.setTuning('sess-1', {
+      kind: 'model',
+      model: 'claude-sonnet-5'
+    })
+
+    expect(verdict).toEqual({ applied: true })
+    expect(port.modelsSet).toEqual(['claude-sonnet-5'])
+    // Not a second poll and not a turn: the pull is the confirmation.
+    expect(port.contextUsageAsks).toEqual([0])
+    expect(registry.telemetryState('sess-1').model).toBe('claude-sonnet-5')
+    // Confirmed, so nothing is left pending for the strip to hedge about.
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
+  it('changes the model on an engine with no context reading, and waits for the next init', async () => {
+    /*
+     * The combination #237 step 5 made possible: `setModel` present,
+     * `contextUsage` absent. The two capabilities are independent, so this is
+     * a real handle shape rather than a gap.
+     *
+     * The change is MADE. Refusing an act this engine can perform, because a
+     * second act it never claimed is missing, would be the panel inventing a
+     * limitation the session does not have. What is missing is only the
+     * cheap witness — so the request stands as pending, no reading is pulled
+     * (there is none to pull), and the next `init` naming the model is what
+     * clears it. Exactly the shape effort already has, for the same reason.
+     */
+    const port = new FakePort()
+    port.offersContextUsage = false
+    const registry = await held(port)
+
+    expect(await registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })).toEqual(
+      { applied: true }
+    )
+
+    expect(port.modelsSet).toEqual(['claude-sonnet-5'])
+    expect(port.contextUsageAsks).toEqual([])
+    // Pending, and honestly so: nothing has confirmed it yet.
+    expect(registry.telemetryState('sess-1').model).toBe('claude-haiku-4-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true, pendingModel: 'claude-sonnet-5' }
+    })
+
+    port.reportTelemetry(0, { model: 'claude-sonnet-5', turn: 'started' })
+
+    expect(registry.telemetryState('sess-1').model).toBe('claude-sonnet-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
+  it('verifies against a reading started AFTER the change, never one already on the wire', async () => {
+    /*
+     * The trap this closes. A pull already in flight was started BEFORE the
+     * model changed, so its answer cannot speak to the change — and
+     * `refreshContextUsage` deliberately JOINS a pull rather than stacking a
+     * second request on the same stream (the no-retry-storm rule). Joining
+     * one here would leave the change unverified until some later trigger
+     * happened to fire, and the strip stuck on "pending" for a change that had
+     * already taken effect.
+     *
+     * The fix is not a second concurrent request: it is waiting for the stale
+     * one, then asking again.
+     */
+    vi.useFakeTimers()
+    try {
+      const port = new FakePort()
+      const registry = await held(port)
+      port.contextUsageHangs = true
+      const stale = registry.refreshContextUsage('sess-1')
+
+      port.contextUsageHangs = false
+      port.contextUsageAnswer = { usedTokens: 1, maxTokens: 1_000_000, model: 'claude-sonnet-5' }
+      const tuned = registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })
+      await vi.advanceTimersByTimeAsync(HELD_CONTEXT_USAGE_TIMEOUT_MS)
+      await stale
+
+      expect(await tuned).toEqual({ applied: true })
+      // Two asks: the stale one that could say nothing about the change, and
+      // the fresh one that could.
+      expect(port.contextUsageAsks).toEqual([0, 0])
+      expect(registry.telemetryState('sess-1').model).toBe('claude-sonnet-5')
+      expect(registry.tuningState('sess-1')).toEqual({
+        held: true,
+        tuning: { canSetModel: true, canSetEffort: true }
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('holds the model pending while the reading still names the old one', async () => {
+    // The one case the whole verification rule exists for: the request was
+    // accepted, and the session has not switched yet. Showing the new name
+    // here would be this panel claiming a change on the strength of a request.
+    const port = new FakePort()
+    const registry = await held(port)
+    port.contextUsageAnswer = {
+      usedTokens: 100,
+      maxTokens: 200_000,
+      model: 'claude-haiku-4-5'
+    }
+
+    expect(await registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })).toEqual(
+      { applied: true }
+    )
+
+    expect(registry.telemetryState('sess-1').model).toBe('claude-haiku-4-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true, pendingModel: 'claude-sonnet-5' }
+    })
+  })
+
+  it('clears the pending model on a later reading that finally names it', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    port.contextUsageAnswer = { usedTokens: 100, maxTokens: 200_000, model: 'claude-haiku-4-5' }
+    await registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })
+
+    port.contextUsageAnswer = { usedTokens: 120, maxTokens: 1_000_000, model: 'claude-sonnet-5' }
+    await registry.refreshContextUsage('sess-1')
+
+    expect(registry.telemetryState('sess-1').model).toBe('claude-sonnet-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
+  it('clears the pending model on the next init naming it, not only on a reading', async () => {
+    // `init` is re-emitted at the start of every turn and carries the model
+    // too. It is the same CLI saying the same thing, so it confirms as well.
+    const port = new FakePort()
+    const registry = await held(port)
+    port.contextUsageAnswer = { usedTokens: 100, maxTokens: 200_000, model: 'claude-haiku-4-5' }
+    await registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })
+
+    port.reportTelemetry(0, { model: 'claude-sonnet-5', turn: 'started' })
+
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
+  it('refuses a model change on a session whose engine has no such act', async () => {
+    // The handle simply has no `setModel`, which is how an engine with no
+    // mid-run model change declares itself. Nothing is attempted and nothing
+    // is left pending: the strip disables the control and states the reason.
+    const port = new FakePort()
+    port.offersSetModel = false
+    const registry = await held(port)
+
+    const verdict = await registry.setTuning('sess-1', {
+      kind: 'model',
+      model: 'claude-sonnet-5'
+    })
+
+    expect(verdict).toEqual({ applied: false, reason: TUNING_UNSUPPORTED })
+    expect(port.contextUsageAsks).toEqual([])
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: false, canSetEffort: true }
+    })
+  })
+
+  it('refuses a change the stream would not take, leaving the old value showing', async () => {
+    const port = new FakePort()
+    port.tuningTakes = false
+    const registry = await held(port)
+
+    const verdict = await registry.setTuning('sess-1', {
+      kind: 'model',
+      model: 'claude-sonnet-5'
+    })
+
+    expect(verdict).toEqual({ applied: false, reason: TUNING_REFUSED })
+    expect(registry.telemetryState('sess-1').model).toBe('claude-haiku-4-5')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
+  it('gives up on a change the session never accepts, and never retries it', async () => {
+    vi.useFakeTimers()
+    try {
+      const port = new FakePort()
+      port.tuningHangs = true
+      const registry = await held(port)
+
+      const pending = registry.setTuning('sess-1', { kind: 'model', model: 'claude-sonnet-5' })
+      await vi.advanceTimersByTimeAsync(HELD_TUNING_TIMEOUT_MS)
+
+      expect(await pending).toEqual({ applied: false, reason: TUNING_TIMED_OUT })
+      // One request, and no reading pulled for a change nothing accepted.
+      expect(port.modelsSet).toEqual(['claude-sonnet-5'])
+      expect(port.contextUsageAsks).toEqual([])
+      expect(registry.tuningState('sess-1')).toEqual({
+        held: true,
+        tuning: { canSetModel: true, canSetEffort: true }
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses a change for a session this panel does not hold, in its own words', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+
+    expect(
+      await registry.setTuning('sess-nobody', { kind: 'model', model: 'claude-sonnet-5' })
+    ).toEqual({ applied: false, reason: TUNING_NOT_HELD })
+    expect(port.modelsSet).toEqual([])
+  })
+
+  it('reports not-held for a session this panel does not hold', () => {
+    const registry = registryOver(new FakePort())
+    expect(registry.tuningState('sess-nobody')).toEqual({ held: false })
+  })
+
+  it('forwards an effort change and pulls NO reading, because none can confirm it', async () => {
+    // A context reading names a model and says nothing at all about effort, so
+    // pulling one here would be a control request that could not answer the
+    // question it was made for.
+    const port = new FakePort()
+    const registry = await held(port)
+
+    const verdict = await registry.setTuning('sess-1', { kind: 'effort', effort: 'high' })
+
+    expect(verdict).toEqual({ applied: true })
+    expect(port.effortsSet).toEqual(['high'])
+    expect(port.contextUsageAsks).toEqual([])
+    // "Requested", not "set": nothing has echoed it back yet.
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true, pendingEffort: 'high' }
+    })
+  })
+
+  it("clears a requested effort once an init re-announces the session's own", async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    await registry.setTuning('sess-1', { kind: 'effort', effort: 'high' })
+
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5', effort: 'high', turn: 'started' })
+
+    expect(registry.telemetryState('sess-1').effort).toBe('high')
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true }
+    })
+  })
+
+  it('keeps an effort requested when the next init announces a different one', async () => {
+    // The honest reading of a setting the CLI accepted and then did not adopt.
+    const port = new FakePort()
+    const registry = await held(port)
+    await registry.setTuning('sess-1', { kind: 'effort', effort: 'high' })
+
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5', effort: 'low', turn: 'started' })
+
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: true, pendingEffort: 'high' }
+    })
+  })
+
+  it('refuses an effort change on a session whose engine has no such act', async () => {
+    const port = new FakePort()
+    port.offersSetEffort = false
+    const registry = await held(port)
+
+    expect(await registry.setTuning('sess-1', { kind: 'effort', effort: 'high' })).toEqual({
+      applied: false,
+      reason: TUNING_UNSUPPORTED
+    })
+    expect(registry.tuningState('sess-1')).toEqual({
+      held: true,
+      tuning: { canSetModel: true, canSetEffort: false }
+    })
+  })
+
+  it('discards a pending change with the session, exactly as it discards the rest', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    await registry.setTuning('sess-1', { kind: 'effort', effort: 'high' })
+
+    port.end(0)
+
+    expect(registry.tuningState('sess-1')).toEqual({ held: false })
   })
 })
 

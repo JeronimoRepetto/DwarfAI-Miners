@@ -26,6 +26,8 @@ import type {
   DwarfQuestionAnswerResult,
   DwarfTextRequest,
   DwarfTextResult,
+  DwarfTuningRequest,
+  DwarfTuningResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
   HostedLaunchRequest,
@@ -82,6 +84,7 @@ import { MaterialLedger } from './ledger/materialLedger'
 import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
+import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -148,6 +151,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
   ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.refreshDwarfTelemetry)
+  ipcMain.removeHandler(IPC_CHANNELS.setDwarfTuning)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
@@ -233,6 +237,40 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+/**
+ * Same boundary discipline again, over a payload that NAMES AN ACT (issue
+ * #96) — the same class of field as `parseProjectQuery`'s `sortBy` and
+ * `parsePermissionRequest`'s `decision`, and checked the same way: against
+ * the closed set this build recognises, with anything else refused outright
+ * rather than resolved to a default.
+ *
+ * There is no lesser act to fall back to here. Both members change a session
+ * that is already running, so a payload whose `kind` this build cannot read
+ * must take the whole request down — the preload collapses an unrecognised
+ * one to exactly the shape this refuses, so the two ends agree.
+ *
+ * The VALUE is checked for being a non-empty string and nothing more. Which
+ * models exist is the provider's own answer (see AgentModelCatalog) and which
+ * efforts a model takes is per-model (ModelOption.effortLevels) — neither is
+ * a list this file may hold a second copy of, and the session itself refuses
+ * what it does not recognise.
+ */
+function parseTuningRequest(payload: unknown): DwarfTuningRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string' || record.dwarfId === '') return null
+  const change = record.change
+  if (typeof change !== 'object' || change === null) return null
+  const named = change as Record<string, unknown>
+  if (named.kind === 'model' && typeof named.model === 'string' && named.model !== '') {
+    return { dwarfId: record.dwarfId, change: { kind: 'model', model: named.model } }
+  }
+  if (named.kind === 'effort' && typeof named.effort === 'string' && named.effort !== '') {
+    return { dwarfId: record.dwarfId, change: { kind: 'effort', effort: named.effort } }
+  }
+  return null
 }
 
 /**
@@ -808,6 +846,18 @@ async function init(): Promise<void> {
   ipcMain.on(IPC_CHANNELS.refreshDwarfTelemetry, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return
     runtime?.refreshDwarfTelemetry(dwarfId)
+  })
+  // Changing a held session's own model or effort (issue #96) — the mutating
+  // half of the surface above, and request/response for the reason the
+  // channel's own doc comment gives: the strip has to render the refusal.
+  // A payload this boundary cannot read is refused with the same words the
+  // registry uses for a session it does not hold, because from the panel's
+  // side those are the same fact: nothing was changed and nothing will be.
+  const notTuned: DwarfTuningResult = { applied: false, reason: TUNING_NOT_HELD }
+  ipcMain.handle(IPC_CHANNELS.setDwarfTuning, (_event, payload: unknown) => {
+    const request = parseTuningRequest(payload)
+    if (request === null) return notTuned
+    return runtime?.setDwarfTuning(request) ?? notTuned
   })
   // A mine this process could not read history for (#192) — never "nobody has
   // spoken here", which is what an empty list with `readable: true` would say.

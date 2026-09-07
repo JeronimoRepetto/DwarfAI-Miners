@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { NO_SESSION_SURFACE_REASON } from '../../lib/scene/sessionStrip'
+import {
+  NO_EFFORT_CONTROL_REASON,
+  NO_MODEL_CONTROL_REASON,
+  NO_SESSION_SURFACE_REASON
+} from '../../lib/scene/sessionStrip'
 import { defaultDwarf } from '../../testing/factories'
-import type { Dwarf } from '../../types'
+import type { AgentModelCatalog, Dwarf } from '../../types'
 import SessionStrip from './SessionStrip.vue'
 
 /**
@@ -98,5 +102,152 @@ describe('SessionStrip', () => {
     const wrapper = mount(SessionStrip, { props: { dwarf: heldDwarf() } })
     expect(wrapper.get('.session-strip').classes()).not.toContain('is-unavailable')
     expect(wrapper.find('.session-reason').exists()).toBe(false)
+  })
+
+  it('shows the model as plain text while there is no live catalogue to choose from', () => {
+    // AMENDED for #96's mutating slice (was: this case was covered by "shows
+    // the model a held session named" above, which had no catalogue to pass).
+    // Restated here because the plain name is now the FALLBACK rather than the
+    // only rendering, and which one appears is the thing worth pinning. The
+    // original case is untouched above.
+    const wrapper = mount(SessionStrip, { props: { dwarf: tunableDwarf(), catalogs: [] } })
+    expect(wrapper.get('.session-model').text()).toBe('claude-haiku-4-5')
+    expect(wrapper.find('.session-model-select').exists()).toBe(false)
+  })
+})
+
+/*
+ * Issue #96's mutating slice, as the strip draws it. Which controls EXIST for
+ * which state is `lib/scene/sessionStrip.ts`'s decision and is tested there;
+ * these cases are about what reaches the screen and what leaves the component
+ * when somebody uses it.
+ */
+const CLAUDE_LIVE: AgentModelCatalog = {
+  provider: 'claude',
+  models: [
+    { value: 'claude-haiku-4-5', label: 'Haiku' },
+    { value: 'claude-sonnet-5', label: 'Sonnet', effortLevels: ['low', 'medium', 'high'] }
+  ],
+  efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  source: 'provider'
+}
+
+function tunableDwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+  return heldDwarf({ sessionTuning: { canSetModel: true, canSetEffort: true }, ...overrides })
+}
+
+function mountStrip(dwarf: Dwarf) {
+  return mount(SessionStrip, { props: { dwarf, catalogs: [CLAUDE_LIVE] } })
+}
+
+describe('SessionStrip controls (#96)', () => {
+  it('offers the catalogue as a select, showing the model the session runs', () => {
+    const wrapper = mountStrip(tunableDwarf())
+    const select = wrapper.get('.session-model-select')
+    expect((select.element as HTMLSelectElement).value).toBe('claude-haiku-4-5')
+    expect(select.findAll('option').map((option) => option.text())).toEqual(['Haiku', 'Sonnet'])
+    // The plain name is replaced by the control, not drawn beside it.
+    expect(wrapper.find('.session-model').exists()).toBe(false)
+  })
+
+  it('asks for the chosen model, by dwarf and as its own act', async () => {
+    const wrapper = mountStrip(tunableDwarf())
+    await wrapper.get('.session-model-select').setValue('claude-sonnet-5')
+    expect(wrapper.emitted('tune')).toEqual([
+      [{ dwarfId: 'claude:sess-1', change: { kind: 'model', model: 'claude-sonnet-5' } }]
+    ])
+  })
+
+  it('asks for nothing when the select settles back on what the session already runs', async () => {
+    // A change to the value already in force is not a change, and spending a
+    // control request on one would be noise on a live stream.
+    const wrapper = mountStrip(tunableDwarf())
+    await wrapper.get('.session-model-select').setValue('claude-haiku-4-5')
+    expect(wrapper.emitted('tune')).toBeUndefined()
+  })
+
+  it('draws no effort select for a model that takes none', () => {
+    const wrapper = mountStrip(tunableDwarf({ model: 'claude-haiku-4-5' }))
+    expect(wrapper.find('.session-effort-select').exists()).toBe(false)
+  })
+
+  it("offers the active model's own effort levels, and asks for the chosen one", async () => {
+    const wrapper = mountStrip(tunableDwarf({ model: 'claude-sonnet-5', effort: 'low' }))
+    const select = wrapper.get('.session-effort-select')
+    expect(select.findAll('option').map((option) => option.text())).toEqual([
+      'low',
+      'medium',
+      'high'
+    ])
+    await select.setValue('high')
+    expect(wrapper.emitted('tune')).toEqual([
+      [{ dwarfId: 'claude:sess-1', change: { kind: 'effort', effort: 'high' } }]
+    ])
+  })
+
+  it('draws a control the engine cannot serve as disabled, with its reason on hover', () => {
+    const wrapper = mountStrip(
+      tunableDwarf({
+        model: 'claude-sonnet-5',
+        sessionTuning: { canSetModel: false, canSetEffort: false }
+      })
+    )
+    const model = wrapper.get('.session-model-select')
+    expect((model.element as HTMLSelectElement).disabled).toBe(true)
+    expect(model.attributes('title')).toBe(NO_MODEL_CONTROL_REASON)
+    const effort = wrapper.get('.session-effort-select')
+    expect((effort.element as HTMLSelectElement).disabled).toBe(true)
+    expect(effort.attributes('title')).toBe(NO_EFFORT_CONTROL_REASON)
+  })
+
+  it('words a model change nothing has confirmed as pending, beside the model still in force', () => {
+    const wrapper = mountStrip(
+      tunableDwarf({
+        sessionTuning: { canSetModel: true, canSetEffort: true, pendingModel: 'claude-sonnet-5' }
+      })
+    )
+    expect(wrapper.get('.session-model-pending').text()).toBe('claude-sonnet-5 pending')
+    // Still showing what the session actually runs: the reading has not
+    // confirmed anything yet, and the select must not claim it has.
+    expect((wrapper.get('.session-model-select').element as HTMLSelectElement).value).toBe(
+      'claude-haiku-4-5'
+    )
+  })
+
+  it('words an effort change as requested rather than pending', () => {
+    const wrapper = mountStrip(
+      tunableDwarf({
+        model: 'claude-sonnet-5',
+        sessionTuning: { canSetModel: true, canSetEffort: true, pendingEffort: 'high' }
+      })
+    )
+    expect(wrapper.get('.session-effort-pending').text()).toBe('high requested')
+  })
+
+  it("shows a refusal's own reason on the strip, and keeps the session's real model", async () => {
+    const wrapper = mountStrip(tunableDwarf())
+    await wrapper.get('.session-model-select').setValue('claude-sonnet-5')
+
+    await wrapper.setProps({ refusal: 'The session would not take that change.' })
+
+    expect(wrapper.get('.session-refusal').text()).toBe('The session would not take that change.')
+    // The refused value is not left showing: the select reads what the
+    // session actually runs, which the props never stopped saying.
+    expect((wrapper.get('.session-model-select').element as HTMLSelectElement).value).toBe(
+      'claude-haiku-4-5'
+    )
+  })
+
+  it('shows no refusal until there is one', () => {
+    const wrapper = mountStrip(tunableDwarf())
+    expect(wrapper.find('.session-refusal').exists()).toBe(false)
+  })
+
+  it('draws no select at all on a strip that is already refusing', () => {
+    const wrapper = mount(SessionStrip, {
+      props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }), catalogs: [CLAUDE_LIVE] }
+    })
+    expect(wrapper.find('.session-model-select').exists()).toBe(false)
+    expect(wrapper.find('.session-effort-select').exists()).toBe(false)
   })
 })
