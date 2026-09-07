@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { DWARF_PROVIDERS } from './types'
-import { LAUNCHABLE_PROVIDERS, agentProviderList, type CliPresence } from './launchProviders'
+import { DWARF_PROVIDERS, type DwarfProvider } from './types'
+import {
+  LAUNCHABLE_PROVIDERS,
+  NOT_LAUNCHABLE,
+  agentProviderList,
+  type CliPresence
+} from './launchProviders'
 
-const found = (cli: 'claude' | 'codex'): CliPresence => ({ cli, installed: true })
-const missing = (cli: 'claude' | 'codex', reason: string): CliPresence => ({
+// AMENDED for #237 (was: 'claude' | 'codex'). Widened to the provider table
+// itself so an observer-only identity can be handed in as a detection.
+const found = (cli: DwarfProvider): CliPresence => ({ cli, installed: true })
+const missing = (cli: DwarfProvider, reason: string): CliPresence => ({
   cli,
   installed: false,
   reason
@@ -13,8 +20,16 @@ describe('agentProviderList', () => {
   it('reports every known provider, found or not, so nothing is silently omitted', () => {
     const list = agentProviderList([found('claude'), missing('codex', 'not on PATH')])
 
-    expect(list.providers.map((entry) => entry.provider)).toEqual(['claude', 'codex'])
-    expect(list.providers.map((entry) => entry.installed)).toEqual([true, false])
+    // AMENDED for #237 (was: ['claude', 'codex'] / [true, false]). The list is
+    // ordered by DWARF_PROVIDERS, so an observer-only provider joins it the
+    // moment its identity exists — reported absent here, because this call
+    // handed in no detection for it.
+    expect(list.providers.map((entry) => entry.provider)).toEqual([
+      'claude',
+      'codex',
+      'antigravity'
+    ])
+    expect(list.providers.map((entry) => entry.installed)).toEqual([true, false, false])
   })
 
   it('marks a detected provider the engine can start as launchable, with no reason', () => {
@@ -65,7 +80,38 @@ describe('agentProviderList', () => {
   })
 
   it('names every provider a launch can actually be started for (#168)', () => {
+    // Unchanged by #237 on purpose: Antigravity is an OBSERVER first, and a
+    // name here that no launch path answers is a chip that responds to Enter
+    // with a session nobody starts.
     expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex'])
+  })
+
+  /*
+   * The condition `NOT_LAUNCHABLE` was written for, finally reached (#237).
+   * Its comment said nothing in the build could get there because every
+   * detected provider was launchable — true until a provider arrived that this
+   * app can only read. An installed Antigravity says so out loud instead of
+   * offering a chip with nothing behind it.
+   */
+  it('refuses to start a detected provider whose launch path does not exist yet', () => {
+    const [, , antigravity] = agentProviderList([found('antigravity')]).providers
+
+    expect(antigravity).toEqual({
+      provider: 'antigravity',
+      installed: true,
+      launchable: false,
+      reason: NOT_LAUNCHABLE
+    })
+  })
+
+  it('offers no refusal copy for an Antigravity nobody has installed', () => {
+    // An absent CLI is not offered as a chip at all, so explaining that it
+    // cannot be started would answer a question the panel is not asking.
+    const [, , antigravity] = agentProviderList([missing('antigravity', 'nowhere')]).providers
+
+    expect(antigravity?.installed).toBe(false)
+    expect(antigravity?.launchable).toBe(false)
+    expect(antigravity?.reason).toBeUndefined()
   })
 
   /*

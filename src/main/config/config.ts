@@ -87,6 +87,44 @@ export interface CodexConfig extends ProviderConfig {
 }
 
 /**
+ * Antigravity's settings block: where the CLI keeps its store, and the three
+ * windows the observer judges a conversation by (#237).
+ *
+ * The windows are shaped differently from Codex's, because the evidence is:
+ * the Antigravity CLI writes a presence LOCK per running conversation, which
+ * is the CLI's own statement that a session exists rather than an inference
+ * from a file's age. That is stronger than a mtime and still not a contract —
+ * a crash leaves the lock behind, and nothing documents when the CLI removes
+ * one — so it takes a grace window on disappearance and a bound on staleness
+ * instead of Codex's liveness-plus-retention pair.
+ */
+export interface AntigravityConfig extends ProviderConfig {
+  /** The `~/.gemini/antigravity-cli` store root. A leading ~ is expanded. */
+  storeRoot: string
+  /**
+   * How recent a still-`RUNNING` transcript step has to be to count as an open
+   * turn, in seconds. The step's `status` is written once and never rewritten,
+   * so a crashed turn leaves a RUNNING record on disk forever; without this
+   * bound its dwarf would mine for eternity.
+   */
+  busyWindowS: number
+  /**
+   * How long a conversation stays on the board after its presence lock stops
+   * being listed, in seconds. A lock can be replaced between two reads, and
+   * dropping a dwarf on one missed listing makes the board flicker.
+   */
+  lockGraceS: number
+  /**
+   * How silent a locked conversation may be before its lock is treated as
+   * stale, in seconds. Generous on purpose: an interactive session
+   * legitimately sits idle for hours between prompts, and this app takes the
+   * generous side when the evidence runs out — raise it if a ghost dwarf is
+   * less annoying than a real one leaving early.
+   */
+  staleLockWindowS: number
+}
+
+/**
  * One settings block per provider identity.
  *
  * Keyed by `DwarfProvider` on purpose: this is a `Record` over the shared
@@ -98,6 +136,7 @@ export interface CodexConfig extends ProviderConfig {
 export interface ProviderConfigs extends Record<DwarfProvider, ProviderConfig> {
   claude: ClaudeConfig
   codex: CodexConfig
+  antigravity: AntigravityConfig
 }
 
 export interface AppConfig {
@@ -167,6 +206,16 @@ export function defaultConfig(): AppConfig {
         heartbeatWindowS: 300,
         scanDays: 7,
         idleRetentionS: 3600
+      },
+      antigravity: {
+        cliPath: '',
+        storeRoot: '~/.gemini/antigravity-cli',
+        busyWindowS: 120,
+        lockGraceS: 30,
+        // A day. An Antigravity session left open overnight is still a session
+        // its owner will come back to; a lock a crash left behind is not, and
+        // this is the line between them.
+        staleLockWindowS: 86_400
       }
     }
   }
@@ -325,6 +374,20 @@ function readCodexConfig(env: ConfigEnv, fallback: CodexConfig): CodexConfig {
   }
 }
 
+function readAntigravityConfig(env: ConfigEnv, fallback: AntigravityConfig): AntigravityConfig {
+  return {
+    ...readProviderConfig(env, { cliPath: 'ANTIGRAVITY_CLI_PATH' }, fallback),
+    storeRoot: readTrimmed(env, 'ANTIGRAVITY_STORE_ROOT', fallback.storeRoot),
+    busyWindowS: readPositiveInt(env, 'ANTIGRAVITY_BUSY_WINDOW_S', fallback.busyWindowS),
+    lockGraceS: readPositiveInt(env, 'ANTIGRAVITY_LOCK_GRACE_S', fallback.lockGraceS),
+    staleLockWindowS: readPositiveInt(
+      env,
+      'ANTIGRAVITY_STALE_LOCK_WINDOW_S',
+      fallback.staleLockWindowS
+    )
+  }
+}
+
 export function loadConfig(env: ConfigEnv = process.env): AppConfig {
   const defaults = defaultConfig()
   return {
@@ -341,7 +404,8 @@ export function loadConfig(env: ConfigEnv = process.env): AppConfig {
     // and nothing above this line has to know it exists.
     providers: {
       claude: readClaudeConfig(env, defaults.providers.claude),
-      codex: readCodexConfig(env, defaults.providers.codex)
+      codex: readCodexConfig(env, defaults.providers.codex),
+      antigravity: readAntigravityConfig(env, defaults.providers.antigravity)
     }
   }
 }

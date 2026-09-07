@@ -3,6 +3,7 @@ import type { DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
 import {
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
+  HELDABLE_PROVIDERS,
   MCP_CONNECTION_STATUSES,
   TIER_WEIGHT_THRESHOLDS_KB,
   dwarfSilenceWindowKey,
@@ -20,7 +21,22 @@ import {
  */
 describe('DWARF_PROVIDERS', () => {
   it('names every provider identity the wire admits, and nothing else', () => {
-    expect(DWARF_PROVIDERS).toEqual(['claude', 'codex'])
+    // AMENDED for #237 (was: ['claude', 'codex']). Antigravity's identity on
+    // the wire is the harness, not its executable: `agy` is only what the
+    // binary is called, and the CLI can front models other than Gemini.
+    expect(DWARF_PROVIDERS).toEqual(['claude', 'codex', 'antigravity'])
+  })
+
+  /*
+   * A provider identity says a store can be READ; it says nothing about what
+   * can be done to the session behind it (#237). Antigravity arrives as an
+   * observer only — no launch, no held stream, no message, no interrupt — so
+   * it is deliberately absent from HELDABLE_PROVIDERS, and the panel's own
+   * capability seams answer "not supported" rather than offering a control
+   * with nothing behind it.
+   */
+  it('does not promise a held stream for a provider this app only observes', () => {
+    expect(HELDABLE_PROVIDERS).not.toContain('antigravity')
   })
 
   it('is the type the union is derived from, so the two cannot drift apart', () => {

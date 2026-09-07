@@ -34,6 +34,15 @@ describe('defaultConfig', () => {
           heartbeatWindowS: 300,
           scanDays: 7,
           idleRetentionS: 3600
+        },
+        // AMENDED for #237 (was: no antigravity block). Its windows are about
+        // a presence LOCK rather than a file's age — see AntigravityConfig.
+        antigravity: {
+          cliPath: '',
+          storeRoot: '~/.gemini/antigravity-cli',
+          busyWindowS: 120,
+          lockGraceS: 30,
+          staleLockWindowS: 86_400
         }
       }
     })
@@ -127,6 +136,39 @@ describe('per-provider settings blocks', () => {
     const config = loadConfig({ CODEX_SCAN_DAYS: '3' })
     expect(config.providers.codex.scanDays).toBe(3)
     expect(config.providers.claude).toEqual(defaultConfig().providers.claude)
+  })
+
+  /*
+   * Issue #237. The third block, and the first one whose windows are about a
+   * LOCK rather than about a file's age: the Antigravity CLI writes a presence
+   * lock per running conversation, which is stronger evidence than a mtime and
+   * still not a contract — so the grace window covers a lock that vanishes for
+   * a moment, and the stale window bounds one a crash left behind.
+   */
+  it('reads the Antigravity block from its own documented variable names', () => {
+    const config = loadConfig({
+      ANTIGRAVITY_STORE_ROOT: '~/custom/antigravity-cli',
+      ANTIGRAVITY_BUSY_WINDOW_S: '90',
+      ANTIGRAVITY_LOCK_GRACE_S: '45',
+      ANTIGRAVITY_STALE_LOCK_WINDOW_S: '7200',
+      ANTIGRAVITY_CLI_PATH: '/opt/agy/agy'
+    })
+
+    expect(config.providers.antigravity).toEqual({
+      cliPath: '/opt/agy/agy',
+      storeRoot: '~/custom/antigravity-cli',
+      busyWindowS: 90,
+      lockGraceS: 45,
+      staleLockWindowS: 7200
+    })
+  })
+
+  it('defaults the Antigravity store to where the CLI keeps it', () => {
+    expect(defaultConfig().providers.antigravity.storeRoot).toBe('~/.gemini/antigravity-cli')
+  })
+
+  it('fails fast on an Antigravity window that is not a positive integer', () => {
+    expect(() => loadConfig({ ANTIGRAVITY_LOCK_GRACE_S: '0' })).toThrow(/ANTIGRAVITY_LOCK_GRACE_S/)
   })
 })
 

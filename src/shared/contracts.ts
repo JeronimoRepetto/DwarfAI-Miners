@@ -117,8 +117,18 @@ export type MaterialTotals = Record<Material, number>
  *
  * The table is not an invitation: `CONTRIBUTING.md`'s evidence bar decides
  * whether a third backend exists at all. This only makes the addition cheap.
+ *
+ * `antigravity` is the third, and it is the one that makes the difference
+ * between an identity and a capability visible (#237). The name is the
+ * HARNESS, not its binary: `agy` is only what the executable is called, and
+ * the CLI can front models other than Gemini, so calling the provider either
+ * of those would name the wrong thing. What this app can do with it is
+ * narrower than what it can do with the other two — it reads the store and
+ * nothing more, which is why the name is absent from `HELDABLE_PROVIDERS` and
+ * from `LAUNCHABLE_PROVIDERS`. Membership here says a store can be READ; it
+ * has never said a session can be reached.
  */
-export const DWARF_PROVIDERS = ['claude', 'codex'] as const
+export const DWARF_PROVIDERS = ['claude', 'codex', 'antigravity'] as const
 
 export type DwarfProvider = (typeof DWARF_PROVIDERS)[number]
 
@@ -210,6 +220,14 @@ export function isPanelObserved(observer: DwarfObserver): observer is typeof PAN
  * A provider missing here can still be LAUNCHED; it is started detached and
  * discovered by the ordinary poll, which is a real launch and simply not a
  * watched one.
+ *
+ * Antigravity is missing here for a third reason, and it is worth telling
+ * apart from Codex's (#237). Codex could be held and has no engine; the
+ * Antigravity CLI documents a bidirectional stream-json protocol that could
+ * carry one, and no round trip through it has been PROVEN by this app. A
+ * capability list is not a plan: the observer slice reads the store, and this
+ * name arrives here on the day a live stream has actually been held, not on
+ * the day one looks possible.
  */
 export const HELDABLE_PROVIDERS: readonly DwarfProvider[] = ['claude']
 
