@@ -136,7 +136,8 @@ export function useProjectBrowse() {
    * does not change is indistinguishable from one that is broken.
    *
    * Clearing the filters does not reach the other half of it: re-declaring a
-   * folder the store already holds keeps the date it was first seen, so it stays
+   * folder the store already holds does not touch its last-activity date
+   * (#205) — a folder nobody has worked in still has none — so it stays
    * wherever it already sat and can be pages down. Main names the project it
    * adopted, and it goes to the head of the list when the reload did not bring
    * it. An older main that names none still reloads, and behaves as before.
@@ -157,10 +158,12 @@ export function useProjectBrowse() {
       await load()
       const added = result.project
       if (added === undefined) return
-      // Prepended rather than sorted in: the list is ordered by when a project
-      // was ADDED, and this one was not added just now — it was re-declared. It
+      // Prepended rather than sorted in: the list is ordered by last activity
+      // (#205), and re-declaring a folder does not touch its last-activity
+      // date — this one was not worked in just now, it was re-declared. It
       // sits at the top because it is what the user just asked about, and the
-      // next ordinary read puts it back in date order.
+      // next ordinary read puts it back in activity order, at the bottom if
+      // it has never been opened.
       if (!projects.value.some((project) => project.id === added.id)) {
         projects.value = [added, ...projects.value]
       }

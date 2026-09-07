@@ -134,17 +134,17 @@ describe('MinesPanel chrome', () => {
    * the same split App.vue's pin button uses. Nothing was dropped: both
    * directions are still pinned, one assertion lower down.
    */
-  it('flips the date order from one labelled button', async () => {
+  it('flips the activity order from one labelled button', async () => {
     const wrapper = panel({ direction: 'desc' })
     const sort = wrapper.get('.sort-control')
-    expect(sort.attributes('title')).toBe('Newest first')
+    expect(sort.attributes('title')).toBe('Most recent activity first')
     await sort.trigger('click')
     expect(wrapper.emitted('toggle-direction')).toHaveLength(1)
   })
 
   it('says which way the list runs once it is flipped', () => {
     expect(panel({ direction: 'asc' }).get('.sort-control').attributes('title')).toBe(
-      'Oldest first'
+      'Least recent activity first'
     )
   })
 
@@ -155,9 +155,9 @@ describe('MinesPanel chrome', () => {
     expect(sort.get('.control-glyph').attributes('style')).toContain('--control-icon')
   })
 
-  it('keeps a stable accessible name on the date order while the hover line moves', () => {
+  it('keeps a stable accessible name on the activity order while the hover line moves', () => {
     expect(panel({ direction: 'asc' }).get('.sort-control').attributes('aria-label')).toBe(
-      'Order by date added'
+      'Order by last activity'
     )
   })
 
