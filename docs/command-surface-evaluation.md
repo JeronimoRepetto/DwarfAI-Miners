@@ -318,6 +318,82 @@ this slice named explicitly.
 Item (5) (mutating actions) and item (6) (effort control) remain exactly where this document left
 them — untouched, and out of scope for a read-only slice by the maintainer's own ruling.
 
+### Status update, 2026-09-07 (#96), the mutating slice
+
+AMENDED for #96 (was: the paragraph immediately above, "items (5) and (6) remain exactly where this
+document left them"). Both have now landed, in one slice, on the maintainer's 2026-09-07 go — with
+the scope that ruling drew and no more: **model and effort on a held session, from the mine's
+session strip.** Still no cost in currency, still held sessions only, and **still no MCP
+reconnect, toggle or `setMcpServers`** — item (5) as this document wrote it named those three
+beside `setModel`, and they are the half that did not ship. Nothing here reopens them.
+
+Two things about this slice were decided differently from what §6 anticipated, and both are worth
+reading before extending it.
+
+**1. `DwarfCapabilities` was NOT the place this went.** §6 item 3 called for "new members for
+model-change and MCP-control" on that type, and item 6 for "unlocking
+`DwarfCapabilities.adjustEffort` for held sessions specifically". Neither happened. `adjustEffort`
+is still the literal `null` its own doc comment declares, because that member is the DWARF ACTION
+BAR's matrix — the message panel's Boost button reads it — and this surface is the mine's strip,
+which is a different control in a different place answering a different question. What the wire
+grew instead is `Dwarf.sessionTuning` (`DwarfSessionTuning`), stamped by `stampHeldTuning` beside
+`stampHeldTelemetry`: it carries `canSetModel`/`canSetEffort` — read off the HANDLE, so it says
+what the engine can do rather than what a provider name suggests — plus `pendingModel` and
+`pendingEffort`. Unlocking `adjustEffort` and wiring Boost to this channel is a real, separate
+piece of work, and it is the natural next one; it is not what this slice did.
+
+**2. The capability is OPTIONAL on the port, and that is load-bearing.**
+`HeldSessionHandle.setModel?`/`setEffort?` are absent where an engine has no such act, exactly as
+`contextUsage`/`interrupt` are heading (the provider-neutral held port, #237 step 5). An engine
+that declares neither is refused BEFORE anything is attempted, with `TUNING_UNSUPPORTED`, and the
+strip disables the control with the reason stated — never a control drawn live that answers every
+click with a refusal.
+
+**The verification rule, which is the whole of why this was safe to ship.** `applied: true` on the
+wire means the session ACCEPTED the request and nothing more. What proves an effect is a later
+report from the session itself, and the two acts have genuinely different proof:
+
+- **Model** — the context reading. `HeldSessionHandle.contextUsage()` now also returns the model
+  the CLI believes is in force (`SDKControlGetContextUsageResponse.model`, beside the counts), so
+  `setTuning` re-pulls a reading immediately after the change and `confirmTuning` promotes the
+  request the moment the reading agrees. This is exactly the route the spike found — `setModel` at
+  ~2 ms, then `getContextUsage()` showing `model` and `maxTokens` flipped, **with no paid turn in
+  between**. The next `init` confirms it too, on the same terms. Until one of them does, the strip
+  shows the requested value as **pending** and the select goes on reading the real model.
+- **Effort** — the next `init`'s own `effort`, and nothing else. There is no reading that carries
+  it, so no pull is made for one: a context response says nothing about effort, and asking would be
+  a control request that cannot answer the question it was made for. So the strip says
+  **requested** rather than set, and it may say so forever — which is the honest reading of
+  `applyFlagSettings` resolving cleanly on a model with no effort support and silently doing
+  nothing, the one method §5 named as contradicting its own type surface.
+
+**The `supportsEffort` guard §6 item 6 asked for is per MODEL, not per provider.** `ModelOption`
+grew an optional `effortLevels?: string[]`, filled from the SDK's own `supportedEffortLevels` and
+gated on `supportsEffort`; `AgentModelCatalog.efforts` (the provider-wide boundary list) could not
+serve, because it is wider than any one model. A model whose catalogue entry names no levels gets
+**no effort control at all** rather than a disabled one — a disabled control reads as "not right
+now", and the truth is "this model has no such setting". Where a model says it supports effort but
+names no levels, the provider's own boundary list is the fallback, which cannot offer a level the
+launch boundary would refuse.
+
+**Wire shape, stated because §6 item 3 called it a one-way door.** One channel,
+`dwarf:setTuning`, carrying a discriminated `DwarfTuningChange` (`{ kind: 'model' | 'effort' }`),
+answering `DwarfTuningResult` = `{ applied: true } | { applied: false, reason }`. One channel for
+two acts because every boundary rule they hold is the same one — held sessions only, one bounded
+control request, no retry, the same four fixed refusal sentences — and the thing that differs
+between them is the confirmation, which is not a property of the request. Never folded into
+`dwarf:sendText`, on this document's own ruling. Bounded by `HELD_TUNING_TIMEOUT_MS`, its own
+constant beside `HELD_CONTEXT_USAGE_TIMEOUT_MS`: same value today, same no-retry discipline, and
+two different acts whose measured costs differ by two orders of magnitude have no reason to stay
+equal forever.
+
+**What remains open on #96 after this**, so nobody has to re-derive it: MCP reconnect/toggle/
+`setMcpServers` (declined for this surface, not deferred pending anything), the dollar-cost field
+(`Dwarf.totalCostUsd` is wired and deliberately undrawn), the structured usage call and its
+account-wide rate-limit windows (§7's third open question picks no scope), `DwarfCapabilities.
+adjustEffort` and the Boost button behind it, and item (7)'s version-gated relay path for
+NON-held sessions — which this document still does not recommend building.
+
 ---
 
 ## 7. Open questions this document leaves to implementation, on purpose
