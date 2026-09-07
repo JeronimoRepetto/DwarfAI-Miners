@@ -30,6 +30,7 @@ import {
   MODEL_CATALOG_TIMEOUT_MS,
   type ClaudeModelCatalogPort
 } from '../sessionLaunch/sdkHeldSession'
+import type { AntigravityModelCatalogPort } from '../providers/antigravity/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
@@ -5945,14 +5946,22 @@ describe('AgentRuntime provider availability (#86)', () => {
 describe('AgentRuntime.listAgentModels (#239)', () => {
   const HOME = '/home/j'
   const CLAUDE_BIN = '/home/j/.local/bin/claude'
+  // AMENDED for #282 (added): the stem cliExecutableStem gives Antigravity —
+  // its convention path is '.local/bin/agy', never the provider name itself.
+  const ANTIGRAVITY_BIN = '/home/j/.local/bin/agy'
 
   function runtimeWith(options: {
     claudeInstalled: boolean
     claudeModelCatalog?: ClaudeModelCatalogPort
     codexModelHistory?: () => Promise<CodexThreadModel[]>
+    // AMENDED for #282 (added): Antigravity now asks its own CLI live,
+    // exactly as Claude asks the SDK — see the fakes below.
+    antigravityInstalled?: boolean
+    antigravityModelCatalog?: AntigravityModelCatalogPort
   }) {
     const fs = new FakeFs()
     if (options.claudeInstalled) fs.addFile(CLAUDE_BIN, '#!/bin/sh\n')
+    if (options.antigravityInstalled) fs.addFile(ANTIGRAVITY_BIN, '#!/bin/sh\n')
     const adapters: PlatformAdapters = {
       platform: 'linux',
       focusPid: async () => false,
@@ -5978,7 +5987,8 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
       platformAdapters: adapters,
       onMinesUpdated: vi.fn(),
       claudeModelCatalog: options.claudeModelCatalog ?? (async () => []),
-      codexModelHistory: options.codexModelHistory ?? (async () => [])
+      codexModelHistory: options.codexModelHistory ?? (async () => []),
+      antigravityModelCatalog: options.antigravityModelCatalog ?? (async () => [])
     })
   }
 
@@ -6105,15 +6115,119 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     warn.mockRestore()
   })
 
-  it('always answers Antigravity as none, until #237 gives it a launch path', async () => {
-    const list = await runtimeWith({ claudeInstalled: false }).listAgentModels()
+  /*
+   * AMENDED for #282 (was: 'always answers Antigravity as none, until #237
+   * gives it a launch path' — one test with no installed/not-installed
+   * branch at all, since PROVIDER_EFFORT_LEVELS.antigravity was `[]` and
+   * nothing could ask it live). #282 asks `agy models` live, on the same
+   * terms Claude's SDK ask already is; this test now covers "not installed"
+   * only, and the four below cover what #239's Claude block already does.
+   */
+  it('answers Antigravity as none when the CLI is not installed', async () => {
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      antigravityInstalled: false
+    }).listAgentModels()
 
     expect(list.catalogs.find((entry) => entry.provider === 'antigravity')).toEqual({
       provider: 'antigravity',
       models: [],
-      efforts: [],
+      efforts: ['low', 'medium', 'high'],
       source: 'none'
     })
+  })
+
+  it("asks the CLI for Antigravity's own live models when installed", async () => {
+    const antigravityModelCatalog = vi
+      .fn<AntigravityModelCatalogPort>()
+      .mockResolvedValue([
+        { value: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6 (Thinking)' }
+      ])
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      antigravityInstalled: true,
+      antigravityModelCatalog
+    }).listAgentModels()
+
+    expect(antigravityModelCatalog).toHaveBeenCalledWith({ executablePath: ANTIGRAVITY_BIN })
+    expect(list.catalogs.find((entry) => entry.provider === 'antigravity')).toEqual({
+      provider: 'antigravity',
+      models: [{ value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)' }],
+      efforts: ['low', 'medium', 'high'],
+      source: 'provider'
+    })
+  })
+
+  it('never spawns anything when Antigravity is not installed', async () => {
+    const antigravityModelCatalog = vi.fn<AntigravityModelCatalogPort>().mockResolvedValue([])
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      antigravityInstalled: false,
+      antigravityModelCatalog
+    }).listAgentModels()
+
+    expect(antigravityModelCatalog).not.toHaveBeenCalled()
+    expect(list.catalogs.find((entry) => entry.provider === 'antigravity')).toEqual({
+      provider: 'antigravity',
+      models: [],
+      efforts: ['low', 'medium', 'high'],
+      source: 'none'
+    })
+  })
+
+  it('answers Antigravity as source: none, never a rejection, when the spawn or the parse itself throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const antigravityModelCatalog = vi
+      .fn<AntigravityModelCatalogPort>()
+      .mockRejectedValue(new Error('agy models produced no readable model list'))
+
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      antigravityInstalled: true,
+      antigravityModelCatalog
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'antigravity')).toEqual({
+      provider: 'antigravity',
+      models: [],
+      efforts: ['low', 'medium', 'high'],
+      source: 'none'
+    })
+    // Claude and Codex still answer: one provider's failure never silences
+    // the other two.
+    expect(list.catalogs).toHaveLength(3)
+    warn.mockRestore()
+  })
+
+  it('answers Antigravity as source: none once the catalogue ask outruns its bound, rather than hanging', async () => {
+    vi.useFakeTimers()
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // Never resolves and never rejects — exactly a stuck CLI's own promise.
+      const antigravityModelCatalog = vi
+        .fn<AntigravityModelCatalogPort>()
+        .mockReturnValue(new Promise(() => {}))
+
+      const pending = runtimeWith({
+        claudeInstalled: false,
+        antigravityInstalled: true,
+        antigravityModelCatalog
+      }).listAgentModels()
+      await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS)
+      const list = await pending
+
+      expect(list.catalogs.find((entry) => entry.provider === 'antigravity')).toEqual({
+        provider: 'antigravity',
+        models: [],
+        efforts: ['low', 'medium', 'high'],
+        source: 'none'
+      })
+      expect(list.catalogs).toHaveLength(3)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

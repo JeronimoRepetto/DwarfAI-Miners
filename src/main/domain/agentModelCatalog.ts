@@ -12,11 +12,13 @@ function effortsFor(provider: DwarfProvider): string[] {
  *
  * Pure, and in `domain/` for the reason `launchTuning.ts` is: this is a rule
  * about SHAPING an answer, not about asking one — the ask itself needs the
- * Agent SDK (sdkHeldSession.ts's createSdkModelCatalog) or Codex's own SQLite
- * registry (readCodexThreads), neither of which a unit test may reach. So the
- * IO lives in runtime.ts and sessionLaunch/, and this file is what turns
- * whatever came back into something the wire can carry — which is what makes
- * every branch below testable with a plain array, no disk and no process.
+ * Agent SDK (sdkHeldSession.ts's createSdkModelCatalog), Codex's own SQLite
+ * registry (readCodexThreads), or a read-only `agy models` spawn
+ * (providers/antigravity/models.ts's createAntigravityModelCatalog, #282),
+ * none of which a unit test may reach. So the IO lives in runtime.ts and the
+ * two provider-specific modules above, and this file is what turns whatever
+ * came back into something the wire can carry — which is what makes every
+ * branch below testable with a plain array, no disk and no process.
  */
 
 /**
@@ -96,15 +98,52 @@ export function codexModelCatalog(threads: readonly CodexThreadModel[]): AgentMo
 }
 
 /**
- * Antigravity's catalogue: always none, until #237 gives it a launch path —
- * see HELDABLE_PROVIDERS and LAUNCHABLE_PROVIDERS for the same absence, drawn
- * for the same reason.
+ * One model Antigravity's own `agy models` line named — id and label,
+ * tab-separated, parsed by providers/antigravity/models.ts (#282). Kept
+ * distinct from `ModelOption` for the same reason `ClaudeModelInfo` is: this
+ * is what the CLI seam hands the domain, before the label-dropping rule below
+ * decides what the wire actually carries.
  */
-export function antigravityModelCatalog(): AgentModelCatalog {
+export interface AntigravityModelInfo {
+  value: string
+  displayName: string
+}
+
+/**
+ * Antigravity's catalogue from a live `agy models` answer — `source:
+ * 'provider'`, on the same terms as Claude's: asked live, on demand, so it can
+ * never be stale (#282). Until this issue the answer was always none — #237
+ * gave Antigravity a launch path but no live list, and #239 left
+ * `PROVIDER_EFFORT_LEVELS.antigravity` empty because nothing could carry an
+ * effort yet.
+ *
+ * `label` is dropped on the same terms as Claude's, for the same reason: a
+ * picker with no distinct label just shows the value.
+ */
+export function antigravityModelCatalog(
+  models: readonly AntigravityModelInfo[]
+): AgentModelCatalog {
   return {
     provider: 'antigravity',
-    models: [],
+    models: models.map((model): ModelOption => ({
+      value: model.value,
+      ...(model.displayName !== '' && model.displayName !== model.value
+        ? { label: model.displayName }
+        : {})
+    })),
     efforts: effortsFor('antigravity'),
-    source: 'none'
+    source: 'provider'
   }
+}
+
+/**
+ * Antigravity's catalogue when nothing could be asked live — not installed,
+ * the spawn failed, or its output could not be read as a model list (#282).
+ * `source: 'none'`, on the same terms as `unavailableClaudeModelCatalog`: an
+ * empty list from a provider that normally answers live must not be confused
+ * with `'history'`, which promises nothing about completeness in the first
+ * place.
+ */
+export function unavailableAntigravityModelCatalog(): AgentModelCatalog {
+  return { provider: 'antigravity', models: [], efforts: effortsFor('antigravity'), source: 'none' }
 }

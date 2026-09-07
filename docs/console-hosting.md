@@ -283,6 +283,26 @@ channel beside the detached `agent:launch`, not a replacement.
   probing and ruled out starting a conversation, so the live subcommand was never invoked to see what
   it actually returns; `antigravityModelCatalog()` is therefore left unchanged, still `source: 'none'`.
 
+- **The fifth slice landed in #282: Antigravity joins the model and effort pickers with a live
+  list.** `agy models` was run for real this time (read-only — it lists models, it does not open a
+  conversation), captured verbatim on CLI 1.1.26, 2026-09-07: a status line with no tab, then one
+  `<id>\t<display name>` line per model, fourteen of them on this machine — `gemini-3.8-flash-high`,
+  `claude-sonnet-4-6`, `gpt-oss-120b-medium` among them, the CLI's own public vendor names. The
+  sanitized capture is `src/main/providers/__fixtures__/antigravity/models.txt`; the parser is
+  `providers/antigravity/models.ts`'s `parseAgyModelsOutput`, which reads the tab as the field
+  separator (so the leading status line falls out for free, with no string it prints ever matched
+  literally) and answers null — never a hard-coded list, and never a half-parse taken as the whole
+  truth — for anything that does not look like this format at all. `createAntigravityModelCatalog`
+  turns that null, and a spawn failure, into the same one rejection `listAgentModels` already knows
+  how to catch from Claude's own port: bounded by the same `MODEL_CATALOG_TIMEOUT_MS` race, degraded
+  to `unavailableAntigravityModelCatalog()` behind one warn line on either failure. `agy --help` also
+  documents `--effort` (`low|medium|high`) as a top-level flag, its own three — not Claude's five or
+  Codex's six — so `PROVIDER_EFFORT_LEVELS.antigravity` stopped being `[]` and
+  `buildAntigravityLaunchArgs` gained the same `tuning` parameter Claude's and Codex's builders
+  already had, dispatched through `buildLaunchArgs` exactly like the other two. No renderer change:
+  the Add Panel's model and effort rows already draw from whatever `listAgentModels` answers, one
+  provider at a time, and antigravity's `source: 'provider'` slots in beside Claude's.
+
 ### The Codex queue — merged, #110 (#97)
 
 The smallest win path 3 promised, and it took a live experiment to earn: the documentation could not

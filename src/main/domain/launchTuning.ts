@@ -60,6 +60,13 @@ export interface LaunchTuning {
  * their union across the eight models it listed on this machine is these six.
  * `ultra` is real and is Codex's alone.
  *
+ * **Antigravity CLI 1.1.26** documents its own three in `agy --help`:
+ * `--effort   Reasoning effort for the current CLI session (low|medium|high)`
+ * (#282) — read-only, on the machine this table is verified against. Its own
+ * three, not borrowed from either neighbour: it has no `xhigh`, no `max`, and
+ * no `ultra`, which is exactly why a per-provider table exists rather than one
+ * union.
+ *
  * Effort levels are a closed enum a CLI documents, which is why they may live
  * here at all — the guideline that keeps MODEL names out of source (they come
  * from the provider live, or from config) is about a list that moves whenever
@@ -69,10 +76,10 @@ export interface LaunchTuning {
 export const PROVIDER_EFFORT_LEVELS: Record<DwarfProvider, readonly string[]> = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
   codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
-  // Empty because no launch can reach it (#237): Antigravity arrives as an
-  // observer, absent from LAUNCHABLE_PROVIDERS. An effort aimed at it is
-  // therefore refused rather than borrowed from a provider that has one.
-  antigravity: []
+  // AMENDED for #282 (was: `[]`, because Antigravity was an observer absent
+  // from LAUNCHABLE_PROVIDERS — #237 gave it a launch path, and this is its
+  // own documented three, verified live above).
+  antigravity: ['low', 'medium', 'high']
 }
 
 /**
