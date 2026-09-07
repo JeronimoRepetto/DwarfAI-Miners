@@ -112,6 +112,67 @@ describe('buildAntigravityLaunchArgs', () => {
   })
 })
 
+/*
+ * #282. Antigravity's own `--model` and `--effort` flags, read out of `agy
+ * --help` on CLI 1.1.26, 2026-09-07: `--model  Model for the current CLI
+ * session` and `--effort  Reasoning effort for the current CLI session
+ * (low|medium|high)`. Both are top-level flags, not `agy models`-specific, so
+ * they take the same place in argv every other tuned flag does: after the
+ * fixed `--input-format text` head (no `-p` — the #237 hotfix above dropped
+ * it, since it takes a value on this CLI and swallowed `--input-format`), in
+ * the order the request named them.
+ */
+describe('launch argv with a model and an effort, Antigravity (#282)', () => {
+  it('leaves the argv exactly as it was when nothing is tuned', () => {
+    // The same promise #239 made for Claude and Codex: ignoring the row
+    // launches precisely as every launch before this issue did.
+    expect(buildAntigravityLaunchArgs({})).toEqual(['--input-format', 'text'])
+    expect(buildLaunchArgs('antigravity', {})).toEqual(['--input-format', 'text'])
+  })
+
+  it("names the model with the flag Antigravity's own help documents", () => {
+    expect(buildAntigravityLaunchArgs({ model: 'claude-sonnet-4-6' })).toEqual([
+      '--input-format',
+      'text',
+      '--model',
+      'claude-sonnet-4-6'
+    ])
+  })
+
+  it('names the effort with --effort, verified on this build', () => {
+    expect(buildAntigravityLaunchArgs({ effort: 'high' })).toEqual([
+      '--input-format',
+      'text',
+      '--effort',
+      'high'
+    ])
+  })
+
+  it('carries both, model before effort', () => {
+    expect(
+      buildAntigravityLaunchArgs({ model: 'gemini-3.8-flash-high', effort: 'medium' })
+    ).toEqual(['--input-format', 'text', '--model', 'gemini-3.8-flash-high', '--effort', 'medium'])
+  })
+
+  it('never carries -p, whatever is tuned', () => {
+    // The whole reason the #237 hotfix exists: -p takes a value on this CLI
+    // and swallows the next argv element, which used to be --input-format
+    // and would now just as happily swallow --model or --effort.
+    expect(buildAntigravityLaunchArgs({ model: 'agy-model', effort: 'high' })).not.toContain('-p')
+  })
+
+  it('dispatches through buildLaunchArgs like the other two providers', () => {
+    expect(buildLaunchArgs('antigravity', { model: 'agy-model', effort: 'low' })).toEqual(
+      buildAntigravityLaunchArgs({ model: 'agy-model', effort: 'low' })
+    )
+  })
+
+  it('still carries no positional prompt, whatever is tuned', () => {
+    const tuned = buildAntigravityLaunchArgs({ model: 'agy-model', effort: 'high' })
+    expect(tuned).not.toContain('dig the east gallery')
+  })
+})
+
 describe('buildCodexLaunchArgs', () => {
   /*
    * Read out of the installed CLI's own help, exactly as Claude's argv was

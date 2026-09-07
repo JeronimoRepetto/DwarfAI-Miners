@@ -198,15 +198,28 @@ export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * day. The stdin write itself (see runLaunchProcess) is unchanged and
  * fully provider-agnostic; only the argv was wrong.
  *
- * No tuning parameter, unlike the two functions above: the CLI's own
- * `--effort` (low|medium|high) and `--model` flags exist, but wiring them
- * through the Add Panel's model/effort row is untouched work for #237's
- * catalogue and boundary rules (PROVIDER_EFFORT_LEVELS.antigravity stays
- * empty) — out of scope for this slice, which only has to make the CLI
- * launchable at all.
+ * AMENDED for #282 (was: no tuning parameter at all — #237 only had to make
+ * the CLI launchable, and PROVIDER_EFFORT_LEVELS.antigravity stayed empty
+ * because nothing could carry an effort). Both flags are read out of the
+ * installed CLI's own help, on the same terms as Claude's argv above —
+ * Antigravity CLI 1.1.26, 2026-09-07:
+ *
+ *     --model    Model for the current CLI session
+ *     --effort   Reasoning effort for the current CLI session (low|medium|high)
+ *
+ * Top-level flags, not `agy models`-specific, so they take the same place in
+ * argv every other tuned flag here does — after the fixed `--input-format
+ * text` head (no `-p`, per the hotfix above), model then effort. An absent
+ * field adds nothing, which is what keeps an untuned launch byte for byte
+ * what it was before #282.
  */
-export function buildAntigravityLaunchArgs(): string[] {
-  return ['--input-format', 'text']
+export function buildAntigravityLaunchArgs(tuning: LaunchTuning = {}): string[] {
+  return [
+    '--input-format',
+    'text',
+    ...(tuning.model === undefined ? [] : ['--model', tuning.model]),
+    ...(tuning.effort === undefined ? [] : ['--effort', tuning.effort])
+  ]
 }
 
 /**
@@ -235,13 +248,13 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
     case 'codex':
       return buildCodexLaunchArgs(tuning)
     case 'antigravity':
-      // AMENDED for #237, step 4 (was: threw "observer only" — Antigravity
-      // was absent from LAUNCHABLE_PROVIDERS, and nothing offered a chip that
-      // reached here). The detached launch landed: `tuning` is accepted for
-      // the exhaustive switch's own uniformity and ignored, exactly as
-      // buildAntigravityLaunchArgs' own doc comment explains — no launch can
-      // carry a model or an effort for this provider yet.
-      return buildAntigravityLaunchArgs()
+      // AMENDED for #282 (was: called buildAntigravityLaunchArgs() with no
+      // argument, dropping `tuning` on the floor — #237, step 4 gave
+      // Antigravity a launch path but PROVIDER_EFFORT_LEVELS.antigravity was
+      // still empty and its builder took no tuning parameter at all). #282
+      // gives it its own live model list and effort levels, so it is
+      // dispatched exactly like Claude's and Codex's.
+      return buildAntigravityLaunchArgs(tuning)
   }
 }
 
