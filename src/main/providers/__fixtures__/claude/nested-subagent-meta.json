@@ -1,0 +1,8 @@
+{
+  "agentType": "Explore",
+  "description": "Placeholder nested agent task",
+  "toolUseId": "toolu_01SqxjWtW7bcsXUEQQnKmprT",
+  "parentAgentId": "a34eaebecc3d57381",
+  "spawnDepth": 2,
+  "model": "opus"
+}

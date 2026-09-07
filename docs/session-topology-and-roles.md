@@ -21,7 +21,7 @@ Three providers, three unrelated rules. The issue names two of them.
 
 | Provider  | Rule                                                                   | Where                           |
 | --------- | ---------------------------------------------------------------------- | ------------------------------- |
-| Claude    | Main session is **always** `foreman`; every subagent is `worker`       | `claudeProvider.ts:532`, `:591` |
+| Claude    | See the resolved rule below (**changed since `cc75a89`**, #267)        | `claudeProvider.ts:532`, `:591` |
 | Codex     | See the resolved rules below (**changed since `cc75a89`**, #202, #219) | `codexProvider.ts:615`, `:761`  |
 | Simulated | Roster index 0 is `foreman`, everyone else `worker`                    | `world.ts:293`                  |
 
@@ -147,9 +147,50 @@ second store, no change to the liveness gate itself, no change to `dwarfs: [main
 either direction. Nothing infers "finished" from the busy headcount, which is the rule #202 retired
 and #209 deleted.
 
+### RESOLVED (#267) — an observed Claude session draws a worker2, and its depth says so
+
+Read on the #267 fix; its line numbers are that fix's, like the two sub-sections above and unlike
+the rest of this document.
+
+**The defect.** "Every subagent is `worker`" was two failures wearing one sentence, and the second
+is the one that hid the first. The rank was hard-coded at the push
+(`role: 'worker'` for every discovered subagent), so a depth-2 agent would have been drawn as a
+worker had it ever been drawn — and it never was, because DISCOVERY only ever read the ROOT's
+transcript. A worker's own `Agent` launches are written to the WORKER's transcript
+(`provider-formats.md`, "Depth is real"), and this provider read that file for `tokensObserved`,
+`lastAssistantText` and `pendingQuestion` while discarding its `inFlightAgents`. So an interactive
+session whose worker had two `Explore` agents out showed neither, for minutes, while the Mine
+History panel of the same mine listed both as `worker2` from the same sidecars on disk (reported
+live on Windows, 2026-09-07).
+
+**The rule now.** Three facts, kept apart:
+
+- **Existence** is the launch record, wherever it was written. `snapshotSession` walks the crew
+  breadth-first — the root's launches, then each member's own tail one level down, with the same
+  extractor, the same terminal-status rule and the same poll-to-poll launch memory a depth-1 launch
+  gets. A nested launch is held in its OWN memory (`nestedLaunches`), separate from
+  `rememberedLaunches`, and that separation IS the invariant: `pendingBackgroundAgentCount` is the
+  root stating how many background agents IT has (#36, #45), so none of its three readings can
+  reach a grandchild rather than each remembering not to.
+- **Rank** is the depth the agent's own sidecar states, through `rankForSpawnDepth` — the one rule
+  the held path (#157) and the Mine History panel already apply to the same number, so the three
+  paths cannot disagree about one agent. An unstated depth still falls to `worker`: being deeper is
+  the stronger claim. A worker2's silence window is the worker's, unchanged, because
+  `dwarfSilenceWindowKey` asks only whether a rank is the root's (#68, #157).
+- **Ending** is the grandchild's own, and never the root's headcount: the terminal notification
+  that reaches the ROOT transcript for every depth alike, its own transcript's silence under the
+  very gates #40 puts on a worker (extracted as `provesNothingRuns` so one reading serves both),
+  or its parent leaving — children go with the parent, because the tail that declared the launch
+  stops being read and nothing left on the board can address them.
+
+**What did not change**: no new field on the wire (`parentId` and `worker2` both landed with #189
+and #157), no new provider option, no second store, no change to how a depth-1 worker is
+discovered, ranked or retired, and no change to any reading of the count.
+
 Sections 2 to 11 below are unaffected: they argue for a normalized topology model (#62), which is
 still unimplemented. #202 and #219 changed only which of the two rules §1 describes Codex is
-running, and how long one of its two kinds of session stays.
+running, and how long one of its two kinds of session stays; #267 changed which agents the Claude
+row's rule is applied to, and where its rank is read from.
 
 ---
 
@@ -174,8 +215,9 @@ mine, in the art's own vocabulary.
 
 **The delivery vocabulary.** `foreman-relay` (`contracts.ts:124`) names _the addressable ancestor a
 worker's message has to go through_. Claude sets it on every subagent, pointing at `mainDwarfId`
-(`claudeProvider.ts:572-576`). A foreman, in that vocabulary, is the node that can be written to
-directly.
+(`claudeProvider.ts:572-576`) — or, since #267, at the WORKER that launched it, which relays on to
+the session so the prefix names the whole path (`MAX_FOREMAN_HOPS`, #157). A foreman, in that
+vocabulary, is the node that can be written to directly, and it is still the only one.
 
 ### The semantic rule
 
