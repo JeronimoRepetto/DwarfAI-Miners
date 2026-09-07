@@ -273,6 +273,18 @@ describe('buildActionBar', () => {
       expect(launchedNoInboxReason('claude')).not.toContain('codex')
     })
 
+    /*
+     * #237, step 4. LAUNCH_COMMAND.antigravity used to name a bare
+     * executable because nothing could reach it — Antigravity was observer
+     * only. A detached launch exists now, so this sentence has to be true of
+     * a real Antigravity dwarf rather than merely present in the map.
+     */
+    it("names Antigravity's launch command too, now that #237 gives it one", () => {
+      expect(entryFor('chat', launched({ provider: 'antigravity' })).hint).toContain('agy -p')
+      expect(launchedNoInboxReason('antigravity')).not.toContain('codex')
+      expect(launchedNoInboxReason('antigravity')).not.toContain('claude')
+    })
+
     it('offers kick, and says it ends the session rather than interrupting a turn', () => {
       const entry = entryFor('kick', launched())
       expect(entry.enabled).toBe(true)
@@ -348,6 +360,11 @@ describe('buildActionBar', () => {
     it('names the command per provider', () => {
       expect(oneShotNoExitReason('claude')).toContain('claude -p')
       expect(oneShotNoExitReason('claude')).not.toContain('codex')
+    })
+
+    it("names Antigravity's command too", () => {
+      expect(oneShotNoExitReason('antigravity')).toContain('agy -p')
+      expect(oneShotNoExitReason('antigravity')).not.toContain('codex')
     })
 
     /*

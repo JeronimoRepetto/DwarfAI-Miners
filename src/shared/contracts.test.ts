@@ -29,11 +29,12 @@ describe('DWARF_PROVIDERS', () => {
 
   /*
    * A provider identity says a store can be READ; it says nothing about what
-   * can be done to the session behind it (#237). Antigravity arrives as an
-   * observer only — no launch, no held stream, no message, no interrupt — so
-   * it is deliberately absent from HELDABLE_PROVIDERS, and the panel's own
-   * capability seams answer "not supported" rather than offering a control
-   * with nothing behind it.
+   * can be done to the session behind it (#237). Antigravity arrived as an
+   * observer only, then gained a detached, one-shot launch in step 4 — but
+   * never a HELD stream: no message, no interrupt, no live conversation this
+   * app keeps open. So it is deliberately absent from HELDABLE_PROVIDERS, and
+   * the panel's own capability seams answer "not supported" rather than
+   * offering a control with nothing behind it.
    */
   it('does not promise a held stream for a provider this app only observes', () => {
     expect(HELDABLE_PROVIDERS).not.toContain('antigravity')

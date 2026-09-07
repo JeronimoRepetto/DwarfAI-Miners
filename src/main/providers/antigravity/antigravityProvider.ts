@@ -3,6 +3,7 @@ import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import { readFeedWindow } from '../feedWindow'
+import { firstUserMessageIn, readFirstPrompt } from '../firstPrompt'
 import type { Provider } from '../provider'
 import {
   antigravityConversationIdsFromLocks,
@@ -66,13 +67,15 @@ export interface AntigravityProviderOptions {
  *
  * ## What it is, and what it deliberately is not
  *
- * This is the OBSERVER half of #237 and nothing more. It reads the CLI's own
- * private store and publishes what is there: which conversations are running,
- * which folder each belongs to, whether a turn is open, and the words on both
- * sides of the exchange. It implements no `textDelivery`, so the runtime
- * resolves the whole capability matrix to null and the action bar disables
- * send, kick and boost with its own honest reason. It answers no question and
- * no permission prompt, guesses no pid, and mines no tokens.
+ * This is the OBSERVER half of #237, plus the one extra fact step 4's
+ * detached launch needs to be recognised (firstPrompt — see below): it is
+ * still not a channel INTO a session. It reads the CLI's own private store
+ * and publishes what is there: which conversations are running, which folder
+ * each belongs to, whether a turn is open, and the words on both sides of the
+ * exchange. It implements no `textDelivery`, so the runtime resolves the whole
+ * capability matrix to null and the action bar disables send, kick and boost
+ * with its own honest reason. It answers no question and no permission
+ * prompt, guesses no pid, and mines no tokens.
  *
  * Every one of those absences is a fact about the evidence rather than a
  * missing feature, and the reasons are worth keeping together:
@@ -377,6 +380,26 @@ export class AntigravityProvider implements Provider {
     // TRANSCRIPT_TAIL_BYTES and never calls feed().
     const messages = await readFeedWindow(this.fs, path, limit, extractAntigravityFeed)
     return messages.map((message) => ({ ...message, text: redactSecrets(message.text) }))
+  }
+
+  /**
+   * The prompt this conversation opened with (#237, step 4; see #191's
+   * design) — the head of the same transcript feed() reads the tail of, and
+   * never redacted: see firstPrompt.ts.
+   *
+   * This is what lets a detached `agy -p` launch be recognised on the board
+   * at all: the launcher writes its prompt to the child's stdin and nothing
+   * else identifies the session it becomes, so the Add Panel's own receipt
+   * (LaunchReceiptRegistry) reads this and matches it against the exact text
+   * it sent. `firstUserMessageIn(extractAntigravityFeed)` reuses the observer
+   * slice's own envelope-stripping (`antigravityUserRequestText`) rather than
+   * a second reading of `<USER_REQUEST>`: the same rule that turns a step
+   * into a feed message is what turns one into a receipt.
+   */
+  async firstPrompt(dwarfId: string): Promise<string | undefined> {
+    const path = this.feedSources.get(dwarfId)
+    if (path === undefined) return undefined
+    return readFirstPrompt(this.fs, path, firstUserMessageIn(extractAntigravityFeed))
   }
 
   /**

@@ -157,6 +157,53 @@ export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
 }
 
 /**
+ * Argv for one non-interactive Antigravity turn — a DETACHED, one-shot launch
+ * only (#237, step 4). The CLI documents a bidirectional stream-json protocol
+ * that could carry a HELD session, but no round trip through it has been
+ * proven by this app yet (see HELDABLE_PROVIDERS in shared/contracts.ts),
+ * which is exactly why this stays out of it: this argv starts the process and
+ * lets go, the same shape Codex's detached launch already is.
+ *
+ * Read out of the installed CLI's own help, re-verified on this machine's
+ * Antigravity CLI 1.1.26, 2026-09-07 (`agy --help`, read-only — no
+ * conversation was started to verify this):
+ *
+ *     -p, --print             Run a single prompt non-interactively and print
+ *                             the response
+ *     --input-format string   Input format for print mode (text, stream-json)
+ *                             (default text)
+ *     --output-format string  Output format for print mode (text, json,
+ *                             stream-json) (default text)
+ *
+ * Exactly Claude's own spelling, and for the same reason: `--input-format
+ * text` is passed explicitly rather than left to the documented default,
+ * because a default can move under us. No `--output-format` is passed —
+ * nothing here ever reads the launched process's stdout (launchRunner.ts's
+ * `stdio` is `['pipe', 'ignore', 'ignore']`), so there is nothing for a
+ * structured output format to serve.
+ *
+ * Whether a bare `-p` with no positional prompt reads it from stdin was not
+ * independently re-tested live — doing so would start a real Antigravity
+ * conversation, which this slice's own instructions rule out. It is taken
+ * from the validated comment's own claim-by-claim check ("Launch with -p
+ * --input-format text | Valid only for detached one-shot launch | It can
+ * send one prompt through stdin") and from the identical argv/stdin design
+ * this app already ships for Claude and Codex — the runner writes the
+ * prompt to the child's stdin and closes it (see runLaunchProcess), which
+ * works for any provider because that half is not provider-specific.
+ *
+ * No tuning parameter, unlike the two functions above: the CLI's own
+ * `--effort` (low|medium|high) and `--model` flags exist, but wiring them
+ * through the Add Panel's model/effort row is untouched work for #237's
+ * catalogue and boundary rules (PROVIDER_EFFORT_LEVELS.antigravity stays
+ * empty) — out of scope for this slice, which only has to make the CLI
+ * launchable at all.
+ */
+export function buildAntigravityLaunchArgs(): string[] {
+  return ['-p', '--input-format', 'text']
+}
+
+/**
  * The argv for one provider (#168).
  *
  * Until #168 there was nothing to dispatch on: the engine called
@@ -182,15 +229,13 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
     case 'codex':
       return buildCodexLaunchArgs(tuning)
     case 'antigravity':
-      // The gate above doing its job, on the first provider to reach it (#237).
-      // Antigravity arrives as an OBSERVER: this app reads its store and has
-      // proven no invocation of `agy`, so it is absent from
-      // LAUNCHABLE_PROVIDERS and nothing offers a chip that would come here.
-      // A throw rather than a guessed argv, and rather than a `never` cast
-      // that would read as "unreachable" while silently spawning a bare
-      // executable: the caller already turns this into "could not be started",
-      // which is exactly what happened.
-      throw new Error('[launch] antigravity has no launch invocation yet (#237): observer only')
+      // AMENDED for #237, step 4 (was: threw "observer only" — Antigravity
+      // was absent from LAUNCHABLE_PROVIDERS, and nothing offered a chip that
+      // reached here). The detached launch landed: `tuning` is accepted for
+      // the exhaustive switch's own uniformity and ignored, exactly as
+      // buildAntigravityLaunchArgs' own doc comment explains — no launch can
+      // carry a model or an effort for this provider yet.
+      return buildAntigravityLaunchArgs()
   }
 }
 
