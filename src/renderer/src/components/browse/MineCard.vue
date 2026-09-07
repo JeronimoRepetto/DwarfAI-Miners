@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { DIALOG_ICON_SRC, NUGGET_SRC, SLEEP_ICON_SRC, maskImageValue } from '../../lib/art'
+import {
+  DELETE_ICON_SRC,
+  DIALOG_ICON_SRC,
+  NUGGET_SRC,
+  SLEEP_ICON_SRC,
+  maskImageValue
+} from '../../lib/art'
 import {
   cardArtFor,
   cardTierFor,
@@ -40,7 +46,7 @@ const props = defineProps<{
   unrecorded?: boolean
 }>()
 
-const emit = defineEmits<{ open: [projectId: string] }>()
+const emit = defineEmits<{ open: [projectId: string]; remove: [projectId: string] }>()
 
 /**
  * The one tier this card states, however it was arrived at (#153) — see
@@ -91,6 +97,20 @@ const measuring = computed(() => isMeasuring(props.project))
  * would be a dead affordance dressed as a working one.
  */
 const enterable = computed(() => props.project.live)
+
+/*
+ * Whether this card has a mine that can be removed (#169).
+ *
+ * Every card but an unrecorded one: removal flags the projects row, and an
+ * unrecorded card has none — main would answer "not tracking that", which is a
+ * refusal dressed as an action. Such a mine leaves the board on its own when
+ * its session ends (#165).
+ *
+ * The one that matters is the opposite of `enterable`: a mine nobody is working
+ * cannot be entered at all, so an affordance living only inside the mine would
+ * leave exactly the rows this exists to clear with no exit.
+ */
+const removable = computed(() => props.unrecorded !== true)
 </script>
 
 <template>
@@ -193,11 +213,38 @@ const enterable = computed(() => props.project.live)
         ></span>
       </span>
     </component>
+    <!--
+      Removing this mine (#169). A SIBLING of the card body, never a child:
+      the body is a button when the mine can be entered, and a button inside a
+      button is not valid HTML — which is also what keeps a press here from
+      reaching the card's own open action, with no stopPropagation to remember.
+
+      Upper-right because the lower-right corner already belongs to the status
+      markers. The design source places no removal at all; see the amendment in
+      `screens/browse.md`.
+    -->
+    <button
+      v-if="removable"
+      class="card-remove"
+      type="button"
+      :aria-label="`Remove the mine ${project.name}`"
+      title="Stop tracking this mine"
+      @click="emit('remove', project.id)"
+    >
+      <span
+        class="remove-glyph"
+        :style="{ '--remove-icon': maskImageValue(DELETE_ICON_SRC) }"
+        aria-hidden="true"
+      ></span>
+    </button>
   </li>
 </template>
 
 <style scoped>
 .mine-card {
+  /* The removal control hangs off this box, so the card is what it is placed
+     against — the body inside it is a grid whose tracks it must not join. */
+  position: relative;
   height: var(--size-card-height);
   list-style: none;
   border: var(--border-highlight);
@@ -432,5 +479,42 @@ button.card-body:focus-visible {
 .status-resting {
   width: var(--size-sleep-icon);
   height: var(--size-sleep-icon);
+}
+/*
+ * The removal control (#169), against the card's upper-right corner — the
+ * opposite corner from the status markers, which own the lower-right.
+ *
+ * A bare glyph with no surface behind it, the treatment the source gives both
+ * of the Mines header's own controls (see MinesPanel's .sort-control), and at
+ * the same shared icon size. It is quieter than they are until it is hovered or
+ * focused: it is the one destructive thing on this screen, and the mock draws
+ * nothing here at all, so it should not compete with the mine's own name.
+ */
+.card-remove {
+  position: absolute;
+  top: 6px;
+  right: var(--space-settings);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  background: none;
+}
+.remove-glyph {
+  display: block;
+  width: var(--size-sleep-icon);
+  height: var(--size-sleep-icon);
+  background: var(--color-control);
+  mask: var(--remove-icon) center / contain no-repeat;
+}
+.card-remove:hover .remove-glyph,
+.card-remove:focus-visible .remove-glyph {
+  background: var(--color-accent);
+}
+.card-remove:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 </style>

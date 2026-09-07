@@ -415,3 +415,78 @@ describe('MinesPanel board-and-list coherence', () => {
     expect(panel({ projects: [], mines: [] }).find('.panel-empty').exists()).toBe(true)
   })
 })
+
+/**
+ * Removing a mine from the list (#169).
+ *
+ * The confirmation is held HERE, exactly as SettingsPanel holds the reset
+ * modal's open state: which mine is awaiting confirmation is display state
+ * nothing outside this screen reads, while the confirmed intent leaves as an
+ * event so App keeps owning the IPC.
+ */
+describe('MinesPanel removing a mine', () => {
+  const stored = defaultProject({ id: 'mine:lalo', name: 'Lalo-Test' })
+
+  it('asks before it removes anything, naming the mine', async () => {
+    const wrapper = panel({ projects: [stored] })
+
+    await wrapper.get('.card-remove').trigger('click')
+
+    expect(wrapper.get('.modal-message').text()).toContain('Lalo-Test')
+    expect(wrapper.emitted('remove')).toBeUndefined()
+  })
+
+  it('reports the removal only once it is confirmed', async () => {
+    const wrapper = panel({ projects: [stored] })
+
+    await wrapper.get('.card-remove').trigger('click')
+    await wrapper.get('.modal-confirm').trigger('click')
+
+    expect(wrapper.emitted('remove')).toEqual([['mine:lalo']])
+  })
+
+  it('removes nothing when the confirmation is dismissed', async () => {
+    const wrapper = panel({ projects: [stored] })
+
+    await wrapper.get('.card-remove').trigger('click')
+    await wrapper.get('.modal-close').trigger('click')
+
+    expect(wrapper.emitted('remove')).toBeUndefined()
+    expect(wrapper.find('.remove-modal').exists()).toBe(false)
+  })
+
+  it('closes the confirmation once the mine is gone from the list', async () => {
+    // The card is the feedback, and the modal named a mine that no longer has
+    // one: leaving it open would ask about a card that is not there.
+    const wrapper = panel({ projects: [stored] })
+    await wrapper.get('.card-remove').trigger('click')
+
+    await wrapper.setProps({ projects: [] })
+
+    expect(wrapper.find('.remove-modal').exists()).toBe(false)
+  })
+
+  it('keeps the confirmation open, with the reason, when the removal failed', async () => {
+    const wrapper = panel({ projects: [stored], removeError: 'The database is locked.' })
+
+    await wrapper.get('.card-remove').trigger('click')
+
+    expect(wrapper.get('.modal-error').text()).toBe('The database is locked.')
+  })
+
+  it('locks the confirmation while main is working on it', async () => {
+    const wrapper = panel({ projects: [stored], removing: true })
+
+    await wrapper.get('.card-remove').trigger('click')
+
+    expect(wrapper.get('.modal-confirm').attributes('disabled')).toBeDefined()
+  })
+
+  it('shows no confirmation until one is asked for', () => {
+    expect(
+      panel({ projects: [stored] })
+        .find('.remove-modal')
+        .exists()
+    ).toBe(false)
+  })
+})

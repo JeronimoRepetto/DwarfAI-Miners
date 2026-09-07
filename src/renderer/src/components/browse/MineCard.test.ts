@@ -255,12 +255,19 @@ describe('MineCard level bar', () => {
   })
 })
 
+/*
+ * AMENDED for #169: both tests below matched `button` bare, and the card now
+ * carries a second one — the removal control, which is a button whether or not
+ * the mine can be entered. The subject of each is the card BODY, so each now
+ * names it; nothing else changed, and the second one would otherwise have
+ * passed or failed on which button the DOM happened to list first.
+ */
 describe('MineCard action', () => {
   it('opens the mine of a live project', async () => {
     const wrapper = mount(MineCard, {
       props: { project: defaultProject({ id: 'C:/dev/alpha', live: true }), activeAgents: 1 }
     })
-    await wrapper.get('button').trigger('click')
+    await wrapper.get('button.card-body').trigger('click')
     expect(wrapper.emitted('open')).toEqual([['C:/dev/alpha']])
   })
 
@@ -268,7 +275,7 @@ describe('MineCard action', () => {
     // The empty-mine interior is not built yet; a button that opened nothing
     // would be a dead affordance pretending to work.
     const wrapper = mount(MineCard, { props: { project: defaultProject({ live: false }) } })
-    expect(wrapper.find('button').exists()).toBe(false)
+    expect(wrapper.find('button.card-body').exists()).toBe(false)
   })
 })
 
@@ -375,5 +382,53 @@ describe('MineCard while the mine is being measured', () => {
   it('says nothing on a discovered card nobody promised a walk', () => {
     const wrapper = mount(MineCard, { props: { project: defaultProject() } })
     expect(wrapper.find('.card-measuring').exists()).toBe(false)
+  })
+})
+
+/**
+ * Removing a mine from the card it stands on (#169).
+ *
+ * The design source specifies no per-mine removal at all — see the amendment
+ * recorded in `screens/browse.md`'s Mine card section — so the placement is
+ * ours: the designer's own unused `delete.svg`, at the card's upper-right,
+ * clear of the lower-right corner the status markers already own. It asks
+ * rather than acts; the confirmation is MinesPanel's (RemoveMineModal).
+ */
+describe('MineCard removal', () => {
+  it('offers a removal control that names the mine it would remove', () => {
+    const wrapper = mount(MineCard, { props: { project: defaultProject({ name: 'Lalo-Test' }) } })
+    const control = wrapper.get('.card-remove')
+    expect(control.attributes('aria-label')).toContain('Lalo-Test')
+  })
+
+  it('reports the project it belongs to, and opens nothing', () => {
+    // It sits OUTSIDE the card body rather than inside it — a button inside a
+    // button is not valid HTML, and it is also what keeps a press from
+    // reaching the card's own open action.
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ id: 'mine:lalo', live: true }) }
+    })
+    wrapper.get('.card-remove').trigger('click')
+    expect(wrapper.emitted('remove')).toEqual([['mine:lalo']])
+    expect(wrapper.emitted('open')).toBeUndefined()
+  })
+
+  it('offers no removal for a live mine the store has no row for', () => {
+    // There is nothing to remove: an unrecorded mine has no row to flag, so the
+    // control would ask main to do nothing and be told so. That mine leaves the
+    // board on its own when its session ends (#165).
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ live: true }), unrecorded: true }
+    })
+    expect(wrapper.find('.card-remove').exists()).toBe(false)
+  })
+
+  it('offers removal for a mine nobody is working, which is the point', () => {
+    // The whole reason the control is on the CARD and not inside the mine: a
+    // mine with no session cannot be entered (see `enterable`), so an
+    // affordance reachable only from the interior would leave exactly the junk
+    // rows #169 exists to clear with no exit at all.
+    const wrapper = mount(MineCard, { props: { project: defaultProject({ live: false }) } })
+    expect(wrapper.find('.card-remove').exists()).toBe(true)
   })
 })

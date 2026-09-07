@@ -7,6 +7,7 @@ import {
   projectQueryFor,
   toggledDirection
 } from '../lib/browse/browseQuery'
+import { removeFailureNotice } from '../lib/browse/removeMine'
 import type { MineTier, ProjectSummary } from '../types'
 
 /**
@@ -19,6 +20,14 @@ const UNREADABLE = 'DwarfAI-Miners could not read your projects.'
 
 /** Said when the declare channel itself could not be reached (#85). */
 const UNREACHABLE = 'DwarfAI-Miners could not open the folder picker.'
+
+/**
+ * Said when the removal channel itself could not be reached (#169).
+ *
+ * States that nothing was removed, which is the fact the user needs: the card
+ * is still there, and a bridge that never answered removed nothing.
+ */
+const REMOVE_UNREACHABLE = 'The panel lost contact with the app. Nothing was removed.'
 
 /**
  * The Mines panel's state (#92): the filters, the pages loaded so far, and
@@ -51,6 +60,16 @@ export function useProjectBrowse() {
    * appearing where the other belongs would misdescribe both.
    */
   const addError = ref<string | null>(null)
+  /** True while main is carrying out a confirmed removal (#169). */
+  const removing = ref(false)
+  /**
+   * Why the last removal did not happen, or null.
+   *
+   * Its own ref for the reason `addError` is one: the list being unreadable,
+   * a folder being refused and a mine that would not go are three different
+   * facts, and any of them appearing where another belongs misdescribes both.
+   */
+  const removeError = ref<string | null>(null)
 
   let latest = 0
 
@@ -174,6 +193,48 @@ export function useProjectBrowse() {
     }
   }
 
+  /**
+   * Remove a mine, by id (#169).
+   *
+   * The mine leaves the map, the list and the board, and nothing it mined is
+   * lost — main flags the row rather than deleting it, so `addProject` on the
+   * same folder brings the mine back with its ore. See MineUndeclareResult.
+   *
+   * The list is RELOADED on success and deliberately not on a refusal. On
+   * success the page on screen is stale — the row it was read from is flagged
+   * now — and the card going away is the only feedback a removal has. On a
+   * refusal nothing changed, so re-reading would repaint the same list and make
+   * a removal that did not happen look like one that did; the notice is what
+   * says so instead.
+   *
+   * Filters are left exactly as they are, the opposite of `addProject`. That
+   * one clears them because a new folder can fall outside them and a card the
+   * user just made has to be visible; here the card is going away, and resetting
+   * the browse would move the ground under a user who is in the middle of
+   * tidying several mines under one filter.
+   *
+   * A second call while one is in flight is dropped: Confirm is destructive,
+   * and a double press must not fire it twice. Resolves true exactly when main
+   * reports the mine removed.
+   */
+  async function removeProject(projectId: string): Promise<boolean> {
+    if (removing.value) return false
+    removing.value = true
+    removeError.value = null
+    try {
+      const result = await window.api.undeclareMine(projectId)
+      removeError.value = removeFailureNotice(result)
+      if (result.outcome !== 'removed') return false
+      await load()
+      return true
+    } catch {
+      removeError.value = REMOVE_UNREACHABLE
+      return false
+    } finally {
+      removing.value = false
+    }
+  }
+
   return {
     filters,
     projects,
@@ -182,11 +243,14 @@ export function useProjectBrowse() {
     exhausted,
     adding,
     addError,
+    removing,
+    removeError,
     load,
     loadMore,
     setSearch,
     setTier,
     toggleDirection,
-    addProject
+    addProject,
+    removeProject
   }
 }
