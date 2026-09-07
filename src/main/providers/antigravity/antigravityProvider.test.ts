@@ -58,14 +58,25 @@ function store(options: StoreOptions = {}): FakeFs {
   return fs
 }
 
-function provider(fs: FakeFs, now: () => number = () => NOW): AntigravityProvider {
+/*
+ * AMENDED for #237, step 5: this helper gained an optional `heldWorkspaceOf`.
+ * Every existing call passes none, so every existing assertion is unchanged —
+ * the provider defaults to answering "this panel holds nothing", which is what
+ * it always did.
+ */
+function provider(
+  fs: FakeFs,
+  now: () => number = () => NOW,
+  heldWorkspaceOf?: (sessionId: string) => string | undefined
+): AntigravityProvider {
   return new AntigravityProvider({
     fs,
     storeRoot: ROOT,
     busyWindowS: 120,
     lockGraceS: 30,
     staleLockWindowS: 86_400,
-    now
+    now,
+    ...(heldWorkspaceOf === undefined ? {} : { heldWorkspaceOf })
   })
 }
 
@@ -471,5 +482,67 @@ describe('AntigravityProvider.transcriptPath', () => {
     await agy.scan()
 
     expect(agy.transcriptPath(`antigravity:${CONVERSATION}`)).toBeUndefined()
+  })
+})
+
+/*
+ * Issue #237, step 5. The measurement that made this seam necessary, and it is
+ * worth stating plainly because it reads like a bug otherwise: an Antigravity
+ * conversation started in stream-json print mode — which is exactly what a
+ * HELD session is — writes NO `history.jsonl` record. Measured on CLI 1.1.26,
+ * 2026-09-07, across four probe conversations: a presence lock appeared for
+ * every one of them and not one got a workspace record.
+ *
+ * `history.jsonl` is the only thing in this store that says which folder a
+ * conversation belongs to, so without a second source the session this panel
+ * launched and is holding is dropped by its own observer — no dwarf, in any
+ * mine. The held registry is that source, and what it answers is first-hand
+ * rather than inferred: this app chose the folder and started the process in
+ * it, and the CLI's own `init` message echoed the same path back.
+ */
+describe('AntigravityProvider and a conversation this panel holds (#237, step 5)', () => {
+  it('places a held conversation the store records no workspace for', async () => {
+    const fs = store({ locked: [CONVERSATION], history: {} })
+    const held = provider(
+      fs,
+      () => NOW,
+      (id) => (id === CONVERSATION ? WORKSPACE : undefined)
+    )
+
+    const [snapshot] = await held.scan()
+    expect(snapshot?.sessionId).toBe(CONVERSATION)
+    expect(snapshot?.cwd).toBe(WORKSPACE)
+  })
+
+  it('still drops a conversation nobody records and nobody holds', async () => {
+    // The #166 guard is untouched: a mine invented from a conversation id is
+    // still a phantom project, and "this panel holds nothing" is the answer
+    // for every session it did not start.
+    const fs = store({ locked: [CONVERSATION], history: {} })
+    expect(
+      await provider(
+        fs,
+        () => NOW,
+        () => undefined
+      ).scan()
+    ).toEqual([])
+  })
+
+  it('prefers the store’s own record over the held folder when both exist', async () => {
+    // The store's record is the CLI's own writing about a conversation it
+    // resumed, and a resumed session can have moved. The held folder is the
+    // fallback for a conversation the store never described, not an override.
+    const fs = store({
+      locked: [CONVERSATION],
+      history: { [CONVERSATION]: [WORKSPACE, NOW - 60_000] }
+    })
+    const held = provider(
+      fs,
+      () => NOW,
+      () => '/home/j/projects/somewhere-else'
+    )
+
+    const [snapshot] = await held.scan()
+    expect(snapshot?.cwd).toBe(WORKSPACE)
   })
 })

@@ -784,7 +784,7 @@ Coal/token backfill stays unsupported for Antigravity, unchanged from §3.1.3's 
 
 #### 3.1.7 Detached launch (2026-09-07, issue #237 step 4)
 
-A one-shot, DETACHED launch only — `LAUNCHABLE_PROVIDERS` gained `antigravity`, `HELDABLE_PROVIDERS` did not, because no round trip through the CLI's documented bidirectional `stream-json` protocol has been proven by this app (that stays step 5). Re-verified live against Antigravity CLI 1.1.26 on this machine, 2026-09-07, with `agy --help` and `agy -p --help` — both read-only; **no Antigravity conversation was started to verify this section**, per this slice's own instructions:
+A one-shot, DETACHED launch — `LAUNCHABLE_PROVIDERS` gained `antigravity` here, and `HELDABLE_PROVIDERS` gained it in step 5 once a round trip through the CLI's documented bidirectional `stream-json` protocol had been proven (§3.1.9). This argv stays the detached one: it starts the process and lets go. Re-verified live against Antigravity CLI 1.1.26 on this machine, 2026-09-07, with `agy --help` and `agy -p --help` — both read-only; **no Antigravity conversation was started to verify this section**, per that slice's own instructions:
 
 ```
 -p, --print              Run a single prompt non-interactively and print the response
@@ -841,6 +841,83 @@ to put text on disk, given the same `Edited` verb. `domain/permissionSummary.ts`
 Claude's (§1.6) or Codex's (§2.2.1), so the shared table stays one flat lookup across all three
 providers.
 
+#### 3.1.9 Held session over the official stream-json protocol (2026-09-07, issue #237 step 5)
+
+**A live two-turn round trip was HELD**, which is what `HELDABLE_PROVIDERS` gaining `antigravity` means and the only thing that could have earned it. Antigravity CLI **1.1.26**, Windows, 2026-09-07, in a scratch directory under the OS temp dir; the sanitized stdout is committed as `src/main/providers/__fixtures__/antigravity/held-stream.jsonl`, and every shape below is read off it rather than off the published page. Official protocol: <https://antigravity.google/docs/cli/headless/> (read 2026-09-07). **[V]**
+
+##### The argv, and the correction that cost two probe runs
+
+```
+agy --input-format stream-json --output-format stream-json
+```
+
+**No `-p`.** The page lists `-p, --print, --prompt` as the print-mode flag, which reads like a boolean and is one on `claude`. It is not one here — it takes a value:
+
+```
+$ agy -p --input-format stream-json --output-format stream-json
+Error: -p took "--input-format" as its prompt, so the intended prompt was left as
+an argument and ignored.
+Attach the prompt to the flag (-p='your prompt') and move --input-format elsewhere
+on the command line.
+... exit 2
+
+$ agy --input-format stream-json --output-format stream-json -p
+flag needs an argument: -p
+... exit 2
+```
+
+`--input-format` is what puts the CLI in print mode. Its own help states the pairing: _"stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires `--output-format stream-json`"_. This is the same finding §3.1.7 records for the detached argv, and it was found here first: the two argvs differ only in the formats they ask for, so one probe settled both. **[V]**
+
+##### Input: one NDJSON line per turn, and the line IS the turn
+
+```json
+{ "event": "user", "message": { "content": "Reply with the single word pong." } }
+```
+
+Written to the child's stdin with a trailing newline, and `JSON.stringify` is what keeps a multi-line prompt on one line. The page also documents a `content` array of `{type:'text',text}` blocks (`text` being the only accepted block type); the plain string is what was measured, so it is what this app sends. **[V]**
+
+##### Output: three event types, and nothing else observed
+
+| Event         | When                 | Fields observed                                                                                                                                                                                                                  |
+| ------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`        | **once per PROCESS** | `conversation_id`; `init.cwd`, `init.tools[]` (56 names), `init.permission_mode`, and `init.model` when `--model` was passed                                                                                                     |
+| `step_update` | many per turn        | `conversation_id`, `step_index`, `state` (`ACTIVE`/`DONE`), `step_type` (`user_input`, `agent_response`, `tool` observed; the page also names `checkpoint`), `text_delta`, `tool_name`, `tool_info`, `duration_seconds`, `usage` |
+| `result`      | **once per turn**    | `conversation_id`, `status`, `response`, `duration_seconds`, `num_turns`, `usage`                                                                                                                                                |
+
+Four findings decide how those are read, and each was measured because guessing it would have put something false in the panel:
+
+1. **`text_delta` is a true delta.** A forty-word reply arrived as two `ACTIVE` chunks plus a `DONE` carrying only the final newline. Concatenating every delta of one `step_index` equals that turn's `result.response`. So a reply is accumulated and published ONCE, at `DONE` — the same rule `sdkHeldSession.ts` follows by keeping only finished messages. **[V]**
+2. **`init` is emitted once per process, not per turn.** The second turn opened with a `user_input` step and no `init`. So **nothing on this wire marks a turn's START** — unlike the Agent SDK, whose `init` is re-emitted per turn (#245). The registry supplies that edge from the message it just sent; `result` supplies the end. **[V]**
+3. **Only `result.usage` is cumulative.** Turn 2's `agent_response` step reported `input_tokens: 4739` while its `result` reported `21524` (= turn 1's 16785 + 4739). `HeldSessionTelemetryUpdate` is merged by the registry — a later value replaces an earlier one — so reporting a step's usage would make the session's totals go backwards. Usage is read off `result` and nowhere else. **[V]**
+4. **The `usage` keys are not Claude's.** `input_tokens`, `output_tokens`, `thinking_tokens`, `cache_read_tokens`, `total_tokens` — **no cache-creation figure anywhere**. `HeldSessionUsage` therefore made `cacheCreationInputTokens` optional and added an optional `thinkingTokens`: one shape, two protocols, each field present only where its own protocol states it. **[V]**
+
+`permission_mode` came back **`always-proceed`**, not the page's documented `request-review` default. Read and not acted on: this app passes no permission flag, so that is this machine's own configuration rather than a fact about the protocol. **[V]**
+
+##### The one on-disk finding that changed a seam
+
+**A stream-json conversation writes NO `history.jsonl` record.** Measured across four probe conversations: every one got a `presence/<id>.lock` and a `brain/<id>/.system_generated/logs/transcript.jsonl`, and **none** got a workspace record. **[V]**
+
+`history.jsonl` is the only thing in this store that maps a conversation to a folder (§3.1.4), so `AntigravityProvider.scan`'s `if (workspace === undefined) continue` would have dropped the one Antigravity session this app knows the most about — the dwarf would never have appeared, in any mine. So the provider gained one narrow seam, `heldWorkspaceOf`, answered by `HeldSessionRegistry.heldWorkspace`: the folder this app **chose itself**, started the process in, and had echoed back by the CLI's own `init.cwd`. The store's own record still wins where one exists, because a resumed conversation may have moved. This is not #166's phantom-project guard weakening — that guard is against a folder this app _invented_.
+
+Two other observer facts worth recording, neither of them acted on here: the presence lock **survived the process exiting** in all four probes (the stale-lock case §3.1.2's `staleLockWindowS` already bounds), and the transcript records the held turns exactly as an observed session's does (`USER_INPUT` / `PLANNER_RESPONSE`), so the feed needs no second parser.
+
+##### What a held Antigravity session deliberately cannot do
+
+The stream's **input** side documents user text events and nothing else. So, per #237's acceptance gates, and expressed in the type system rather than in prose — `HeldSessionHandle.interrupt` and `.contextUsage` became **optional**, and a held Antigravity handle simply omits both:
+
+| Capability                                    | Held Claude           | Held Antigravity  | Why                                                                                                              |
+| --------------------------------------------- | --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| start with a prompt, push follow-up text, end | yes                   | **yes**           | the whole of what `HELDABLE_PROVIDERS` promises                                                                  |
+| conversation id, live feed, turn end          | yes                   | **yes**           | `init` and `step_update`/`result` state all three                                                                |
+| cumulative token usage                        | yes                   | **yes**           | `result.usage`, replaced never summed                                                                            |
+| cut the running turn short                    | yes (`interrupt()`)   | **absent**        | no cancel event documented on the input side                                                                     |
+| context-window reading                        | yes (control request) | **absent**        | no control channel exists                                                                                        |
+| answer a question / a permission prompt       | yes (`canUseTool`)    | **never offered** | `ask_question`/`ask_permission` are in the tool list and nothing hands one to a host — detection is not delivery |
+| subagent crew                                 | yes (`task_started`)  | **not claimed**   | the page names `subagent_info`; the probe saw none, and a task id + depth cannot be invented                     |
+
+**Absent, not `false`.** A method returning `false` says "it was tried and refused"; an absent method says "this session type has no such act", and the panel says different things about the two. A kick on a held Antigravity dwarf is **disabled with its own sentence** (`HELD_NO_CANCEL_REASON` — "This session's protocol has no cancel, so the turn can't be cut short from here. Messages still go straight onto the stream."), carried there by `TextDeliveryTarget`'s new `interruptible` flag so the panel's capability matrix and the runtime's kick routing read the one rule. Everything in the last four rows is step 7's work, gated on a proven live round trip exactly as this slice was.
+
+`--model` and `--effort` are forwarded when a launch names them, and no more: `HeldSessionLaunchRequest` already carried both, and #282 has since given the Add Panel a live `agy models` catalogue and `PROVIDER_EFFORT_LEVELS.antigravity = ['low','medium','high']` to fill them from. One thing this slice measured and did NOT resolve: those model slugs carry the effort inside the name (`gemini-3.8-flash-high`, `-medium`, `-low`), so `--model gemini-3.8-flash-high --effort low` is a combination nobody has run. The held argv forwards exactly what the request names rather than picking a winner — the rule for the pair is #282's to decide, and the note sits at `antigravityHeldArgs`' own definition. `PERMISSION_MODE_PROVIDERS` is a new list beside `HELDABLE_PROVIDERS` for the same reason: `HELD_PERMISSION_MODES` is the **Agent SDK's** five words, and `agy --mode` takes `accept-edits` or `plan` — a different vocabulary, so the Permissions picker stays hidden for a held Antigravity launch rather than offering it words that mean nothing.
 ---
 
 ## 4. Matching session files to live processes (click-to-focus)
@@ -860,28 +937,36 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 
 ## 5. Confidence summary
 
-| Claim                                                                                         | Status                                                                                                   |
-| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Claude dir encoding lossy; `cwd` field per line                                               | Verified                                                                                                 |
-| Claude line schema, `effort`, model, thinking blocks                                          | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                     |
-| `sessions/<pid>.json` busy/idle + PID mapping                                                 | Verified live (cleanup-on-crash not tested)                                                              |
-| Agent async launch / task-notification completion / `subagents\` layout                       | Verified live + on completed session                                                                     |
-| `<status>` is one of completed/failed/killed; all terminal                                    | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                         |
-| Three delivery envelopes carry the notification; the rest quote it                            | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                        |
-| `agent-*.meta.json` and `tasks\*.output` carry no completion state                            | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                 |
-| `waitingFor` is the six values of §1.5, plus absent                                           | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                    |
-| Subagents expose no status or blocked condition anywhere                                      | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                   |
-| Codex writes no approval / user-input record at all                                           | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)                     |
-| Codex rollout layout & record types                                                           | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                  |
-| Codex liveness = mtime + task_started/complete + process                                      | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                  |
-| Gemini CLI: nothing on disk here                                                              | Verified absence                                                                                         |
-| Antigravity CLI store layout, record schema and key inventory                                 | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise |
-| Antigravity: newest step's RUNNING status is the only open-turn evidence                      | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                    |
-| Antigravity: no token usage, no blocked-on-a-human record anywhere                            | Verified absence in that corpus                                                                          |
-| Antigravity: eight tool names map to a feed activity line, rest omitted                       | Verified (180 calls / 3 conversations, 2026-09-07; re-confirmed against the same store during #280)      |
-| Antigravity: conversation_summaries.db describes CLI sessions                                 | **Refuted** - no CLI conversation id was in it; nothing reads it                                         |
-| Antigravity: a running agy.exe can be mapped to a conversation                                | **Refuted** - its command line carries no conversation id; no pid is published                           |
-| Antigravity: `-p`/`--input-format`/`--output-format`/`--effort`/`--model` all exist on 1.1.26 | Verified live, 2026-09-07, `agy --help` (read-only, no conversation started)                             |
-| Antigravity: bare `-p` with no positional prompt reads it from stdin                          | **Not independently re-tested** (would have started a conversation); taken from the validated plan       |
-| Antigravity: a `models` subcommand exists and lists available models                          | Its own `--help` verified; **live output not checked** — outside this slice's read-only authorization    |
-| Click-to-focus via PPID walk to terminal                                                      | Process data verified; focusing mechanics inferred                                                       |
+| Claim                                                                                         | Status                                                                                                                  |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Claude dir encoding lossy; `cwd` field per line                                               | Verified                                                                                                                |
+| Claude line schema, `effort`, model, thinking blocks                                          | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                                    |
+| `sessions/<pid>.json` busy/idle + PID mapping                                                 | Verified live (cleanup-on-crash not tested)                                                                             |
+| Agent async launch / task-notification completion / `subagents\` layout                       | Verified live + on completed session                                                                                    |
+| `<status>` is one of completed/failed/killed; all terminal                                    | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                                        |
+| Three delivery envelopes carry the notification; the rest quote it                            | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                                       |
+| `agent-*.meta.json` and `tasks\*.output` carry no completion state                            | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                                |
+| `waitingFor` is the six values of §1.5, plus absent                                           | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                                   |
+| Subagents expose no status or blocked condition anywhere                                      | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                                  |
+| Codex writes no approval / user-input record at all                                           | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)                                    |
+| Codex rollout layout & record types                                                           | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                                 |
+| Codex liveness = mtime + task_started/complete + process                                      | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                                 |
+| Gemini CLI: nothing on disk here                                                              | Verified absence                                                                                                        |
+| Antigravity CLI store layout, record schema and key inventory                                 | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise                |
+| Antigravity: newest step's RUNNING status is the only open-turn evidence                      | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                                   |
+| Antigravity: no token usage, no blocked-on-a-human record anywhere                            | Verified absence in that corpus                                                                                         |
+| Antigravity: eight tool names map to a feed activity line, rest omitted                       | Verified (180 calls / 3 conversations, 2026-09-07; re-confirmed against the same store during #280)                     |
+| Antigravity: conversation_summaries.db describes CLI sessions                                 | **Refuted** - no CLI conversation id was in it; nothing reads it                                                        |
+| Antigravity: a running agy.exe can be mapped to a conversation                                | **Refuted** - its command line carries no conversation id; no pid is published                                          |
+| Antigravity: `-p`/`--input-format`/`--output-format`/`--effort`/`--model` all exist on 1.1.26 | Verified live, 2026-09-07, `agy --help` (read-only, no conversation started)                                            |
+| Antigravity: bare `-p` with no positional prompt reads it from stdin                          | **Refuted** - `-p` takes a value; `agy -p --input-format ...` exits 2 without running (§3.1.9)                          |
+| Antigravity: `--input-format` alone puts the CLI in print mode, prompt on stdin               | Verified live, 2026-09-07 (both `text` and `stream-json`)                                                               |
+| Antigravity: a held two-turn round trip over bidirectional `stream-json`                      | Verified live on 1.1.26, 2026-09-07 (one process, two turns, one conversation id; stdout committed)                     |
+| Antigravity: `text_delta` is an incremental delta, not the whole reply                        | Verified live (two ACTIVE chunks plus a DONE carrying only the final newline)                                           |
+| Antigravity: `init` is emitted once per process, so nothing marks a turn's start              | Verified live (turn 2 opened with a `user_input` step and no `init`)                                                    |
+| Antigravity: `result.usage` is cumulative and a step's own `usage` is not                     | Verified live (turn 2 step 4739 vs result 21524 = 16785 + 4739)                                                         |
+| Antigravity: a stream-json conversation writes a `history.jsonl` record                       | **Refuted** - four probe conversations, four locks, zero workspace records (§3.1.9)                                     |
+| Antigravity: the stream input side documents a cancel / question / permission answer          | **Refuted** - user text events only; those capabilities are absent from the handle                                      |
+| Antigravity: `subagent_info` appears on a held stream                                         | Documented on the page; **not observed live** - no crew is claimed for a held session                                   |
+| Antigravity: a `models` subcommand exists and lists available models                          | Verified live, 2026-09-07 (step 5's probe and #282's own capture): a status line, then one `<id>	<label>` line per model |
+| Click-to-focus via PPID walk to terminal                                                      | Process data verified; focusing mechanics inferred                                                                      |

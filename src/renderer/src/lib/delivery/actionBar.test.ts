@@ -6,6 +6,7 @@ import {
   approvalNote,
   buildActionBar,
   CHANNEL_HINT,
+  HELD_NO_CANCEL_REASON,
   KICK_HINT,
   launchedNoInboxReason,
   NO_CHANNEL_REASON,
@@ -168,6 +169,43 @@ describe('buildActionBar', () => {
       expect(entry.hint).not.toBe(NO_KICK_REASON)
       expect(entry.hint).toBe(KICK_HINT['codex-queue'])
       expect(entry.hint).toContain('console')
+    })
+
+    /*
+     * Issue #237, step 5. The same asymmetry as the queue's, from the opposite
+     * direction: a held Antigravity session takes messages on the stream this
+     * panel holds, and its documented input side carries no cancel event at
+     * all. So `cancel` is null while `sendText` is 'held-session', and neither
+     * of the two sentences already here is true for it —
+     * `KICK_HINT['held-session']` promises an interrupt of the turn, which is
+     * exactly what cannot happen, and the generic reason reads as a feature
+     * this app has not got round to.
+     */
+    it('says a held protocol has no cancel, rather than promising an interrupt', () => {
+      const entry = entryFor(
+        'kick',
+        capableDwarf({
+          provider: 'antigravity',
+          textDelivery: 'held-session',
+          capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+        })
+      )
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).toBe(HELD_NO_CANCEL_REASON)
+      expect(entry.hint).not.toBe(NO_KICK_REASON)
+      expect(entry.hint).not.toBe(KICK_HINT['held-session'])
+    })
+
+    it('still promises the interrupt for a held session whose protocol has one', () => {
+      const entry = entryFor(
+        'kick',
+        capableDwarf({
+          textDelivery: 'held-session',
+          capabilities: { sendText: 'held-session', cancel: 'held-session', adjustEffort: null }
+        })
+      )
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(KICK_HINT['held-session'])
     })
   })
 
@@ -459,5 +497,34 @@ describe('approvalNote', () => {
       }
     })
     expect(approvalNote(observed)).toBeNull()
+  })
+})
+
+/*
+ * Issue #237, step 5. The composer's own half of the same dwarf: a held
+ * session that cannot be kicked is still fully writable, so nothing about the
+ * chat action changes for it. Asserted because the kick's refusal above is
+ * read off the SAME matrix, and a mistake there would be easiest to make by
+ * disabling both.
+ */
+describe('a held session whose protocol has no cancel (#237, step 5)', () => {
+  it('leaves the composer open, because the stream still takes a message', () => {
+    const dwarf = defaultDwarf({
+      provider: 'antigravity',
+      textDelivery: 'held-session',
+      capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+    })
+    const chat = buildActionBar(dwarf, IDLE).find((action) => action.id === 'chat')
+    expect(chat?.enabled).toBe(true)
+    expect(chat?.hint).toBe(CHANNEL_HINT['held-session'])
+  })
+
+  it('shows the kick’s reason on the panel, since chat is not the one refusing', () => {
+    const dwarf = defaultDwarf({
+      provider: 'antigravity',
+      textDelivery: 'held-session',
+      capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+    })
+    expect(refusalLine(dwarf, IDLE)).toBe(HELD_NO_CANCEL_REASON)
   })
 })

@@ -239,30 +239,40 @@ function antigravityDecodedSubject(value: unknown): string | undefined {
  * `list_dir` reads as `read` rather than a fifth verb: the design names four,
  * and browsing a directory's contents is closer to reading them than to any
  * of the other three.
+ *
+ * AMENDED for #237, step 5: the `read` parameter, and it is the whole of the
+ * change — every tool, field and priority decision above is #280's, untouched.
+ * This CLI reports the same tool call TWO ways, and only the decoding differs
+ * between them. In its private transcript each `args` value is a JSON string
+ * needing a second parse (see `antigravityDecodedSubject`); on its official
+ * stream-json output `tool_info.parameters` carries plain values. The arg
+ * NAMES are identical either way, so the mapping is shared and each reader
+ * brings its own decoder — one table of names, which is what stops a held
+ * session and an observed one drawing the same call differently.
  */
-function antigravityToolInput(name: string, args: Rec): Record<string, unknown> | undefined {
+export function antigravityToolSubject(
+  name: string,
+  read: (key: string) => string | undefined
+): Record<string, unknown> | undefined {
   switch (name) {
     case 'view_file':
     case 'write_to_file':
     case 'replace_file_content': {
-      const raw = name === 'view_file' ? args.AbsolutePath : args.TargetFile
-      const filePath = antigravityDecodedSubject(raw)
+      const filePath = read(name === 'view_file' ? 'AbsolutePath' : 'TargetFile')
       return filePath === undefined ? undefined : { file_path: filePath }
     }
     case 'list_dir': {
-      const path = antigravityDecodedSubject(args.DirectoryPath)
+      const path = read('DirectoryPath')
       return path === undefined ? undefined : { path }
     }
     case 'run_command': {
-      const command = antigravityDecodedSubject(args.CommandLine)
+      const command = read('CommandLine')
       return command === undefined ? undefined : { command }
     }
     case 'grep_search':
     case 'find_by_name': {
-      const patternField = name === 'grep_search' ? args.Query : args.Pattern
-      const pathField = name === 'grep_search' ? args.SearchPath : args.SearchDirectory
-      const pattern = antigravityDecodedSubject(patternField)
-      const path = antigravityDecodedSubject(pathField)
+      const pattern = read(name === 'grep_search' ? 'Query' : 'Pattern')
+      const path = read(name === 'grep_search' ? 'SearchPath' : 'SearchDirectory')
       if (pattern === undefined && path === undefined) return undefined
       return {
         ...(pattern === undefined ? {} : { pattern }),
@@ -272,6 +282,15 @@ function antigravityToolInput(name: string, args: Rec): Record<string, unknown> 
     default:
       return undefined
   }
+}
+
+/**
+ * That mapping over a TRANSCRIPT's args, which are double-encoded (#280) —
+ * the reader `toolCallActivity` below uses, and the one this function existed
+ * as in full before #237 split the name table out of it.
+ */
+function antigravityToolInput(name: string, args: Rec): Record<string, unknown> | undefined {
+  return antigravityToolSubject(name, (key) => antigravityDecodedSubject(args[key]))
 }
 
 /**

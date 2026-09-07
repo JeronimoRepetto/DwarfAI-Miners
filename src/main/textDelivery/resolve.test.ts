@@ -489,3 +489,78 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities?.adjustEffort).toBeNull()
   })
 })
+
+/*
+ * Issue #237, step 5. Two providers can be held now, and their protocols do
+ * not agree about cancellation: the Agent SDK documents an `interrupt` control
+ * request, and Antigravity's bidirectional stream documents user text events
+ * on its input side and nothing else.
+ *
+ * So `interruptible` is a fact carried by the endpoint rather than derived
+ * from its KIND, and both callers read the one rule — the panel must disable
+ * the control main is bound to refuse, which is exactly what these two
+ * functions exist to keep in step (#97's own reasoning, second case).
+ */
+describe('a held session whose protocol has no cancel (#237, step 5)', () => {
+  const HELD_NO_CANCEL = {
+    kind: 'held-session' as const,
+    sessionId: 'agy-1',
+    interruptible: false
+  }
+  const HELD = { kind: 'held-session' as const, sessionId: 'sess-1', interruptible: true }
+
+  it('still routes a MESSAGE, because the stream takes one', () => {
+    expect(
+      resolveTextDelivery('antigravity:agy-1', targetsFrom({ 'antigravity:agy-1': HELD_NO_CANCEL }))
+    ).toEqual({
+      channel: 'held-session',
+      endpoint: HELD_NO_CANCEL,
+      prefix: ''
+    })
+  })
+
+  it('refuses to route a kick, rather than reporting one it cannot perform', () => {
+    expect(
+      resolveKickDelivery('antigravity:agy-1', targetsFrom({ 'antigravity:agy-1': HELD_NO_CANCEL }))
+    ).toBeNull()
+  })
+
+  it('routes a kick for a held session whose protocol does have one', () => {
+    expect(resolveKickDelivery('claude:sess-1', targetsFrom({ 'claude:sess-1': HELD }))).toEqual({
+      channel: 'held-session',
+      endpoint: HELD,
+      prefix: ''
+    })
+  })
+
+  it('stamps send without cancel, so the bar can say which half is missing', () => {
+    const held: Dwarf = {
+      id: 'antigravity:agy-1',
+      provider: 'antigravity',
+      role: 'foreman',
+      name: 'boss',
+      status: 'working',
+      sessionId: 'agy-1'
+    }
+    const [mine] = stampTextDelivery(
+      [
+        {
+          id: 'mine:c:\work',
+          path: 'C:\work',
+          name: 'work',
+          tier: 'bronze',
+          dwarfs: [held],
+          tokensObserved: 0,
+          updatedAt: 1
+        }
+      ],
+      targetsFrom({ 'antigravity:agy-1': HELD_NO_CANCEL })
+    )
+    expect(mine?.dwarfs[0]?.textDelivery).toBe('held-session')
+    expect(mine?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'held-session',
+      cancel: null,
+      adjustEffort: null
+    })
+  })
+})

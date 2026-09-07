@@ -59,6 +59,16 @@ class FakePort {
   failWith: Error | undefined = undefined
   /** Set false to make the stream refuse an interrupt, as one already ending would. */
   interruptTakes = true
+  /*
+   * AMENDED for #237, step 5. Both acts became OPTIONAL on the handle when a
+   * second held protocol arrived documenting neither — see HeldSessionHandle
+   * on why absent and `false` are different claims. Both default true, so
+   * every existing assertion here is unchanged.
+   */
+  /** Set false to hand back a handle with no `interrupt` at all. */
+  offersInterrupt = true
+  /** Set false to hand back a handle with no `contextUsage` at all. */
+  offersContextUsage = true
   /** Set false to make the stream refuse a send, as one already closing would (#245). */
   sendTakes = true
   /*
@@ -85,15 +95,23 @@ class FakePort {
         this.sent.push(text)
         return true
       },
-      interrupt: async () => {
-        this.interrupted.push(index)
-        return this.interruptTakes
-      },
-      contextUsage: () => {
-        this.contextUsageAsks.push(index)
-        if (this.contextUsageHangs) return new Promise<never>(() => {})
-        return Promise.resolve(this.contextUsageAnswer)
-      }
+      ...(this.offersInterrupt
+        ? {
+            interrupt: async () => {
+              this.interrupted.push(index)
+              return this.interruptTakes
+            }
+          }
+        : {}),
+      ...(this.offersContextUsage
+        ? {
+            contextUsage: () => {
+              this.contextUsageAsks.push(index)
+              if (this.contextUsageHangs) return new Promise<never>(() => {})
+              return Promise.resolve(this.contextUsageAnswer)
+            }
+          }
+        : {})
     }
   }
 
@@ -147,7 +165,10 @@ class FakePort {
 function registryOver(port: FakePort, detector: CliDetector = installedDetector()) {
   return new HeldSessionRegistry({
     detector,
-    start: port.start,
+    // AMENDED for #237, step 5 (was: `start: port.start`). The port became a
+    // table keyed by provider when a second engine arrived; every existing
+    // assertion is unchanged, and this fake is still the only Claude engine.
+    start: { claude: port.start },
     now: () => 1_700_000_000_000,
     log: () => {}
   })
@@ -913,10 +934,16 @@ describe('HeldSessionRegistry lifetime', () => {
     await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
-    await expect(registry.interrupt('sess-1')).resolves.toBe(true)
+    // AMENDED for #237, step 5 (was: `.toBe(true)` / `.toBe(false)`). The
+    // boolean became a named verdict when a second held protocol arrived with
+    // no cancellation in it at all — 'unsupported' and 'refused' are different
+    // facts and the panel says different things about them. Nothing about what
+    // this test proves has moved: the turn is cut on a session held, and an
+    // interrupt aimed at one that is not reaches no stream.
+    await expect(registry.interrupt('sess-1')).resolves.toBe('interrupted')
     expect(port.interrupted).toEqual([0])
 
-    await expect(registry.interrupt('sess-nobody')).resolves.toBe(false)
+    await expect(registry.interrupt('sess-nobody')).resolves.toBe('not-held')
     // Refused, never attempted against whatever else is held: an interrupt
     // aimed at a session this panel does not hold has no stream to reach.
     expect(port.interrupted).toEqual([0])
@@ -933,8 +960,93 @@ describe('HeldSessionRegistry lifetime', () => {
     await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
 
-    await expect(registry.interrupt('sess-1')).resolves.toBe(false)
+    // AMENDED for #237, step 5 (was: `.toBe(false)`). A stream that HAS an
+    // interrupt and would not take it is 'refused' — see the verdict's own doc
+    // comment on why that is not the same answer as a protocol without one.
+    await expect(registry.interrupt('sess-1')).resolves.toBe('refused')
     expect(port.interrupted).toEqual([0])
+  })
+
+  /*
+   * Issue #237, step 5. The other half of that verdict, and the acceptance
+   * gate this registry is responsible for: a held session whose protocol
+   * documents no cancellation offers no `interrupt` on its handle at all, and
+   * the answer must name that rather than borrowing the sentence for a stream
+   * that tried and failed.
+   */
+  it('says a protocol has no interrupt, rather than that one was refused', async () => {
+    const port = new FakePort()
+    port.offersInterrupt = false
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    await expect(registry.interrupt('sess-1')).resolves.toBe('unsupported')
+    // Nothing was attempted, which is the point: there was nothing to attempt.
+    expect(port.interrupted).toEqual([])
+    expect(registry.count()).toBe(1)
+  })
+
+  /*
+   * The same absence on the pull side (#237, step 5). A context reading is
+   * asked for on a schedule the runtime owns, so a session whose protocol
+   * exposes none must be a silent no-op rather than a timeout every mine
+   * opening pays for.
+   */
+  it('asks no context reading of a protocol that exposes none', async () => {
+    const port = new FakePort()
+    port.offersContextUsage = false
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    await registry.refreshContextUsage('sess-1')
+    expect(port.contextUsageAsks).toEqual([])
+    expect(registry.telemetryState('sess-1').contextUsage).toBeUndefined()
+  })
+
+  /*
+   * Issue #237, step 5. One provider's own store cannot say which folder a
+   * held conversation belongs to — an Antigravity stream-json conversation
+   * writes no `history.jsonl` record at all — so the registry answers with the
+   * folder it started the session in. First-hand, and only ever for a session
+   * this panel is actually holding.
+   */
+  it('names the folder a held session was started in, and nothing for one it does not hold', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    expect(registry.heldWorkspace('sess-1')).toBe(MINE)
+    expect(registry.heldWorkspace('sess-nobody')).toBeUndefined()
+  })
+
+  /*
+   * Issue #237, step 5. `HELDABLE_PROVIDERS` says a provider MAY be held; the
+   * engine table says which implementation answers when it is. A name in the
+   * list with no engine is refused by name — never started under whichever
+   * engine happened to be composed, which is the substitution #168 removed.
+   */
+  it('refuses a heldable provider with no engine behind it, and starts nothing', async () => {
+    const port = new FakePort()
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      // Claude is heldable and has no row here.
+      start: {},
+      now: () => 1_700_000_000_000,
+      log: () => {}
+    })
+
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig'
+    })
+    expect(result.launched).toBe(false)
+    expect(result.error).toContain('claude')
+    expect(port.started).toHaveLength(0)
   })
 })
 
@@ -1246,7 +1358,10 @@ describe('a held launch that names a model and an effort (#239)', () => {
   function tunedRegistry(port: FakePort, options: { model?: string } = {}) {
     return new HeldSessionRegistry({
       detector: installedDetector(),
-      start: port.start,
+      // AMENDED for #237, step 5 (was: `start: port.start`). The port became a
+      // table keyed by provider when a second engine arrived; every existing
+      // assertion is unchanged, and this fake is still the only Claude engine.
+      start: { claude: port.start },
       now: () => 1_700_000_000_000,
       log: () => {},
       ...(options.model === undefined ? {} : { model: options.model })
@@ -1316,7 +1431,10 @@ describe('a held launch that names a model and an effort (#239)', () => {
     const port = new FakePort()
     const registry = new HeldSessionRegistry({
       detector: installedDetector(),
-      start: port.start,
+      // AMENDED for #237, step 5 (was: `start: port.start`). The port became a
+      // table keyed by provider when a second engine arrived; every existing
+      // assertion is unchanged, and this fake is still the only Claude engine.
+      start: { claude: port.start },
       now: () => 1_700_000_000_000,
       log: () => {},
       ...({ effort: 'low' } as object)
@@ -1350,7 +1468,10 @@ describe('a held launch that names a model and an effort (#239)', () => {
     const logged: string[] = []
     const registry = new HeldSessionRegistry({
       detector: installedDetector(),
-      start: port.start,
+      // AMENDED for #237, step 5 (was: `start: port.start`). The port became a
+      // table keyed by provider when a second engine arrived; every existing
+      // assertion is unchanged, and this fake is still the only Claude engine.
+      start: { claude: port.start },
       now: () => 1_700_000_000_000,
       log: (message) => logged.push(message)
     })

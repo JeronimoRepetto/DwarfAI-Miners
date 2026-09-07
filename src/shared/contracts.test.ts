@@ -28,16 +28,36 @@ describe('DWARF_PROVIDERS', () => {
   })
 
   /*
-   * A provider identity says a store can be READ; it says nothing about what
-   * can be done to the session behind it (#237). Antigravity arrived as an
-   * observer only, then gained a detached, one-shot launch in step 4 — but
-   * never a HELD stream: no message, no interrupt, no live conversation this
-   * app keeps open. So it is deliberately absent from HELDABLE_PROVIDERS, and
-   * the panel's own capability seams answer "not supported" rather than
-   * offering a control with nothing behind it.
+   * AMENDED for #237, step 5 (was: `expect(HELDABLE_PROVIDERS).not.toContain(
+   * 'antigravity')`, under the heading "does not promise a held stream for a
+   * provider this app only observes").
+   *
+   * The condition that comment set is met, and it was met by measurement
+   * rather than by argument. A live two-turn round trip was HELD on this
+   * machine on 2026-09-07 against Antigravity CLI 1.1.26: one process, one
+   * NDJSON user event per turn on its stdin, the same `conversation_id` across
+   * both, a `result` for each, and the stdout captured as
+   * `main/providers/__fixtures__/antigravity/held-stream.jsonl`. That is the
+   * whole of what the list promises, and the day the comment was waiting for.
+   *
+   * What the name still does NOT promise is everything step 7 owns: no
+   * question answering, no permission answering, no turn cancellation, no
+   * message addressed to a child. Those are absent from the handle rather
+   * than refused at runtime — see HeldSessionHandle — so the panel's own
+   * capability seams say "unsupported" with a reason instead of offering a
+   * control with nothing behind it.
    */
-  it('does not promise a held stream for a provider this app only observes', () => {
-    expect(HELDABLE_PROVIDERS).not.toContain('antigravity')
+  it('promises a held stream for every provider a live round trip has been held on', () => {
+    expect(HELDABLE_PROVIDERS).toEqual(['claude', 'antigravity'])
+  })
+
+  /*
+   * The other half of that, and the one that is still a capability rather than
+   * a plan: Codex has no held-session engine in this app at all. #168 put the
+   * refusal behind a provider name for exactly this case.
+   */
+  it('does not promise a held stream for a provider with no engine behind it', () => {
+    expect(HELDABLE_PROVIDERS).not.toContain('codex')
   })
 
   it('is the type the union is derived from, so the two cannot drift apart', () => {

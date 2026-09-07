@@ -271,9 +271,10 @@ channel beside the detached `agent:launch`, not a replacement.
   print mode and is passed explicitly rather than left to the documented default, the same reason
   Claude's and Codex's own argv name their defaults rather than relying on them. No `--output-format` is
   passed: this app never reads the launched process's stdout (`stdio` is `['pipe', 'ignore', 'ignore']`,
-  same as every other detached launch). Detached only — `LAUNCHABLE_PROVIDERS` gained the name and
-  `HELDABLE_PROVIDERS` did not, because the CLI's documented bidirectional `stream-json` protocol has had no round trip proven
-  through this app yet (that stays step 5). The launched session is discovered the same way a detached
+  same as every other detached launch). Detached is no longer the only mode: `HELDABLE_PROVIDERS`
+  gained the name too, once step 5 proved a round trip through the CLI's documented bidirectional
+  `stream-json` protocol — see the held bullet below. This argv stays the DETACHED one, and the two
+  are not variants of each other. The launched session is discovered the same way a detached
   Codex one is: its own transcript records the prompt as its first `USER_INPUT` step, and
   `AntigravityProvider.firstPrompt` now reads it — envelope stripped, off the same
   `extractAntigravityFeed` the live feed already uses — so the Add Panel's receipt registry
@@ -302,6 +303,27 @@ channel beside the detached `agent:launch`, not a replacement.
   already had, dispatched through `buildLaunchArgs` exactly like the other two. No renderer change:
   the Add Panel's model and effort rows already draw from whatever `listAgentModels` answers, one
   provider at a time, and antigravity's `source: 'provider'` slots in beside Claude's.
+- **A HELD Antigravity session shipped in #237's step 5, and `HELDABLE_PROVIDERS` has two names now.**
+  `antigravityHeldSession.ts` is the second implementation of `HeldSessionPort`, over
+  `agy --input-format stream-json --output-format stream-json` on a child process's stdin and stdout —
+  no library, no SDK. A live two-turn round trip was held on this machine against CLI 1.1.26 on
+  2026-09-07, which is the condition `HELDABLE_PROVIDERS`' own comment had set for admitting the name;
+  the sanitized stdout is committed as a fixture and `docs/provider-formats.md` §3.1.9 records every
+  event shape and the four measurements that decide how a reply is read (the argv correction is
+  the bullet above, found by this same probe).
+  What matters for THIS page is what the two engines turned out not to share. The port stopped being the
+  Agent SDK's shape: `HeldSessionHandle.interrupt` and `.contextUsage` are **optional**, because
+  Antigravity's documented input side carries user text events and nothing else — no cancel event, no
+  question answer, no permission answer. Absent rather than a method returning `false`, and the
+  distinction is the point: `false` says "it was tried and refused", absence says "this session type has
+  no such act", and the panel owes a person different sentences for the two. So a held Antigravity dwarf
+  takes messages on the strongest send channel this app has and its Kick is disabled with its own
+  reason, carried to the capability matrix by `TextDeliveryTarget.interruptible` so the bar and the
+  runtime's kick routing read the one rule (the discipline `kickEndpointOf` already held for the Codex
+  queue). It also cost the observer one narrow seam: a stream-json conversation writes no
+  `history.jsonl` record at all, so `AntigravityProvider` now asks the held registry which folder a
+  conversation it holds was started in — first-hand, and the store's own record still wins where one
+  exists.
 
 ### The Codex queue — merged, #110 (#97)
 

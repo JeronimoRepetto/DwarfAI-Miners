@@ -1,0 +1,8 @@
+{"event":"init","conversation_id":"55555555-5555-4555-8555-555555555555","init":{"cwd":"C:\\Users\\j\\Desktop\\Sample-Project","tools":[],"permission_mode":"request-review","model":"a-model-slug"}}
+{"event":"step_update","step_update":{"conversation_id":"55555555-5555-4555-8555-555555555555","step_index":0,"state":"ACTIVE","step_type":"checkpoint"}}
+{"event":"step_update","step_update":{"conversation_id":"55555555-5555-4555-8555-555555555555","step_index":1,"state":"DONE","step_type":"agent_response"}}
+{"event":"step_update","step_update":{"conversation_id":"55555555-5555-4555-8555-555555555555","step_index":2,"state":"DONE","step_type":"tool","tool_name":"manage_task","tool_info":{"name":"manage_task","parameters":{"Action":"list"}}}}
+{"event":"an_event_type_this_build_does_not_know","payload":{"whatever":1}}
+this line is not JSON at all
+{"event":"result","result":{"conversation_id":"55555555-5555-4555-8555-555555555555","status":"ERROR","error":"the run could not be completed","duration_seconds":0.42,"num_turns":1,"usage":{"input_tokens":11,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":11}}}
+{"event":"step_update","step_update":{"conversation_id":"55555555-5555-4555-8555-5555
