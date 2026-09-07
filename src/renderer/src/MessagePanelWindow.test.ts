@@ -522,6 +522,31 @@ describe('reporting its own height', () => {
     }
   })
 
+  it('reports again whenever the surface changes, so a hidden window is revealed', async () => {
+    // The window is created HIDDEN and the first height report is what reveals
+    // the window — see setMessagePanelHeight in main/shell/window.ts. Leaving that to
+    // the ResizeObserver alone would leave the window hidden whenever the new
+    // surface happens to be exactly as tall as the last one — a panel that
+    // looks as though the click did nothing.
+    const measured = fakeMeasurement(235)
+    try {
+      const { api } = await mountPanel(CLOSED, {
+        getMines: vi
+          .fn()
+          .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+      })
+      api.setMessagePanelHeight.mockClear()
+
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+      await flushPromises()
+
+      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(235)
+    } finally {
+      measured.restore()
+    }
+  })
+
   it('reports nothing at all before anything has been laid out', async () => {
     // A height of zero is not a height: main refuses it, and a window of no
     // height is a panel that looks as though it never opened.

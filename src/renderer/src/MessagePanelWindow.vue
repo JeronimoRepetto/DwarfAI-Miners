@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AddPanel from './components/launch/AddPanel.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
@@ -230,6 +230,10 @@ async function load(): Promise<void> {
  * kicks — and a watch for a reaction can only be resolved where it was opened.
  * Every dwarf rather than one mine's crew, too: a session whose mine closed
  * still deserves the verdict of the message somebody sent it.
+ *
+ * Not a deep watch: `setMines` replaces the whole list on every poll, so the
+ * reference changes each time and a deep traversal of every mine and every
+ * dwarf would be paid twice a second for a fact the identity already carries.
  */
 watch(
   () => state.mines,
@@ -238,7 +242,7 @@ watch(
     observeSends(dwarfs)
     observeKicks(dwarfs)
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 /** The open dwarf as the CURRENT snapshot reports it, or nothing once the board dropped it. */
@@ -592,6 +596,24 @@ function reportHeight(): void {
   if (height <= 0) return
   window.api.setMessagePanelHeight(height)
 }
+
+/**
+ * Report again whenever the SURFACE changes, and not only when it resizes.
+ *
+ * The window is created hidden and main reveals it on the first height report
+ * (see setMessagePanelHeight in main/shell/window.ts), so leaving the report to
+ * the ResizeObserver alone would leave the window hidden every time the new
+ * surface happened to be exactly as tall as the last one — a click that looks
+ * as though it did nothing. `nextTick` because the report is a measurement:
+ * the panel this state asks for has to be on screen before there is anything
+ * to measure.
+ */
+watch(
+  () => panel.value.surface,
+  () => {
+    void nextTick(reportHeight)
+  }
+)
 
 let unsubscribe: (() => void) | undefined
 let unlistenPanel: (() => void) | undefined
