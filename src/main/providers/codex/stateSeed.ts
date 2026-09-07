@@ -26,6 +26,13 @@ export interface ThreadSeed {
   /** Freshness the registry reports; the whole point is that it is not the file mtime. */
   updatedAtMs?: number
   recencyAtMs?: number
+  /**
+   * When the row was created. Nullable in the real schema exactly as
+   * `updated_at_ms` is, and the only stamp a just-opened thread is certain to
+   * carry (#264) — a relaunched session's row can reach the first scan with
+   * `updated_at_ms` still NULL and `recency_at_ms` at its 0 default.
+   */
+  createdAtMs?: number
   model?: string
   effort?: string
   tokensUsed?: number
@@ -56,6 +63,7 @@ export function threadInsert(seed: ThreadSeed): string {
     model: seed.model === undefined ? 'NULL' : quote(seed.model),
     reasoning_effort: seed.effort === undefined ? 'NULL' : quote(seed.effort),
     agent_nickname: seed.agentNickname === undefined ? 'NULL' : quote(seed.agentNickname),
+    created_at_ms: seed.createdAtMs === undefined ? 'NULL' : String(seed.createdAtMs),
     updated_at_ms: seed.updatedAtMs === undefined ? 'NULL' : String(seed.updatedAtMs),
     recency_at_ms: String(seed.recencyAtMs ?? 0)
   }

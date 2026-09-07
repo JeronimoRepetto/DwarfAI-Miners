@@ -25,7 +25,10 @@ export interface CodexThread {
   model?: string
   effort?: string
   tokensUsed?: number
-  /** Freshest of updated_at_ms / recency_at_ms, in epoch milliseconds. */
+  /**
+   * Freshest of created_at_ms / updated_at_ms / recency_at_ms, in epoch
+   * milliseconds. See THREADS_SQL for why creation counts.
+   */
   updatedAtMs: number
   /** Present only for a thread spawned as a Codex sub-agent. */
   parentThreadId?: string
@@ -151,13 +154,37 @@ export function parseCodexThreadSource(source: unknown): CodexThreadSource {
   return result
 }
 
+/**
+ * Three activity stamps, maxed, and `created_at_ms` is one of them (#264).
+ *
+ * A thread row Codex has only just opened can reach the first scan carrying
+ * nothing else: `updated_at_ms` is nullable and arrives NULL, `recency_at_ms`
+ * is NOT NULL DEFAULT 0 and arrives 0. Both floored to 0, so the row sorted
+ * before every cutoff and the reader skipped it — and a session relaunched in
+ * a folder whose previous session had just aged out was rediscovered by its
+ * rollout file alone, without the cwd, model, effort or queue address that
+ * only the registry states. Creation is the one stamp such a row is certain
+ * to have, and it is a genuine freshness signal, bounded exactly like the
+ * other two: a thread created ten days ago and never touched since is still
+ * older than the cutoff and still excluded.
+ *
+ * Safe against an older Codex for the reason readCodexCliVersions is isolated
+ * from this query: a column this table lacks fails the whole statement, and
+ * all() maps that to no rows. `created_at_ms` was added to `threads` BEFORE
+ * `updated_at_ms` (their order in the captured schema is the order they were
+ * appended), so every build that can answer the columns this query already
+ * asked for can answer this one too.
+ */
+const THREADS_ACTIVITY_MS =
+  'MAX(COALESCE(created_at_ms, 0), COALESCE(updated_at_ms, 0), COALESCE(recency_at_ms, 0))'
+
 const THREADS_SQL =
   'SELECT id, cwd, rollout_path, model, reasoning_effort, tokens_used, ' +
   'agent_nickname, source, ' +
-  'MAX(COALESCE(updated_at_ms, 0), COALESCE(recency_at_ms, 0)) AS activity_ms ' +
+  `${THREADS_ACTIVITY_MS} AS activity_ms ` +
   'FROM threads ' +
   'WHERE archived = 0 ' +
-  'AND MAX(COALESCE(updated_at_ms, 0), COALESCE(recency_at_ms, 0)) >= ? ' +
+  `AND ${THREADS_ACTIVITY_MS} >= ? ` +
   'ORDER BY activity_ms DESC'
 
 function toThread(row: SqliteRow): CodexThread | null {

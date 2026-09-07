@@ -539,4 +539,138 @@ describe('CodexProvider with the Codex SQLite registry', () => {
       expect(snapshot?.dwarfs.find((dwarf) => dwarf.sessionId === LIVE_ID)?.oneShot).toBeUndefined()
     })
   })
+
+  /**
+   * Issue #264: a Codex session started from the terminal after the previous
+   * one in the same folder closed.
+   *
+   * The second session is a brand-new thread whose registry row has not been
+   * stamped yet — `updated_at_ms` NULL, `recency_at_ms` at its 0 default — and
+   * whose rollout was created moments ago, so on Windows its mtime is already
+   * frozen at whatever it was born with (issue #1). Everything the provider
+   * used to read about that row said "0", which is before every cutoff.
+   */
+  describe('a session relaunched in the same cwd after the previous one closed (#264)', () => {
+    const CLOSED_ID = '01a04d79-1111-7a31-9b1a-00000000aaaa'
+    const RELAUNCHED_ID = '01a04d7f-2222-7a31-9b1a-00000000bbbb'
+    /**
+     * Registry spelling and rollout spelling of ONE folder — the fixture
+     * rollout's own session_meta.cwd, so both sessions really do land in the
+     * same mine and nothing here turns on a fixture mismatch.
+     */
+    const CWD = '\\\\?\\C:\\Users\\j\\Desktop\\Sample-Project'
+    const CWD_SHOWN = 'C:\\Users\\j\\Desktop\\Sample-Project'
+    /** Well past livenessWindowS + idleRetentionS, so the closed session cannot linger. */
+    const LATER = NOW + (WINDOW_S + RETENTION_S) * 1_000 + 60_000
+
+    /** One provider across both scans, since the gate compares against what it saw last tick. */
+    function relaunchProvider(clock: { now: number }): CodexProvider {
+      return makeProvider({ now: () => clock.now })
+    }
+
+    /** The first session: busy, registered, and stamped normally. */
+    function seedClosedSession(): void {
+      fake.addFile(rolloutPathFor(CLOSED_ID), busyRollout(CLOSED_ID), NOW - 30_000)
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: CLOSED_ID,
+          cwd: CWD,
+          rolloutPath: rolloutPathFor(CLOSED_ID),
+          model: 'gpt-5.6-terra',
+          updatedAtMs: NOW - 30_000
+        })
+      )
+    }
+
+    /**
+     * The second session, as it exists on its very first scan: a row carrying
+     * nothing but its creation stamp, in the same folder.
+     */
+    function seedRelaunchedRow(createdAtMs: number, rolloutOnDisk: boolean): void {
+      if (rolloutOnDisk) {
+        fake.addFile(rolloutPathFor(RELAUNCHED_ID), busyRollout(RELAUNCHED_ID), createdAtMs)
+      }
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: RELAUNCHED_ID,
+          cwd: CWD,
+          rolloutPath: rolloutPathFor(RELAUNCHED_ID),
+          model: 'gpt-5.6-luna',
+          effort: 'high',
+          cliVersion: '0.151.0',
+          createdAtMs
+        })
+      )
+    }
+
+    it('shows the relaunched session and nothing of the one that closed', async () => {
+      const clock = { now: NOW }
+      const provider = relaunchProvider(clock)
+      seedClosedSession()
+      expect((await provider.scan()).map((s) => s.sessionId)).toEqual([CLOSED_ID])
+
+      clock.now = LATER
+      seedRelaunchedRow(LATER - 5_000, true)
+      const snapshots = await provider.scan()
+      expect(snapshots.map((s) => s.sessionId)).toEqual([RELAUNCHED_ID])
+      expect(snapshots[0]!.cwd).toBe(CWD_SHOWN)
+      expect(snapshots[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual(['codex:' + RELAUNCHED_ID])
+    })
+
+    /**
+     * The half the rollout file cannot cover. A relaunched session found only
+     * by the day-directory walk is a nameless dwarf: no model, no effort, no
+     * queue address — every one of those is a registry fact (#97), and the
+     * unstamped row was being skipped.
+     */
+    it('reads the relaunched session off its registry row, not just its rollout', async () => {
+      const clock = { now: NOW }
+      const provider = relaunchProvider(clock)
+      seedClosedSession()
+      await provider.scan()
+
+      clock.now = LATER
+      seedRelaunchedRow(LATER - 5_000, true)
+      const [snapshot] = await provider.scan()
+      expect(snapshot!.dwarfs[0]).toMatchObject({ model: 'gpt-5.6-luna', effort: 'high' })
+      expect(provider.textDelivery('codex:' + RELAUNCHED_ID)).toEqual({
+        kind: 'codex-queue',
+        threadId: RELAUNCHED_ID
+      })
+    })
+
+    /**
+     * And the case where the file cannot save the session at all: the row is
+     * written when the thread opens, so a scan landing before the rollout is
+     * readable has the registry as its only evidence — which is exactly the
+     * tick the panel had nothing on the board for.
+     */
+    it('shows a relaunched session whose rollout is not readable yet', async () => {
+      const clock = { now: NOW }
+      const provider = relaunchProvider(clock)
+      seedClosedSession()
+      await provider.scan()
+
+      clock.now = LATER
+      seedRelaunchedRow(LATER - 5_000, false)
+      const snapshots = await provider.scan()
+      expect(snapshots.map((s) => s.sessionId)).toEqual([RELAUNCHED_ID])
+      expect(snapshots[0]!.cwd).toBe(CWD_SHOWN)
+    })
+
+    it('leaves a session created long ago and never touched since off the board', async () => {
+      const clock = { now: NOW }
+      const provider = relaunchProvider(clock)
+      seedClosedSession()
+      await provider.scan()
+
+      clock.now = LATER
+      // Created before the closed session and never stamped again: creation is
+      // freshness only while the creation itself is recent.
+      seedRelaunchedRow(NOW - 30_000, false)
+      expect(await provider.scan()).toEqual([])
+    })
+  })
 })
