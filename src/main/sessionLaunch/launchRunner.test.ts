@@ -1,14 +1,15 @@
 import type { SpawnOptions } from 'node:child_process'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
 import type { LaunchTuning } from '../domain/launchTuning'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
-import type { LaunchedProcess } from './launchedSessions'
+import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 import {
   CONSOLE_HOSTING_PROGRAM,
+  EARLY_FAILURE_WINDOW_MS,
   launchClaudeSession,
   runLaunchProcess,
   type LaunchChild,
@@ -437,6 +438,78 @@ describe('launchClaudeSession retention', () => {
   })
 })
 
+/*
+ * Since #217 the fake also carries a pid and an 'exit' subscription, because
+ * that is what the runner now hands back for the panel to hold onto.
+ *
+ * AMENDED for #263 (was: `exit` took no arguments, there was no stderr stream
+ * at all, and this lived only inside `describe('runLaunchProcess')`). The
+ * runner now reads both — the exit code, to tell a failure from an ordinary
+ * end, and stderr, for the CLI's own words — so the fake grows a `stderr` the
+ * child exposes and an `exit(code, signal)` that matches what Node's real
+ * 'exit' event actually carries. It is hoisted to module scope so the
+ * early-failure describe block below can share it rather than duplicating it.
+ * Every existing call site that calls `exit()` with no arguments is
+ * unchanged: the default below is a clean 0, which is what "the process just
+ * ended" already meant to every test that predates this issue.
+ */
+function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn', pid: number | null = 4242) {
+  const calls: Array<{ command: string; args: readonly string[]; options: SpawnOptions }> = []
+  const written: string[] = []
+  let unrefCalls = 0
+  const exited: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+  const stderrListeners: Array<(chunk: Buffer | string) => void> = []
+  const spawnProcess: SpawnLaunch = (command, args, options) => {
+    calls.push({ command, args, options })
+    const spawned: Array<() => void> = []
+    const failed: Array<(error: Error) => void> = []
+    const child: LaunchChild = {
+      ...(pid === null ? {} : { pid }),
+      once(event, listener) {
+        if (event === 'spawn') spawned.push(listener as () => void)
+        else if (event === 'exit')
+          exited.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void)
+        else failed.push(listener as (error: Error) => void)
+        return child
+      },
+      stdin: {
+        on() {
+          return undefined
+        },
+        end(chunk: string) {
+          written.push(chunk)
+        }
+      },
+      stderr: {
+        on(event, listener) {
+          if (event === 'data') stderrListeners.push(listener)
+          return child.stderr
+        }
+      },
+      unref() {
+        unrefCalls += 1
+      }
+    }
+    queueMicrotask(() => {
+      if (outcome === 'spawn') for (const listener of spawned) listener()
+      else for (const listener of failed) listener(new Error('EINVAL'))
+    })
+    return child
+  }
+  return {
+    spawnProcess,
+    calls,
+    written,
+    unrefCalls: () => unrefCalls,
+    exit: (code: number | null = 0, signal: NodeJS.Signals | null = null) => {
+      for (const listener of exited) listener(code, signal)
+    },
+    writeStderr: (chunk: string) => {
+      for (const listener of stderrListeners) listener(chunk)
+    }
+  }
+}
+
 describe('runLaunchProcess', () => {
   function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
     return {
@@ -447,57 +520,6 @@ describe('runLaunchProcess', () => {
       stdin: 'dig',
       viaNodeEntry: false,
       ...overrides
-    }
-  }
-
-  /*
-   * Since #217 the fake also carries a pid and an 'exit' subscription, because
-   * that is what the runner now hands back for the panel to hold onto. Nothing
-   * else about it changed.
-   */
-  function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn', pid: number | null = 4242) {
-    const calls: Array<{ command: string; args: readonly string[]; options: SpawnOptions }> = []
-    const written: string[] = []
-    let unrefCalls = 0
-    const exited: Array<() => void> = []
-    const spawnProcess: SpawnLaunch = (command, args, options) => {
-      calls.push({ command, args, options })
-      const spawned: Array<() => void> = []
-      const failed: Array<(error: Error) => void> = []
-      const child: LaunchChild = {
-        ...(pid === null ? {} : { pid }),
-        once(event, listener) {
-          if (event === 'spawn') spawned.push(listener as () => void)
-          else if (event === 'exit') exited.push(listener as () => void)
-          else failed.push(listener)
-          return child
-        },
-        stdin: {
-          on() {
-            return undefined
-          },
-          end(chunk: string) {
-            written.push(chunk)
-          }
-        },
-        unref() {
-          unrefCalls += 1
-        }
-      }
-      queueMicrotask(() => {
-        if (outcome === 'spawn') for (const listener of spawned) listener()
-        else for (const listener of failed) listener(new Error('EINVAL'))
-      })
-      return child
-    }
-    return {
-      spawnProcess,
-      calls,
-      written,
-      unrefCalls: () => unrefCalls,
-      exit: () => {
-        for (const listener of exited) listener()
-      }
     }
   }
 
@@ -525,11 +547,14 @@ describe('runLaunchProcess', () => {
     const call = spawn.calls[0]!
     expect(call.command).toBe('node')
     expect(call.args).toEqual([NPM_ENTRY, 'exec', '-'])
+    // AMENDED for #263 (was: stdio: ['pipe', 'ignore', 'ignore']). stderr is
+    // now piped rather than discarded, so a launch that fails almost at once
+    // can say why — see the early-failure window describe block below.
     expect(call.options).toEqual({
       cwd: MINE_PATH,
       env: { PATH: '/usr/bin' },
       detached: true,
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'ignore', 'pipe'],
       windowsHide: true
     })
     expect(spawn.written).toEqual(['dig'])
@@ -567,11 +592,12 @@ describe('runLaunchProcess', () => {
     expect(call.args).toEqual(['-e', CONSOLE_HOSTING_PROGRAM, 'node', NPM_ENTRY, 'exec', '-'])
     // The outer spawn is unchanged: detached is still what makes the session
     // outlive the panel, and no shell is involved in either hop.
+    // AMENDED for #263, for the same reason the test above was.
     expect(call.options).toEqual({
       cwd: MINE_PATH,
       env: { PATH: '/usr/bin' },
       detached: true,
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'ignore', 'pipe'],
       windowsHide: true
     })
     expect(spawn.written).toEqual(['dig'])
@@ -656,6 +682,143 @@ describe('runLaunchProcess', () => {
     expect(call.args.join(' ')).not.toContain(secret)
     expect(call.command).not.toContain(secret)
     expect(spawn.written).toEqual([secret])
+  })
+})
+
+/*
+ * Issue #263. After `spawn` resolves this promise, the runner used to have no
+ * way to say the child then died at once — stderr was discarded and the exit
+ * code was never read. A `codex exec` that starts and exits immediately (a
+ * concurrent instance already holding its lock, a flag it does not
+ * recognise) was reported `launched: true` and nothing ever corrected it.
+ *
+ * `onEarlyFailure` is the fix: told at most once, only for a child that exits
+ * inside `EARLY_FAILURE_WINDOW_MS` of spawning with something other than a
+ * clean 0. A later exit is an ordinary end of session and must never reach
+ * it — a real agent's own turn finishing has nothing to do with the launch.
+ */
+describe('the early-failure window (#263)', () => {
+  function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
+    return {
+      command: CODEX_PATH,
+      args: ['exec', '-'],
+      env: { PATH: '/usr/bin' },
+      cwd: MINE_PATH,
+      stdin: 'dig',
+      viaNodeEntry: false,
+      ...overrides
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('reports the exit code and the stderr the child wrote, for an exit inside the window', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
+    retained?.onEarlyFailure?.(onEarlyFailure)
+
+    spawn.writeStderr('codex: another instance is already running\n')
+    spawn.exit(1)
+
+    expect(onEarlyFailure).toHaveBeenCalledWith({
+      exitCode: 1,
+      signal: null,
+      stderrTail: 'codex: another instance is already running\n'
+    })
+  })
+
+  it('never reports a clean exit inside the window as a failure', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const onEarlyFailure = vi.fn()
+    retained?.onEarlyFailure?.(onEarlyFailure)
+
+    spawn.exit(0)
+
+    expect(onEarlyFailure).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The whole point of the window: a real session ending, minutes or hours
+   * later, must read as the ordinary end it is rather than a launch failure.
+   */
+  it('never reports an exit once the window has passed — that is an ordinary end of session', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const onEarlyFailure = vi.fn()
+    retained?.onEarlyFailure?.(onEarlyFailure)
+
+    vi.advanceTimersByTime(EARLY_FAILURE_WINDOW_MS + 1)
+    spawn.exit(1)
+
+    expect(onEarlyFailure).not.toHaveBeenCalled()
+  })
+
+  it('reports a signal-only exit too, with no code', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
+    retained?.onEarlyFailure?.(onEarlyFailure)
+
+    spawn.exit(null, 'SIGTERM')
+
+    expect(onEarlyFailure).toHaveBeenCalledWith({
+      exitCode: null,
+      signal: 'SIGTERM',
+      stderrTail: ''
+    })
+  })
+
+  it('tells a listener that subscribes AFTER the failure already latched', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+
+    spawn.writeStderr('auth expired\n')
+    spawn.exit(1)
+    const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
+    retained?.onEarlyFailure?.(onEarlyFailure)
+
+    expect(onEarlyFailure).toHaveBeenCalledWith({
+      exitCode: 1,
+      signal: null,
+      stderrTail: 'auth expired\n'
+    })
+  })
+
+  it('keeps only the tail of a flood of stderr, bounded rather than unbounded', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
+    retained?.onEarlyFailure?.(onEarlyFailure)
+
+    // Comfortably past any reasonable KiB-scale bound; asserting the exact
+    // cap here would pin an implementation detail rather than the property
+    // that matters — this must never grow without limit.
+    const flood = 'x'.repeat(64 * 1024)
+    spawn.writeStderr(flood)
+    spawn.exit(1)
+
+    const failure = onEarlyFailure.mock.calls[0]![0]
+    expect(failure.stderrTail.length).toBeLessThan(flood.length)
+    // The END of the flood survives, not the start — the last lines of a
+    // refusal are the ones that say what actually happened.
+    expect(flood.endsWith(failure.stderrTail)).toBe(true)
+  })
+
+  it('never watches a child this process could not hold onto (no pid)', async () => {
+    const spawn = fakeSpawn('spawn', null)
+
+    await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).resolves.toBeUndefined()
+    // Nothing to assert an onEarlyFailure against — there is no handle at all,
+    // which is the existing 'retains nothing' rule this respects rather than
+    // reopens.
   })
 })
 

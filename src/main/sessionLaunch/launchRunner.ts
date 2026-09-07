@@ -6,7 +6,7 @@ import { resolveShimTarget, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
 import { buildLaunchArgs, isShellShim, prepareLaunchPrompt } from './launch'
-import type { LaunchedProcess } from './launchedSessions'
+import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 
 /**
  * Running the launch: the spawn seam, and the mapping from every way it can go
@@ -20,6 +20,112 @@ import type { LaunchedProcess } from './launchedSessions'
 
 /** Refusals and failures, phrased for the panel. Fixed copy, and never a path. */
 const EMPTY_PROMPT = 'Type a prompt first.'
+
+/**
+ * How long after `spawn` a non-clean exit still counts as the CLI refusing
+ * to start, rather than an ordinary end of session (#263).
+ *
+ * The diagnosis behind this issue: after `spawn` succeeds there was no
+ * failure channel at all — stderr discarded, the exit code never read — so a
+ * `codex exec` that starts and dies at once (a concurrent instance already
+ * holding its lock, a flag it does not recognise, an auth prompt with
+ * nothing attached to answer it) was reported `launched: true` and the panel
+ * parked on "the session started" forever.
+ *
+ * A CLI that declines does so almost immediately — milliseconds, not
+ * seconds — because refusing is the FIRST thing it does, before any real
+ * work. A session that is genuinely running can end at any later moment for
+ * reasons that have nothing to do with the launch (the agent simply
+ * finished its one turn), so the window has to be short enough that an
+ * ordinary turn essentially never finishes inside it. Three seconds is
+ * generous headroom past the immediate-refusal case while staying well
+ * inside that bound — the two failure modes this constant exists to keep
+ * apart.
+ */
+export const EARLY_FAILURE_WINDOW_MS = 3_000
+
+/**
+ * Bound on the stderr this app keeps from a launched child (#263). Never
+ * unbounded: a CLI that floods stderr must not grow this process's memory
+ * for words nobody but the last few lines of a refusal will ever read.
+ *
+ * Counted in JS string characters rather than true bytes — an approximation
+ * that is deliberately accepted, the same way `truncate`'s caps are: the
+ * text this bounds is a CLI's own diagnostic output, essentially always
+ * ASCII, and getting the exact multi-byte boundary right would cost far
+ * more than the one edge case it would fix.
+ */
+export const STDERR_TAIL_BYTES = 4 * 1024
+
+/**
+ * The bounded tail of a stream's own output — the LAST bytes survive, not
+ * the first, because the final lines of a CLI's refusal are the ones that
+ * say what actually happened; an unbounded head would let a chatty CLI push
+ * the one sentence that matters out of the window entirely.
+ */
+class TailBuffer {
+  private text = ''
+  constructor(private readonly maxChars: number) {}
+
+  push(chunk: Buffer | string): void {
+    this.text += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+    if (this.text.length > this.maxChars) {
+      this.text = this.text.slice(this.text.length - this.maxChars)
+    }
+  }
+
+  read(): string {
+    return this.text
+  }
+}
+
+/**
+ * Watches one child for an early failure (#263): captures its stderr from
+ * the moment it is retained, and latches at most one verdict — a clean 0 or
+ * an exit past the window is not a failure, and nothing here fires twice.
+ *
+ * A latch rather than a bare event, because `retainedProcess` wires this up
+ * the instant a launch is retained and the caller (the runtime, which has to
+ * learn the receipt this launch was given first) subscribes a moment later.
+ * A child that exits in between — vanishingly unlikely, but not impossible —
+ * must not lose the failure to a listener that was not there yet.
+ */
+class EarlyFailureWatch {
+  private latched: LaunchFailure | null = null
+  private listener: ((failure: LaunchFailure) => void) | null = null
+  private readonly stderrTail = new TailBuffer(STDERR_TAIL_BYTES)
+  private withinWindow = true
+
+  constructor(child: LaunchChild) {
+    child.stderr?.on('data', (chunk) => this.stderrTail.push(chunk))
+    const timer = setTimeout(() => {
+      this.withinWindow = false
+    }, EARLY_FAILURE_WINDOW_MS)
+    // This launch is already detached and unref'd (see runLaunchProcess); a
+    // timer of this watch's own must not be the one thing left keeping the
+    // main process's event loop alive.
+    timer.unref?.()
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      if (!this.withinWindow || code === 0) return
+      this.latch({ exitCode: code, signal, stderrTail: this.stderrTail.read() })
+    })
+  }
+
+  private latch(failure: LaunchFailure): void {
+    this.latched = failure
+    this.listener?.(failure)
+  }
+
+  /** Told now if the failure already latched, or whenever it does. At most once either way. */
+  subscribe(listener: (failure: LaunchFailure) => void): void {
+    if (this.latched !== null) {
+      listener(this.latched)
+      return
+    }
+    this.listener = listener
+  }
+}
 
 /**
  * What each CLI is called when the panel has to name it.
@@ -83,7 +189,20 @@ export type LaunchRunner = (invocation: LaunchInvocation) => Promise<LaunchedPro
  * (#193).
  */
 export interface LaunchChild {
-  once(event: 'spawn' | 'error' | 'exit', listener: (error: Error) => void): unknown
+  once(event: 'spawn', listener: () => void): unknown
+  once(event: 'error', listener: (error: Error) => void): unknown
+  /**
+   * Node's own 'exit' shape (#263): the child's own code, or null when it
+   * went by signal instead. Split from 'error' and 'spawn' above rather than
+   * kept in the old three-events-one-signature shape, because this is the
+   * event `EarlyFailureWatch` reads to tell a launch failure from an
+   * ordinary end of session — a listener that could not see the code could
+   * not tell the two apart.
+   */
+  once(
+    event: 'exit',
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void
+  ): unknown
   /**
    * The started process's own pid, which is what the panel retains so it can
    * end that tree later (#217). Optional because Node's is: a child that never
@@ -91,6 +210,12 @@ export interface LaunchChild {
    */
   readonly pid?: number
   stdin: { on(event: 'error', listener: () => void): unknown; end(chunk: string): unknown } | null
+  /**
+   * Piped rather than ignored (#263, see `buildLaunchSpawn`), so a launch
+   * that fails almost at once can say why. Null is never read from — the
+   * same shape `stdin` already allows for a child this cannot fully hold.
+   */
+  stderr: { on(event: 'data', listener: (chunk: Buffer | string) => void): unknown } | null
   unref(): void
 }
 
@@ -218,7 +343,12 @@ export function buildLaunchSpawn(invocation: LaunchInvocation): {
     cwd: invocation.cwd,
     env: invocation.env,
     detached: true,
-    stdio: ['pipe', 'ignore', 'ignore'],
+    // stderr is piped rather than ignored (#263): the other two streams stay
+    // untouched — stdin is the prompt's only transport, and stdout is never
+    // read — but a launch that fails almost at once needs a channel to say
+    // why, and the CLI's own stderr is the one this app can read without
+    // guessing at its output format.
+    stdio: ['pipe', 'ignore', 'pipe'],
     windowsHide: true
   }
   if (!invocation.viaNodeEntry) {
@@ -304,10 +434,18 @@ export function runLaunchProcess(
 function retainedProcess(child: LaunchChild): LaunchedProcess | undefined {
   const pid = child.pid
   if (pid === undefined) return undefined
+  // Watching starts now, unconditionally, rather than only once a caller
+  // subscribes (#263): the failure this exists to catch can happen within
+  // milliseconds of spawning, and EarlyFailureWatch's own latch is what
+  // keeps a subscriber that arrives a tick later from losing it.
+  const earlyFailure = new EarlyFailureWatch(child)
   return {
     pid,
     onExit: (listener) => {
       child.once('exit', listener)
+    },
+    onEarlyFailure: (listener) => {
+      earlyFailure.subscribe(listener)
     }
   }
 }
