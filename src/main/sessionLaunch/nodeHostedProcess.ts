@@ -46,10 +46,13 @@ import type {
  * interpret them.
  *
  * All three streams are piped, unlike the detached launcher's `['pipe',
- * 'ignore', 'ignore']`. That is the feature: stdout and stderr ARE the
+ * 'ignore', <file fd>]` (#263 gave stderr a file there, never a pipe — see
+ * `buildLaunchSpawn`). That is the feature here: stdout and stderr ARE the
  * conversation this panel shows, and stdin stays open so the composer is a real
  * inbox. An unread pipe fills and stalls its writer, which is why the detached
- * launcher ignores the other two — here they are read on every chunk.
+ * launcher ignores stdout and never pipes stderr either — here both are read
+ * on every chunk instead, because a hosted process is never detached and dies
+ * with the panel, so there is no parent-exits-first hazard to avoid.
  */
 export function buildHostedSpawn(request: {
   program: string

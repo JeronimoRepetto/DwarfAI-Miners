@@ -1,4 +1,8 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { closeSync, fstatSync, openSync, readSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
@@ -45,59 +49,131 @@ const EMPTY_PROMPT = 'Type a prompt first.'
 export const EARLY_FAILURE_WINDOW_MS = 3_000
 
 /**
- * Bound on the stderr this app keeps from a launched child (#263). Never
- * unbounded: a CLI that floods stderr must not grow this process's memory
- * for words nobody but the last few lines of a refusal will ever read.
+ * Bound on the stderr this app reads back from a launched child (#263).
+ * Never unbounded: a CLI that floods stderr must not cost this process a
+ * read of the whole file for words nobody but the last few lines of a
+ * refusal will ever see.
  *
- * Counted in JS string characters rather than true bytes — an approximation
- * that is deliberately accepted, the same way `truncate`'s caps are: the
- * text this bounds is a CLI's own diagnostic output, essentially always
- * ASCII, and getting the exact multi-byte boundary right would cost far
- * more than the one edge case it would fix.
+ * Real bytes, not an approximation — the file is read with a positioned
+ * read exactly like `NodeFs.readTextTail`'s, and the two share that read's
+ * own small caveat: a torn multi-byte UTF-8 sequence exactly at the
+ * boundary is possible and left unhandled, on the same reasoning that
+ * existing read already accepts it.
  */
 export const STDERR_TAIL_BYTES = 4 * 1024
 
 /**
- * The bounded tail of a stream's own output — the LAST bytes survive, not
- * the first, because the final lines of a CLI's refusal are the ones that
- * say what actually happened; an unbounded head would let a chatty CLI push
- * the one sentence that matters out of the window entirely.
+ * Where a launched child's stderr is captured (#263) — a small, synchronous
+ * port of its own rather than a `FsLike` member: that one is async and
+ * read-oriented, built for providers reading a session's transcript, and
+ * this needs a REAL fd resolved before `spawn` is even called, plus a
+ * write-then-read-then-remove file this app owns start to finish.
+ *
+ * `path` and `openForWrite` are split so a caller can still name and clean
+ * up the exact path it was given even if opening it somehow failed.
  */
-class TailBuffer {
-  private text = ''
-  constructor(private readonly maxChars: number) {}
+export interface StderrFile {
+  /** A fresh, unique path for one launch's own capture file. */
+  path(): string
+  /** Opens `path` for writing and returns the fd `buildLaunchSpawn` hands to `spawn`. */
+  openForWrite(path: string): number
+  /**
+   * Closes the CALLER's copy of the fd — see `runLaunchProcess` on why this
+   * is safe the instant `spawn` has taken it.
+   */
+  close(fd: number): void
+  /**
+   * The last `maxBytes` written to `path` right now, or `''` if it cannot be
+   * read — already removed, never created, or a genuine I/O error all read
+   * the same way here: nothing to show is not a fact worth failing over.
+   */
+  readTail(path: string, maxBytes: number): string
+  /** Removes `path`; safe to call on one already gone. */
+  remove(path: string): void
+}
 
-  push(chunk: Buffer | string): void {
-    this.text += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-    if (this.text.length > this.maxChars) {
-      this.text = this.text.slice(this.text.length - this.maxChars)
+/**
+ * The real, disk-backed `StderrFile` (#263) — the seam `runLaunchProcess` is
+ * written against, so no unit test other than the one proving THIS works
+ * touches a real file. Named on the same pattern this project already uses
+ * for "the real implementation of a small port" (`createNodeHostedProcess`,
+ * `createSdkModelCatalog`).
+ *
+ * `node:os`'s `tmpdir()`, never Electron's `app.getPath('temp')`: this
+ * module has no Electron import anywhere in it, by design (see the module
+ * comment — it is composed in the runtime rather than in
+ * platformAdapters) — and a temp directory is a Node fact, not an app one.
+ */
+export function createNodeStderrFile(): StderrFile {
+  return {
+    path: () => join(tmpdir(), `dwarfai-launch-stderr-${randomUUID()}.log`),
+    openForWrite: (path) => openSync(path, 'w'),
+    close: (fd) => {
+      try {
+        closeSync(fd)
+      } catch {
+        // Already closed, or never really open — nothing left to release.
+      }
+    },
+    readTail: (path, maxBytes) => {
+      let fd: number
+      try {
+        fd = openSync(path, 'r')
+      } catch {
+        return ''
+      }
+      try {
+        const size = fstatSync(fd).size
+        const length = Math.min(size, maxBytes)
+        const buffer = Buffer.alloc(length)
+        readSync(fd, buffer, 0, length, size - length)
+        return buffer.toString('utf8')
+      } catch {
+        return ''
+      } finally {
+        closeSync(fd)
+      }
+    },
+    remove: (path) => {
+      try {
+        unlinkSync(path)
+      } catch {
+        // Already gone, or never created — nothing left to remove.
+      }
     }
-  }
-
-  read(): string {
-    return this.text
   }
 }
 
 /**
- * Watches one child for an early failure (#263): captures its stderr from
- * the moment it is retained, and latches at most one verdict — a clean 0 or
- * an exit past the window is not a failure, and nothing here fires twice.
+ * Watches one child for an early failure (#263): reads its stderr FILE (see
+ * `buildLaunchSpawn` for why a file and never a pipe) once, on exit, and
+ * latches at most one verdict — a clean 0 or an exit past the window is not
+ * a failure, and nothing here fires twice.
  *
  * A latch rather than a bare event, because `retainedProcess` wires this up
  * the instant a launch is retained and the caller (the runtime, which has to
  * learn the receipt this launch was given first) subscribes a moment later.
  * A child that exits in between — vanishingly unlikely, but not impossible —
  * must not lose the failure to a listener that was not there yet.
+ *
+ * The file is removed unconditionally on exit, whatever the reason — nothing
+ * writes to it again once the child is gone. Whenever this process is NOT
+ * around to see that exit at all, the file is simply left behind: a detached
+ * launch is meant to survive the panel quitting (#231), and there is nothing
+ * left in this process by then to clean anything up with. That is an
+ * accepted, honest trade-off — a small stray file in the OS temp directory —
+ * rather than a reason to keep the pipe hazard `buildLaunchSpawn` documents.
  */
 class EarlyFailureWatch {
   private latched: LaunchFailure | null = null
   private listener: ((failure: LaunchFailure) => void) | null = null
-  private readonly stderrTail = new TailBuffer(STDERR_TAIL_BYTES)
   private withinWindow = true
 
-  constructor(child: LaunchChild) {
-    child.stderr?.on('data', (chunk) => this.stderrTail.push(chunk))
+  constructor(
+    child: LaunchChild,
+    private readonly stderrPath: string,
+    private readonly stderrFile: StderrFile
+  ) {
     const timer = setTimeout(() => {
       this.withinWindow = false
     }, EARLY_FAILURE_WINDOW_MS)
@@ -107,8 +183,14 @@ class EarlyFailureWatch {
     timer.unref?.()
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
-      if (!this.withinWindow || code === 0) return
-      this.latch({ exitCode: code, signal, stderrTail: this.stderrTail.read() })
+      if (this.withinWindow && code !== 0) {
+        this.latch({
+          exitCode: code,
+          signal,
+          stderrTail: this.stderrFile.readTail(this.stderrPath, STDERR_TAIL_BYTES)
+        })
+      }
+      this.stderrFile.remove(this.stderrPath)
     })
   }
 
@@ -210,12 +292,6 @@ export interface LaunchChild {
    */
   readonly pid?: number
   stdin: { on(event: 'error', listener: () => void): unknown; end(chunk: string): unknown } | null
-  /**
-   * Piped rather than ignored (#263, see `buildLaunchSpawn`), so a launch
-   * that fails almost at once can say why. Null is never read from — the
-   * same shape `stdin` already allows for a child this cannot fully hold.
-   */
-  stderr: { on(event: 'data', listener: (chunk: Buffer | string) => void): unknown } | null
   unref(): void
 }
 
@@ -334,7 +410,10 @@ export const CONSOLE_HOSTING_PROGRAM = [
  * entry's REALPATH, and a vendor fallback that does not exist on this machine),
  * and wherever that copy misses, the window comes back unannounced.
  */
-export function buildLaunchSpawn(invocation: LaunchInvocation): {
+export function buildLaunchSpawn(
+  invocation: LaunchInvocation,
+  stderrFd: number
+): {
   command: string
   args: string[]
   options: SpawnOptions
@@ -343,12 +422,28 @@ export function buildLaunchSpawn(invocation: LaunchInvocation): {
     cwd: invocation.cwd,
     env: invocation.env,
     detached: true,
-    // stderr is piped rather than ignored (#263): the other two streams stay
-    // untouched — stdin is the prompt's only transport, and stdout is never
-    // read — but a launch that fails almost at once needs a channel to say
-    // why, and the CLI's own stderr is the one this app can read without
-    // guessing at its output format.
-    stdio: ['pipe', 'ignore', 'pipe'],
+    // stderr is a FILE's own fd, never a pipe and never 'ignore' (#263).
+    //
+    // A pipe's PARENT end belongs to THIS process, and this launch is
+    // detached and unref'd on purpose so the session survives the panel
+    // quitting (#231) — that is the whole point of a detached launch, not
+    // an edge case of it. The moment this process exits, the pipe's read
+    // end goes with it, and the next time the still-running child writes to
+    // stderr it gets EPIPE (or the Windows equivalent of a handle that is
+    // simply gone) instead of the write it asked for — which can kill a
+    // session that was never asked to end. "The panel restarted" must never
+    // become "every launched session dies the next time it logs a
+    // warning". 'ignore' has no such hazard, but it is the ORIGINAL gap
+    // this issue exists to close: the words are thrown away and nothing
+    // here can ever say why a launch failed.
+    //
+    // A file has neither problem. There is no reader on the far end to
+    // disappear — it is a plain file, opened by `runLaunchProcess` before
+    // this call and closed on THIS process's own side the instant `spawn`
+    // has taken it, which does not touch the child's own duplicate of the
+    // fd — and the bytes are still sitting on disk whenever this app is
+    // actually still around to read them.
+    stdio: ['pipe', 'ignore', stderrFd],
     windowsHide: true
   }
   if (!invocation.viaNodeEntry) {
@@ -370,8 +465,12 @@ export function buildLaunchSpawn(invocation: LaunchInvocation): {
  * observer of sessions, and one that died whenever the tray icon quit would be
  * a worse thing than what a terminal already gives the user. stdin is the
  * prompt's only transport and is closed straight after writing — the child then
- * has no stream anyone here reads, which is also why the other two are ignored
- * rather than piped: an unread pipe fills and stalls the child.
+ * has no stream anyone here reads on stdin, which is also why stdout is
+ * ignored rather than piped: an unread pipe fills and stalls the child.
+ * stderr is the one exception (#263): captured to a FILE, never ignored and
+ * never piped, for the reason `buildLaunchSpawn` states at length — a pipe's
+ * parent end would disappear the moment this process exits, and this launch
+ * exists specifically to survive that (#231).
  *
  * No `shell`, ever, and `detached` is not negotiable — the two are linked. A
  * detached cmd.exe has no console and starts no external program (exit 0,
@@ -387,21 +486,34 @@ export function buildLaunchSpawn(invocation: LaunchInvocation): {
  */
 export function runLaunchProcess(
   invocation: LaunchInvocation,
-  spawnProcess: SpawnLaunch = spawn
+  spawnProcess: SpawnLaunch = spawn,
+  stderrFile: StderrFile = createNodeStderrFile()
 ): Promise<LaunchedProcess | undefined> {
   return new Promise((resolve, reject) => {
     let settled = false
     let child: LaunchChild
-    const call = buildLaunchSpawn(invocation)
+    const stderrPath = stderrFile.path()
+    const stderrFd = stderrFile.openForWrite(stderrPath)
+    const call = buildLaunchSpawn(invocation, stderrFd)
     try {
       child = spawnProcess(call.command, call.args, call.options)
     } catch (error) {
+      // Nothing will ever be spawned to write here now; clean up what was
+      // opened for it rather than leaving an empty file behind.
+      stderrFile.close(stderrFd)
+      stderrFile.remove(stderrPath)
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
+    // This process's own copy of the fd is closed the instant `spawn` has
+    // taken it (#263) — see `buildLaunchSpawn`'s note on why that is safe:
+    // the child keeps its own duplicate of the fd, and closing this one
+    // does not touch that.
+    stderrFile.close(stderrFd)
     child.once('error', (error) => {
       if (settled) return
       settled = true
+      stderrFile.remove(stderrPath)
       reject(error)
     })
     child.once('spawn', () => {
@@ -413,7 +525,7 @@ export function runLaunchProcess(
       child.stdin?.on('error', () => {})
       child.stdin?.end(invocation.stdin)
       child.unref()
-      resolve(retainedProcess(child))
+      resolve(retainedProcess(child, stderrPath, stderrFile))
     })
   })
 }
@@ -431,14 +543,24 @@ export function runLaunchProcess(
  * child from keeping an event loop alive, and this main process has one for as
  * long as the app runs, so the exit still arrives.
  */
-function retainedProcess(child: LaunchChild): LaunchedProcess | undefined {
+function retainedProcess(
+  child: LaunchChild,
+  stderrPath: string,
+  stderrFile: StderrFile
+): LaunchedProcess | undefined {
   const pid = child.pid
-  if (pid === undefined) return undefined
+  if (pid === undefined) {
+    // Nothing to hold means nothing to watch either (#263) — this file will
+    // never be read, because there is no handle left to correlate an exit
+    // to, so there is no reason to wait for one.
+    stderrFile.remove(stderrPath)
+    return undefined
+  }
   // Watching starts now, unconditionally, rather than only once a caller
   // subscribes (#263): the failure this exists to catch can happen within
   // milliseconds of spawning, and EarlyFailureWatch's own latch is what
   // keeps a subscriber that arrives a tick later from losing it.
-  const earlyFailure = new EarlyFailureWatch(child)
+  const earlyFailure = new EarlyFailureWatch(child, stderrPath, stderrFile)
   return {
     pid,
     onExit: (listener) => {

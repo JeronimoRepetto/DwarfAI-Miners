@@ -1,4 +1,7 @@
 import type { SpawnOptions } from 'node:child_process'
+import { existsSync, writeSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
@@ -10,12 +13,15 @@ import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 import {
   CONSOLE_HOSTING_PROGRAM,
   EARLY_FAILURE_WINDOW_MS,
+  STDERR_TAIL_BYTES,
+  createNodeStderrFile,
   launchClaudeSession,
   runLaunchProcess,
   type LaunchChild,
   type LaunchInvocation,
   type LaunchRunner,
-  type SpawnLaunch
+  type SpawnLaunch,
+  type StderrFile
 } from './launchRunner'
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
@@ -442,23 +448,28 @@ describe('launchClaudeSession retention', () => {
  * Since #217 the fake also carries a pid and an 'exit' subscription, because
  * that is what the runner now hands back for the panel to hold onto.
  *
- * AMENDED for #263 (was: `exit` took no arguments, there was no stderr stream
- * at all, and this lived only inside `describe('runLaunchProcess')`). The
- * runner now reads both — the exit code, to tell a failure from an ordinary
- * end, and stderr, for the CLI's own words — so the fake grows a `stderr` the
- * child exposes and an `exit(code, signal)` that matches what Node's real
- * 'exit' event actually carries. It is hoisted to module scope so the
- * early-failure describe block below can share it rather than duplicating it.
- * Every existing call site that calls `exit()` with no arguments is
+ * AMENDED for #263 (was: `exit` took no arguments, and this lived only
+ * inside `describe('runLaunchProcess')`). `exit(code, signal)` now matches
+ * what Node's real 'exit' event actually carries, so a test can tell a
+ * failure from an ordinary end. It is hoisted to module scope so the
+ * early-failure describe block below can share it rather than duplicating
+ * it. Every existing call site that calls `exit()` with no arguments is
  * unchanged: the default below is a clean 0, which is what "the process just
  * ended" already meant to every test that predates this issue.
+ *
+ * AMENDED again for #263 (was: a `stderr` stream the fake exposed and a
+ * `writeStderr` that fed it). The runner no longer reads a live stream at
+ * all — a pipe's parent end would disappear the moment this process exits,
+ * which is exactly the hazard a DETACHED, unref'd child must never have
+ * (#231) — so stderr is captured to a FILE instead; see `fakeStderrFile`
+ * below for its own fake and `createNodeStderrFile` in `launchRunner.ts` for
+ * the real one.
  */
 function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn', pid: number | null = 4242) {
   const calls: Array<{ command: string; args: readonly string[]; options: SpawnOptions }> = []
   const written: string[] = []
   let unrefCalls = 0
   const exited: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
-  const stderrListeners: Array<(chunk: Buffer | string) => void> = []
   const spawnProcess: SpawnLaunch = (command, args, options) => {
     calls.push({ command, args, options })
     const spawned: Array<() => void> = []
@@ -480,12 +491,6 @@ function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn', pid: number | null = 42
           written.push(chunk)
         }
       },
-      stderr: {
-        on(event, listener) {
-          if (event === 'data') stderrListeners.push(listener)
-          return child.stderr
-        }
-      },
       unref() {
         unrefCalls += 1
       }
@@ -503,10 +508,56 @@ function fakeSpawn(outcome: 'spawn' | 'error' = 'spawn', pid: number | null = 42
     unrefCalls: () => unrefCalls,
     exit: (code: number | null = 0, signal: NodeJS.Signals | null = null) => {
       for (const listener of exited) listener(code, signal)
-    },
-    writeStderr: (chunk: string) => {
-      for (const listener of stderrListeners) listener(chunk)
     }
+  }
+}
+
+/**
+ * An in-memory `StderrFile` (#263), so the great majority of this suite
+ * never touches real disk — the one test that has to, proving
+ * `createNodeStderrFile` itself does what it claims, says so explicitly and
+ * lives in its own describe block below.
+ *
+ * `openForWrite` hands back a small, deterministic fd (`FAKE_STDERR_FD` for
+ * the first file any one fake opens) so a test can still assert the exact
+ * spawn `options` object rather than merely that stdio[2] is "a number" —
+ * see `createNodeStderrFile`'s own module comment for what a real fd would
+ * be here instead. `writeStderr` stands in for the child's own writes to
+ * that fd, addressed to whichever path this fake most recently opened,
+ * since a test drives the fake spawn and never sees the generated path
+ * itself.
+ */
+const FAKE_STDERR_FD = 900
+
+function fakeStderrFile(): StderrFile & {
+  writeStderr: (chunk: string) => void
+  removedPaths: () => string[]
+} {
+  const contents = new Map<string, string>()
+  const removed: string[] = []
+  let currentPath: string | null = null
+  let nextFd = FAKE_STDERR_FD
+  return {
+    path: () => `fake-launch-stderr-${nextFd}.log`,
+    openForWrite: (path) => {
+      currentPath = path
+      contents.set(path, '')
+      return nextFd++
+    },
+    close: () => {},
+    readTail: (path, maxBytes) => {
+      const text = contents.get(path) ?? ''
+      return text.length > maxBytes ? text.slice(text.length - maxBytes) : text
+    },
+    remove: (path) => {
+      contents.delete(path)
+      removed.push(path)
+    },
+    writeStderr: (chunk) => {
+      if (currentPath === null) return
+      contents.set(currentPath, (contents.get(currentPath) ?? '') + chunk)
+    },
+    removedPaths: () => removed
   }
 }
 
@@ -533,13 +584,15 @@ describe('runLaunchProcess', () => {
    */
   it('spawns the command as given — detached, hidden, no shell — and writes the prompt to stdin', async () => {
     const spawn = fakeSpawn()
+    const files = fakeStderrFile()
 
     // Was `resolves.toBeUndefined()` before #217; the runner now answers with
     // the retained handle, and the spawn assertions below are unchanged.
     await expect(
       runLaunchProcess(
         invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'] }),
-        spawn.spawnProcess
+        spawn.spawnProcess,
+        files
       )
     ).resolves.toMatchObject({ pid: 4242 })
 
@@ -547,25 +600,49 @@ describe('runLaunchProcess', () => {
     const call = spawn.calls[0]!
     expect(call.command).toBe('node')
     expect(call.args).toEqual([NPM_ENTRY, 'exec', '-'])
-    // AMENDED for #263 (was: stdio: ['pipe', 'ignore', 'ignore']). stderr is
-    // now piped rather than discarded, so a launch that fails almost at once
-    // can say why — see the early-failure window describe block below.
+    // AMENDED for #263 (was: stdio: ['pipe', 'ignore', 'ignore'], then later
+    // ['pipe', 'ignore', 'pipe']). A pipe's parent end belongs to THIS
+    // process and disappears the moment it exits — exactly what a detached,
+    // unref'd launch must survive (#231) — so stderr is now a real file
+    // descriptor, never 'pipe' and never 'ignore'. See the dedicated test
+    // below and the early-failure window describe block for the rest.
     expect(call.options).toEqual({
       cwd: MINE_PATH,
       env: { PATH: '/usr/bin' },
       detached: true,
-      stdio: ['pipe', 'ignore', 'pipe'],
+      stdio: ['pipe', 'ignore', FAKE_STDERR_FD],
       windowsHide: true
     })
     expect(spawn.written).toEqual(['dig'])
     expect(spawn.unrefCalls()).toBe(1)
   })
 
+  /*
+   * The design fix this test pins: a pipe here would be an EPIPE hazard the
+   * old `'ignore'` never had, because a detached launch's whole purpose is
+   * to outlive the panel process (#231, #263).
+   */
+  it('captures stderr through a real file descriptor, never a pipe', async () => {
+    const spawn = fakeSpawn()
+
+    await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
+
+    const stderrEntry = spawn.calls[0]!.options.stdio?.[2]
+    expect(typeof stderrEntry).toBe('number')
+    expect(stderrEntry).not.toBe('pipe')
+    expect(stderrEntry).not.toBe('ignore')
+  })
+
   it('rejects when the child reports it could not start, writing nothing', async () => {
     const spawn = fakeSpawn('error')
+    const files = fakeStderrFile()
 
-    await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).rejects.toThrow('EINVAL')
+    await expect(runLaunchProcess(invocation(), spawn.spawnProcess, files)).rejects.toThrow(
+      'EINVAL'
+    )
     expect(spawn.written).toEqual([])
+    // Nothing will ever be spawned to write into it now.
+    expect(files.removedPaths()).toHaveLength(1)
   })
 
   /*
@@ -582,7 +659,8 @@ describe('runLaunchProcess', () => {
 
     await runLaunchProcess(
       invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'], viaNodeEntry: true }),
-      spawn.spawnProcess
+      spawn.spawnProcess,
+      fakeStderrFile()
     )
 
     const call = spawn.calls[0]!
@@ -597,7 +675,7 @@ describe('runLaunchProcess', () => {
       cwd: MINE_PATH,
       env: { PATH: '/usr/bin' },
       detached: true,
-      stdio: ['pipe', 'ignore', 'pipe'],
+      stdio: ['pipe', 'ignore', FAKE_STDERR_FD],
       windowsHide: true
     })
     expect(spawn.written).toEqual(['dig'])
@@ -608,7 +686,8 @@ describe('runLaunchProcess', () => {
 
     await runLaunchProcess(
       invocation({ command: CODEX_PATH, args: ['exec', '-'], viaNodeEntry: false }),
-      spawn.spawnProcess
+      spawn.spawnProcess,
+      fakeStderrFile()
     )
 
     const call = spawn.calls[0]!
@@ -630,7 +709,8 @@ describe('runLaunchProcess', () => {
 
     const retained = await runLaunchProcess(
       invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'], viaNodeEntry: true }),
-      spawn.spawnProcess
+      spawn.spawnProcess,
+      fakeStderrFile()
     )
 
     expect(retained?.pid).toBe(4242)
@@ -647,7 +727,7 @@ describe('runLaunchProcess', () => {
    */
   it('reports the process ending, through the handle it handed back', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
 
     let gone = false
     retained?.onExit(() => {
@@ -658,9 +738,29 @@ describe('runLaunchProcess', () => {
     expect(gone).toBe(true)
   })
 
+  /*
+   * #263. On EVERY exit — whatever the reason — nothing will ever be
+   * written into this launch's stderr file again, so it is removed rather
+   * than left for a longer-lived launch's file to keep it company forever.
+   */
+  it('removes the stderr file once the child has exited, whatever the reason', async () => {
+    const spawn = fakeSpawn()
+    const files = fakeStderrFile()
+    await runLaunchProcess(invocation(), spawn.spawnProcess, files)
+
+    expect(files.removedPaths()).toHaveLength(0)
+    spawn.exit(0)
+    expect(files.removedPaths()).toHaveLength(1)
+  })
+
   it('retains nothing when the child reports no pid at all', async () => {
     const spawn = fakeSpawn('spawn', null)
-    await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).resolves.toBeUndefined()
+    const files = fakeStderrFile()
+
+    await expect(runLaunchProcess(invocation(), spawn.spawnProcess, files)).resolves.toBeUndefined()
+    // Nothing to hold means nothing to watch either — there is no exit this
+    // process will ever see to clean it up on, so it is removed right away.
+    expect(files.removedPaths()).toHaveLength(1)
   })
 
   it('keeps the prompt off argv with the intermediary in the chain too', async () => {
@@ -674,7 +774,8 @@ describe('runLaunchProcess', () => {
         stdin: secret,
         viaNodeEntry: true
       }),
-      spawn.spawnProcess
+      spawn.spawnProcess,
+      fakeStderrFile()
     )
 
     const call = spawn.calls[0]!
@@ -718,13 +819,16 @@ describe('the early-failure window (#263)', () => {
     vi.useRealTimers()
   })
 
-  it('reports the exit code and the stderr the child wrote, for an exit inside the window', async () => {
+  it('reports the exit code and reads the stderr the child wrote to its file, for an exit inside the window', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const files = fakeStderrFile()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, files)
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
-    spawn.writeStderr('codex: another instance is already running\n')
+    // Standing in for the child's own writes to the fd `buildLaunchSpawn`
+    // handed it — nothing here reads a live stream any more (#263).
+    files.writeStderr('codex: another instance is already running\n')
     spawn.exit(1)
 
     expect(onEarlyFailure).toHaveBeenCalledWith({
@@ -736,7 +840,7 @@ describe('the early-failure window (#263)', () => {
 
   it('never reports a clean exit inside the window as a failure', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
     const onEarlyFailure = vi.fn()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -751,7 +855,7 @@ describe('the early-failure window (#263)', () => {
    */
   it('never reports an exit once the window has passed — that is an ordinary end of session', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
     const onEarlyFailure = vi.fn()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -763,7 +867,7 @@ describe('the early-failure window (#263)', () => {
 
   it('reports a signal-only exit too, with no code', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -778,9 +882,10 @@ describe('the early-failure window (#263)', () => {
 
   it('tells a listener that subscribes AFTER the failure already latched', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const files = fakeStderrFile()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, files)
 
-    spawn.writeStderr('auth expired\n')
+    files.writeStderr('auth expired\n')
     spawn.exit(1)
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
@@ -794,7 +899,8 @@ describe('the early-failure window (#263)', () => {
 
   it('keeps only the tail of a flood of stderr, bounded rather than unbounded', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess)
+    const files = fakeStderrFile()
+    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, files)
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -802,7 +908,7 @@ describe('the early-failure window (#263)', () => {
     // cap here would pin an implementation detail rather than the property
     // that matters — this must never grow without limit.
     const flood = 'x'.repeat(64 * 1024)
-    spawn.writeStderr(flood)
+    files.writeStderr(flood)
     spawn.exit(1)
 
     const failure = onEarlyFailure.mock.calls[0]![0]
@@ -814,11 +920,70 @@ describe('the early-failure window (#263)', () => {
 
   it('never watches a child this process could not hold onto (no pid)', async () => {
     const spawn = fakeSpawn('spawn', null)
+    const files = fakeStderrFile()
 
-    await expect(runLaunchProcess(invocation(), spawn.spawnProcess)).resolves.toBeUndefined()
+    await expect(runLaunchProcess(invocation(), spawn.spawnProcess, files)).resolves.toBeUndefined()
     // Nothing to assert an onEarlyFailure against — there is no handle at all,
     // which is the existing 'retains nothing' rule this respects rather than
-    // reopens.
+    // reopens. The file this launch never got to use is still cleaned up.
+    expect(files.removedPaths()).toHaveLength(1)
+  })
+})
+
+/*
+ * The one honest exception to "no real disk in a unit test" (see
+ * `skills/tdd/SKILL.md`): `createNodeStderrFile` IS the real adapter, so
+ * this proves it actually works against the machine's own temp directory
+ * rather than mocking around the one thing that needed proving. Everything
+ * above this block, and everywhere else `StderrFile` is used, stays on the
+ * in-memory fake.
+ */
+describe('createNodeStderrFile (#263)', () => {
+  it('opens a real file under the OS temp directory, and a caller can write the fd it hands back', () => {
+    const files = createNodeStderrFile()
+    const path = files.path()
+    expect(path.startsWith(tmpdir())).toBe(true)
+
+    const fd = files.openForWrite(path)
+    writeSync(fd, 'codex: another instance is already running\n')
+    files.close(fd)
+
+    expect(files.readTail(path, STDERR_TAIL_BYTES)).toBe(
+      'codex: another instance is already running\n'
+    )
+
+    files.remove(path)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('keeps only the real tail of a file larger than the cap', () => {
+    const files = createNodeStderrFile()
+    const path = files.path()
+    const fd = files.openForWrite(path)
+    writeSync(fd, 'x'.repeat(STDERR_TAIL_BYTES * 2))
+    files.close(fd)
+
+    const tail = files.readTail(path, STDERR_TAIL_BYTES)
+
+    expect(tail).toHaveLength(STDERR_TAIL_BYTES)
+    files.remove(path)
+  })
+
+  it('reads as empty rather than throwing for a path that was never created', () => {
+    const files = createNodeStderrFile()
+    expect(files.readTail(join(tmpdir(), 'dwarfai-launch-stderr-never-existed.log'), 1024)).toBe('')
+  })
+
+  it('removing a path that is already gone is a no-op, not a throw', () => {
+    const files = createNodeStderrFile()
+    expect(() =>
+      files.remove(join(tmpdir(), 'dwarfai-launch-stderr-never-existed.log'))
+    ).not.toThrow()
+  })
+
+  it('generates a fresh path on every call, never reusing one launch’s file for another', () => {
+    const files = createNodeStderrFile()
+    expect(files.path()).not.toBe(files.path())
   })
 })
 
