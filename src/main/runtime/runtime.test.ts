@@ -3499,12 +3499,20 @@ describe('AgentRuntime proving which dwarf a detached launch became (#191)', () 
 
   async function runtimeWith(sessions: string[], firstPrompts: Record<string, string> = {}) {
     const firstPrompt = vi.fn(async (dwarfId: string) => firstPrompts[dwarfId])
+    /*
+     * AMENDED for #263 (was a board snapshotted once by mockResolvedValue).
+     * Read on every scan, so a test can have a session ARRIVE after the
+     * launch — which is the only way a launch's own session ever reaches the
+     * board, and now the only way it can be claimed: a session already there
+     * when the prompt was sent predates it.
+     */
+    const onBoard = [...sessions]
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [
         {
           kind: 'codex',
-          scan: vi.fn<Provider['scan']>().mockResolvedValue(codexBoard(sessions)),
+          scan: vi.fn<Provider['scan']>(async () => codexBoard(onBoard)),
           feed: vi.fn().mockResolvedValue([]),
           firstPrompt
         }
@@ -3513,7 +3521,7 @@ describe('AgentRuntime proving which dwarf a detached launch became (#191)', () 
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
-    return { runtime, firstPrompt, mineId: runtime.getMines()[0]!.id }
+    return { runtime, firstPrompt, onBoard, mineId: runtime.getMines()[0]!.id }
   }
 
   /** One poll, plus the head read the poll deliberately does not wait for. */
@@ -3543,7 +3551,11 @@ describe('AgentRuntime proving which dwarf a detached launch became (#191)', () 
   })
 
   it('stamps that receipt on the dwarf whose session opened with the prompt it sent', async () => {
-    const { runtime, mineId } = await runtimeWith(['mine', 'theirs'], {
+    // AMENDED for #263: 'mine' now ARRIVES after the launch instead of already
+    // sitting on the board with it. Both assertions are untouched; only the
+    // fixture's timeline is, and in the direction of what actually happens —
+    // the session a launch starts cannot be on the board before the launch.
+    const { runtime, mineId, onBoard } = await runtimeWith(['theirs'], {
       'codex:mine': 'dig the east gallery',
       'codex:theirs': 'shore the north wall'
     })
@@ -3553,11 +3565,40 @@ describe('AgentRuntime proving which dwarf a detached launch became (#191)', () 
       provider: 'codex',
       prompt: 'dig the east gallery'
     })
+    onBoard.push('mine')
     await sweep(runtime)
     await runtime.refresh()
 
     expect(launchIdOf(runtime, 'codex:mine')).toBe(launchId)
     expect(launchIdOf(runtime, 'codex:theirs')).toBeUndefined()
+  })
+
+  /*
+   * Issue #263, and the wiring rather than the rule: LaunchReceiptRegistry can
+   * only refuse a session it was TOLD about, so the board the runtime reads at
+   * launch time is the whole of the guard. Launching Codex where a Codex
+   * session was already running claimed that older session — a relaunch is
+   * usually the same prompt, and candidates are ordered by a chronological
+   * uuid-v7 — so the panel opened on the wrong dwarf and the session that had
+   * just started read as one that never started.
+   */
+  it('never stamps a session that was already on the board when the launch was made', async () => {
+    const { runtime, mineId, onBoard } = await runtimeWith(['thread-1'], {
+      'codex:thread-1': 'dig the east gallery',
+      'codex:thread-2': 'dig the east gallery'
+    })
+
+    const { launchId } = await runtime.launchAgent({
+      mineId,
+      provider: 'codex',
+      prompt: 'dig the east gallery'
+    })
+    onBoard.push('thread-2')
+    await sweep(runtime)
+    await runtime.refresh()
+
+    expect(launchIdOf(runtime, 'codex:thread-1')).toBeUndefined()
+    expect(launchIdOf(runtime, 'codex:thread-2')).toBe(launchId)
   })
 
   it('stamps nobody when no session on the board opened with those words', async () => {

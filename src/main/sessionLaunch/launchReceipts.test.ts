@@ -64,7 +64,12 @@ describe('proving which dwarf a detached launch became', () => {
    */
   it('claims the dwarf whose session opened with the prompt this launch sent', async () => {
     const { receipts } = registry({ 'codex:mine': PROMPT, 'codex:theirs': 'shore the north wall' })
-    const launchId = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: []
+    })
 
     await receipts.observe([
       mine(MINE_PATH, [dwarf({ sessionId: 'theirs' }), dwarf({ sessionId: 'mine' })])
@@ -81,7 +86,7 @@ describe('proving which dwarf a detached launch became', () => {
    */
   it('claims nobody when the only new session opened with somebody else’s words', async () => {
     const { receipts } = registry({ 'codex:theirs': 'shore the north wall' })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
 
     await receipts.observe([mine(MINE_PATH, [dwarf({ sessionId: 'theirs' })])])
 
@@ -96,7 +101,12 @@ describe('proving which dwarf a detached launch became', () => {
    */
   it('claims a session that had already ended by the time its dwarf was drawn', async () => {
     const { receipts } = registry({ 'codex:done': PROMPT })
-    const launchId = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: []
+    })
 
     await receipts.observe([mine(MINE_PATH, [dwarf({ sessionId: 'done', status: 'leaving' })])])
 
@@ -105,7 +115,7 @@ describe('proving which dwarf a detached launch became', () => {
 
   it('never claims a session in another mine, however well its words match', async () => {
     const { receipts } = registry({ 'codex:mine': PROMPT })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
 
     await receipts.observe([mine(OTHER_PATH, [dwarf({ sessionId: 'mine' })])])
 
@@ -114,7 +124,7 @@ describe('proving which dwarf a detached launch became', () => {
 
   it('never claims another provider’s session', async () => {
     const { receipts } = registry({ 'claude:s1': PROMPT })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
 
     await receipts.observe([
       mine(MINE_PATH, [dwarf({ id: 'claude:s1', provider: 'claude', sessionId: 's1' })])
@@ -131,7 +141,12 @@ describe('proving which dwarf a detached launch became', () => {
    */
   it('never claims a spawned agent that inherited the same opening prompt', async () => {
     const { receipts } = registry({ 'codex:child': PROMPT, 'codex:root': PROMPT })
-    const launchId = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: []
+    })
 
     await receipts.observe([
       mine(MINE_PATH, [
@@ -154,7 +169,8 @@ describe('proving which dwarf a detached launch became', () => {
     const first = forwards.receipts.issue({
       provider: 'codex',
       minePath: MINE_PATH,
-      prompt: PROMPT
+      prompt: PROMPT,
+      knownSessionIds: []
     })
     await forwards.receipts.observe([
       mine(MINE_PATH, [dwarf({ sessionId: 'b' }), dwarf({ sessionId: 'a' })])
@@ -164,7 +180,8 @@ describe('proving which dwarf a detached launch became', () => {
     const second = backwards.receipts.issue({
       provider: 'codex',
       minePath: MINE_PATH,
-      prompt: PROMPT
+      prompt: PROMPT,
+      knownSessionIds: []
     })
     await backwards.receipts.observe([
       mine(MINE_PATH, [dwarf({ sessionId: 'a' }), dwarf({ sessionId: 'b' })])
@@ -176,8 +193,18 @@ describe('proving which dwarf a detached launch became', () => {
 
   it('gives two launches in one mine the two sessions their own words name', async () => {
     const { receipts } = registry({ 'codex:a': 'dig', 'codex:b': 'shore' })
-    const digging = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: 'dig' })
-    const shoring = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: 'shore' })
+    const digging = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: 'dig',
+      knownSessionIds: []
+    })
+    const shoring = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: 'shore',
+      knownSessionIds: []
+    })
 
     await receipts.observe([
       mine(MINE_PATH, [dwarf({ sessionId: 'a' }), dwarf({ sessionId: 'b' })])
@@ -189,7 +216,12 @@ describe('proving which dwarf a detached launch became', () => {
 
   it('keeps the session it claimed when a later one matches too', async () => {
     const { receipts } = registry({ 'codex:a': PROMPT, 'codex:b': PROMPT })
-    const launchId = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: []
+    })
 
     await receipts.observe([mine(MINE_PATH, [dwarf({ sessionId: 'a' })])])
     await receipts.observe([
@@ -205,12 +237,108 @@ describe('proving which dwarf a detached launch became', () => {
    * newline of its own when it writes the turn down. Exact equality of the
    * trimmed strings, and nothing looser: this is the whole proof.
    */
+  /*
+   * Issue #263. Launching Codex in a folder that already held a Codex session
+   * "failed silently": the panel opened on the OLD dwarf, so the session that
+   * had just started looked like it never had.
+   *
+   * Nothing in the match could tell the two apart. A relaunch in the same
+   * folder is usually the same words as last time — often literally the same
+   * prompt, retyped or pasted — and candidates were ordered by id, which for
+   * Codex is `codex:<uuid-v7>` and therefore chronological: the older session
+   * was read first and claimed. The ids below sort the same way for the same
+   * reason.
+   */
+  it('never claims a session that was already on the board when the launch was made', async () => {
+    const { receipts } = registry({ 'codex:thread-1': PROMPT, 'codex:thread-2': PROMPT })
+    const alreadyThere = dwarf({ sessionId: 'thread-1' })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: [alreadyThere.sessionId]
+    })
+
+    await receipts.observe([mine(MINE_PATH, [alreadyThere, dwarf({ sessionId: 'thread-2' })])])
+
+    expect(receipts.receiptOf('codex:thread-1')).toBeUndefined()
+    expect(receipts.receiptOf('codex:thread-2')).toBe(launchId)
+  })
+
+  /*
+   * A session already on the board is somebody else's whatever folder it turns
+   * up in — the same reasoning the kill register states for its own guard.
+   */
+  it('never claims a known session that has since moved to the launched mine', async () => {
+    const { receipts } = registry({ 'codex:thread-1': PROMPT })
+    receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: ['thread-1']
+    })
+
+    await receipts.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' })])])
+
+    expect(receipts.receiptOf('codex:thread-1')).toBeUndefined()
+  })
+
+  /*
+   * The half that must not move. Presence at issue time disqualifies a
+   * session; ABSENCE still claims nobody on its own — the words are the whole
+   * proof, and a launch into an empty folder whose session says something else
+   * gets no receipt.
+   */
+  it('still claims nobody when a session nobody knew opened with other words', async () => {
+    const { receipts } = registry({ 'codex:thread-2': 'shore the north wall' })
+    receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: ['thread-1']
+    })
+
+    await receipts.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-2' })])])
+
+    expect(receipts.receiptOf('codex:thread-2')).toBeUndefined()
+  })
+
+  /*
+   * And the reason this registry cannot simply reuse the kill register's rule:
+   * the session a launch became may already have ended by the first poll that
+   * draws it, and that is the case the panel most needs to open on. Being
+   * unknown at issue time is what admits it, not being alive now.
+   */
+  it('still claims a session that started and ended between the launch and the poll', async () => {
+    const { receipts } = registry({ 'codex:thread-2': PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: ['thread-1']
+    })
+
+    await receipts.observe([
+      mine(MINE_PATH, [
+        dwarf({ sessionId: 'thread-1' }),
+        dwarf({ sessionId: 'thread-2', status: 'leaving' })
+      ])
+    ])
+
+    expect(receipts.receiptOf('codex:thread-2')).toBe(launchId)
+  })
+
   it('matches the trimmed prompt and nothing that merely resembles it', async () => {
     const { receipts } = registry({
       'codex:spaced': `\n${PROMPT}\n`,
       'codex:longer': `${PROMPT} and the west one`
     })
-    const launchId = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: []
+    })
 
     await receipts.observe([
       mine(MINE_PATH, [dwarf({ sessionId: 'longer' }), dwarf({ sessionId: 'spaced' })])
@@ -228,7 +356,7 @@ describe('what the receipt read costs', () => {
    */
   it('reads a dwarf that has spoken exactly once, however many polls pass', async () => {
     const { read, receipts } = registry({ 'codex:theirs': 'shore the north wall' })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
     const board = [mine(MINE_PATH, [dwarf({ sessionId: 'theirs' })])]
 
     await receipts.observe(board)
@@ -248,7 +376,7 @@ describe('what the receipt read costs', () => {
     const silent: Record<string, string | undefined> = { 'codex:slow': undefined }
     const read = reader(silent)
     const receipts = new LaunchReceiptRegistry({ firstPrompt: read.firstPrompt })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
     const board = [mine(MINE_PATH, [dwarf({ sessionId: 'slow' })])]
 
     for (let poll = 0; poll < FIRST_PROMPT_READ_ATTEMPTS + 3; poll++) await receipts.observe(board)
@@ -260,7 +388,12 @@ describe('what the receipt read costs', () => {
     const answers: Record<string, string | undefined> = { 'codex:slow': undefined }
     const read = reader(answers)
     const receipts = new LaunchReceiptRegistry({ firstPrompt: read.firstPrompt })
-    const launchId = receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    const launchId = receipts.issue({
+      provider: 'codex',
+      minePath: MINE_PATH,
+      prompt: PROMPT,
+      knownSessionIds: []
+    })
     const board = [mine(MINE_PATH, [dwarf({ sessionId: 'slow' })])]
 
     await receipts.observe(board)
@@ -274,7 +407,7 @@ describe('what the receipt read costs', () => {
 
   it('reads nothing at all once every launch has its session', async () => {
     const { read, receipts } = registry({ 'codex:mine': PROMPT })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
     const board = [mine(MINE_PATH, [dwarf({ sessionId: 'mine' })])]
 
     await receipts.observe(board)
@@ -301,7 +434,7 @@ describe('what the receipt read costs', () => {
     const receipts = new LaunchReceiptRegistry({
       firstPrompt: () => Promise.reject(new Error('transcript gone'))
     })
-    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT })
+    receipts.issue({ provider: 'codex', minePath: MINE_PATH, prompt: PROMPT, knownSessionIds: [] })
 
     await receipts.observe([mine(MINE_PATH, [dwarf({ sessionId: 'mine' })])])
 
