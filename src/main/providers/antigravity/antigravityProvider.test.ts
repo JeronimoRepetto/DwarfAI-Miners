@@ -346,12 +346,23 @@ describe('AntigravityProvider.feed', () => {
     expect(await provider(store()).feed('antigravity:nobody', 12)).toBeNull()
   })
 
+  // AMENDED for #280 (was: ['user', 'assistant', 'user', 'assistant'], before
+  // this fixture's three tool_calls steps — find_by_name, view_file,
+  // replace_file_content — published activity lines of their own).
   it('reads the conversation both ways round after a scan', async () => {
     const agy = provider(store())
     await agy.scan()
 
     const feed = await agy.feed(`antigravity:${CONVERSATION}`, 12)
-    expect(feed?.map((message) => message.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(feed?.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'assistant',
+      'user',
+      'assistant',
+      'assistant',
+      'assistant'
+    ])
   })
 
   it('redacts what leaves the provider, user text included', async () => {
