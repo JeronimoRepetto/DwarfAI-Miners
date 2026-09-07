@@ -19,6 +19,19 @@ export interface ClaudeSessionEntry {
   cwd: string
   status: SessionStatus
   /**
+   * Whether the entry carried a `status` field at all — a different fact from
+   * the folded value above, which reads its absence as `idle` (#191).
+   *
+   * Claude Code's REPL is what writes that field, so its presence is the
+   * registry saying a REPL is running: an SDK-hosted session registers as
+   * `kind: interactive` like a TUI and never writes a status, because it has no
+   * REPL (observed live against 2.1.260, see ClaudeProviderOptions.isHeldSession).
+   * A session with no REPL has no console for a human to type into however its
+   * `kind` reads, which is why `kind` alone cannot answer whether a resting
+   * session is still reachable (#255).
+   */
+  statusReported: boolean
+  /**
    * What the session is blocked on while status is 'waiting' (e.g. "dialog
    * open"), copied verbatim from the registry. Structured evidence only —
    * never derived from assistant text (issue #34). Claude Code's own
@@ -238,6 +251,10 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     // only unknown values normalize to idle, the conservative reading. The
     // main session dwarf is a foreman either way — status changes, rank does not.
     status: json.status === 'busy' ? 'busy' : json.status === 'waiting' ? 'waiting' : 'idle',
+    // Read off the raw entry, because the fold above cannot be un-folded: an
+    // absent status and an unrecognized one both arrive as 'idle' downstream,
+    // and only one of them means "nothing was ever here to write it".
+    statusReported: asString(json.status) !== undefined,
     waitingFor: asString(json.waitingFor),
     procStart: asString(json.procStart),
     kind: asString(json.kind),

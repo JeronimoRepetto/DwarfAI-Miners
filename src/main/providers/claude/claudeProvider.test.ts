@@ -344,12 +344,23 @@ describe('ClaudeProvider', () => {
       expect(worker).toMatchObject({ role: 'worker', status: 'working' })
     })
 
-    it('keeps an idle session dwarfless — leaving behavior is unchanged', async () => {
+    /**
+     * AMENDED for #255 (was: "keeps an idle session dwarfless — leaving
+     * behavior is unchanged", asserting `dwarfs: []`). #34's subject is
+     * untouched and still asserted: an idle session stops MINING. What
+     * changed is that stopping work is not leaving the mine — this fixture's
+     * session is one a person can type into (`kind: interactive`, and its
+     * REPL wrote the status), and the ruling on #255 is that a terminal still
+     * at a prompt stays reachable. The dwarfless case now needs a session
+     * nobody is at; the #255 block below pins both sides of it.
+     */
+    it('rests the foreman of an idle session rather than mining (issue #34)', async () => {
       fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('idle'), 1_000)
       fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
       const snapshots = await makeProvider().scan()
       expect(snapshots[0]!.status).toBe('idle')
-      expect(snapshots[0]!.dwarfs).toEqual([])
+      expect(snapshots[0]!.dwarfs).toHaveLength(1)
+      expect(snapshots[0]!.dwarfs[0]).toMatchObject({ role: 'foreman', status: 'waiting' })
     })
   })
 
@@ -1120,9 +1131,14 @@ describe('ClaudeProvider', () => {
 
         // Proof outranks silence: the notification lands while every transcript
         // is fresh, and the worker leaves on that poll, not one window later.
+        //
+        // AMENDED for #255 (was: `toEqual([])`). The worker leaving is this
+        // test's whole subject and is asserted exactly as before; the foreman
+        // now stays, because its session is one somebody can type into and
+        // its transcript was just written.
         fake.addFile(TRANSCRIPT, parentTranscript + notification(LIVE_AGENT, 'completed'), clock)
         const second = await provider.scan()
-        expect(second[0]!.dwarfs).toEqual([])
+        expect(second[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
       })
 
       it('never brings a stale worker back when its session goes busy again', async () => {
@@ -1173,9 +1189,13 @@ describe('ClaudeProvider', () => {
           launch(GHOST, 'Ghost agent') + pastRegularTail + turnDuration(1),
           clock
         )
+        // AMENDED for #255 (was: `toEqual([])`). The ghost staying buried is
+        // the subject and is asserted unchanged; the foreman rejoins because
+        // this poll rewrote the transcript, which the reading above — taken a
+        // whole window after the last write — deliberately had not.
         const third = await provider.scan()
         expect(deepReads()).toBe(1)
-        expect(third[0]!.dwarfs).toEqual([])
+        expect(third[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID])
       })
 
       it('uses generous default windows when none are injected', async () => {
@@ -3019,6 +3039,158 @@ describe('ClaudeProvider', () => {
         fake.addFile(SUBAGENT, subagentTranscript, clock)
         expect((await provider.scan())[0]!.dwarfs.map((d) => d.id)).toEqual([MAIN_ID, WORKER_ID])
       })
+    })
+  })
+
+  /*
+   * Issue #255. A session a person launched in a console finishes its turn and
+   * sits at its prompt with the terminal still open — and #34's rule, which
+   * listed the foreman only while the registry said `busy` or `waiting` or the
+   * session had agents out, took its dwarf away the instant the status read
+   * `idle`. The MessagePanel addresses a session THROUGH that dwarf (#86,
+   * #159, #183, #190), so the one session a person most wants to write to next
+   * was the one the panel had no handle for, while the terminal sat there
+   * answerable. Observed live 2026-09-05.
+   *
+   * Attendance is the predicate, and it is the honest one: `kind: interactive`
+   * is the registry itself saying a human can type there (#68). Rank could
+   * not answer this — a headless `claude -p` run is a root too — and the
+   * clock could not either, which is why option (2)'s grace window was not
+   * the ruling. The resulting shape is the one #191/#245 already gave a held
+   * session and #202 gave Codex's own idle roots: resting on the board, not
+   * gone.
+   *
+   * Attendance is not the WHOLE predicate, because `kind: interactive` is
+   * also what an SDK-hosted session writes, and that one has no console at
+   * all (#191). A REPL-written status is the second half; see
+   * sitsAtAnOpenPrompt.
+   * gone.
+   */
+  describe('an idle session someone can type into (#255)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const REGISTRY = `${ROOT1}\\sessions\\32896.json`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    /** Stand-ins for the product's hour and half hour, as #40's and #68's tests use. */
+    const FOREMAN_WINDOW = 60_000
+    const WORKER_WINDOW = 30_000
+    const LAST_WRITE = 42_000
+
+    let clock = LAST_WRITE
+
+    /** The fixture registry entry, idle, with its kind replaced or removed. */
+    function idleEntryOfKind(kind: string | undefined): string {
+      const base: Record<string, unknown> = { ...JSON.parse(sessionEntry), status: 'idle' }
+      if (kind === undefined) delete base.kind
+      else base.kind = kind
+      return JSON.stringify(base)
+    }
+
+    /** The provider with this block's clock and windows small enough to cross. */
+    function providerHere(): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => clock,
+        foremanSilenceMs: FOREMAN_WINDOW,
+        workerSilenceMs: WORKER_WINDOW
+      })
+    }
+
+    beforeEach(() => {
+      clock = LAST_WRITE
+      // No agents out, so the foreman's own listing is the whole question.
+      fake.addFile(TRANSCRIPT, noAgentTranscript, LAST_WRITE)
+    })
+
+    it('rests the foreman of an idle interactive session on the board', async () => {
+      fake.addFile(REGISTRY, idleEntryOfKind('interactive'), 1_000)
+      const snapshot = (await providerHere().scan())[0]!
+
+      // The registry still reads idle — nothing is invented about the entry.
+      expect(snapshot.status).toBe('idle')
+      expect(snapshot.dwarfs).toHaveLength(1)
+      expect(snapshot.dwarfs[0]).toMatchObject({
+        id: MAIN_ID,
+        role: 'foreman',
+        attendance: 'attended',
+        status: 'waiting',
+        sessionId: SESSION_ID
+      })
+      // Resting, never blocked: the session was asked nothing, so nothing may
+      // say it is waiting ON something (issue #60).
+      expect(snapshot.dwarfs[0]!.waitingReason).toBeUndefined()
+    })
+
+    it('hands the panel a channel into the resting dwarf it can send on', async () => {
+      // The defect itself: the panel's send needs the dwarf AND the target,
+      // and the target was already there — only the dwarf was missing.
+      fake.addFile(REGISTRY, idleEntryOfKind('interactive'), 1_000)
+      const provider = providerHere()
+      const snapshot = (await provider.scan())[0]!
+
+      expect(snapshot.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+      expect(provider.textDelivery(MAIN_ID)).toEqual({
+        kind: 'terminal',
+        pid: 32896,
+        sessionName: 'sample-project-70'
+      })
+    })
+
+    it('leaves an idle session whose kind proves nothing about attendance dwarfless', async () => {
+      // 'unknown' must never behave like a proven 'attended' in either
+      // direction (#68): the entry was asked and answered nothing, so the
+      // rule it had before this issue is the rule it keeps.
+      fake.addFile(REGISTRY, idleEntryOfKind(undefined), 1_000)
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('leaves an idle headless session dwarfless, exactly as before', async () => {
+      // Nobody is at a keyboard, so there is nothing to keep reachable.
+      fake.addFile(REGISTRY, idleEntryOfKind('bg'), 1_000)
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('leaves an SDK-hosted session dwarfless, though its kind reads interactive', async () => {
+      // The registry entry every session THIS app launches writes, and every
+      // one another tool's SDK launches: `kind: interactive`, no status ever,
+      // because the REPL is what writes that field and there is no REPL
+      // (#191). No console means nothing this rule could keep reachable —
+      // and the panel's own hosted sessions reach the board by being held,
+      // which is the proof that they are there for the user.
+      const entry = JSON.parse(sessionEntry) as Record<string, unknown>
+      delete entry.status
+      delete entry.statusUpdatedAt
+      fake.addFile(REGISTRY, JSON.stringify({ ...entry, entrypoint: 'sdk-ts' }), 1_000)
+
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('still drops an idle interactive session once its whole window has elapsed', async () => {
+      // The silence windows are what make this rule safe to have at all
+      // (#47/#68): a terminal nobody touches leaves like anything else. The
+      // middle reading is past the HEADLESS window and still on the board,
+      // which is what proves the attended window is the one being drawn.
+      fake.addFile(REGISTRY, idleEntryOfKind('interactive'), 1_000)
+      const provider = providerHere()
+      expect((await provider.scan())[0]!.dwarfs).toHaveLength(1)
+
+      clock = LAST_WRITE + WORKER_WINDOW + 1
+      expect((await provider.scan())[0]!.dwarfs).toHaveLength(1)
+
+      // A window that has exactly elapsed reads as stale — the side
+      // writtenWithinWindow already picked, pinned so it stays a decision.
+      clock = LAST_WRITE + FOREMAN_WINDOW
+      expect((await provider.scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('rests no dwarf on an idle interactive session that has no transcript at all', async () => {
+      // A missing transcript is the absence of evidence, never fresh evidence
+      // — the same reading silenceField and #40's staleness rule already give
+      // it. Nothing here may promote "I know nothing" into "it just spoke".
+      fake.addFile(REGISTRY, idleEntryOfKind('interactive'), 1_000)
+      fake.removeFile(TRANSCRIPT)
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
     })
   })
 })
