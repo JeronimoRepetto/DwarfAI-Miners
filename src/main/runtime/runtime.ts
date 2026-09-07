@@ -1538,6 +1538,25 @@ export class AgentRuntime {
   }
 
   /**
+   * Ask a held session for its own context reading (issue #96) — the mine's
+   * `dwarf:refreshTelemetry` channel, called on the panel's own refresh
+   * policy (opening a mine on a dwarf, and every later selection; main's own
+   * pull at the end of each turn keeps it fresh after that). One-way, like
+   * `watchDwarfFeed`: the reading lands on the record and rides the next
+   * poll's ordinary publish, so there is nothing here to await.
+   *
+   * A silent no-op for a dwarf not on the board, or one whose session this
+   * panel does not hold — `heldSessionIdOf` already draws that line for
+   * `deliveryTargetOf`, and it is the same line a context reading may cross:
+   * there is no stream to ask on either side of it.
+   */
+  refreshDwarfTelemetry(dwarfId: string): void {
+    const sessionId = this.heldSessionIdOf(dwarfId)
+    if (sessionId === undefined) return
+    void this.heldSessions.refreshContextUsage(sessionId)
+  }
+
+  /**
    * The watched dwarf whose feed THIS poll must read, or undefined when
    * there is nothing to read (#196) — a PLAIN synchronous decision, kept
    * apart from the actual read so the poll callback can await the read only

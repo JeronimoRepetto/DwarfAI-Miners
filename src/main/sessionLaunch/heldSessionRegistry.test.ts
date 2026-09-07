@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import { HELD_CONVERSATION_LIMIT } from '../domain/types'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import { HeldSessionRegistry } from './heldSessionRegistry'
+import { HELD_CONTEXT_USAGE_TIMEOUT_MS } from './heldSession'
 import type {
   HeldAnswer,
   HeldPermission,
   HeldPermissionAnswer,
+  HeldSessionContextUsage,
   HeldSessionPort,
   HeldSessionStartRequest,
   HeldSessionTelemetryUpdate
@@ -59,6 +61,18 @@ class FakePort {
   interruptTakes = true
   /** Set false to make the stream refuse a send, as one already closing would (#245). */
   sendTakes = true
+  /*
+   * AMENDED for #96 (was: a handle carrying only close/send/interrupt). The
+   * context reading is the one piece of telemetry no stream message carries,
+   * so the port grew a PULL — `contextUsage()` — and the fake has to satisfy
+   * it. No existing assertion changed.
+   */
+  /** Which sessions were asked for a context reading, in order. */
+  readonly contextUsageAsks: number[] = []
+  /** What the session answers a pull with; null is "it could not say". */
+  contextUsageAnswer: HeldSessionContextUsage | null = { usedTokens: 41_237, maxTokens: 200_000 }
+  /** Set true to make the pull hang, as a session that never answers would. */
+  contextUsageHangs = false
 
   readonly start: HeldSessionPort = async (request) => {
     if (this.failWith !== undefined) throw this.failWith
@@ -74,6 +88,11 @@ class FakePort {
       interrupt: async () => {
         this.interrupted.push(index)
         return this.interruptTakes
+      },
+      contextUsage: () => {
+        this.contextUsageAsks.push(index)
+        if (this.contextUsageHangs) return new Promise<never>(() => {})
+        return Promise.resolve(this.contextUsageAnswer)
       }
     }
   }
@@ -467,6 +486,148 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
     await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
     port.reportSessionId(0, 'sess-1')
     port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+
+    port.end(0)
+
+    expect(registry.telemetryState('sess-1')).toEqual({ held: false })
+  })
+})
+
+/*
+ * Issue #96, the read-only command surface. Context usage is the one thing
+ * the held stream never reports: neither `init` nor `result` carries a
+ * context breakdown, so it has to be PULLED off the session's own
+ * `getContextUsage()` control request. The refresh policy the maintainer
+ * settled on 2026-09-07 is what these pin — on demand (the mine opening) and
+ * at the end of a turn, never on a poll, with a deadline and no retry storm.
+ */
+describe('HeldSessionRegistry context usage (#96)', () => {
+  async function held(port: FakePort): Promise<HeldSessionRegistry> {
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    return registry
+  }
+
+  it('pulls a reading on demand and keeps it beside what the stream reported', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5' })
+
+    await registry.refreshContextUsage('sess-1')
+
+    expect(port.contextUsageAsks).toEqual([0])
+    expect(registry.telemetryState('sess-1')).toEqual({
+      held: true,
+      model: 'claude-haiku-4-5',
+      contextUsage: { usedTokens: 41_237, maxTokens: 200_000 }
+    })
+  })
+
+  it('asks nothing at all for a session this panel does not hold', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+
+    await registry.refreshContextUsage('sess-nobody')
+
+    expect(port.contextUsageAsks).toEqual([])
+  })
+
+  it('pulls exactly once when a turn ends, which is the only thing that triggers one', async () => {
+    // Never on a poll: the poll never reaches this registry for a reading, and
+    // an `init` starting a turn is not a completed one either.
+    const port = new FakePort()
+    const registry = await held(port)
+
+    port.reportTelemetry(0, { model: 'claude-haiku-4-5', turn: 'started' })
+    expect(port.contextUsageAsks).toEqual([])
+
+    port.reportTelemetry(0, { totalCostUsd: 0.01, turn: 'ended' })
+    await registry.refreshContextUsage('sess-1')
+
+    expect(port.contextUsageAsks).toEqual([0])
+    expect(registry.telemetryState('sess-1').contextUsage).toEqual({
+      usedTokens: 41_237,
+      maxTokens: 200_000
+    })
+  })
+
+  it('joins a pull already in flight rather than starting a second one', async () => {
+    // The no-retry-storm half of the policy: a mine opened twice in a second,
+    // or a turn ending while the last reading is still on its way, must not
+    // put two control requests on the same stream.
+    const port = new FakePort()
+    const registry = await held(port)
+
+    await Promise.all([
+      registry.refreshContextUsage('sess-1'),
+      registry.refreshContextUsage('sess-1')
+    ])
+
+    expect(port.contextUsageAsks).toEqual([0])
+  })
+
+  it('gives up on a pull the session never answers, leaving the last reading alone', async () => {
+    vi.useFakeTimers()
+    try {
+      const port = new FakePort()
+      const registry = await held(port)
+      await registry.refreshContextUsage('sess-1')
+
+      port.contextUsageHangs = true
+      const pull = registry.refreshContextUsage('sess-1')
+      await vi.advanceTimersByTimeAsync(HELD_CONTEXT_USAGE_TIMEOUT_MS)
+      await pull
+
+      // The reading that DID arrive still stands: a deadline that reached
+      // nothing says nothing about the last measurement taken.
+      expect(registry.telemetryState('sess-1').contextUsage).toEqual({
+        usedTokens: 41_237,
+        maxTokens: 200_000
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('takes a fresh pull after one timed out, rather than latching the session off', async () => {
+    vi.useFakeTimers()
+    try {
+      const port = new FakePort()
+      const registry = await held(port)
+      port.contextUsageHangs = true
+      const timedOut = registry.refreshContextUsage('sess-1')
+      await vi.advanceTimersByTimeAsync(HELD_CONTEXT_USAGE_TIMEOUT_MS)
+      await timedOut
+
+      port.contextUsageHangs = false
+      port.contextUsageAnswer = { usedTokens: 9, maxTokens: 200_000 }
+      await registry.refreshContextUsage('sess-1')
+
+      expect(port.contextUsageAsks).toEqual([0, 0])
+      expect(registry.telemetryState('sess-1').contextUsage).toEqual({
+        usedTokens: 9,
+        maxTokens: 200_000
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('records nothing when the session answers that it could not say', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    port.contextUsageAnswer = null
+
+    await registry.refreshContextUsage('sess-1')
+
+    expect(registry.telemetryState('sess-1')).toEqual({ held: true })
+  })
+
+  it('discards the reading with the session, exactly as it discards the rest', async () => {
+    const port = new FakePort()
+    const registry = await held(port)
+    await registry.refreshContextUsage('sess-1')
 
     port.end(0)
 

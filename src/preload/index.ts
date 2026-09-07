@@ -138,6 +138,16 @@ export interface DwarfAiMinersApi {
    */
   setWatchedDwarf: (dwarfId: string | null) => void
   /**
+   * Ask a held session for its own context reading (issue #96) — the one
+   * telemetry field no stream message carries, so main has to be asked for it
+   * rather than merely watching a poll. Named by DWARF, like every other
+   * action, and one-way like `setWatchedDwarf`: the reading rides the next
+   * `minesUpdated` snapshot like any other change, so there is no verdict
+   * here to wait for. A no-op on an observed dwarf's id, or one this panel
+   * does not hold — main draws that line, not this bridge.
+   */
+  refreshDwarfTelemetry: (dwarfId: string) => void
+  /**
    * Every dwarf that has spoken in a mine, with its latest messages, read from
    * the transcripts under the mine's folder (#192) — for the Mine History
    * panel, which reads a mine whose crew may be long gone.
@@ -356,6 +366,13 @@ const api: DwarfAiMinersApi = {
   // is itself a real answer ("nobody is watched") and not a malformed one.
   setWatchedDwarf: (dwarfId) =>
     ipcRenderer.send(IPC_CHANNELS.setWatchedDwarf, typeof dwarfId === 'string' ? dwarfId : null),
+  // Same discipline as retireDwarf: collapse anything that is not a string
+  // BEFORE it crosses, so main's boundary check only reasons about one.
+  refreshDwarfTelemetry: (dwarfId) =>
+    ipcRenderer.send(
+      IPC_CHANNELS.refreshDwarfTelemetry,
+      typeof dwarfId === 'string' ? dwarfId : ''
+    ),
   // Same discipline as getDwarfFeed: a mine id crosses as a real string or as
   // '', which main refuses as a mine it does not hold.
   getMineHistory: (mineId) =>

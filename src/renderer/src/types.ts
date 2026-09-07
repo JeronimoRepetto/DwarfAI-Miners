@@ -20,6 +20,7 @@ export type {
   DwarfActivation,
   DwarfAttendance,
   DwarfCapabilities,
+  DwarfContextUsage,
   DwarfDeliveryReport,
   DwarfFeedResult,
   DwarfKickRequest,

@@ -130,6 +130,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
   ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
+  ipcMain.removeAllListeners(IPC_CHANNELS.refreshDwarfTelemetry)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
@@ -747,6 +748,14 @@ async function init(): Promise<void> {
   ipcMain.on(IPC_CHANNELS.setWatchedDwarf, (_event, payload: unknown) => {
     if (payload !== null && typeof payload !== 'string') return
     runtime?.watchDwarfFeed(payload)
+  })
+  // The mine asking a held session for its own context reading (issue #96).
+  // One-way, like setWatchedDwarf: main's own boundary check only ever
+  // reasons about a string, and a malformed payload is refused outright
+  // rather than coerced — the reading itself rides the next ordinary poll.
+  ipcMain.on(IPC_CHANNELS.refreshDwarfTelemetry, (_event, dwarfId: unknown) => {
+    if (typeof dwarfId !== 'string') return
+    runtime?.refreshDwarfTelemetry(dwarfId)
   })
   // A mine this process could not read history for (#192) — never "nobody has
   // spoken here", which is what an empty list with `readable: true` would say.

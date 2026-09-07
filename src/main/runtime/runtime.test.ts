@@ -4507,6 +4507,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     port: HeldSessionPort
     started: HeldSessionStartRequest[]
     closes: () => number
+    /** AMENDED for #96: which sessions were asked for a context reading, in order. */
+    contextUsageAsks: number[]
     reportSessionId: (index: number, sessionId: string) => void
     ask: (index: number, toolUseId: string) => Promise<HeldAnswer>
     permission: (index: number, toolUseId: string) => Promise<HeldPermissionAnswer>
@@ -4515,11 +4517,14 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     reportMessage: (index: number, role: 'user' | 'assistant', text: string) => void
   } {
     const started: HeldSessionStartRequest[] = []
+    const contextUsageAsks: number[] = []
     let closed = 0
     return {
       started,
       closes: () => closed,
+      contextUsageAsks,
       port: async (request) => {
+        const index = started.length
         started.push(request)
         return {
           close: () => {
@@ -4529,7 +4534,16 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
           // #210 added interrupt() beside close/send. These tests are about
           // holding a session, not delivering to one, so the fake only has to
           // satisfy the port; the delivery route is pinned in its own describe.
-          interrupt: async () => true
+          interrupt: async () => true,
+          /*
+           * AMENDED for #96 (was: a handle carrying only close/send/interrupt).
+           * Context usage is the one reading no stream message carries, so the
+           * port grew a pull. No existing assertion changed.
+           */
+          contextUsage: async () => {
+            contextUsageAsks.push(index)
+            return { usedTokens: 41_237, maxTokens: 200_000 }
+          }
         }
       },
       reportSessionId: (index, sessionId) => started[index]!.onSessionId(sessionId),
@@ -4741,6 +4755,57 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     expect(dwarf.model).toBe('claude-haiku-4-5')
     expect(dwarf.mcpServers).toEqual([{ name: 'codegraph', status: 'connected' }])
     expect(dwarf.totalCostUsd).toBe(0.0697689)
+    runtime.stop()
+  })
+
+  /*
+   * Issue #96's read-only surface, the half no stream message can serve. The
+   * panel asks for a context reading when a mine opens, main resolves the
+   * dwarf to the session it HOLDS, and the reading arrives on the next
+   * snapshot like every other change — the same one-way shape
+   * `setWatchedDwarf` already has.
+   */
+  it('pulls a context reading for the dwarf the panel opened, and publishes it (#96)', async () => {
+    const port = heldPort()
+    const registry = heldRegistry(port.port)
+    const runtime = heldRuntime({ heldSessions: registry, providers: [foremanProvider()] })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    await runtime.refresh()
+    expect(runtime.getMines()[0]!.dwarfs[0]!.contextUsage).toBeUndefined()
+
+    runtime.refreshDwarfTelemetry('claude:sess-1')
+    // The pull is a control request on a stream main owns; the value lands on
+    // the record, and the board carries it on its next pass.
+    await registry.refreshContextUsage('sess-1')
+    await runtime.refresh()
+
+    expect(port.contextUsageAsks).toEqual([0])
+    expect(runtime.getMines()[0]!.dwarfs[0]!.contextUsage).toEqual({
+      usedTokens: 41_237,
+      maxTokens: 200_000
+    })
+    runtime.stop()
+  })
+
+  it('asks nothing for a dwarf whose session this panel only observes (#96)', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    runtime.refreshDwarfTelemetry('claude:sess-1')
+    runtime.refreshDwarfTelemetry('nobody')
+
+    expect(port.contextUsageAsks).toEqual([])
     runtime.stop()
   })
 
@@ -5846,7 +5911,10 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
           interrupt: async () => {
             interrupts += 1
             return options.canInterrupt ?? true
-          }
+          },
+          // #96 added this beside close/send/interrupt; this describe is about
+          // delivery, not telemetry, so the fake only has to satisfy the port.
+          contextUsage: async () => null
         }
       },
       reportSessionId: (sessionId) => started!.onSessionId(sessionId),
@@ -6596,7 +6664,14 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
       detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
       start: async (request) => {
         started.push(request)
-        return { close: () => {}, send: () => true, interrupt: async () => true }
+        return {
+          close: () => {},
+          send: () => true,
+          interrupt: async () => true,
+          // #96's addition; this test is about permission prompts, not
+          // telemetry, so the fake only has to satisfy the port.
+          contextUsage: async () => null
+        }
       },
       now: () => 1_700_000_000_000,
       log: () => {}

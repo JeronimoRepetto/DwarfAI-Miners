@@ -592,6 +592,29 @@ describe('preload watched-dwarf-feed contract (#196)', () => {
     expect(send).toHaveBeenLastCalledWith('panel:watchDwarfFeed', null)
   })
 })
+
+/**
+ * The panel asking a held session what its own context looks like (#96).
+ *
+ * One-way, exactly like setWatchedDwarf and for the same reason: the reading
+ * is a control request main makes on a stream it owns, and the answer arrives
+ * on the next `minesUpdated` snapshot like every other change — so there is
+ * no verdict here to wait for. Named by DWARF, never by session, because that
+ * is what the panel has and main resolves the rest.
+ */
+describe('preload session-telemetry refresh contract (#96)', () => {
+  it('asks for the dwarf on the dwarf:refreshTelemetry channel', () => {
+    expect(api.refreshDwarfTelemetry('claude:s1')).toBeUndefined()
+    expect(send).toHaveBeenLastCalledWith('dwarf:refreshTelemetry', 'claude:s1')
+  })
+
+  it("collapses anything that is not a string to '' before it crosses the bridge", () => {
+    // The same discipline every other id here holds: main's boundary check
+    // only ever reasons about a string, and refuses an empty one.
+    ;(api.refreshDwarfTelemetry as unknown as (value: unknown) => void)(42)
+    expect(send).toHaveBeenLastCalledWith('dwarf:refreshTelemetry', '')
+  })
+})
 /**
  * The message panel's own window (#162).
  *
