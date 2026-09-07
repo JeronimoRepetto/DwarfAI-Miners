@@ -941,7 +941,7 @@ describe('App mines browse', () => {
     expect(wrapper.find('.mines-panel').exists()).toBe(true)
     expect(wrapper.find('.map-view').exists()).toBe(false)
     expect(api.queryProjects).toHaveBeenCalledWith(
-      expect.objectContaining({ sortBy: 'addedAt', direction: 'desc', offset: 0 })
+      expect.objectContaining({ sortBy: 'lastOpenedAt', direction: 'desc', offset: 0 })
     )
   })
 

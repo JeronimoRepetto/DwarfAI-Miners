@@ -46,7 +46,9 @@ const rows = computed(() => browseRows(props.projects, props.mines, props))
 
 const empty = computed(() => !props.loading && props.error === null && rows.value.length === 0)
 
-const sortLabel = computed(() => (props.direction === 'desc' ? 'Newest first' : 'Oldest first'))
+const sortLabel = computed(() =>
+  props.direction === 'desc' ? 'Most recent activity first' : 'Least recent activity first'
+)
 
 const sentinel = ref<HTMLElement | null>(null)
 let observer: IntersectionObserver | undefined
@@ -112,7 +114,7 @@ onBeforeUnmount(stopWatching)
       <button
         class="sort-control"
         type="button"
-        aria-label="Order by date added"
+        aria-label="Order by last activity"
         :title="sortLabel"
         @click="emit('toggle-direction')"
       >

@@ -32,12 +32,12 @@ function deferred<T>() {
 }
 
 describe('useProjectBrowse first page', () => {
-  it('asks for the newest projects, unfiltered, from the top', async () => {
+  it('asks for the most recently active projects, unfiltered, from the top', async () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubQuery(queryProjects)
     await useProjectBrowse().load()
     expect(queryProjects).toHaveBeenCalledWith({
-      sortBy: 'addedAt',
+      sortBy: 'lastOpenedAt',
       direction: 'desc',
       limit: BROWSE_PAGE_SIZE,
       offset: 0
@@ -187,7 +187,7 @@ describe('useProjectBrowse filters', () => {
     // Asserted as the WHOLE query, so an All chip that quietly sent a tier
     // key with an undefined value would still fail here.
     expect(queryProjects).toHaveBeenLastCalledWith({
-      sortBy: 'addedAt',
+      sortBy: 'lastOpenedAt',
       direction: 'desc',
       limit: BROWSE_PAGE_SIZE,
       offset: 0

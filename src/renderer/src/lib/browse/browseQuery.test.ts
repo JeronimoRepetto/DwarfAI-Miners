@@ -8,7 +8,7 @@ import {
 } from './browseQuery'
 
 describe('browse filters', () => {
-  it('starts on All, an empty search and the newest projects first', () => {
+  it('starts on All, an empty search and the most recently active projects first', () => {
     expect(defaultBrowseFilters()).toEqual({ search: '', tier: null, direction: 'desc' })
   })
 
@@ -19,9 +19,9 @@ describe('browse filters', () => {
 })
 
 describe('projectQueryFor', () => {
-  it('orders by the added date, the one date every project has', () => {
+  it('orders by last activity, most recently worked mine first (#205)', () => {
     const query = projectQueryFor(defaultBrowseFilters(), 0)
-    expect(query.sortBy).toBe('addedAt')
+    expect(query.sortBy).toBe('lastOpenedAt')
     expect(query.direction).toBe('desc')
   })
 

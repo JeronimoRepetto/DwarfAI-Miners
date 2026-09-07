@@ -28,7 +28,7 @@ export interface BrowseFilters {
   direction: ProjectSortDirection
 }
 
-/** All, nothing typed, newest first. */
+/** All, nothing typed, most recently active first. */
 export function defaultBrowseFilters(): BrowseFilters {
   return { search: '', tier: null, direction: 'desc' }
 }
@@ -46,12 +46,18 @@ export function toggledDirection(direction: ProjectSortDirection): ProjectSortDi
  * something the user did not type. An empty box is no filter rather than an
  * empty one.
  *
- * The order is always by `addedAt`: it is the one date every project has, and
- * the design's date-sort control offers no second key to choose.
+ * The order is always by `lastOpenedAt` (#205): the mine someone is working
+ * in right now belongs at the top, not buried under whichever project
+ * happened to be declared first. `addedAt` stays a valid `ProjectSortKey` on
+ * the wire and main still answers it, but the design's date-sort control
+ * offers no second key to choose, so this is the only one the panel ever
+ * sends. A project nobody has ever opened has no last-activity date at all —
+ * main's NULL-last rule (`projectQuery.ts`) is what puts those at the bottom
+ * under this default direction rather than scattering them through the list.
  */
 export function projectQueryFor(filters: BrowseFilters, offset: number): ProjectQuery {
   const query: ProjectQuery = {
-    sortBy: 'addedAt',
+    sortBy: 'lastOpenedAt',
     direction: filters.direction,
     limit: BROWSE_PAGE_SIZE,
     offset
