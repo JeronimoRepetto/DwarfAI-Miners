@@ -724,7 +724,7 @@ One JSON object per line, one per STEP, `step_index` ascending across the file w
 
 Everything else is skipped, and each omission is a fact. `GENERIC` is tool output and is most of the file's bytes (84 of 184 records in one conversation). A `PLANNER_RESPONSE` carrying only `tool_calls` is the model acting rather than speaking (73 of 184). `thinking` is a field of its own, so **no tag-stripping heuristic is needed anywhere** — the one thing this format makes easier than Claude's or Codex's. `SYSTEM_MESSAGE` and `ERROR_MESSAGE` are the harness talking to itself, and drawing either as a turn would attribute it to a person.
 
-**Issue #240 draws one feed line per tool call for Claude and Codex; Antigravity's `tool_calls` do not get one, on purpose — not yet measured enough to trust.** `tool_call.args` was sampled on this machine, 2026-09-07, across every real conversation: 180 calls in 3 conversations (`view_file` 93, `run_command` 33, `list_dir` 20, `manage_subagents` 14, `grep_search` 11, `find_by_name` 4, five more under 3 each). Every subject field checked (`AbsolutePath`, `CommandLine`, `Query`) is a DOUBLE-encoded string on all 105 sampled occurrences — the raw value itself opens with a literal `"`, i.e. a JSON string whose own content is another JSON string, needing a second `JSON.parse` this format is alone in needing. Three conversations against Claude's 568 transcripts and Codex's 184 rollouts is not the same order of evidence, and the opening paragraph of this section already warns the shape "has already changed across CLI versions" — `run_command`'s own args gained `CommandLine` between the fixture capture and this measurement. `extractAntigravityFeed`'s own doc comment carries this same note; a future implementer has the field mapping to start from.
+**Issue #240 draws one feed line per tool call for Claude and Codex; Antigravity's `tool_calls` did not get one at the time, on purpose — not yet measured enough to trust.** `tool_call.args` was sampled on this machine, 2026-09-07, across every real conversation: 180 calls in 3 conversations (`view_file` 93, `run_command` 33, `list_dir` 20, `manage_subagents` 14, `grep_search` 11, `find_by_name` 4, five more under 3 each). Every subject field checked (`AbsolutePath`, `CommandLine`, `Query`) is a DOUBLE-encoded string on all 105 sampled occurrences — the raw value itself opens with a literal `"`, i.e. a JSON string whose own content is another JSON string, needing a second `JSON.parse` this format is alone in needing. Three conversations against Claude's 568 transcripts and Codex's 184 rollouts is not the same order of evidence, and the opening paragraph of this section already warns the shape "has already changed across CLI versions" — `run_command`'s own args gained `CommandLine` between the fixture capture and this measurement. The maintainer said yes to drawing the line anyway on 2026-09-07, on this same evidence, and §3.1.6 below is what shipped (issue #280).
 
 **A `USER_INPUT` record's `content` is an envelope, not a prompt** **[V]**. The human's words sit in a `<USER_REQUEST>` block, followed by blocks nobody typed:
 
@@ -802,6 +802,45 @@ Every flag documented in the validated plan's claim-by-claim check is still ther
 
 **Discovery, not a new mechanism.** A launched `agy -p` session is found by the ordinary poll like any other detached launch, through the same observer store §3.1.1–§3.1.3 already read; nothing about launching one changes how it is later read. What launching adds is the receipt a launched session needs to be recognised by the Add Panel at all (#191): `AntigravityProvider.firstPrompt` now reads the transcript's opening `USER_INPUT` step, off the exact same `extractAntigravityFeed`/`antigravityUserRequestText` envelope-stripping the live feed already used, so `LaunchReceiptRegistry`'s exact-string match works for Antigravity precisely as it already does for Claude and Codex.
 
+#### 3.1.8 One line per tool call (2026-09-07, issue #280)
+
+`extractAntigravityFeed` now walks each step's `tool_calls` array in call order and emits the same
+`Edited <path>` / `Ran <command>` / `Read <path>` / `Searched <pattern>` line #240 draws for Claude
+and Codex, interleaved with the step's own spoken message where it has one — off the same shared
+table, `domain/permissionSummary.ts`'s `toolActivityLine`. `antigravityToolInput` in
+`antigravity/parse.ts` is the per-tool decoder that gets a call's args into the field names that
+table reads: every arg is DOUBLE-encoded (§3.1.2 above), so it runs a second `JSON.parse` on
+exactly the field the line needs and returns `undefined` on anything that does not come back a
+string. A truncated field's second parse fails on exactly what the CLI leaves behind — the
+`<truncated N bytes>` marker replaces the closing quote, and the raw newline the CLI cuts through
+mid-string is itself an illegal control character inside a JSON string literal — so **a truncated
+subject and a tool this table has never seen both take the same path and both publish NO line**,
+never `Ran ` with nothing after it.
+
+Every tool name in the 180-call, 3-conversation corpus §3.1.2 measured, re-confirmed against that
+same store on this machine, 2026-09-07 **[V]**:
+
+| Tool               | Verb       | Calls | Gets a line?                                                |
+| ------------------ | ---------- | ----: | ----------------------------------------------------------- |
+| `view_file`        | `Read`     |    93 | Yes — `AbsolutePath`                                        |
+| `run_command`      | `Ran`      |    33 | Yes — `CommandLine`                                         |
+| `list_dir`         | `Read`     |    20 | Yes — `DirectoryPath`; no fifth verb exists for "listed"    |
+| `manage_subagents` | —          |    14 | No — agent traffic, drawn as a dwarf already                |
+| `grep_search`      | `Searched` |    11 | Yes — `Query`, ahead of `SearchPath`, same rule as Grep     |
+| `find_by_name`     | `Searched` |     4 | Yes — `Pattern`, ahead of `SearchDirectory`                 |
+| `schedule`         | —          |     2 | No — the agent scheduling a wakeup, not acting              |
+| `invoke_subagent`  | —          |     1 | No — agent traffic, drawn as a dwarf already                |
+| `write_to_file`    | `Edited`   |     1 | Yes — `TargetFile`                                          |
+| `call_mcp_tool`    | —          |     1 | No — a server name and a tool name, no path/command/pattern |
+
+`replace_file_content` carries zero calls in this 3-conversation corpus but is a real tool name:
+`__fixtures__/antigravity/transcript.jsonl` (issue #237's own capture, same CLI version) already
+holds one, with a `TargetFile` field identical in shape to `write_to_file`'s — this CLI's other way
+to put text on disk, given the same `Edited` verb. `domain/permissionSummary.ts`'s
+`TOOL_ACTIVITY_KINDS` comment cites the same counts. None of these eight names collide with
+Claude's (§1.6) or Codex's (§2.2.1), so the shared table stays one flat lookup across all three
+providers.
+
 ---
 
 ## 4. Matching session files to live processes (click-to-focus)
@@ -839,6 +878,7 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 | Antigravity CLI store layout, record schema and key inventory                                 | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise |
 | Antigravity: newest step's RUNNING status is the only open-turn evidence                      | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                    |
 | Antigravity: no token usage, no blocked-on-a-human record anywhere                            | Verified absence in that corpus                                                                          |
+| Antigravity: eight tool names map to a feed activity line, rest omitted                       | Verified (180 calls / 3 conversations, 2026-09-07; re-confirmed against the same store during #280)      |
 | Antigravity: conversation_summaries.db describes CLI sessions                                 | **Refuted** - no CLI conversation id was in it; nothing reads it                                         |
 | Antigravity: a running agy.exe can be mapped to a conversation                                | **Refuted** - its command line carries no conversation id; no pid is published                           |
 | Antigravity: `-p`/`--input-format`/`--output-format`/`--effort`/`--model` all exist on 1.1.26 | Verified live, 2026-09-07, `agy --help` (read-only, no conversation started)                             |

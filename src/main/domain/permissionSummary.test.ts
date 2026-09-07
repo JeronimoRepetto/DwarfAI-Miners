@@ -90,7 +90,17 @@ describe('toolActivityLine', () => {
     ['Grep', { pattern: 'FeedMessage', path: 'src' }, 'search', 'Searched FeedMessage'],
     ['Glob', { pattern: '**/*.test.ts' }, 'search', 'Searched **/*.test.ts'],
     ['shell_command', { command: 'git status' }, 'run', 'Ran git status'],
-    ['apply_patch', { file_path: 'src/parse.ts' }, 'edit', 'Edited src/parse.ts']
+    ['apply_patch', { file_path: 'src/parse.ts' }, 'edit', 'Edited src/parse.ts'],
+    // AMENDED for #280 (was: the it.each list ended at apply_patch). Antigravity
+    // CLI rows, keyed by its own tool names, decoded by antigravity/parse.ts
+    // before this table ever sees them — see its own `antigravityToolInput`.
+    ['view_file', { file_path: 'src/parse.ts' }, 'read', 'Read src/parse.ts'],
+    ['list_dir', { path: 'src' }, 'read', 'Read src'],
+    ['run_command', { command: 'pnpm test' }, 'run', 'Ran pnpm test'],
+    ['grep_search', { pattern: 'FeedMessage', path: 'src' }, 'search', 'Searched FeedMessage'],
+    ['find_by_name', { pattern: '*.test.ts', path: 'src' }, 'search', 'Searched *.test.ts'],
+    ['write_to_file', { file_path: 'scratch/note.md' }, 'edit', 'Edited scratch/note.md'],
+    ['replace_file_content', { file_path: 'src/parse.test.ts' }, 'edit', 'Edited src/parse.test.ts']
   ])('speaks a %s call as one line', (toolName, input, kind, text) => {
     expect(toolActivityLine(toolName, input)).toEqual({
       role: 'assistant',
@@ -116,7 +126,14 @@ describe('toolActivityLine', () => {
     ['the one tool that asks instead of acting', 'AskUserQuestion', { questions: [] }],
     ['a known tool whose input names no subject', 'Bash', { timeout: 5 }],
     ['a known tool whose subject is not a string', 'Read', { file_path: 42 }],
-    ['a known tool whose subject is only whitespace', 'Bash', { command: '   ' }]
+    ['a known tool whose subject is only whitespace', 'Bash', { command: '   ' }],
+    // AMENDED for #280 (was: the it.each list ended at "only whitespace").
+    // Antigravity tools this table deliberately omits, one per omission kind
+    // TOOL_ACTIVITY_KINDS's own comment gives.
+    ['Antigravity agent management, drawn as a dwarf already', 'manage_subagents', { path: 'x' }],
+    ['an Antigravity subagent launch, drawn as a dwarf already', 'invoke_subagent', { path: 'x' }],
+    ['the Antigravity agent scheduling a wakeup rather than acting', 'schedule', { command: 'x' }],
+    ['an Antigravity MCP call with no subject this table names', 'call_mcp_tool', { path: 'x' }]
   ])('answers nothing for %s', (_case, toolName, input) => {
     expect(toolActivityLine(toolName, input)).toBeUndefined()
   })

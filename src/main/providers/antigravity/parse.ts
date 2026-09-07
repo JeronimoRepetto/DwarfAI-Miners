@@ -1,3 +1,4 @@
+import { toolActivityLine } from '../../domain/permissionSummary'
 import type { FeedMessage } from '../../domain/types'
 
 /**
@@ -16,6 +17,15 @@ import type { FeedMessage } from '../../domain/types'
  * rule the process probe is under.
  */
 
+/**
+ * One tool call the model made in a step, raw — see `antigravityToolInput`
+ * for what turns `args` into a subject the shared activity table can read.
+ */
+export interface AntigravityToolCall {
+  name: string
+  args: Record<string, unknown>
+}
+
 /** One step of the log, reduced to the fields this app reads. */
 export interface AntigravityStep {
   stepIndex: number
@@ -31,6 +41,8 @@ export interface AntigravityStep {
   createdAt: string
   /** Displayable text, present only on some record types. */
   content?: string
+  /** Tool calls the model made in this step, present only where the CLI wrote some. */
+  toolCalls?: AntigravityToolCall[]
 }
 
 /**
@@ -78,6 +90,24 @@ function asString(value: unknown): string | undefined {
 }
 
 /**
+ * The `tool_calls` of one step, or undefined when the field is absent or not
+ * an array. A call missing a string `name` or a record `args` is dropped on
+ * its own rather than refusing the whole array — the same per-item leniency
+ * `askedQuestion`/`calledTool` take on Claude's side.
+ */
+function asToolCalls(value: unknown): AntigravityToolCall[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const calls: AntigravityToolCall[] = []
+  for (const item of value) {
+    if (!isRecord(item)) continue
+    const name = asString(item.name)
+    if (name === undefined || !isRecord(item.args)) continue
+    calls.push({ name, args: item.args })
+  }
+  return calls
+}
+
+/**
  * Every step a window yields, oldest first, de-duplicated by `step_index`.
  *
  * `step_index` is the log's own identity for a step and ascends across the
@@ -118,6 +148,8 @@ export function antigravityTranscriptSteps(text: string): AntigravityStep[] {
     if (Number.isFinite(createdAtMs)) step.createdAtMs = createdAtMs
     const content = asString(parsed.content)
     if (content !== undefined) step.content = content
+    const toolCalls = asToolCalls(parsed.tool_calls)
+    if (toolCalls !== undefined && toolCalls.length > 0) step.toolCalls = toolCalls
     byIndex.set(stepIndex, step)
   }
   return [...byIndex.values()].sort((left, right) => left.stepIndex - right.stepIndex)
@@ -160,6 +192,106 @@ function spokenMessage(step: AntigravityStep): FeedMessage | undefined {
 }
 
 /**
+ * One `args` field of an Antigravity tool call, decoded TWICE (#280).
+ *
+ * Every subject field this CLI writes is a JSON string whose own content is
+ * ANOTHER JSON string — confirmed on 105 sampled occurrences across the three
+ * most common tools, docs/provider-formats.md §3.1.2 — so the outer parse
+ * that already ran once over the whole record leaves this value still
+ * needing a second `JSON.parse`. Only a string result counts, matching every
+ * other subject reader in this codebase.
+ *
+ * This is also where a truncated field answers itself. The CLI cuts a long
+ * value mid-string and appends a `<truncated N bytes>` marker in place of the
+ * closing quote — and the raw newline inside that cut is itself an illegal
+ * control character inside a JSON string literal — so the second parse
+ * throws on precisely the calls this app must not draw a line for. No
+ * special-casing needed: malformed JSON already says "no line" honestly.
+ */
+function antigravityDecodedSubject(value: unknown): string | undefined {
+  const once = asString(value)
+  if (once === undefined) return undefined
+  let twice: unknown
+  try {
+    twice = JSON.parse(once)
+  } catch {
+    return undefined
+  }
+  return typeof twice === 'string' ? twice : undefined
+}
+
+/**
+ * The subject `toolActivityLine` needs for one Antigravity tool call, mapped
+ * from the CLI's own arg names to the shared table's canonical fields (#280)
+ * — `command`, `file_path`, `pattern`, `path`, see permissionSummary.ts.
+ *
+ * Only the tools whose subject is a path, a command or a pattern are named
+ * here, matching `TOOL_ACTIVITY_KINDS`'s rows for this CLI exactly — every
+ * other observed tool (`manage_subagents`, `schedule`, `invoke_subagent`,
+ * `call_mcp_tool`) is deliberately absent, and that table's own comment gives
+ * the reason for each by kind.
+ *
+ * `grep_search` and `find_by_name` can carry both a pattern and a path — the
+ * same shape Claude's own Grep tool carries — so both are read and the
+ * shared table's own priority (pattern ahead of path) settles which one
+ * names the call.
+ *
+ * `list_dir` reads as `read` rather than a fifth verb: the design names four,
+ * and browsing a directory's contents is closer to reading them than to any
+ * of the other three.
+ */
+function antigravityToolInput(name: string, args: Rec): Record<string, unknown> | undefined {
+  switch (name) {
+    case 'view_file':
+    case 'write_to_file':
+    case 'replace_file_content': {
+      const raw = name === 'view_file' ? args.AbsolutePath : args.TargetFile
+      const filePath = antigravityDecodedSubject(raw)
+      return filePath === undefined ? undefined : { file_path: filePath }
+    }
+    case 'list_dir': {
+      const path = antigravityDecodedSubject(args.DirectoryPath)
+      return path === undefined ? undefined : { path }
+    }
+    case 'run_command': {
+      const command = antigravityDecodedSubject(args.CommandLine)
+      return command === undefined ? undefined : { command }
+    }
+    case 'grep_search':
+    case 'find_by_name': {
+      const patternField = name === 'grep_search' ? args.Query : args.Pattern
+      const pathField = name === 'grep_search' ? args.SearchPath : args.SearchDirectory
+      const pattern = antigravityDecodedSubject(patternField)
+      const path = antigravityDecodedSubject(pathField)
+      if (pattern === undefined && path === undefined) return undefined
+      return {
+        ...(pattern === undefined ? {} : { pattern }),
+        ...(path === undefined ? {} : { path })
+      }
+    }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * The activity lines one step's tool calls publish, in call order — empty
+ * for a step with no `tool_calls`, or where none of them named a subject
+ * this app can show (#280).
+ */
+function toolCallActivity(step: AntigravityStep): FeedMessage[] {
+  if (step.toolCalls === undefined) return []
+  const entries: FeedMessage[] = []
+  for (const call of step.toolCalls) {
+    const input = antigravityToolInput(call.name, call.args)
+    if (input === undefined) continue
+    const activity = toolActivityLine(call.name, input)
+    if (activity !== undefined) entries.push({ ...activity, timestamp: step.createdAt })
+  }
+  return entries
+}
+
+/**
  * The last `limit` messages of a transcript window.
  *
  * Only two record shapes are a message, and both are named by their SOURCE as
@@ -168,41 +300,31 @@ function spokenMessage(step: AntigravityStep): FeedMessage | undefined {
  * - `USER_EXPLICIT`/`USER_INPUT` with string content — a human turn.
  * - `MODEL`/`PLANNER_RESPONSE` with string content — the reply the panel draws.
  *
- * Everything else is skipped, and each omission is a fact rather than a gap.
- * `GENERIC` is tool output and is most of the file's bytes. A
- * `PLANNER_RESPONSE` carrying only `tool_calls` is the model acting, not
- * speaking. `thinking` is a field of its own, so no tag-stripping heuristic is
- * needed anywhere here — which is the one thing this format makes easier than
- * the others. `SYSTEM_MESSAGE` and `ERROR_MESSAGE` are the harness talking to
- * itself, and drawing either as a turn would attribute it to a person.
+ * `GENERIC` is tool output and is most of the file's bytes; `thinking` is a
+ * field of its own, so no tag-stripping heuristic is needed anywhere here —
+ * the one thing this format makes easier than the others. `SYSTEM_MESSAGE`
+ * and `ERROR_MESSAGE` are the harness talking to itself, and drawing either
+ * as a turn would attribute it to a person.
  *
  * No issuer is ever stamped (see MessageIssuer): absent means the human, and
  * this store records no evidence that a turn came from anywhere else.
  *
- * **No activity line for a `tool_calls` entry (#240) — a decision, not an
- * oversight.** Claude and Codex each publish one; this format was measured
- * the same way and left out on purpose. Real corpus, this machine,
- * 2026-09-07: 180 `tool_calls` across 3 conversations (`view_file` 93,
- * `run_command` 33, `list_dir` 20, `manage_subagents` 14, `grep_search` 11,
- * `find_by_name` 4, and five others under 3 each). Every subject field
- * observed (`AbsolutePath`, `CommandLine`, `Query`, ...) is a DOUBLE-encoded
- * string — the value itself opens with a literal `"`, i.e. a JSON string
- * whose content is another JSON string, confirmed on all 105 sampled
- * occurrences of the three most common tools — so reading one honestly would
- * add a decode step this format is the only one of the three that needs. Two
- * things kept that from being worth it here: the corpus is three
- * conversations on one machine against Claude's ~38 000 blocks and Codex's
- * ~1 000, and `docs/provider-formats.md` already carries this format under
- * "no compatibility promise, and it has already changed across CLI versions"
- * — `run_command`'s own args gained `CommandLine` between the fixture capture
- * and this measurement. A future implementer has the field mapping above to
- * start from; this change stops at documenting it.
+ * **One line per tool call (#280), off the same shared rule #240 draws for
+ * Claude and Codex.** A `PLANNER_RESPONSE` carrying `tool_calls` is the model
+ * acting rather than speaking, and each call this app recognises — a path, a
+ * command or a pattern, per `TOOL_ACTIVITY_KINDS`'s Antigravity rows — gets
+ * its own `Edited`/`Ran`/`Read`/`Searched` line, in call order, decoded twice
+ * through `antigravityToolInput`/`antigravityDecodedSubject` above. A call
+ * this table has never mapped, and a call whose subject the CLI's own
+ * truncation cut through, both publish NOTHING — see those functions' own
+ * comments, and docs/provider-formats.md §3.1.6 for the measured counts.
  */
 export function extractAntigravityFeed(text: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
   for (const step of antigravityTranscriptSteps(text)) {
     const message = spokenMessage(step)
     if (message !== undefined) feed.push(message)
+    feed.push(...toolCallActivity(step))
   }
   return feed.slice(-limit)
 }
