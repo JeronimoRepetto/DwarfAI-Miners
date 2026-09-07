@@ -28,6 +28,15 @@ tier walk print one line per skipped file — reason, size, path — and a closi
 per project (#39). Unlike `DWARFAI_PERF` it is read per walk, not at import time, so a
 `.env` entry works in a dev checkout.
 
+**The Codex liveness gate has one too**, and it answers a different question: not what a
+poll cost but why a session is not on the board. `CODEX_DEBUG=1` (or `true`) makes every
+scan print one line per candidate rollout it refused — the verdict (`retention-floor`,
+`no-process`, `unreadable-rollout`, `artifact-cwd`, `duplicate-session`), how old the
+freshest activity signal was, whether Codex's own registry had a row for it, and the
+path (#264). Read at construction like `TIER_DEBUG`, so a `.env` entry works. Expect
+volume: a 7-day window holds dozens of long-dead rollouts and each is refused on every
+2-second tick — filtering them would hide the very line you turned this on to find.
+
 Every poll then prints one line: the total, where the time went, and what it
 saw.
 

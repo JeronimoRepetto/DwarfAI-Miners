@@ -3,7 +3,12 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
 import { CODEX_PROBE_SCRIPT } from '../../platform/processProbe'
-import { CodexProvider, type CodexProviderOptions } from './codexProvider'
+import {
+  CodexProvider,
+  codexDebugEnabled,
+  formatCodexSkip,
+  type CodexProviderOptions
+} from './codexProvider'
 import { extractCodexFeed } from './parse'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'codex')
@@ -1106,6 +1111,129 @@ describe('CodexProvider', () => {
         parentId: `codex:${ROOT_ID}`
       })
     })
+  })
+
+  /**
+   * Issue #264. The liveness gate is the one place a Codex session stops being
+   * live, and it used to reject in complete silence: this provider carried no
+   * log statement at all, so "my session is not on the board" could only be
+   * answered by reading the source and guessing which branch had fired.
+   */
+  describe('reporting why a candidate was refused (#264)', () => {
+    const REFUSED_ID = '01a048b5-2640-7312-ab78-264264264264'
+    const refusedPath = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T01-00-00-${REFUSED_ID}.jsonl`
+
+    function refusedRollout(): string {
+      return rollout.replaceAll(SESSION_ID, REFUSED_ID)
+    }
+
+    /** Only the lines about the candidate under test; the fixtures produce their own. */
+    async function skipLines(overrides: Partial<CodexProviderOptions> = {}): Promise<string[]> {
+      const lines: string[] = []
+      await makeProvider({ debug: true, log: (line) => lines.push(line), ...overrides }).scan()
+      return lines.filter((line) => line.includes(REFUSED_ID))
+    }
+
+    it('names the retention floor for a rollout no signal can keep alive', async () => {
+      fake.addFile(refusedPath, refusedRollout(), NOW - 10 * 24 * 3600_000)
+      const [line] = await skipLines()
+      expect(line).toContain('retention-floor')
+      // The age is the number that makes the verdict checkable against the
+      // configured window instead of merely reported.
+      expect(line).toContain('age 864000s')
+      expect(line).toContain(refusedPath)
+    })
+
+    it('names the process probe for a quiet rollout with no codex running', async () => {
+      // Between freshAfter and retainAfter: the one band where the verdict is
+      // the probe's rather than the clock's.
+      fake.addFile(refusedPath, refusedRollout(), NOW - 900_000)
+      const [line] = await skipLines({
+        idleRetentionS: 600,
+        isCodexProcessRunning: async () => false
+      })
+      expect(line).toContain('no-process')
+    })
+
+    it('names an unreadable rollout the registry never recorded', async () => {
+      // A rollout-shaped file with no session_meta: nothing states the session
+      // id or its cwd, and no registry row makes up for it.
+      fake.addFile(refusedPath, '{"type":"response_item"}\n', NOW - 30_000)
+      expect((await skipLines())[0]).toContain('unreadable-rollout')
+    })
+
+    it("names Codex's own artifact-storage path for a session that has no project", async () => {
+      // The #166 drop, which is a deliberate refusal rather than a fault — and
+      // was the hardest of all to tell apart from a bug without a line saying so.
+      const lines = new Array<string>()
+      const meta: { payload: Record<string, unknown> } = JSON.parse(rolloutLines[0]!)
+      meta.payload.cwd = 'C:\\Users\\j\\Documents\\Codex\\2026-09-03\\a-slug'
+      meta.payload.session_id = REFUSED_ID
+      meta.payload.id = REFUSED_ID
+      fake.addFile(
+        refusedPath,
+        [JSON.stringify(meta), ...rolloutLines.slice(1)].join('\n') + '\n',
+        NOW - 30_000
+      )
+      await makeProvider({ debug: true, log: (line) => lines.push(line) }).scan()
+      expect(lines.find((line) => line.includes(REFUSED_ID))).toContain('artifact-cwd')
+    })
+
+    it('says nothing at all while the flag is off', async () => {
+      fake.addFile(refusedPath, refusedRollout(), NOW - 10 * 24 * 3600_000)
+      const lines: string[] = []
+      // Not merely quiet about this candidate: quiet about every one of them,
+      // which is what the shipped app must be.
+      await makeProvider({ log: (line) => lines.push(line) }).scan()
+      expect(lines).toEqual([])
+    })
+
+    it('keeps refusing nothing it used to accept', async () => {
+      // The diagnostic is a report, never a decision: with it on, the same two
+      // fixture sessions are still the ones on the board.
+      fake.addFile(refusedPath, refusedRollout(), NOW - 10 * 24 * 3600_000)
+      const snapshots = await makeProvider({ debug: true, log: () => undefined }).scan()
+      expect(snapshots.map((s) => s.sessionId).sort()).toEqual([BUSY_SESSION_ID, SESSION_ID])
+    })
+  })
+})
+
+describe('codexDebugEnabled', () => {
+  it('stays off when the flag is absent', () => {
+    expect(codexDebugEnabled({})).toBe(false)
+  })
+
+  it('stays off for the explicit off values', () => {
+    expect(codexDebugEnabled({ CODEX_DEBUG: '0' })).toBe(false)
+    expect(codexDebugEnabled({ CODEX_DEBUG: 'false' })).toBe(false)
+    expect(codexDebugEnabled({ CODEX_DEBUG: '' })).toBe(false)
+  })
+
+  it('turns on for 1 and true, whatever the casing', () => {
+    expect(codexDebugEnabled({ CODEX_DEBUG: '1' })).toBe(true)
+    expect(codexDebugEnabled({ CODEX_DEBUG: 'true' })).toBe(true)
+    expect(codexDebugEnabled({ CODEX_DEBUG: 'TRUE' })).toBe(true)
+  })
+})
+
+describe('formatCodexSkip', () => {
+  it('states the reason, the age, whether the registry knew it, and the path', () => {
+    expect(
+      formatCodexSkip({
+        reason: 'retention-floor',
+        path: 'C:\\r\\rollout-a.jsonl',
+        registered: true,
+        activityAgeS: 4321
+      })
+    ).toBe('[codex] skip retention-floor age 4321s registry row C:\\r\\rollout-a.jsonl')
+  })
+
+  it('says the registry never recorded the rollout, rather than leaving it out', () => {
+    // The single most useful fact when a session is missing: whether Codex
+    // itself has a row for it, or only a file exists.
+    expect(
+      formatCodexSkip({ reason: 'unreadable-rollout', path: 'C:\\r\\b.jsonl', registered: false })
+    ).toBe('[codex] skip unreadable-rollout registry none C:\\r\\b.jsonl')
   })
 })
 

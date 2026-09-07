@@ -158,6 +158,50 @@ describe('readCodexThreads', () => {
     expect((await read(NOW - 60_000)).map((t) => t.threadId)).toEqual(['thread-1'])
   })
 
+  /**
+   * #264. A thread row that has only just been created carries no freshness at
+   * all in the two columns this reader used to look at: `updated_at_ms` is
+   * nullable and arrives NULL, `recency_at_ms` is NOT NULL DEFAULT 0 and
+   * arrives 0. Both floor to 0, which is before every cutoff, so the row was
+   * invisible for as long as it stayed unstamped — and the session that opened
+   * it lost its cwd, model and queue address with it.
+   */
+  it('reports a just-created thread whose only stamp is created_at_ms', async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: 'fresh', cwd: 'C:\\p', model: 'gpt-5.6-luna', createdAtMs: NOW - 2_000 })
+    )
+    expect((await read(NOW - 60_000))[0]).toMatchObject({
+      threadId: 'fresh',
+      model: 'gpt-5.6-luna',
+      updatedAtMs: NOW - 2_000
+    })
+  })
+
+  it('uses the freshest of created_at_ms, updated_at_ms and recency_at_ms', async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({
+        id: 'thread-1',
+        cwd: 'C:\\p',
+        createdAtMs: NOW - 9_000,
+        updatedAtMs: NOW - 5_000,
+        recencyAtMs: NOW - 2_000
+      })
+    )
+    expect((await read(NOW - 60_000))[0]!.updatedAtMs).toBe(NOW - 2_000)
+  })
+
+  it('never lets a stale creation stamp hold an abandoned thread open', async () => {
+    // Creation is a freshness signal only while it is itself recent: a thread
+    // created ten days ago and never touched since must stay out.
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: 'old', cwd: 'C:\\p', createdAtMs: NOW - 10 * 24 * 3600_000 })
+    )
+    expect(await read(NOW - 60_000)).toEqual([])
+  })
+
   it('excludes archived threads', async () => {
     sqlite.exec(STATE_DB, threadInsert({ id: 'gone', cwd: 'C:\\p', updatedAtMs: NOW, archived: 1 }))
     expect(await read(NOW - 60_000)).toEqual([])
