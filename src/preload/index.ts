@@ -24,6 +24,8 @@ import type {
   MetricsResetResult,
   MineDeclareResult,
   MineHistoryResult,
+  MineOpenPathRequest,
+  MineOpenPathResult,
   MinesSnapshot,
   MineUndeclareResult,
   PanelLayout,
@@ -160,6 +162,15 @@ export interface DwarfAiMinersApi {
    * different answer from a mine nobody has spoken in.
    */
   getMineHistory: (mineId: string) => Promise<MineHistoryResult>
+  /**
+   * Open an activity line's own path in the OS default app (#279).
+   *
+   * Resolved and verified entirely in MAIN, against the MINE's own folder:
+   * this bridge only carries the mine id and the raw target string over and
+   * hands back main's verdict — `opened`, or a fixed reason main wrote. The
+   * renderer never receives a filesystem verdict of its own to act on.
+   */
+  openMinePath: (request: MineOpenPathRequest) => Promise<MineOpenPathResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
@@ -395,6 +406,13 @@ const api: DwarfAiMinersApi = {
   // '', which main refuses as a mine it does not hold.
   getMineHistory: (mineId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getMineHistory, typeof mineId === 'string' ? mineId : ''),
+  // Same discipline as every other request channel: rebuilt field by field,
+  // so a caller cannot attach anything beyond a mine id and a target string.
+  openMinePath: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openMinePath, {
+      mineId: typeof request?.mineId === 'string' ? request.mineId : '',
+      target: typeof request?.target === 'string' ? request.target : ''
+    }),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
   kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
   // Same discipline as setToggleShortcut, applied field by field: a launch

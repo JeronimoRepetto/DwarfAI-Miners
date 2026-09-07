@@ -2739,6 +2739,21 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * The folder a mine id names, for a click on an activity line's own path
+   * (#279) — the one lookup `index.ts` needs to hand `openMineFile.ts` a
+   * folder it can trust, resolved against the board exactly as `mineHistory`
+   * resolves one, and for the same reason: a channel that accepted a folder
+   * from the renderer would be a channel that accepts any folder.
+   *
+   * Undefined for a mine the board does not hold — never a folder guessed
+   * from an id — so a caller has one honest way to refuse a request naming a
+   * mine that is not there.
+   */
+  mineFolderOf(mineId: string): string | undefined {
+    return this.mines.find((item) => item.id === mineId)?.path
+  }
+
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {
     const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
     if (dwarf === undefined) return { focused: false, openedTerminal: false, feed: [] }

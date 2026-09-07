@@ -65,6 +65,8 @@ export type {
   MineDeclareResult,
   MineHistoryResult,
   MineHistorySpeaker,
+  MineOpenPathRequest,
+  MineOpenPathResult,
   MinesSnapshot,
   MineTier,
   MineUndeclareResult,

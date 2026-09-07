@@ -6332,6 +6332,57 @@ describe('AgentRuntime.mineHistory', () => {
 })
 
 /**
+ * The one lookup `index.ts` needs to trust a folder for a click on an
+ * activity line's own path (#279) — resolved against the board exactly as
+ * `mineHistory`'s own mine lookup is, and for the same reason: a channel that
+ * accepted a folder from the renderer would accept any folder.
+ */
+describe('AgentRuntime.mineFolderOf', () => {
+  const scan = vi.fn<Provider['scan']>().mockResolvedValue([
+    {
+      provider: 'claude',
+      sessionId: 'session-1',
+      cwd: 'C:\\work\\project',
+      status: 'busy',
+      updatedAt: 1,
+      dwarfs: [
+        {
+          id: 'claude:session-1',
+          provider: 'claude',
+          role: 'foreman',
+          name: 'session-',
+          status: 'working',
+          sessionId: 'session-1'
+        }
+      ]
+    }
+  ])
+  const source: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }
+
+  it("resolves a mine on the board to its own folder", async () => {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    expect(runtime.mineFolderOf(mineIdForPath('C:\\work\\project'))).toBe('C:\\work\\project')
+  })
+
+  it('answers undefined for a mine that is not on the board', async () => {
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+
+    expect(runtime.mineFolderOf('mine:nowhere')).toBeUndefined()
+  })
+})
+
+/**
  * Delivery to a session THIS PANEL HOLDS (#210).
  *
  * The bug these pin, measured live: a held session's registry entry reports
