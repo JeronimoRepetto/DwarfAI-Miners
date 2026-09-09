@@ -2263,6 +2263,98 @@ export interface PanelLayoutRequest {
 }
 
 /**
+ * What the person chose in Settings' Audio section (#174, #173).
+ *
+ * Four VALUES rather than one master mute, because the three channels are
+ * three different jobs: music is a soundtrack somebody may want quiet under a
+ * call, the mine's ambience is a reading of the crew, and a voice is a bark on
+ * a click. Each is scaled independently against its own base volume — 100 %
+ * for music, 50 % for ambience, 75 % for a voice (see AUDIO_BASE_VOLUME in
+ * lib/audio/volume.ts, which owns the mixing and is the only place those bases
+ * appear).
+ *
+ * `musicAtStartup` is deliberately about STARTUP and nothing else. The shell's
+ * own music button toggles playback for the run it is pressed in and persists
+ * nothing: a person silencing the music for one meeting is not changing what
+ * the app should do tomorrow, and the two facts are separate for the same
+ * reason `PanelLayout.expanded` is separate from the stored edge.
+ *
+ * Every volume is a fraction in 0..1. Main clamps on the way in and answers
+ * with what it STORED, never with the request — see the audio channels in
+ * IPC_CHANNELS.
+ */
+export interface AudioPreferences {
+  /** Whether music starts playing on launch. */
+  musicAtStartup: boolean
+  musicVolume: number
+  ambienceVolume: number
+  voiceVolume: number
+}
+
+/**
+ * What Settings' Audio section reads before anybody has chosen anything.
+ *
+ * Music on, every slider at full: the app has had no sound at all until now,
+ * so a first run has to demonstrate what was added rather than ship it
+ * pre-attenuated. The BASE volumes (100/50/75 %) are what keeps a slider at
+ * full from being three channels shouting over each other — they are the
+ * renderer's mixing constants, not defaults a person can change, and they live
+ * in `lib/audio/volume.ts`.
+ */
+export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
+  musicAtStartup: true,
+  musicVolume: 1,
+  ambienceVolume: 1,
+  voiceVolume: 1
+}
+
+/**
+ * One volume, read as a fraction in 0..1.
+ *
+ * Out of range CLAMPS rather than falling back: a slider cannot mean "more
+ * than all of it", so 0 and 1 are the honest reading of anything past them.
+ * Anything that is not a finite number is not a volume at all and falls back —
+ * `NaN` above all, which would silently mute a channel if it were clamped, and
+ * would then be indistinguishable from a deliberate mute.
+ */
+export function clampAudioVolume(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(1, Math.max(0, value))
+}
+
+/**
+ * Stored or wire document -> preferences, degrading field by field.
+ *
+ * Two different failures, deliberately treated differently (see the
+ * `config-layering` skill). A document that is not an object at all is
+ * corruption, indistinguishable from a file that was never written, and reads
+ * as the defaults. A readable document with ONE unusable field keeps the other
+ * three: a person who has moved three sliders should not lose all three
+ * because a fourth value arrived malformed.
+ *
+ * Used by main (what it stores), by the preload (what may cross) and by the
+ * renderer (what it mixes with), which is exactly why it is declared here.
+ */
+export function parseAudioPreferences(document: unknown): AudioPreferences {
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    return { ...DEFAULT_AUDIO_PREFERENCES }
+  }
+  const record = document as Record<string, unknown>
+  return {
+    musicAtStartup:
+      typeof record.musicAtStartup === 'boolean'
+        ? record.musicAtStartup
+        : DEFAULT_AUDIO_PREFERENCES.musicAtStartup,
+    musicVolume: clampAudioVolume(record.musicVolume, DEFAULT_AUDIO_PREFERENCES.musicVolume),
+    ambienceVolume: clampAudioVolume(
+      record.ambienceVolume,
+      DEFAULT_AUDIO_PREFERENCES.ambienceVolume
+    ),
+    voiceVolume: clampAudioVolume(record.voiceVolume, DEFAULT_AUDIO_PREFERENCES.voiceVolume)
+  }
+}
+
+/**
  * Which of the message-panel window's two surfaces is open, or neither (#162).
  *
  * The two SHARE one window because they share one slot in the design: the Add
@@ -2671,6 +2763,34 @@ export const IPC_CHANNELS = {
   setMessagePanelHeight: 'panel:message:height',
   dragMessagePanel: 'panel:message:drag',
   dockMessagePanel: 'panel:message:dock',
+  /**
+   * Whether the shell window is on screen at all (#174, #173).
+   *
+   * The renderer needs this because every sound has to stop while the app is
+   * minimised or hidden, and a hidden BrowserWindow is not a thing a page can
+   * read for itself with any confidence: `document.visibilityState` is
+   * Chromium's answer about a TAB, and what it reports for a hidden,
+   * transparent, always-on-top frameless window is a platform detail nobody
+   * has verified on all three targets. Main already knows — it is the process
+   * that calls `show()` and `hide()` — so it says, and the renderer follows
+   * the fact rather than guessing at it. That is the same reasoning the pin
+   * and the layout channels carry.
+   *
+   * `getPanelVisible` exists for the one moment a push cannot reach: the
+   * page's own first mount, which happens while the window is still hidden.
+   */
+  getPanelVisible: 'panel:visible:get',
+  panelVisibilityChanged: 'panel:visible:changed',
+  /**
+   * Settings' Audio section (#174, over #173's channels).
+   *
+   * `setAudioPreferences` answers with what main STORED rather than what was
+   * asked for, the same discipline the pin and the edge preference hold: main
+   * clamps every volume into 0..1 and refuses a malformed document outright,
+   * so a slider can only ever be drawn at a value that is really in force.
+   */
+  getAudioPreferences: 'audio:preferences:get',
+  setAudioPreferences: 'audio:preferences:set',
   /**
    * User-configurable panel toggle, see #17. Both channels answer with the
    * REAL ShortcutState after the registration attempt — never the requested

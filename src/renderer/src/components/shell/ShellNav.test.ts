@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest'
 import type { ShellArea } from '../../lib/shell/shellNav'
 import ShellNav from './ShellNav.vue'
 
-function mountNav(props: { area?: ShellArea; broken?: boolean } = {}) {
-  return mount(ShellNav, { props: { area: 'map' as const, broken: false, ...props } })
+function mountNav(props: { area?: ShellArea; broken?: boolean; musicPlaying?: boolean } = {}) {
+  return mount(ShellNav, {
+    props: { area: 'map' as const, broken: false, musicPlaying: true, ...props }
+  })
 }
 
 describe('ShellNav', () => {
@@ -112,5 +114,61 @@ describe('ShellNav', () => {
 
   it('leaves the settings button unflagged when the shortcut works', () => {
     expect(mountNav().findAll('.nav-button')[0]!.classes()).not.toContain('is-broken')
+  })
+})
+
+/*
+ * The music button (#174), at the bottom of the navigation column.
+ *
+ * Here rather than in a component of its own because the column IS the bottom
+ * of the shell: the mark sits at its top, the five areas are centred against
+ * the panel, and this is what is left below them. It decides nothing, for the
+ * reason the mark and the rail's arrow decide nothing — playback belongs to
+ * the audio engine, which App.vue owns.
+ */
+describe('ShellNav — the music button', () => {
+  it('draws it below the five areas, at the bottom of the column', () => {
+    const nav = mountNav()
+    const button = nav.find('.nav-music')
+    expect(button.exists()).toBe(true)
+    expect(button.element.tagName).toBe('BUTTON')
+    expect(button.attributes('type')).toBe('button')
+  })
+
+  it('keeps one accessible name and carries the state on aria-pressed', () => {
+    // The same rule the pin control holds: the name stays stable so a screen
+    // reader is not told the control changed identity, and the STATE is what
+    // moves.
+    const playing = mountNav({ musicPlaying: true })
+    const stopped = mountNav({ musicPlaying: false })
+    expect(playing.find('.nav-music').attributes('aria-label')).toBe(
+      stopped.find('.nav-music').attributes('aria-label')
+    )
+    expect(playing.find('.nav-music').attributes('aria-pressed')).toBe('true')
+    expect(stopped.find('.nav-music').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('flips the glyph between the designer’s two music icons', () => {
+    const playing = mountNav({ musicPlaying: true }).find('.music-icon').attributes('style')
+    const stopped = mountNav({ musicPlaying: false }).find('.music-icon').attributes('style')
+    expect(playing).toMatch(/--music-icon:\s*url\(/)
+    expect(stopped).toMatch(/--music-icon:\s*url\(/)
+    expect(playing).not.toBe(stopped)
+  })
+
+  it('says what the current state does, so the tooltip is not just a label', () => {
+    expect(mountNav({ musicPlaying: true }).find('.nav-music').attributes('title')).toMatch(/stop/i)
+    expect(mountNav({ musicPlaying: false }).find('.nav-music').attributes('title')).toMatch(
+      /play/i
+    )
+  })
+
+  it('asks for the toggle and changes nothing itself', () => {
+    const nav = mountNav({ musicPlaying: true })
+    nav.find('.nav-music').trigger('click')
+    expect(nav.emitted('toggle-music')).toHaveLength(1)
+    expect(nav.emitted('select')).toBeUndefined()
+    // Still drawn as playing: the engine above owns whether it is.
+    expect(nav.find('.nav-music').attributes('aria-pressed')).toBe('true')
   })
 })

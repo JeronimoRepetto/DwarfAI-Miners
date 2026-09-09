@@ -10,6 +10,7 @@ import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useView } from './composables/useView'
+import { DEFAULT_AUDIO_PREFERENCES } from './types'
 
 const DEFAULT_SHORTCUT = {
   accelerator: 'Control+Alt+Shift+P',
@@ -193,6 +194,26 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       ]
     }),
     setDwarfTuning: vi.fn().mockResolvedValue({ applied: true }),
+    /*
+     * AMENDED for #174/#173 (was: absent). The shell owns the audio engine, so
+     * all four members have to exist even in tests that never make a sound:
+     * two are AWAITED on mount (the stored settings, the window's real
+     * visibility) and the third returns an unsubscribe, exactly like
+     * onMinesUpdated.
+     *
+     * `getPanelVisible` answers NOT visible by default, for the same reason
+     * `getPanelLayout` answers "closed": that is what main actually creates
+     * the window as, and the app starts hidden until the shortcut or the tray
+     * shows it. Which also keeps this suite silent — with the window away,
+     * nothing opens a media element jsdom has no pipeline for. A test about
+     * sound overrides it. No existing assertion changed.
+     */
+    getAudioPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES }),
+    setAudioPreferences: vi
+      .fn()
+      .mockImplementation((preferences: unknown) => Promise.resolve(preferences)),
+    getPanelVisible: vi.fn().mockResolvedValue(false),
+    onPanelVisibility: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2008,5 +2029,188 @@ describe('App mine history', () => {
     await wrapper.find('.mine-history').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-empty').text()).toBe("This mine's history could not be read.")
+  })
+})
+
+/*
+ * ── The panel's sound (#174, #173) ────────────────────────────────────────
+ *
+ * The shell owns the audio engine, so the four surfaces that touch it — the
+ * navigation column's music button, Settings' Audio section, the mine
+ * interior's ambience mute, a click on a dwarf — are wired up in App and
+ * nowhere else. Every RULE about what plays lives under lib/audio/ and is
+ * tested there; what these cases hold is only that each surface is joined to
+ * the one engine.
+ *
+ * `getPanelVisible` is overridden to true throughout, because the stub's
+ * default is the hidden window main really creates and a hidden window is
+ * silent by design.
+ */
+describe('App audio (#174, #173)', () => {
+  const MINE = defaultMine({ id: 'p1', name: 'panel', dwarfs: [] })
+  const WORKER = defaultDwarf({ id: 'claude:s1', role: 'worker', status: 'working' })
+
+  /**
+   * A hand-written stand-in for the browser's `Audio`, recording every source
+   * the player opens.
+   *
+   * jsdom has an `HTMLMediaElement` with no pipeline behind it — `play()`
+   * raises "Not implemented" — so this is both what makes the assertion
+   * possible and what keeps the suite quiet. Only the members
+   * `createElementAudioPlayer` actually touches are here; anything else it
+   * grew would fail loudly rather than be silently absent.
+   */
+  const opened: string[] = []
+  let realAudio: typeof Audio
+  beforeEach(() => {
+    opened.length = 0
+    realAudio = window.Audio
+    class FakeAudio {
+      preload = ''
+      loop = false
+      volume = 0
+      currentTime = 0
+      duration = Number.NaN
+      constructor(src: string) {
+        opened.push(src)
+      }
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      removeAttribute(): void {}
+      play(): void {}
+      pause(): void {}
+      load(): void {}
+    }
+    Object.defineProperty(window, 'Audio', { configurable: true, value: FakeAudio })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'Audio', { configurable: true, value: realAudio })
+  })
+
+  async function audioApp(overrides: Record<string, unknown> = {}) {
+    return mountOpenApp({ getPanelVisible: vi.fn().mockResolvedValue(true), ...overrides })
+  }
+
+  it('starts the music with the shell, and draws the button as playing', async () => {
+    const { wrapper } = await audioApp()
+    expect(opened).toHaveLength(1)
+    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('stops the music from the shell button and starts it again', async () => {
+    const { wrapper } = await audioApp()
+    await wrapper.find('.nav-music').trigger('click')
+    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('false')
+
+    await wrapper.find('.nav-music').trigger('click')
+    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+    // A fresh track rather than a resumed one: turning the music off releases
+    // what was playing (see engine.ts).
+    expect(opened).toHaveLength(2)
+  })
+
+  it('opens silent when the person turned "music at startup" off', async () => {
+    const { wrapper } = await audioApp({
+      getAudioPreferences: vi
+        .fn()
+        .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, musicAtStartup: false })
+    })
+    expect(opened).toHaveLength(0)
+    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('false')
+
+    // The button is still the way in, which is #174's own acceptance step.
+    await wrapper.find('.nav-music').trigger('click')
+    expect(opened).toHaveLength(1)
+  })
+
+  it('persists a volume from Settings and renders what main stored', async () => {
+    const { wrapper, api } = await audioApp({
+      setAudioPreferences: vi
+        .fn()
+        .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, musicVolume: 0.5 })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await flushPromises()
+
+    const slider = wrapper.find('.music-volume')
+    ;(slider.element as HTMLInputElement).value = '0.25'
+    await slider.trigger('input')
+    await flushPromises()
+
+    expect(api.setAudioPreferences).toHaveBeenCalledWith({
+      ...DEFAULT_AUDIO_PREFERENCES,
+      musicVolume: 0.25
+    })
+    // Main answered 0.5; the slider shows the value in force, not the drag.
+    expect(wrapper.find('.music-readout').text()).toBe('50%')
+  })
+
+  it('plays the mine ambience while an interior is open, and stops it on the way out', async () => {
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    // The working bed, because a worker is working — read off the same
+    // snapshot the sprites are drawn from.
+    expect(opened.some((src) => src.includes('mine-inside-working'))).toBe(true)
+
+    await wrapper.find('.close-mine').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(MineScene).exists()).toBe(false)
+  })
+
+  it('mutes the ambience from the interior, and says so on the control', async () => {
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+
+    await wrapper.find('.mute-ambience').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mute-ambience').attributes('aria-pressed')).toBe('true')
+    // The music is untouched, which is the whole point of a mute that names
+    // one channel (#173).
+    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('gives a clicked dwarf its rank voice, once', async () => {
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    const before = opened.length
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    const voices = opened.slice(before).filter((src) => src.includes('voice'))
+    expect(voices).toHaveLength(1)
+    expect(voices[0]).toContain('dwarf-worker-voice')
+  })
+
+  it('gives a foreman the foreman voice, and no other rank’s', async () => {
+    const foreman = defaultDwarf({ id: 'claude:s2', role: 'foreman', status: 'waiting' })
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    expect(opened.some((src) => src.includes('dwarf-foreman-voice'))).toBe(true)
+    expect(opened.some((src) => src.includes('dwarf-worker-voice'))).toBe(false)
   })
 })

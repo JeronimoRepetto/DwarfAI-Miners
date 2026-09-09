@@ -54,7 +54,8 @@ import {
   isDwarfProvider,
   isHeldPermissionMode,
   isMessagePanelDragPhase,
-  isMineTier
+  isMineTier,
+  parseAudioPreferences
 } from '../shared/contracts'
 import {
   enable as enableAutostart,
@@ -88,6 +89,7 @@ import { openProjectsStore } from './projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
+import { createAudioPreferenceStore } from './shell/audioPreference'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -152,6 +154,9 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.dragMessagePanel)
   ipcMain.removeAllListeners(IPC_CHANNELS.dockMessagePanel)
   ipcMain.removeAllListeners(IPC_CHANNELS.reportDwarfDelivery)
+  ipcMain.removeHandler(IPC_CHANNELS.getPanelVisible)
+  ipcMain.removeHandler(IPC_CHANNELS.getAudioPreferences)
+  ipcMain.removeHandler(IPC_CHANNELS.setAudioPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
@@ -519,6 +524,34 @@ async function init(): Promise<void> {
 
   const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
+  // Settings' Audio section (#174, #173) is the sixth userData preference.
+  // Read AFTER the window exists, unlike the pin and the edge: nothing about
+  // the first frame depends on it — the renderer asks for it on mount and
+  // starts the music itself — so there is no reason to make startup wait.
+  const audioStore = createAudioPreferenceStore({
+    filePath: join(app.getPath('userData'), 'audio-preferences-v1.json')
+  })
+
+  /*
+   * Whether the shell is really on screen (#174, #173).
+   *
+   * `isVisible()` alone is not the answer on every platform: a minimised
+   * window reports differently on Windows and macOS, and the renderer's rule
+   * is "every sound stops while the app is not on screen" — which minimised
+   * plainly is not. Both are asked, and main is the one process that can.
+   */
+  const panelVisible = (): boolean => mainWindow.isVisible() && !mainWindow.isMinimized()
+  const publishPanelVisibility = (): void => {
+    shellWebContents()?.send(IPC_CHANNELS.panelVisibilityChanged, panelVisible())
+  }
+  // Subscribed to the window rather than to `showPanel`/`hidePanel`, so the
+  // ways round those two — a minimise from the OS, the tray, a shortcut, the
+  // app mark — all reach the renderer through one path.
+  mainWindow.on('show', publishPanelVisibility)
+  mainWindow.on('hide', publishPanelVisibility)
+  mainWindow.on('minimize', publishPanelVisibility)
+  mainWindow.on('restore', publishPanelVisibility)
+
   // The panel-toggle shortcut is the third userData preference (see #17), read
   // here so the accelerator is in hand before anything is claimed from the OS.
   // A missing or unusable file yields the documented Ctrl+Alt+Shift+P default.
@@ -746,6 +779,32 @@ async function init(): Promise<void> {
       console.warn('[pin] Failed to persist the always-on-top preference:', error)
     }
     return real
+  })
+  /*
+   * Whether the shell is on screen (#174, #173) — pulled once on the page's
+   * own mount, which is the moment no push can reach because the window is
+   * still hidden while its page loads.
+   */
+  ipcMain.handle(IPC_CHANNELS.getPanelVisible, () => panelVisible())
+  /*
+   * Settings' Audio section (#174, over #173's two volumes).
+   *
+   * `set` answers with what was STORED rather than with the request, which is
+   * the discipline every other preference channel here holds: the shared
+   * parser clamps each volume into 0..1 and falls back field by field, so a
+   * slider can only ever be drawn at a value that is really in force.
+   */
+  ipcMain.handle(IPC_CHANNELS.getAudioPreferences, () => audioStore.load())
+  ipcMain.handle(IPC_CHANNELS.setAudioPreferences, async (_event, payload: unknown) => {
+    const preferences = parseAudioPreferences(payload)
+    try {
+      await audioStore.save(preferences)
+    } catch (error) {
+      // The change itself already took effect in the renderer; a persistence
+      // hiccup only means the next launch falls back to the stored document.
+      console.warn('[audio] Failed to persist the audio preferences:', error)
+    }
+    return preferences
   })
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle
