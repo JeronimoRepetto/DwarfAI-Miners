@@ -8,7 +8,7 @@ import {
   sendMarker as sendMarkerFor
 } from '../../lib/delivery/deliveryVerdict'
 import { LEAVING_EXIT_MS, statusAnimationClass } from '../../lib/presentation'
-import { dwarfClips, isAwaitingAnswer, stillFrameOf } from '../../lib/sprite/dwarfSequence'
+import { dwarfClips, isResting, stillFrameOf } from '../../lib/sprite/dwarfSequence'
 import {
   SPRITE_FRAME_SIZE,
   backgroundSizePercent,
@@ -234,21 +234,25 @@ const stopWatchingMotion = watchReducedMotion((reduced) => {
 onBeforeUnmount(stopWatchingMotion)
 
 /**
- * Whether a person has been asked something and has not answered (issue #60).
- *
- * The waiting reason is passed straight through, never re-derived here: only
- * the provider knows whether a human was actually asked, and a sprite that
- * guessed would be the fabricated status the issue forbids.
+ * Whether this dwarf is resting (issue #306) — the exact predicate
+ * `DwarfStatusIcons`' own sleep marker draws for below (`:resting`), so the
+ * two can never disagree again. It replaces `isAwaitingAnswer`, which read
+ * `waitingReason` and required a provider to have proved a human was asked
+ * something (#60): a foreman resting at his prompt with no such proof was
+ * marked asleep by the glyph and drawn awake by the sequence. #60's signal
+ * has not gone anywhere — it still drives the separate question glyph off
+ * `dwarf.pendingQuestion` below — it just no longer decides which sequence
+ * plays.
  */
-const awaiting = computed(() => isAwaitingAnswer(props.dwarf.status, props.dwarf.waitingReason))
+const resting = computed(() => isResting(props.dwarf.status))
 
 /**
- * Whether this dwarf is at the rock (issue #74). Unlike `awaiting`, this is a
+ * Whether this dwarf is at the rock (issue #74). Unlike `resting`, this is a
  * direct read of the status — `working` has no other signal feeding it — but
- * it still has to be its own watched value: going from an ordinary `waiting`
- * straight to `working` (no human ever asked) changes nothing about
- * `awaiting` on either side of that transition, so `dwarfClips` would never
- * be re-run for it if the watch below only tracked `awaiting`.
+ * it still has to be its own watched value: going from `leaving` straight to
+ * `working` changes nothing about `resting` on either side of that
+ * transition (neither status is rest), so `dwarfClips` would never be re-run
+ * for it if the watch below only tracked `resting`.
  *
  * Deliberately still just the status. Whether it has actually ARRIVED is a
  * separate question below (issue #262) — `dwarfClips` is what gates the
@@ -291,11 +295,10 @@ const atWork = computed(() => working.value && arrived.value)
  *
  * The watcher carries the PREVIOUS answer on each axis into `dwarfClips`,
  * which is what turns a state into a transition — a foreman lies down when
- * the question arrives and gets up when it is answered, a worker picks up its
- * pick when it starts and sets it down when it stops, rather than either
- * simply appearing that way. Vue hands `undefined` as the old value on the
- * immediate first run, which is exactly the "nothing to leave" case the
- * sequence wants.
+ * rest begins and gets up when it ends, a worker picks up its pick when it
+ * starts and sets it down when it stops, rather than either simply appearing
+ * that way. Vue hands `undefined` as the old value on the immediate first
+ * run, which is exactly the "nothing to leave" case the sequence wants.
  */
 const clips = ref<readonly SpriteClip[]>([])
 const elapsedMs = ref(0)
@@ -310,20 +313,13 @@ function stopCycle(): void {
 // Any change of state restarts the sequence at its head, so a dwarf that just
 // picked up a task never starts mid-gesture. `arrived` is tracked alongside
 // `working` — not folded into it — so an arrival re-selects clips even when
-// neither `awaiting` nor the raw `working` status changed a bit (issue #262);
+// neither `resting` nor the raw `working` status changed a bit (issue #262);
 // `atWork` rides along only to hand `dwarfClips` its previous, already-gated
 // answer as `wasWorking` (see that computed's own note).
 watch(
-  [awaiting, working, () => props.dwarf.role, arrived, atWork] as const,
-  ([nowAwaiting, nowWorking, role, nowArrived], previous) => {
-    clips.value = dwarfClips(
-      role,
-      nowAwaiting,
-      previous?.[0],
-      nowWorking,
-      previous?.[4],
-      nowArrived
-    )
+  [resting, working, () => props.dwarf.role, arrived, atWork] as const,
+  ([nowResting, nowWorking, role, nowArrived], previous) => {
+    clips.value = dwarfClips(role, nowResting, previous?.[0], nowWorking, previous?.[4], nowArrived)
     elapsedMs.value = 0
   },
   { immediate: true }
@@ -512,7 +508,7 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       :talking="Boolean(bubbleText)"
       :asking="dwarf.pendingQuestion !== undefined"
       :awaiting-approval="dwarf.waitingReason === 'approval'"
-      :resting="dwarf.status === 'waiting'"
+      :resting="resting"
       :expand-label="bubbleLabel"
       :expanded="bubbleExpanded"
       @expand="toggleBubble"

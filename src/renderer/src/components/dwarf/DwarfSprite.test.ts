@@ -707,11 +707,16 @@ describe('DwarfSprite', () => {
       vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
     })
 
+    // AMENDED for #306: passed `waitingReason: 'user-input'` on the claim
+    // that "the foreman being asked a question is the change that is
+    // actually visible" — under `isAwaitingAnswer` that reason was what made
+    // the sleep sequence engage at all. It no longer is: `status: 'waiting'`
+    // alone is the visible change now, so the reason is dropped to prove it.
     it('restarts the cycle from the first frame when the loop changes', async () => {
       // Was pinned through a status change, which used to select a different
       // pose table. Every status a WORKER can be in now draws the same sheet
-      // (#74), so the foreman being asked a question is the change that is
-      // actually visible — and it restarts on frame 0 exactly as before.
+      // (#74), so the foreman entering rest is the change that is actually
+      // visible — and it restarts on frame 0 exactly as before.
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
       })
@@ -720,7 +725,7 @@ describe('DwarfSprite', () => {
       expect(framePercentOf(wrapper)).toBeGreaterThan(0)
 
       await wrapper.setProps({
-        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' })
       })
       expect(framePercentOf(wrapper)).toBe(0)
     })
@@ -1348,11 +1353,13 @@ describe('DwarfSprite sleep indicator', () => {
     expect(sheetOf(resting)).not.toBe(sheetOf(working))
   })
 
-  it('draws a foreman actually asleep when a person was asked, and says so once', async () => {
+  // AMENDED for #306: passed `waitingReason: 'user-input'`, which is what
+  // `isAwaitingAnswer` required before the sleep sequence would engage at
+  // all. Rest is a status now, not a proven reason, so the fixture drops it
+  // — a foreman resting with no reason offered falls asleep exactly the same.
+  it('draws a foreman actually asleep once it starts resting, and says so once', async () => {
     const wrapper = mount(DwarfSprite, {
-      props: {
-        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
-      }
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
     })
     // Falls asleep first, then stays asleep: two sheets, one movement.
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['start-sleep']!.src))
@@ -1363,11 +1370,11 @@ describe('DwarfSprite sleep indicator', () => {
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman.sleeping!.src))
   })
 
-  it('wakes a foreman up once the question has been answered', async () => {
+  // AMENDED for #306, same reason as above: dropped `waitingReason` — leaving
+  // rest wakes the foreman regardless of why it was resting.
+  it('wakes a foreman up once rest ends', async () => {
     const wrapper = mount(DwarfSprite, {
-      props: {
-        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
-      }
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
     })
     await wrapper.setProps({ dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) })
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['end-sleep']!.src))
@@ -1378,11 +1385,37 @@ describe('DwarfSprite sleep indicator', () => {
     expect(sheetOf(wrapper)).toBe(FOREMAN_IDLE)
   })
 
-  it('never wakes a foreman that was never put to sleep', () => {
+  /*
+   * AMENDED for #306 — this is the bug itself, pinned as if it were correct.
+   * It asserted FOREMAN_IDLE: a foreman mounted directly in `'waiting'` status
+   * with no `waitingReason` used to draw awake, because `isAwaitingAnswer`
+   * needed a proven reason before the sleep sequence would even consider him
+   * resting. The marker (`DwarfStatusIcons`, `status === 'waiting'`) drew him
+   * asleep the whole time — see issue #306's reproduction. He now falls
+   * asleep exactly like any other dwarf that mounts already resting (the
+   * first-render rule in dwarfSequence.ts): nothing to interrupt, so the fall
+   * plays rather than being skipped.
+   */
+  it('falls asleep on mount when found already resting, with no proof anybody asked it anything', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
     })
-    expect(sheetOf(wrapper)).toBe(FOREMAN_IDLE)
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['start-sleep']!.src))
+  })
+
+  /*
+   * The watch that feeds `dwarfClips` (#306): `resting` is computed off
+   * `isResting(dwarf.status)` alone now, so a `waitingReason` other than
+   * `'user-input'` — which used to keep `isAwaitingAnswer` false and the
+   * sprite idle — no longer has anything to disagree with the marker about.
+   */
+  it('falls asleep resting on any waitingReason at all, status being the only thing that matters', () => {
+    const wrapper = mount(DwarfSprite, {
+      props: {
+        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'approval' })
+      }
+    })
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['start-sleep']!.src))
   })
 })
 
@@ -1462,27 +1495,26 @@ describe('DwarfSprite with reduced motion', () => {
    * overlay and the leaving fade instead. Restore the four-way case with the
    * working and walking sheets.
    */
-  it('still tells a foreman waiting on a person from one at his post', () => {
+  // AMENDED for #306: dropped `waitingReason: 'user-input'` — resting is
+  // what tells these two apart now, not a proven reason for the rest.
+  it('still tells a resting foreman from one at his post', () => {
     stubReducedMotion(true)
-    const asked = mount(DwarfSprite, {
-      props: {
-        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
-      }
+    const resting = mount(DwarfSprite, {
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
     })
     const posted = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
     })
-    expect(sheetOf(asked)).not.toBe(sheetOf(posted))
+    expect(sheetOf(resting)).not.toBe(sheetOf(posted))
   })
 
+  // AMENDED for #306: dropped `waitingReason: 'user-input'`, same reason.
   it('shows a sleeping foreman asleep rather than caught halfway down', () => {
     // Holding the FIRST clip would draw him mid-fall, which is a foreman
     // frozen in an action rather than a foreman in a state.
     stubReducedMotion(true)
     const wrapper = mount(DwarfSprite, {
-      props: {
-        dwarf: defaultDwarf({ role: 'foreman', status: 'waiting', waitingReason: 'user-input' })
-      }
+      props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
     })
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman.sleeping!.src))
   })
