@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildPasteCommand,
   buildSendInterruptCommand,
   buildSendKeysCommand,
   escapeSendKeys,
@@ -108,6 +109,33 @@ describe('buildSendKeysCommand', () => {
     )
     // Exactly one live ENTER keystroke: our own trailing one.
     expect(command.match(/SendWait\('\{ENTER\}'\)/g)).toHaveLength(1)
+  })
+})
+
+/*
+ * The paste path (#319): a MESSAGE is put on the clipboard and pasted with
+ * Ctrl+V instead of typed character by character, so a 441-char message lands
+ * at once rather than over ~16 s of foregrounded typing. The command carries no
+ * user text at all — the text travels on the clipboard, and this only presses
+ * the two keys — so unlike buildSendKeysCommand it never touches escapeSendKeys.
+ */
+describe('buildPasteCommand', () => {
+  it('sends the Ctrl+V keystroke that pastes the clipboard into the foreground window', () => {
+    const command = buildPasteCommand(false)
+    expect(command).toContain('Add-Type -AssemblyName System.Windows.Forms')
+    expect(command).toContain("SendWait('^v')")
+  })
+
+  it('appends a separate ENTER keystroke only when asked', () => {
+    expect(buildPasteCommand(true)).toContain("SendWait('{ENTER}')")
+    expect(buildPasteCommand(false)).not.toContain("SendWait('{ENTER}')")
+  })
+
+  it('carries no user text: the message travels on the clipboard, only the keys are pressed', () => {
+    // One argument — pressEnter — and nothing that could smuggle a payload
+    // through: the whole point of pasting is that the text is never in the
+    // command a shell re-parses.
+    expect(buildPasteCommand).toHaveLength(1)
   })
 })
 

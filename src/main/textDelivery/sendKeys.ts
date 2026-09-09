@@ -75,6 +75,40 @@ export function buildSendKeysCommand(text: string, pressEnter: boolean): string 
 }
 
 /**
+ * PowerShell that pastes the clipboard into the foreground window — Ctrl+V,
+ * optionally followed by ENTER as a separate keystroke (#319).
+ *
+ * This is the message path since #319: the text is put on the clipboard and
+ * pasted in one keystroke rather than typed character by character, so a long
+ * message lands at once and the window in which a mid-typing focus change could
+ * steal the rest of it nearly disappears (measured: 441 chars typed took ~16 s).
+ *
+ * Deliberately built without escapeSendKeys/buildSendKeysCommand, for the same
+ * reason buildSendInterruptCommand is: `^v` and `{ENTER}` here ARE the SendKeys
+ * keynames, and there is no user text to escape — the message never enters this
+ * command, it rides the clipboard. `^v` is SendKeys for Ctrl+V (`^` is its Ctrl
+ * modifier), the same spelling `{ENTER}` and `{ESC}` are the transport's own.
+ *
+ * The settle sleeps mirror buildSendKeysCommand's: the just-focused terminal
+ * needs a moment before the paste, and the paste a moment before the submit.
+ */
+export function buildPasteCommand(pressEnter: boolean): string {
+  const lines = [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Start-Sleep -Milliseconds 150',
+    "[System.Windows.Forms.SendKeys]::SendWait('^v')"
+  ]
+  if (pressEnter) {
+    lines.push(
+      'Start-Sleep -Milliseconds 120',
+      "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
+    )
+  }
+  return lines.join('\n')
+}
+
+/**
  * PowerShell that sends a raw ESC keystroke to the foreground window — this is
  * how the Claude Code TUI interrupts (Kick's cancel), not typed text.
  *

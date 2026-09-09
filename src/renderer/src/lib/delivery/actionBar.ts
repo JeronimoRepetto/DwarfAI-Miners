@@ -101,28 +101,29 @@ export function oneShotNoExitReason(provider: DwarfProvider): string {
 /**
  * What each channel means, in the sender's terms.
  *
- * Read off `capabilities.sendText`, which since #308 can name a different
- * channel from `capabilities.cancel` for the same dwarf — so these sentences
- * describe the SEND and only the send, and KICK_HINT below describes the other
- * half. Two of them changed with that reordering, and both had to: the console
- * hint described the default it no longer is, and the relay hint described a
- * headless session it is no longer exclusive to.
+ * Read off `capabilities.sendText`, which can name a different channel from
+ * `capabilities.cancel` for the same dwarf (the Codex queue, a launched
+ * process) — so these sentences describe the SEND and only the send, and
+ * KICK_HINT below describes the other half. The console and relay hints changed
+ * again with #319: the console PASTES the message now (it no longer types), and
+ * it is the primary channel once more, so the relay describes itself as the
+ * fallback instead.
  */
 export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
-  // Says the two things the default channel never had to say (#308): that it
-  // is the fallback, and what it costs. It focuses somebody's console and
-  // types — a person about to have their screen taken over should be able to
-  // read that here first.
-  terminal:
-    'The fallback when nothing else can reach the session: its console is focused and the ' +
-    'message typed in.',
-  // Never "headless": since #308 this is the channel an ordinary session at an
-  // ordinary terminal uses too, and it reaches that session without touching
-  // its window. Says "reads it between tool calls" rather than claiming
-  // anything read it — a ✓ here is a hand-over to the queue and nothing more
-  // (see reaction.ts and the delivered-versus-reacted invariant).
+  // The primary channel again for a session with a console (#319): it focuses
+  // the console and PASTES the message straight in, landing a long message at
+  // once — as the person's own prompt — rather than typing it out character by
+  // character. It still comes forward, so the sentence says focus first.
+  terminal: "Focuses this session's console and pastes the message straight in.",
+  // The channel for a session reached by name — one with no terminal to paste
+  // into — and the fallback for one whose console could not be brought forward
+  // (#319). Never touches a window, which is its whole point. Says "reads it
+  // between tool calls" rather than claiming anything read it — a ✓ here is a
+  // hand-over to the queue and nothing more (see reaction.ts).
   'claude-relay':
-    "Handed to the session through Claude Code's own messaging; it reads it between tool calls.",
+    "Handed to the session through Claude Code's own messaging, which it reads between tool " +
+    'calls — the channel for a session with no terminal, and the fallback when one will not come ' +
+    'forward.',
   'foreman-relay': "Delivered to this worker's foreman, tagged for them.",
   'codex-queue': "Added to this Codex session's queue; it reads it between turns.",
   'held-session': 'Put straight onto the session this panel is holding open.',

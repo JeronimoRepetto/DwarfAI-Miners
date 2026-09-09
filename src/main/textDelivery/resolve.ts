@@ -20,17 +20,19 @@ export interface ResolvedTextDelivery {
   /** Prepended to the user's text, e.g. '[for agent Explorer] '. Empty for a direct send. */
   prefix: string
   /**
-   * The console this send may fall back to, when the relay above it could not
-   * be started at all (#308). Absent wherever there is no second tier —
-   * which is every endpoint but a relay reached off a session that owns a
-   * console too.
+   * The relay this send may fall back to, when the console paste above it could
+   * not be delivered at all (#319, reversing #308). Absent wherever there is no
+   * second tier — which is every endpoint but a console reached off a session
+   * that is also addressable by registry name.
    *
-   * A pid rather than an endpoint, because the fallback is not a channel the
-   * panel may advertise: `channel` is what the bar reads, and it names the
-   * relay. See `sendRouteOf` for the rule, and `TextDeliveryOutcome.neverStarted`
-   * for the single condition under which the runtime is allowed to use this.
+   * A session name rather than an endpoint, mirroring what #308's
+   * `consoleFallbackPid` was: the fallback is not a channel the panel may
+   * advertise — `channel` is what the bar reads, and it names the console. See
+   * `sendRouteOf` for the rule, and `TextDeliveryOutcome.neverStarted` for the
+   * single condition under which the runtime is allowed to use this (a paste
+   * whose window would not come forward, so nothing was pasted).
    */
-  consoleFallbackPid?: number
+  relayFallbackSessionName?: string
 }
 
 /** Same shape as ResolvedTextDelivery; kept as its own type since Kick's prefix means something different. */
@@ -119,27 +121,29 @@ function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): Forem
  * send and kick routing part company (#308).
  *
  * The rule it adds: a session that owns a console AND is addressable by
- * registry name is written to through the RELAY, on every platform, with the
- * console kept only as the tier a relay that never started falls back to.
+ * registry name is written to by PASTING at its console, on the platform that
+ * has one (Windows), with the relay kept only as the tier a paste that could
+ * not focus falls back to.
  *
- * #24 chose the opposite order, and chose it for an honest reason —
- * keystrokes are instant where a relay turn is a whole `claude -p` run. What
- * reversed it is not a preference but a hazard measured live: the console tier
- * focuses the session's window and then types the message into whatever holds
- * the foreground, so a person who clicks elsewhere while it types has the rest
- * of their own sentence written into an unrelated application (#308). A slow
- * channel that cannot do that beats a fast one that can, and the seconds are
- * paid by the panel rather than by the person's other windows.
+ * #308 chose the opposite order — the relay primary — to escape the console
+ * tier's letter-by-letter typing, which took ~16 s for a 441-char message and
+ * wrote the remainder into whatever window a mid-typing focus change gave the
+ * foreground. #319 reverses it because the defect was HOW the console wrote,
+ * not that it wrote: a PASTE lands the whole message at once in under a second,
+ * so the focus-steal window nearly disappears — and the message arrives as the
+ * person's own prompt rather than labelled as another session, which a relayed
+ * message cannot be. The relay stays the fallback for a paste that cannot
+ * focus (and the only channel for a session with no console at all).
  *
- * Kick keeps #24's order deliberately, which is why this rule lives here and
- * not in `deliveryTargetOf` where both would inherit it: an interrupt IS a
- * keystroke, it carries no user text that could land somewhere else, and Esc
- * at the wrong window costs a cancelled turn rather than a leaked message.
+ * Kick's order was never the question — it stays at the console (#24), which is
+ * why this rule lives here and not in `deliveryTargetOf`: an interrupt IS a
+ * keystroke, and Esc at the wrong window costs a cancelled turn, not a leaked
+ * message.
  *
  * `channel` follows the endpoint so that the capability the bar reads is the
- * channel the send will actually use. A worker's chain keeps 'foreman-relay',
- * because what the panel is describing there is still the hop and not the tier
- * underneath it.
+ * channel the send will actually use — 'terminal' for a direct send now that
+ * the console is primary again. A worker's chain keeps 'foreman-relay', because
+ * what the panel is describing there is still the hop and not the tier under it.
  */
 function sendRouteOf(hops: ForemanHops): Omit<ResolvedTextDelivery, 'prefix'> | null {
   if (!canCarryText(hops.endpoint)) return null
@@ -147,10 +151,15 @@ function sendRouteOf(hops: ForemanHops): Omit<ResolvedTextDelivery, 'prefix'> | 
   if (endpoint.kind !== 'terminal' || endpoint.sessionName === undefined) {
     return { channel: hops.channel, endpoint }
   }
+  // The name moves off the endpoint to the fallback slot, the mirror of what
+  // #308 did with the pid: the endpoint is the plain console the paste writes
+  // to, and the relay address it may fall back to is not a channel the bar
+  // advertises. `hops.channel` is already 'terminal' for a direct send and
+  // 'foreman-relay' for a worker's chain, and neither changes here.
   return {
-    channel: hops.workerNames.length === 0 ? 'claude-relay' : hops.channel,
-    endpoint: { kind: 'claude-relay', sessionName: endpoint.sessionName },
-    consoleFallbackPid: endpoint.pid
+    channel: hops.channel,
+    endpoint: { kind: 'terminal', pid: endpoint.pid },
+    relayFallbackSessionName: endpoint.sessionName
   }
 }
 
@@ -274,21 +283,21 @@ export function resolveKickDelivery(
  * which is the whole reason it is a matrix. `sendText` is null wherever the
  * endpoint cannot take text and `cancel` is null wherever it cannot take a
  * kick, both read off the same routing functions resolveTextDelivery and
- * resolveKickDelivery enforce (#97, #217, #308) rather than re-derived here —
- * a second copy of either rule is how the panel and the runtime would start
+ * resolveKickDelivery enforce (#97, #217) rather than re-derived here — a
+ * second copy of either rule is how the panel and the runtime would start
  * refusing different dwarfs, or start describing a send main will not make.
  *
- * Three channels are asymmetric today, and the third one differs from the
- * other two in kind: the Codex queue delivers and cannot interrupt, a process
- * this panel launched can be ended and takes no messages, and an observed
- * Claude session with a registry name takes MESSAGES over the relay while its
- * interrupt still goes to its console (#308). The first two are facts about a
- * session type; the third is one session answering two channels, which is why
- * `sendChannel` comes off sendRouteOf rather than off the shared walk.
- * `textDelivery` mirrors sendText only, because it is the field the composer
- * reads — stamping a channel that cannot carry text there would enable a box
- * whose message main is bound to refuse, and stamping the kick's channel there
- * would put the console tier's hint on a send that never touches a console.
+ * Two channels are asymmetric: the Codex queue delivers and cannot interrupt,
+ * and a process this panel launched can be ended and takes no messages. Both
+ * are facts about a session TYPE. A named observed Claude session used to be a
+ * third, one-session asymmetry (#308: relay for a message, console for a kick),
+ * but #319 pastes the message at its console too, so both halves are 'terminal'
+ * again and it is symmetric once more. `sendChannel` still comes off
+ * sendRouteOf rather than the shared walk, because the two asymmetric types
+ * above still make send and kick disagree. `textDelivery` mirrors sendText
+ * only, because it is the field the composer reads — stamping a channel that
+ * cannot carry text there would enable a box whose message main is bound to
+ * refuse.
  *
  * One walk per dwarf, which is why both halves come off `followForemanHops`
  * here rather than from two resolve calls: the poll asks each provider once
