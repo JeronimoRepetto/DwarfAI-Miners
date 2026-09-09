@@ -129,19 +129,57 @@ export function conversationEnded(dwarf: Pick<Dwarf, 'status'>): boolean {
   return dwarf.status === 'leaving'
 }
 
+/**
+ * WHICH wire messages the panel draws for this dwarf, and what claim they
+ * carry — the precedence itself, read once.
+ *
+ * A held session's own exchange wins over a transcript read of the same
+ * session, because the tail is those same words second-hand and one turn
+ * behind; failing both, the `lastMessage` every poll carries is a single
+ * bubble rather than nothing.
+ */
+function sourcedMessagesOf(
+  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
+  feed?: DwarfFeedResult
+): { source: ConversationSource; messages: readonly FeedMessage[] } {
+  if (dwarf.conversation !== undefined && dwarf.conversation.length > 0) {
+    return { source: 'held', messages: dwarf.conversation }
+  }
+  if (feed !== undefined && feed.messages.length > 0) {
+    return { source: 'observed', messages: feed.messages }
+  }
+  const last = fromLastMessage(dwarf.lastMessage)
+  return last.length > 0 ? { source: 'observed', messages: last } : { source: 'none', messages: [] }
+}
+
+/**
+ * The wire messages behind what the panel draws, before they became rows
+ * (#309).
+ *
+ * Exported because an echo has to be reconciled against the transcript, and
+ * that comparison needs each message's own TIMESTAMP — which `PanelMessage`
+ * does not carry, having spent it on a list key. Off the same precedence
+ * `conversationOf` draws from, so the rows an echo is measured against are
+ * exactly the rows it would otherwise stand beside.
+ */
+export function feedMessagesOf(
+  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
+  feed?: DwarfFeedResult
+): readonly FeedMessage[] {
+  return sourcedMessagesOf(dwarf, feed).messages
+}
+
 /** What the panel draws while the session is still there to be drawn. */
 function liveConversationOf(
   dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
   feed?: DwarfFeedResult
 ): PanelConversation {
-  if (dwarf.conversation !== undefined && dwarf.conversation.length > 0) {
-    return { source: 'held', messages: panelMessagesOf(dwarf.conversation), note: HELD_NOTE }
+  const { source, messages } = sourcedMessagesOf(dwarf, feed)
+  if (source === 'held') {
+    return { source, messages: panelMessagesOf(messages), note: HELD_NOTE }
   }
-
-  const tail = feed !== undefined && feed.messages.length > 0 ? feed.messages : []
-  const messages = tail.length > 0 ? tail : fromLastMessage(dwarf.lastMessage)
-  if (messages.length > 0) {
-    return { source: 'observed', messages: panelMessagesOf(messages), note: OBSERVED_NOTE }
+  if (source === 'observed') {
+    return { source, messages: panelMessagesOf(messages), note: OBSERVED_NOTE }
   }
 
   // Three ways to have nothing, and they are three different statements. The

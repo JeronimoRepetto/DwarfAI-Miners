@@ -11,6 +11,7 @@ import {
   authorOf,
   conversationEnded,
   conversationOf,
+  feedMessagesOf,
   latestText
 } from './conversation'
 
@@ -266,6 +267,65 @@ describe('conversationEnded', () => {
     const live: DwarfStatus[] = ['working', 'waiting']
     for (const status of live) {
       expect(conversationEnded(defaultDwarf({ status }))).toBe(false)
+    }
+  })
+})
+
+/**
+ * The wire messages behind the rows (#309).
+ *
+ * Exported for the echo reconciliation, which needs each message's own
+ * timestamp — a `PanelMessage` spent that on a list key. Every case below is
+ * the same precedence `conversationOf` above already asserts; what these pin
+ * is that ONE reading answers both, so an echo can never be measured against a
+ * transcript the panel is not drawing.
+ */
+describe('feedMessagesOf', () => {
+  it("answers with a held session's own exchange", () => {
+    expect(feedMessagesOf(defaultDwarf({ conversation: HELD }))).toEqual(HELD)
+  })
+
+  it('prefers the held exchange over a transcript read of the same session', () => {
+    const shown = feedMessagesOf(defaultDwarf({ conversation: HELD }), {
+      readable: true,
+      messages: [{ role: 'assistant', text: 'stale', timestamp: 'then' }]
+    })
+    expect(shown).toEqual(HELD)
+  })
+
+  it("answers with an observed session's transcript tail", () => {
+    const tail = [{ role: 'assistant' as const, text: 'Still working', timestamp: 'now' }]
+    expect(feedMessagesOf(defaultDwarf(), { readable: true, messages: tail })).toEqual(tail)
+  })
+
+  it('falls back to the last message the poll carries, timestamp and all', () => {
+    // The stand-in the panel already draws: no timestamp on the wire for it,
+    // which is exactly why an echo can never be matched against it.
+    expect(feedMessagesOf(defaultDwarf({ lastMessage: 'Halfway down' }))).toEqual([
+      { role: 'assistant', text: 'Halfway down', timestamp: '' }
+    ])
+  })
+
+  it('answers with nothing when there is nothing to draw', () => {
+    expect(feedMessagesOf(defaultDwarf(), { readable: false, messages: [] })).toEqual([])
+  })
+
+  it('answers with exactly what conversationOf drew, message for message', () => {
+    // The claim that makes it safe to reconcile against: two readings of the
+    // precedence would eventually disagree, and this is the one that says they
+    // are the same reading.
+    const cases: [Parameters<typeof feedMessagesOf>[0], DwarfFeedResult | undefined][] = [
+      [defaultDwarf({ conversation: HELD }), undefined],
+      [defaultDwarf(), { readable: true, messages: HELD }],
+      [defaultDwarf({ lastMessage: 'Halfway down' }), undefined],
+      [defaultDwarf(), { readable: true, messages: [] }]
+    ]
+    for (const [dwarf, feed] of cases) {
+      expect(feedMessagesOf(dwarf, feed).map((message) => message.text)).toEqual(
+        conversationOf({ ...defaultDwarf(), ...dwarf }, feed).messages.map(
+          (message) => message.text
+        )
+      )
     }
   })
 })

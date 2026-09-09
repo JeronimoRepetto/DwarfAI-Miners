@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
+import { ECHO_LIMIT } from '../lib/message/echo'
 import { defaultDwarf } from '../testing/factories'
-import type { Dwarf, DwarfTextResult } from '../types'
+import type { Dwarf, DwarfTextResult, FeedMessage } from '../types'
 import { RESULT_VISIBLE_MS, useDwarfMessaging } from './useDwarfMessaging'
 
 function stubApi(sendDwarfText: (...args: never[]) => Promise<DwarfTextResult>): void {
@@ -288,5 +289,250 @@ describe('useDwarfMessaging reaction tracking', () => {
   it('survives a poll that arrives before anything was ever sent', () => {
     const { observe } = useDwarfMessaging()
     expect(() => observe([dwarf()])).not.toThrow()
+  })
+})
+
+/**
+ * One record per MESSAGE, beside the one per dwarf (#309).
+ *
+ * The panel draws the person's words the moment Enter is pressed, so it needs
+ * a verdict per message rather than per dwarf: `state.byDwarfId` is the latest
+ * verdict and cannot say which of three bubbles is the one that failed. Every
+ * assertion below is about that second record; the per-dwarf one the shell's
+ * sprite marker reads is unchanged, which the last test in this block pins.
+ */
+describe('useDwarfMessaging echoes', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfMessaging().clearAll()
+    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function dwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+    return defaultDwarf({ id: 'claude:s1', ...overrides })
+  }
+
+  /** The transcript row the session would write for a message sent at `sentAt`. */
+  function turn(text: string, sentAt: number, offsetMs = 1_000): FeedMessage {
+    return { role: 'user', text, timestamp: new Date(sentAt + offsetMs).toISOString() }
+  }
+
+  it('draws the message the instant it is sent, before any channel has answered', async () => {
+    const pending = deferred<DwarfTextResult>()
+    stubApi(() => pending.promise)
+    const { send, echoesFor } = useDwarfMessaging()
+
+    const sending = send('claude:s1', 'dig deeper', true)
+    expect(echoesFor('claude:s1')).toMatchObject([
+      { text: 'dig deeper', state: { phase: 'sending' } }
+    ])
+
+    pending.release({ delivered: true, via: 'terminal' })
+    await sending
+  })
+
+  it("gives that one message the delivery's own verdict", async () => {
+    const { send, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({
+      phase: 'delivered',
+      via: 'claude-relay',
+      awaitingReaction: true
+    })
+  })
+
+  it('marks the message that failed, with its reason, and keeps it on screen', async () => {
+    stubApi(() =>
+      Promise.resolve({ delivered: false, via: 'terminal', error: 'The relay never started.' })
+    )
+    const { send, echoesFor, stateFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({
+      phase: 'failed',
+      via: 'terminal',
+      error: 'The relay never started.'
+    })
+
+    // The sprite's marker is a four-second badge and clears itself. The bubble
+    // is the person's own message: it stays, marked, so it can be read and
+    // sent again.
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('claude:s1')).toBeUndefined()
+    expect(echoesFor('claude:s1')[0]?.state.phase).toBe('failed')
+  })
+
+  it('promotes the message the reaction belongs to, and keeps its bubble', async () => {
+    const { send, observe, echoesFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'working', lastMessage: 'a' })])
+    await send('claude:s1', 'dig deeper', true)
+
+    observe([dwarf({ status: 'working', lastMessage: 'on it' })])
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'reacted', via: 'claude-relay' })
+
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(echoesFor('claude:s1')[0]?.state.phase).toBe('reacted')
+  })
+
+  it("decays the message's own marker when the window closes unobserved", async () => {
+    const { send, observe, echoesFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'working', lastMessage: 'a' })])
+    await send('claude:s1', 'dig deeper', true)
+
+    vi.advanceTimersByTime(REACTION_WINDOW_MS)
+    expect(echoesFor('claude:s1')[0]?.state).toMatchObject({
+      phase: 'delivered',
+      awaitingReaction: false
+    })
+  })
+
+  it('promotes only the message the watch was opened for', async () => {
+    const { send, observe, echoesFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'working', lastMessage: 'a' })])
+    await send('claude:s1', 'first', true)
+    await send('claude:s1', 'second', true)
+
+    observe([dwarf({ status: 'working', lastMessage: 'on it' })])
+    const echoes = echoesFor('claude:s1')
+    expect(echoes.map((echo) => [echo.text, echo.state.phase])).toEqual([
+      ['first', 'delivered'],
+      ['second', 'reacted']
+    ])
+  })
+
+  it('mints a new message when a failed one is sent again, and leaves the failed one marked', async () => {
+    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    const { send, retry, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+    const failed = echoesFor('claude:s1')[0]!
+
+    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+    await retry('claude:s1', failed.id)
+
+    const echoes = echoesFor('claude:s1')
+    expect(echoes).toHaveLength(2)
+    expect(echoes[0]).toEqual(failed)
+    expect(echoes[1]?.id).not.toBe(failed.id)
+    expect(echoes[1]).toMatchObject({ text: 'dig deeper', state: { phase: 'delivered' } })
+  })
+
+  it("sends the failed message's own words, over the same channel a send uses", async () => {
+    stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+    const { send, retry, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+
+    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+    stubApi(api as never)
+    await retry('claude:s1', echoesFor('claude:s1')[0]!.id)
+
+    expect(api).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      text: 'dig deeper',
+      pressEnter: true
+    })
+  })
+
+  it('refuses to send again a message it is not holding', async () => {
+    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+    stubApi(api as never)
+    const { retry } = useDwarfMessaging()
+
+    await expect(retry('claude:s1', 'never-minted')).resolves.toBe(false)
+    expect(api).not.toHaveBeenCalled()
+  })
+
+  it('keeps at most the cap, dropping the oldest, so a long conversation stays bounded', async () => {
+    const { send, echoesFor } = useDwarfMessaging()
+    for (let index = 0; index < ECHO_LIMIT + 2; index++) {
+      await send('claude:s1', `message ${index}`, true)
+    }
+
+    const echoes = echoesFor('claude:s1')
+    expect(echoes).toHaveLength(ECHO_LIMIT)
+    expect(echoes[0]?.text).toBe('message 2')
+    expect(echoes.at(-1)?.text).toBe(`message ${ECHO_LIMIT + 1}`)
+  })
+
+  it("keeps each dwarf's own messages apart", async () => {
+    const { send, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'to one', true)
+    await send('claude:s2', 'to two', true)
+
+    expect(echoesFor('claude:s1').map((echo) => echo.text)).toEqual(['to one'])
+    expect(echoesFor('claude:s2').map((echo) => echo.text)).toEqual(['to two'])
+  })
+
+  it('drops a message once the transcript accounts for it', async () => {
+    const { send, reconcile, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    reconcile('claude:s1', [turn('dig deeper', sentAt)])
+    expect(echoesFor('claude:s1')).toEqual([])
+  })
+
+  it('keeps a message the transcript does not account for', async () => {
+    const { send, reconcile, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    reconcile('claude:s1', [turn('something else', sentAt)])
+    expect(echoesFor('claude:s1')).toHaveLength(1)
+  })
+
+  it('never brings a dropped message back when the transcript tail forgets it', async () => {
+    // The tail is bounded, so the row that accounted for a message rolls off
+    // it. The drop is a fact and a later poll does not take it back.
+    const { send, reconcile, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    reconcile('claude:s1', [turn('dig deeper', sentAt)])
+    reconcile('claude:s1', [])
+    expect(echoesFor('claude:s1')).toEqual([])
+  })
+
+  it('forgets every dwarf but the one the panel moved to', async () => {
+    const { send, keepEchoesFor, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'to one', true)
+    await send('claude:s2', 'to two', true)
+
+    keepEchoesFor('claude:s2')
+    expect(echoesFor('claude:s1')).toEqual([])
+    expect(echoesFor('claude:s2')).toHaveLength(1)
+  })
+
+  it('forgets all of them when the panel is on nobody', async () => {
+    const { send, keepEchoesFor, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'to one', true)
+
+    keepEchoesFor(null)
+    expect(echoesFor('claude:s1')).toEqual([])
+  })
+
+  it('drops the messages along with the verdict on clear', async () => {
+    const { send, clear, echoesFor } = useDwarfMessaging()
+    await send('claude:s1', 'dig deeper', true)
+
+    clear('claude:s1')
+    expect(echoesFor('claude:s1')).toEqual([])
+  })
+
+  it('leaves the per-dwarf verdict the sprite marker reads exactly as it was', async () => {
+    // The whole point of a second record: the shell needs no change, and the
+    // marker on the dwarf still shows the LATEST verdict (#162).
+    const { send, stateFor } = useDwarfMessaging()
+    await send('claude:s1', 'first', true)
+    await send('claude:s1', 'second', true)
+
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'delivered',
+      via: 'claude-relay',
+      awaitingReaction: true
+    })
   })
 })
