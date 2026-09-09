@@ -1038,6 +1038,11 @@ function onKick(): void {
 /*
  * Both bubbles use the same surface and the same ink; only the alignment
  * differs, exactly as the design has it.
+ *
+ * AMENDED for #347 (was: --font-pixel inherited from the body, at the panel's
+ * meta size). What a dwarf or the person SAYS is now the conversation face at
+ * the conversation size — the one surface in this panel that is prose rather
+ * than chrome, and the only one Tiny5's single weight could not draw.
  */
 .bubble {
   margin: 0;
@@ -1047,6 +1052,8 @@ function onKick(): void {
   border-radius: var(--radius-default);
   color: var(--color-panel);
   background: var(--color-cream);
+  font-family: var(--font-conversation);
+  font-size: var(--text-conversation);
   line-height: 1.35;
   white-space: pre-wrap;
   user-select: text;

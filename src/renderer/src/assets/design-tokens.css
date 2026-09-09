@@ -20,6 +20,17 @@
    * choice to whatever the platform picked first.
    */
   --font-pixel: 'Tiny5', 'Segoe UI', system-ui, sans-serif;
+  /*
+   * The face for what a dwarf or the person SAYS (#347, maintainer amendment
+   * 2026-09-09): the bubbles, the echoes, and the question and permission
+   * cards' prose. Tiny5 above stays the Pixel UI face for everything else.
+   *
+   * A second family rather than a second weight, because Tiny5 has exactly one
+   * and an agent's reply is now paragraphs with bold, lists and code. The
+   * variable cut carries 400..700, so emphasis is a real weight rather than a
+   * synthesised one. Same fallback shape as --font-pixel, for the same reason.
+   */
+  --font-conversation: 'Pixelify Sans Variable', 'Segoe UI', system-ui, sans-serif;
 
   /* Closed edge rail. */
   --color-rail: #f6b644;
@@ -72,6 +83,13 @@
    */
   /* Dense labels, controls and metadata. */
   --text-meta: 12px;
+  /*
+   * What the crew says (#347). Its own rung rather than a second reader of
+   * --text-helper, which happens to be 14px too: the two answer different
+   * questions, and a correction to confirmation copy must not silently resize
+   * every bubble in the panel.
+   */
+  --text-conversation: 14px;
   /* Confirmation helper copy. */
   --text-helper: 14px;
   /* Settings section labels. */
