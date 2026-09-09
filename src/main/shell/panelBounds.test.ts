@@ -17,8 +17,14 @@ import {
   MESSAGE_PANEL_GAP,
   MIN_WINDOW_WIDTH,
   RAIL_WIDTH,
+  clampMessagePanelBounds,
+  detachedMessagePanelBounds,
+  detachedMessagePanelWidth,
   expandedWidth,
+  messagePanelAnchorOf,
   messagePanelBounds,
+  messagePanelPlacement,
+  messagePanelWidth,
   mineColumnWidth,
   mineOnlyWidth,
   panelBounds,
@@ -621,5 +627,226 @@ describe('messagePanelBounds', () => {
     const shell = shellAt(odd, 'right')
     const bounds = messagePanelBounds(odd, shell, 'right', 237)
     for (const value of Object.values(bounds)) expect(Number.isInteger(value)).toBe(true)
+  })
+})
+
+/*
+ * The panel the person MOVED (#296).
+ *
+ * Everything above derives the panel's rectangle from where the shell is. This
+ * block is the other half: once the person has dragged the window somewhere,
+ * the shell stops being the thing it is placed against, and the only rectangle
+ * that still matters is the one they chose — kept on the screen, and nothing
+ * else. The arithmetic is here for the reason the docked arithmetic is: a clamp
+ * that only ever runs on a real display is a clamp nobody can assert.
+ */
+describe('detachedMessagePanelWidth', () => {
+  it('takes the design’s own 990px, scaled onto this display', () => {
+    for (const area of [AT_1X, AT_1_333X, AT_2X]) {
+      expect(detachedMessagePanelWidth(area)).toBe(scaled(area, MESSAGE_PANEL_DESIGN_WIDTH))
+    }
+  })
+
+  it('never asks for more width than the display has', () => {
+    expect(detachedMessagePanelWidth({ x: 0, y: 0, width: 640, height: 1080 })).toBe(640)
+  })
+
+  it('still asks for a window the platform will actually make', () => {
+    // The same floor the docked panel holds: a window of no width is not a
+    // narrow panel, it is one that looks as though it never opened.
+    expect(detachedMessagePanelWidth({ x: 0, y: 0, width: 1920, height: 20 })).toBe(
+      MIN_WINDOW_WIDTH
+    )
+  })
+
+  it('owes nothing to the shell, which is the whole point of being detached', () => {
+    // The docked width shrinks to the room beside the shell (see
+    // messagePanelWidth); a detached panel is not placed beside anything, so a
+    // shell spanning the display cannot narrow it.
+    const spanning = { x: 0, y: 0, width: AT_1X.width, height: AT_1X.height }
+    expect(detachedMessagePanelWidth(AT_1X)).toBeGreaterThan(
+      messagePanelWidth(AT_1X, spanning, 'right')
+    )
+  })
+})
+
+describe('clampMessagePanelBounds', () => {
+  const RECT = { x: 400, y: 300, width: 990, height: 235 }
+
+  it('leaves a rectangle already inside the work area exactly where it is', () => {
+    expect(clampMessagePanelBounds(AT_1X, RECT)).toEqual(RECT)
+  })
+
+  it('pulls a rectangle hanging off the right or the bottom back inside', () => {
+    const off = clampMessagePanelBounds(AT_1X, { ...RECT, x: 1800, y: 1000 })
+    expect(off.x).toBe(AT_1X.width - RECT.width)
+    expect(off.y).toBe(AT_1X.height - RECT.height)
+  })
+
+  it('pulls a rectangle hanging off the left or the top back inside', () => {
+    const off = clampMessagePanelBounds(AT_1X, { ...RECT, x: -500, y: -80 })
+    expect(off.x).toBe(0)
+    expect(off.y).toBe(0)
+  })
+
+  it('clamps against the rectangle it was handed, never against the origin', () => {
+    // A second display sits at its own origin, and that origin can be negative.
+    for (const area of [
+      { x: 2560, y: 357, width: 1920, height: 1032 },
+      { x: -1920, y: 0, width: 1920, height: 1080 }
+    ]) {
+      const pushed = clampMessagePanelBounds(area, { ...RECT, x: area.x - 4000, y: area.y - 4000 })
+      expect(pushed.x).toBe(area.x)
+      expect(pushed.y).toBe(area.y)
+      const pulled = clampMessagePanelBounds(area, { ...RECT, x: area.x + 9999, y: area.y + 9999 })
+      expect(pulled.x + pulled.width).toBe(area.x + area.width)
+      expect(pulled.y + pulled.height).toBe(area.y + area.height)
+    }
+  })
+
+  it('never asks for a window bigger than the work area', () => {
+    const huge = clampMessagePanelBounds(
+      { x: 0, y: 0, width: 800, height: 200 },
+      { x: 0, y: 0, width: 990, height: 578 }
+    )
+    expect(huge.width).toBe(800)
+    expect(huge.height).toBe(200)
+  })
+
+  it('returns whole pixels, which is all Electron accepts for bounds', () => {
+    const odd = clampMessagePanelBounds(
+      { x: 0, y: 0, width: 1367, height: 769 },
+      { x: 12.4, y: 700.6, width: 990.5, height: 235.5 }
+    )
+    for (const value of Object.values(odd)) expect(Number.isInteger(value)).toBe(true)
+  })
+})
+
+describe('detachedMessagePanelBounds', () => {
+  const DESIGN_HEIGHT = 235
+  const ANCHOR = { x: 300, bottom: 900 }
+
+  it('puts the panel back exactly where the person left it', () => {
+    const bounds = detachedMessagePanelBounds(AT_1X, ANCHOR, DESIGN_HEIGHT)
+    expect(bounds).not.toBeNull()
+    expect(bounds?.x).toBe(ANCHOR.x)
+    expect(bounds?.y).toBe(ANCHOR.bottom - DESIGN_HEIGHT)
+    expect(bounds?.width).toBe(scaled(AT_1X, MESSAGE_PANEL_DESIGN_WIDTH))
+    expect(bounds?.height).toBe(Math.round(DESIGN_HEIGHT * uiScale(AT_1X)))
+  })
+
+  it('grows UPWARD from the anchored bottom edge, exactly as the docked panel does', () => {
+    const short = detachedMessagePanelBounds(AT_1X, ANCHOR, 235)
+    const tall = detachedMessagePanelBounds(AT_1X, ANCHOR, 578)
+    expect((short?.y ?? 0) + (short?.height ?? 0)).toBe(ANCHOR.bottom)
+    expect((tall?.y ?? 0) + (tall?.height ?? 0)).toBe(ANCHOR.bottom)
+    expect(tall?.y).toBeLessThan(short?.y ?? 0)
+    expect(tall?.x).toBe(short?.x)
+  })
+
+  it('keeps a panel dragged half off the screen on the screen', () => {
+    const bounds = detachedMessagePanelBounds(AT_1X, { x: 1600, bottom: 1200 }, DESIGN_HEIGHT)
+    expect(bounds?.x).toBe(AT_1X.width - scaled(AT_1X, MESSAGE_PANEL_DESIGN_WIDTH))
+    expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBe(AT_1X.height)
+  })
+
+  it('refuses an anchor that no longer touches this display at all', () => {
+    // The monitor it was dragged onto was unplugged, or the resolution shrank
+    // under it: a rectangle with nothing on screen is not a position to honour,
+    // and clamping it would move the panel somewhere nobody chose.
+    expect(detachedMessagePanelBounds(AT_1X, { x: 3000, bottom: 900 }, DESIGN_HEIGHT)).toBeNull()
+    expect(detachedMessagePanelBounds(AT_1X, { x: -1500, bottom: 900 }, DESIGN_HEIGHT)).toBeNull()
+    expect(detachedMessagePanelBounds(AT_1X, { x: 300, bottom: -10 }, DESIGN_HEIGHT)).toBeNull()
+    expect(detachedMessagePanelBounds(AT_1X, { x: 300, bottom: 2000 }, DESIGN_HEIGHT)).toBeNull()
+  })
+
+  it('refuses a work area with no room in it', () => {
+    expect(detachedMessagePanelBounds({ x: 0, y: 0, width: 0, height: 0 }, ANCHOR, 235)).toBeNull()
+  })
+
+  it('reads back the anchor of the rectangle it produced', () => {
+    const bounds = detachedMessagePanelBounds(AT_1X, ANCHOR, DESIGN_HEIGHT)
+    expect(messagePanelAnchorOf(bounds as ScreenRect)).toEqual(ANCHOR)
+  })
+})
+
+describe('messagePanelPlacement', () => {
+  const DESIGN_HEIGHT = 235
+  const MINE_ONLY = { expanded: false, mineOpen: true }
+
+  it('is the docked rectangle while nothing has been moved', () => {
+    for (const edge of ['left', 'right'] as const) {
+      for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+        const shell = panelBounds(AT_1X, edge, layout)
+        expect(messagePanelPlacement(AT_1X, shell, edge, DESIGN_HEIGHT, null)).toEqual(
+          messagePanelBounds(AT_1X, shell, edge, DESIGN_HEIGHT)
+        )
+      }
+    }
+  })
+
+  it('stops following the shell once the person has moved it', () => {
+    // The decision the whole issue is about: a shell that moved, grew or
+    // changed its docked side no longer drags the panel around with it.
+    const anchor = { x: 300, bottom: 900 }
+    const railRight = panelBounds(AT_1X, 'right', CLOSED)
+    const openLeft = panelBounds(AT_1X, 'left', OPEN_WITH_MINE)
+    expect(messagePanelPlacement(AT_1X, railRight, 'right', DESIGN_HEIGHT, anchor)).toEqual(
+      messagePanelPlacement(AT_1X, openLeft, 'left', DESIGN_HEIGHT, anchor)
+    )
+  })
+
+  it('lets the person put the panel ON TOP of the shell', () => {
+    // It is already a child window, so it stands above the shell; nothing here
+    // may refuse an overlap somebody chose.
+    const shell = panelBounds(AT_1X, 'right', OPEN_WITH_MINE)
+    const onTop = messagePanelPlacement(AT_1X, shell, 'right', DESIGN_HEIGHT, {
+      x: shell.x,
+      bottom: shell.y + shell.height
+    })
+    expect(onTop.x).toBe(shell.x)
+    expect(onTop.x).toBeLessThan(shell.x + shell.width)
+  })
+
+  it('keeps resizing in place when the panel reports a new height', () => {
+    const anchor = { x: 300, bottom: 900 }
+    const shell = panelBounds(AT_1X, 'right', MINE_ONLY)
+    const short = messagePanelPlacement(AT_1X, shell, 'right', 235, anchor)
+    const tall = messagePanelPlacement(AT_1X, shell, 'right', 578, anchor)
+    expect(tall.height).toBeGreaterThan(short.height)
+    expect(tall.x).toBe(short.x)
+    expect(tall.y + tall.height).toBe(short.y + short.height)
+  })
+
+  it('falls back to the docked rectangle when the position no longer fits', () => {
+    const shell = panelBounds(AT_1X, 'right', MINE_ONLY)
+    const anchor = { x: 4000, bottom: 900 }
+    expect(messagePanelPlacement(AT_1X, shell, 'right', DESIGN_HEIGHT, anchor)).toEqual(
+      messagePanelBounds(AT_1X, shell, 'right', DESIGN_HEIGHT)
+    )
+  })
+
+  it('stays inside the work area for every anchor, on both edges', () => {
+    for (const area of [
+      AT_1X,
+      AT_2X,
+      { x: 2560, y: 357, width: 1920, height: 1032 },
+      { x: 0, y: 0, width: 1024, height: 768 }
+    ]) {
+      for (const edge of ['left', 'right'] as const) {
+        for (const anchor of [
+          { x: area.x + 10, bottom: area.y + 400 },
+          { x: area.x + area.width - 20, bottom: area.y + area.height + 300 },
+          { x: area.x - 20, bottom: area.y + 40 }
+        ]) {
+          const shell = panelBounds(area, edge, OPEN_WITH_MINE)
+          const bounds = messagePanelPlacement(area, shell, edge, 578, anchor)
+          expect(bounds.x).toBeGreaterThanOrEqual(area.x)
+          expect(bounds.x + bounds.width).toBeLessThanOrEqual(area.x + area.width)
+          expect(bounds.y).toBeGreaterThanOrEqual(area.y)
+          expect(bounds.y + bounds.height).toBeLessThanOrEqual(area.y + area.height)
+        }
+      }
+    }
   })
 })

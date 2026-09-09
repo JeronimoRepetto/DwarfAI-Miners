@@ -333,3 +333,133 @@ export function messagePanelBounds(
   const bottom = Math.min(shell.y + shell.height, area.y + area.height)
   return { x, y: Math.max(area.y, bottom - height), width, height }
 }
+
+/**
+ * Where a message-panel window the person MOVED is anchored (#296).
+ *
+ * Two numbers rather than a whole rectangle, because only two of the four are
+ * the person's: the width is still the design's own 990 scaled onto the
+ * display, and the height is still whatever the panel last measured of itself
+ * (the design's vertical-only resize, see `messagePanelBounds`). Storing a
+ * rectangle would mean storing a width and a height nothing may honour and
+ * inviting a later reader to honour them anyway.
+ *
+ * `bottom` rather than a top edge, for the reason the docked panel aligns on
+ * its bottom: a taller panel grows UPWARD, so the bottom is the edge that
+ * stays put across a height report and the top is the one that follows.
+ */
+export interface MessagePanelAnchor {
+  /** Its left edge, in the display coordinates Electron's bounds speak. */
+  x: number
+  /** Its BOTTOM edge, which is the one a height change leaves alone. */
+  bottom: number
+}
+
+/** The anchor of a rectangle — what main records once a drag has ended. */
+export function messagePanelAnchorOf(rect: ScreenRect): MessagePanelAnchor {
+  return { x: rect.x, bottom: rect.y + rect.height }
+}
+
+/**
+ * How wide a DETACHED message panel is: the design's own 990, scaled, and
+ * nothing to do with the shell (#296).
+ *
+ * `messagePanelWidth` shrinks to the room beside the shell, which is the honest
+ * answer for a panel placed against it — the shell is what ate the room. A
+ * panel the person carried somewhere else is not placed against anything, so
+ * that reasoning does not reach it: it gets the design's width, and the only
+ * two limits left are the display it is on and the narrowest window the
+ * platform will actually make.
+ */
+export function detachedMessagePanelWidth(area: ScreenRect): number {
+  const design = Math.round(MESSAGE_PANEL_DESIGN_WIDTH * uiScale(area))
+  return Math.min(area.width, Math.max(MIN_WINDOW_WIDTH, design))
+}
+
+/** Pull one value back between two bounds; the bounds win over the value. */
+function within(value: number, low: number, high: number): number {
+  return Math.min(Math.max(Math.round(value), low), high)
+}
+
+/**
+ * Keep a rectangle inside the work area it is meant to be on (#296).
+ *
+ * Run on EVERY apply rather than only at the end of a drag: the display the
+ * panel sits on can change under it — a resolution change, a monitor
+ * unplugged, a taskbar appearing — and a window whose position was recorded
+ * once is a window that can be off-screen with no gesture involved. The size
+ * is clamped before the origin, because a rectangle bigger than the area has
+ * no origin that would fit it.
+ */
+export function clampMessagePanelBounds(area: ScreenRect, rect: ScreenRect): ScreenRect {
+  const width = Math.min(area.width, Math.max(MIN_WINDOW_WIDTH, Math.round(rect.width)))
+  const height = Math.min(area.height, Math.max(1, Math.round(rect.height)))
+  return {
+    x: within(rect.x, area.x, area.x + area.width - width),
+    y: within(rect.y, area.y, area.y + area.height - height),
+    width,
+    height
+  }
+}
+
+/**
+ * The rectangle a stored anchor asks for on this display, or `null` when the
+ * anchor no longer means anything here (#296).
+ *
+ * The refusal is the interesting half. A position is remembered across
+ * restarts and across display changes, so it can name a place that is simply
+ * gone: the second monitor it was dragged onto was unplugged, or the
+ * resolution shrank under it. Clamping such an anchor would still produce a
+ * rectangle on screen — but one nobody chose, at a corner of a display the
+ * panel was never on, which reads as the app having moved the panel by itself.
+ * Answering `null` lets the caller fall back to the docked placement, which is
+ * a place the person has seen the panel before.
+ *
+ * The test is whether the asked-for rectangle still TOUCHES the work area, and
+ * it is deliberately generous: a panel dragged mostly off the right edge is a
+ * panel somebody put there, and it is clamped back into view rather than
+ * disowned.
+ */
+export function detachedMessagePanelBounds(
+  area: ScreenRect,
+  anchor: MessagePanelAnchor,
+  designHeight: number
+): ScreenRect | null {
+  if (area.width <= 0 || area.height <= 0) return null
+  const width = detachedMessagePanelWidth(area)
+  const height = Math.min(area.height, Math.max(1, Math.round(designHeight * uiScale(area))))
+  const asked = { x: Math.round(anchor.x), y: Math.round(anchor.bottom) - height, width, height }
+  const touches =
+    asked.x < area.x + area.width &&
+    asked.x + asked.width > area.x &&
+    asked.y < area.y + area.height &&
+    asked.y + asked.height > area.y
+  return touches ? clampMessagePanelBounds(area, asked) : null
+}
+
+/**
+ * Where the message-panel window goes: beside the shell, or where the person
+ * put it (#296).
+ *
+ * The one decision this whole issue is about, and it is here rather than in the
+ * window so that it can be asserted without a display. An anchor means the
+ * panel has been MOVED, and a moved panel stops following the shell — the shell
+ * changing side, growing for a mine, or being re-placed on another display no
+ * longer drags the conversation across the desktop with it. What still reaches
+ * a detached panel is its own height (the design's vertical-only resize, which
+ * grows it upward from the anchored bottom edge) and the clamp above.
+ *
+ * With no anchor this is exactly `messagePanelBounds`, which is what opening
+ * the panel does: docked until moved, so the first open is the composition the
+ * design's own mock draws and nothing has to be learned to get it.
+ */
+export function messagePanelPlacement(
+  area: ScreenRect,
+  shell: ScreenRect,
+  edge: PanelEdge,
+  designHeight: number,
+  anchor: MessagePanelAnchor | null
+): ScreenRect {
+  const detached = anchor === null ? null : detachedMessagePanelBounds(area, anchor, designHeight)
+  return detached ?? messagePanelBounds(area, shell, edge, designHeight)
+}
