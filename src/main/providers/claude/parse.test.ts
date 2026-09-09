@@ -42,9 +42,10 @@ describe('encodeClaudeProjectDir', () => {
 
 describe('parseClaudeSessionEntry', () => {
   it('parses a real sessions/<pid>.json registry entry', () => {
-    // AMENDED for #255: `statusReported` joined the shape. The assertion is
-    // whole-object on purpose — a field added here has to be declared — and
-    // nothing else about the parse moved.
+    // AMENDED for #255: `statusReported` joined the shape, and again for
+    // #313: `statusUpdatedAt`. The assertion is whole-object on purpose — a
+    // field added here has to be declared — and nothing else about the parse
+    // moved either time.
     expect(parseClaudeSessionEntry(sessionEntryJson)).toEqual({
       pid: 32896,
       sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
@@ -55,8 +56,22 @@ describe('parseClaudeSessionEntry', () => {
       kind: 'interactive',
       name: 'sample-project-70',
       startedAt: 1788001972417,
-      updatedAt: 1788003794280
+      updatedAt: 1788003794280,
+      statusUpdatedAt: 1788003794280
     })
+  })
+
+  it('keeps statusUpdatedAt, which dates the write that proves a REPL is there (#313)', () => {
+    // A session with no transcript yet is judged by this stamp, so a
+    // non-numeric one has to read as absent rather than as a fresh write.
+    expect(
+      parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', statusUpdatedAt: 1788003794280 })
+        ?.statusUpdatedAt
+    ).toBe(1788003794280)
+    expect(
+      parseClaudeSessionEntry({ pid: 1, sessionId: 's', cwd: 'c', statusUpdatedAt: 'soon' })
+        ?.statusUpdatedAt
+    ).toBeUndefined()
   })
 
   it('keeps the session kind, which is what separates a TUI from a headless job', () => {

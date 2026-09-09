@@ -56,6 +56,18 @@ export interface ClaudeSessionEntry {
   name?: string
   startedAt?: number
   updatedAt?: number
+  /**
+   * When the registry's `status` was last written — the stamp on the very
+   * write `statusReported` above reads the existence of (#313).
+   *
+   * A session that has never been prompted has no transcript, so nothing else
+   * on disk can date its console. This is the closest fact there is: the REPL
+   * wrote it, and the REPL is the console. Not `updatedAt`, which the entry
+   * also moves for changes that say nothing about a prompt being open, and not
+   * a guarantee — an older build may report a status and no stamp for it, so
+   * the caller falls back to `startedAt` (ClaudeProvider.sitsAtAnOpenPrompt).
+   */
+  statusUpdatedAt?: number
 }
 
 /** A subagent launched with the Agent tool that has not completed yet. */
@@ -261,7 +273,8 @@ export function parseClaudeSessionEntry(json: unknown): ClaudeSessionEntry | nul
     kind: asString(json.kind),
     name: asString(json.name),
     startedAt: asNumber(json.startedAt),
-    updatedAt: asNumber(json.updatedAt)
+    updatedAt: asNumber(json.updatedAt),
+    statusUpdatedAt: asNumber(json.statusUpdatedAt)
   }
 }
 
