@@ -427,3 +427,207 @@ project" bucket or attributing to the storage folder. **[V — this machine, 202
 confidence: high for the Windows/Codex-Desktop/no-open-folder case sampled here; the
 macOS/Linux equivalent artifact-storage layout, if one exists, is UNCONFIRMED — this
 heuristic is Windows-verified only.]**
+
+## 8. Thread → process, measured 2026-09-09, codex-cli 0.153.4
+
+Issue #305, step 1. **Verdict: no join available today meets the guarantee Claude's registry pid
+has.** One real thread→pid binding exists and had not been found before — the pid is embedded in
+`logs_2.sqlite`'s `process_uuid` — but it is many-to-one, not stable over a thread's life, and the
+store carries nothing to re-verify it against pid reuse. The strongest thing 0.153.4 adds is a
+CLI-side hook surface that COULD carry the join; it is a candidate, not a measurement.
+
+Read with §4's "Pid" paragraph, which this supersedes: that paragraph said no file maps a thread to
+a serving process. That is now wrong in the letter and right in the conclusion.
+
+Machine: Windows 11, `codex-cli 0.153.4` on PATH (pnpm install) plus the Codex desktop app
+(`OpenAI.Codex_26.901.*`). Everything below is read-only: process enumeration, and reads of the
+store. No Codex session was started, resumed, prompted, focused or signalled. Two `codex.exe`
+processes were live throughout and are referred to as **P-tui** (the interactive CLI, started from a
+terminal tab) and **P-app** (the desktop app's `app-server` backend, a child of the app's own
+`ChatGPT.exe`). Real pids and thread uuids are not reproduced here.
+
+### The exact procedure, so nobody walks it again
+
+1. `Get-CimInstance Win32_Process`, filtered on a name or command line containing `codex`, taking
+   `ProcessId, CreationDate, ExecutablePath, CommandLine, ParentProcessId`, then resolving the
+   parent chain by repeating the query on `ParentProcessId`. **Do not** use `Get-Process`: its
+   `Path` is the binary, and it has no parent link.
+2. `node --version` ≥ 22 and `node:sqlite`'s `DatabaseSync(file, { readOnly: true })` against every
+   `*.sqlite` in `~/.codex` **and** every `*.db` in `~/.codex/sqlite` (new in this build). WAL reads
+   worked with no lock contention and no copy-before-read, exactly as in §3.
+3. `PRAGMA table_info(<table>)` on each table, then the queries in the sections below.
+4. `codex --version`, `codex --help`, and `--help` on `app-server`, `app-server daemon`, `agents`
+   and `debug`. Help output only — none of these opens or resumes a thread.
+5. Read the first line of a rollout for a 0.153.4 thread and take `Object.keys(payload)`; scan the
+   whole file for the four pid-shaped key names (`pid`, `osPid`, `process_id`, `processId`).
+
+### (a) The store still records no pid for a thread — negative, re-measured
+
+- **`state_5.sqlite.threads`** (193 rows) carries the same 38 columns §3 lists, and not one of them
+  names a process: filtering the column list for `pid|proc|host|port|sock` returns the empty set.
+  The `threads` row is still the best thread-level record, and still says nothing about who serves
+  it.
+- **`~/.codex/sqlite/codex-dev.db` is new** and does not help. Its `local_thread_catalog` (1,444
+  rows: `host_id, thread_id, display_title, source_created_at, source_updated_at, cwd, source_kind,
+source_detail, model_provider, git_branch, observation_sequence, missing_candidate, thread_source,
+source_recency_at, pending_observed_title, project_id, conversation_origin`) is the desktop app's
+  own index over local and ChatGPT-hosted threads. Its `host_id` joins
+  `local_thread_catalog_hosts (host_id, host_kind)`, whose two rows are `local` and a ChatGPT
+  account identity — a **sync source**, never a process. Its siblings are
+  `local_thread_catalog_metadata`, `_scan_checkpoints`, `_scan_entries`, `_sync_state`,
+  `thread_timeline_ledger`, `automations`, `automation_runs`, `inbox_items`,
+  `local_app_server_feature_enablement`, `codex_schema_migrations`. Beside it,
+  `codex-thread-summaries-dev.db` holds one table, `thread_turn_summaries`.
+- **The rollout head is unchanged in kind.** `session_meta.payload` for a 0.153.4 `source: "cli"`
+  thread carries `session_id, id, timestamp, cwd, originator, cli_version, source, thread_source,
+model_provider, base_instructions, history_mode, context_window, git` — `git` is the one addition
+  since §7's inventory, and a spawned worker adds `forked_from_id, parent_thread_id, agent_nickname,
+agent_path, subagent_history_start_ordinal, multi_agent_version`. **No pid, on any of the eight
+  rollouts written that day.**
+- **`process_id` DOES appear inside rollouts, and it is not the session's.** Every hit sits on an
+  `event_msg` of type `item_completed` whose `item.type` is `CommandExecution`: it is the pid of a
+  shell the agent ran (on Windows, the `powershell.exe` it spawned). Same class as
+  `process_manager/chat_processes.json`'s `osPid`, which is unchanged — still shell commands only,
+  still often `null`, still holding entries months old.
+  - The tempting derivation — that such a pid's PARENT is the codex process, so an ancestor walk
+    names it — was **not measured**, and cannot carry a control even if it holds: the pid exists
+    only while that command runs, so a session that is thinking, streaming, or waiting on the model
+    has none. A join that is absent exactly when it is asked is not a join. Recorded so the next
+    reader does not have to think of it twice.
+
+### (b) The pid IS in the store, in `logs_2.sqlite` — positive, with three limits
+
+**`logs.process_uuid` has the shape `pid:<os pid>:<uuid v4>`** — 39,820 of 39,820 retained rows
+match `pid:[0-9]*:*`, none deviates. `logs.thread_id` is populated on session-scoped lines. So
+`SELECT process_uuid FROM logs WHERE thread_id = ? ORDER BY ts DESC LIMIT 1` answers "which OS
+process last served this thread", and the uuid half distinguishes two processes that happened to
+share a pid.
+
+Verified live, both directions:
+
+- The one thread open in the TUI at measurement time carried P-tui's pid in every one of its log
+  rows, and P-tui's `Win32_Process.CreationDate` matched that process's first log line **to the
+  second** (`logs.ts` is unix seconds; `ts_nanos` beside it carries the sub-second part).
+- P-app's rows carry P-app's pid, and its `thread_id` is null on the app-server's own global lines
+  (`codex_app_server::message_processor`, `codex_http_client::*`) exactly as §3 describes.
+
+Three limits, each measured:
+
+1. **Many-to-one, not 1:1.** One `source: 'cli'` TUI process was observed serving **six** threads —
+   its own root plus five `thread_source: 'subagent'` children it spawned during a turn. Another
+   process served **nine**, spanning `source: 'cli'` and `source: 'vscode'` threads at once. So the
+   pid behind a subagent dwarf is its PARENT session's process, and the pid behind a desktop thread
+   is a backend shared with every other desktop thread. Ending either process tree would end
+   sessions nobody pointed at — the precise failure #329 exists to prevent.
+2. **Not stable over a thread's life.** Seven threads in the retained window were served by two or
+   three different pids: a thread resumed in a new process keeps its id and changes its server. Only
+   the NEWEST row is an answer, and only while that process is still alive.
+3. **Coverage and retention are both partial.** 80 of the 193 registered threads have ever produced
+   a log row in the retained window, and the window is a rolling one: ids run 1,181,876→1,363,821
+   (~182k rows issued) for 39,820 rows kept, oldest ten days back. A thread with no row has no
+   binding, and nothing promises a given thread will write one.
+
+**On pid reuse.** The store records no process creation time, so it cannot re-verify a pid the way
+`LaunchedSessionRegistry` does. There is a sound test that uses only what is here, and it is worth
+writing down because it is not obvious: probe the candidate pid's creation time `C` now; a process
+alive at instant `T` is the unique owner of its pid at `T`, so if `C` is EARLIER than the timestamp
+of the log row the pid was read from, the process running now is the one that wrote that row.
+Later, and it is a different process wearing the same number. This is as strong as the
+creation-time check, with two caveats: `logs.ts` is whole seconds, so the comparison needs a margin
+(or `ts_nanos`), and it proves identity at the row's instant, not that the process has not exited
+and been replaced since — which is the same thing `processStartTimeMs` proves, and the reason that
+check is re-run at every act rather than cached. In the retained window **no pid appears under two
+different `process_uuid`s**, so reuse was not observed here; the uuid is nevertheless the field that
+would catch it.
+
+### (c) The OS side alone cannot do it on Windows — negative
+
+- **`Win32_Process` has no working-directory property.** The class exposes `CommandLine`,
+  `ExecutablePath`, `ParentProcessId`, `CreationDate`, `SessionId` and resource counters, and
+  nothing else that locates a process in the filesystem. Reading a process's actual cwd means
+  reading its PEB through `OpenProcess`, which is a native call this app does not make and could not
+  make against an elevated session anyway.
+- **Neither codex process publishes its folder on its command line.** The 0.153.4 TUI's
+  `CommandLine` is the bare executable path with no arguments at all — no `-C`, no `--cd`. Its
+  parent is a `node.exe` running the package's `codex.js` shim, whose own command line is the shim
+  path and nothing more. **This corrects `docs/provider-formats.md` §4**, which records
+  `--working-dir <path>` on Codex's node helper processes as "the closest thing to a verifiable
+  PID↔project link found so far": that argument is not present on 0.153.4, and the claim should not
+  be relied on.
+- **The ancestor chain reaches the terminal, which is shared.** P-tui's chain is
+  `codex.exe → node.exe → cmd.exe → WindowsTerminal.exe`. The host window is one process for every
+  tab, so it identifies a terminal and never a session — the same fact #329 measured for Claude.
+- **Creation time correlates only for a thread born with its process.** P-tui's creation time and
+  its thread's `thread/start` line agree to the second, which is a genuine consistency check to
+  ASSERT once a candidate exists. It is not a way to FIND one: `codex resume` opens an old thread in
+  a new process, so `threads.created_at` and the process's birth then disagree by days, and a TUI
+  sitting at its session picker has a process older than any thread it will open.
+- **"Two threads in one folder" is the wrong question for this build.** It was posed for a world of
+  one process per session. What was actually observed is a single backend serving nine threads
+  across two different `source` values simultaneously, and a single TUI serving six. Per-cwd
+  uniqueness would be satisfied by many of those and would still be the wrong answer.
+
+### (d) What Codex itself offers — no pid, and one candidate worth building on
+
+- **`codex --help` (0.153.4)** lists `agents, exec, review, login, logout, mcp, plugin, mcp-server,
+app-server, remote-control, app, completion, update, doctor, sandbox, debug, apply, resume, queue,
+archive, delete, migrate-rollouts, unarchive, fork, cloud, exec-server, features, help`. **None
+  reports a process for a thread.** `codex agents` is a TUI browser over "the shared local
+  app-server daemon"; `codex debug` offers `models`, `app-server` and `prompt-input`, all of them
+  renderers.
+- **`codex app-server daemon` now has `bootstrap`, `start`, `restart`, `stop`, `version` and the two
+  remote-control toggles** — the Windows refusal §3 recorded may well be gone. This makes the join
+  WORSE rather than better: a shared daemon is one process for every thread on the machine, and any
+  pid read off it names the daemon.
+- **The 0.153.4 TUI runs its app-server in-process.** Its own `thread/start` log line carries
+  `rpc.transport="in-process"`. That is what makes the pid in (b) the session's own process at all,
+  and it is a property of this build rather than a contract.
+- **Codex now has Claude-style hooks, and this is the candidate.** `~/.codex/hooks.json` uses the
+  same shape Claude Code's does — `SessionStart`, `PreToolUse` with a `matcher`, and (per the
+  `hooks.state` keys in `config.toml`) `SessionEnd`, `UserPromptSubmit`, `SubagentStop`. A hook
+  command is run BY the session's own process, so its parent chain names that process while the
+  session is alive, and its payload names the thread. That is the same opt-in push channel this app
+  already has for Claude (`main/hooks`), and it is the only route found that could produce a
+  first-party, per-thread, per-process fact rather than an inference. **UNMEASURED**: the payload's
+  field names, whether the hook runs as a direct child or through a shell, and whether it fires on
+  `resume`. Measuring it means starting a Codex session, which this slice was not permitted to do.
+- **`~/.codex/thread-writer-locks/<thread-uuid>.lock`** is new: one zero-byte file per live thread
+  writer, beside a `.coordination.lock`. It names the thread and carries no pid, and finding the
+  process holding a Windows file handle needs a native handle enumeration this app has no port for.
+  Worth knowing as a liveness signal — it is Codex's own statement that a writer is open, the same
+  class of evidence Antigravity's presence lock gives (`provider-formats.md` §3.1.2) — but it is not
+  a process link.
+
+### Recommendation
+
+**Nothing here clears the bar `LaunchedSessionRegistry` sets, so an observed Codex dwarf gets no
+pid-backed act today.** That registry records a pid and its creation time at the one instant it
+holds the handle, and re-probes the creation time at every act; the pid is the app's own or it is
+nothing. Every join above is an inference over somebody else's records.
+
+If a Codex act is built before the hook is measured, `logs.process_uuid` is the only honest input,
+and it needs all of these gates, none of them optional:
+
+1. the thread's newest `logs` row is recent, and its `process_uuid` is the one acted on;
+2. that pid is alive and its creation time is earlier than that row's timestamp (the test in (b));
+3. the pid's `ExecutablePath` is the CLI package's `codex.exe`, not the desktop app's install tree —
+   the desktop backend is shared and its parent is the app itself;
+4. `threads.source = 'cli'` **and** `thread_source = 'user'`, so the dwarf is a root and not a
+   subagent sharing its parent's process;
+5. no other thread has a live binding to the same pid.
+
+Fail any one of them and the answer is the refusal, not a guess. That refusal is what step 3 of #305
+puts on the control (`OPEN_TURN_NO_INTERRUPT_HINT` in the renderer's `actionBar.ts`).
+
+One consequence for #305's own step 2, which #329 has since overtaken: the act behind a verified pid
+is **ending that session's process tree**, not focusing a window and sending Esc. A focus step is
+for the Console control alone, and the panel sends no keystroke into a window it cannot prove is the
+session's own. Every gate above is written for an act that ends a process, which is why gates 3 and
+4 matter as much as the identity check — ending the shared backend, or a subagent's parent, would
+end sessions nobody pointed at.
+
+**Confidence**: the `process_uuid` shape, the row counts, the many-to-one and multi-pid measurements
+and the absent columns are **verified** against this machine's live store. The pid-reuse test in (b)
+is **reasoned from the uniqueness of a live pid**, not observed — no reuse occurred in the window.
+The hook route and the rollout-`process_id` ancestor walk are **unmeasured candidates**, explicitly
+so. Everything is one build on one OS: `0.153.4` on Windows 11.

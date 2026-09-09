@@ -13,6 +13,7 @@ import {
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
   oneShotNoExitReason,
+  OPEN_TURN_NO_INTERRUPT_HINT,
   refusalLine,
   SESSION_ENDED_REASON,
   type ActionBarEntry,
@@ -135,10 +136,21 @@ describe('buildActionBar', () => {
      * they press Kick on it is not "interrupt the turn" but "I am done with
      * this one": the control stays live and dismisses the dwarf.
      */
+    /*
+     * AMENDED for #305, step 3: `status: 'waiting'` pinned, where the fixture
+     * used to inherit `defaultDwarf`'s `'working'`. Nothing about this
+     * assertion changed - the dismissal is still what a dwarf with no cancel
+     * channel gets - but it is now the answer for an IDLE one only, so the test
+     * has to say which it is asking about. Mid-turn is its own block at the
+     * foot of this file.
+     */
     it('is enabled, and says it dismisses, when the session has no cancel channel', () => {
       const entry = entryFor(
         'kick',
-        capableDwarf({ capabilities: { sendText: null, cancel: null, adjustEffort: null } })
+        capableDwarf({
+          status: 'waiting',
+          capabilities: { sendText: null, cancel: null, adjustEffort: null }
+        })
       )
       expect(entry.enabled).toBe(true)
       expect(entry.name).toBe('Kick')
@@ -146,8 +158,9 @@ describe('buildActionBar', () => {
     })
 
     /* AMENDED for #293, same reason as above (was: 'is disabled when ...'). */
+    /* AMENDED for #305, step 3: `status: 'waiting'` pinned, same reason as above. */
     it('is enabled and dismisses when the dwarf carries no capability matrix at all', () => {
-      const entry = entryFor('kick', defaultDwarf())
+      const entry = entryFor('kick', defaultDwarf({ status: 'waiting' }))
       expect(entry.enabled).toBe(true)
       expect(entry.hint).toBe(DISMISS_HINT)
     })
@@ -186,10 +199,12 @@ describe('buildActionBar', () => {
      * misleading now that it does something. The queue's limit is still stated;
      * it is now the first half of what Kick does instead.
      */
+    /* AMENDED for #305, step 3: `status: 'waiting'` pinned, same reason as above. */
     it('offers the dismissal where only the queue can deliver, and says why', () => {
       const entry = entryFor(
         'kick',
         capableDwarf({
+          status: 'waiting',
           textDelivery: 'codex-queue',
           capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
         })
@@ -218,11 +233,13 @@ describe('buildActionBar', () => {
      * happen is this dwarf being promised the interrupt of a turn, which is
      * exactly what its protocol has no event for.
      */
+    /* AMENDED for #305, step 3: `status: 'waiting'` pinned, same reason as above. */
     it('offers the dismissal for a held protocol with no cancel, never the interrupt', () => {
       const entry = entryFor(
         'kick',
         capableDwarf({
           provider: 'antigravity',
+          status: 'waiting',
           textDelivery: 'held-session',
           capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
         })
@@ -419,8 +436,9 @@ describe('buildActionBar', () => {
      * board, and the composer beside it still carries the sentence about the
      * session, which is where that fact belongs.
      */
+    /* AMENDED for #305, step 3: `status: 'waiting'` pinned, same reason as above. */
     it('offers the dismissal, without ever claiming an exit for the session', () => {
-      const entry = entryFor('kick', foreign())
+      const entry = entryFor('kick', foreign({ status: 'waiting' }))
       expect(entry.enabled).toBe(true)
       expect(entry.hint).toBe(DISMISS_HINT)
       expect(entry.hint).not.toBe(oneShotNoExitReason('codex'))
@@ -663,5 +681,100 @@ describe('the copy for a named console session that pastes messages and interrup
     // The relay's whole point is that it touches no window — its copy must not
     // borrow the console's.
     expect(CHANNEL_HINT['claude-relay']).not.toMatch(/console|typ|window|focus/i)
+  })
+})
+
+/*
+ * Issue #305, step 3. Kick on an OPEN turn nothing here can interrupt.
+ *
+ * #293 made a kick with no cancel channel a dismissal, and on a `working`
+ * dwarf that reads as a control that does not work: an open turn counts as
+ * activity, so the lifecycle tracker puts the dwarf straight back on the rock
+ * at the next poll. The maintainer watched exactly that on a Codex thread. So
+ * the dismissal is kept for the dwarfs it is honest for — idle and ended — and
+ * an open turn gets a refusal that names why and where the turn can be stopped.
+ */
+describe('kick while a turn nothing here can interrupt is open (#305)', () => {
+  /** Working, and nothing in the matrix can cut the turn short — the Codex thread's case. */
+  function midTurn(overrides: Partial<Dwarf> = {}): Dwarf {
+    return defaultDwarf({
+      provider: 'codex',
+      status: 'working',
+      textDelivery: 'codex-queue',
+      capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null },
+      ...overrides
+    })
+  }
+
+  it('disables Kick rather than offering a dismissal the next poll would undo', () => {
+    const entry = entryFor('kick', midTurn())
+    expect(entry.enabled).toBe(false)
+    expect(entry.name).toBe('Kick')
+    expect(entry.hint).toBe(OPEN_TURN_NO_INTERRUPT_HINT)
+    expect(entry.hint).not.toBe(DISMISS_HINT)
+  })
+
+  it('names the fact and the way out, in KICK_HINT’s two-clause idiom', () => {
+    // The limit first, then what the control does with it — the shape every
+    // other sentence in this module keeps.
+    expect(OPEN_TURN_NO_INTERRUPT_HINT).toMatch(/cannot be stopped from here/i)
+    expect(OPEN_TURN_NO_INTERRUPT_HINT).toMatch(/esc/i)
+    expect(OPEN_TURN_NO_INTERRUPT_HINT).toMatch(/once the turn ends/i)
+    // Never a promise the panel keeps: nothing here presses that key. #329
+    // rules that the panel sends no keystroke into a window it cannot prove is
+    // the session's own, so the Esc named here is the person's, at their
+    // terminal.
+    expect(OPEN_TURN_NO_INTERRUPT_HINT).not.toMatch(/sends an interrupt/i)
+  })
+
+  it('keeps the dismissal for the same dwarf once its turn is over', () => {
+    const entry = entryFor('kick', midTurn({ status: 'waiting' }))
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(DISMISS_HINT)
+  })
+
+  it('keeps the ended dismissal for a dwarf whose session has gone', () => {
+    const entry = entryFor('kick', midTurn({ status: 'leaving' }))
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(ENDED_DISMISS_HINT)
+  })
+
+  it('leaves a working dwarf that HAS an interrupt channel exactly as it was', () => {
+    const entry = entryFor('kick', capableDwarf({ status: 'working' }))
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(KICK_HINT.terminal)
+  })
+
+  /*
+   * The refusal is about the open turn and not about Codex: a held protocol
+   * with no cancel event (#237) is in the same position mid-turn, and the
+   * sentence has to be true for it too — which is why it points at where the
+   * session runs rather than promising anything from here.
+   */
+  it('refuses the same way for a held session whose protocol carries no cancel', () => {
+    const entry = entryFor(
+      'kick',
+      capableDwarf({
+        provider: 'antigravity',
+        status: 'working',
+        textDelivery: 'held-session',
+        capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+      })
+    )
+    expect(entry.enabled).toBe(false)
+    expect(entry.hint).toBe(OPEN_TURN_NO_INTERRUPT_HINT)
+  })
+
+  it('still reports an in-flight kick that was fired before the turn opened', () => {
+    const entry = entryFor('kick', midTurn(), { kicking: true })
+    expect(entry.enabled).toBe(false)
+    expect(entry.name).toBe('Kicking...')
+  })
+
+  it('says nothing on the panel: a disabled Kick is not the composer’s refusal', () => {
+    // `refusalLine` reads the chat entry alone (#293), and the composer of a
+    // Codex thread works — the queue takes messages. The kick's reason stays on
+    // the control.
+    expect(refusalLine(midTurn())).toBeNull()
   })
 })
