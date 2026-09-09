@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Minimum entitlements Electron needs under Hardened Runtime (build.mac.hardenedRuntime
+  in package.json) — see docs/signing.md. Both keys come straight from
+  electron-builder's own "Minimum Hardened Runtime Entitlements" doc for Electron apps;
+  nothing project-specific is added. Referenced from both build.mac.entitlements and
+  build.mac.entitlementsInherit in package.json, so the app and its helper processes
+  (spawned with the same signing identity) carry the same minimal grant.
+-->
+<plist version="1.0">
+<dict>
+  <!-- Electron's renderer/main processes run V8, which needs JIT-compiled,
+       writable-then-executable memory pages. Hardened Runtime blocks that by
+       default; without this the app fails to launch at all once signed. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Same root cause as allow-jit: some Electron/V8 internals allocate
+       executable memory that was never mapped from a signed page on disk.
+       Hardened Runtime forbids that unless this is granted. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

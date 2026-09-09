@@ -145,10 +145,13 @@ Download the installer for your OS from the
 | macOS    | `DwarfAI-Miners-*.dmg` (arm64 or x64, matching your Mac)      |
 | Linux    | `DwarfAI-Miners-*.AppImage` or the `.deb` package             |
 
-Nothing is code-signed or notarized (see [`docs/signing.md`](docs/signing.md)), so:
+macOS installers are signed and notarized from the next release onward; Windows and Linux are not
+(see [`docs/signing.md`](docs/signing.md)), so:
 
-- **macOS**: Gatekeeper blocks the unsigned app on a normal double-click. Right-click (or
-  Control-click) the app and choose **Open**, then confirm in the dialog — only needed once.
+- **macOS**: an installer from before the signed release still gets blocked by Gatekeeper on a
+  normal double-click. Right-click (or Control-click) the app and choose **Open**, then confirm
+  in the dialog — only needed once — or clear the quarantine attribute:
+  `xattr -cr "/Applications/DwarfAI-Miners.app"`. Neither is needed for a signed release.
 - **Linux**: make the AppImage executable before running it: `chmod +x DwarfAI-Miners-*.AppImage`.
 
 Every release is built and packaged on the target OS, but Windows is the only platform that has
@@ -488,11 +491,11 @@ Windows leg only; a macOS/Linux matrix is a follow-up (see `.github/workflows/ci
 Packaging is per-platform and must run on that platform (electron-builder cannot cross-build a
 dmg or a deb):
 
-| Command              | Runs on | Output in `release/`                        |
-| -------------------- | ------- | ------------------------------------------- |
-| `pnpm package`       | Windows | unsigned NSIS installer + portable exe, x64 |
-| `pnpm package:mac`   | macOS   | dmg + zip, arm64 and x64                    |
-| `pnpm package:linux` | Linux   | AppImage + deb, x64                         |
+| Command              | Runs on | Output in `release/`                                |
+| -------------------- | ------- | --------------------------------------------------- |
+| `pnpm package`       | Windows | unsigned NSIS installer + portable exe, x64         |
+| `pnpm package:mac`   | macOS   | dmg + zip, arm64 and x64 (signed + notarized in CI) |
+| `pnpm package:linux` | Linux   | AppImage + deb, x64                                 |
 
 `package:mac` names no targets on the command line, and that is deliberate. Naming any target
 there replaces the configured list _including its architectures_, after which electron-builder
@@ -500,8 +503,12 @@ falls back to the build host's own architecture — which is how two releases sh
 from an arm64 runner. Leaving the list off keeps `build.mac.target` in `package.json` the single
 place that decides which architectures ship.
 
-Nothing is code-signed or notarized, so Windows SmartScreen and macOS Gatekeeper will both warn —
-see [`docs/signing.md`](docs/signing.md) for exactly what that means and what it takes to fix.
+Windows and Linux builds are never code-signed, so SmartScreen and unsigned-`.deb`-aware package
+managers will warn — see [`docs/signing.md`](docs/signing.md) for exactly what that means and
+what it takes to fix. macOS is signed and notarized only when the five Apple/Developer-ID secrets
+are present in the environment — true for the CI `release-mac` job, not for a local
+`pnpm package:mac` run without them, which still succeeds but produces an unsigned/ad-hoc build
+(see [`docs/signing.md`](docs/signing.md#local-packaging-without-a-certificate)).
 The application icon (installer, exe, tray, and window) is generated from the mound art
 by `pnpm icons` (`scripts/build-icons.mjs`); see `build/icon.*` and `resources/*-icon*.png`.
 

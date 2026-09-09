@@ -153,7 +153,8 @@ jobs:
   # electron-builder cannot cross-build a dmg or a deb, so macOS/Linux
   # artifacts each need their own runner — hence the matrix below. Each leg
   # packages its own installers and attaches them to the same GitHub Release
-  # for the pushed tag.
+  # for the pushed tag. macOS is deliberately NOT one of this matrix's
+  # entries — see the `release-mac` job below for why.
   release:
     name: Package installers and publish release
     needs: checks
@@ -169,15 +170,6 @@ jobs:
             asset_files: |
               release/DwarfAI-Miners-Setup-*.exe
               release/DwarfAI-Miners-Portable-*.exe
-          # Mac artifact names come from the `build.mac.artifactName` template
-          # in package.json (`${productName}-${version}-${arch}.${ext}`), so
-          # the dmg/zip files carry no `-mac` suffix — e.g.
-          # `DwarfAI-Miners-0.1.0-arm64.dmg` / `DwarfAI-Miners-0.1.0-x64.zip`.
-          - os: macos-latest
-            package_script: package:mac
-            asset_files: |
-              release/*.dmg
-              release/*.zip
           - os: ubuntu-latest
             package_script: package:linux
             asset_files: |
@@ -219,17 +211,18 @@ jobs:
       # softprops/action-gh-release's release() already retries and
       # reconciles concurrent creates against the same tag (it picks the
       # canonical non-draft/oldest-id release), so no separate "create the
-      # release first" job is needed for the three legs racing to create it.
+      # release first" job is needed for the legs racing to create it.
       #
       # `generate_release_notes` is scoped to a single leg (ubuntu-latest) on
       # purpose: GitHub's API re-generates notes from commits on every
       # updateRelease call, and — because the other legs pass no body, the
       # action falls back to re-sending the existing body — flipping this on
-      # for all three legs would prepend a fresh copy of the same notes on
-      # every leg that runs after the first, duplicating them. `append_body`
-      # stays on for all legs as a safety net: it only appends when a leg's
-      # own body is non-empty, which is never the case here, so it never
-      # clobbers whatever the notes-leg has already written.
+      # for every leg would prepend a fresh copy of the same notes on every
+      # leg that runs after the first, duplicating them. `append_body` stays
+      # on for all legs as a safety net: it only appends when a leg's own
+      # body is non-empty, which is never the case here, so it never clobbers
+      # whatever the notes-leg has already written. `release-mac` below keeps
+      # this the same single leg by passing `generate_release_notes: false`.
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
@@ -238,3 +231,86 @@ jobs:
           append_body: true
           fail_on_unmatched_files: true
           files: ${{ matrix.asset_files }}
+
+  # macOS packaging needs the Developer ID certificate and Apple notarization
+  # credentials, which live only in the GitHub `release` Environment (never
+  # as repository secrets) — see docs/signing.md. `environment:` takes one
+  # value per job, evaluated once for that job; there is no clean way to
+  # apply it to a single entry of the matrix above without giving the
+  # Windows/Linux entries an empty/conditional environment name, which is
+  # not a real "no environment" and risks those legs failing or waiting on
+  # an environment that was never meant to gate them. Splitting macOS into
+  # its own job keeps the blast radius of those five secrets to exactly the
+  # one job that needs them, and the `release` environment's own `v*` tag
+  # deployment rule means this job additionally refuses to run for any ref
+  # that isn't a `v*` tag, on top of the `if:` below.
+  release-mac:
+    name: Package macOS installers and publish release
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: release
+    permissions:
+      contents: write
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Only this step sees the release environment's secrets — nothing
+      # earlier in the job needs them, and scoping them to the step keeps
+      # them out of the job's ambient env for every other step. CSC_LINK is
+      # the Developer ID Application .p12 as base64; electron-builder
+      # decodes it into a temporary keychain and auto-discovers the identity
+      # from there, which is why build.mac in package.json names no
+      # `identity` string. `notarize: true` in package.json stays
+      # unconditional rather than gated here — see docs/signing.md for why.
+      - name: Package installers
+        run: pnpm package:mac
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Mac artifact names come from the `build.mac.artifactName` template in
+      # package.json (`${productName}-${version}-${arch}.${ext}`), so the
+      # dmg/zip files carry no `-mac` suffix — e.g.
+      # `DwarfAI-Miners-0.1.0-arm64.dmg` / `DwarfAI-Miners-0.1.0-x64.zip`.
+      # `generate_release_notes: false` keeps note generation on the single
+      # ubuntu-latest leg above, per the comment on that step.
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: false
+          generate_release_notes: false
+          append_body: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.dmg
+            release/*.zip
