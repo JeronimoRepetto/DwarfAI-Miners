@@ -8,12 +8,14 @@ import {
   applyPanelBounds,
   applyUiScale,
   buildMainWindowOptions,
+  formatShellTrace,
   messagePanelState,
   panelLayout,
   raisePanelWindow,
   seedPanelEdge,
   setMessagePanel,
   setPanelLayout,
+  shellDebugEnabled,
   type AlwaysOnTopTarget,
   type PanelBoundsTarget,
   type RaiseTarget,
@@ -459,5 +461,90 @@ describe('setMessagePanel', () => {
     const read = messagePanelState()
     read.dwarfId = 'claude:someone-else'
     expect(messagePanelState().dwarfId).toBe('claude:s1')
+  })
+})
+
+/**
+ * The switch that makes a first message-panel open say what it did (#312).
+ *
+ * The first open of a run took a path nobody could see: the panel window is
+ * created hidden and revealed by a height report, and every refusal on the way
+ * there is a bare `return`. A whole failing run produced not one line from
+ * main, which is why the flag exists at all — and why it is asserted here
+ * rather than trusted, exactly as its three siblings are.
+ */
+describe('shellDebugEnabled', () => {
+  it('is off when nobody asked for it', () => {
+    expect(shellDebugEnabled({})).toBe(false)
+  })
+
+  it('is on for the two affirmative spellings, in any case', () => {
+    for (const raw of ['1', 'true', 'TRUE', 'True']) {
+      expect(shellDebugEnabled({ SHELL_DEBUG: raw })).toBe(true)
+    }
+  })
+
+  it('stays off for anything else, so a stray value cannot switch it on', () => {
+    // The same refusal DWARFAI_PERF, TIER_DEBUG and CODEX_DEBUG make: an empty
+    // string, a '0' or a word is not a request, and a debugging device that
+    // turns itself on for one is one nobody can turn off.
+    for (const raw of ['', '0', 'false', 'yes', 'on']) {
+      expect(shellDebugEnabled({ SHELL_DEBUG: raw })).toBe(false)
+    }
+  })
+})
+
+/**
+ * One diagnostic line, and the shape the maintainer pastes back (#312).
+ *
+ * Pure and asserted for the reason every other decision in this file is: the
+ * moments it describes all happen inside Electron, so the only part that can be
+ * proven without a display is what the line SAYS — and a line missing the one
+ * fact that separates a first open from a second one is a line that costs a
+ * whole reproduction.
+ */
+describe('formatShellTrace', () => {
+  it('names the subject, the moment, and every fact after it', () => {
+    expect(formatShellTrace('message panel placed', { surface: 'message', visible: false })).toBe(
+      '[shell] message panel placed: surface=message visible=false'
+    )
+  })
+
+  it('states a moment with nothing to add without a dangling colon', () => {
+    expect(formatShellTrace('message panel window close', {})).toBe(
+      '[shell] message panel window close'
+    )
+  })
+
+  it('folds a rectangle into one field, so the line stays greppable', () => {
+    // Size before origin, and no spaces inside the value: a rectangle split
+    // across fields cannot be compared between two lines at a glance, and one
+    // carrying a space stops being one field.
+    expect(formatShellTrace('message panel window created', { bounds: MESSAGE_PANEL_BOUNDS })).toBe(
+      '[shell] message panel window created: bounds=990x235@8,797'
+    )
+  })
+
+  it('carries an anchor as the two numbers it actually is, not as a rectangle', () => {
+    // A remembered position is an x and a BOTTOM edge (see MessagePanelAnchor):
+    // printing it as a rectangle would invent a width and a height nothing
+    // stored, and this line is read beside the bounds the anchor produced.
+    expect(
+      formatShellTrace('message panel window created', { anchor: { x: 300, bottom: 900 } })
+    ).toBe('[shell] message panel window created: anchor=300,900')
+  })
+
+  it('says "none" for a fact that is absent, never nothing at all', () => {
+    // A missing anchor is the answer to the first question this flag was added
+    // to settle, so it has to be printed rather than left off the line.
+    expect(formatShellTrace('message panel window created', { anchor: null })).toBe(
+      '[shell] message panel window created: anchor=none'
+    )
+  })
+
+  it('keeps the facts in the order they were written', () => {
+    // Two lines from one run are read side by side, so the columns have to line
+    // up: an object's own insertion order is the only order there is.
+    expect(formatShellTrace('m', { a: 1, b: 2, c: 3 })).toBe('[shell] m: a=1 b=2 c=3')
   })
 })

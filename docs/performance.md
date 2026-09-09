@@ -37,6 +37,16 @@ path (#264). Read at construction like `TIER_DEBUG`, so a `.env` entry works. Ex
 volume: a 7-day window holds dozens of long-dead rollouts and each is refused on every
 2-second tick — filtering them would hide the very line you turned this on to find.
 
+**The two windows have one too, and it is not a performance instrument.** `SHELL_DEBUG=1`
+(or `true`) makes `src/main/shell/window.ts` narrate what it does to the message panel's
+own window: the rectangle a first open asked for and what became of a persisted position,
+each height report with the window's visibility before and after it, the branch every
+later open takes instead, and the window's own `close` handler firing (#312). It exists
+because that whole path is silent — the window is created hidden and revealed only by the
+renderer's first height report, and every refusal on the way there was a bare `return`, so
+a first open that produced no panel produced no line either. Read per call like
+`TIER_DEBUG`, so a `.env` entry works. Low volume: nothing here fires on a poll.
+
 Every poll then prints one line: the total, where the time went, and what it
 saw.
 

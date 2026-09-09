@@ -48,6 +48,70 @@ export function markQuitting(): void {
 }
 
 /**
+ * Debug-only visibility switch for what main does to its two windows (#312).
+ *
+ * The first message-panel open of a run went wrong in complete silence, and
+ * that silence is the reason this exists: the panel window is created HIDDEN
+ * and revealed only by the renderer's first height report, and every step on
+ * the way there that can decline does so with a bare `return` — an anchor
+ * dropped because it no longer reaches a display, a height report arriving
+ * while there is no window or no open surface, the window's own close handler
+ * firing. A whole failing run produced not one line from main, so there was
+ * nothing to tell those four apart from each other.
+ *
+ * Mirrors `perf.ts`'s DWARFAI_PERF, `tierService.ts`'s TIER_DEBUG and
+ * `codexProvider.ts`'s CODEX_DEBUG — read straight from process.env rather than
+ * AppConfig, because this is a debugging device rather than a product setting
+ * and it must be usable without a config round trip (`SHELL_DEBUG=1 pnpm dev`).
+ * Read per call rather than at import time, like the latter two, so a `.env`
+ * entry works in a dev checkout.
+ */
+const SHELL_DEBUG_ENV_VAR = 'SHELL_DEBUG'
+
+/** Whether this process narrates what it does to its two windows. */
+export function shellDebugEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[SHELL_DEBUG_ENV_VAR]
+  if (raw === undefined) return false
+  const normalized = raw.toLowerCase()
+  return normalized === '1' || normalized === 'true'
+}
+
+/** One fact on a diagnostic line. `null` is an absence worth printing. */
+type ShellTraceFact = string | number | boolean | ScreenRect | MessagePanelAnchor | null
+
+/**
+ * One fact as a single field with no space in it.
+ *
+ * The two geometries this file logs are the only two it has: a whole rectangle
+ * and the two-number anchor a moved panel is remembered by (see
+ * `MessagePanelAnchor`, which is deliberately not a rectangle). They are told
+ * apart by the edge only one of them names, so a line never has to say which
+ * kind it carried.
+ */
+function traceFact(fact: ShellTraceFact): string {
+  if (fact === null) return 'none'
+  if (typeof fact !== 'object') return String(fact)
+  if ('bottom' in fact) return `${fact.x},${fact.bottom}`
+  return `${fact.width}x${fact.height}@${fact.x},${fact.y}`
+}
+
+/**
+ * One diagnostic line: the subject, the moment, and the facts that separate
+ * this occurrence from the one that worked.
+ *
+ * Pure, so what a line SAYS is assertable without a display — every moment it
+ * describes happens inside Electron and none of them can be reached from a
+ * unit test. A rectangle is folded into a single field because two lines from
+ * one run are read side by side, and an absent value prints as `none` rather
+ * than being left off: a missing anchor is the answer to a question, not the
+ * absence of one.
+ */
+export function formatShellTrace(moment: string, facts: Record<string, ShellTraceFact>): string {
+  const fields = Object.entries(facts).map(([name, fact]) => `${name}=${traceFact(fact)}`)
+  return fields.length === 0 ? `[shell] ${moment}` : `[shell] ${moment}: ${fields.join(' ')}`
+}
+
+/**
  * The slice of BrowserWindow the pin control needs (see #35). Narrow on
  * purpose: tests drive applyAlwaysOnTop with a deterministic fake instead of a
  * real window, and the wiring passes the real BrowserWindow, which satisfies
@@ -742,13 +806,30 @@ function createMessagePanelWindow(parent: BrowserWindow): BrowserWindow {
   // and this is the first apply of the session: dropping it now is what makes
   // the opening rectangle the docked one rather than a corner of a display the
   // panel was never on.
+  const storedAnchor = messagePanelAnchor
   forgetLostMessagePanelPosition()
+  const bounds = messagePanelRect()
+  if (shellDebugEnabled()) {
+    // The one open that takes this path is the first of the run (#312), so
+    // this line is what says which rectangle it asked for, on which display,
+    // and what became of a position read at startup — kept, or dropped here.
+    console.log(
+      formatShellTrace('message panel window created', {
+        bounds,
+        area: messagePanelScreenArea(),
+        shell: parent.getBounds(),
+        storedAnchor,
+        anchor: messagePanelAnchor,
+        designHeight: messagePanelDesignHeight
+      })
+    )
+  }
   const panel = new BrowserWindow(
     buildMessagePanelWindowOptions({
       // Whatever the shell IS, not what the preference said: the user may have
       // unpinned since it opened.
       alwaysOnTop: parent.isAlwaysOnTop(),
-      bounds: messagePanelRect(),
+      bounds,
       parent,
       preloadPath: join(import.meta.dirname, '../preload/index.mjs'),
       iconPath: resolveResourcePath('app-icon.png', {
@@ -772,6 +853,19 @@ function createMessagePanelWindow(parent: BrowserWindow): BrowserWindow {
   // it on the next dwarf then costs no page load, and the surface it comes
   // back with is a fresh mount either way (the renderer keys it by dwarf).
   panel.on('close', (event) => {
+    if (shellDebugEnabled()) {
+      // A close here resets the state to 'none' and hides the window, which
+      // from the outside is indistinguishable from an open that never happened
+      // (#312) — so the line has to say that it fired at all, and whether it
+      // was the quit or something else that closed it.
+      console.log(
+        formatShellTrace('message panel window close', {
+          quitting,
+          surface: messagePanel.surface,
+          visible: panel.isVisible()
+        })
+      )
+    }
     if (quitting) return
     event.preventDefault()
     setMessagePanel(emptyMessagePanel())
@@ -830,6 +924,17 @@ export function setMessagePanel(state: MessagePanelState): MessagePanelState {
   if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) {
     messagePanelWindow = createMessagePanelWindow(mainWindow)
   } else {
+    // Which of the two branches an open took is the whole question in #312:
+    // the first one creates a window and every later one lands here, so a run
+    // that works and a run that does not differ by exactly this line.
+    if (shellDebugEnabled()) {
+      console.log(
+        formatShellTrace('message panel placed', {
+          surface: messagePanel.surface,
+          visible: messagePanelWindow.isVisible()
+        })
+      )
+    }
     placeMessagePanel()
   }
   return messagePanelState()
@@ -847,10 +952,43 @@ export function setMessagePanel(state: MessagePanelState): MessagePanelState {
  */
 export function setMessagePanelHeight(designHeight: number): void {
   messagePanelDesignHeight = designHeight
-  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return
-  if (messagePanel.surface === 'none') return
+  const debug = shellDebugEnabled()
+  // Both refusals below are what a hidden window looks like from the outside
+  // (#312), and each was a bare `return`: the report can arrive before the
+  // window exists, or after the surface it measured has already closed.
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) {
+    if (debug) {
+      console.log(
+        formatShellTrace('message panel height refused', { designHeight, reason: 'no window' })
+      )
+    }
+    return
+  }
+  if (messagePanel.surface === 'none') {
+    if (debug) {
+      console.log(
+        formatShellTrace('message panel height refused', { designHeight, reason: 'surface none' })
+      )
+    }
+    return
+  }
+  const visibleBefore = messagePanelWindow.isVisible()
   placeMessagePanel()
   if (!messagePanelWindow.isVisible()) messagePanelWindow.show()
+  if (debug) {
+    // The report that reveals the window is the FIRST one, so `visibleBefore`
+    // false with `visible` true is the moment the panel appeared — and the two
+    // both false is the show having been asked for and refused.
+    console.log(
+      formatShellTrace('message panel height', {
+        designHeight,
+        surface: messagePanel.surface,
+        visibleBefore,
+        visible: messagePanelWindow.isVisible(),
+        bounds: messagePanelWindow.getBounds()
+      })
+    )
+  }
 }
 
 /** The panel window's page, for the one push main owes it. Null when there is none. */
