@@ -45,6 +45,13 @@ checked rather than trusted.
   a pid is alive, when that process started, and whether a `codex` process is running —
   PowerShell `Get-CimInstance Win32_Process` on Windows, `pgrep -f` and `ps -o lstart=`
   elsewhere (`src/main/platform/processProbe.ts`).
+- **Two small git files, to tell a worktree from its project.** To fold every git worktree of a
+  repository into its main working tree's mine, a session's `cwd` is walked upward for a `.git`
+  entry; where that entry is a file (a worktree checkout, never a main one) its `gitdir:` pointer
+  is read, then the `commondir` file beside the directory it names, and — once a worktree is
+  confirmed — the `HEAD` file, for the branch it has checked out. Each read is capped at 4 KB, no
+  `git` binary is ever run, and a folder that is not a worktree costs one stat and nothing more
+  (`src/main/projects/worktree.ts`).
 
 ### The one-time history scan
 
@@ -180,6 +187,13 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
   so nothing stops the panel's own frame being navigated somewhere else. In practice the
   renderer is a local bundle that navigates nowhere, but the guard is narrower than "all
   navigation is denied" and should not be relied on as if it were that.
+- **A link inside a message bubble goes through the same rule, checked twice.** Markdown in a
+  bubble can draw a link, but never as a real `<a href>` the panel's own frame could be navigated
+  by — it draws a button, and pressing it asks main to open the address (`shell:openExternalLink`).
+  Only `http:` and `https:` addresses under 2048 characters pass; the renderer checks this before
+  drawing the link at all, and main checks the same raw string again before it ever reaches
+  `shell.openExternal`, because a renderer's word is never treated as a permission
+  (`src/shared/externalLink.ts`, `src/main/shell/openExternalLink.ts`).
 
 ## The one thing it borrows: your clipboard
 
@@ -218,6 +232,11 @@ were found:
 - **Session names**, as the Claude session registry records them.
 - **Subagent task descriptions**, taken from the `Agent` tool call that launched each worker
   and used as that worker's name and its tooltip line (`claudeProvider.ts`).
+- **A worktree's branch name**, beside a dwarf's name in the message panel header, for a session
+  running in a git worktree of a project rather than its main folder — the folder name instead,
+  when that worktree's checkout is detached (`src/renderer/src/lib/worktree.ts`). The dialog
+  offered when you add a worktree folder also names the project's full path, no differently from
+  the path already shown above every mine's cave.
 
 A description is free text the orchestrating session wrote, so it is transcript-derived text
 that reaches the screen without going through the redaction pass. Read the panel as showing
