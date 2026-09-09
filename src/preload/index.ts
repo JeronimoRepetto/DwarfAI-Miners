@@ -23,6 +23,7 @@ import type {
   HostedLaunchResult,
   DwarfDeliveryReport,
   LaunchFailedPush,
+  MessagePanelDragPhase,
   MessagePanelState,
   MetricsResetResult,
   MineDeclareResult,
@@ -37,7 +38,12 @@ import type {
   ProjectQueryResult,
   ShortcutState
 } from '../shared/contracts'
-import { IPC_CHANNELS, isDwarfProvider, isMessagePanelSurface } from '../shared/contracts'
+import {
+  IPC_CHANNELS,
+  isDwarfProvider,
+  isMessagePanelDragPhase,
+  isMessagePanelSurface
+} from '../shared/contracts'
 
 /**
  * The one act a tuning request names, rebuilt so main only ever reasons about
@@ -118,6 +124,28 @@ export interface DwarfAiMinersApi {
    * either way. The first report also reveals a window created hidden.
    */
   setMessagePanelHeight: (designHeight: number) => void
+  /**
+   * Report that a drag of the panel window by its header has begun or ended
+   * (#296) — 'start' on a press that landed on the header, 'end' when it is
+   * released.
+   *
+   * Nothing about WHERE. Main reads the cursor on its own clock, moves the
+   * window, clamps it to the display it is on and remembers the position; the
+   * gesture is the only part a renderer can see. See MessagePanelDragPhase for
+   * why reporting each step would stall the drag it was driving.
+   *
+   * One-way, and for a stronger reason than `setMessagePanelHeight`: there is
+   * no verdict here that a page draws. Neither surface renders the panel's
+   * position, so answering with one would create a copy that could only
+   * disagree with the window.
+   */
+  dragMessagePanel: (phase: MessagePanelDragPhase) => void
+  /**
+   * Snap the panel window back beside the shell and forget where it had been
+   * dragged to (#296) — the way back, on a double-click of the same header
+   * row that moves it. One-way, for the reason above.
+   */
+  dockMessagePanel: () => void
   /**
    * Publish the send and kick verdicts the panel window holds, so the mine in
    * the SHELL window can draw its markers (#162).
@@ -399,6 +427,13 @@ const api: DwarfAiMinersApi = {
       IPC_CHANNELS.setMessagePanelHeight,
       typeof designHeight === 'number' ? designHeight : Number.NaN
     ),
+  // The phase is the one field, and it has no safe default — the same ruling
+  // the surface carries just above. Collapsing an unrecognised value to
+  // 'start' would begin a drag nobody asked for and 'end' would silently
+  // swallow one, so it crosses as '' and main refuses the request outright.
+  dragMessagePanel: (phase) =>
+    ipcRenderer.send(IPC_CHANNELS.dragMessagePanel, isMessagePanelDragPhase(phase) ? phase : ''),
+  dockMessagePanel: () => ipcRenderer.send(IPC_CHANNELS.dockMessagePanel),
   // Forwarded uncoerced, exactly as queryProjects' query is: a nested record
   // of verdicts cannot be collapsed to a safe default the way a stray string
   // can, so main validates it and refuses what it cannot read — one malformed

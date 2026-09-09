@@ -2272,6 +2272,38 @@ export function isMessagePanelSurface(value: unknown): value is MessagePanelSurf
 }
 
 /**
+ * The two ends of a drag on the message panel's own header (#296).
+ *
+ * This is the whole of what the renderer says about moving the window: the
+ * press landed on the header, and the press is over. Everything between them
+ * is main's — it reads the cursor on its own clock, moves the window, clamps it
+ * to the display and remembers where it ended up — which is the rule
+ * `PanelLayout` already holds for the shell, applied to the one thing about
+ * this window a renderer could otherwise have decided.
+ *
+ * There is deliberately no 'move' phase, and the reason is not economy. A
+ * pointer event's own position is measured inside the window, and a window
+ * that is tracking the cursor moves WITH it — so the coordinates stop changing
+ * and the events stop arriving exactly when the drag is working. A renderer
+ * driving each step would then stall the very gesture it was driving. The
+ * position that is still true throughout is the one the OS holds, and only
+ * main can ask for it.
+ */
+export type MessagePanelDragPhase = 'start' | 'end'
+
+/**
+ * Whether a value is one of the two phases a drag has.
+ *
+ * Exists for the reason `isMessagePanelSurface` does: the preload refuses to
+ * guess one. A phase collapsed to a default would be the bridge deciding that
+ * a window should move — 'start' above all, which would begin a drag nobody
+ * asked for — so an unrecognised value crosses as '' and main refuses it.
+ */
+export function isMessagePanelDragPhase(value: unknown): value is MessagePanelDragPhase {
+  return value === 'start' || value === 'end'
+}
+
+/**
  * Which of the app's two windows a renderer is running in (#162).
  *
  * One renderer ENTRY serves both. The panel window is the same page loaded
@@ -2607,6 +2639,15 @@ export const IPC_CHANNELS = {
    * dimension goes through. One-way, and the first one also reveals the
    * window: it is created hidden, so nobody sees it at a height nothing had
    * measured yet.
+   *
+   * `dragMessagePanel` and `dockMessagePanel` are where that window stops being
+   * glued to the shell (#296). Both are one-way, and for a stronger reason than
+   * the height report: there is no verdict here for a renderer to draw at all.
+   * Main reads the cursor, moves the window, clamps it to the display and
+   * remembers where it ended up — the panel's position is not state the page
+   * renders, so answering with it would be inventing a copy that could
+   * disagree. `dockMessagePanel` is the way back: it forgets the position and
+   * puts the panel beside the shell again.
    */
   getMessagePanel: 'panel:message:get',
   setMessagePanel: 'panel:message:set',
@@ -2614,6 +2655,8 @@ export const IPC_CHANNELS = {
   reportDwarfDelivery: 'panel:message:delivery',
   dwarfDeliveryReported: 'panel:message:delivery:changed',
   setMessagePanelHeight: 'panel:message:height',
+  dragMessagePanel: 'panel:message:drag',
+  dockMessagePanel: 'panel:message:dock',
   /**
    * User-configurable panel toggle, see #17. Both channels answer with the
    * REAL ShortcutState after the registration attempt — never the requested

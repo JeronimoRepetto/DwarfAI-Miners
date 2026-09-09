@@ -394,7 +394,13 @@ function onKick(): void {
       @keydown="resizeByKey"
     ></div>
 
-    <header class="panel-bar">
+    <!--
+      `data-window-drag` marks this row as the handle that moves the panel's
+      own WINDOW (#296). Only a marker: the gesture and the geometry belong to
+      MessagePanelWindow.vue and to main, and the three controls below stay
+      controls — see lib/shell/windowDrag.
+    -->
+    <header class="panel-bar" data-window-drag>
       <!--
         The design draws the dwarf's name here and no fourth icon, so the name
         IS the control that focuses this session's console — which is where
