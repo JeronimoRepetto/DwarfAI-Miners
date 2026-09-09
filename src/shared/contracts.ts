@@ -2591,8 +2591,44 @@ export interface AppBuild {
  * both arrived as `{ declared: false, reason: string }` and the only thing
  * telling them apart was matching an exact English sentence on the wire.
  */
+/**
+ * A picked folder that turned out to be a worktree of a project (#348), and
+ * the project it belongs to.
+ *
+ * Enough for the panel to ask its question and nothing more: the folder's own
+ * path so the dialog can name what was picked, the project's so it can name
+ * what will be opened instead, and whichever of a branch or a short commit the
+ * worktree's HEAD carries — a detached one has no branch, and naming the
+ * commit is better than naming nothing about a folder somebody is being asked
+ * to give up.
+ *
+ * The renderer never sends `root` back. "Open the main project" is a second
+ * ASK with no payload, exactly as the first was, so this channel keeps the
+ * property that the renderer names no path main did not choose itself.
+ */
+export interface MineWorktreeOf {
+  /** The folder the picker returned. */
+  worktree: string
+  /** The main working tree — the project this worktree belongs to. */
+  root: string
+  /** The branch the worktree has checked out; absent when its HEAD is detached. */
+  branch?: string
+  /** The short commit sha, and only when HEAD is detached. */
+  commit?: string
+}
+
 export interface MineDeclareResult {
-  outcome: 'added' | 'cancelled' | 'failed'
+  /**
+   * 'worktree-of' (#348) is a QUESTION rather than a refusal, which is why it
+   * is a fourth outcome and not a `failed` with a reason. Nothing went wrong
+   * and nothing was declared: the folder is a slice of a project, the board
+   * would fold it into that project anyway, and the person is the only one who
+   * can say whether that project is the one they meant. Declaring the worktree
+   * itself is deliberately not on offer.
+   */
+  outcome: 'added' | 'cancelled' | 'failed' | 'worktree-of'
+  /** The worktree that was picked and the project behind it; only for 'worktree-of'. */
+  worktreeOf?: MineWorktreeOf
   /**
    * The mine that now exists, when one does — the SAME id aggregation and the
    * ledger use for that path, never a second scheme. The mine itself arrives on
@@ -3019,6 +3055,18 @@ export const IPC_CHANNELS = {
    * back for a mine that was removed.
    */
   declareMine: 'mine:declare',
+  /**
+   * The answer to `declareMine`'s 'worktree-of' question (#348): adopt the
+   * project the picked worktree belongs to.
+   *
+   * No payload either, and that is the point. Main remembers the project it
+   * resolved for the folder it opened the picker for, so "Open the main
+   * project" is a second ASK rather than a path travelling back — the renderer
+   * still never names a folder. Main forgets it as soon as it is used or
+   * another declare begins, so this can only ever adopt the project the person
+   * was actually shown.
+   */
+  declareMainProject: 'mine:declare-main',
   undeclareMine: 'mine:undeclare',
   /**
    * Settings' "Reset metrics" action (#138). No payload: the typed

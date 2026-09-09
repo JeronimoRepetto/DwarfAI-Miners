@@ -51,6 +51,7 @@ import {
   type MineHistoryResult,
   type MineTier,
   type MineUndeclareResult,
+  type MineWorktreeOf,
   type ProjectQuery,
   type ProjectQueryResult,
   type ProjectSummary,
@@ -325,6 +326,8 @@ const NO_PICKER = "This build can't open a folder picker."
 const PICKER_FAILED = 'The folder picker could not be opened.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
 const UNDECLARE_FAILED = 'That mine could not be removed.'
+/** #348: the answer arrived with no question outstanding — a stale panel, or a second press. */
+const NO_PENDING_PROJECT = 'There is no project waiting to be opened. Add the folder again.'
 /**
  * AMENDED for #169 (was NOT_DECLARED, "That mine is not one you added.").
  *
@@ -770,6 +773,17 @@ export class AgentRuntime {
    * behind it.
    */
   private readonly migratedWorktrees = new Set<string>()
+  /**
+   * The project a picked worktree belongs to, while the panel is asking about
+   * it (#348), or null.
+   *
+   * Held HERE rather than sent to the renderer and back, so "Open the main
+   * project" stays an ask: this channel opens the picker in main precisely so
+   * a renderer never names a folder, and a root travelling out and back would
+   * hand that property away for nothing. Cleared as soon as it is used and by
+   * the next declare, so it can only ever adopt the project actually shown.
+   */
+  private pendingMainProject: string | null = null
   private mines: Mine[] = []
   /**
    * Where a held session's own crew can be written to, rebuilt every poll by
@@ -1701,6 +1715,75 @@ export class AgentRuntime {
     // one carries no reason — there is nothing left for a string to add.
     if (path === null || path.trim() === '') return { outcome: 'cancelled' }
 
+    // A worktree is ASKED about, never declared silently (#348). The board
+    // would fold it into its project anyway, so declaring it would put a row in
+    // the store for a folder that never appears as a mine — and the person may
+    // simply not have realised which folder they picked. The project is
+    // remembered here rather than sent to the renderer and back, so the answer
+    // stays an ask and this channel goes on naming its own paths.
+    const worktreeOf = await this.worktreeQuestionFor(path)
+    if (worktreeOf !== null) {
+      this.pendingMainProject = worktreeOf.root
+      return { outcome: 'worktree-of', worktreeOf }
+    }
+    this.pendingMainProject = null
+
+    return this.adoptProject(store, path)
+  }
+
+  /**
+   * Adopt the project the picked worktree belongs to (#348) — the "Open the
+   * main project" answer.
+   *
+   * Takes no path, for the reason `declareMine` opens the picker in main: what
+   * is adopted is the project MAIN resolved for the folder MAIN opened the
+   * picker for, so a renderer can only ever confirm a question it was actually
+   * asked. The pending project is dropped whether this succeeds or fails, so a
+   * second press cannot adopt it again by accident, and it is dropped by the
+   * next `declareMine` too.
+   *
+   * Lands exactly where a plain Add lands: the same verdict, the same row, the
+   * same card.
+   */
+  async declareMainProject(): Promise<MineDeclareResult> {
+    const store = this.projects
+    if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
+    const root = this.pendingMainProject
+    this.pendingMainProject = null
+    if (root === null) return { outcome: 'failed', reason: NO_PENDING_PROJECT }
+    return this.adoptProject(store, root)
+  }
+
+  /**
+   * The question to ask about a picked folder, or null when there is none:
+   * this folder is a worktree, and the project behind it.
+   *
+   * Null for everything the resolver cannot prove — a main working tree, a
+   * submodule, a bare repo's worktree, a folder in no repository, and a
+   * resolver that could not read the disk. A picker must not refuse to adopt a
+   * folder because a `.git` file was unreadable.
+   */
+  private async worktreeQuestionFor(path: string): Promise<MineWorktreeOf | null> {
+    const roots = this.projectRoots
+    if (roots === null) return null
+    try {
+      const resolution = await roots.resolve(path)
+      const worktree = resolution.worktree
+      if (worktree === undefined) return null
+      return {
+        worktree: worktree.path,
+        root: resolution.root,
+        ...(worktree.branch === undefined ? {} : { branch: worktree.branch }),
+        ...(worktree.commit === undefined ? {} : { commit: worktree.commit })
+      }
+    } catch (error) {
+      console.warn(`[projects] Could not tell whether ${path} is a worktree`, error)
+      return null
+    }
+  }
+
+  /** The half of `declareMine` that runs once a folder has been settled on. */
+  private async adoptProject(store: ProjectsStore, path: string): Promise<MineDeclareResult> {
     const result = await store.declare({ path, at: this.now() })
     if (!result.ok) {
       console.warn(`[projects] Could not add a mine (${result.failure}):`, result.message)

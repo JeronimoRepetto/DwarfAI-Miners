@@ -3,9 +3,16 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ADD_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { browseRows } from '../../lib/browse/boardRows'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
-import type { Mine, MineTier, ProjectSortDirection, ProjectSummary } from '../../types'
+import type {
+  Mine,
+  MineTier,
+  MineWorktreeOf,
+  ProjectSortDirection,
+  ProjectSummary
+} from '../../types'
 import MineCard from './MineCard.vue'
 import RemoveMineModal from './RemoveMineModal.vue'
+import WorktreeFoldModal from './WorktreeFoldModal.vue'
 
 const props = defineProps<{
   projects: ProjectSummary[]
@@ -25,6 +32,11 @@ const props = defineProps<{
   removing?: boolean
   /** Why the last removal did not happen; null for a success and before any attempt. */
   removeError?: string | null
+  /**
+   * The worktree the last Add landed on, while the panel asks whether to open
+   * its project instead (#348). Null when there is nothing to ask about.
+   */
+  worktreeQuestion?: MineWorktreeOf | null
 }>()
 
 const emit = defineEmits<{
@@ -35,6 +47,10 @@ const emit = defineEmits<{
   add: []
   open: [projectId: string]
   remove: [projectId: string]
+  /** Adopt the project the picked worktree belongs to (#348). */
+  'open-main-project': []
+  /** Dismiss the worktree question, having added nothing (#348). */
+  'dismiss-worktree': []
 }>()
 
 /*
@@ -251,6 +267,19 @@ onBeforeUnmount(stopWatching)
       :error="removeError ?? null"
       @confirm="confirmRemoval"
       @close="removingId = null"
+    />
+    <!--
+      The worktree question (#348), over the same panel and in the same shell.
+      Keyed by the picked folder, so a second Add landing on another worktree
+      is a fresh dialog rather than this one with a different sentence in it.
+    -->
+    <WorktreeFoldModal
+      v-if="worktreeQuestion"
+      :key="worktreeQuestion.worktree"
+      :worktree-of="worktreeQuestion"
+      :adding="adding"
+      @open="emit('open-main-project')"
+      @close="emit('dismiss-worktree')"
     />
   </section>
 </template>

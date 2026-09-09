@@ -8863,3 +8863,108 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
     expect(project?.hiddenAt).toBeNull()
   })
 })
+
+/**
+ * Adding a folder that turns out to be a worktree (#348). The runtime asks
+ * rather than declaring: the board folds every worktree into its project, so a
+ * row for the worktree would name a folder that is never a mine.
+ */
+describe('AgentRuntime.declareMine — worktrees (#348)', () => {
+  const ROOT = 'C:\\Code\\Anvil'
+  const FORGE = 'C:\\Code\\Anvil-worktrees\\forge'
+
+  function repoFs(head = 'ref: refs/heads/feat/forge\n'): FakeFs {
+    const fs = new FakeFs()
+    fs.addFile('C:/Code/Anvil/.git/HEAD', 'ref: refs/heads/main\n')
+    fs.addFile('C:/Code/Anvil-worktrees/forge/.git', 'gitdir: C:/Code/Anvil/.git/worktrees/forge\n')
+    fs.addFile('C:/Code/Anvil/.git/worktrees/forge/commondir', '../..\n')
+    fs.addFile('C:/Code/Anvil/.git/worktrees/forge/HEAD', head)
+    return fs
+  }
+
+  function runtimeFor(picked: string, fs: FakeFs, projects?: ProjectsStore): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [],
+      projects:
+        projects ??
+        createProjectsStore({
+          filePath: 'C:\\userData\\projects-v1.db',
+          sqlite: new MemoryWritableSqlite()
+        }),
+      chooseDirectory: async () => picked,
+      fs,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  it('asks about a picked worktree instead of declaring it', async () => {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite()
+    })
+    const runtime = runtimeFor(FORGE, repoFs(), projects)
+
+    const result = await runtime.declareMine()
+    const rows = await projects.list()
+    runtime.stop()
+
+    expect(result).toEqual({
+      outcome: 'worktree-of',
+      worktreeOf: { worktree: FORGE, root: ROOT, branch: 'feat/forge' }
+    })
+    // Nothing was written: the question has not been answered yet.
+    expect(rows.ok ? rows.value : []).toEqual([])
+  })
+
+  it('names the commit of a detached worktree, which has no branch to name', async () => {
+    const runtime = runtimeFor(FORGE, repoFs('3f2a1b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a\n'))
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.worktreeOf).toEqual({ worktree: FORGE, root: ROOT, commit: '3f2a1b9' })
+  })
+
+  it('declares a picked MAIN working tree with no question at all', async () => {
+    const runtime = runtimeFor(ROOT, repoFs())
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
+  })
+
+  it('adopts the project on the answer, and lands exactly where a plain Add lands', async () => {
+    const runtime = runtimeFor(FORGE, repoFs())
+
+    await runtime.declareMine()
+    const result = await runtime.declareMainProject()
+    runtime.stop()
+
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
+    expect(result.project).toMatchObject({ id: mineIdForPath(ROOT), path: ROOT, declared: true })
+  })
+
+  it('refuses an answer to a question nobody asked, and never guesses a folder', async () => {
+    const runtime = runtimeFor(FORGE, repoFs())
+
+    const result = await runtime.declareMainProject()
+    runtime.stop()
+
+    expect(result.outcome).toBe('failed')
+    expect(result.reason).toBeDefined()
+  })
+
+  it('forgets the project once it is used, so a second press adopts nothing', async () => {
+    const runtime = runtimeFor(FORGE, repoFs())
+
+    await runtime.declareMine()
+    await runtime.declareMainProject()
+    const again = await runtime.declareMainProject()
+    runtime.stop()
+
+    expect(again.outcome).toBe('failed')
+  })
+})

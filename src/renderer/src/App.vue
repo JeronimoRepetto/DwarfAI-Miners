@@ -203,6 +203,9 @@ const {
   setTier: setProjectTier,
   toggleDirection: toggleProjectOrder,
   addProject,
+  worktreeQuestion,
+  openMainProject,
+  dismissWorktreeQuestion,
   removeProject
 } = useProjectBrowse()
 
@@ -797,6 +800,7 @@ onBeforeUnmount(() => {
               :add-error="addProjectError"
               :removing="removingMine"
               :remove-error="removeMineError"
+              :worktree-question="worktreeQuestion"
               @search="setProjectSearch"
               @tier="setProjectTier"
               @toggle-direction="toggleProjectOrder"
@@ -804,6 +808,8 @@ onBeforeUnmount(() => {
               @add="addProject"
               @open="openFromBrowse"
               @remove="removeFromBrowse"
+              @open-main-project="openMainProject"
+              @dismiss-worktree="dismissWorktreeQuestion"
             />
           </PanelFrame>
 

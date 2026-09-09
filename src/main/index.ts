@@ -175,6 +175,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
+  ipcMain.removeHandler(IPC_CHANNELS.declareMainProject)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
   ipcMain.removeHandler(IPC_CHANNELS.resetMetrics)
   ipcMain.removeHandler(IPC_CHANNELS.queryProjects)
@@ -1109,6 +1110,13 @@ async function init(): Promise<void> {
     reason: 'The panel is still starting up.'
   }
   ipcMain.handle(IPC_CHANNELS.declareMine, () => runtime?.declareMine() ?? notDeclared)
+  // The answer to declare s worktree question (#348), and payloadless for the
+  // same reason declare is: main remembers which project it resolved for the
+  // folder it opened the picker for, so the renderer confirms rather than names.
+  ipcMain.handle(
+    IPC_CHANNELS.declareMainProject,
+    () => runtime?.declareMainProject() ?? notDeclared
+  )
   ipcMain.handle(IPC_CHANNELS.undeclareMine, (_event, mineId: unknown) => {
     // Boundary discipline as elsewhere: a malformed payload changes nothing,
     // and says so rather than resolving as a removal that never happened.

@@ -78,6 +78,7 @@ export type {
   MinesSnapshot,
   MineTier,
   MineUndeclareResult,
+  MineWorktreeOf,
   ModelOption,
   PanelEdge,
   PanelLayout,
