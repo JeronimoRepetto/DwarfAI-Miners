@@ -166,7 +166,6 @@ function unreadableHistory(): MineHistoryResult {
 const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
-const NO_KICK_CHANNEL = "This session type can't be canceled yet."
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 /**
  * The two held-session refusals (#210).
@@ -2696,15 +2695,22 @@ export class AgentRuntime {
     const dwarf = this.mines
       .flatMap((mine) => mine.dwarfs)
       .find((item) => item.id === request.dwarfId)
-    // Same reasoning as sendDwarfText: a 'leaving' dwarf's agent has already
-    // finished, so its retained pid/session are stale and there is nothing
-    // safe to interrupt.
-    if (dwarf === undefined || dwarf.status === 'leaving') {
-      return { delivered: false, via: 'none', error: NO_SUCH_DWARF }
-    }
+    // An id nothing on the board answers to is the one case with nothing to
+    // do: there is no session to interrupt and no dwarf to dismiss either.
+    if (dwarf === undefined) return { delivered: false, via: 'none', error: NO_SUCH_DWARF }
+    // A 'leaving' dwarf's agent has already finished, so its retained
+    // pid/session are stale and there is nothing safe to interrupt — but the
+    // person pressing Kick on one is asking for the walk to end, and that is a
+    // decision about the board rather than about the session (#293).
+    if (dwarf.status === 'leaving') return this.dismissDwarf(request.dwarfId)
 
     const resolved = resolveKickDelivery(request.dwarfId, (id) => this.deliveryTargetOf(id))
-    if (resolved === null) return { delivered: false, via: 'none', error: NO_KICK_CHANNEL }
+    // Nothing here can interrupt this session: the Codex queue drains only
+    // between turns (#97), a held protocol may carry no cancel event at all
+    // (#237), and a one-shot run this app did not start has no exit (#231).
+    // The kick used to be refused for want of a channel; a dismissal needs
+    // none, because it touches no session (#293).
+    if (resolved === null) return this.dismissDwarf(request.dwarfId)
 
     const endpoint = resolved.endpoint
     const timer = createStageTimer(this.now)
@@ -2794,6 +2800,31 @@ export class AgentRuntime {
         error: 'The kick could not be delivered.'
       }
     }
+  }
+
+  /**
+   * Take a dwarf off the board because the person asked for it (#293) — the
+   * other half of `kickDwarf`, taken wherever nothing can interrupt the
+   * session or the session has already ended.
+   *
+   * Resolved HERE rather than by the renderer calling `retireDwarf` itself, for
+   * the reason the retirement above is fire-and-forget: main owns who is on the
+   * board, and one control answering through two different paths depending on a
+   * capability the renderer read would put that decision in two places. It also
+   * keeps the renderer's two-phase honesty intact — a distinct `via` is what
+   * tells the kick store there is no reaction to watch for, because there is no
+   * session that was asked to do anything.
+   *
+   * `delivered: true` and nothing was delivered anywhere: what succeeded is the
+   * person's decision, which is why it answers its own `via` instead of
+   * borrowing a channel's (see DwarfKickVia).
+   */
+  private dismissDwarf(dwarfId: string): DwarfKickResult {
+    console.log(
+      `[runtime] Dismissing ${dwarfId}: nothing here can interrupt it, and it was asked to go.`
+    )
+    this.lifecycle.dismiss(dwarfId)
+    return { delivered: true, via: 'dismiss' }
   }
 
   /**

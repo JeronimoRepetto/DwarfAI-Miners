@@ -29,6 +29,7 @@ export type {
   DwarfKickRequest,
   DwarfKickResult,
   DwarfKickState,
+  DwarfKickVia,
   DwarfMcpServerStatus,
   DwarfObserver,
   DwarfPermissionAnswerRequest,

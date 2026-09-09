@@ -216,3 +216,146 @@ describe('DwarfLifecycleTracker retirement', () => {
     expect(tracker.apply(input)).toEqual(input)
   })
 })
+
+/**
+ * Dismissal (#293). A kick on a dwarf nothing here can interrupt — a Codex
+ * thread's queue, a protocol with no cancel, a session that has already ended
+ * — is the PERSON saying they are done with it, never the panel claiming the
+ * session stopped. So it walks off the rock like a retirement, and unlike one
+ * it comes straight back the moment the session is seen moving again: #46's
+ * own warning is that an agent hidden while it runs is the very lie this
+ * feature exists to prevent, and a dismissed session is usually still alive.
+ */
+describe('DwarfLifecycleTracker dismissal', () => {
+  const idle = { ...defaultDwarf(), id: 'codex:a', name: 'Digger', status: 'waiting' as const }
+
+  it('walks a dismissed dwarf out and keeps it off the board while it stays idle', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const reported = [mine({ dwarfs: [idle] })]
+    tracker.apply(reported)
+
+    now += 1_000
+    tracker.dismiss('codex:a')
+    const walking = tracker.apply(reported)
+    expect(walking[0]!.dwarfs[0]).toMatchObject({ id: 'codex:a', status: 'leaving' })
+
+    // The provider goes on reporting the idle thread for as long as its own
+    // rules say it is there; that must not put the dwarf back on the rock.
+    now += GRACE_MS
+    expect(tracker.apply(reported)[0]!.dwarfs).toEqual([])
+    now += 60_000
+    expect(tracker.apply(reported)[0]!.dwarfs).toEqual([])
+  })
+
+  it('puts the dwarf back the moment the provider reports a turn open again', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    tracker.apply([mine({ dwarfs: [idle] })])
+
+    now += 1_000
+    tracker.dismiss('codex:a')
+    // It walks out with the ordinary leaving grace before it is gone.
+    const walking = tracker.apply([mine({ dwarfs: [idle] })])
+    expect(walking[0]!.dwarfs[0]).toMatchObject({ id: 'codex:a', status: 'leaving' })
+    now += GRACE_MS
+    expect(tracker.apply([mine({ dwarfs: [idle] })])[0]!.dwarfs).toEqual([])
+
+    // Somebody typed into that Codex TUI: the thread opens a turn.
+    now += 1_000
+    const working = { ...idle, status: 'working' as const }
+    expect(tracker.apply([mine({ dwarfs: [working] })])[0]!.dwarfs).toEqual([working])
+  })
+
+  it('puts the dwarf back when its own transcript is appended to after the dismissal', () => {
+    let now = 5_000
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const before = { ...idle, transcriptUpdatedAt: 4_000 }
+    tracker.apply([mine({ dwarfs: [before] })])
+
+    now += 1_000 // dismissed at t=6_000
+    tracker.dismiss('codex:a')
+    tracker.apply([mine({ dwarfs: [before] })])
+    now += GRACE_MS // the walk is over
+    // The same mtime it already had proves nothing: nobody has written since.
+    expect(tracker.apply([mine({ dwarfs: [before] })])[0]!.dwarfs).toEqual([])
+
+    // Measured against the DISMISSAL, not against now: a write at t=7_500 is
+    // still a write somebody made after the person sent the dwarf off.
+    now += 1_000
+    const appended = { ...idle, transcriptUpdatedAt: 7_500 }
+    expect(tracker.apply([mine({ dwarfs: [appended] })])[0]!.dwarfs).toEqual([appended])
+  })
+
+  it('reads a transcript written before the dismissal as no activity at all', () => {
+    let now = 10_000
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const stale = { ...idle, transcriptUpdatedAt: 9_000 }
+    tracker.apply([mine({ dwarfs: [stale] })])
+
+    now += 1_000
+    tracker.dismiss('codex:a')
+    tracker.apply([mine({ dwarfs: [stale] })])
+    now += GRACE_MS
+    for (let i = 0; i < 5; i++) {
+      now += 1_000
+      expect(tracker.apply([mine({ dwarfs: [stale] })])[0]!.dwarfs).toEqual([])
+    }
+  })
+
+  it('never reads a sibling dwarf’s work as the dismissed one moving', () => {
+    // The mine's own updatedAt is deliberately NOT the evidence: several
+    // sessions share one folder, so a neighbour digging would resurrect a
+    // dwarf nobody touched.
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const other = { ...defaultDwarf(), id: 'codex:b', status: 'working' as const }
+    tracker.apply([mine({ dwarfs: [idle, other] })])
+
+    now += 1_000
+    tracker.dismiss('codex:a')
+    tracker.apply([mine({ dwarfs: [idle, other] })])
+    now += GRACE_MS
+    const result = tracker.apply([mine({ dwarfs: [idle, other], updatedAt: now })])
+    expect(result[0]!.dwarfs.map((item) => item.id)).toEqual(['codex:b'])
+  })
+
+  it('ends the walk at once for a dwarf that was already leaving', () => {
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    tracker.apply([mine({ dwarfs: [idle] })])
+
+    now += 1_000
+    expect(tracker.apply([mine({ dwarfs: [] })])[0]!.dwarfs).toHaveLength(1)
+
+    // Pressed on a finished worker: the walk is the thing being dismissed.
+    now += 1_000
+    tracker.dismiss('codex:a')
+    expect(tracker.apply([mine({ dwarfs: [] })])[0]?.dwarfs ?? []).toEqual([])
+  })
+
+  it('leaves an observed stop suppressed however busy the provider says it is', () => {
+    // #46's rule is untouched: a retirement is the panel having SEEN the agent
+    // stop, so the provider still calling it 'working' is exactly the belief
+    // the record exists to outlast.
+    let now = 0
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => now })
+    const busy = { ...idle, status: 'working' as const, transcriptUpdatedAt: 50_000 }
+    tracker.apply([mine({ dwarfs: [busy] })])
+
+    now += 1_000
+    tracker.retire('codex:a')
+    tracker.apply([mine({ dwarfs: [busy] })])
+    now += GRACE_MS
+    expect(tracker.apply([mine({ dwarfs: [busy] })])[0]!.dwarfs).toEqual([])
+    now += 60_000
+    expect(tracker.apply([mine({ dwarfs: [busy] })])[0]!.dwarfs).toEqual([])
+  })
+
+  it('ignores a dismissal for a dwarf it has never seen', () => {
+    const tracker = new DwarfLifecycleTracker({ graceMs: GRACE_MS, now: () => 0 })
+    tracker.dismiss('codex:ghost')
+    const input = [mine({ dwarfs: [idle] })]
+    expect(tracker.apply(input)).toEqual(input)
+  })
+})

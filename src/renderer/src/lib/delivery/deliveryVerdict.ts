@@ -38,14 +38,52 @@ const KICK_FAILED_TITLE = 'The kick could not be delivered.'
  */
 const KICK_ENDED_TITLE = 'The session was ended: the process this panel launched is gone.'
 const KICK_ENDED_LINE = 'Ended the session — the process this panel launched is gone.'
+/**
+ * A kick that took the dwarf off the BOARD without touching the session
+ * (#293).
+ *
+ * The third act behind one control, and it must read as neither of the other
+ * two. A hand-over says a session was asked something, and nothing was asked
+ * here — nothing can interrupt this session, which is precisely why the kick
+ * means "I am done with this one". "The session was ended" is a claim about a
+ * process, and this makes none: for all the panel knows the session is still
+ * running, and it may well be.
+ *
+ * So the copy says what happened and then says the one thing that undoes it.
+ * That second clause is not padding: a dismissed dwarf returns the moment its
+ * session shows activity (see the main process's DwarfLifecycleTracker), and
+ * somebody who was not told would read that return as a bug rather than as the
+ * board refusing to hide work.
+ */
+const KICK_DISMISSED_TITLE =
+  'The dwarf was sent off the rock. It comes back if its session shows new activity.'
+const KICK_DISMISSED_LINE =
+  'Sent the dwarf off the rock — it comes back if the session shows new activity.'
 
 /**
  * Whether a kick on this channel ends the session rather than asking it to
- * stop. Read by the copy below and by the kick store, which opens no reaction
- * watch for one.
+ * stop. Read by the copy below and by `kickHasNothingToAwait`.
  */
 export function kickEndedTheSession(via: string | undefined): boolean {
   return via === 'launched-process'
+}
+
+/** Whether a kick took the dwarf off the board rather than reaching a session (#293). */
+export function kickDismissedTheDwarf(via: string | undefined): boolean {
+  return via === 'dismiss'
+}
+
+/**
+ * Whether a delivered kick has anything left to watch for.
+ *
+ * Two verdicts answer no, for opposite reasons: an ended session has no later
+ * snapshot that could prove anything, and a dismissal asked the session
+ * nothing at all. Read by the kick store, which opens no reaction watch for
+ * either — a watch would decay to "no reaction seen" about a session that was
+ * never asked to react.
+ */
+export function kickHasNothingToAwait(via: string | undefined): boolean {
+  return kickEndedTheSession(via) || kickDismissedTheDwarf(via)
 }
 
 function deliveredMarker(awaitingReaction: boolean | undefined): DeliveryMarker {
@@ -76,6 +114,11 @@ export function kickMarker(state: DwarfKickState | undefined): DeliveryMarker | 
   // SEEN acting. One tick, and its own sentence.
   if (state.phase === 'delivered' && kickEndedTheSession(state.via)) {
     return { cls: 'is-delivered', glyph: '✓', title: KICK_ENDED_TITLE }
+  }
+  // Nor a reacted one, and for the opposite reason (#293): nothing was asked,
+  // so there is nothing a session could be seen doing about it.
+  if (state.phase === 'delivered' && kickDismissedTheDwarf(state.via)) {
+    return { cls: 'is-delivered', glyph: '✓', title: KICK_DISMISSED_TITLE }
   }
   if (state.phase === 'delivered') return deliveredMarker(state.awaitingReaction)
   if (state.phase === 'reacted') return reactedMarker(KICK_REACTED_TITLE)
@@ -108,7 +151,10 @@ export function sendStatusLine(state: DwarfSendState | undefined): string | null
 
 export function kickStatusLine(state: DwarfKickState | undefined): string | null {
   if (state === undefined) return null
-  // The one act that is not a hand-over, and never described as one.
+  // The two acts that are not hand-overs, and never described as one. Both
+  // return before `statusLine` below, which would otherwise render the verdict
+  // as "via dismiss" — naming a channel that does not exist.
   if (state.phase === 'delivered' && kickEndedTheSession(state.via)) return KICK_ENDED_LINE
+  if (state.phase === 'delivered' && kickDismissedTheDwarf(state.via)) return KICK_DISMISSED_LINE
   return statusLine(state.phase, state.via, state.awaitingReaction, 'Kick handed over')
 }

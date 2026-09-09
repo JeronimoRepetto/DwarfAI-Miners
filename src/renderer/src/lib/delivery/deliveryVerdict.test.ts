@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfKickState, DwarfSendState } from '../../types'
 import {
+  kickDismissedTheDwarf,
   kickEndedTheSession,
+  kickHasNothingToAwait,
   kickMarker,
   kickStatusLine,
   sendMarker,
@@ -181,5 +183,59 @@ describe('a kick that ended the session', () => {
     expect(kickEndedTheSession('launched-process')).toBe(true)
     expect(kickEndedTheSession('held-session')).toBe(false)
     expect(kickEndedTheSession(undefined)).toBe(false)
+  })
+})
+
+/*
+ * A kick that DISMISSED the dwarf (#293). The third act behind one control,
+ * and the only one that never touched the session at all: nothing can
+ * interrupt it, so the person said they were done with it and the dwarf left
+ * the board. That has to read as neither of the other two — a hand-over
+ * promises a session that was asked something, and "the session was ended"
+ * claims a process is gone — and, like an ended session, it awaits nothing.
+ */
+describe('a kick that dismissed the dwarf', () => {
+  it('says the dwarf was sent off, never that the session was asked anything', () => {
+    const line = kickStatusLine({ phase: 'delivered', via: 'dismiss' })
+    expect(line).toContain('off the rock')
+    expect(line).not.toContain('watching')
+    expect(line).not.toContain('handed over')
+    expect(line).not.toContain('Ended the session')
+  })
+
+  it('says out loud that the dwarf comes back if the session moves', () => {
+    // The dismissal is the person's act and never a finding that the session
+    // stopped, so its own copy has to carry the one thing that undoes it.
+    expect(kickStatusLine({ phase: 'delivered', via: 'dismiss' })).toMatch(/new activity/i)
+    expect(kickMarker({ phase: 'delivered', via: 'dismiss' })?.title).toMatch(/new activity/i)
+  })
+
+  it('marks it without ever claiming a reaction', () => {
+    const marker = kickMarker({ phase: 'delivered', via: 'dismiss' })
+    expect(marker?.glyph).toBe('✓')
+    expect(marker?.cls).toBe('is-delivered')
+    expect(marker?.title).not.toMatch(/reacted/i)
+  })
+
+  it('never reads the channel name into the sentence', () => {
+    // 'dismiss' is a verdict, not a route (see DwarfKickVia); the generic line
+    // would render it as "via dismiss", which names a channel that does not
+    // exist.
+    expect(kickStatusLine({ phase: 'delivered', via: 'dismiss' })).not.toContain('via dismiss')
+  })
+
+  it('is told apart from an ended session, and from every real channel', () => {
+    expect(kickDismissedTheDwarf('dismiss')).toBe(true)
+    expect(kickDismissedTheDwarf('launched-process')).toBe(false)
+    expect(kickDismissedTheDwarf('terminal')).toBe(false)
+    expect(kickDismissedTheDwarf(undefined)).toBe(false)
+    expect(kickEndedTheSession('dismiss')).toBe(false)
+  })
+
+  it('awaits nothing, for the same reason an ended session awaits nothing', () => {
+    expect(kickHasNothingToAwait('dismiss')).toBe(true)
+    expect(kickHasNothingToAwait('launched-process')).toBe(true)
+    expect(kickHasNothingToAwait('terminal')).toBe(false)
+    expect(kickHasNothingToAwait('codex-queue')).toBe(false)
   })
 })

@@ -19,6 +19,7 @@ import {
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
   type DwarfQuestion,
+  type DwarfStatus,
   type FeedMessage,
   type LaunchFailedPush,
   type ProviderSnapshot
@@ -1200,7 +1201,14 @@ describe('AgentRuntime.sendDwarfText', () => {
     ).resolves.toMatchObject({ delivered: false })
   })
 
-  it('refuses a leaving dwarf, whose retained pid and session are already stale', async () => {
+  /*
+   * AMENDED for #293 (was: 'refuses a leaving dwarf, whose retained pid and
+   * session are already stale'). The pid and the session name are still stale
+   * and still never touched — what changed is that the person now has a way to
+   * say "get this finished worker off the rock", which is a decision about the
+   * BOARD and needs no channel at all.
+   */
+  it('dismisses a leaving dwarf rather than reaching for its stale pid', async () => {
     const scan = vi
       .fn<Provider['scan']>()
       .mockResolvedValueOnce([
@@ -1470,11 +1478,18 @@ describe('AgentRuntime.kickDwarf', () => {
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  it('refuses a dwarf whose session type has no cancel channel (Codex, all shapes)', async () => {
+  /*
+   * AMENDED for #293 (was: 'refuses a dwarf whose session type has no cancel
+   * channel (Codex, all shapes)', asserting delivered:false with a reason).
+   * A kick nothing can carry is no longer a refusal: the person asked for this
+   * dwarf to go, so it is dismissed from the board and nothing is sent
+   * anywhere. The two "nothing was sent" assertions are the half that matters
+   * and they are unchanged.
+   */
+  it('dismisses a dwarf whose session type has no cancel channel, sending nothing', async () => {
     const { runtime, port } = await runtimeWith({})
     const result = await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
-    expect(result).toMatchObject({ delivered: false, via: 'none' })
-    expect(result.error).toBeTruthy()
+    expect(result).toEqual({ delivered: true, via: 'dismiss' })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
     expect(port.sendInterrupt).not.toHaveBeenCalled()
   })
@@ -1534,8 +1549,12 @@ describe('AgentRuntime.kickDwarf', () => {
     await runtime.refresh()
 
     const result = await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
-    expect(result.delivered).toBe(false)
+    expect(result).toEqual({ delivered: true, via: 'dismiss' })
     expect(port.sendInterrupt).not.toHaveBeenCalled()
+
+    // The walk ends at once: that walk is what was being dismissed.
+    await runtime.refresh()
+    expect(runtime.getMines().flatMap((mine) => mine.dwarfs)).toEqual([])
   })
 
   it('reports the failure reason the delivery port gave', async () => {
@@ -1703,7 +1722,12 @@ describe('AgentRuntime over the Codex message queue', () => {
     } as TextDeliveryPort
   }
 
-  async function runtimeWithQueue(port: TextDeliveryPort) {
+  /**
+   * `dwarfStatus` was added for #293 and defaults to the mid-turn thread every
+   * caller before it wanted: the dismissal rule turns on whether a turn is
+   * open, so its own cases need a thread sitting at its prompt.
+   */
+  async function runtimeWithQueue(port: TextDeliveryPort, dwarfStatus: DwarfStatus = 'working') {
     const source: Provider = {
       kind: 'codex',
       scan: vi.fn<Provider['scan']>().mockResolvedValue([
@@ -1711,7 +1735,7 @@ describe('AgentRuntime over the Codex message queue', () => {
           provider: 'codex',
           sessionId: THREAD_ID,
           cwd: 'C:\\work\\project',
-          status: 'busy',
+          status: dwarfStatus === 'working' ? 'busy' : 'idle',
           updatedAt: 1,
           dwarfs: [
             {
@@ -1719,7 +1743,7 @@ describe('AgentRuntime over the Codex message queue', () => {
               provider: 'codex',
               role: 'worker',
               name: 'codex-01a04d79',
-              status: 'working',
+              status: dwarfStatus,
               sessionId: THREAD_ID
             }
           ]
@@ -1780,15 +1804,63 @@ describe('AgentRuntime over the Codex message queue', () => {
     })
   })
 
-  it('refuses a kick outright rather than queueing one that could never interrupt', async () => {
+  /*
+   * AMENDED for #293 (was: 'refuses a kick outright rather than queueing one
+   * that could never interrupt'). Never queueing the kick is the rule #97
+   * established and it still holds — a queued interrupt drains after the turn
+   * it was meant to stop. What the person gets instead is no longer nothing:
+   * the thread they are done with leaves the board.
+   */
+  it('dismisses the dwarf rather than queueing a kick that could never interrupt', async () => {
     const port = queuePort()
     const runtime = await runtimeWithQueue(port)
 
     const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
-    expect(result).toMatchObject({ delivered: false, via: 'none' })
-    expect(result.error).toBeTruthy()
+    expect(result).toEqual({ delivered: true, via: 'dismiss' })
     expect(port.queueToCodexThread).not.toHaveBeenCalled()
     expect(port.sendInterrupt).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The board half of the same act, end to end (#293): the provider goes on
+   * reporting an idle Codex thread for its whole retention window, and the
+   * dismissal has to outlast that belief or the dwarf flickers back on the
+   * very next poll.
+   */
+  it('keeps a dismissed thread at its prompt off the board while the provider reports it', async () => {
+    const runtime = await runtimeWithQueue(queuePort(), 'waiting')
+
+    await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    // It walks out first, exactly as a retirement does.
+    await runtime.refresh()
+    expect(runtime.getMines().flatMap((mine) => mine.dwarfs)).toMatchObject([
+      { id: DWARF_ID, status: 'leaving' }
+    ])
+
+    // And never comes back on, however long the provider goes on listing the
+    // thread — the flicker-back this record exists to stop. It is still
+    // walking rather than gone only because the leave grace is wall-clock and
+    // this fixture takes no injected clock; lifecycle.test.ts owns the expiry.
+    for (let i = 0; i < 4; i++) await runtime.refresh()
+    expect(runtime.getMines().flatMap((mine) => mine.dwarfs)).toMatchObject([
+      { id: DWARF_ID, status: 'leaving' }
+    ])
+  })
+
+  /*
+   * The limit of the dismissal, and it is #46's own rule rather than a hole in
+   * this one: a thread whose turn is open is RUNNING, and an agent hidden while
+   * it runs is the very lie the board must never tell. So a dismissal of a
+   * mid-turn thread is undone by the next poll that still sees the turn.
+   */
+  it('brings a dismissed thread straight back while its turn is still open', async () => {
+    const runtime = await runtimeWithQueue(queuePort())
+
+    await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    await runtime.refresh()
+    expect(runtime.getMines().flatMap((mine) => mine.dwarfs)).toMatchObject([
+      { id: DWARF_ID, status: 'working' }
+    ])
   })
 
   it('reports the reason the queue tier gave, with no relay fallback to reach for', async () => {
@@ -2031,9 +2103,12 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     // No matrix at all and every field null mean the same thing here — see
     // DwarfCapabilities — and what is being asserted is "no cancel channel".
     expect(runtime.getMines()[0]?.dwarfs[0]?.capabilities?.cancel ?? null).toBeNull()
-    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
-      delivered: false,
-      via: 'none'
+    // AMENDED for #293 (was: delivered:false, via:'none'). No exit is still no
+    // exit — nobody else's process is ended — and the kick now takes the dwarf
+    // off the board instead of answering with nothing.
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'dismiss'
     })
   })
 
@@ -2297,9 +2372,13 @@ describe('AgentRuntime giving a previous run’s launch its exit back (#231)', (
     const { runtime, endProcessTree } = await secondRun(sqlite, PROC_START + 3_600_000)
 
     expect(dwarfOf(runtime, THREAD_ID)?.capabilities?.cancel ?? null).toBeNull()
-    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
-      delivered: false,
-      via: 'none'
+    // AMENDED for #293 (was: delivered:false, via:'none'). The assertion that
+    // carries the whole design is the last one, and it is untouched: nothing is
+    // signalled. A dismissal is a decision about the board, so it cannot reach
+    // a process at all, whoever owns that pid now.
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'dismiss'
     })
     expect(endProcessTree).not.toHaveBeenCalled()
   })
