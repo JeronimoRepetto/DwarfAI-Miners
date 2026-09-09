@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus } from '../../types'
 import { DWARF_SHEETS } from './dwarfSheets'
-import { dwarfClips, isAwaitingAnswer, stillFrameOf } from './dwarfSequence'
+import { dwarfClips, isResting, stillFrameOf } from './dwarfSequence'
 import { loopOf, onceOf } from './spriteSheet'
 
 const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
@@ -16,27 +16,66 @@ function sheetsOf(clips: ReturnType<typeof dwarfClips>): string[] {
 }
 
 /*
- * Issue #60's signal, unchanged: only a provider that PROVED a person was asked
- * something selects this. An approval and an open dialog are not questions, and
- * the panel may not single a dwarf out on a reason that merely might mean one.
+ * REMOVED for #306: `isAwaitingAnswer(status, waitingReason)`, which required
+ * a provider to have PROVED a human was asked something before the marker's
+ * OWN predicate — `status === 'waiting'` — could be trusted for the sleep
+ * SEQUENCE too. That was the bug: a foreman resting at his prompt with no
+ * such proof was marked asleep by `DwarfStatusIcons` and drawn awake by this
+ * module. Three cases went with it: "is true only for a blocked dwarf whose
+ * provider proved a human was asked", "leaves every unproven reason alone"
+ * (the case that pinned the bug as if it were correct — `isAwaitingAnswer('waiting',
+ * undefined)` was `false`) and "never fires for a dwarf that is working or on
+ * its way out". `isResting` below replaces it, has no `waitingReason`
+ * parameter to get wrong, and is exercised the same way.
  */
-describe('isAwaitingAnswer', () => {
-  it('is true only for a blocked dwarf whose provider proved a human was asked', () => {
-    expect(isAwaitingAnswer('waiting', 'user-input')).toBe(true)
+describe('isResting', () => {
+  it('is true for a waiting dwarf, with no reason required at all (#306)', () => {
+    // isResting takes no waitingReason — there is nothing here FOR a reason
+    // to gate. That absence of a parameter is the fix.
+    expect(isResting('waiting')).toBe(true)
   })
 
-  it('leaves every unproven reason alone', () => {
-    for (const reason of ['approval', 'unknown', undefined] as const) {
-      expect(isAwaitingAnswer('waiting', reason), String(reason)).toBe(false)
-    }
-  })
-
-  it('never fires for a dwarf that is working or on its way out', () => {
-    // The reason rides on a blocked dwarf. A working one is producing and a
-    // leaving one is already going; neither is waiting on anybody.
+  it('is false for a dwarf that is working or on its way out', () => {
     for (const status of ['working', 'leaving'] as const) {
-      expect(isAwaitingAnswer(status, 'user-input'), status).toBe(false)
+      expect(isResting(status), status).toBe(false)
     }
+  })
+})
+
+/*
+ * The regression itself (#306), composed the exact way `DwarfSprite.vue`'s
+ * watch feeds `dwarfClips` — `isResting(status)` straight in, no reason
+ * required. Before this fix a foreman blocked at his prompt with no PROVEN
+ * reason (no `waitingReason` at all, or one other than `'user-input'`) was
+ * marked asleep by `DwarfStatusIcons`' marker and left idling by this
+ * sequence, because `isAwaitingAnswer('waiting', undefined)` was `false`.
+ * `isResting` did not exist before this fix, so every case here fails to
+ * even compile against the pre-fix module — which is the correct failure: the
+ * fix IS `isResting` existing and `dwarfClips` reading it.
+ */
+describe('the sleep axis reads REST, not a proven reason (#306)', () => {
+  it('falls asleep entering rest with no waitingReason offered at all', () => {
+    expect(sheetsOf(dwarfClips('foreman', isResting('waiting'), false))).toEqual(
+      sheetsOf([onceOf(FOREMAN['start-sleep']!), loopOf(FOREMAN.sleeping!)])
+    )
+  })
+
+  it('wakes leaving rest for idle', () => {
+    expect(sheetsOf(dwarfClips('foreman', isResting('leaving'), true))).toEqual(
+      sheetsOf([onceOf(FOREMAN['end-sleep']!), loopOf(FOREMAN.idle)])
+    )
+  })
+
+  it('wakes leaving rest straight for work, end-sleep resolving before the working axis gets a say', () => {
+    expect(sheetsOf(dwarfClips('foreman', isResting('working'), true, true, false))).toEqual(
+      sheetsOf([onceOf(FOREMAN['end-sleep']!), loopOf(FOREMAN.idle)])
+    )
+  })
+
+  it('idles a resting worker, having no sleep strips of its own', () => {
+    expect(sheetsOf(dwarfClips('worker', isResting('waiting'), false))).toEqual(
+      sheetsOf([loopOf(WORKER.idle)])
+    )
   })
 })
 
@@ -57,7 +96,16 @@ describe('dwarfClips', () => {
     }
   })
 
-  describe('the foreman being asked a question', () => {
+  /*
+   * AMENDED for #306: this block was 'the foreman being asked a question',
+   * and its cases called the first two dwarfClips arguments `awaiting` /
+   * `wasAwaiting` in spirit — the boolean was meant to answer "did a provider
+   * prove someone asked him something". It now answers "is he resting", full
+   * stop, which is why the assertions below are untouched: dwarfClips's own
+   * mechanics never depended on WHERE the boolean came from, only on its
+   * value, and that is exactly what this block still pins.
+   */
+  describe('the foreman entering and leaving rest', () => {
     it('falls asleep once, then sleeps on', () => {
       expect(sheetsOf(dwarfClips('foreman', true, false))).toEqual(
         sheetsOf([onceOf(FOREMAN['start-sleep']!), loopOf(FOREMAN.sleeping!)])
@@ -78,8 +126,8 @@ describe('dwarfClips', () => {
       )
     })
 
-    it('falls asleep on a first render that already finds it asked', () => {
-      // A dwarf appearing already blocked has nothing to interrupt, and the
+    it('falls asleep on a first render that already finds it resting', () => {
+      // A dwarf appearing already resting has nothing to interrupt, and the
       // fall is what makes the sleep legible rather than a dwarf spawned prone.
       expect(sheetsOf(dwarfClips('foreman', true, undefined))).toEqual(
         sheetsOf([onceOf(FOREMAN['start-sleep']!), loopOf(FOREMAN.sleeping!)])
@@ -99,8 +147,8 @@ describe('dwarfClips', () => {
      * A CHANGE OF STATE ALWAYS RESTARTS THE SEQUENCE, AND A TRANSITION CAUGHT
      * MID-PLAY IS ABANDONED WHERE IT STANDS.
      *
-     * A question answered while he is still lying down cuts straight to him
-     * getting up; asked again while he is getting up cuts straight back to
+     * Rest ending while he is still lying down cuts straight to him getting
+     * up; rest starting again while he is getting up cuts straight back to
      * lying down. It is decided entirely by the two booleans, so the same pair
      * always produces the same clips however the dwarf got there — no partial
      * playback to unwind, and no sequence that can strand him half-asleep.
@@ -121,9 +169,10 @@ describe('dwarfClips', () => {
 
   /*
    * #74's working strips, the same template as the foreman's sleep above,
-   * keyed on the dwarf's OWN 'working' status instead of a question asked of
-   * it. `working`/`wasWorking` default to false/undefined so every call above
-   * this block, written before this axis existed, keeps its exact old meaning.
+   * keyed on the dwarf's OWN 'working' status instead of whether it is
+   * resting. `working`/`wasWorking` default to false/undefined so every call
+   * above this block, written before this axis existed, keeps its exact old
+   * meaning.
    */
   describe('a worker starting work', () => {
     it('picks up the pick once, then swings on', () => {
@@ -184,7 +233,7 @@ describe('dwarfClips', () => {
       // consulted, not the other way round. A worker has no sleep art, so
       // this is invisible for him (idle either way) — it is what stops a
       // FOREMAN's end-sleep transition from being skipped the instant his
-      // status flips straight from being asked to 'working'.
+      // status flips straight from 'waiting' to 'working'.
       expect(sheetsOf(dwarfClips('foreman', false, true, true, false))).toEqual(
         sheetsOf([onceOf(FOREMAN['end-sleep']!), loopOf(FOREMAN.idle)])
       )
@@ -286,44 +335,44 @@ describe('dwarfClips', () => {
   /*
    * The honest remainder. #74 has now drawn a working sequence (above), which
    * is why this block no longer claims "every state" — only what is left:
-   * being asked a question, resting, walking to the vein and walking out
-   * (without having worked first) all still fall back to the one idle loop,
-   * because none of those has been drawn. Style consistency was chosen over
-   * motion fidelity for what remains undrawn, exactly as it was chosen for
-   * all four before working landed.
+   * resting, walking to the vein and walking out (without having worked
+   * first) all still fall back to the one idle loop, because none of those
+   * has been drawn. Style consistency was chosen over motion fidelity for
+   * what remains undrawn, exactly as it was chosen for all four before
+   * working landed.
    */
   describe('a worker, whose other loops have not been drawn', () => {
-    it('idles through being asked a question, having no sleep art', () => {
+    it('idles through rest, having no sleep art', () => {
       expect(sheetsOf(dwarfClips('worker', true, false))).toEqual(sheetsOf([loopOf(WORKER.idle)]))
     })
 
     it('plays no transition it does not have, rather than substituting one', () => {
       // Every clip is a loop: a missing transition is DROPPED, never filled
       // with the idle, which would read as a stutter before every state.
-      for (const [awaiting, was] of [
+      for (const [resting, was] of [
         [true, false],
         [false, true],
         [true, true],
         [false, false]
       ] as const) {
-        const clips = dwarfClips('worker', awaiting, was)
+        const clips = dwarfClips('worker', resting, was)
         expect(
           clips.map((clip) => clip.playback),
-          `${awaiting}/${was}`
+          `${resting}/${was}`
         ).toEqual(['loop'])
       }
     })
 
     it('settles on a loop whatever it is doing, so it never freezes on a pose', () => {
       for (const role of ROLES) {
-        for (const [awaiting, was] of [
+        for (const [resting, was] of [
           [true, false],
           [false, true],
           [true, true],
           [false, false]
         ] as const) {
-          const clips = dwarfClips(role, awaiting, was)
-          expect(clips[clips.length - 1]?.playback, `${role}/${awaiting}/${was}`).toBe('loop')
+          const clips = dwarfClips(role, resting, was)
+          expect(clips[clips.length - 1]?.playback, `${role}/${resting}/${was}`).toBe('loop')
         }
       }
     })
@@ -336,12 +385,12 @@ describe('dwarfClips', () => {
     for (const role of ROLES) {
       const other: DwarfRole = role === 'worker' ? 'foreman' : 'worker'
       const otherSheets = Object.values(DWARF_SHEETS[other]).map((sheet) => sheet.src)
-      for (const [awaiting, was] of [
+      for (const [resting, was] of [
         [true, false],
         [false, true]
       ] as const) {
-        for (const clip of dwarfClips(role, awaiting, was)) {
-          expect(otherSheets, `${role}/${awaiting}/${was}`).not.toContain(clip.sheet.src)
+        for (const clip of dwarfClips(role, resting, was)) {
+          expect(otherSheets, `${role}/${resting}/${was}`).not.toContain(clip.sheet.src)
         }
       }
     }
@@ -387,17 +436,17 @@ describe('stillFrameOf', () => {
 
   it('holds a frame the sheet actually has, for every state either rank can be in', () => {
     for (const role of ROLES) {
-      for (const [awaiting, was] of [
+      for (const [resting, was] of [
         [true, false],
         [false, true],
         [true, true],
         [false, false]
       ] as const) {
-        const clips = dwarfClips(role, awaiting, was)
+        const clips = dwarfClips(role, resting, was)
         const held = stillFrameOf(clips)
         const sheet = clips[held.clip]?.sheet
-        expect(sheet, `${role}/${awaiting}/${was}`).toBeDefined()
-        expect(held.frame, `${role}/${awaiting}/${was}`).toBeLessThan(sheet!.frames)
+        expect(sheet, `${role}/${resting}/${was}`).toBeDefined()
+        expect(held.frame, `${role}/${resting}/${was}`).toBeLessThan(sheet!.frames)
       }
     }
   })
@@ -408,7 +457,7 @@ describe('stillFrameOf', () => {
  * consequence and not a surprise. Silence (#47), rest (#34) and travel (#19)
  * each selected their own pose off the painted frames; none of them has been
  * drawn as a sheet, so all three now play the rank's idle. The information did
- * not vanish from the panel — the zzz overlay still marks a resting dwarf and
+ * not vanish from the panel — the sleep marker still marks a resting dwarf and
  * the leaving fade still marks a departure — but it is gone from the SPRITE
  * until #74 delivers the art.
  */
@@ -421,7 +470,7 @@ describe('states that no longer have a drawing of their own', () => {
     // art no longer applies to removed.
     const remaining: readonly DwarfStatus[] = ['waiting', 'leaving']
     const drawn = remaining.map((status) =>
-      sheetsOf(dwarfClips('worker', isAwaitingAnswer(status, undefined), false)).join()
+      sheetsOf(dwarfClips('worker', isResting(status), false)).join()
     )
     expect(new Set(drawn).size).toBe(1)
 

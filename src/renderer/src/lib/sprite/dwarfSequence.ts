@@ -1,35 +1,46 @@
 /**
- * Which strips a dwarf plays, and in what order (issues #74, #87, #262).
+ * Which strips a dwarf plays, and in what order (issues #74, #87, #262, #306).
  *
  * ## The interruption rule
  *
  * A CHANGE OF STATE ALWAYS RESTARTS THE SEQUENCE, AND A TRANSITION CAUGHT
- * MID-PLAY IS ABANDONED WHERE IT STANDS. A foreman answered while he is still
- * lying down cuts straight to getting up; asked again while getting up cuts
- * straight back to lying down. A worker sent home mid pick-up cuts straight
- * to setting the pick back down, never finishing the swing it was caught
- * starting.
+ * MID-PLAY IS ABANDONED WHERE IT STANDS. A foreman put back to work while he
+ * is still lying down cuts straight to getting up; sent back to rest while
+ * getting up cuts straight back to lying down. A worker sent home mid
+ * pick-up cuts straight to setting the pick back down, never finishing the
+ * swing it was caught starting.
  *
  * It is worth the sentence because the obvious alternative — letting a `once`
  * clip finish before honouring the new state — is what strands a sprite: two
  * quick changes and the drawing is a state behind the dwarf, with no bound on
  * how far behind it can fall. Here the clips are a pure function of two
- * independent (state, wasState) pairs — one for being asked a question, one
- * for working — so the same four values always produce the same sequence
- * however the dwarf arrived at them, and there is no partial playback to
- * unwind.
+ * independent (state, wasState) pairs — one for rest, one for working — so
+ * the same four values always produce the same sequence however the dwarf
+ * arrived at them, and there is no partial playback to unwind.
  *
- * The two pairs are independent in name only. `isAwaitingAnswer` never returns
- * true for a working dwarf, so a real dwarf is never in both current states at
- * once — but a dwarf CAN carry a true past on one axis into a render where the
- * other axis has since gone true (asked a question, then put straight to
- * work). Being asked a question is checked first, ahead of the working axis
- * entirely, both for entering it and for the transition OUT of it: leaving a
- * blocked state is always resolved before the working axis is ever consulted.
- * That ordering is what keeps a foreman's end-sleep transition from being
- * skipped the instant his status flips straight from being asked to
- * 'working' — see `dwarfClips`'s own note below for why it has to be exactly
- * this way round.
+ * The two pairs are independent in name only. `status` is a single field, so
+ * a real dwarf is never `'waiting'` and `'working'` at once — but a dwarf CAN
+ * carry a true past on one axis into a render where the other axis has since
+ * gone true (rested, then put straight to work). Rest is checked first,
+ * ahead of the working axis entirely, both for entering it and for the
+ * transition OUT of it: leaving rest is always resolved before the working
+ * axis is ever consulted. That ordering is what keeps a foreman's end-sleep
+ * transition from being skipped the instant his status flips straight from
+ * `'waiting'` to `'working'` — see `dwarfClips`'s own note below for why it
+ * has to be exactly this way round.
+ *
+ * ## Rest is a status, not a proven reason (issue #306)
+ *
+ * The sleep axis used to be keyed on `isAwaitingAnswer` — true only where a
+ * provider PROVED a human was asked something (`waitingReason ===
+ * 'user-input'`, issue #60). That disagreed with `DwarfStatusIcons`' own
+ * sleep marker, which has always drawn for `status === 'waiting'` alone: a
+ * foreman resting at his prompt with no proven reason was marked asleep by
+ * the glyph and drawn awake by the sequence. `isResting` below is exactly the
+ * marker's own predicate, exported so the sequence's caller can never compute
+ * a different answer than the glyph does. #60's normalized reason has not
+ * gone anywhere — it still drives its own glyph, the important-dialog mark on
+ * `dwarf.pendingQuestion` — it just no longer decides which SEQUENCE plays.
  *
  * ## What is drawn and what is not
  *
@@ -44,7 +55,7 @@
  * walking and leaving (without having worked first) still fall back to the
  * one idle loop, because none of those has been drawn. Only the foreman's
  * sleep is drawn besides. The panel has not stopped saying which state a
- * dwarf is in — the `z z z` overlay still marks a resting one and the leaving
+ * dwarf is in — the sleep marker still marks a resting one and the leaving
  * fade still marks a departure — but the SPRITE says it only where the art
  * exists.
  *
@@ -60,23 +71,22 @@
  * was the one thing left contradicting the scene. See `dwarfClips`'s own
  * note below for what this does to `wasWorking`'s meaning.
  */
-import type { DwarfRole, DwarfStatus, WaitingReason } from '../../types'
-import { WAITING_ON_HUMAN_REASON } from '../../types'
+import type { DwarfRole, DwarfStatus } from '../../types'
 import { DWARF_SHEETS, type DwarfSheetName, type DwarfSheetSet } from './dwarfSheets'
 import { loopOf, onceOf, type SequencePosition, type SpriteClip } from './spriteSheet'
 
 /**
- * Whether this dwarf is blocked on a person answering it (issue #60).
- *
- * The reason is passed through from the provider and never re-derived: only a
- * provider knows whether a human was actually asked something, and one proven
- * value picks this out. An approval and an open dialog rest exactly as they
- * always have — the panel may single a dwarf out for attention only where a
- * provider proved a person was asked, never on a reason that might mean one.
+ * Whether this dwarf is resting (issue #306) — the exact predicate
+ * `DwarfStatusIcons`' own sleep marker draws for (`DwarfSprite.vue`'s
+ * `:resting` binding), so the marker and the sequence can never disagree
+ * again. It replaces `isAwaitingAnswer`, which read `waitingReason` and
+ * required a provider to have PROVED a human was asked something (#60) —
+ * exactly the reason a foreman resting with no such proof was marked asleep
+ * and drawn awake. Rest is a status, not a reason, and this reads only the
+ * one field both the marker and the sequence already agreed meant it.
  */
-export function isAwaitingAnswer(status: DwarfStatus, waitingReason?: WaitingReason): boolean {
-  if (status === 'working' || status === 'leaving') return false
-  return waitingReason === WAITING_ON_HUMAN_REASON
+export function isResting(status: DwarfStatus): boolean {
+  return status === 'waiting'
 }
 
 /** The looping sheet for a state, or the rank's idle where none was drawn. */
@@ -93,7 +103,7 @@ function transition(sheets: DwarfSheetSet, name: DwarfSheetName): SpriteClip[] {
 /**
  * The clips to play now.
  *
- * `wasAwaiting` and `wasWorking` are the PREVIOUS answers on each axis, which
+ * `wasResting` and `wasWorking` are the PREVIOUS answers on each axis, which
  * is what turns a state into a transition — `undefined` on either is a first
  * render, where a dwarf that arrives already in that state still plays the
  * transition into it (there is nothing to interrupt, and a dwarf spawned
@@ -123,30 +133,31 @@ function transition(sheets: DwarfSheetSet, name: DwarfSheetName): SpriteClip[] {
  * working is the mirror case, and gets the ordinary end-working abandonment,
  * by the same interruption rule as everything else in this file.
  *
- * The branch order is load-bearing, not incidental: being asked a question is
- * checked first (current, then its exit) and the working axis only after
- * both. A dwarf can never be CURRENTLY both — `isAwaitingAnswer` already rules
- * that out — so the first `if` is a plain priority pick when it happens to
- * fire. What the order actually protects is the SECOND `if`: without it
- * running before the working checks, a foreman whose status flips straight
- * from being asked to `'working'` would have his end-sleep transition
- * skipped, because `working` would already be true on that very render. Sleep
- * finishing what it started always comes before work gets a say.
+ * The branch order is load-bearing, not incidental: REST is checked first
+ * (current, then its exit) and the working axis only after both. A dwarf can
+ * never be CURRENTLY both — `status` is one field, so `resting` and `working`
+ * can never both be true for the same render — so the first `if` is a plain
+ * priority pick when it happens to fire. What the order actually protects is
+ * the SECOND `if`: without it running before the working checks, a foreman
+ * whose status flips straight from `'waiting'` to `'working'` would have his
+ * end-sleep transition skipped, because `working` would already be true on
+ * that very render. Sleep finishing what it started always comes before work
+ * gets a say.
  */
 export function dwarfClips(
   role: DwarfRole,
-  awaiting: boolean,
-  wasAwaiting: boolean | undefined,
+  resting: boolean,
+  wasResting: boolean | undefined,
   working = false,
   wasWorking: boolean | undefined = undefined,
   arrived = true
 ): readonly SpriteClip[] {
   const sheets = DWARF_SHEETS[role]
-  if (awaiting) {
-    if (wasAwaiting === true) return [settleOn(sheets, 'sleeping')]
+  if (resting) {
+    if (wasResting === true) return [settleOn(sheets, 'sleeping')]
     return [...transition(sheets, 'start-sleep'), settleOn(sheets, 'sleeping')]
   }
-  if (wasAwaiting === true) return [...transition(sheets, 'end-sleep'), loopOf(sheets.idle)]
+  if (wasResting === true) return [...transition(sheets, 'end-sleep'), loopOf(sheets.idle)]
   // Arrival gates the working sequence (#262): a dwarf still walking never
   // shows it, whatever its status — see the note above.
   const atWork = working && arrived
