@@ -791,6 +791,11 @@ export class CodexProvider implements Provider {
         toolUseId: asked.toolUseId,
         question: redactSecrets(asked.question),
         ...(header === undefined ? {} : { header }),
+        // No Codex thread is one this panel holds, and Codex offers a message
+        // queue rather than an answer channel — a queued message is not an
+        // answer to a blocked tool call. So the ask is shown and pointed at
+        // its own terminal, never offered as answerable (#354).
+        channel: 'terminal',
         multiSelect: asked.multiSelect,
         options: asked.options.map((option) => ({
           label: redactSecrets(option.label),

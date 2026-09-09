@@ -2127,10 +2127,24 @@ describe('ClaudeProvider', () => {
         toolUseId: 'toolu_01Pending',
         question: 'Which approach?',
         header: 'Approach',
+        channel: 'terminal',
         multiSelect: false,
         options: [{ label: 'Accumulate', description: 'Walk the tail once.' }],
         askedAt: '2026-09-01T09:03:41.062Z'
       })
+    })
+
+    it('names the terminal channel: this session is watched, not held (#354)', async () => {
+      // The panel read this ask out of a transcript it does not own, so the
+      // only place it can be answered is the console the session runs in.
+      // The card refuses in advance off this field, and never on a click.
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + askLine('toolu_01Pending', 'Which approach?', 'Walk the tail once.'),
+        42_000
+      )
+      const snapshots = await makeProvider().scan()
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion!.channel).toBe('terminal')
     })
 
     it('carries no question at all once the session answered it', async () => {

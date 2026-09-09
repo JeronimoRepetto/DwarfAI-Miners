@@ -146,6 +146,7 @@ describe('askToWireQuestion', () => {
     expect(askToWireQuestion(ask, ASKED_AT)).toEqual({
       toolUseId: 'toolu_10',
       question: 'First?',
+      channel: 'held',
       multiSelect: false,
       options: [{ label: 'A' }, { label: 'B' }],
       askedAt: ASKED_AT
@@ -182,6 +183,17 @@ describe('askToWireQuestion', () => {
     const wire = askToWireQuestion(ask, ASKED_AT)
     expect('header' in wire).toBe(false)
     expect('description' in wire.options[0]!).toBe(false)
+  })
+
+  it('names the held channel, which is the only one an ask from here can take', () => {
+    // #354: the panel owns this session's stream, so the answer releases the
+    // blocked ask through it. Nothing else in the app may derive that — the
+    // card reads this field, and runtime.answerDwarfQuestion guards on the
+    // registry membership that produced it.
+    const ask = parseAskUserQuestion('toolu_13', {
+      questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
+    })!
+    expect(askToWireQuestion(ask, ASKED_AT).channel).toBe('held')
   })
 })
 
@@ -284,6 +296,7 @@ describe('stampHeldQuestions', () => {
   const question = {
     toolUseId: 'toolu_30',
     question: 'Which colour?',
+    channel: 'held' as const,
     multiSelect: false,
     options: [{ label: 'Green' }]
   }
@@ -310,7 +323,9 @@ describe('stampHeldQuestions', () => {
     const mines = board()
     mines[0]!.dwarfs[0] = {
       ...mines[0]!.dwarfs[0]!,
-      pendingQuestion: { ...question, toolUseId: 'toolu_old' }
+      // The tail's version, which is always the terminal channel: only the
+      // registry can stamp 'held' (#354).
+      pendingQuestion: { ...question, toolUseId: 'toolu_old', channel: 'terminal' as const }
     }
 
     const stamped = stampHeldQuestions(mines, () => ({ held: true }))
@@ -320,7 +335,7 @@ describe('stampHeldQuestions', () => {
 
   it('leaves a session this panel does not hold exactly as the provider reported it', () => {
     const mines = board()
-    const tail = { ...question, toolUseId: 'toolu_tail' }
+    const tail = { ...question, toolUseId: 'toolu_tail', channel: 'terminal' as const }
     mines[0]!.dwarfs[0] = { ...mines[0]!.dwarfs[0]!, pendingQuestion: tail }
 
     const stamped = stampHeldQuestions(mines, () => ({ held: false }))
@@ -1107,6 +1122,7 @@ describe('stampHeldQuestions permission (#203)', () => {
     const question = {
       toolUseId: 'toolu_30',
       question: 'Which colour?',
+      channel: 'held' as const,
       multiSelect: false,
       options: [{ label: 'Green' }]
     }

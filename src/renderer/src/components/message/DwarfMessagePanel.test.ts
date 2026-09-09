@@ -1072,6 +1072,7 @@ describe('DwarfMessagePanel question', () => {
   const pendingQuestion = {
     toolUseId: 'toolu_01',
     question: 'Which database should the importer write to?',
+    channel: 'held' as const,
     multiSelect: false,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }]
   }
@@ -1089,6 +1090,21 @@ describe('DwarfMessagePanel question', () => {
 
   it('shows no question surface for a dwarf with nothing outstanding', () => {
     expect(panel().find('.question-card').exists()).toBe(false)
+  })
+
+  it('forwards the jump on a question it cannot answer to the console path (#354)', async () => {
+    // Same wire the permission card's jump already travels, so one gesture
+    // reaches one handler: the window turns `open-console` into activate().
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        conversation: HELD,
+        pendingQuestion: { ...pendingQuestion, channel: 'terminal' as const }
+      })
+    })
+    await wrapper.find('.question-card .answer-jump').trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
+    expect(wrapper.emitted('answer')).toBeUndefined()
   })
 
   it('replaces the composer with the ask, exactly as the design draws it', () => {
@@ -1152,6 +1168,7 @@ describe('DwarfMessagePanel permission (#203)', () => {
   const pendingQuestion = {
     toolUseId: 'toolu_01',
     question: 'Which database should the importer write to?',
+    channel: 'held' as const,
     multiSelect: false,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }]
   }

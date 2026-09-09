@@ -43,6 +43,7 @@ function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
   return {
     toolUseId: 'toolu_01',
     question: 'Which database should the importer write to?',
+    channel: 'held',
     multiSelect: false,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }],
     ...overrides

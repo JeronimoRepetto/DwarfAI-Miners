@@ -1,9 +1,9 @@
 import type {
   DwarfAnswerState,
   DwarfPermissionAnswerRequest,
-  DwarfPermissionChannel,
   DwarfPermissionDecision,
   DwarfPermissionRequest,
+  DwarfPromptChannel,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
   DwarfQuestionOption
@@ -216,7 +216,7 @@ export const PERMISSION_ESCAPED_LINE =
  */
 export function permissionStatusLine(
   state: DwarfAnswerState | undefined,
-  channel: DwarfPermissionChannel
+  channel: DwarfPromptChannel
 ): string | null {
   if (state?.phase !== 'answered') return null
   if (channel === 'held') return PERMISSION_RELEASED_LINE

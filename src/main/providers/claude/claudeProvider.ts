@@ -318,6 +318,11 @@ function pendingQuestionField(question: ClaudePendingQuestion | undefined): {
       toolUseId: question.toolUseId,
       question: redactSecrets(question.question),
       ...(header === undefined ? {} : { header }),
+      // Read out of a transcript this panel does not own, so the ask can only
+      // be answered where the session runs (#354). A session the panel DOES
+      // hold never keeps this value: stampHeldQuestions supersedes the whole
+      // field with the registry's own, which says 'held'.
+      channel: 'terminal',
       multiSelect: question.multiSelect,
       options: question.options.map((option) => ({
         label: redactSecrets(option.label),
