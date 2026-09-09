@@ -6,6 +6,8 @@ import {
   HISTORY_ICON_SRC,
   INTERIOR_ART_SIZE,
   INTERIOR_SRC,
+  MUSIC_OFF_ICON_SRC,
+  MUSIC_ON_ICON_SRC,
   maskImageValue
 } from '../../lib/art'
 import { createBubbleBoard } from '../../lib/overlay/bubbles'
@@ -67,6 +69,16 @@ const props = defineProps<{
    * click rather than to the board, so no snapshot could ever carry it here.
    */
   tuningRefusal?: string
+  /**
+   * Whether this run's mine ambience is muted (#173).
+   *
+   * The verdict, never the wish — the audio engine above owns it, so a control
+   * that painted itself on the click could show a muted mine that was still
+   * playing. Optional because it is a fact about SOUND rather than about the
+   * mine: a scene mounted with nothing to say about it is a scene that is not
+   * muted, which is the run's own default.
+   */
+  ambienceMuted?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -84,6 +96,12 @@ const emit = defineEmits<{
    * already follow.
    */
   tune: [request: DwarfTuningRequest]
+  /**
+   * The ambience mute was pressed (#173). Emits and decides nothing, for the
+   * reason Close, History and Add do: the audio engine belongs to App.vue,
+   * which is where every cross-cutting surface in this window is owned.
+   */
+  'toggle-ambience-mute': []
 }>()
 
 /*
@@ -111,6 +129,11 @@ const emit = defineEmits<{
  */
 
 const interiorSrc = computed(() => INTERIOR_SRC[props.mine.tier])
+
+/** The mute's glyph: the designer's music icon, crossed out while muted. */
+const muteIcon = computed(() =>
+  maskImageValue(props.ambienceMuted === true ? MUSIC_OFF_ICON_SRC : MUSIC_ON_ICON_SRC)
+)
 
 /*
  * The design's frame, used until a real measurement lands — and in tests, where
@@ -414,6 +437,29 @@ onBeforeUnmount(() => {
         :materials="mine.materials"
       />
 
+      <!--
+        The ambience mute (#173), at the interior's top-LEFT corner — the one
+        corner the design leaves free, and a maintainer-specified extension of
+        `screens/mine.md`, which draws no such control. Drawn at the same size
+        and in the same round shape as Close, History and Add, because it is
+        the fourth action on the same painting and a different shape would read
+        as something else.
+
+        It silences the AMBIENCE alone: not the music, not the voices. One
+        accessible name with the state on `aria-pressed`, and a tooltip saying
+        what a press would do — the split the pin control uses.
+      -->
+      <button
+        class="mute-ambience"
+        type="button"
+        aria-label="Mine ambience"
+        :aria-pressed="ambienceMuted === true ? 'true' : 'false'"
+        :title="ambienceMuted === true ? 'Unmute the mine ambience' : 'Mute the mine ambience'"
+        @click="emit('toggle-ambience-mute')"
+      >
+        <span class="action-glyph" :style="{ '--action-icon': muteIcon }" aria-hidden="true"></span>
+      </button>
+
       <!-- The design's round close, at the interior's top-right corner. It
            closes the MINE, never the window — the panel's own way out is the
            rail. -->
@@ -597,7 +643,8 @@ onBeforeUnmount(() => {
  */
 .close-mine,
 .mine-history,
-.add-agent {
+.add-agent,
+.mute-ambience {
   position: absolute;
   z-index: 7;
   display: flex;
@@ -622,6 +669,11 @@ onBeforeUnmount(() => {
   top: 8px;
   right: 8px;
 }
+/* The mirror of Close, on the corner the design leaves free (#173). */
+.mute-ambience {
+  top: 8px;
+  left: 8px;
+}
 /* Close's size and column, one gap below it — the design draws them as a stacked pair. */
 .mine-history {
   top: calc(8px + var(--action-size) + var(--space-nav-gap));
@@ -644,12 +696,19 @@ onBeforeUnmount(() => {
 }
 .close-mine:hover,
 .mine-history:hover,
-.add-agent:not(:disabled):hover {
+.add-agent:not(:disabled):hover,
+.mute-ambience:hover {
   background: var(--color-accent);
+}
+/* Muted is the one state that dims the glyph rather than the button: the
+   control is still available, and what is off is the sound. */
+.mute-ambience[aria-pressed='true'] .action-glyph {
+  background: var(--color-nav-idle);
 }
 .close-mine:focus-visible,
 .mine-history:focus-visible,
-.add-agent:focus-visible {
+.add-agent:focus-visible,
+.mute-ambience:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }

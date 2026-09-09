@@ -2047,6 +2047,9 @@ describe('App mine history', () => {
  * silent by design.
  */
 describe('App audio (#174, #173)', () => {
+  const MINE = defaultMine({ id: 'p1', name: 'panel', dwarfs: [] })
+  const WORKER = defaultDwarf({ id: 'claude:s1', role: 'worker', status: 'working' })
+
   /**
    * A hand-written stand-in for the browser's `Audio`, recording every source
    * the player opens.
@@ -2140,5 +2143,74 @@ describe('App audio (#174, #173)', () => {
     })
     // Main answered 0.5; the slider shows the value in force, not the drag.
     expect(wrapper.find('.music-readout').text()).toBe('50%')
+  })
+
+  it('plays the mine ambience while an interior is open, and stops it on the way out', async () => {
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    // The working bed, because a worker is working — read off the same
+    // snapshot the sprites are drawn from.
+    expect(opened.some((src) => src.includes('mine-inside-working'))).toBe(true)
+
+    await wrapper.find('.close-mine').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(MineScene).exists()).toBe(false)
+  })
+
+  it('mutes the ambience from the interior, and says so on the control', async () => {
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+
+    await wrapper.find('.mute-ambience').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mute-ambience').attributes('aria-pressed')).toBe('true')
+    // The music is untouched, which is the whole point of a mute that names
+    // one channel (#173).
+    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('gives a clicked dwarf its rank voice, once', async () => {
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    const before = opened.length
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    const voices = opened.slice(before).filter((src) => src.includes('voice'))
+    expect(voices).toHaveLength(1)
+    expect(voices[0]).toContain('dwarf-worker-voice')
+  })
+
+  it('gives a foreman the foreman voice, and no other rank’s', async () => {
+    const foreman = defaultDwarf({ id: 'claude:s2', role: 'foreman', status: 'waiting' })
+    const { wrapper } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+
+    await wrapper.find('.dwarf-hit').trigger('click')
+    await flushPromises()
+
+    expect(opened.some((src) => src.includes('dwarf-foreman-voice'))).toBe(true)
+    expect(opened.some((src) => src.includes('dwarf-worker-voice'))).toBe(false)
   })
 })

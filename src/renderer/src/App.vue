@@ -81,11 +81,15 @@ const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 const {
   settings: audioSettings,
   musicPlaying,
+  ambienceMuted,
   sync: syncAudio,
   listen: listenAudio,
   toggleMusic,
+  toggleAmbienceMute,
   setSettings: setAudioSettings,
+  setScene: setAudioScene,
   setCollapsed: setAudioCollapsed,
+  playVoice,
   dispose: disposeAudio
 } = useAudio()
 
@@ -489,6 +493,10 @@ function leaveMine(): void {
 
 /** Clicking the selected dwarf again closes its panel, as a toggle should. */
 function selectDwarf(dwarf: Dwarf): void {
+  // The dwarf speaks (#173), and a click on a dwarf is the ONLY thing that
+  // makes one speak. Before the toggle below, deliberately: clicking the
+  // selected dwarf again closes its panel and is still a click on the dwarf.
+  playVoice(dwarf.role)
   // The mine's own History panel still shares the shell's dock, and one
   // conversation surface at a time is the rule whether or not the two overlap
   // any more: opening this puts that away.
@@ -607,6 +615,27 @@ watch(
   },
   { immediate: true }
 )
+
+/**
+ * What the ambience is a reading of (#173): the mine held open, and each of
+ * its crew's rank and status.
+ *
+ * Folded into one string for the reason `crewSignal` above is: the watch then
+ * fires on a change to any of them and stays silent on a poll that moved none,
+ * so an idle mine costs nothing. Rank and status are the only fields the beds
+ * depend on — see `hasWorkingWorker` — and naming just those two is what keeps
+ * a dwarf's message or token count from re-deciding the sound.
+ */
+const audioSceneSignal = computed(
+  () =>
+    `${viewState.mineId ?? ''}|${(currentMine.value?.dwarfs ?? [])
+      .map((dwarf) => `${dwarf.role}:${dwarf.status}`)
+      .join(',')}`
+)
+
+watch(audioSceneSignal, () => setAudioScene(viewState.mineId, currentMine.value?.dwarfs ?? []), {
+  immediate: true
+})
 
 /*
  * The shell collapsed to its bare rail silences the ambience and the voices
@@ -860,11 +889,13 @@ onBeforeUnmount(() => {
             :selected-id="openDwarfId"
             :catalogs="catalogs"
             :tuning-refusal="tuningRefusal"
+            :ambience-muted="ambienceMuted"
             @back="leaveMine"
             @select="selectDwarf"
             @add="openLaunch(currentMine.id)"
             @history="openHistory"
             @tune="tuneSession"
+            @toggle-ambience-mute="toggleAmbienceMute"
           />
         </PanelFrame>
       </div>
