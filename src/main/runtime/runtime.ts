@@ -277,6 +277,18 @@ const LAUNCH_END_REFUSED = 'That session could not be ended.'
  */
 const NO_TERMINAL_END_TIER = "This build can't end a session running in a terminal."
 /**
+ * A kick that will not signal a pid nothing verified (#231, #329).
+ *
+ * The provider puts `pidStartedAt` on a dwarf only where probing its pid AGREED
+ * with the registry's own record of when that process was created. Absent means
+ * the verdict was 'unknown' — no procStart recorded, no probe wired, a probe
+ * that could not answer — and an unknown pid is a pid that may since have been
+ * recycled onto somebody else's program. The dwarf stays on the board either
+ * way; only the irreversible act is refused, and the relay cancel behind it
+ * still applies where the session has a name.
+ */
+const PID_UNVERIFIED = "This session's process could not be verified, so the panel will not end it."
+/**
  * The refusals for a process this panel is HOLDING over stdio (#194).
  *
  * A hosted process is the mirror image of a launched one, and the copy has to
@@ -2011,6 +2023,23 @@ export class AgentRuntime {
    * above it are untouched. Ending an ancestor would end every session in that
    * window (see EndSessionRequest).
    *
+   * A pid alone is not enough to act on, though, and this is where that is
+   * enforced (#231). `pidStartedAt` is the creation time the provider verified
+   * against the machine, and it is absent whenever the verdict was anything but
+   * a match — no procStart in the registry, no probe wired, a probe that could
+   * not answer. Such a dwarf stays on the board, because a pid-reuse guard must
+   * never make a live session disappear, and it is refused here, because
+   * signalling a pid nothing verified is how an unrelated process gets killed.
+   * The port re-probes the pid against this value at the moment of the kill;
+   * this is the half that decides whether it may be asked at all.
+   *
+   * The start time is read off the dwarf the ENDPOINT belongs to, which is why
+   * the pids are compared first: a worker's kick resolves through its foreman,
+   * so the dwarf that was pointed at and the pid that will be signalled need
+   * not be the same session's. Where they disagree there is no verified reading
+   * for this pid and the kick is refused, rather than paired with a start time
+   * measured for another process.
+   *
    * On a delivered end the dwarf is RETIRED, not left to the provider. The
    * provider goes on reporting a session until its own liveness window gives
    * up, and a dwarf standing on the rock after its process is gone is the ghost
@@ -2030,12 +2059,31 @@ export class AgentRuntime {
   private async endTerminalSession(dwarfId: string, pid: number): Promise<TextDeliveryOutcome> {
     const end = this.textDelivery.endConsoleSession
     if (end === undefined) return { delivered: false, error: NO_TERMINAL_END_TIER }
-    const outcome = await end.call(this.textDelivery, { pid })
+    const expectedStartMs = this.verifiedStartOf(dwarfId, pid)
+    if (expectedStartMs === undefined) {
+      console.log(`[runtime] Kick for ${dwarfId} ends nothing: its pid is unverified.`)
+      return { delivered: false, error: PID_UNVERIFIED }
+    }
+    const outcome = await end.call(this.textDelivery, { pid, expectedStartMs })
     if (outcome.delivered) {
       console.log(`[runtime] Retiring ${dwarfId}: a kick ended its session's process.`)
       this.lifecycle.retire(dwarfId)
     }
     return outcome
+  }
+
+  /**
+   * The verified creation time of `pid`, as this dwarf reported it — undefined
+   * when there is none, or when the dwarf's pid is not the one being signalled.
+   *
+   * Read off the board rather than taken from the wire, exactly as
+   * `heldSessionIdOf` reads its session id, so main answers from the snapshot
+   * it published rather than from anything a caller supplied.
+   */
+  private verifiedStartOf(dwarfId: string, pid: number): number | undefined {
+    const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
+    if (dwarf === undefined || dwarf.pid !== pid) return undefined
+    return dwarf.pidStartedAt
   }
 
   /**

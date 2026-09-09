@@ -895,6 +895,31 @@ export interface Dwarf {
   pid?: number
   startedAt?: number
   /**
+   * When the process behind `pid` was CREATED, epoch ms, and only when the
+   * provider has verified it against the machine (#329, #231).
+   *
+   * Not `startedAt`, which is the session's own record of when it began and
+   * proves nothing about a pid: a pid is a number the OS recycles, and the
+   * creation time is the one fact an unrelated process wearing that recycled
+   * number cannot forge. So this is what licenses an act that cannot be taken
+   * back — Kick ends a terminal session's process tree, and it may only do so
+   * on a pid whose identity was proved.
+   *
+   * ABSENT MEANS UNVERIFIED, and unverified is a refusal rather than a
+   * permission. Claude fills it from its registry's `procStart` only when
+   * probing that pid AGREED with it; where the registry records no procStart,
+   * where no probe is wired, or where the probe could not answer, the provider
+   * leaves a live dwarf on the board (a pid-reuse guard must never make a
+   * running session disappear) and this field simply is not there. Every other
+   * provider leaves it absent too.
+   *
+   * A reading, never a promise. It says the pid was this process at the last
+   * poll, so anything about to signal that pid re-probes and compares against
+   * this value at the moment of the act rather than trusting the poll — see
+   * `EndSessionRequest.expectedStartMs`.
+   */
+  pidStartedAt?: number
+  /**
    * Cumulative tokens the session has spent, when the provider knows it.
    * Codex records it on its registry row; Claude does not expose an equivalent.
    */

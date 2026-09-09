@@ -644,13 +644,35 @@ describe('WindowsTextDelivery.queueToCodexThread', () => {
  * pointed at comes from somewhere else.
  */
 describe('WindowsTextDelivery.endConsoleSession', () => {
+  /** The creation time the provider verified and put on the wire. */
+  const EXPECTED_START_MS = 1_788_001_972_136
+
+  /**
+   * AMENDED throughout this block for the #329 review: an end now names the
+   * creation time it expects, and the port re-probes the pid before killing it.
+   * The four cases below are unchanged in what they assert.
+   */
+  function ender(
+    endProcessTree = vi.fn().mockResolvedValue(true),
+    processStartTimeMs = vi.fn().mockResolvedValue(EXPECTED_START_MS),
+    extra: Parameters<typeof delivery>[0] = {}
+  ) {
+    const port = delivery({
+      processEnd: { endProcessTree },
+      processProbe: { isCodexProcessRunning: vi.fn(), processStartTimeMs },
+      ...extra
+    })
+    return { port, endProcessTree, processStartTimeMs }
+  }
+
   it("ends the session's own process tree without touching a window", async () => {
-    const endProcessTree = vi.fn().mockResolvedValue(true)
     const focus = vi.fn()
     const runPowerShell = vi.fn()
-    const port = delivery({ focus, runPowerShell, processEnd: { endProcessTree } })
+    const { port, endProcessTree } = ender(undefined, undefined, { focus, runPowerShell })
 
-    await expect(port.endConsoleSession({ pid: 4242 })).resolves.toMatchObject({ delivered: true })
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
     expect(endProcessTree).toHaveBeenCalledWith(4242)
     expect(focus).not.toHaveBeenCalled()
     expect(runPowerShell).not.toHaveBeenCalled()
@@ -663,25 +685,94 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
    * lie this repo keeps refusing to tell.
    */
   it('reports a refusal when the platform would not end the tree', async () => {
-    const port = delivery({ processEnd: { endProcessTree: vi.fn().mockResolvedValue(false) } })
-    const outcome = await port.endConsoleSession({ pid: 4242 })
+    const { port } = ender(vi.fn().mockResolvedValue(false))
+    const outcome = await port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     expect(outcome.delivered).toBe(false)
     expect(outcome.error).toBeTruthy()
   })
 
   it('turns a throwing port into a failed verdict instead of a rejection', async () => {
-    const port = delivery({
-      processEnd: { endProcessTree: vi.fn().mockRejectedValue(new Error('taskkill is missing')) }
-    })
-    await expect(port.endConsoleSession({ pid: 4242 })).resolves.toMatchObject({ delivered: false })
+    const { port } = ender(vi.fn().mockRejectedValue(new Error('taskkill is missing')))
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: false })
   })
 
   it('times the end the way every other tier times its own work', async () => {
-    const port = delivery({
-      now: clockOf(0, 40),
-      processEnd: { endProcessTree: vi.fn().mockResolvedValue(true) }
-    })
-    const outcome = await port.endConsoleSession({ pid: 4242 })
+    const { port } = ender(undefined, undefined, { now: clockOf(0, 40) })
+    const outcome = await port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     expect(outcome.stages).toEqual({ spawnMs: 40 })
+  })
+
+  /*
+   * The pid is re-verified at the moment of the act — #231's rule, which the
+   * launched tier already holds — rather than trusted from the poll that
+   * produced it. A poll can be two seconds old, a pid can be recycled in
+   * between, and `taskkill /T` on a recycled pid ends a stranger's program and
+   * everything under it.
+   *
+   * This is the one place in the app where UNKNOWN is a refusal. The liveness
+   * guard fails OPEN because a wrong "dead" only hides a dwarf; a kill fails
+   * CLOSED because it cannot be taken back.
+   */
+  it('probes the pid immediately before the kill, and kills only on agreement', async () => {
+    const order: string[] = []
+    const processStartTimeMs = vi.fn().mockImplementation(async () => {
+      order.push('probe')
+      return EXPECTED_START_MS
+    })
+    const endProcessTree = vi.fn().mockImplementation(async () => {
+      order.push('kill')
+      return true
+    })
+    const { port } = ender(endProcessTree, processStartTimeMs)
+
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(order).toEqual(['probe', 'kill'])
+    // One pid, asked about and then acted on — never two.
+    expect(processStartTimeMs).toHaveBeenCalledWith(4242)
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+  })
+
+  it('accepts a reading inside the same tolerance the provider used', async () => {
+    const { port, endProcessTree } = ender(
+      undefined,
+      vi.fn().mockResolvedValue(EXPECTED_START_MS + 1_500)
+    )
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(endProcessTree).toHaveBeenCalled()
+  })
+
+  it('kills nothing when the pid now belongs to another process', async () => {
+    const { port, endProcessTree } = ender(
+      undefined,
+      vi.fn().mockResolvedValue(EXPECTED_START_MS + 60_000)
+    )
+    const outcome = await port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toMatch(/could not be verified/i)
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  it('kills nothing when the probe cannot answer, unlike the liveness guard', async () => {
+    const { port, endProcessTree } = ender(undefined, vi.fn().mockResolvedValue(null))
+    const outcome = await port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    expect(outcome.delivered).toBe(false)
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  it('kills nothing when the probe itself throws', async () => {
+    const { port, endProcessTree } = ender(
+      undefined,
+      vi.fn().mockRejectedValue(new Error('powershell is missing'))
+    )
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: false })
+    expect(endProcessTree).not.toHaveBeenCalled()
   })
 })

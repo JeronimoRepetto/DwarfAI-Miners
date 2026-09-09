@@ -148,7 +148,8 @@ function createTextDelivery(
   options: PlatformAdapterOptions,
   focus: (pid: number) => Promise<boolean>,
   cliDetector: CliDetector,
-  processEnd: ProcessEndPort
+  processEnd: ProcessEndPort,
+  processProbe: ProcessProbePort
 ): TextDeliveryPort {
   const shared = {
     home: options.home,
@@ -182,8 +183,12 @@ function createTextDelivery(
       // Kick's terminal tier ends the session's process tree (#329), through
       // the SAME port a launched session's exit uses — one per-OS tree kill,
       // composed once here, exactly as #217 left it. Passed in rather than
-      // built inside the port so the injected `endRun` reaches it too.
+      // built inside the port so the injected `endRun` reaches it too. The
+      // probe beside it is the re-verification before that kill (#231), and it
+      // is the SAME port the Claude provider's pid-reuse guard reads, so the
+      // two answers about one pid can never come from two different probes.
       processEnd,
+      processProbe,
       ...(runShell === undefined ? {} : { runPowerShell: runShell }),
       ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
     })
@@ -208,6 +213,10 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
     platform,
     ...(options.endRun === undefined ? {} : { run: options.endRun })
   })
+  const processProbe = createProcessProbe({
+    platform,
+    ...(options.probeRun === undefined ? {} : { run: options.probeRun })
+  })
   // Built before the delivery port, which asks it for the codex binary (#97).
   const cliDetector = createCliDetector({
     home: options.home,
@@ -230,11 +239,15 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
         nodePath,
         ...(options.spawn === undefined ? {} : { spawn: options.spawn })
       }),
-    textDelivery: createTextDelivery(platform, options, focus, cliDetector, processEnd),
-    processProbe: createProcessProbe({
+    textDelivery: createTextDelivery(
       platform,
-      ...(options.probeRun === undefined ? {} : { run: options.probeRun })
-    }),
+      options,
+      focus,
+      cliDetector,
+      processEnd,
+      processProbe
+    ),
+    processProbe,
     processEnd,
     cliDetector
   }

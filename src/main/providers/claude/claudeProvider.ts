@@ -605,9 +605,15 @@ export class ClaudeProvider implements Provider {
         // recycled pid would render as a live dwarf whose focus/Send/Kick
         // land in an unrelated application, so a procStart mismatch is a
         // dead session exactly as if the kill probe had failed.
-        if ((await this.procStartVerdict(session)) === 'mismatch') continue
+        const procStart = await this.procStartVerdict(session)
+        if (procStart === 'mismatch') continue
         seenSessions.add(session.sessionId)
-        snapshots.push(await this.snapshotSession(root, session, feedSources, deliveryTargets))
+        // The verdict travels on rather than being thrown away here (#329):
+        // only 'match' licenses an act that ends the process behind this pid,
+        // and only this loop ever asks the question.
+        snapshots.push(
+          await this.snapshotSession(root, session, feedSources, deliveryTargets, procStart)
+        )
       }
     }
     // A session that left the registry takes its launch memory with it: the
@@ -721,11 +727,34 @@ export class ClaudeProvider implements Provider {
     }
   }
 
+  /**
+   * The creation time of this session's process, for the wire — present only
+   * when probing that pid AGREED with the registry (#329, #231).
+   *
+   * Deliberately the REGISTRY's converted value rather than the probe's: the
+   * probe is the confirmation, and the registry is the constant the next probe
+   * will be compared against. Handing on a freshly probed reading instead would
+   * let a value drift a tolerance-width per poll until it agreed with anything.
+   *
+   * Absent for every other verdict, and that is the whole contract: 'unknown'
+   * keeps the dwarf on the board (a pid-reuse guard must not make a live
+   * session vanish) while refusing anything that would signal the pid.
+   */
+  private pidStartedAtField(
+    session: ClaudeSessionEntry,
+    verdict: ProcStartVerdict
+  ): { pidStartedAt?: number } {
+    if (verdict !== 'match' || session.procStart === undefined) return {}
+    const startedMs = filetimeToEpochMs(session.procStart)
+    return startedMs === null ? {} : { pidStartedAt: startedMs }
+  }
+
   private async snapshotSession(
     root: string,
     session: ClaudeSessionEntry,
     feedSources: Map<string, string>,
-    deliveryTargets: Map<string, TextDeliveryTarget>
+    deliveryTargets: Map<string, TextDeliveryTarget>,
+    procStart: ProcStartVerdict
   ): Promise<ProviderSnapshot> {
     const projectDir = join(root, 'projects', encodeClaudeProjectDir(session.cwd))
     const transcriptPath = join(projectDir, `${session.sessionId}.jsonl`)
@@ -901,6 +930,10 @@ export class ClaudeProvider implements Provider {
         lastMessage: redactSecrets(info.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,
+        // Only where the guard above PROVED this pid is still the process the
+        // registry was written about (#329) — a pid nothing verified is one
+        // nothing may signal.
+        ...this.pidStartedAtField(session, procStart),
         startedAt: session.startedAt,
         ...(mainTokens !== undefined ? { tokensObserved: mainTokens } : {}),
         // The session transcript's own mtime — the foreman's proof of life,
@@ -1076,6 +1109,9 @@ export class ClaudeProvider implements Provider {
         lastMessage: redactSecrets(workerInfo.lastAssistantText),
         sessionId: session.sessionId,
         pid: session.pid,
+        // The same pid, so the same verified creation time: a subagent runs
+        // inside its session's process and has none of its own.
+        ...this.pidStartedAtField(session, procStart),
         ...(workerTokens !== undefined ? { tokensObserved: workerTokens } : {}),
         ...this.silenceField(subagentStat?.mtimeMs, now),
         ...this.transcriptUpdatedAtField(subagentStat?.mtimeMs)

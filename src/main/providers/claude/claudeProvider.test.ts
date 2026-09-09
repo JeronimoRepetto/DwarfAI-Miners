@@ -2284,6 +2284,59 @@ describe('ClaudeProvider', () => {
       expect(probe).not.toHaveBeenCalled()
     })
 
+    /*
+     * The verdict on the wire (#329). It stopped being a private scan decision
+     * the moment something acted irreversibly on a pid: Kick ends a terminal
+     * session's process tree, and it may only do that on a pid whose identity
+     * was proved. `pid` alone cannot say that — the OS recycles pids — so the
+     * creation time this guard already compares against travels with it, and
+     * only where the comparison AGREED.
+     */
+    it('stamps the verified creation time beside the pid when the probe agreed', async () => {
+      const provider = providerWithProbe(async () => REGISTRY_START_MS + 1_500)
+      const dwarf = (await provider.scan())[0]!.dwarfs[0]!
+      // The REGISTRY's value, not the probe's: the probe is the confirmation,
+      // and the registry is what the next probe will be compared against.
+      expect(dwarf.pidStartedAt).toBe(REGISTRY_START_MS)
+      expect(dwarf.pid).toBe(32896)
+    })
+
+    it('leaves the field off a session whose registry entry has no procStart', async () => {
+      const entry: Record<string, unknown> = JSON.parse(sessionEntry)
+      delete entry.procStart
+      fake.addFile(`${ROOT1}\\sessions\\32896.json`, JSON.stringify(entry), 1_000)
+      const dwarf = (await providerWithProbe(async () => REGISTRY_START_MS)).scan()
+
+      const scanned = (await dwarf)[0]!.dwarfs[0]!
+      // Still on the board — an unknown verdict must never make a live dwarf
+      // disappear — and still unverified, which is a refusal downstream.
+      expect(scanned.pid).toBe(32896)
+      expect(scanned.pidStartedAt).toBeUndefined()
+      expect('pidStartedAt' in scanned).toBe(false)
+    })
+
+    it('leaves the field off when the probe could not answer', async () => {
+      const dwarf = (await providerWithProbe(async () => null).scan())[0]!.dwarfs[0]!
+      expect(dwarf.pidStartedAt).toBeUndefined()
+    })
+
+    it('leaves the field off when no probe is wired at all', async () => {
+      const provider = new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => 99_000
+      })
+      const dwarf = (await provider.scan())[0]!.dwarfs[0]!
+      expect(dwarf.pidStartedAt).toBeUndefined()
+    })
+
+    it('stamps it on the crew too, whose pid is the same session process', async () => {
+      const provider = providerWithProbe(async () => REGISTRY_START_MS)
+      const dwarfs = (await provider.scan())[0]!.dwarfs
+      for (const dwarf of dwarfs) expect(dwarf.pidStartedAt).toBe(REGISTRY_START_MS)
+    })
+
     it('probes each (pid, procStart) pair once, not once per poll tick', async () => {
       // The poller runs every 2s; a PowerShell spawn per session per tick
       // would dwarf the cost of the scan itself. The verdict is cached.

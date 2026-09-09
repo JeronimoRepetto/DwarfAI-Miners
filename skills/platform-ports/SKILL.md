@@ -69,6 +69,21 @@ not the session's. Implementing it there "for symmetry" would be the per-OS bran
 exists to avoid — a builder producing an argv that is not true of the platform. The honest per-OS
 end for macOS and Linux is a follow-up, and it needs a measurement rather than a symmetry argument.
 
+## One port answers one question, everywhere it is asked
+
+`ProcessProbePort.processStartTimeMs` now has two callers with opposite failure directions, and they
+share the port precisely so the two answers about one pid can never come from two different probes.
+The Claude provider reads it to tell a live session from a recycled pid; `endConsoleSession` re-reads
+it immediately before the kill (#231). Both use the same `sameProcessStart` comparison and the same
+`PROCESS_START_TOLERANCE_MS`, which is why that constant lives in `processProbe.ts` rather than in
+either caller.
+
+**What differs is what an unknown means, and that belongs to the caller, never to the port.** The
+probe answers `null` for "could not determine" and says nothing about what to do with it. Liveness
+fails open — an unreadable process list must not make a running dwarf vanish. A kill fails closed —
+`taskkill /T` on a recycled pid ends a stranger's program and cannot be undone. A port that decided
+this for both would have to be wrong for one of them.
+
 ## One comment not to repeat
 
 The `AgentRuntime` constructor carries a comment saying it is _"the one place the running operating
