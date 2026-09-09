@@ -238,6 +238,19 @@ export interface EndSessionRequest {
    * dwarf and nothing derived from it — there is no ancestor walk on this path.
    */
   pid: number
+  /**
+   * When that pid's process was created, epoch ms, as the provider verified it
+   * (`Dwarf.pidStartedAt`).
+   *
+   * REQUIRED, and the only optional-looking thing about it is that a caller
+   * with no such value must not call at all. A pid is a number the OS recycles;
+   * signalling a remembered one is how an unrelated process gets killed (#231).
+   * The provider's verification happened at the last poll, which can be seconds
+   * old, so the implementation re-probes the pid and compares it against this
+   * value at the moment of the act — the same re-verification
+   * LaunchedSessionRegistry does before its own kill.
+   */
+  expectedStartMs: number
 }
 
 /** Result of one write attempt. Never echoes the message back (privacy). */
@@ -346,6 +359,10 @@ export interface TextDeliveryPort {
    * shared terminal window is in front is unknowable from here, so the act that
    * cannot miss is the only honest one left. The terminal tab stays open at its
    * shell prompt.
+   *
+   * An implementation MUST re-verify `pid` against `expectedStartMs` at the
+   * moment of the kill and refuse on anything short of agreement, unknown
+   * included (#231). This is the one guard in the app that fails closed.
    *
    * Optional for the reason `pasteToConsole` is, and absent for a stronger
    * one: only the Windows port implements it. The POSIX tree kill signals the

@@ -1592,6 +1592,14 @@ describe('AgentRuntime.kickDwarf', () => {
   const FOREMAN_ID = 'claude:session-1'
   const WORKER_ID = 'claude:session-1:agent-9'
 
+  /*
+   * AMENDED for the #329 review: the scan reports the pid's VERIFIED creation
+   * time beside the pid. A dwarf without one is a dwarf whose pid nothing
+   * proved, and the kick refuses to signal it — see the block at the end of
+   * this describe, which pins exactly that.
+   */
+  const VERIFIED_START_MS = 1_788_001_972_136
+
   function crewScan() {
     return vi.fn<Provider['scan']>().mockResolvedValue([
       {
@@ -1608,7 +1616,8 @@ describe('AgentRuntime.kickDwarf', () => {
             name: 'boss',
             status: 'working',
             sessionId: 'session-1',
-            pid: 42
+            pid: 42,
+            pidStartedAt: VERIFIED_START_MS
           },
           {
             id: WORKER_ID,
@@ -1617,7 +1626,8 @@ describe('AgentRuntime.kickDwarf', () => {
             name: 'Explorer',
             status: 'working',
             sessionId: 'session-1',
-            pid: 42
+            pid: 42,
+            pidStartedAt: VERIFIED_START_MS
           }
         ]
       }
@@ -1675,7 +1685,10 @@ describe('AgentRuntime.kickDwarf', () => {
       delivered: true,
       via: 'terminal'
     })
-    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({
+      pid: 42,
+      expectedStartMs: VERIFIED_START_MS
+    })
     expect(port.sendInterrupt).not.toHaveBeenCalled()
     expect(port.sendToConsole).not.toHaveBeenCalled()
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
@@ -1841,7 +1854,10 @@ describe('AgentRuntime.kickDwarf', () => {
       delivered: true,
       via: 'claude-relay'
     })
-    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({
+      pid: 42,
+      expectedStartMs: VERIFIED_START_MS
+    })
     // The fallback carries the exact instruction the relay tier already uses —
     // a kick has no user text, only this fixed message.
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
@@ -1983,7 +1999,10 @@ describe('AgentRuntime.kickDwarf', () => {
       delivered: true,
       via: 'terminal'
     })
-    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({
+      pid: 42,
+      expectedStartMs: VERIFIED_START_MS
+    })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 })
@@ -2002,6 +2021,8 @@ describe('AgentRuntime.kickDwarf', () => {
 describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)', () => {
   const DWARF_ID = 'claude:session-1'
   const SESSION_PID = 4242
+  /** The pid's creation time, as the provider verified it against the machine. */
+  const VERIFIED_START_MS = 1_788_001_972_136
 
   /**
    * The tree measured live, as a table a test can assert against: two sessions
@@ -2036,13 +2057,19 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
     } satisfies TextDeliveryPort
   }
 
-  function scanOf(status: 'working' | 'waiting' = 'working') {
+  /**
+   * `verified: false` is the dwarf whose pid the provider could NOT prove — no
+   * procStart in the registry, no probe wired, a probe that would not answer.
+   * It is on the board exactly like any other (a pid-reuse guard must not hide
+   * a live session) and carries no creation time.
+   */
+  function scanOf(verified = true) {
     return vi.fn<Provider['scan']>().mockResolvedValue([
       {
         provider: 'claude',
         sessionId: 'session-1',
         cwd: 'C:\\work\\project',
-        status: status === 'working' ? 'busy' : 'idle',
+        status: 'busy',
         updatedAt: 1,
         dwarfs: [
           {
@@ -2050,9 +2077,10 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
             provider: 'claude',
             role: 'foreman',
             name: 'boss',
-            status,
+            status: 'working' as const,
             sessionId: 'session-1',
-            pid: SESSION_PID
+            pid: SESSION_PID,
+            ...(verified ? { pidStartedAt: VERIFIED_START_MS } : {})
           }
         ]
       }
@@ -2061,7 +2089,8 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
 
   async function runtimeWith(
     port: TextDeliveryPort,
-    target: TextDeliveryTarget = { kind: 'terminal', pid: SESSION_PID }
+    target: TextDeliveryTarget = { kind: 'terminal', pid: SESSION_PID },
+    verified = true
   ) {
     let now = 0
     const runtime = new AgentRuntime({
@@ -2069,7 +2098,7 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
       providers: [
         {
           kind: 'claude',
-          scan: scanOf(),
+          scan: scanOf(verified),
           feed: vi.fn().mockResolvedValue([]),
           textDelivery: () => target
         }
@@ -2090,7 +2119,10 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
       delivered: true,
       via: 'terminal'
     })
-    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: SESSION_PID })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({
+      pid: SESSION_PID,
+      expectedStartMs: VERIFIED_START_MS
+    })
     // The pid the provider reported, and nothing derived from it: no walk, so
     // cmd.exe, WindowsTerminal.exe, conhost.exe and the root are unreachable
     // from here even by accident.
@@ -2179,6 +2211,74 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
     expect(result).toMatchObject({ delivered: false, via: 'terminal' })
     expect(result.error).toBeTruthy()
     expect(port.sendInterrupt).not.toHaveBeenCalled()
+  })
+
+  /*
+   * A pid is a number the OS recycles, and this app owns a tree kill: signalling
+   * a remembered number is how an unrelated process gets killed (#231). The
+   * provider stamps `pidStartedAt` only where probing the pid AGREED with the
+   * registry's record of when that process was created, so its absence is a
+   * verdict of 'unknown' — no procStart, no probe wired, a probe that would not
+   * answer — and unknown is a refusal here, not a permission.
+   *
+   * The asymmetry with liveness is the point. There an unknown keeps the dwarf,
+   * because a wrong "dead" only hides one. Here an unknown kills nothing,
+   * because a wrong kill cannot be taken back.
+   */
+  it('ends nothing for a dwarf whose pid the provider could not verify', async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(port, { kind: 'terminal', pid: SESSION_PID }, false)
+
+    const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    expect(result).toMatchObject({ delivered: false, via: 'terminal' })
+    expect(result.error).toMatch(/could not be verified/i)
+    expect(port.endConsoleSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps that dwarf on the rock, since an unverified pid is not a dead session', async () => {
+    const { runtime } = await runtimeWith(
+      terminalPort(),
+      { kind: 'terminal', pid: SESSION_PID },
+      false
+    )
+
+    await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    await runtime.refresh()
+    expect(runtime.getMines().flatMap((mine) => mine.dwarfs)[0]?.status).toBe('working')
+  })
+
+  it('still relays the cancel instruction behind an unverified pid, where the session has a name', async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(
+      port,
+      { kind: 'terminal', pid: SESSION_PID, sessionName: 'sample-project-70' },
+      false
+    )
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'claude-relay'
+    })
+    expect(port.endConsoleSession).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'sample-project-70',
+      text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
+    })
+  })
+
+  /*
+   * A worker's kick resolves through its foreman, so the dwarf that was pointed
+   * at and the pid that would be signalled need not belong to one session. A
+   * start time measured for another process is no proof of this one, so the
+   * pids must agree before the reading is used at all.
+   */
+  it('refuses when the endpoint names a pid this dwarf did not report', async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(port, { kind: 'terminal', pid: SESSION_PID + 1 })
+
+    const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    expect(result).toMatchObject({ delivered: false, via: 'terminal' })
+    expect(port.endConsoleSession).not.toHaveBeenCalled()
   })
 
   /*
@@ -3104,6 +3204,8 @@ describe('AgentRuntime.nudge', () => {
  */
 describe('AgentRuntime delivery instrumentation', () => {
   const FOREMAN_ID = 'claude:session-1'
+  /** AMENDED for the #329 review: a kick may only end a pid the provider verified. */
+  const VERIFIED_START_MS = 1_788_001_972_136
 
   function crewScan() {
     return vi.fn<Provider['scan']>().mockResolvedValue([
@@ -3121,7 +3223,8 @@ describe('AgentRuntime delivery instrumentation', () => {
             name: 'boss',
             status: 'working',
             sessionId: 'session-1',
-            pid: 42
+            pid: 42,
+            pidStartedAt: VERIFIED_START_MS
           }
         ]
       }
@@ -3404,6 +3507,8 @@ describe('AgentRuntime delivery instrumentation', () => {
 describe('AgentRuntime kick escalation policy', () => {
   const FOREMAN_ID = 'claude:session-1'
   const HARSH = /kill|terminate|force|sigkill|taskkill|destroy/i
+  /** AMENDED for the #329 review: a kick may only end a pid the provider verified. */
+  const VERIFIED_START_MS = 1_788_001_972_136
 
   function crewScan() {
     return vi.fn<Provider['scan']>().mockResolvedValue([
@@ -3421,7 +3526,8 @@ describe('AgentRuntime kick escalation policy', () => {
             name: 'boss',
             status: 'working',
             sessionId: 'session-1',
-            pid: 42
+            pid: 42,
+            pidStartedAt: VERIFIED_START_MS
           }
         ]
       }
@@ -3456,15 +3562,25 @@ describe('AgentRuntime kick escalation policy', () => {
     return { runtime, port }
   }
 
-  // AMENDED for #329: the request the terminal tier carries is the end's, and
-  // it carries the same one thing — the session's own pid, nothing derived.
-  it('carries nothing but the pid — there is no escalation dial to turn', async () => {
+  /*
+   * AMENDED for #329 and again for its review: the request the terminal tier
+   * carries is the end's, and it names the session's own pid plus the creation
+   * time that pid must still have. Two fields, both about identifying ONE
+   * process — still nothing that could turn an act into a harder one.
+   */
+  it('carries nothing but the pid and its proof — there is no escalation dial to turn', async () => {
     const { runtime, port } = await kickRuntime({ kind: 'terminal', pid: 42 })
 
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
 
-    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
-    expect(Object.keys(port.endConsoleSession.mock.calls[0]?.[0] ?? {})).toEqual(['pid'])
+    expect(port.endConsoleSession).toHaveBeenCalledWith({
+      pid: 42,
+      expectedStartMs: VERIFIED_START_MS
+    })
+    expect(Object.keys(port.endConsoleSession.mock.calls[0]?.[0] ?? {})).toEqual([
+      'pid',
+      'expectedStartMs'
+    ])
   })
 
   /*
@@ -3482,7 +3598,8 @@ describe('AgentRuntime kick escalation policy', () => {
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
 
-    expect(port.endConsoleSession.mock.calls).toEqual([[{ pid: 42 }], [{ pid: 42 }], [{ pid: 42 }]])
+    const call = { pid: 42, expectedStartMs: VERIFIED_START_MS }
+    expect(port.endConsoleSession.mock.calls).toEqual([[call], [call], [call]])
     expect(port.sendInterrupt).not.toHaveBeenCalled()
   })
 

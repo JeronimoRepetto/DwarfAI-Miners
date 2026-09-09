@@ -2,6 +2,11 @@ import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { focusSessionConsole, type FocusOutcome, type ShellRunner } from '../platform/focus'
 import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
+import {
+  createProcessProbe,
+  sameProcessStart,
+  type ProcessProbePort
+} from '../platform/processProbe'
 import type {
   ClipboardPort,
   CodexQueueRequest,
@@ -95,6 +100,21 @@ function sharedWindowRefusal(stages: StageTimings): TextDeliveryOutcome {
  */
 const SESSION_NOT_ENDED = 'This session could not be ended.'
 
+/**
+ * Why nothing was killed: the pid could not be proved to still be this session
+ * (#231's rule, applied to #329's act).
+ *
+ * The provider verified this pid's creation time at the last poll, which can be
+ * seconds old, and a pid is a number the OS recycles. So the pid is re-probed
+ * here and compared again, and the comparison must AGREE — a mismatch and an
+ * unreadable process list are both refusals. That asymmetry is deliberate and
+ * is the opposite of the liveness guard's: an unknown there fails open, because
+ * a wrong "dead" only hides a dwarf, and an unknown here fails closed, because
+ * `taskkill /T` on a recycled pid ends a stranger's program and everything
+ * under it, and no verdict afterwards can take that back.
+ */
+const SESSION_NOT_VERIFIED = "This session's process could not be verified, so nothing was ended."
+
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
   relayModel: string
@@ -147,6 +167,12 @@ export interface WindowsTextDeliveryOptions {
    * this composes the Windows one itself.
    */
   processEnd?: ProcessEndPort
+  /**
+   * Reads a pid's real creation time — the re-verification before the kill
+   * (#231). The same port the Claude provider's pid-reuse guard uses, composed
+   * once in platformAdapters; absent, this composes the Windows one itself.
+   */
+  processProbe?: ProcessProbePort
   /** Injected for tests; defaults to Date.now. Only ever reads durations. */
   now?: () => number
 }
@@ -183,6 +209,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
   private readonly processEnd: ProcessEndPort
+  private readonly processProbe: ProcessProbePort
   private readonly now: () => number
   /** Null when the transport was replaced outright and there is nothing to keep alive. */
   private readonly consoleWorker: ConsoleWorker | null
@@ -201,6 +228,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     // Windows port, and reading process.platform here would be a fourth call
     // site for an answer the composition already made (see platform-ports).
     this.processEnd = options.processEnd ?? createProcessEnd({ platform: 'win32' })
+    this.processProbe = options.processProbe ?? createProcessProbe({ platform: 'win32' })
     this.now = options.now ?? Date.now
 
     // An injected runner with no worker spawn is a test replacing the whole
@@ -419,6 +447,14 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * is given, so the session's own tool processes go with it and the shell, the
    * terminal host and every other tab above it are untouched.
    *
+   * The pid is re-verified here rather than trusted from the poll that produced
+   * it (#231): probe its real creation time, compare against the one the
+   * provider verified, and kill only on agreement. `sameProcessStart` is the
+   * same comparison and the same 2s tolerance the provider's own pid-reuse
+   * guard uses, so the two cannot drift apart. A mismatch and an unreadable
+   * process list both refuse — see SESSION_NOT_VERIFIED for why this guard,
+   * alone in this app, fails closed.
+   *
    * `delivered: true` is a fact this process observed — the platform reported
    * the tree gone — and not a message handed to somebody who may act on it,
    * exactly as the launched tier's end reads (see endLaunchedSession). Every
@@ -427,11 +463,22 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   async endConsoleSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
     const timer = createStageTimer(this.now)
     try {
-      const ended = await timer.measure('spawn', () => this.processEnd.endProcessTree(request.pid))
+      // Both children under one stage: the probe exists only to license the
+      // kill, and what a person waits through is the pair.
+      const ended = await timer.measure('spawn', async () => {
+        const probedMs = await this.processProbe.processStartTimeMs(request.pid)
+        if (probedMs === null || !sameProcessStart(probedMs, request.expectedStartMs)) return null
+        return this.processEnd.endProcessTree(request.pid)
+      })
+      if (ended === null) {
+        return { delivered: false, error: SESSION_NOT_VERIFIED, stages: timer.timings() }
+      }
       return ended
         ? { delivered: true, stages: timer.timings() }
         : { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
     } catch {
+      // A throwing probe is an unreadable process list by another name, and a
+      // throwing kill did not kill: neither may report a session ended.
       return { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
     }
   }

@@ -425,8 +425,8 @@ carries a registry `sessionName` is one session with two answers, and `resolveTe
 
 | Target                             | Message (`sendDwarfText`)                        | Kick (`kickDwarf`)                             | Touches a window? |
 | ---------------------------------- | ------------------------------------------------ | ---------------------------------------------- | ----------------- |
-| `terminal` **with** a session name | `terminal` (paste), relay only if it can't focus | **ends the session** (#329), relay as fallback | message only      |
-| `terminal` **without** one         | `terminal` (paste) — the only channel it has     | **ends the session**, nothing behind it        | message only      |
+| `terminal` **with** a session name | `terminal` (paste), relay only if it can't focus | **ends the verified pid** (#329), relay behind | message only      |
+| `terminal` **without** one         | `terminal` (paste) — the only channel it has     | **ends the verified pid**, nothing behind it   | message only      |
 | `claude-relay`                     | `claude-relay`                                   | `claude-relay` (a semantic ask)                | no                |
 | `codex-queue`                      | `codex-queue`                                    | refused — drains between turns (#97)           | no                |
 | `held-session`                     | the stream this panel holds                      | a real interrupt, where the protocol has one   | no                |
@@ -480,16 +480,32 @@ processes go with it while the shell, the terminal host and every other tab abov
 ending an ancestor would end all of them, which is why the pid is passed straight through with no
 ancestor walk anywhere on the path.
 
-Three consequences worth stating. The dwarf is **retired** on a delivered end (#46's path, not
+**A pid is never signalled unverified, and the check runs inside the act.** #231's rule — a pid is
+acted on only with its creation time verified — reaches this tier too, and reaches it twice. The
+Claude provider already probes each `(pid, procStart)` pair for its pid-reuse guard [#45]; the
+verdict is now on the wire as `Dwarf.pidStartedAt`, present **only** where the probe AGREED, and the
+runtime refuses to ask for an end at all when it is absent. Then `endConsoleSession` re-probes the
+pid immediately before `taskkill` and compares against that value with the same 2s tolerance
+[`sameProcessStart`], because the provider's verification happened at the last poll and a poll can
+be two seconds old.
+
+**This is the one guard in the app that fails closed**, and the asymmetry is deliberate. The
+liveness guard treats an unreadable process list as "alive", because a wrong "dead" only hides a
+dwarf. A kill treats it as a refusal, because `taskkill /T` on a recycled pid ends a stranger's
+program and everything under it, and no verdict afterwards can take that back. Mismatch and unknown
+are therefore the same answer here: nothing is ended, and the panel says the process could not be
+verified.
+
+Three more consequences worth stating. The dwarf is **retired** on a delivered end (#46's path, not
 #293's dismissal: a dismissal lifts on a `'working'` status, which is exactly what a session kicked
 mid-turn was last reported as), so the walk starts at once instead of waiting out the provider's
-liveness window. A refused end still **falls back to the relay cancel instruction** where the
-session has a registry name — weaker than what was asked for, and still better than nothing tried.
-And the POSIX ports implement **no** end tier: their tree kill signals the process GROUP, which is
-right for a process this panel started as a group leader and wrong for a session somebody else
-launched. A `terminal` target does not reach a kick there in any case (`supportsConsoleInput` is
-false on both, so it degrades to the relay first); a per-OS end is a follow-up, noted in
-`platform-ports`.
+liveness window. A refused end — including a refused verification — still **falls back to the relay
+cancel instruction** where the session has a registry name: weaker than what was asked for, and
+still better than nothing tried. And the POSIX ports implement **no** end tier: their tree kill
+signals the process GROUP, which is right for a process this panel started as a group leader and
+wrong for a session somebody else launched. A `terminal` target does not reach a kick there in any
+case (`supportsConsoleInput` is false on both, so it degrades to the relay first); a per-OS end is a
+follow-up, noted in `platform-ports`.
 
 **The permission digits still type.** A decision is answered at the terminal drawing the dialog, so
 it reads the kick's old route rather than the message's — `sendToConsole` for the measured `1`,
