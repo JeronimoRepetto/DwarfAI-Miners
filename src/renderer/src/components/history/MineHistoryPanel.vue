@@ -441,7 +441,12 @@ function toggleRun(key: string): void {
   display: flex;
   gap: 6px;
   align-items: center;
-  width: 100%;
+  /*
+   * No explicit width, on purpose (#307): this row also carries the
+   * bubble-alignment margin-left above, and as a flex item it already
+   * stretches to the list's width MINUS that margin. `width: 100%` added the
+   * margin on top and scrolled the whole conversation sideways.
+   */
   padding: 0;
   border: none;
   cursor: pointer;
@@ -481,7 +486,12 @@ function toggleRun(key: string): void {
  */
 .activity-line.is-openable {
   display: block;
-  width: 100%;
+  /*
+   * No explicit width, on purpose (#307): this row also carries the
+   * bubble-alignment margin-left above, and as a flex item it already
+   * stretches to the list's width MINUS that margin. `width: 100%` added the
+   * margin on top and scrolled the whole conversation sideways.
+   */
   padding: 0;
   border: none;
   background: none;
