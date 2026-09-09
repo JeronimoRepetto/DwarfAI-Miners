@@ -77,6 +77,8 @@ import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
 import iconKick from '../../../../docs/assets/icons/klck.svg?url'
 import iconDelete from '../../../../docs/assets/icons/delete.svg?url'
+import iconMusicOn from '../../../../docs/assets/icons/music_on.svg?url'
+import iconMusicOff from '../../../../docs/assets/icons/music_off.svg?url'
 
 import trayIcon from '../../../../resources/tray-icon@2x.png'
 
@@ -312,6 +314,21 @@ export const ADD_ICON_SRC = iconAdd
 export const DELETE_ICON_SRC = iconDelete
 export const DIALOG_ICON_SRC = iconDialog
 export const SLEEP_ICON_SRC = iconSleep
+
+/**
+ * The shell's music button (#174), and the mine interior's ambience mute
+ * (#173) — one pair of glyphs for both, because both controls say the same
+ * thing about a different channel: sound, or sound crossed out.
+ *
+ * The maintainer's own files, delivered with the icon set at the path the
+ * design source names for every other icon, and used by no screen in the
+ * documentation — the source draws neither control, and both are recorded as
+ * amendments proposed with #174 and #173. Masked like the rest, so the
+ * committed SVG keeps the designer's bytes (its fill is black) and the colour
+ * comes from the tokens.
+ */
+export const MUSIC_ON_ICON_SRC = iconMusicOn
+export const MUSIC_OFF_ICON_SRC = iconMusicOff
 
 /**
  * The question-put-to-the-user glyph (#153), and the one icon in this file that

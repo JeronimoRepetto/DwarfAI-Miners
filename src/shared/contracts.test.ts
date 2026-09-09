@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
 import {
+  DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
   HELDABLE_PROVIDERS,
@@ -10,7 +11,8 @@ import {
   dwarfSilenceWindowMs,
   isDwarfProvider,
   isMcpConnectionStatus,
-  isMessagePanelDragPhase
+  isMessagePanelDragPhase,
+  parseAudioPreferences
 } from './contracts'
 
 /*
@@ -278,4 +280,88 @@ describe('isMessagePanelDragPhase', () => {
       expect(isMessagePanelDragPhase(value)).toBe(false)
     }
   )
+})
+
+/*
+ * Settings' Audio section (#174, #173), and why its parser lives on the wire
+ * boundary rather than in the renderer that mixes with it.
+ *
+ * Both processes read this document: main stores it and clamps on the way in,
+ * the preload rebuilds it field by field on the way across, and the renderer's
+ * engine mixes with it. One parser, one declaration point — the same rule the
+ * providers table above holds.
+ *
+ * The asymmetry `config-layering` names is the whole shape of it: a bad
+ * DOCUMENT degrades to the defaults, because a preference file is never worth
+ * failing over, and a bad VALUE inside an otherwise readable document degrades
+ * FIELD BY FIELD rather than taking the readable fields with it.
+ */
+describe('parseAudioPreferences', () => {
+  it('reads a document it wrote itself', () => {
+    expect(
+      parseAudioPreferences({
+        musicAtStartup: false,
+        musicVolume: 0.4,
+        ambienceVolume: 0.2,
+        voiceVolume: 0.9
+      })
+    ).toEqual({
+      musicAtStartup: false,
+      musicVolume: 0.4,
+      ambienceVolume: 0.2,
+      voiceVolume: 0.9
+    })
+  })
+
+  it('clamps a volume outside the range rather than discarding the whole document', () => {
+    // A slider cannot mean "more than all of it", so the ends are the honest
+    // reading of a value past them — not a reason to forget the other three.
+    expect(parseAudioPreferences({ musicVolume: 4, ambienceVolume: -1 })).toEqual({
+      ...DEFAULT_AUDIO_PREFERENCES,
+      musicVolume: 1,
+      ambienceVolume: 0
+    })
+  })
+
+  it('falls back field by field, so one bad value cannot take the others with it', () => {
+    expect(parseAudioPreferences({ musicAtStartup: 'yes', musicVolume: 0.25 })).toEqual({
+      ...DEFAULT_AUDIO_PREFERENCES,
+      musicVolume: 0.25
+    })
+  })
+
+  it('keeps the two ends, which are real choices and not errors', () => {
+    expect(parseAudioPreferences({ musicVolume: 0, voiceVolume: 1 })).toEqual({
+      ...DEFAULT_AUDIO_PREFERENCES,
+      musicVolume: 0,
+      voiceVolume: 1
+    })
+  })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, '0.8', null, {}, []])(
+    'reads %j as no volume at all, because it is not a finite fraction',
+    (value) => {
+      expect(parseAudioPreferences({ musicVolume: value }).musicVolume).toBe(
+        DEFAULT_AUDIO_PREFERENCES.musicVolume
+      )
+    }
+  )
+
+  it.each([null, undefined, [], 'music', 42])(
+    'reads %j — a document that is not an object — as the defaults',
+    (document) => {
+      expect(parseAudioPreferences(document)).toEqual(DEFAULT_AUDIO_PREFERENCES)
+    }
+  )
+})
+
+describe('DEFAULT_AUDIO_PREFERENCES', () => {
+  it('starts the music on and every channel at full, which is what #174 specifies', () => {
+    expect(DEFAULT_AUDIO_PREFERENCES).toEqual({
+      musicAtStartup: true,
+      musicVolume: 1,
+      ambienceVolume: 1,
+      voiceVolume: 1
+    })
+  })
 })
