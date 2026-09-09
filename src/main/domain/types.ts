@@ -50,6 +50,7 @@ export type {
   DwarfTuningChange,
   DwarfTuningRequest,
   DwarfTuningResult,
+  ExternalLinkResult,
   FeedActivity,
   FeedActivityKind,
   FeedMessage,

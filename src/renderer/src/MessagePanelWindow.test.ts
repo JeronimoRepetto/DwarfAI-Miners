@@ -79,6 +79,10 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // A click on an activity line's own path (#279). Opened is the quiet
     // default; individual tests override it to assert the refusal path.
     openMinePath: vi.fn().mockResolvedValue({ opened: true }),
+    // A press on a link inside a bubble (#347), on the same rule as the line
+    // above: opened is the quiet default, and the refusal path is asserted by
+    // the tests that override it.
+    openExternalLink: vi.fn().mockResolvedValue({ opened: true }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -1626,5 +1630,61 @@ describe('the sent message, drawn at once (#309)', () => {
     expect(last.send).toEqual({
       'claude:s1': { phase: 'delivered', via: 'terminal', awaitingReaction: true }
     })
+  })
+})
+
+/**
+ * A press on a link inside a bubble (#347).
+ *
+ * The same division #279 drew one describe above: this window relays the
+ * address and renders whatever main decided, on the same `.notice` line. It
+ * validates nothing itself and it opens nothing itself — the browser is main's,
+ * and a renderer's word is never a permission.
+ */
+describe('opening a link inside a bubble', () => {
+  const WITH_LINK = {
+    ...HELD_DWARF,
+    conversation: [
+      {
+        role: 'assistant' as const,
+        text: 'see [the issue](https://example.test/347)',
+        timestamp: 't0'
+      }
+    ]
+  }
+
+  it('asks main with the exact address, not the words that carried it', async () => {
+    const { wrapper, api } = await openOn([WITH_LINK], HELD_DWARF.id, {
+      openExternalLink: vi.fn().mockResolvedValue({ opened: true })
+    })
+
+    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await flushPromises()
+
+    expect(api.openExternalLink).toHaveBeenCalledWith('https://example.test/347')
+  })
+
+  it("says out loud main's fixed refusal when the link could not be opened", async () => {
+    const { wrapper } = await openOn([WITH_LINK], HELD_DWARF.id, {
+      openExternalLink: vi
+        .fn()
+        .mockResolvedValue({ opened: false, reason: 'That link could not be opened.' })
+    })
+
+    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.notice').text()).toBe('That link could not be opened.')
+  })
+
+  it('says nothing when the browser took it', async () => {
+    const { wrapper } = await openOn([WITH_LINK], HELD_DWARF.id, {
+      openExternalLink: vi.fn().mockResolvedValue({ opened: true })
+    })
+
+    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.notice').exists()).toBe(false)
   })
 })

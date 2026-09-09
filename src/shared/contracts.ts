@@ -1513,6 +1513,21 @@ export interface MineOpenPathRequest {
  */
 export type MineOpenPathResult = { opened: true } | { opened: false; reason: string }
 
+/**
+ * The verdict of one request to open a link from a bubble (#347).
+ *
+ * Deliberately the same shape as `MineOpenPathResult` above and deliberately
+ * NOT the same type: the two channels answer different questions — one about a
+ * file inside a mine, one about an address on the web — and folding them into
+ * one alias would mean a change to either reason set silently rewrote the
+ * other's contract.
+ *
+ * `reason` is one fixed sentence this app wrote, never the platform's: see
+ * EXTERNAL_LINK_REFUSED_REASON for why there is exactly one of it where #279's
+ * file channel has three.
+ */
+export type ExternalLinkResult = { opened: true } | { opened: false; reason: string }
+
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
   /** True when an existing terminal window was found and brought to the foreground. */
@@ -2908,6 +2923,23 @@ export const IPC_CHANNELS = {
    * it later the way a snapshot would.
    */
   openMinePath: 'mine:openPath',
+  /**
+   * A press on a link inside a message bubble (#347) — validated in MAIN and
+   * opened in the SYSTEM BROWSER, never in this app.
+   *
+   * Never inside the panel, and that is the whole reason the channel exists
+   * rather than an anchor in the bubble. A renderer that can navigate is a
+   * renderer that can be navigated: the transcript is untrusted text, and an
+   * `<a href>` in it would be a page this window could actually be replaced by.
+   * So a bubble draws a button, reports the address, and main decides.
+   *
+   * The payload is the raw string the transcript carried — never a URL object,
+   * never a parsed one — because main re-runs the same `externalLinkOf` rule
+   * the renderer ran, and re-running a rule on somebody else's parse result is
+   * not re-running it. Request/response for the reason `openMinePath` is: there
+   * IS a verdict the panel must render, and nothing else pushes it later.
+   */
+  openExternalLink: 'shell:openExternalLink',
   sendDwarfText: 'dwarf:sendText',
   kickDwarf: 'dwarf:kick',
   /**
