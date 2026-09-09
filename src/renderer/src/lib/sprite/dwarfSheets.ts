@@ -15,6 +15,17 @@
  * loop the swing several times rather than concatenating start+loop+end once
  * each, unlike the foreman's sleep preview.
  *
+ * THE ORDER THE WORKING TRIAD IS PLAYED IN is not this file's to decide and is
+ * stated here only because the counts above are read as evidence of it: since
+ * #325 a dwarf at the rock plays `start-working`, `working`, `working`,
+ * `end-working` and then begins again — a shift cycle rather than a swing that
+ * never stops — and plays `end-working` alone, once, on the way out.
+ * `dwarfSequence.ts` owns that. The previews' own repeat counts (the worker's
+ * several turns, the worker2's four) are the artist showing a movement
+ * REPEATING, and are evidence of which strips belong to one animation and in
+ * what order — never of how many turns the panel takes before setting the pick
+ * down, which is a reading decision and was made in #325.
+ *
  * ONE SHEET PER RANK IS REQUIRED and it is `idle`. Everything else is optional,
  * and a state a rank has no drawing for falls back to that idle rather than to
  * another rank's art — which is why a worker currently idles through waiting
@@ -93,6 +104,9 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
    * which the worker's own preview could not give — 73 is exactly
    * 16 + (10 x 4) + 17, the pick-up, four turns of the swing and the set-down
    * concatenated, where the worker's 60 do not decompose into 3/11/6 at all.
+   * FOUR turns is the preview's own count and not the panel's: the shift cycle
+   * takes two before it sets the pick down and starts over (#325, and see the
+   * note on order at the top of this file).
    *
    * NO `impactFrames` AND NO `glowFrames` ON ANY OF THE THREE, and that is a
    * SETTLED DECISION rather than art still owed — maintainer ruling on #211.
