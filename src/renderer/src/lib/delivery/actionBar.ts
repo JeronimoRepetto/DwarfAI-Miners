@@ -204,6 +204,27 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   'hosted-stdin': 'Ends the process this panel is holding — the whole process, not the turn.'
 }
 
+/**
+ * The same dwarf, mid-turn — and the one case where the dismissal above is a
+ * control that visibly does nothing (#305, step 3).
+ *
+ * A dismissal is reversed the moment the session shows activity, and an OPEN
+ * TURN is activity: the dwarf walks off the rock and is back on the next poll.
+ * The maintainer watched exactly that on an observed Codex thread. So a
+ * `working` dwarf nothing here can interrupt gets a refusal instead, and the
+ * refusal is the honest half of what #293 replaced.
+ *
+ * Two clauses in KICK_HINT's idiom, the limit first. It points at where the
+ * session RUNS rather than promising a keystroke, for two reasons: the sentence
+ * has to stay true for a held protocol carrying no cancel event (#237), which
+ * has no terminal at all; and the panel is never the thing that presses Esc
+ * — #329 rules that no keystroke goes into a window this app cannot prove is
+ * the session's own, so the Esc named here is the person's.
+ */
+export const OPEN_TURN_NO_INTERRUPT_HINT =
+  'This turn cannot be stopped from here — only where the session runs, which for a Codex ' +
+  'thread is its own terminal (Esc). Kick sends the dwarf off the rock once the turn ends.'
+
 export const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."
 
 export const CONSOLE_HINT = "Focus this session's console."
@@ -295,11 +316,24 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   // Read off the status rather than the channel for the reason the bar always
   // did (#192): the grace window freezes the last real snapshot, so a leaving
   // dwarf still carries the channel it had and main would refuse to use it.
-  const channel = hasEnded(dwarf) ? null : (dwarf.capabilities?.cancel ?? null)
+  const ended = hasEnded(dwarf)
+  const channel = ended ? null : (dwarf.capabilities?.cancel ?? null)
+  // The one position the dismissal cannot be honest in (#305): see
+  // OPEN_TURN_NO_INTERRUPT_HINT. Read off the status for the same reason the
+  // channel is — 'leaving' has no turn left to be open.
+  const openTurn = !ended && channel === null && dwarf.status === 'working'
   const hint =
-    channel !== null ? KICK_HINT[channel] : hasEnded(dwarf) ? ENDED_DISMISS_HINT : DISMISS_HINT
+    channel !== null
+      ? KICK_HINT[channel]
+      : ended
+        ? ENDED_DISMISS_HINT
+        : openTurn
+          ? OPEN_TURN_NO_INTERRUPT_HINT
+          : DISMISS_HINT
+  // Still reported first: a kick fired while the dwarf was idle is in flight
+  // whatever the dwarf started doing since, and the person is owed its progress.
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
-  return { id: 'kick', name: 'Kick', enabled: true, hint }
+  return { id: 'kick', name: 'Kick', enabled: !openTurn, hint }
 }
 
 function boostAction(dwarf: Dwarf): ActionBarEntry {

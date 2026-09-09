@@ -889,9 +889,18 @@ describe('DwarfMessagePanel controls', () => {
    * canceled yet"). Nothing can interrupt this session, which is now the reason
    * the control means something else rather than the reason it is dead.
    */
+  /*
+   * AMENDED again for #305, step 3: `status: 'waiting'` pinned on both fixtures
+   * below, where they used to inherit `defaultDwarf`'s `'working'`. The
+   * dismissal is unchanged for an idle dwarf; mid-turn the control is now
+   * refused, which is the test that follows them.
+   */
   it('keeps kick live where nothing can be cancelled, and says it dismisses', () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ capabilities: { sendText: null, cancel: null, adjustEffort: null } })
+      dwarf: defaultDwarf({
+        status: 'waiting',
+        capabilities: { sendText: null, cancel: null, adjustEffort: null }
+      })
     })
     expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.control-kick').attributes('title')).toContain('off the rock')
@@ -899,8 +908,24 @@ describe('DwarfMessagePanel controls', () => {
 
   /* AMENDED for #293, same reason (was: 'disables kick when the dwarf ...'). */
   it('keeps kick live when the dwarf carries no capability matrix at all', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ capabilities: undefined }) })
+    const wrapper = panel({ dwarf: defaultDwarf({ status: 'waiting', capabilities: undefined }) })
     expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
+  })
+
+  /*
+   * The other half of #305, step 3, and the only place it is proven to reach
+   * the DOM: a dismissal on a dwarf mid-turn is undone by the next poll, so the
+   * button is genuinely disabled rather than merely re-worded.
+   */
+  it('disables kick while a turn nothing can interrupt is open, with the reason', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        status: 'working',
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+      })
+    })
+    expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.control-kick').attributes('title')).toContain('cannot be stopped from')
   })
 
   /*
