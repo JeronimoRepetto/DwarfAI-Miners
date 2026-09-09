@@ -374,6 +374,51 @@ describe('createAudioEngine — ambience (#173)', () => {
     expect(player.liveOf('working.mp3')).toHaveLength(2)
   })
 
+  it('gives the copy the seam faded in a seam of its own, rather than going silent (#322)', () => {
+    // The bed loops for as long as the interior is open, so EVERY copy the
+    // seam opens has to reach its own seam. Two plays and silence is what the
+    // seam flag caused when it came to describe the incoming copy.
+    engine.setScene({ ...OPEN, working: true })
+    const first = player.live()[0]!
+    first.setDurationMs(60_000)
+    first.seekMs(58_000)
+    engine.tick()
+
+    const second = player.liveOf('working.mp3')[1]!
+    second.setDurationMs(60_000)
+    second.seekMs(58_000)
+    engine.tick()
+
+    const copies = player.liveOf('working.mp3')
+    expect(copies).toHaveLength(3)
+    expect(second.ramp).toEqual({ to: 0, ms: AMBIENCE_CROSSFADE_MS })
+    expect(copies[2]!.ramp).toEqual({ to: 0.5, ms: AMBIENCE_CROSSFADE_MS })
+  })
+
+  it('keeps seaming after a state flip landed on a seam (#322)', () => {
+    engine.setScene({ ...OPEN, working: true })
+    const working = player.live()[0]!
+    working.setDurationMs(60_000)
+    working.seekMs(58_000)
+    // One crossfade, into the other bed: the flip and the seam are one act.
+    engine.setScene(OPEN)
+    engine.tick()
+    expect(player.liveOf('silence.mp3')).toHaveLength(1)
+
+    const second = player.liveOf('silence.mp3')[0]!
+    second.setDurationMs(60_000)
+    second.seekMs(58_000)
+    engine.tick()
+    expect(player.liveOf('silence.mp3')).toHaveLength(2)
+
+    const third = player.liveOf('silence.mp3')[1]!
+    third.setDurationMs(60_000)
+    third.seekMs(58_000)
+    engine.tick()
+    expect(player.liveOf('silence.mp3')).toHaveLength(3)
+    expect(third.ramp).toEqual({ to: 0, ms: AMBIENCE_CROSSFADE_MS })
+  })
+
   it('goes silent when the interior is muted, and comes back on a cut', () => {
     engine.setScene({ ...OPEN, working: true })
     const bed = player.live()[0]!

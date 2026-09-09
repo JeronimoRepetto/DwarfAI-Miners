@@ -108,8 +108,6 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
   let nextTrackAt: number | undefined
 
   let ambience: { clip: AudioClip; standing: AmbienceStanding } | undefined
-  /** Whether the bed on screen has already begun its loop seam. */
-  let seamStarted = false
   const fading: FadingBed[] = []
 
   let voice: AudioClip | undefined
@@ -181,13 +179,11 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
     const clip = player.open(beds[standing.bed], { volume })
     clip.play()
     ambience = { clip, standing }
-    seamStarted = false
   }
 
   function stopAmbience(): void {
     ambience?.clip.stop()
     ambience = undefined
-    seamStarted = false
     // A cut discards the outgoing bed too: it belongs to a mine or a state
     // that is no longer on screen, and letting it finish its fade would be the
     // panel still saying something about it.
@@ -220,9 +216,9 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
    * The one crossfade, shared by the state flip and the loop seam.
    *
    * They are the same act — two seconds of the outgoing bed falling while the
-   * incoming one rises — so a flip that lands ON the seam must run once, not
-   * twice. That is why `seamStarted` is reset here rather than only where the
-   * seam is detected.
+   * incoming one rises — so a flip that lands ON the seam runs once, not
+   * twice: whichever of the two got here first leaves `ambience` holding a
+   * fresh copy at position 0, and a bed at position 0 has no seam to detect.
    */
   function crossfadeTo(standing: AmbienceStanding, overMs: number): void {
     const outgoing = ambience?.clip
@@ -239,13 +235,20 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       bed.clip.stop()
       fading.splice(index, 1)
     }
-    if (ambience === undefined || seamStarted) return
+    if (ambience === undefined) return
     const clip = ambience.clip
     if (!shouldCrossfadeLoopSeam(clip.positionMs(), clip.durationMs())) return
     // The seam plays whichever bed the scene calls for NOW: the same one
     // normally, the other one when the crew changed on this very tick.
+    //
+    // Nothing is recorded about having run it, and that is the whole of #322:
+    // the seam belongs to the bed in `ambience`, and this crossfade replaces
+    // that bed with a copy at position 0. A flag remembering "the seam has
+    // started" outlived the bed it described, so the copy it faded in was born
+    // already seamed and never opened the next one — two plays, then silence.
+    // The outgoing bed cannot seam twice either: it is no longer `ambience`,
+    // so nothing here reads its position again.
     crossfadeTo(ambience.standing, AMBIENCE_CROSSFADE_MS)
-    seamStarted = true
   }
 
   // ── the surface ──────────────────────────────────────────────────────────
