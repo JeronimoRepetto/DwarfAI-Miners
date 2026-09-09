@@ -107,11 +107,15 @@ describe('buildActionBar', () => {
   })
 
   describe('kick', () => {
+    // AMENDED for #329: the terminal channel's sentence says the session is
+    // ended, because that is what the kick does there now.
     it('is enabled with the channel-specific hint when a cancel channel exists', () => {
       const entry = entryFor('kick', capableDwarf())
       expect(entry.enabled).toBe(true)
       expect(entry.name).toBe('Kick')
-      expect(entry.hint).toBe('Sends an interrupt keystroke to the session console.')
+      expect(entry.hint).toBe(
+        'Ends this session — the whole process, not the turn. Its terminal tab stays open.'
+      )
     })
 
     it('names the relay-tier limitation honestly', () => {
@@ -631,9 +635,18 @@ describe('the copy for a named console session that pastes messages and interrup
     expect(CHANNEL_HINT.terminal).not.toMatch(/fallback/i)
   })
 
-  it("describes the kick as a keystroke at that session's console", () => {
+  /*
+   * AMENDED for #329 (was: "describes the kick as a keystroke at that session's
+   * console"). The keystroke is gone — it could not be aimed at one tab of a
+   * shared terminal window — so the sentence has to promise the act that
+   * replaced it. A person told a turn was interrupted, when the session is
+   * gone, has been told the wrong thing.
+   */
+  it('describes the kick as ending that session rather than interrupting its turn', () => {
     const kick = buildActionBar(consolePaste(), IDLE).find((action) => action.id === 'kick')
     expect(kick?.hint).toBe(KICK_HINT.terminal)
+    expect(KICK_HINT.terminal).toMatch(/ends this session/i)
+    expect(KICK_HINT.terminal).not.toMatch(/keystroke|interrupt/i)
   })
 
   it('describes the relay send as a hand-over the session reads between tool calls, and its fallback role', () => {

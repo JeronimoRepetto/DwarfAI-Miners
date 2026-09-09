@@ -946,7 +946,12 @@ describe('AgentRuntime.sendDwarfText', () => {
       sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
       pasteToConsole: vi.fn().mockResolvedValue({ delivered: true }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
-      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      // AMENDED for #329: the terminal tier ENDS the session now, so a fake
+      // port needs the tier the kick actually takes. sendInterrupt stays on it
+      // — the permission deny of #203 still presses Esc — and every 'nothing
+      // was sent' assertion still reads it.
+      endConsoleSession: vi.fn().mockResolvedValue({ delivered: true })
     } satisfies TextDeliveryPort
   }
 
@@ -1623,7 +1628,12 @@ describe('AgentRuntime.kickDwarf', () => {
     return {
       sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
-      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      // AMENDED for #329: the terminal tier ENDS the session now, so a fake
+      // port needs the tier the kick actually takes. sendInterrupt stays on it
+      // — the permission deny of #203 still presses Esc — and every 'nothing
+      // was sent' assertion still reads it.
+      endConsoleSession: vi.fn().mockResolvedValue({ delivered: true })
     } satisfies TextDeliveryPort
   }
 
@@ -1647,7 +1657,16 @@ describe('AgentRuntime.kickDwarf', () => {
     return { runtime, port }
   }
 
-  it('sends a raw interrupt keystroke to a terminal-hosted dwarf, never typed text', async () => {
+  /*
+   * AMENDED for #329 (was: 'sends a raw interrupt keystroke to a
+   * terminal-hosted dwarf, never typed text', asserting sendInterrupt with the
+   * pid). The keystroke was the defect: a session in a terminal TAB cannot be
+   * foregrounded on its own, so the Esc reached whichever tab was in front. The
+   * tier ends the session's process now — same pid, no window — and the three
+   * "nothing else was reached" assertions are unchanged, with the keystroke
+   * itself joining them.
+   */
+  it('ends the session of a terminal-hosted dwarf, pressing nothing at any window', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
     })
@@ -1656,7 +1675,8 @@ describe('AgentRuntime.kickDwarf', () => {
       delivered: true,
       via: 'terminal'
     })
-    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
     expect(port.sendToConsole).not.toHaveBeenCalled()
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
@@ -1781,30 +1801,36 @@ describe('AgentRuntime.kickDwarf', () => {
     expect(runtime.getMines().flatMap((mine) => mine.dwarfs)).toEqual([])
   })
 
+  // AMENDED for #329: the reason now comes off the END the tier performs.
   it('reports the failure reason the delivery port gave', async () => {
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi.fn(),
-      sendInterrupt: vi
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi
         .fn()
-        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+        .mockResolvedValue({ delivered: false, error: 'This session could not be ended.' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
 
     await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
       delivered: false,
       via: 'terminal',
-      error: 'The terminal would not come forward.'
+      error: 'This session could not be ended.'
     })
   })
 
-  it('falls back to the relay cancel instruction when the interrupt fails and the session has a name', async () => {
+  // AMENDED for #329 (was: '...when the interrupt fails...'). The fallback
+  // itself is unchanged — see the runtime's own note on why a cancel
+  // instruction is still worth trying behind a refused end.
+  it('falls back to the relay cancel instruction when the end fails and the session has a name', async () => {
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
-      sendInterrupt: vi
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi
         .fn()
-        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+        .mockResolvedValue({ delivered: false, error: 'This session could not be ended.' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
@@ -1815,7 +1841,7 @@ describe('AgentRuntime.kickDwarf', () => {
       delivered: true,
       via: 'claude-relay'
     })
-    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
     // The fallback carries the exact instruction the relay tier already uses —
     // a kick has no user text, only this fixed message.
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
@@ -1824,11 +1850,13 @@ describe('AgentRuntime.kickDwarf', () => {
     })
   })
 
+  // AMENDED for #329: the attempt the fallback stands behind is the end.
   it("prefixes the worker's cancel tag on the fallback, same as the relay tier", async () => {
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
-      sendInterrupt: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' })
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
       {
@@ -1848,15 +1876,18 @@ describe('AgentRuntime.kickDwarf', () => {
     })
   })
 
+  // AMENDED for #329: both reasons still combine, terminal first; the terminal
+  // one is a refused end rather than a window that would not come forward.
   it('combines both reasons, terminal first, when the relay fallback also fails', async () => {
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi
         .fn()
         .mockResolvedValue({ delivered: false, error: 'The relay timed out.' }),
-      sendInterrupt: vi
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi
         .fn()
-        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+        .mockResolvedValue({ delivered: false, error: 'This session could not be ended.' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
@@ -1866,24 +1897,26 @@ describe('AgentRuntime.kickDwarf', () => {
     await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
       delivered: false,
       via: 'terminal',
-      error: 'Terminal: The terminal would not come forward.\nRelay fallback: The relay timed out.'
+      error: 'Terminal: This session could not be ended.\nRelay fallback: The relay timed out.'
     })
   })
 
+  // AMENDED for #329: same rule, driven by a refused end.
   it('never falls back for a terminal session that has no relay address', async () => {
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
-      sendInterrupt: vi
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi
         .fn()
-        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' })
+        .mockResolvedValue({ delivered: false, error: 'This session could not be ended.' })
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
 
     await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
       delivered: false,
       via: 'terminal',
-      error: 'The terminal would not come forward.'
+      error: 'This session could not be ended.'
     })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
@@ -1906,13 +1939,16 @@ describe('AgentRuntime.kickDwarf', () => {
       text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
     })
     expect(port.sendInterrupt).not.toHaveBeenCalled()
+    expect(port.endConsoleSession).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #329: the tier that can throw on this path is the end.
   it('turns a throwing delivery port into a failed verdict', async () => {
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi.fn(),
-      sendInterrupt: vi.fn().mockRejectedValue(new Error('boom'))
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi.fn().mockRejectedValue(new Error('boom'))
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
 
@@ -1924,12 +1960,19 @@ describe('AgentRuntime.kickDwarf', () => {
   /**
    * The half #308 left alone, pinned so the next reordering has to say so.
    *
-   * A MESSAGE to this exact dwarf now leaves over the relay, and the kick does
-   * not follow it: an interrupt is a keystroke by nature, it carries no user
-   * text that could land in the wrong window, and Esc is the only thing this
-   * app has ever measured against a live Claude TUI.
+   * A MESSAGE to this exact dwarf pastes at its console with the relay behind
+   * it (#319), and the kick does not share that order: it stays on the terminal
+   * tier outright, with no relay in front of it.
+   *
+   * AMENDED for #329 (was: 'still interrupts at the console of a named session,
+   * where the message no longer goes (#308)'). What the tier DOES changed —
+   * ending the session rather than pressing Esc — and the reason the old title
+   * gave for keeping it at the console is exactly the one the report disproved:
+   * an interrupt carries no user text, but a keystroke does land in the wrong
+   * window. What this test pins is unchanged: a named session's kick is not
+   * routed to the relay.
    */
-  it('still interrupts at the console of a named session, where the message no longer goes (#308)', async () => {
+  it('still acts at the terminal of a named session rather than over its relay (#308)', async () => {
     const port = { ...fakePort(), supportsConsoleInput: true }
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
@@ -1940,8 +1983,219 @@ describe('AgentRuntime.kickDwarf', () => {
       delivered: true,
       via: 'terminal'
     })
-    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Kick ends the session it was pressed on (#329).
+ *
+ * The terminal tier pressed Esc at a focused window from #24 until here, and
+ * the report is what a focused window turned out to be worth: two Claude
+ * sessions in two tabs of ONE Windows Terminal window, and the Esc reached the
+ * tab that happened to be active rather than the dwarf the person pointed at.
+ * A pid cannot be the wrong session, so the act is the tree kill #217 already
+ * built — and the pid it is pointed at is the session's OWN, never an ancestor
+ * every tab of that window shares.
+ */
+describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)', () => {
+  const DWARF_ID = 'claude:session-1'
+  const SESSION_PID = 4242
+
+  /**
+   * The tree measured live, as a table a test can assert against: two sessions
+   * in two tabs, so every process ABOVE either of them is shared. Ending one of
+   * those ancestors would take both tabs — and the terminal window with them.
+   */
+  const PROCESS_TABLE = [
+    { pid: SESSION_PID, parentPid: 3131, name: 'claude.exe' },
+    { pid: 5252, parentPid: 3132, name: 'claude.exe' },
+    { pid: 3131, parentPid: 2020, name: 'cmd.exe' },
+    { pid: 3132, parentPid: 2020, name: 'cmd.exe' },
+    { pid: 2020, parentPid: 1010, name: 'WindowsTerminal.exe' },
+    { pid: 1010, parentPid: 1, name: 'conhost.exe' },
+    { pid: 1, parentPid: 0, name: 'bash' }
+  ]
+
+  /** Every pid in that table that is NOT the kicked session's own process. */
+  function othersInTheTable(): number[] {
+    return PROCESS_TABLE.filter((process) => process.pid !== SESSION_PID).map(
+      (process) => process.pid
+    )
+  }
+
+  /** Every keystroke tier is a bare spy: reaching one at all would be the defect. */
+  function terminalPort(endConsoleSession = vi.fn().mockResolvedValue({ delivered: true })) {
+    return {
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn(),
+      endConsoleSession
+    } satisfies TextDeliveryPort
+  }
+
+  function scanOf(status: 'working' | 'waiting' = 'working') {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: status === 'working' ? 'busy' : 'idle',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: DWARF_ID,
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status,
+            sessionId: 'session-1',
+            pid: SESSION_PID
+          }
+        ]
+      }
+    ])
+  }
+
+  async function runtimeWith(
+    port: TextDeliveryPort,
+    target: TextDeliveryTarget = { kind: 'terminal', pid: SESSION_PID }
+  ) {
+    let now = 0
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
+      providers: [
+        {
+          kind: 'claude',
+          scan: scanOf(),
+          feed: vi.fn().mockResolvedValue([]),
+          textDelivery: () => target
+        }
+      ],
+      textDelivery: port,
+      onMinesUpdated: vi.fn(),
+      now: () => now
+    })
+    await runtime.refresh()
+    return { runtime, advance: (ms: number) => (now += ms) }
+  }
+
+  it("ends the session's own process and never an ancestor every tab shares", async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(port)
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'terminal'
+    })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: SESSION_PID })
+    // The pid the provider reported, and nothing derived from it: no walk, so
+    // cmd.exe, WindowsTerminal.exe, conhost.exe and the root are unreachable
+    // from here even by accident.
+    const ended = port.endConsoleSession.mock.calls.map((call) => call[0]?.pid)
+    for (const other of othersInTheTable()) expect(ended).not.toContain(other)
+  })
+
+  it('presses nothing at any window, so no other tab can notice', async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(port)
+
+    await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The provider goes on reporting a session its own liveness window has not
+   * given up on yet — this scan reports it 'working' forever — so without this
+   * the dwarf would stand on the rock after its process was gone. Retired
+   * through #46's path rather than #293's dismissal, and the scan above is why:
+   * a dismissal lifts on a 'working' status, which is exactly what a session
+   * kicked mid-turn was last reported as. Ending the process is the observed
+   * stop #46 asks for, made rather than watched for.
+   */
+  it('starts the walk at once instead of waiting out the provider liveness window', async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(port)
+
+    await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    await runtime.refresh()
+
+    const dwarfs = runtime.getMines().flatMap((mine) => mine.dwarfs)
+    expect(dwarfs.map((dwarf) => dwarf.status)).toEqual(['leaving'])
+  })
+
+  it('leaves the dwarf exactly where it was when the end was refused', async () => {
+    const port = terminalPort(
+      vi.fn().mockResolvedValue({ delivered: false, error: 'Access is denied.' })
+    )
+    const { runtime } = await runtimeWith(port)
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toMatchObject({
+      delivered: false
+    })
+    await runtime.refresh()
+    expect(runtime.getMines().flatMap((dwarf) => dwarf.dwarfs)[0]?.status).toBe('working')
+  })
+
+  /*
+   * The relay fallback #24 built is kept for a refused end, and it is the only
+   * second tier this path has ever had. Weaker than what was asked for — a
+   * cancel instruction, not an exit — but it is the difference between a person
+   * being told nothing happened and something being tried.
+   */
+  it('falls back to the relay cancel instruction when the end is refused and the session has a name', async () => {
+    const port = terminalPort(
+      vi.fn().mockResolvedValue({ delivered: false, error: 'Access is denied.' })
+    )
+    const { runtime } = await runtimeWith(port, {
+      kind: 'terminal',
+      pid: SESSION_PID,
+      sessionName: 'sample-project-70'
+    })
+
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'claude-relay'
+    })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'sample-project-70',
+      text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
+    })
+  })
+
+  it('refuses with a reason on a port that implements no end tier at all', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn(),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(port)
+
+    const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    expect(result).toMatchObject({ delivered: false, via: 'terminal' })
+    expect(result.error).toBeTruthy()
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+  })
+
+  /*
+   * A second kick lands on a dwarf that is already walking out, which is the
+   * dismissal #293 made it — never a second tree kill, and never an escalation.
+   */
+  it('dismisses a second kick on the dwarf now walking out, rather than ending twice', async () => {
+    const port = terminalPort()
+    const { runtime } = await runtimeWith(port)
+
+    await runtime.kickDwarf({ dwarfId: DWARF_ID })
+    await runtime.refresh()
+    await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'dismiss'
+    })
+    expect(port.endConsoleSession).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -2956,14 +3210,21 @@ describe('AgentRuntime delivery instrumentation', () => {
     logged.restore()
   })
 
+  /*
+   * AMENDED for #329: a kick's terminal tier is an END now, and it has no focus
+   * stage to fold in — there is no window in the act at all. The stage it does
+   * report is its own `spawn`, and the absorbed-stages rule this pins is
+   * unchanged.
+   */
   it('instruments a kick exactly like a message', async () => {
     const clock = { value: 0 }
     const port = {
       sendToConsole: vi.fn(),
       relayToClaudeSession: vi.fn(),
-      sendInterrupt: vi.fn().mockImplementation(async () => {
+      sendInterrupt: vi.fn(),
+      endConsoleSession: vi.fn().mockImplementation(async () => {
         clock.value += 20
-        return { delivered: true, stages: { focusMs: 8, spawnMs: 12 } }
+        return { delivered: true, stages: { spawnMs: 12 } }
       })
     } satisfies TextDeliveryPort
     const runtime = await instrumentedRuntime({ kind: 'terminal', pid: 42 }, port, clock)
@@ -2972,7 +3233,7 @@ describe('AgentRuntime delivery instrumentation', () => {
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
 
     const line = logged.lines().find((entry) => entry.includes('Kick for')) ?? ''
-    expect(line).toContain('focus=8ms')
+    expect(line).toContain('spawn=12ms')
     expect(line).toContain('total=20ms')
     logged.restore()
   })
@@ -3131,6 +3392,14 @@ describe('AgentRuntime delivery instrumentation', () => {
  * escalates to anything harder without a second explicit user request. A
  * session killed mid-write can corrupt its own transcript, so this invariant is
  * pinned here to stop a future change from quietly breaking it.
+ *
+ * AMENDED for #329, and narrowed rather than dropped. Three tiers now end the
+ * session on the first press: a process this panel launched (#217), one it is
+ * holding (#194), and one in somebody's own terminal — the last because the
+ * polite act there was a keystroke aimed at a window, and the window turned out
+ * to be another session's as often as not. What survives is the half that was
+ * always the point: NOTHING escalates. A second kick repeats the same act with
+ * the same argument, and no tier has a harder second gear behind it.
  */
 describe('AgentRuntime kick escalation policy', () => {
   const FOREMAN_ID = 'claude:session-1'
@@ -3163,7 +3432,12 @@ describe('AgentRuntime kick escalation policy', () => {
     const port = {
       sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
-      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      // AMENDED for #329: the terminal tier ENDS the session now, so a fake
+      // port needs the tier the kick actually takes. sendInterrupt stays on it
+      // — the permission deny of #203 still presses Esc — and every 'nothing
+      // was sent' assertion still reads it.
+      endConsoleSession: vi.fn().mockResolvedValue({ delivered: true })
     } satisfies TextDeliveryPort
     const runtime = new AgentRuntime({
       config: defaultConfig(),
@@ -3182,23 +3456,34 @@ describe('AgentRuntime kick escalation policy', () => {
     return { runtime, port }
   }
 
+  // AMENDED for #329: the request the terminal tier carries is the end's, and
+  // it carries the same one thing — the session's own pid, nothing derived.
   it('carries nothing but the pid — there is no escalation dial to turn', async () => {
     const { runtime, port } = await kickRuntime({ kind: 'terminal', pid: 42 })
 
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
 
-    expect(port.sendInterrupt).toHaveBeenCalledWith({ pid: 42 })
-    expect(Object.keys(port.sendInterrupt.mock.calls[0]?.[0] ?? {})).toEqual(['pid'])
+    expect(port.endConsoleSession).toHaveBeenCalledWith({ pid: 42 })
+    expect(Object.keys(port.endConsoleSession.mock.calls[0]?.[0] ?? {})).toEqual(['pid'])
   })
 
-  it('repeats the identical polite interrupt on a second kick', async () => {
+  /*
+   * AMENDED for #329 (was: 'repeats the identical polite interrupt on a second
+   * kick'). A terminal kick is no longer polite: it ends the session on the
+   * FIRST press, because a keystroke aimed at that session could not be
+   * delivered to it at all. What the invariant this describe exists for still
+   * forbids is unchanged and is what this asserts — a repeat is the same act
+   * with the same argument, never a harder one.
+   */
+  it('repeats the identical act on a second kick, never a harder one', async () => {
     const { runtime, port } = await kickRuntime({ kind: 'terminal', pid: 42 })
 
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
     await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
 
-    expect(port.sendInterrupt.mock.calls).toEqual([[{ pid: 42 }], [{ pid: 42 }], [{ pid: 42 }]])
+    expect(port.endConsoleSession.mock.calls).toEqual([[{ pid: 42 }], [{ pid: 42 }], [{ pid: 42 }]])
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
   })
 
   it('asks a relayed session to stop and never orders it killed', async () => {

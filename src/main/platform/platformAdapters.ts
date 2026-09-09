@@ -147,7 +147,8 @@ function createTextDelivery(
   platform: Platform,
   options: PlatformAdapterOptions,
   focus: (pid: number) => Promise<boolean>,
-  cliDetector: CliDetector
+  cliDetector: CliDetector,
+  processEnd: ProcessEndPort
 ): TextDeliveryPort {
   const shared = {
     home: options.home,
@@ -178,6 +179,11 @@ function createTextDelivery(
         runShell === undefined
           ? focusSessionConsole
           : (pid: number) => focusSessionConsole(pid, runShell),
+      // Kick's terminal tier ends the session's process tree (#329), through
+      // the SAME port a launched session's exit uses — one per-OS tree kill,
+      // composed once here, exactly as #217 left it. Passed in rather than
+      // built inside the port so the injected `endRun` reaches it too.
+      processEnd,
       ...(runShell === undefined ? {} : { runPowerShell: runShell }),
       ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
     })
@@ -196,6 +202,12 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
   const focus = createFocus(platform, options)
   const viewerScriptPath = resolveViewerScriptPath(options.appPaths, platform)
   const nodePath = options.nodePath ?? process.execPath
+  // Built before the delivery port for the reason cliDetector is: the Windows
+  // port ends a session's process tree through it (#329).
+  const processEnd = createProcessEnd({
+    platform,
+    ...(options.endRun === undefined ? {} : { run: options.endRun })
+  })
   // Built before the delivery port, which asks it for the codex binary (#97).
   const cliDetector = createCliDetector({
     home: options.home,
@@ -218,15 +230,12 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
         nodePath,
         ...(options.spawn === undefined ? {} : { spawn: options.spawn })
       }),
-    textDelivery: createTextDelivery(platform, options, focus, cliDetector),
+    textDelivery: createTextDelivery(platform, options, focus, cliDetector, processEnd),
     processProbe: createProcessProbe({
       platform,
       ...(options.probeRun === undefined ? {} : { run: options.probeRun })
     }),
-    processEnd: createProcessEnd({
-      platform,
-      ...(options.endRun === undefined ? {} : { run: options.endRun })
-    }),
+    processEnd,
     cliDetector
   }
 }

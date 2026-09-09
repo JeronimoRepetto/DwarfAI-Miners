@@ -135,10 +135,12 @@ function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): Forem
  * message cannot be. The relay stays the fallback for a paste that cannot
  * focus (and the only channel for a session with no console at all).
  *
- * Kick's order was never the question — it stays at the console (#24), which is
- * why this rule lives here and not in `deliveryTargetOf`: an interrupt IS a
- * keystroke, and Esc at the wrong window costs a cancelled turn, not a leaked
- * message.
+ * Kick's order was never the question — it stays at the console, which is why
+ * this rule lives here and not in `deliveryTargetOf`. The reason changed with
+ * #329 and the answer did not: the kick was a keystroke (#24) until an Esc at
+ * the wrong window turned out to cost a stranger's turn, and it is now an END
+ * of the session's own process, which needs no window and has no relay it would
+ * rather take.
  *
  * `channel` follows the endpoint so that the capability the bar reads is the
  * channel the send will actually use — 'terminal' for a direct send now that

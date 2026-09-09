@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { focusSessionConsole, type FocusOutcome, type ShellRunner } from '../platform/focus'
+import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
 import type {
   ClipboardPort,
   CodexQueueRequest,
   ConsoleTextRequest,
+  EndSessionRequest,
   InterruptRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
@@ -84,6 +86,15 @@ function sharedWindowRefusal(stages: StageTimings): TextDeliveryOutcome {
   return { delivered: false, error: SHARED_TERMINAL_WINDOW, neverStarted: true, stages }
 }
 
+/**
+ * What a tree kill that did not happen is called (#329).
+ *
+ * Never "the session was ended": `endProcessTree` reports false for a refusal,
+ * a missing binary and a pid taskkill cannot find alike, and the last of those
+ * is what a second kick on an already-ended session looks like.
+ */
+const SESSION_NOT_ENDED = 'This session could not be ended.'
+
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
   relayModel: string
@@ -128,6 +139,14 @@ export interface WindowsTextDeliveryOptions {
   codexBinary?: () => Promise<string | undefined>
   /** Injected for tests; defaults to a real codex.exe spawn. */
   runCodexQueue?: CodexQueueRunner
+  /**
+   * Ends a process and everything below it — Kick's terminal tier (#329).
+   *
+   * The same per-OS port a launched session's exit uses (#217), injected the way
+   * `focus` and `clipboard` are so a test never spawns a real taskkill; absent,
+   * this composes the Windows one itself.
+   */
+  processEnd?: ProcessEndPort
   /** Injected for tests; defaults to Date.now. Only ever reads durations. */
   now?: () => number
 }
@@ -163,6 +182,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
+  private readonly processEnd: ProcessEndPort
   private readonly now: () => number
   /** Null when the transport was replaced outright and there is nothing to keep alive. */
   private readonly consoleWorker: ConsoleWorker | null
@@ -177,6 +197,10 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
+    // Pinned to 'win32' rather than asked of the machine: this class IS the
+    // Windows port, and reading process.platform here would be a fourth call
+    // site for an answer the composition already made (see platform-ports).
+    this.processEnd = options.processEnd ?? createProcessEnd({ platform: 'win32' })
     this.now = options.now ?? Date.now
 
     // An injected runner with no worker spawn is a test replacing the whole
@@ -383,6 +407,32 @@ export class WindowsTextDelivery implements TextDeliveryPort {
         error: 'The agent terminal could not be reached.',
         stages: timer.timings()
       }
+    }
+  }
+
+  /**
+   * Kick's terminal tier: end the session's process tree (#329).
+   *
+   * No focus step and no keystroke, which is the repair rather than an
+   * optimization — every window this path used to need was a window that could
+   * turn out to be another session's. `taskkill /T` walks DOWN from the pid it
+   * is given, so the session's own tool processes go with it and the shell, the
+   * terminal host and every other tab above it are untouched.
+   *
+   * `delivered: true` is a fact this process observed — the platform reported
+   * the tree gone — and not a message handed to somebody who may act on it,
+   * exactly as the launched tier's end reads (see endLaunchedSession). Every
+   * other answer is a failure with a reason, never a session reported ended.
+   */
+  async endConsoleSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
+    try {
+      const ended = await timer.measure('spawn', () => this.processEnd.endProcessTree(request.pid))
+      return ended
+        ? { delivered: true, stages: timer.timings() }
+        : { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
+    } catch {
+      return { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
     }
   }
 }

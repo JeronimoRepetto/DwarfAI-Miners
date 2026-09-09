@@ -176,14 +176,21 @@ export const ENDED_DISMISS_HINT =
 
 /**
  * What kicking that channel actually does, in honest terms — or, where a
- * channel cannot kick at all, why not: a terminal gets a real interrupt
- * keystroke, a relay tier is a semantic ask the session may decline, a held
- * session gets a genuine interrupt of the turn it is in (#210), and the
- * Codex queue cannot cut a turn short at all, because the only thing it is
- * proven to do is drain between turns (#97).
+ * channel cannot kick at all, why not: a terminal session is ENDED (#329), a
+ * relay tier is a semantic ask the session may decline, a held session gets a
+ * genuine interrupt of the turn it is in (#210), and the Codex queue cannot cut
+ * a turn short at all, because the only thing it is proven to do is drain
+ * between turns (#97).
  */
 export const KICK_HINT: Record<TextDeliveryChannel, string> = {
-  terminal: 'Sends an interrupt keystroke to the session console.',
+  // The third channel that ends the session rather than the turn, and the first
+  // one where that is a repair rather than the absence of anything gentler
+  // (#329). Kick pressed Esc at this session's console from #24 until then —
+  // but several sessions share one terminal window, only one of its tabs is in
+  // front, and the keystroke reached whichever session that was. Ending the
+  // process needs no window. Says the tab survives, because a person who has
+  // just been told the session was ended will wonder about the terminal.
+  terminal: 'Ends this session — the whole process, not the turn. Its terminal tab stays open.',
   'claude-relay': 'Asks the agent to stop — it decides how.',
   'foreman-relay': "Asks this worker's foreman to stop it — it decides how.",
   'codex-queue':

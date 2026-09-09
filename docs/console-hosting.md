@@ -423,15 +423,15 @@ reordered and #319 reordered back. Two acts, two orders, one target: a `terminal
 carries a registry `sessionName` is one session with two answers, and `resolveTextDelivery` /
 `resolveKickDelivery` give them separately [code: `src/main/textDelivery/resolve.ts`].
 
-| Target                             | Message (`sendDwarfText`)                        | Interrupt (`kickDwarf`)                      | Touches a window? |
-| ---------------------------------- | ------------------------------------------------ | -------------------------------------------- | ----------------- |
-| `terminal` **with** a session name | `terminal` (paste), relay only if it can't focus | `terminal`, relay as the fallback            | yes               |
-| `terminal` **without** one         | `terminal` (paste) — the only channel it has     | `terminal`, nothing behind it                | yes               |
-| `claude-relay`                     | `claude-relay`                                   | `claude-relay` (a semantic ask)              | no                |
-| `codex-queue`                      | `codex-queue`                                    | refused — drains between turns (#97)         | no                |
-| `held-session`                     | the stream this panel holds                      | a real interrupt, where the protocol has one | no                |
-| `hosted-stdin`                     | the pipe this panel holds                        | ends the process (#194)                      | no                |
-| `launched-process`                 | refused — no inbox (#217)                        | ends the process                             | no                |
+| Target                             | Message (`sendDwarfText`)                        | Kick (`kickDwarf`)                             | Touches a window? |
+| ---------------------------------- | ------------------------------------------------ | ---------------------------------------------- | ----------------- |
+| `terminal` **with** a session name | `terminal` (paste), relay only if it can't focus | **ends the session** (#329), relay as fallback | message only      |
+| `terminal` **without** one         | `terminal` (paste) — the only channel it has     | **ends the session**, nothing behind it        | message only      |
+| `claude-relay`                     | `claude-relay`                                   | `claude-relay` (a semantic ask)                | no                |
+| `codex-queue`                      | `codex-queue`                                    | refused — drains between turns (#97)           | no                |
+| `held-session`                     | the stream this panel holds                      | a real interrupt, where the protocol has one   | no                |
+| `hosted-stdin`                     | the pipe this panel holds                        | ends the process (#194)                        | no                |
+| `launched-process`                 | refused — no inbox (#217)                        | ends the process                               | no                |
 
 **Row one is #319, and it reverses #308 back to #24's order — but not #24's mechanism.** #24 made
 the console the primary for the honest reason that keystrokes are instant where a relay turn is a
@@ -469,12 +469,34 @@ window and nothing else is drawn on it (#190), which is the session's own window
 keystroke cares about. Click-to-focus still accepts both — somebody who clicked to see the terminal
 is served by either.
 
-**Kick never moved.** An interrupt is a keystroke by nature, it carries no user text that could land
-in the wrong window, and Esc is the only key this app has measured against a live Claude TUI [V,
-#203, see §4 row four]. The same is true of the permission digits: a decision is answered at the
-terminal drawing the dialog, so it reads the kick's route, not the message's — and it still **types**
-its measured single keystroke (`sendToConsole`), because a paste of that digit into a live selector
-is unverified and #319 changed only the message.
+**Kick's tier never moved; what it DOES changed with #329.** It stayed at the console through #308
+and #319 on the reasoning that an interrupt is a keystroke by nature and carries no user text that
+could land in the wrong window — the missing half being that the keystroke itself lands in the wrong
+window, and cancels a stranger's turn when it does. So the terminal tier **ends the session's
+process tree** now, through the same `ProcessEndPort` a launched session's exit uses [#217]: no
+focus step, no window, and nothing another tab can notice. The terminal tab stays open at its shell
+prompt. `taskkill /T` walks DOWN from the pid the provider reported, so the session's own tool
+processes go with it while the shell, the terminal host and every other tab above it are untouched —
+ending an ancestor would end all of them, which is why the pid is passed straight through with no
+ancestor walk anywhere on the path.
+
+Three consequences worth stating. The dwarf is **retired** on a delivered end (#46's path, not
+#293's dismissal: a dismissal lifts on a `'working'` status, which is exactly what a session kicked
+mid-turn was last reported as), so the walk starts at once instead of waiting out the provider's
+liveness window. A refused end still **falls back to the relay cancel instruction** where the
+session has a registry name — weaker than what was asked for, and still better than nothing tried.
+And the POSIX ports implement **no** end tier: their tree kill signals the process GROUP, which is
+right for a process this panel started as a group leader and wrong for a session somebody else
+launched. A `terminal` target does not reach a kick there in any case (`supportsConsoleInput` is
+false on both, so it degrades to the relay first); a per-OS end is a follow-up, noted in
+`platform-ports`.
+
+**The permission digits still type.** A decision is answered at the terminal drawing the dialog, so
+it reads the kick's old route rather than the message's — `sendToConsole` for the measured `1`,
+`sendInterrupt` for the `Esc` — because a paste of that digit into a live selector is unverified and
+#319 changed only the message. Those two are the last keystroke callers left, and they inherit the
+shared-window refusal above rather than escaping it: a dialog can only be answered at the window
+drawing it, so where the panel cannot tell which tab that is, it says so instead of pressing.
 
 **A per-OS paste is a follow-up, not built here.** The console-paste tier is Windows-verified only.
 macOS and Linux keep the relay for a message exactly as they did (`supportsConsoleInput` is false, so
@@ -535,8 +557,9 @@ already written. Both models are supported; neither had to win.
 > **Since #319 a message to a session with a console takes this path again** — see §4b: it brings
 > the window forward and PASTES, the relay behind it only when the window will not come forward.
 > (#308 had routed a named session's message over the relay instead; #319 reversed that.) The focus
-> mechanics below govern that paste, and still govern Kick, the permission keystrokes of #203, and a
-> message to a session with no name at all.
+> mechanics below govern that paste, the permission keystrokes of #203, and a message to a session
+> with no name at all. **They no longer govern Kick** — since #329 it ends the session's process and
+> asks for no window at all (see §4b).
 
 Path 4 keeps one act the other three never need: bringing **somebody else's** terminal window to the
 front before typing into it. Three things about that are counter-intuitive enough to have cost an

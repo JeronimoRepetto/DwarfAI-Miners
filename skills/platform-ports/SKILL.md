@@ -54,6 +54,21 @@ unavailable — a decision expressed entirely in capability terms.
 
 Prefer a capability flag to a platform check whenever you can name the capability.
 
+## An absent method is a per-OS answer too
+
+`TextDeliveryPort` has four optional methods, and each absence states something true about a
+platform rather than marking a gap somebody forgot to fill. The runtime turns every one of them
+into a stated refusal, never a silent no-op.
+
+`endConsoleSession` is the one to read before adding a fifth (#329). Windows implements it —
+`taskkill /T` walks down from the session's pid — and the POSIX port deliberately does not, because
+the same port's POSIX branch signals the process **group** (`kill -TERM -<pid>`). That is correct
+for a process this panel started as a group leader (#217) and wrong for a session somebody else
+launched, whose pid leads no group of ours: the signal would either miss or reach a group that is
+not the session's. Implementing it there "for symmetry" would be the per-OS branch this whole page
+exists to avoid — a builder producing an argv that is not true of the platform. The honest per-OS
+end for macOS and Linux is a follow-up, and it needs a measurement rather than a symmetry argument.
+
 ## One comment not to repeat
 
 The `AgentRuntime` constructor carries a comment saying it is _"the one place the running operating

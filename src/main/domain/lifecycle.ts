@@ -93,6 +93,14 @@ export class DwarfLifecycleTracker {
    * without it the very next poll would re-adopt the dwarf and it would
    * flicker back onto the rock. It departs rather than vanishes, because
    * 'leaving' and the grace clock below are already exactly that.
+   *
+   * Two callers make that observation now, and the second is why the rule is
+   * "observed" rather than "watched": a kick on a terminal session ENDS its
+   * process and the platform reports the tree gone (#329), which is this
+   * process observing the stop rather than inferring it from a settled status.
+   * `dismiss` below cannot serve that case — its suppression lifts on a
+   * `'working'` status, which is precisely what a session kicked mid-turn was
+   * last reported as.
    */
   retire(dwarfId: string): void {
     this.retired.set(dwarfId, undefined)

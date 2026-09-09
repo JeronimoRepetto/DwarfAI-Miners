@@ -634,3 +634,54 @@ describe('WindowsTextDelivery.queueToCodexThread', () => {
     expect(outcome.error).not.toContain('my-secret-payload')
   })
 })
+
+/**
+ * Kick's terminal tier since #329: end the session, do not press a key at it.
+ *
+ * No window, no keystroke and no focus step, which is the whole point — a pid
+ * cannot be the wrong session the way a foreground window can. The tree kill is
+ * the same per-OS port a launched session's exit uses (#217); only the pid it is
+ * pointed at comes from somewhere else.
+ */
+describe('WindowsTextDelivery.endConsoleSession', () => {
+  it("ends the session's own process tree without touching a window", async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn()
+    const runPowerShell = vi.fn()
+    const port = delivery({ focus, runPowerShell, processEnd: { endProcessTree } })
+
+    await expect(port.endConsoleSession({ pid: 4242 })).resolves.toMatchObject({ delivered: true })
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+    expect(focus).not.toHaveBeenCalled()
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  /*
+   * taskkill exits 128 for a pid it cannot find, and the port already reports
+   * that as false rather than as an ended session (see processEnd.ts). A second
+   * kick therefore reports a refusal, never a second success — the exit-0-shaped
+   * lie this repo keeps refusing to tell.
+   */
+  it('reports a refusal when the platform would not end the tree', async () => {
+    const port = delivery({ processEnd: { endProcessTree: vi.fn().mockResolvedValue(false) } })
+    const outcome = await port.endConsoleSession({ pid: 4242 })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toBeTruthy()
+  })
+
+  it('turns a throwing port into a failed verdict instead of a rejection', async () => {
+    const port = delivery({
+      processEnd: { endProcessTree: vi.fn().mockRejectedValue(new Error('taskkill is missing')) }
+    })
+    await expect(port.endConsoleSession({ pid: 4242 })).resolves.toMatchObject({ delivered: false })
+  })
+
+  it('times the end the way every other tier times its own work', async () => {
+    const port = delivery({
+      now: clockOf(0, 40),
+      processEnd: { endProcessTree: vi.fn().mockResolvedValue(true) }
+    })
+    const outcome = await port.endConsoleSession({ pid: 4242 })
+    expect(outcome.stages).toEqual({ spawnMs: 40 })
+  })
+})

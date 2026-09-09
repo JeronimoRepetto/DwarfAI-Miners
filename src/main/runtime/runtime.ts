@@ -265,6 +265,18 @@ const KEYSTROKE_UNVERIFIED =
 const LAUNCH_ALREADY_ENDED = 'That session has already ended.'
 const LAUNCH_END_REFUSED = 'That session could not be ended.'
 /**
+ * A console session a kick resolved to, on a port with no end tier (#329).
+ *
+ * The mirror of NO_PASTE_TIER above and the same discipline: an optional port
+ * method that is missing becomes a stated refusal rather than a silent no-op.
+ * It is reachable in principle only — the POSIX ports implement no end tier,
+ * and a 'terminal' target never reaches a kick there because
+ * `supportsConsoleInput` is false on both and degrades it to the relay first
+ * (see deliveryTargetOf). See TextDeliveryPort.endConsoleSession for why POSIX
+ * has none.
+ */
+const NO_TERMINAL_END_TIER = "This build can't end a session running in a terminal."
+/**
  * The refusals for a process this panel is HOLDING over stdio (#194).
  *
  * A hosted process is the mirror image of a launched one, and the copy has to
@@ -1989,6 +2001,44 @@ export class AgentRuntime {
   }
 
   /**
+   * Ending a session running in somebody's own terminal — Kick's terminal tier
+   * since #329, and the third one that ends rather than interrupts.
+   *
+   * The pid is the one the PROVIDER reported for this dwarf, passed straight
+   * through: no ancestor walk, and none available on this path. That is the
+   * whole safety property — the tree kill walks DOWN, so the session's own tool
+   * processes go with it while the shell, the terminal host and every other tab
+   * above it are untouched. Ending an ancestor would end every session in that
+   * window (see EndSessionRequest).
+   *
+   * On a delivered end the dwarf is RETIRED, not left to the provider. The
+   * provider goes on reporting a session until its own liveness window gives
+   * up, and a dwarf standing on the rock after its process is gone is the ghost
+   * this would otherwise create.
+   *
+   * #46's retirement rather than #293's dismissal, and the choice is not a
+   * preference. A dismissal is lifted the instant the provider reports the
+   * session `'working'` (see showsActivitySince), which is exactly the state a
+   * session kicked mid-turn is in — so it would put the dwarf straight back on
+   * the rock on the very next poll. Retirement is the right record for the same
+   * reason it is allowed here at all: `delivered: true` means the platform
+   * reported the tree GONE, a fact this process observed rather than a message
+   * handed to somebody who may act on it (the reading endLaunchedSession's
+   * verdict has, #217). That is the observed stop #46 asks for, made by ending
+   * the process rather than by watching it settle.
+   */
+  private async endTerminalSession(dwarfId: string, pid: number): Promise<TextDeliveryOutcome> {
+    const end = this.textDelivery.endConsoleSession
+    if (end === undefined) return { delivered: false, error: NO_TERMINAL_END_TIER }
+    const outcome = await end.call(this.textDelivery, { pid })
+    if (outcome.delivered) {
+      console.log(`[runtime] Retiring ${dwarfId}: a kick ended its session's process.`)
+      this.lifecycle.retire(dwarfId)
+    }
+    return outcome
+  }
+
+  /**
    * The hosted-process tier for a message: straight onto the stdin this
    * process is holding (#194).
    *
@@ -2266,9 +2316,12 @@ export class AgentRuntime {
    * neither presses Enter.
    *
    * The two go through different port methods, and that is not a detail:
-   * `sendToConsole` types text, and `sendInterrupt` presses a raw Esc into
-   * the focused console — which is Kick's path, already built per platform,
-   * and exactly the key a decline is. Nothing per-OS was added for this.
+   * `sendToConsole` types text, and `sendInterrupt` presses a raw Esc into the
+   * focused console — already built per platform, and exactly the key a decline
+   * is. Nothing per-OS was added for this. Both were Kick's path until #329,
+   * which moved the kick off keystrokes entirely; a dialog can only be answered
+   * at the window drawing it, so this route keeps them and inherits the
+   * shared-window refusal that came with them.
    *
    * The seam is injected rather than read straight off the module so both
    * branches stay proven from a test, including the refusal a decision with
@@ -2768,10 +2821,17 @@ export class AgentRuntime {
 
   /**
    * Cancel a dwarf's current work (Kick). Mirrors sendDwarfText's refusals and
-   * channel routing, but never carries user text: a terminal-hosted session
-   * gets a raw interrupt keystroke (ESC), and a relay tier gets one of the two
-   * fixed instructions above — this session's own turn, or (through its
-   * foreman) a named worker's.
+   * channel routing, but never carries user text: a terminal-hosted session has
+   * its process ENDED (#329), and a relay tier gets one of the two fixed
+   * instructions above — this session's own turn, or (through its foreman) a
+   * named worker's.
+   *
+   * Kick means "stop what you are doing" on every tier, and on three of them it
+   * ends the session rather than the turn: a process this panel launched
+   * (#217), one it is holding (#194), and now one running in somebody's own
+   * terminal. The panel has to say which act it performed — a person told a
+   * turn was interrupted, when the session is gone, has been told the wrong
+   * thing (see KICK_HINT).
    */
   async kickDwarf(request: DwarfKickRequest): Promise<DwarfKickResult> {
     const dwarf = this.mines
@@ -2837,8 +2897,13 @@ export class AgentRuntime {
         if (endpoint.kind === 'hosted-stdin') {
           return this.endHostedProcess(endpoint.hostedId)
         }
+        // The third tier that ends rather than interrupts, and the newest
+        // (#329). It used to press Esc at the console, which meant pressing it
+        // at whatever window came forward — and a session in a terminal TAB
+        // cannot be brought forward on its own, so the key reached whichever
+        // session was in front. A pid cannot be the wrong session.
         if (endpoint.kind === 'terminal') {
-          return this.textDelivery.sendInterrupt({ pid: endpoint.pid })
+          return this.endTerminalSession(request.dwarfId, endpoint.pid)
         }
         return timer.measure('relay', () =>
           this.textDelivery.relayToClaudeSession({
@@ -2860,6 +2925,12 @@ export class AgentRuntime {
       // relay tier already uses — a kick has no user text, only this message.
       // A 'held-session' endpoint carries no relay name and must not borrow
       // one: the failure is stated instead (#210). See the endpoint's own doc.
+      //
+      // Kept for the terminal tier now that it ENDS rather than interrupts
+      // (#329), and it is weaker than what was asked for: a cancel instruction
+      // the session may decline, where the person asked for it to stop. It is
+      // still the difference between something being tried and nothing being
+      // tried, and the verdict names the channel that actually delivered.
       if (resolved.endpoint.kind === 'terminal' && resolved.endpoint.sessionName !== undefined) {
         return this.relayFallback({
           dwarfId: request.dwarfId,
