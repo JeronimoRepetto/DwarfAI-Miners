@@ -27,27 +27,32 @@ happens — so an agent that does not know either invents a process or asks.
 
 One job per platform, each producing real installers:
 
-| Runner  | Produces                                           |
-| ------- | -------------------------------------------------- |
-| Windows | an NSIS setup executable and a portable executable |
-| macOS   | a `.dmg` and a `.zip`                              |
-| Linux   | an `AppImage` and a `.deb`                         |
+| Runner  | Job           | Produces                                           |
+| ------- | ------------- | -------------------------------------------------- |
+| Windows | `release`     | an NSIS setup executable and a portable executable |
+| Linux   | `release`     | an `AppImage` and a `.deb`                         |
+| macOS   | `release-mac` | a `.dmg` and a `.zip`                              |
 
-Each leg must run on its own OS; that is why it is a matrix and not one job.
+Each leg must run on its own OS. Windows and Linux stay a matrix inside one `release` job; macOS
+is its own separate job, `release-mac`, so it alone can carry the GitHub `release` Environment and
+its five signing/notarization secrets without exposing them to the other two — see
+[`docs/signing.md`](../../docs/signing.md).
 
 ## The traps
 
 Verified against the workflow. Every one of these is a way to get a release that silently does not
 happen, or a build that fails late.
 
-1. **The release job depends on the checks job.** If checks are red, the tag builds **nothing** —
-   the release job is skipped, not failed, so it is easy to miss. The first step of that job is the
-   privacy guard, so a leak in a tracked file blocks every release until it is fixed. See
-   [`privacy-guard`](../privacy-guard/SKILL.md).
+1. **Both release jobs depend on the checks job.** If checks are red, the tag builds **nothing** —
+   `release` and `release-mac` are both skipped, not failed, so it is easy to miss. The first step
+   of `checks` is the privacy guard, so a leak in a tracked file blocks every release until it is
+   fixed. See [`privacy-guard`](../privacy-guard/SKILL.md).
 2. **The trigger is a glob, not semver.** Anything starting with `v` fires it. Nothing validates
    the tag against the version in `package.json` — check that yourself before pushing.
-3. **Permissions are split on purpose.** The workflow grants read at the top level and the release
-   job overrides it with write. Copying only the top-level block gets a 403 on publish.
+3. **Permissions are split on purpose.** The workflow grants read at the top level, and both
+   `release` and `release-mac` override it with write independently. Copying only the top-level
+   block — or copying `release`'s job block without its own `permissions:`, e.g. when splitting a
+   leg into a new job — gets a 403 on publish.
 4. **It publishes immediately.** Not a draft. There is no review step between the tag and a public
    release.
 5. **Release notes are generated on exactly one leg.** GitHub regenerates notes on every update, so
@@ -60,6 +65,18 @@ happen, or a build that fails late.
 7. **Packaging never self-publishes.** All three package scripts pass a never-publish flag, and the
    workflow's own release step owns publishing. Tag builds once tried to publish on their own and
    failed on a missing token. The Linux target also requires an author email to be set.
+8. **The macOS leg fails alone, silently, on the other two.** `release-mac` is its own job (not a
+   matrix entry, so it can carry the `release` GitHub Environment and its five secrets without
+   handing them to Windows/Linux) with `needs: checks` and no dependency on the `release` job. An
+   expired Developer ID certificate or app-specific password fails only `release-mac` — Windows
+   and Linux still package and publish normally, so a release can go out missing only the Mac
+   installers with nothing in the other two legs' logs pointing at it. Check `release-mac`
+   specifically, not just whether the release has assets.
+9. **The `release` environment's tag rule can refuse the leg outright.** It carries a `v*`
+   deployment tag rule, so `release-mac` refuses to run for any ref that doesn't match `v*` —
+   independent of, and in addition to, the job's own `if: startsWith(github.ref, 'refs/tags/v')`.
+   See [`docs/signing.md`](../../docs/signing.md) for what the five secrets are and where they
+   live.
 
 ## Before pushing a tag
 
