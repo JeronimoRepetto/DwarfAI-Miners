@@ -12,13 +12,19 @@
  */
 import type { DwarfRole } from '../../types'
 import type { AmbienceBed } from './ambience'
+import type { UiSfx } from './volume'
 
 import trackAmbientSynthFuture from '../../assets/audio/music/ambient-synth-future.ogg'
+import trackCinematicOrchestralAdventure from '../../assets/audio/music/cinematic-orchestral-adventure.ogg'
 import trackAtmosphericMonastic from '../../assets/audio/music/atmospheric-monastic.ogg'
 import trackAtmosphericSciFi from '../../assets/audio/music/atmospheric-sci-fi.ogg'
+import trackHopefulAcousticCinematic from '../../assets/audio/music/hopeful-acoustic-cinematic.ogg'
 import trackWhimsicalChamberOrchestra from '../../assets/audio/music/whimsical-chamber-orchestra.ogg'
 import trackWhimsicalMedievalFolk from '../../assets/audio/music/whimsical-medieval-folk.ogg'
 import trackWhimsicalTheatricalCircus from '../../assets/audio/music/whimsical-theatrical-circus.ogg'
+
+import sfxClick from '../../assets/audio/sfx/button_sound.mp3'
+import sfxPanel from '../../assets/audio/sfx/open_sound.mp3'
 
 import bedSilence from '../../assets/art/inside-mines/sfx/mine-inside-silence.mp3'
 import bedWorking from '../../assets/art/inside-mines/sfx/mine-inside-working.mp3'
@@ -28,18 +34,21 @@ import workerVoice from '../../assets/art/dwarf-worker/voice/dwarf-worker-voice.
 import worker2Voice from '../../assets/art/dwarf-worker/voice/dwarf-worker2-voice.mp3'
 
 /**
- * The six background tracks, in the order they are declared and in no other
+ * The eight background tracks, in the order they are declared and in no other
  * sense ordered: the playlist shuffles them (see playlist.ts), so this list's
  * sequence is never what anybody hears.
  *
  * `.ogg` because Electron's bundled Chromium decodes it natively — nothing
- * here is transcoded at build time. Roughly 17.6 MB across the six, which the
- * maintainer accepted on #174.
+ * here is transcoded at build time. Roughly 22.5 MB across the eight: 17.6 MB
+ * of it the six the maintainer accepted on #174, and 4.9 MB the two added
+ * after the first live listen (#323).
  */
 export const MUSIC_TRACK_SRC: readonly string[] = [
   trackAmbientSynthFuture,
   trackAtmosphericMonastic,
   trackAtmosphericSciFi,
+  trackCinematicOrchestralAdventure,
+  trackHopefulAcousticCinematic,
   trackWhimsicalMedievalFolk,
   trackWhimsicalChamberOrchestra,
   trackWhimsicalTheatricalCircus
@@ -70,3 +79,18 @@ export const DWARF_VOICE_SRC = {
   worker: workerVoice,
   worker2: worker2Voice
 } satisfies Record<DwarfRole, string>
+
+/**
+ * The two interface sounds (#323), under `assets/audio/sfx/` beside the music
+ * rather than under the art tree the mine beds live in: these answer a press on
+ * the shell's own chrome, and nothing about them belongs to a mine.
+ *
+ * `.mp3`, as delivered — the same container the beds and the voices already
+ * use, decoded natively by Electron's Chromium, so nothing is transcoded here
+ * either. They are kilobytes rather than megabytes: a press has to sound the
+ * moment it is pressed, and a long recording could not.
+ */
+export const UI_SFX_SRC = {
+  click: sfxClick,
+  panel: sfxPanel
+} satisfies Record<UiSfx, string>

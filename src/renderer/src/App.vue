@@ -90,6 +90,7 @@ const {
   setScene: setAudioScene,
   setCollapsed: setAudioCollapsed,
   playVoice,
+  playSfx,
   dispose: disposeAudio
 } = useAudio()
 
@@ -225,6 +226,10 @@ const shortcutBroken = computed(
  * keystrokes the next time settings came back.
  */
 function selectArea(area: ShellArea): void {
+  // The press answers back (#323). Before anything else it might do, so the
+  // click is heard for a press that turns out to change nothing — pressing the
+  // area already selected is still a press.
+  playSfx('click')
   if (viewState.area === 'settings' && area !== 'settings') stopShortcutRecording()
   showArea(area)
   error.value = null
@@ -421,6 +426,16 @@ watch(
  * With no mine open there is nothing left to show, so it lands on the rail.
  */
 function toggleSecondary(): void {
+  /*
+   * The panel's own sound, both ways (#323), fired HERE rather than off the
+   * layout that comes back: this is the one place the secondary panel's state
+   * is flipped, so it is once per transition however many controls lead to it,
+   * and the press is what the sound is answering. It plays before the layout
+   * has been asked for on purpose — a press whose sound waited for main would
+   * be feedback arriving after the animation it belongs to, and opening from
+   * the rail is the press the collapse gate is exempted for (see volume.ts).
+   */
+  playSfx('panel')
   void toggleLayout(viewState.mineId !== null)
 }
 

@@ -226,6 +226,33 @@ describe('useAudio', () => {
     surface.dispose()
   })
 
+  it('answers a navigation press and the panel with their own recordings (#323)', async () => {
+    const surface = audio(player)
+    await surface.sync()
+
+    surface.playSfx('click')
+    expect(player.live().some((clip) => clip.src.includes('button_sound'))).toBe(true)
+
+    surface.playSfx('panel')
+    expect(player.live().some((clip) => clip.src.includes('open_sound'))).toBe(true)
+    surface.dispose()
+  })
+
+  it('still sounds the press that opens the panel from the collapsed rail (#323)', async () => {
+    // The rail is the one place an interface sound survives the collapse, and
+    // this is the surface that has to carry the exception through.
+    const surface = audio(player)
+    await surface.sync()
+    surface.setCollapsed(true)
+
+    surface.playSfx('click')
+    expect(player.live().some((clip) => clip.src.includes('button_sound'))).toBe(false)
+
+    surface.playSfx('panel')
+    expect(player.live().some((clip) => clip.src.includes('open_sound'))).toBe(true)
+    surface.dispose()
+  })
+
   it('drives the engine on a tick, so the fades and seams happen at all', async () => {
     const surface = audio(player)
     await surface.sync()

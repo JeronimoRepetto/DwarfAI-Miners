@@ -2197,6 +2197,47 @@ describe('App audio (#174, #173)', () => {
     expect(voices[0]).toContain('dwarf-worker-voice')
   })
 
+  it('clicks on each of the navigation column’s five area buttons (#323)', async () => {
+    const { wrapper } = await audioApp()
+    const buttons = wrapper.findAll('.nav-button')
+    expect(buttons).toHaveLength(5)
+
+    for (const button of buttons) {
+      const before = opened.length
+      await button.trigger('click')
+      await flushPromises()
+      expect(opened.slice(before).filter((src) => src.includes('button_sound'))).toHaveLength(1)
+    }
+  })
+
+  it('sounds the secondary panel once as it closes and once as it opens (#323)', async () => {
+    // Once per TRANSITION rather than once per control: the rail's arrow and
+    // the app mark on it are the same press, and the second one here happens
+    // with the shell already collapsed — the one exception a rail is allowed.
+    const { wrapper } = await audioApp()
+
+    const before = opened.length
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(opened.slice(before).filter((src) => src.includes('open_sound'))).toHaveLength(1)
+
+    const between = opened.length
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(opened.slice(between).filter((src) => src.includes('open_sound'))).toHaveLength(1)
+  })
+
+  it('leaves the music button silent, because it is not an interface press (#323)', async () => {
+    const { wrapper } = await audioApp()
+    const before = opened.length
+    await wrapper.find('.nav-music').trigger('click')
+    await flushPromises()
+    const sfx = opened
+      .slice(before)
+      .filter((src) => src.includes('button_sound') || src.includes('open_sound'))
+    expect(sfx).toHaveLength(0)
+  })
+
   it('gives a foreman the foreman voice, and no other rank’s', async () => {
     const foreman = defaultDwarf({ id: 'claude:s2', role: 'foreman', status: 'waiting' })
     const { wrapper } = await audioApp({

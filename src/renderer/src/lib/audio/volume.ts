@@ -66,6 +66,34 @@ const SETTING_OF: Record<AudioChannel, AudioVolumeKey> = {
 }
 
 /**
+ * The interface sounds (#323): a press on one of the five area buttons, and the
+ * secondary panel opening or closing.
+ *
+ * A KIND rather than a fourth channel, because there is no fourth thing to mix:
+ * both are short answers to a press, both ride the voice channel's base and the
+ * one slider Settings calls `Effects`, and giving them a channel would mean a
+ * volume nobody asked for.
+ */
+export const UI_SFX_KINDS = ['click', 'panel'] as const
+
+export type UiSfx = (typeof UI_SFX_KINDS)[number]
+
+/**
+ * Which interface sound survives a shell collapsed to its bare rail.
+ *
+ * `click` does not, exactly as a voice does not — the five area buttons are not
+ * drawn on the rail at all, so there is nothing there to click. `panel` does,
+ * and it is the one exception in this file: the rail's arrow IS the press that
+ * opens the panel, and the act of opening the app going unheard is the one case
+ * worth exempting (#323). `hidden` still wins over it, as it wins over
+ * everything.
+ */
+const SFX_SURVIVES_COLLAPSE: Record<UiSfx, boolean> = {
+  click: false,
+  panel: true
+}
+
+/**
  * The volume one channel plays at right now: base x setting, or 0 when a gate
  * is shut.
  *
@@ -84,4 +112,19 @@ export function channelVolume(
   const key = SETTING_OF[channel]
   const setting = clampAudioVolume(settings[key], DEFAULT_AUDIO_PREFERENCES[key])
   return AUDIO_BASE_VOLUME[channel] * setting
+}
+
+/**
+ * The volume one interface sound plays at right now.
+ *
+ * The voice channel's own answer, with one gate relaxed for the kind that is
+ * allowed through a collapsed rail — see SFX_SURVIVES_COLLAPSE. Nothing else
+ * differs: the same base, the same slider, and the same 0 while the app is
+ * hidden.
+ */
+export function sfxVolume(kind: UiSfx, settings: AudioPreferences, gates: AudioGates): number {
+  return channelVolume('voice', settings, {
+    ...gates,
+    collapsed: gates.collapsed && !SFX_SURVIVES_COLLAPSE[kind]
+  })
 }

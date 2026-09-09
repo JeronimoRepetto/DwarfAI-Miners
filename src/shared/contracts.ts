@@ -2288,24 +2288,37 @@ export interface AudioPreferences {
   musicAtStartup: boolean
   musicVolume: number
   ambienceVolume: number
+  /**
+   * The dwarf barks AND the interface sounds, which is why Settings calls this
+   * row `Effects` rather than `Voices` (#323). They share one slider because
+   * they are one channel: both are short, both answer a press, and a person who
+   * wants the panel to stop talking back means both.
+   */
   voiceVolume: number
 }
 
 /**
  * What Settings' Audio section reads before anybody has chosen anything.
  *
- * Music on, every slider at full: the app has had no sound at all until now,
- * so a first run has to demonstrate what was added rather than ship it
- * pre-attenuated. The BASE volumes (100/50/75 %) are what keeps a slider at
- * full from being three channels shouting over each other — they are the
- * renderer's mixing constants, not defaults a person can change, and they live
- * in `lib/audio/volume.ts`.
+ * Music on, and QUIET. Every slider started at full on #174, on the reasoning
+ * that a first run should demonstrate what had been added rather than ship it
+ * pre-attenuated; the first live listen settled it the other way (#323) — the
+ * music dominated the panel and the dwarfs barked over everything, and a level
+ * that makes somebody reach for a slider on the first launch is the wrong
+ * default. So: music at 10 %, the effects at 70 %, and the ambience left where
+ * it was, because it is a reading of the crew rather than a soundtrack.
+ *
+ * These are the DEFAULT and nothing more: a stored preference keeps whatever it
+ * stored, and a document that cannot be read at all falls back here. The BASE
+ * volumes (100/50/75 %) are a separate knob and were not the one turned — they
+ * are the renderer's mixing constants, not defaults a person can change, and
+ * they live in `lib/audio/volume.ts`.
  */
 export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   musicAtStartup: true,
-  musicVolume: 1,
+  musicVolume: 0.1,
   ambienceVolume: 1,
-  voiceVolume: 1
+  voiceVolume: 0.7
 }
 
 /**
