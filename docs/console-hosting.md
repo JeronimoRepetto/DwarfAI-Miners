@@ -453,6 +453,22 @@ fall back, because a second delivery over the relay would put the message into t
 `neverStarted` is that distinction, carried rather than inferred from the error string, and it reads
 the same in both directions the tiers have ever run.
 
+**A focus that succeeded is not proof the session's window is in front — #329.** The focus step
+resolves one of two things (§6): a console window the session is on, or, when the ancestor walk had
+to reach one, a named terminal **host**. A host draws several sessions in tabs of one window and
+exposes no way to select a tab by pid, so foregrounding it raises whichever tab the person last
+used. Every keystroke tier read a plain `true` from focus as "this session's console is in front",
+and for a host that is false. Measured live, 2026-09-09: two Claude sessions in two tabs of one
+Windows Terminal window — same `WindowsTerminal.exe` host pid for both — and an Esc aimed at one
+foreman interrupted the other, which logged `[Request interrupted by user]` and stopped its turn
+[V, #329]. So `focusSessionConsole` reports WHICH window it reached
+[code: `src/main/platform/focus.ts`], and `pasteToConsole`, `sendToConsole` and `sendInterrupt` all
+refuse a host-level focus with `neverStarted` rather than pressing a key. An **ancestor's** console
+is not a host and is not refused: in a classic `cmd.exe` console the shell and the session share one
+window and nothing else is drawn on it (#190), which is the session's own window in every sense a
+keystroke cares about. Click-to-focus still accepts both — somebody who clicked to see the terminal
+is served by either.
+
 **Kick never moved.** An interrupt is a keystroke by nature, it carries no user text that could land
 in the wrong window, and Esc is the only key this app has measured against a live Claude TUI [V,
 #203, see §4 row four]. The same is true of the permission digits: a decision is answered at the
@@ -523,8 +539,9 @@ already written. Both models are supported; neither had to win.
 > message to a session with no name at all.
 
 Path 4 keeps one act the other three never need: bringing **somebody else's** terminal window to the
-front before typing into it. Two things about that are counter-intuitive enough to have cost #190
-three rounds, and neither is legible in the code that does it [code: `src/main/platform/focus.ts`].
+front before typing into it. Three things about that are counter-intuitive enough to have cost an
+issue each — two of them #190's three rounds, the third #329 — and none is legible in the code that
+does it [code: `src/main/platform/focus.ts`].
 
 **Windows refuses the foreground to a process that has not earned it.** `SetForegroundWindow` is
 granted to a process that already owns the foreground or received the last input event; this app has
@@ -552,9 +569,22 @@ target itself — it returns the handle unchanged when nothing owns it, so an or
 as before. It also insists the window is **visible**, because text delivery types into whatever holds
 the foreground and a phantom raised alone would take the keystrokes somewhere nobody is looking.
 
+**A window that came forward may not be the window the session is in.** The third fact, and the one
+that cost #329. Resolution ends on either a console window or a named terminal **host**, and only
+the first is provably the session's: a host window is a tab strip, `WindowsTerminal.exe` exposes no
+way to raise a tab by pid, and the tab in front is whatever the person last used. Two sessions in
+two tabs of one window therefore resolve to the SAME target — the same host pid for both — so a
+keystroke sent after the focus reaches one of them at random [V, #329, see §4b]. This is a limit of
+the terminal rather than of this code: nothing here can select a tab, so the honest answer is not to
+type. Which of the two was reached is now reported rather than collapsed into a boolean, and every
+keystroke tier refuses the host case; click-to-focus still takes it, because raising the terminal is
+all it promised.
+
 Neither fact is reachable from a unit test: both live in what user32 does, not in what the generated
 PowerShell says. #190 closed once on pure builders and reopened. A change here is measured live
-against a real hosted session, and the measurement goes in the issue.
+against a real hosted session, and the measurement goes in the issue. The third is testable, because
+it is a fact about which of two shapes resolution ended on rather than about what user32 then did —
+`resolveFocusTarget` and `focusSessionConsole` are unit-tested over a fake shell runner for both.
 
 ---
 

@@ -4,7 +4,7 @@ import type { FsLike } from '../adapters/fsLike'
 import { createCliDetector, type AgentCli, type CliDetector } from './cliDetection'
 import { createProcessProbe, type ProbeRunner, type ProcessProbePort } from './processProbe'
 import { createProcessEnd, type EndProcessRunner, type ProcessEndPort } from './processEnd'
-import { focusPid as windowsFocusPid, type ShellRunner } from './focus'
+import { focusPid as windowsFocusPid, focusSessionConsole, type ShellRunner } from './focus'
 import {
   launchTranscriptViewer,
   resolveViewerScriptPath,
@@ -153,7 +153,6 @@ function createTextDelivery(
     home: options.home,
     relayModel: options.relayModel,
     relayTimeoutMs: options.relayTimeoutMs,
-    focus,
     // The Codex queue tier addresses the binary the detection port found (#91),
     // so CODEX_CLI_PATH reaches it and no second install-location guess exists.
     // Asked per delivery rather than resolved once: the detector caches with a
@@ -167,14 +166,25 @@ function createTextDelivery(
     ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue })
   }
   if (platform === 'win32') {
+    // The SCOPED focus, and the one place the two part company (#329): every
+    // Windows tier sends a keystroke, and a keystroke may only follow a window
+    // this session is provably alone on — where the `focus` parameter above,
+    // which click-to-focus and the POSIX port read, is content with either.
+    // Same function underneath, same injected runner; only the answer is richer.
+    const runShell = options.runShell
     return new WindowsTextDelivery({
       ...shared,
-      ...(options.runShell === undefined ? {} : { runPowerShell: options.runShell }),
+      focus:
+        runShell === undefined
+          ? focusSessionConsole
+          : (pid: number) => focusSessionConsole(pid, runShell),
+      ...(runShell === undefined ? {} : { runPowerShell: runShell }),
       ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
     })
   }
   return new PosixTextDelivery({
     ...shared,
+    focus,
     platform,
     consoleInput: createConsoleInput(platform, options)
   })

@@ -139,8 +139,40 @@ export function selectFocusTargetPid(
   return null
 }
 
-/** Where to drive the hardened foreground sequence: an already-known window handle, or a pid to resolve via Get-Process. */
+/**
+ * Where to drive the hardened foreground sequence: an already-known window
+ * handle, or a pid to resolve via Get-Process.
+ *
+ * The two kinds are not interchangeable for a KEYSTROKE, which is what #329
+ * cost. A `handle` is a console window the session is on, alone or with the
+ * shell that launched it. A `pid` is only ever a named terminal HOST, and a
+ * host draws several sessions in tabs of one window: foregrounding it raises
+ * whichever tab the person last used, so a keystroke sent afterwards lands in
+ * whatever session that happens to be. `FocusReach` below is that distinction
+ * travelling out to the caller.
+ */
 export type FocusTarget = { kind: 'handle'; handle: number } | { kind: 'pid'; pid: number }
+
+/**
+ * Which window a focus attempt actually brought forward (#329).
+ *
+ * `own-console` is a console window this session is on — its own, or the one it
+ * shares with the shell that launched it (#190). Nothing else is drawn there,
+ * so a keystroke afterwards reaches this session.
+ *
+ * `terminal-host` is a window reached by the ancestor walk instead: Windows
+ * Terminal, VS Code. It draws many sessions and exposes no way to select a tab
+ * by pid, so the panel cannot tell which one is in front. Enough for
+ * click-to-focus, never enough for a keystroke.
+ */
+export type FocusReach = 'own-console' | 'terminal-host'
+
+export interface FocusOutcome {
+  /** Whether any window came forward at all. */
+  focused: boolean
+  /** Which one did; null when none did, so there is nothing to be sure about. */
+  reach: FocusReach | null
+}
 
 /**
  * One rung of the walk `focusPid` climbs once the session's own console window
@@ -395,8 +427,15 @@ function runPowerShell(command: string): Promise<ShellResult> {
  *
  * The process list is only queried once the session's own probe has missed,
  * so the common pid-exact hit costs one PowerShell process and no walk.
+ *
+ * Exported for #329: which of the two kinds it lands on decides whether a
+ * keystroke may follow the focus, so that answer is worth a pure test of its
+ * own rather than only being observable through a foreground command.
  */
-async function resolveFocusTarget(pid: number, run: ShellRunner): Promise<FocusTarget | null> {
+export async function resolveFocusTarget(
+  pid: number,
+  run: ShellRunner
+): Promise<FocusTarget | null> {
   const probeConsole = async (targetPid: number): Promise<number> => {
     const probe = await run(buildConsoleWindowProbeCommand(targetPid))
     return probe.exitCode === 0 ? parseConsoleWindowHandle(probe.stdout) : 0
@@ -418,22 +457,44 @@ async function resolveFocusTarget(pid: number, run: ShellRunner): Promise<FocusT
 }
 
 /**
- * Focus the terminal window hosting `pid`. Returns false when resolution finds
- * no window or the window cannot be foregrounded — the caller then falls back
- * to showing a live transcript feed instead.
+ * Focus the window hosting `pid` and say WHICH window that was (#329).
+ *
+ * `focused: false` means resolution found no window or the window would not
+ * come forward — the caller then falls back to showing a live transcript feed
+ * instead. `reach` is what a caller about to send a keystroke has to read: see
+ * `FocusReach`, and `windowsTextDelivery.ts` for the refusal it drives.
  */
-export async function focusPid(pid: number, run: ShellRunner = runPowerShell): Promise<boolean> {
+export async function focusSessionConsole(
+  pid: number,
+  run: ShellRunner = runPowerShell
+): Promise<FocusOutcome> {
   try {
     const target = await resolveFocusTarget(pid, run)
-    if (target === null) return false
+    if (target === null) return { focused: false, reach: null }
 
+    // Only ever a named terminal host, which is why a pid target is the
+    // shared-window case and a handle is not; see FocusTarget.
+    const reach: FocusReach = target.kind === 'handle' ? 'own-console' : 'terminal-host'
     const focus = await run(
       target.kind === 'handle'
         ? buildFocusHandleCommand(target.handle)
         : buildFocusCommand(target.pid)
     )
-    return focus.exitCode === 0
+    return focus.exitCode === 0 ? { focused: true, reach } : { focused: false, reach: null }
   } catch {
-    return false
+    return { focused: false, reach: null }
   }
+}
+
+/**
+ * Focus the terminal window hosting `pid`. Returns false when resolution finds
+ * no window or the window cannot be foregrounded — the caller then falls back
+ * to showing a live transcript feed instead.
+ *
+ * Still a boolean, deliberately: this is click-to-focus, and somebody who
+ * clicked to see the terminal is served by either window (#329). Only a caller
+ * about to type needs `focusSessionConsole` above.
+ */
+export async function focusPid(pid: number, run: ShellRunner = runPowerShell): Promise<boolean> {
+  return (await focusSessionConsole(pid, run)).focused
 }

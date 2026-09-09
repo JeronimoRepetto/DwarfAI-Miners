@@ -41,13 +41,25 @@ function autoReplyShell() {
   return { process, written, kill, end }
 }
 
+/**
+ * The three answers the focus seam can give (#329).
+ *
+ * AMENDED throughout this file for #329: the seam answered a bare boolean
+ * until keystrokes had to know WHICH window came forward. `own-console` is a
+ * window this session is alone on, `terminal-host` one whose tab strip the
+ * panel cannot see into — see FocusReach in platform/focus.ts.
+ */
+const OWN_CONSOLE = { focused: true, reach: 'own-console' } as const
+const TERMINAL_HOST = { focused: true, reach: 'terminal-host' } as const
+const NOT_FOCUSED = { focused: false, reach: null } as const
+
 function delivery(overrides: Partial<ConstructorParameters<typeof WindowsTextDelivery>[0]> = {}) {
   return new WindowsTextDelivery({
     home: 'C:\\Users\\j',
     relayModel: 'haiku',
     relayTimeoutMs: 60_000,
     env: { PATH: 'C:\\Windows' },
-    focus: vi.fn().mockResolvedValue(true),
+    focus: vi.fn().mockResolvedValue(OWN_CONSOLE),
     runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 }),
     runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     ...overrides
@@ -59,7 +71,7 @@ describe('WindowsTextDelivery.sendToConsole', () => {
     const order: string[] = []
     const focus = vi.fn().mockImplementation(async () => {
       order.push('focus')
-      return true
+      return OWN_CONSOLE
     })
     const runPowerShell = vi.fn().mockImplementation(async () => {
       order.push('type')
@@ -80,7 +92,7 @@ describe('WindowsTextDelivery.sendToConsole', () => {
 
   it('never types anything when the terminal could not be foregrounded', async () => {
     const runPowerShell = vi.fn()
-    const port = delivery({ focus: vi.fn().mockResolvedValue(false), runPowerShell })
+    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), runPowerShell })
 
     const result = await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
     expect(result.delivered).toBe(false)
@@ -108,7 +120,7 @@ describe('WindowsTextDelivery.sendToConsole', () => {
 
   it('keeps the message out of the failure text', async () => {
     const port = delivery({
-      focus: vi.fn().mockResolvedValue(false)
+      focus: vi.fn().mockResolvedValue(NOT_FOCUSED)
     })
     const result = await port.sendToConsole({
       pid: 42,
@@ -152,7 +164,7 @@ describe('WindowsTextDelivery.pasteToConsole', () => {
     const order: string[] = []
     const focus = vi.fn().mockImplementation(async () => {
       order.push('focus')
-      return true
+      return OWN_CONSOLE
     })
     const runPowerShell = vi.fn().mockImplementation(async () => {
       order.push('paste')
@@ -194,7 +206,7 @@ describe('WindowsTextDelivery.pasteToConsole', () => {
     const runPowerShell = vi.fn()
     const clip = trackingClipboard([])
     const port = delivery({
-      focus: vi.fn().mockResolvedValue(false),
+      focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
       runPowerShell,
       clipboard: clip.port
     })
@@ -240,7 +252,7 @@ describe('WindowsTextDelivery.pasteToConsole', () => {
 
   it('keeps the message out of the failure text', async () => {
     const clip = trackingClipboard([])
-    const port = delivery({ focus: vi.fn().mockResolvedValue(false), clipboard: clip.port })
+    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), clipboard: clip.port })
     const result = await port.pasteToConsole({
       pid: 42,
       text: 'my-secret-payload',
@@ -310,7 +322,7 @@ describe('WindowsTextDelivery.sendInterrupt', () => {
     const order: string[] = []
     const focus = vi.fn().mockImplementation(async () => {
       order.push('focus')
-      return true
+      return OWN_CONSOLE
     })
     const runPowerShell = vi.fn().mockImplementation(async () => {
       order.push('interrupt')
@@ -329,7 +341,7 @@ describe('WindowsTextDelivery.sendInterrupt', () => {
 
   it('never sends the keystroke when the terminal could not be foregrounded', async () => {
     const runPowerShell = vi.fn()
-    const port = delivery({ focus: vi.fn().mockResolvedValue(false), runPowerShell })
+    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), runPowerShell })
 
     const result = await port.sendInterrupt({ pid: 42 })
     expect(result.delivered).toBe(false)
@@ -351,6 +363,84 @@ describe('WindowsTextDelivery.sendInterrupt', () => {
       runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
     })
     await expect(port.sendInterrupt({ pid: 42 })).resolves.toMatchObject({ delivered: false })
+  })
+})
+
+/**
+ * A host-level focus is not enough for a keystroke (#329).
+ *
+ * Measured live: two Claude sessions in two tabs of ONE Windows Terminal
+ * window, so neither `claude` owns a console of its own and the ancestor walk
+ * reaches the shared host for both. Foregrounding that raises whichever tab the
+ * person last used, and every keystroke after it went to THAT session — an Esc
+ * meant for one foreman interrupted the other. Nothing typed is preferable, and
+ * `neverStarted` is what lets the relay carry the message instead.
+ */
+describe('WindowsTextDelivery — a host window is never proof of the session (#329)', () => {
+  function hostFocused(overrides: Parameters<typeof delivery>[0] = {}) {
+    return delivery({ focus: vi.fn().mockResolvedValue(TERMINAL_HOST), ...overrides })
+  }
+
+  it('pastes nothing, and says the window is shared, so the relay may take the message', async () => {
+    const runPowerShell = vi.fn()
+    const port = hostFocused({ runPowerShell })
+
+    const result = await port.pasteToConsole({ pid: 42, text: 'run the tests', pressEnter: true })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/shares its terminal window/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  it('types nothing, so a permission digit cannot land in another tab', async () => {
+    const runPowerShell = vi.fn()
+    const port = hostFocused({ runPowerShell })
+
+    const result = await port.sendToConsole({ pid: 42, text: '1', pressEnter: false })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/shares its terminal window/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The keystroke this issue was reported for. Kick no longer takes this path
+   * at all (it ends the process instead), but a permission DENY still presses
+   * Esc through here, and an Esc into the wrong tab is the same lost turn.
+   */
+  it('sends no interrupt keystroke, which is the Esc that reached the wrong session', async () => {
+    const runPowerShell = vi.fn()
+    const port = hostFocused({ runPowerShell })
+
+    const result = await port.sendInterrupt({ pid: 42 })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/shares its terminal window/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  it('restores the clipboard it had already saved, exactly as a failed focus does', async () => {
+    const writes: string[] = []
+    let value = 'previous clipboard'
+    const clipboard = {
+      read: () => value,
+      write: (text: string) => {
+        writes.push(text)
+        value = text
+      }
+    }
+    const port = hostFocused({ clipboard, runPowerShell: vi.fn() })
+
+    await port.pasteToConsole({ pid: 42, text: 'my-secret-payload', pressEnter: true })
+    expect(value).toBe('previous clipboard')
+    expect(writes[writes.length - 1]).toBe('previous clipboard')
+  })
+
+  it('keeps the message out of the refusal', async () => {
+    const port = hostFocused({ runPowerShell: vi.fn() })
+    const result = await port.pasteToConsole({
+      pid: 42,
+      text: 'my-secret-payload',
+      pressEnter: true
+    })
+    expect(result.error).not.toContain('my-secret-payload')
   })
 })
 
@@ -384,7 +474,7 @@ describe('WindowsTextDelivery stage instrumentation', () => {
   it('still reports the stages of an attempt that failed', async () => {
     const port = delivery({
       now: clockOf(0, 9),
-      focus: vi.fn().mockResolvedValue(false)
+      focus: vi.fn().mockResolvedValue(NOT_FOCUSED)
     })
 
     const result = await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
@@ -415,7 +505,7 @@ describe('WindowsTextDelivery console transport', () => {
       relayModel: 'haiku',
       relayTimeoutMs: 60_000,
       env: { PATH: 'C:\Windows' },
-      focus: vi.fn().mockResolvedValue(true),
+      focus: vi.fn().mockResolvedValue(OWN_CONSOLE),
       runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
       spawnConsoleWorker,
       ...(fallback === undefined ? {} : { runPowerShell: fallback })
