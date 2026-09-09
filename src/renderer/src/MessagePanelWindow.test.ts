@@ -624,6 +624,87 @@ describe('reporting its own height', () => {
     const { api } = await openOn([OBSERVED_DWARF], 'claude:s1')
     expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
   })
+
+  /**
+   * A surface that measures what it actually CONTAINS, with no observer
+   * watching it change (#312).
+   *
+   * `fakeMeasurement` above answers one constant height whatever is on the
+   * page, and that is what hid the first open of a run: it makes the report
+   * fired from `onMounted` succeed before either panel exists, so the ORDER
+   * the two answers arrive in never mattered. A real surface is 0 tall until
+   * it holds a panel, and this getter says so.
+   *
+   * No ResizeObserver on purpose, and jsdom shipping none is the real
+   * situation rather than an approximation of it: the panel window is created
+   * hidden, a hidden window's frames are not drawn, and the observer callback
+   * is delivered as part of drawing one. So the observer that backs up a
+   * VISIBLE window is exactly what the open that has to reveal it cannot have.
+   */
+  function fakeContentMeasurement(height: number) {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.querySelector('.message-panel, .add-panel') === null ? 0 : height
+      }
+    })
+    return { restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight') }
+  }
+
+  /** An answer from main this test holds back, so the two can land in one order. */
+  function deferred<T>() {
+    let settle: (value: T) => void = () => undefined
+    const promise = new Promise<T>((resolve) => {
+      settle = resolve
+    })
+    return { promise, settle }
+  }
+
+  it('reports the height once the dwarf’s panel mounts, not only when the surface changes', async () => {
+    // The first open of a run, in the order the two answers actually arrive
+    // (#312): main names the surface, and the board that decides WHICH dwarf
+    // is drawn lands afterwards. So the report the surface change fires
+    // measures a surface with nothing in it yet, and the one thing that
+    // reveals the window is a report — which makes the panel that appears when
+    // the board lands the moment there is finally something to say.
+    const measured = fakeContentMeasurement(426)
+    const board = deferred<unknown>()
+    try {
+      const { wrapper, api } = await mountPanel(
+        { surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' },
+        { getMines: vi.fn().mockReturnValue(board.promise) }
+      )
+      expect(wrapper.find('.message-panel').exists()).toBe(false)
+      expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
+
+      board.settle({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+      await flushPromises()
+
+      expect(wrapper.find('.message-panel').exists()).toBe(true)
+      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
+    } finally {
+      measured.restore()
+    }
+  })
+
+  it('reports again for the next dwarf, whose panel is a fresh one of its own height', async () => {
+    // Selecting another dwarf never changes the SURFACE — it stays 'message' —
+    // so the watch that only followed the surface left this to the observer,
+    // which says nothing when the two panels happen to be the same height.
+    const measured = fakeContentMeasurement(300)
+    try {
+      const { api } = await openOn([OBSERVED_DWARF, HELD_DWARF], 'claude:s1')
+      api.setMessagePanelHeight.mockClear()
+
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
+      await flushPromises()
+
+      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(300)
+    } finally {
+      measured.restore()
+    }
+  })
 })
 
 /**
