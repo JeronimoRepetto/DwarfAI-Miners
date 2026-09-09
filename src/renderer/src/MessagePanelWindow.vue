@@ -9,6 +9,7 @@ import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
+import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
   DwarfFeedResult,
@@ -598,6 +599,62 @@ function raiseWindow(): void {
 }
 
 /**
+ * Move this window by its header, and snap it back (#296).
+ *
+ * ## Why the gesture is wired here and not in the panel
+ *
+ * At the WINDOW level, because that is what is being moved: the two surfaces
+ * that share this window each draw the same header row and neither of them
+ * knows it is in a window at all. They mark the row (`data-window-drag`, see
+ * `lib/shell/windowDrag`) and this listens for presses that landed on it —
+ * one place that decides, and a press on a control inside the row is still
+ * that control's.
+ *
+ * ## Why a pointer report and not `-webkit-app-region: drag`
+ *
+ * The CSS region is less code and it was refused. It hands the move to the OS,
+ * so MAIN never learns the window was dragged until after the fact — and main
+ * is the owner of every rectangle in this app (`usePanelLayout`: state only
+ * ever becomes something main REPORTED). It cannot clamp a drag to the display
+ * while it is happening, only correct it afterwards. It also inverts the
+ * default: every interactive child of the region has to be marked `no-drag`
+ * one by one, so a control added to the header later becomes a drag handle
+ * silently, and the person loses a button rather than gaining one. What is
+ * paid for that is the two messages below, and main polling the cursor while
+ * the press is down (see MessagePanelDragPhase).
+ */
+/**
+ * Whether the press currently down began a drag — so a release anywhere else
+ * on this window is not reported as the end of one. Main persists the position
+ * on every 'end' it is told about, and a click on the conversation is not a
+ * gesture that produced a position.
+ */
+let windowDragging = false
+
+function startWindowDrag(event: PointerEvent): void {
+  if (!isWindowDragTarget(event.target)) return
+  // Captured on this element so the release still reaches us once the window
+  // has moved out from under the cursor, and so a pointer that leaves the
+  // window entirely cannot leave a drag running with nothing to end it.
+  const root = event.currentTarget
+  if (root instanceof Element) root.setPointerCapture(event.pointerId)
+  windowDragging = true
+  window.api.dragMessagePanel('start')
+}
+
+function endWindowDrag(): void {
+  if (!windowDragging) return
+  windowDragging = false
+  window.api.dragMessagePanel('end')
+}
+
+/** Double-click the header: back beside the shell, and the position forgotten. */
+function dockWindow(event: MouseEvent): void {
+  if (!isWindowDragTarget(event.target)) return
+  window.api.dockMessagePanel()
+}
+
+/**
  * The window is as tall as the surface it drew (#162).
  *
  * Measured rather than derived, because the two surfaces answer the height
@@ -671,7 +728,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="message-window" @pointerdown.capture="raiseWindow">
+  <div
+    class="message-window"
+    @pointerdown.capture="raiseWindow"
+    @pointerdown="startWindowDrag"
+    @pointerup="endWindowDrag"
+    @pointercancel="endWindowDrag"
+    @dblclick="dockWindow"
+  >
     <div ref="surfaceRef" class="message-surface">
       <p v-if="error" class="notice" role="alert">{{ error }}</p>
 
@@ -742,6 +806,28 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--color-cream);
   font-size: var(--text-meta);
+}
+/*
+ * The one tell that the header row moves the whole window (#296).
+ *
+ * Unspecified in the design source, and the amendment the maintainer approved
+ * names it rather than leaving the handle invisible: a frameless window has no
+ * title bar, so with no cursor change there is nothing at all to say the row
+ * can be grabbed. `grab` is the platform's own vocabulary for exactly that and
+ * costs no ink.
+ *
+ * Written here rather than in either panel because the drag belongs to the
+ * WINDOW: both surfaces mark their header (see lib/shell/windowDrag) and know
+ * nothing about being in one. The second rule restores what the controls
+ * inside the row already declare for themselves — the name opens a console and
+ * the glyph closes the panel, and a grab cursor over either would promise a
+ * gesture that lands on the control instead.
+ */
+.message-window :deep([data-window-drag]) {
+  cursor: grab;
+}
+.message-window :deep([data-window-drag] button) {
+  cursor: pointer;
 }
 /*
  * What main measures the window against, so it is content-height and must

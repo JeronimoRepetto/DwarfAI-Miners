@@ -52,6 +52,7 @@ import {
   IPC_CHANNELS,
   isDwarfProvider,
   isHeldPermissionMode,
+  isMessagePanelDragPhase,
   isMineTier
 } from '../shared/contracts'
 import {
@@ -86,6 +87,7 @@ import { openProjectsStore } from './projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
+import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
@@ -95,6 +97,8 @@ import { createTray } from './shell/tray'
 import {
   applyAlwaysOnTop,
   createMainWindow,
+  dockMessagePanel,
+  dragMessagePanel,
   hidePanel,
   markQuitting,
   messagePanelState,
@@ -102,6 +106,7 @@ import {
   mirrorMessagePanelPin,
   panelLayout,
   raiseWindowOf,
+  seedMessagePanelPosition,
   seedPanelEdge,
   setMessagePanel,
   setMessagePanelHeight,
@@ -143,6 +148,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getMessagePanel)
   ipcMain.removeHandler(IPC_CHANNELS.setMessagePanel)
   ipcMain.removeAllListeners(IPC_CHANNELS.setMessagePanelHeight)
+  ipcMain.removeAllListeners(IPC_CHANNELS.dragMessagePanel)
+  ipcMain.removeAllListeners(IPC_CHANNELS.dockMessagePanel)
   ipcMain.removeAllListeners(IPC_CHANNELS.reportDwarfDelivery)
   ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
@@ -499,6 +506,16 @@ async function init(): Promise<void> {
   })
   seedPanelEdge(await panelEdgeStore.load())
 
+  // Where the person left the message panel (#296) — the fifth userData
+  // marker, read before any window exists for the reason the edge preference
+  // is: a panel that had been dragged somewhere should open there rather than
+  // dock beside the shell and jump on the first apply. A missing or corrupt
+  // file reads as "never moved", which is the docked placement.
+  const messagePanelPositionStore = createMessagePanelPositionStore({
+    filePath: join(app.getPath('userData'), 'message-panel-position-v1.json')
+  })
+  seedMessagePanelPosition(await messagePanelPositionStore.load())
+
   const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
   // The panel-toggle shortcut is the third userData preference (see #17), read
@@ -789,6 +806,33 @@ async function init(): Promise<void> {
     const height = parseMessagePanelHeight(payload)
     if (height === null) return
     setMessagePanelHeight(height)
+  })
+  /*
+   * The panel window being dragged anywhere, and snapped back (#296).
+   *
+   * Both are one-way for the reason the height report is, and a stronger one:
+   * neither page draws the panel's position, so there is no verdict to answer
+   * with. What comes back from main is for THIS process to persist — the
+   * position the window actually ended up at, never the gesture that asked for
+   * it, which is the same discipline the pin and the edge preference hold.
+   */
+  ipcMain.on(IPC_CHANNELS.dragMessagePanel, (_event, payload: unknown) => {
+    // Boundary discipline as elsewhere: a phase main cannot read moves
+    // nothing. There is no safe default — see isMessagePanelDragPhase.
+    if (!isMessagePanelDragPhase(payload)) return
+    const anchor = dragMessagePanel(payload)
+    // Persisted once per gesture rather than once per frame: 'start' answers
+    // with the position that was already stored, and only the release can have
+    // produced a new one.
+    if (payload !== 'end') return
+    void messagePanelPositionStore.save(anchor).catch((error: unknown) => {
+      console.warn('[panel] Failed to persist the message panel position:', error)
+    })
+  })
+  ipcMain.on(IPC_CHANNELS.dockMessagePanel, () => {
+    void messagePanelPositionStore.save(dockMessagePanel()).catch((error: unknown) => {
+      console.warn('[panel] Failed to forget the message panel position:', error)
+    })
   })
   // The delivery verdicts the panel window is the only writer of, relayed to
   // the shell so the mine can draw its markers (#162, see DwarfDeliveryReport).

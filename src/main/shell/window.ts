@@ -7,12 +7,26 @@ import {
   type WebContents
 } from 'electron'
 import { join } from 'node:path'
-import type { MessagePanelState, PanelEdge, PanelLayout, PanelLayoutRequest } from '../domain/types'
+import type {
+  MessagePanelDragPhase,
+  MessagePanelState,
+  PanelEdge,
+  PanelLayout,
+  PanelLayoutRequest
+} from '../domain/types'
 import { MESSAGE_PANEL_SURFACE, RENDERER_SURFACE_PARAM } from '../domain/types'
 import { currentPlatform } from '../platform/platform'
 import { panelScreenArea, type ScreenRect } from '../platform/screenArea'
 import { emptyMessagePanel } from './messagePanelState'
-import { messagePanelBounds, panelBounds, uiScale } from './panelBounds'
+import {
+  clampMessagePanelBounds,
+  detachedMessagePanelBounds,
+  messagePanelAnchorOf,
+  messagePanelPlacement,
+  panelBounds,
+  uiScale,
+  type MessagePanelAnchor
+} from './panelBounds'
 import { resolveResourcePath } from './resourcePaths'
 
 let mainWindow: BrowserWindow | null = null
@@ -314,6 +328,28 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
     return { action: 'deny' }
   })
 
+  /*
+   * Re-clamp the message panel when the displays change under it (#296).
+   *
+   * A docked panel is re-derived on every show, every layout change and every
+   * height report, so it never needed this. A panel the person MOVED is
+   * different in kind: its rectangle is a position they chose, and nothing
+   * they do afterwards has to touch it — so a monitor unplugged, a resolution
+   * change or a taskbar appearing can leave it off screen with no gesture
+   * involved and nothing to correct it. `placeMessagePanel` is the one path
+   * (see its own comment); it does nothing when there is no panel window, and
+   * for a docked one it re-derives exactly what it already had.
+   *
+   * Registered here rather than beside the panel window because this runs
+   * once: the panel window is created on the first open and hidden rather than
+   * destroyed after, so subscribing over there would risk one listener per
+   * rebuild for a rectangle main can always re-derive from state it holds.
+   */
+  const refitMessagePanel = (): void => placeMessagePanel()
+  screen.on('display-metrics-changed', refitMessagePanel)
+  screen.on('display-added', refitMessagePanel)
+  screen.on('display-removed', refitMessagePanel)
+
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -349,6 +385,9 @@ export function showPanel(): void {
 
 export function hidePanel(): void {
   mainWindow?.hide()
+  // A drag cannot survive the window going away (#296): the press that would
+  // have ended it lands on nothing once there is nothing on screen to release.
+  endMessagePanelDrag()
   // Hidden WITH the shell, not closed: what the panel is showing is untouched,
   // so the surface that comes back is the one that went away.
   if (messagePanelWindow !== null && !messagePanelWindow.isDestroyed()) {
@@ -390,6 +429,42 @@ let messagePanelWindow: BrowserWindow | null = null
 let messagePanel: MessagePanelState = emptyMessagePanel()
 /** The panel's own height in DESIGN pixels, as its renderer last measured it. */
 let messagePanelDesignHeight = MESSAGE_PANEL_OPENING_HEIGHT
+
+/**
+ * Where the person put the panel, or `null` while it is still docked (#296).
+ *
+ * Docked until moved: the panel opens beside the shell, as the design's mock
+ * draws it, and only a drag on its header ever sets this. Once it is set the
+ * shell stops being what the panel is placed against — see
+ * `messagePanelPlacement`, which is where that decision is stated and tested.
+ */
+let messagePanelAnchor: MessagePanelAnchor | null = null
+
+/**
+ * A header drag in progress: where the cursor was when it started, where the
+ * window was, and the clock main follows the cursor on.
+ *
+ * Both origins are the ones from the START of the gesture rather than a
+ * running total, so a drag that pushed the window against a screen edge comes
+ * back off it when the cursor does — accumulating clamped deltas would leave
+ * the window stuck there.
+ */
+let messagePanelDrag: {
+  cursor: { x: number; y: number }
+  origin: ScreenRect
+  clock: NodeJS.Timeout
+} | null = null
+
+/**
+ * How often main re-reads the cursor while the header is held down — one
+ * frame at 60Hz.
+ *
+ * Main drives this rather than the renderer for the reason
+ * `MessagePanelDragPhase` gives: a window tracking the cursor stops seeing the
+ * cursor move, so a renderer reporting each step would stall the drag it was
+ * driving.
+ */
+const MESSAGE_PANEL_DRAG_INTERVAL_MS = 16
 
 export interface MessagePanelWindowOptionsInput {
   /** The shell's pin, mirrored rather than owned (see below). */
@@ -461,19 +536,84 @@ export function messagePanelState(): MessagePanelState {
 }
 
 /**
- * Where the panel window belongs right now: beside the shell as the shell
- * ACTUALLY is, at the height its renderer last measured.
+ * Adopt a persisted position before any window exists (#296) — index.ts calls
+ * this with the stored one right after loading it, mirroring how the edge
+ * preference reaches `seedPanelEdge`. A panel the person had moved then opens
+ * where they left it instead of docking beside the shell and jumping.
+ */
+export function seedMessagePanelPosition(anchor: MessagePanelAnchor | null): void {
+  messagePanelAnchor = anchor
+}
+
+/**
+ * The screen rectangle the panel may cover: the display its own remembered
+ * position is on once it has been moved, and the shell's until then (#296).
+ *
+ * Two displays are two different questions, and a panel carried onto the
+ * second one has to be clamped and scaled for THAT one — `uiScale`'s own rule
+ * is that the zoom belongs to the display rather than to the window that
+ * happens to be on it, and clamping a detached panel to the shell's display
+ * would drag it back off the monitor the person chose.
+ *
+ * The anchor's own point rather than the window's bounds, because this is also
+ * what answers the question before the window is built (and while a display it
+ * used to be on is gone). `getDisplayNearestPoint` always names a display, so
+ * an anchor pointing at a monitor that was unplugged resolves against a real
+ * one and then fails the reach test in `detachedMessagePanelBounds` — which is
+ * exactly the fall-back-to-docked path.
+ */
+function messagePanelScreenArea(): ScreenRect {
+  if (messagePanelAnchor === null) return currentScreenArea()
+  const display = screen.getDisplayNearestPoint({
+    x: messagePanelAnchor.x,
+    y: messagePanelAnchor.bottom
+  })
+  return panelScreenArea(display, currentPlatform())
+}
+
+/**
+ * Drop a remembered position that no longer lands on any display (#296).
+ *
+ * The monitor it was dragged onto was unplugged, or the resolution shrank
+ * under it. Forgotten rather than carried, so the fallback to the docked
+ * placement is derived against the SHELL's display — a stale anchor left in
+ * place would have every later apply compute the docked rectangle against a
+ * display the shell is not on. The stored file is not rewritten here: the next
+ * drag or snap-back replaces it, and until then re-reading a position that
+ * fails this same test costs nothing.
+ */
+function forgetLostMessagePanelPosition(): void {
+  if (messagePanelAnchor === null) return
+  const lost =
+    detachedMessagePanelBounds(
+      messagePanelScreenArea(),
+      messagePanelAnchor,
+      messagePanelDesignHeight
+    ) === null
+  if (lost) messagePanelAnchor = null
+}
+
+/**
+ * Where the panel window belongs right now: where the person put it, or beside
+ * the shell as the shell ACTUALLY is, at the height its renderer last measured.
  *
  * The shell's real bounds rather than a re-derivation, so a compositor that
  * placed the shell somewhere else moves the panel with it instead of leaving
  * the pair apart. With no shell window yet there is nothing to be beside, so
- * the rectangle main would have given it stands in.
+ * the rectangle main would have given it stands in. Which of the two answers
+ * applies is `messagePanelPlacement`'s decision, not this function's.
  */
 function messagePanelRect(): ScreenRect {
-  const area = currentScreenArea()
+  const area = messagePanelScreenArea()
   const shell =
     mainWindow === null ? panelBounds(area, layout.edge, layout) : mainWindow.getBounds()
-  return messagePanelBounds(area, shell, layout.edge, messagePanelDesignHeight)
+  return messagePanelPlacement(
+    area,
+    shell,
+    layout.edge,
+    messagePanelDesignHeight,
+    messagePanelAnchor
+  )
 }
 
 /**
@@ -483,14 +623,126 @@ function messagePanelRect(): ScreenRect {
  * DISPLAY rather than to the window that happens to be on it, and the panel
  * shares the shell's ui scale exactly — the same 1080-design-world factor,
  * applied to a second window so the two surfaces are one size.
+ *
+ * Still called from all four places it was (#296), and that is not an
+ * oversight: a detached panel is re-placed to the rectangle it is already at,
+ * because the placement is derived from the remembered position rather than
+ * from the shell. So a shell move or a layout change moves nothing, a height
+ * report resizes it in place, and a display that changed under it is
+ * re-clamped — one path, three behaviours, none of them a special case.
  */
 function placeMessagePanel(): void {
   if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return
-  applyUiScale(messagePanelWindow.webContents, currentScreenArea())
+  forgetLostMessagePanelPosition()
+  applyUiScale(messagePanelWindow.webContents, messagePanelScreenArea())
   applyPanelBounds(messagePanelWindow, messagePanelRect())
 }
 
+/** Stop following the cursor; the gesture is over, or its window has gone. */
+function endMessagePanelDrag(): void {
+  if (messagePanelDrag === null) return
+  clearInterval(messagePanelDrag.clock)
+  messagePanelDrag = null
+}
+
+/**
+ * One step of a header drag: put the window where the cursor has taken it.
+ *
+ * The work area is the display the CURSOR is nearest rather than the one the
+ * window is mostly on, which is what lets a drag cross monitors at all: a
+ * clamp against the window's own display would keep it inside that display, so
+ * it could never reach the half-way point where the display it is "on" changes.
+ *
+ * A press that has not moved the cursor at all is left alone, so a plain click
+ * on the header — and the double-click that snaps the panel back — never
+ * detaches the panel from the shell.
+ */
+function stepMessagePanelDrag(): void {
+  const drag = messagePanelDrag
+  if (drag === null) return
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) {
+    endMessagePanelDrag()
+    return
+  }
+  const cursor = screen.getCursorScreenPoint()
+  const dx = cursor.x - drag.cursor.x
+  const dy = cursor.y - drag.cursor.y
+  if (dx === 0 && dy === 0) return
+  const area = panelScreenArea(screen.getDisplayNearestPoint(cursor), currentPlatform())
+  // The live size, not the size the gesture started at: the panel may have
+  // re-measured itself mid-drag, and the width and height are never the
+  // drag's to change.
+  const { width, height } = messagePanelWindow.getBounds()
+  const moved = applyPanelBounds(
+    messagePanelWindow,
+    clampMessagePanelBounds(area, {
+      x: drag.origin.x + dx,
+      y: drag.origin.y + dy,
+      width,
+      height
+    })
+  )
+  // What the window ACTUALLY became, never the request: the compositor may
+  // have placed it elsewhere, and a remembered position that disagrees with
+  // the window would move the panel on its next apply.
+  messagePanelAnchor = messagePanelAnchorOf(moved)
+}
+
+/**
+ * Begin or end a drag of the panel window by its header (#296), and answer
+ * with the position main now remembers.
+ *
+ * The answer is for the caller to PERSIST, not to render: nothing on either
+ * page draws the panel's position, so a renderer holding a copy could only
+ * ever disagree with the window. `null` is still docked — which is what a
+ * press that never moved leaves behind.
+ *
+ * A 'start' clears any drag already running, which is also what recovers from
+ * an 'end' that never arrived (a page that reloaded mid-gesture): the next
+ * press on the header replaces the runaway, and its release ends it.
+ */
+export function dragMessagePanel(phase: MessagePanelDragPhase): MessagePanelAnchor | null {
+  if (phase === 'end') {
+    endMessagePanelDrag()
+    // One re-place once the gesture is over, because a drag can cross onto
+    // another display and the drag itself only moves the origin: the zoom
+    // belongs to the display (see applyUiScale), and the design's 990 is
+    // multiplied by that display's scale, so the panel adopts both here rather
+    // than keeping the previous monitor's size until something else happens.
+    placeMessagePanel()
+    return messagePanelAnchor
+  }
+  endMessagePanelDrag()
+  if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) return messagePanelAnchor
+  messagePanelDrag = {
+    cursor: screen.getCursorScreenPoint(),
+    origin: messagePanelWindow.getBounds(),
+    clock: setInterval(stepMessagePanelDrag, MESSAGE_PANEL_DRAG_INTERVAL_MS)
+  }
+  return messagePanelAnchor
+}
+
+/**
+ * Snap the panel back beside the shell and forget where it was (#296) — the
+ * way back from a position that turned out to be the wrong one, and the one
+ * gesture that clears a remembered position on purpose.
+ *
+ * Answers with the position main now remembers, which is `null`, for the same
+ * reason `dragMessagePanel` answers: the caller persists it.
+ */
+export function dockMessagePanel(): MessagePanelAnchor | null {
+  endMessagePanelDrag()
+  messagePanelAnchor = null
+  placeMessagePanel()
+  return messagePanelAnchor
+}
+
 function createMessagePanelWindow(parent: BrowserWindow): BrowserWindow {
+  // The persisted position may name a display that is no longer here (#296),
+  // and this is the first apply of the session: dropping it now is what makes
+  // the opening rectangle the docked one rather than a corner of a display the
+  // panel was never on.
+  forgetLostMessagePanelPosition()
   const panel = new BrowserWindow(
     buildMessagePanelWindowOptions({
       // Whatever the shell IS, not what the preference said: the user may have
@@ -565,6 +817,10 @@ export function setMessagePanel(state: MessagePanelState): MessagePanelState {
     // again — which is also the design's own rule, that a reopened panel
     // recalculates from the latest message.
     messagePanelDesignHeight = MESSAGE_PANEL_OPENING_HEIGHT
+    // The POSITION is not: closing and reopening the panel brings it back
+    // where the person left it (#296), which is the whole point of remembering
+    // it. Only the drag itself ends here, with the window it was moving.
+    endMessagePanelDrag()
     if (messagePanelWindow !== null && !messagePanelWindow.isDestroyed()) {
       messagePanelWindow.hide()
     }

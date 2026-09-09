@@ -62,6 +62,7 @@ export type {
   MaterialTotals,
   McpConnectionStatus,
   MessageIssuer,
+  MessagePanelDragPhase,
   MessagePanelState,
   MessagePanelSurface,
   MetricsResetResult,
@@ -119,6 +120,7 @@ export {
   isDwarfProvider,
   isHeldPermissionMode,
   isMcpConnectionStatus,
+  isMessagePanelDragPhase,
   isMessagePanelSurface,
   isMineTier,
   isPanelObserved

@@ -9,7 +9,8 @@ import {
   dwarfSilenceWindowKey,
   dwarfSilenceWindowMs,
   isDwarfProvider,
-  isMcpConnectionStatus
+  isMcpConnectionStatus,
+  isMessagePanelDragPhase
 } from './contracts'
 
 /*
@@ -252,4 +253,29 @@ describe('TIER_WEIGHT_THRESHOLDS_KB', () => {
     expect(TIER_WEIGHT_THRESHOLDS_KB.silverKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.goldKb)
     expect(TIER_WEIGHT_THRESHOLDS_KB.goldKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.uraniumKb)
   })
+})
+
+/*
+ * The two ends of a header drag (#296), as the preload has to recognise them:
+ * main moves the window, so a phase it cannot read is one that would either
+ * start a drag nobody asked for or leave one running with nothing to end it.
+ * Same ruling isMessagePanelSurface carries — the bridge refuses to guess, and
+ * an unrecognised value crosses as '' for main to refuse outright.
+ */
+describe('isMessagePanelDragPhase', () => {
+  it('recognises the two phases a drag actually has', () => {
+    for (const phase of ['start', 'end']) {
+      expect(isMessagePanelDragPhase(phase)).toBe(true)
+    }
+  })
+
+  it.each(['Start', 'START', 'move', 'dragging', '', ' end', 42, null, undefined, {}])(
+    'refuses %j, which is not one of them',
+    (value) => {
+      // 'move' above is the one worth naming: main follows the cursor on its
+      // own clock, so a renderer reporting each step is a phase this contract
+      // never had (see MessagePanelDragPhase).
+      expect(isMessagePanelDragPhase(value)).toBe(false)
+    }
+  )
 })
