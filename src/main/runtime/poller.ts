@@ -19,6 +19,18 @@ export interface PollerOptions {
    * treating this as fire-and-forget.
    */
   onUpdate: (mines: Mine[]) => void | Promise<void>
+  /**
+   * Folds every worktree session onto its project before the aggregation
+   * groups them (#348) — the one seam where a cwd becomes a mine path.
+   *
+   * Here rather than inside each provider because there are four scanners and
+   * one rule, and here rather than after `aggregateMines` because two
+   * worktrees must arrive as ONE cwd for one mine to come out of it. Optional:
+   * a build with none — every test that predates this, and the simulated
+   * valley, whose folders are invented — aggregates the raw snapshots exactly
+   * as it always did.
+   */
+  foldWorktrees?: (snapshots: ProviderSnapshot[]) => Promise<ProviderSnapshot[]>
   logError?: (message: string, error: unknown) => void
   /** How long nudge() coalesces further events after firing; defaults to 300 ms. */
   nudgeWindowMs?: number
@@ -111,8 +123,20 @@ export class Poller {
         }
       })
       pollProfiler.count('sessions', snapshots.length)
+      // A fold that could not read the disk must not cost the poll (#348). The
+      // unfolded board is what this app showed before the issue existed —
+      // several mines for one project — which is a worse board and a truthful
+      // one; publishing nothing would take every live agent off the map.
+      const grouped = await pollProfiler.measure('worktrees', async () => {
+        try {
+          return (await this.options.foldWorktrees?.(snapshots)) ?? snapshots
+        } catch (error) {
+          this.options.logError?.('[poller] Could not resolve worktrees for this scan', error)
+          return snapshots
+        }
+      })
       const mines = pollProfiler.measureSync('aggregate', () =>
-        aggregateMines(snapshots, this.options.tierOf)
+        aggregateMines(grouped, this.options.tierOf)
       )
       // Awaited rather than fire-and-forgotten (#196): onUpdate can now do
       // real async work of its own before it publishes (reading a watched

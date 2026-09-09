@@ -54,6 +54,7 @@ import {
   type ProjectQuery,
   type ProjectQueryResult,
   type ProjectSummary,
+  type ProviderSnapshot,
   type TextDeliveryChannel,
   type WatchedFeedPush
 } from '../domain/types'
@@ -72,8 +73,15 @@ import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
 import type { CliDetector } from '../platform/cliDetection'
 import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
+import { normalizePathKey, type Platform } from '../platform/platform'
 import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
+import {
+  createProjectRootResolver,
+  foldWorktreeSnapshots,
+  type ProjectRootResolution,
+  type ProjectRootResolver
+} from '../projects/worktree'
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
 import {
@@ -743,6 +751,25 @@ export class AgentRuntime {
    * opposite guess would sweep mines off a board on a momentary lock.
    */
   private forgotten = new Set<string>()
+  /** The OS family every path rule in this runtime is decided by, never process.platform. */
+  private readonly osFamily: Platform
+  /**
+   * Which project each session's cwd belongs to (#348), cached per folder.
+   *
+   * Null for a simulated valley and for nothing else: its folders are invented
+   * (#42), so there is no `.git` anywhere to read and every resolution would be
+   * a wasted walk up a path that is not on this machine.
+   */
+  private readonly projectRoots: ProjectRootResolver | null
+  /**
+   * Store rows already folded onto their project (#348), by row id.
+   *
+   * The migration is idempotent — declaring a root twice and forgetting a row
+   * twice both land where they already were — but `loadDeclared` runs on every
+   * declaration, and two writes per stale row per click is a cost with nothing
+   * behind it.
+   */
+  private readonly migratedWorktrees = new Set<string>()
   private mines: Mine[] = []
   /**
    * Where a held session's own crew can be written to, rebuilt every poll by
@@ -1087,10 +1114,29 @@ export class AgentRuntime {
       now: options.now
     })
     this.lifecycle = lifecycle
+    /*
+     * Which project each session's cwd belongs to (#348). Built on the same fs
+     * every other disk reader in this constructor takes, and skipped entirely
+     * for a simulated valley, whose folders are not on this machine (#42).
+     */
+    this.osFamily = platform.platform
+    this.projectRoots = simulation
+      ? null
+      : createProjectRootResolver({
+          fs,
+          platform: platform.platform,
+          ...(options.now === undefined ? {} : { now: options.now })
+        })
     this.poller = new Poller({
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
       tierOf,
+      // Every worktree of one repository lands in the main tree's mine (#348),
+      // decided here — before the aggregation groups anything — because that
+      // is the one seam where a cwd becomes a mine path.
+      ...(this.projectRoots === null
+        ? {}
+        : { foldWorktrees: (snapshots: ProviderSnapshot[]) => this.foldWorktrees(snapshots) }),
       onUpdate: async (rawMines) => {
         const now = this.now()
         // Mines the user has deleted go FIRST, before anything else in this
@@ -1437,6 +1483,38 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * One poll's snapshots, with every worktree session grouped under its
+   * project (#348).
+   *
+   * The disk work is here and the decision is in `foldWorktreeSnapshots`: one
+   * resolution per DISTINCT cwd, so two sessions in one worktree cost one
+   * lookup, and the resolver's own cache makes the ordinary poll cost nothing
+   * at all.
+   */
+  private async foldWorktrees(snapshots: ProviderSnapshot[]): Promise<ProviderSnapshot[]> {
+    const roots = this.projectRoots
+    if (roots === null) return snapshots
+    const resolutions = new Map<string, ProjectRootResolution>()
+    for (const snapshot of snapshots) {
+      if (resolutions.has(snapshot.cwd)) continue
+      resolutions.set(snapshot.cwd, await roots.resolve(snapshot.cwd))
+    }
+    return foldWorktreeSnapshots(snapshots, (cwd) => resolutions.get(cwd))
+  }
+
+  /**
+   * Where the board says one dwarf actually works (#348): its own worktree
+   * when it has one, its mine's folder otherwise.
+   *
+   * The single reading every path resolution for a dwarf goes through, so a
+   * click on an activity line (#279) and a transcript read cannot disagree
+   * about which of a project's folders the dwarf is in.
+   */
+  private workplaceOf(dwarf: Dwarf, mine: Mine): string {
+    return dwarf.workplace?.path ?? mine.path
+  }
+
   async loadDeclared(): Promise<void> {
     const store = this.projects
     if (store === null) return
@@ -1474,14 +1552,126 @@ export class AgentRuntime {
     // A forgotten project is not declared for the board's purposes, whatever
     // its origin column says: leaving it here would put the mine back on the
     // map on the next poll as a declared one with no crew (#169).
+    //
+    // Which of these rows names a worktree rather than a project (#348).
+    // Resolved for EVERY row, declared or discovered, because both kinds draw a
+    // card and both would otherwise keep drawing one for a folder the board no
+    // longer has a mine for. Costs one cached resolution per row on a read that
+    // happens at startup and on a click, never per poll.
+    const worktrees = await this.resolveStoredWorktrees(result.value)
     this.declared = result.value
       .filter((project) => project.origin === 'declared' && project.hiddenAt === null)
-      .map((project) => ({
-        path: project.path,
-        // null means never measured, and mergeDeclaredMines falls back to the
-        // provisional tier for drawing (#41).
-        ...(project.knownTier === null ? {} : { knownTier: project.knownTier })
-      }))
+      .map((project) => {
+        const root = worktrees.get(project.id)
+        // FOLDED ON READ (#348): a worktree the user declared before this
+        // change is drawn as its project, on the very first poll and whether or
+        // not the migration below has landed yet.
+        if (root !== undefined) {
+          // The measured tier is deliberately LEFT BEHIND. It was measured by
+          // walking the worktree's own folder, and #41's rule is that only a
+          // measurement of the thing itself may stand for it — so the project
+          // draws with the provisional tier until its own walk lands.
+          return { path: root }
+        }
+        return {
+          path: project.path,
+          // null means never measured, and mergeDeclaredMines falls back to the
+          // provisional tier for drawing (#41).
+          ...(project.knownTier === null ? {} : { knownTier: project.knownTier })
+        }
+      })
+    await this.migrateStoredWorktrees(result.value, worktrees)
+  }
+
+  /**
+   * The project each stored row belongs to, for the rows that name a worktree
+   * of one (#348) — by row id, and absent for every row that is its own
+   * project.
+   *
+   * A row whose folder is gone from disk resolves to itself and is left alone,
+   * which is the right answer: nothing can prove it was ever a worktree, and
+   * inventing a fold from an unreadable folder would move a user's mine.
+   */
+  private async resolveStoredWorktrees(
+    rows: readonly ProjectRecord[]
+  ): Promise<ReadonlyMap<string, string>> {
+    const roots = this.projectRoots
+    const folded = new Map<string, string>()
+    if (roots === null) return folded
+    for (const row of rows) {
+      try {
+        const resolution = await roots.resolve(row.path)
+        if (resolution.worktree !== undefined) folded.set(row.id, resolution.root)
+      } catch (error) {
+        // A folder that cannot be read is not a folder that folds.
+        console.warn(`[projects] Could not resolve the project behind ${row.id}`, error)
+      }
+    }
+    return folded
+  }
+
+  /**
+   * Teach the store what the board already shows: a declared worktree becomes
+   * its project, and the stale worktree row stops drawing a card (#348).
+   *
+   * ## Hidden worktrees are the case that had to be decided
+   *
+   * A hidden row (#169) is left exactly as it is, and nothing about its hiding
+   * is carried to the project. Hiding a worktree meant "take THIS folder off my
+   * board", and after the fold that folder is not a mine at all — so there is
+   * nothing left to hide, and moving the flag up to the project would take the
+   * whole repository off the board because of a decision about one branch. That
+   * is the accident the issue names, and it is worse than a stale flag: the
+   * mine would vanish with no card to bring it back from. The row keeps its
+   * flag, keeps its ore, and simply describes a folder the board has stopped
+   * keying by.
+   *
+   * ## The two writes, and why only these two
+   *
+   * A visible DECLARED worktree declares its project — that is the fact the
+   * user actually stated, "track this codebase" — and then the worktree row is
+   * flagged, because it drew a card and the board has no mine under it any
+   * more. A visible DISCOVERED one is only flagged: the observer records the
+   * project itself from the next poll's board, and declaring on a user's behalf
+   * something they never declared would put a folder in their list as if they
+   * had asked for it.
+   *
+   * `forget` FLAGS the row rather than deleting it, which is what keeps the ore
+   * already credited to that folder's mine id attached to a row (see
+   * ProjectsStore.forget). Nothing here converts anything, moves any material,
+   * or touches a counter.
+   *
+   * Never throws: a store that refuses leaves the fold in memory, where it is
+   * already correct, and the next launch tries again.
+   */
+  private async migrateStoredWorktrees(
+    rows: readonly ProjectRecord[],
+    worktrees: ReadonlyMap<string, string>
+  ): Promise<void> {
+    const store = this.projects
+    if (store === null || worktrees.size === 0) return
+    for (const row of rows) {
+      const root = worktrees.get(row.id)
+      if (root === undefined || this.migratedWorktrees.has(row.id)) continue
+      // A hidden worktree row: nothing to do, and deliberately so — see above.
+      if (row.hiddenAt !== null) {
+        this.migratedWorktrees.add(row.id)
+        continue
+      }
+      this.migratedWorktrees.add(row.id)
+      try {
+        if (row.origin === 'declared') {
+          const declared = await store.declare({ path: root, at: this.now() })
+          // The row exists from this moment, so the mine is recorded from this
+          // poll on (#165) — the same one-id addition the observer makes.
+          if (declared.ok) this.recorded?.add(declared.value.id)
+        }
+        const forgotten = await store.forget({ id: row.id, at: this.now() })
+        if (forgotten.ok) this.forgotten.add(row.id)
+      } catch (error) {
+        console.warn(`[projects] Could not fold the worktree ${row.id} into its project`, error)
+      }
+    }
   }
 
   /**
@@ -3098,7 +3288,12 @@ export class AgentRuntime {
     const mine = this.mines.find((item) => item.id === mineId)
     if (mine === undefined) return unreadableHistory()
     try {
-      return { readable: true, speakers: await this.history.read(mine.path) }
+      // The project's folder AND every worktree its crew is in (#348). A
+      // provider files a transcript under the cwd the session ran in, so a
+      // mine folded from three worktrees has its history in three places, and
+      // reading only the project's would show an empty panel for a mine that
+      // has been worked in all day.
+      return { readable: true, speakers: await this.history.readAcross(this.mineFoldersOf(mine)) }
     } catch (error) {
       console.warn(`[runtime] Failed to read the history of ${mineId}`, error)
       return unreadableHistory()
@@ -3116,8 +3311,43 @@ export class AgentRuntime {
    * from an id — so a caller has one honest way to refuse a request naming a
    * mine that is not there.
    */
-  mineFolderOf(mineId: string): string | undefined {
-    return this.mines.find((item) => item.id === mineId)?.path
+  mineFolderOf(mineId: string, dwarfId?: string): string | undefined {
+    const mine = this.mines.find((item) => item.id === mineId)
+    if (mine === undefined) return undefined
+    // The DWARF's own folder when the click came from one (#348): a mine folded
+    // from several worktrees has a crew spread over several folders, and an
+    // activity line's relative path is relative to the session's cwd, which is
+    // the worktree — resolving it against the project's folder would refuse a
+    // file that is there, or open the main tree's copy of one that differs.
+    //
+    // Resolved against the board like the mine itself, and only within THAT
+    // mine: a dwarf id naming a session in another project answers with the
+    // mine's own folder rather than reaching into somebody else's.
+    if (dwarfId === undefined) return mine.path
+    const dwarf = mine.dwarfs.find((item) => item.id === dwarfId)
+    return dwarf === undefined ? mine.path : this.workplaceOf(dwarf, mine)
+  }
+
+  /**
+   * Every folder one mine's work actually happens in (#348): the project's own,
+   * plus each distinct worktree its crew is in.
+   *
+   * The project's folder is always first and always present, even for a mine
+   * whose whole crew is in worktrees — sessions come and go, and the project's
+   * own transcripts are the ones that outlive them.
+   */
+  private mineFoldersOf(mine: Mine): string[] {
+    const folders = [mine.path]
+    const seen = new Set([normalizePathKey(mine.path, this.osFamily)])
+    for (const dwarf of mine.dwarfs) {
+      const path = dwarf.workplace?.path
+      if (path === undefined) continue
+      const key = normalizePathKey(path, this.osFamily)
+      if (seen.has(key)) continue
+      seen.add(key)
+      folders.push(path)
+    }
+    return folders
   }
 
   async activateDwarf(dwarfId: string): Promise<DwarfActivation> {

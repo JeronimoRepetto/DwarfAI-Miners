@@ -646,7 +646,15 @@ async function openPath(target: string): Promise<void> {
   if (currentMine.value === undefined) return
   error.value = null
   try {
-    const result = await window.api.openMinePath({ mineId: currentMine.value.id, target })
+    // The dwarf travels with the click (#348). A mine folded from several
+    // worktrees has a crew in several folders, and a relative path on this
+    // dwarf's activity line is relative to ITS session's cwd — main reads that
+    // off the board; this window still names no folder.
+    const result = await window.api.openMinePath({
+      mineId: currentMine.value.id,
+      target,
+      ...(selectedDwarf.value === undefined ? {} : { dwarfId: selectedDwarf.value.id })
+    })
     if (!result.opened) error.value = result.reason
   } catch {
     error.value = 'That file could not be opened.'

@@ -544,11 +544,13 @@ const api: DwarfAiMinersApi = {
   getMineHistory: (mineId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getMineHistory, typeof mineId === 'string' ? mineId : ''),
   // Same discipline as every other request channel: rebuilt field by field,
-  // so a caller cannot attach anything beyond a mine id and a target string.
+  // so a caller cannot attach anything beyond a mine id, a target string and
+  // the dwarf the click came from (#348) — still never a folder.
   openMinePath: (request) =>
     ipcRenderer.invoke(IPC_CHANNELS.openMinePath, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
-      target: typeof request?.target === 'string' ? request.target : ''
+      target: typeof request?.target === 'string' ? request.target : '',
+      ...(typeof request?.dwarfId === 'string' ? { dwarfId: request.dwarfId } : {})
     }),
   // Same discipline again, on a channel that carries one value: a non-string
   // address crosses as '', which main refuses like any other non-address. The

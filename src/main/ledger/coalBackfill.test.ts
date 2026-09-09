@@ -420,3 +420,60 @@ describe('runCoalBackfill — failure tolerance', () => {
     expect(h.credits).toEqual([])
   })
 })
+
+/**
+ * Historical coal is credited by transcript cwd and live ore by mine id, so
+ * both have to agree about which folder is the project (#348). A worktree's
+ * history that landed under its own mine id would never appear beside the live
+ * mine and would silently vanish from the per-mine view.
+ */
+describe('runCoalBackfill — worktrees (#348)', () => {
+  const ROOT = 'C:\\Code\\Anvil'
+  const FORGE = 'C:\\Code\\Anvil-worktrees\\forge'
+
+  function withRepo(h: Harness): void {
+    h.fs.addFile('C:/Code/Anvil/.git/HEAD', 'ref: refs/heads/main\n')
+    h.fs.addFile(
+      'C:/Code/Anvil-worktrees/forge/.git',
+      'gitdir: C:/Code/Anvil/.git/worktrees/forge\n'
+    )
+    h.fs.addFile('C:/Code/Anvil/.git/worktrees/forge/commondir', '../..\n')
+    h.fs.addFile('C:/Code/Anvil/.git/worktrees/forge/HEAD', 'ref: refs/heads/feat/forge\n')
+  }
+
+  it('credits a worktree s history to the project, under the live mine s id', async () => {
+    const h = harness()
+    withRepo(h)
+    h.fs.addFile(
+      `${CLAUDE_ROOT}/projects/C--Code-Anvil-worktrees-forge/sess-1.jsonl`,
+      claudeTranscript(FORGE, 4_000),
+      LONG_AGO
+    )
+
+    await h.run()
+
+    expect(creditedTo(h, ROOT)).toBe(4_000)
+    expect(creditedTo(h, FORGE)).toBe(0)
+  })
+
+  it('sums a project s own history and its worktrees into one mine', async () => {
+    const h = harness()
+    withRepo(h)
+    h.fs.addFile(
+      `${CLAUDE_ROOT}/projects/C--Code-Anvil/sess-1.jsonl`,
+      claudeTranscript(ROOT, 1_000),
+      LONG_AGO
+    )
+    h.fs.addFile(
+      `${CLAUDE_ROOT}/projects/C--Code-Anvil-worktrees-forge/sess-2.jsonl`,
+      claudeTranscript(FORGE, 2_500),
+      LONG_AGO
+    )
+
+    await h.run()
+
+    // One mine, one count. Nothing was converted and nothing crossed a
+    // material; only which mine the tokens belong to changed.
+    expect(creditedTo(h, ROOT)).toBe(3_500)
+  })
+})

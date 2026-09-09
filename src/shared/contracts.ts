@@ -828,6 +828,31 @@ export interface DwarfPermissionRequest {
  */
 export type DwarfPermissionDecision = 'allow' | 'deny'
 
+/**
+ * Where a dwarf actually works, when that is not the mine's own folder (#348).
+ *
+ * Every worktree of one repository folds into the main working tree's mine —
+ * the repository is the project, a worktree is a place it is being worked on —
+ * so a mine's crew can be spread over several folders. This is the one that
+ * belongs to THIS dwarf: its session's own cwd, which is where its files are,
+ * where its transcript's `cwd` points, and what a relative path on an activity
+ * line resolves against (#279).
+ *
+ * `path` is the session's cwd, not the worktree's top folder: a session started
+ * in a subfolder resolves its relative paths against that subfolder, and
+ * substituting the folder above it would open the wrong file.
+ *
+ * `branch` is the branch the worktree has checked out, read from its own HEAD.
+ * ABSENT MEANS DETACHED, never "no branch was looked for" — a detached worktree
+ * has a commit where a branch would be, and the wire deliberately does not
+ * carry it: a short sha is not a name a person navigates by, so the panel says
+ * the folder instead.
+ */
+export interface DwarfWorkplace {
+  path: string
+  branch?: string
+}
+
 export interface Dwarf {
   id: string
   /**
@@ -892,6 +917,15 @@ export interface Dwarf {
   parentId?: string
   lastMessage?: string
   sessionId: string
+  /**
+   * Which worktree of the mine's repository this dwarf is in (#348).
+   *
+   * ABSENT MEANS THE MINE'S OWN FOLDER, like every other optional fact on this
+   * wire: only a dwarf main can positively say is working somewhere else
+   * carries one. Anything resolving a path FOR A DWARF reads this first and
+   * falls back to `Mine.path` — see DwarfWorkplace.
+   */
+  workplace?: DwarfWorkplace
   pid?: number
   startedAt?: number
   /**
@@ -1500,6 +1534,19 @@ export interface MineHistoryResult {
 export interface MineOpenPathRequest {
   mineId: string
   target: string
+  /**
+   * The dwarf whose activity line was clicked, when the panel knows one (#348).
+   *
+   * Not a folder, and that distinction is the whole point of this channel: main
+   * resolves the id against the board and reads THAT dwarf's `workplace`, so a
+   * mine folded from several worktrees opens the file in the folder the session
+   * is actually running in. A renderer naming a folder would be a renderer
+   * naming any folder.
+   *
+   * Absent, or naming a dwarf this mine has not got, falls back to the mine's
+   * own folder — which is what every caller did before worktrees folded.
+   */
+  dwarfId?: string
 }
 
 /**

@@ -389,9 +389,13 @@ describe('opening an activity line’s path', () => {
     await openLine(wrapper)
     await flushPromises()
 
+    // The dwarf travels with it as of #348, so main can resolve the path
+    // against THIS dwarf's worktree when the mine is folded from several. Still
+    // no folder: an id the board can check, exactly like the mine's.
     expect(api.openMinePath).toHaveBeenCalledWith({
       mineId: MINE.id,
-      target: 'src/main/index.ts'
+      target: 'src/main/index.ts',
+      dwarfId: WITH_EDIT_ACTIVITY.id
     })
   })
 

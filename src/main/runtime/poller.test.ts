@@ -150,6 +150,48 @@ describe('Poller', () => {
       poller.stop()
     }
   })
+
+  /**
+   * #348. The fold is the poller's because this is the one seam where a cwd
+   * becomes a mine path, and it runs BEFORE the aggregation rather than after:
+   * two worktrees have to arrive at `aggregateMines` under one cwd for one mine
+   * to come out.
+   */
+  it('folds the scanned snapshots before aggregating them, when a fold is wired', async () => {
+    const poller = new Poller({
+      providers: [
+        fakeProvider('claude', async () => [snapshotAt('C:\\Code\\wt-a')]),
+        fakeProvider('codex', async () => [snapshotAt('C:\\Code\\wt-b')])
+      ],
+      intervalMs: 1000,
+      tierOf: () => 'bronze',
+      foldWorktrees: async (snapshots) =>
+        snapshots.map((snapshot) => ({ ...snapshot, cwd: 'C:\\Code\\Anvil' })),
+      onUpdate: (mines) => {
+        updates.push(mines)
+      }
+    })
+    await poller.tick()
+    expect(updates[0]!.map((mine) => mine.path)).toEqual(['C:\\Code\\Anvil'])
+  })
+
+  it('publishes the raw snapshots when a fold refuses, rather than dropping the poll', async () => {
+    const poller = new Poller({
+      providers: [fakeProvider('claude', async () => [snapshotAt('C:\\Code\\wt-a')])],
+      intervalMs: 1000,
+      tierOf: () => 'bronze',
+      foldWorktrees: async () => {
+        throw new Error('the disk said no')
+      },
+      onUpdate: (mines) => {
+        updates.push(mines)
+      },
+      logError: (_message, error) => errors.push(error)
+    })
+    await poller.tick()
+    expect(updates[0]!.map((mine) => mine.path)).toEqual(['C:\\Code\\wt-a'])
+    expect(errors).toHaveLength(1)
+  })
 })
 
 /**

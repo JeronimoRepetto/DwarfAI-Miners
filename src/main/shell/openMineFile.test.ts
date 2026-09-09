@@ -162,6 +162,29 @@ describe('parseMineOpenPathRequest', () => {
   ])('refuses %s', (_label, payload) => {
     expect(parseMineOpenPathRequest(payload)).toBeNull()
   })
+
+  /**
+   * #348. A mine folded from several worktrees has a crew in several folders,
+   * so the click says which dwarf it came from and main reads that dwarf's
+   * worktree off the board. Still an id, never a folder.
+   */
+  it('carries the dwarf the click came from, when the panel named one', () => {
+    expect(
+      parseMineOpenPathRequest({ mineId: 'mine:1', target: 'src/index.ts', dwarfId: 'claude:s1' })
+    ).toEqual({ mineId: 'mine:1', target: 'src/index.ts', dwarfId: 'claude:s1' })
+  })
+
+  it.each([
+    ['absent', {}],
+    ['empty', { dwarfId: '' }],
+    ['not a string', { dwarfId: 7 }]
+  ])('reads the request without a dwarf when the id is %s', (_label, extra) => {
+    // Dropped rather than refused: the request still means something without
+    // one, and it resolves against the mine's own folder exactly as before.
+    expect(
+      parseMineOpenPathRequest({ mineId: 'mine:1', target: 'src/index.ts', ...extra })
+    ).toEqual({ mineId: 'mine:1', target: 'src/index.ts' })
+  })
 })
 
 /** Reason constants exist to prove a caller who imports one gets a real sentence. */

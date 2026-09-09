@@ -995,7 +995,10 @@ async function init(): Promise<void> {
       const request = parseMineOpenPathRequest(payload)
       const outside: MineOpenPathResult = { opened: false, reason: MINE_PATH_OUTSIDE_REASON }
       if (request === null) return outside
-      const mineFolder = runtime?.mineFolderOf(request.mineId)
+      // The dwarf's own worktree when the click named one (#348), the mine's
+      // folder otherwise — resolved inside the runtime against the board, so
+      // this boundary still never takes a folder from the renderer.
+      const mineFolder = runtime?.mineFolderOf(request.mineId, request.dwarfId)
       if (mineFolder === undefined) return outside
       const verdict = await verifyMinePath(
         mineFolder,

@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
 import { mineIdForPath } from '../domain/aggregate'
+import { createProjectRootResolver, type ProjectRootResolver } from '../projects/worktree'
 import { currentPlatform, type Platform } from '../platform/platform'
 import { claudeCoalFromTail, codexCoalFromRollout } from './coalScan'
 import { writeFileAtomic, type LedgerFsLike } from './ledgerStore'
@@ -116,6 +117,22 @@ export interface CoalBackfillOptions {
   /** Pays coal into the vault. Called once per project per unit. */
   credit: (mineId: string, tokens: number) => void
   now: () => number
+  /**
+   * Which project a transcript's own `cwd` belongs to (#348) — the SAME
+   * resolver the live poll folds worktrees with.
+   *
+   * It has to be the same one, and not because sharing a function is tidy:
+   * historical coal is credited by transcript cwd and live ore by mine id, so
+   * if the two disagreed about which folder is the project, a worktree's
+   * history would land under a mine id that never appears beside the live one
+   * and would silently vanish from the per-mine view — exactly the drift
+   * `mineIdForPath`'s own doc comment exists to prevent.
+   *
+   * Defaults to a resolver over this scan's own `fs`, so a build that wires
+   * nothing still folds; a fixture whose transcripts sit in folders with no
+   * `.git` anywhere resolves every cwd to itself and behaves as it always did.
+   */
+  projectRoots?: ProjectRootResolver
   platform?: Platform
   maxFiles?: number
   maxDurationMs?: number
@@ -245,7 +262,8 @@ async function scanUnit(
   unit: ScanUnit,
   installedAt: number,
   maxFilesPerDir: number,
-  platform: Platform
+  platform: Platform,
+  projectRoots: ProjectRootResolver
 ): Promise<{ credits: Map<string, number>; filesRead: number }> {
   const credits = new Map<string, number>()
   let filesRead = 0
@@ -263,7 +281,11 @@ async function scanUnit(
     try {
       const coal = await readCoal(options.fs, unit, filePath, installedAt)
       if (coal === null) continue
-      const mineId = mineIdForPath(coal.cwd, platform)
+      // A worktree's history belongs to the project, exactly as its live work
+      // does (#348). Only WHICH mine the count belongs to changes here; the
+      // count itself is untouched, and nothing is converted or summed across
+      // materials.
+      const mineId = mineIdForPath((await projectRoots.resolve(coal.cwd)).root, platform)
       credits.set(mineId, (credits.get(mineId) ?? 0) + coal.tokens)
     } catch (error) {
       // One unreadable transcript must not cost the whole directory.
@@ -286,6 +308,11 @@ export async function runCoalBackfill(options: CoalBackfillOptions): Promise<Coa
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS
   const maxFilesPerDir = options.maxFilesPerDir ?? DEFAULT_MAX_FILES_PER_DIR
+  // One resolver for the whole run, so a project directory holding a hundred
+  // transcripts of one worktree costs one resolution rather than a hundred.
+  const projectRoots =
+    options.projectRoots ??
+    createProjectRootResolver({ fs: options.fs, platform, now: options.now })
 
   const marker = await loadMarker(options.markerFs, options.markerPath)
   if (marker?.done === true) {
@@ -320,7 +347,14 @@ export async function runCoalBackfill(options: CoalBackfillOptions): Promise<Coa
       break
     }
 
-    const scanned = await scanUnit(options, unit, installedAt, maxFilesPerDir, platform)
+    const scanned = await scanUnit(
+      options,
+      unit,
+      installedAt,
+      maxFilesPerDir,
+      platform,
+      projectRoots
+    )
     filesRead += scanned.filesRead
     for (const [mineId, tokens] of scanned.credits) {
       options.credit(mineId, tokens)
