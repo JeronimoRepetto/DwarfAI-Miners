@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { CLOSE_ICON_SRC, PORTRAIT_SRC, USER_PORTRAIT_SRC, maskImageValue } from '../../lib/art'
+import { groupActivity } from '../../lib/message/activityGroup'
 import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   HISTORY_SCOPE_NOTE,
@@ -98,6 +99,38 @@ watch(selectedId, () => void showLatest())
 function choose(id: string): void {
   chosenId.value = id
 }
+
+/*
+ * The rows as they are DRAWN: every run of consecutive tool calls folded into
+ * one disclosure row, the same rule the interactive MessagePanel draws them
+ * with (#294) — both panels draw `PanelMessage` rows, so a run has to read the
+ * same in a tab as it does live.
+ *
+ * `ended: true` always, and it is a fact rather than a default: a tab is a
+ * RECORD of what was said in this mine, so no run in it is still growing and
+ * none of them may say "Working...".
+ */
+const entries = computed(() => groupActivity(rows.value, { ended: true }))
+
+/*
+ * Which runs this reader has unfolded, by group key — per run and per MOUNT,
+ * like the message panel's. Not per TAB on purpose: a key belongs to one
+ * speaker's row, so switching tabs and coming back finds the same run open,
+ * which is the reader's own last decision about it rather than a reset.
+ */
+const openRuns = ref<Record<string, true>>({})
+
+function isRunOpen(key: string): boolean {
+  return openRuns.value[key] === true
+}
+
+function toggleRun(key: string): void {
+  if (isRunOpen(key)) {
+    delete openRuns.value[key]
+    return
+  }
+  openRuns.value[key] = true
+}
 </script>
 
 <template>
@@ -161,48 +194,76 @@ function choose(id: string): void {
       :aria-label="HISTORY_SCOPE_NOTE"
     >
       <p v-if="note !== null" class="history-empty">{{ note }}</p>
-      <template v-for="row in rows" :key="row.key">
+      <template v-for="entry in entries" :key="entry.key">
         <!--
-          One tool call, same rule as the interactive MessagePanel (#240): a
-          muted meta line with no icon, no bubble and no portrait, still one
-          row of the tab's own message count.
+          AMENDED for #294 (was: one line per tool call, always drawn). A run of
+          consecutive tool calls is one closed disclosure row, exactly as the
+          interactive MessagePanel draws it — the same wire rows, so the same
+          shape. A tab's label is always the counted one: nothing in a record
+          is still working.
         -->
-        <!--
-          AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
-          FILE, so it draws as a button styled as text rather than an anchor
-          — `run` and `search` stay the plain paragraph #240 drew. A refusal
-          main gave for THIS row (matched by key) replaces the title rather
-          than the display text, since this panel has no status line of its
-          own to show it on.
-        -->
-        <button
-          v-if="row.activity && isOpenablePath(row.activity)"
-          type="button"
-          class="activity-line is-openable"
-          :data-row-key="row.key"
-          :title="pathRefusal?.key === row.key ? pathRefusal.reason : row.text"
-          @click="emit('open-path', { key: row.key, target: row.activity.target })"
+        <template v-if="entry.kind === 'activity'">
+          <button
+            type="button"
+            class="activity-disclosure"
+            :class="{ 'is-open': isRunOpen(entry.key) }"
+            :aria-expanded="isRunOpen(entry.key)"
+            :title="entry.label"
+            @click="toggleRun(entry.key)"
+          >
+            <span class="disclosure-arrow" aria-hidden="true"></span>
+            <span class="disclosure-label">{{ entry.label }}</span>
+          </button>
+          <!--
+            One tool call, same rule as the interactive MessagePanel (#240): a
+            muted meta line with no icon, no bubble and no portrait, still one
+            row of the tab's own message count.
+          -->
+          <!--
+            AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
+            FILE, so it draws as a button styled as text rather than an anchor
+            — `run` and `search` stay the plain paragraph #240 drew. A refusal
+            main gave for THIS row (matched by key) replaces the title rather
+            than the display text, since this panel has no status line of its
+            own to show it on.
+          -->
+          <template v-if="isRunOpen(entry.key)">
+            <template v-for="line in entry.rows" :key="line.key">
+              <button
+                v-if="line.activity && isOpenablePath(line.activity)"
+                type="button"
+                class="activity-line is-openable"
+                :data-row-key="line.key"
+                :title="pathRefusal?.key === line.key ? pathRefusal.reason : line.text"
+                @click="emit('open-path', { key: line.key, target: line.activity.target })"
+              >
+                {{ line.text }}
+              </button>
+              <p v-else class="activity-line" :title="line.text">{{ line.text }}</p>
+            </template>
+          </template>
+        </template>
+        <article
+          v-else
+          class="message"
+          :class="entry.message.from === 'agent' ? 'is-agent' : 'is-user'"
         >
-          {{ row.text }}
-        </button>
-        <p v-else-if="row.activity" class="activity-line" :title="row.text">{{ row.text }}</p>
-        <article v-else class="message" :class="row.from === 'agent' ? 'is-agent' : 'is-user'">
           <!--
             The message panel's own portrait treatment (#159), and its own
             reading of whose face this is (#175): a prompt another agent issued
             wears that agent's face, everything else the speaker's own.
           -->
           <img
-            v-if="row.from === 'agent'"
+            v-if="entry.message.from === 'agent'"
             class="portrait"
-            :src="PORTRAIT_SRC[row.author.role]"
-            :alt="`${row.author.name}, ${row.author.role}`"
-            :title="`${row.author.name}, ${row.author.role}`"
+            :src="PORTRAIT_SRC[entry.message.author.role]"
+            :alt="`${entry.message.author.name}, ${entry.message.author.role}`"
+            :title="`${entry.message.author.name}, ${entry.message.author.role}`"
             draggable="false"
           />
-          <p class="bubble">{{ row.text }}</p>
+          <p class="bubble">{{ entry.message.text }}</p>
           <img
-            v-if="row.from === 'user'"
+            v-if="entry.message.from === 'user'"
             class="portrait"
             :src="USER_PORTRAIT_SRC"
             alt="You"
@@ -359,7 +420,8 @@ function choose(id: string): void {
  * the portrait's width and the row gap so it lines up with the BUBBLE rather
  * than with where a portrait would sit.
  */
-.activity-line {
+.activity-line,
+.activity-disclosure {
   flex: none;
   margin: 0;
   margin-left: calc(var(--size-portrait) + var(--space-nav-gap));
@@ -368,6 +430,48 @@ function choose(id: string): void {
   font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+ * The folded run (#294), the message panel's own treatment: the activity
+ * line's ink, size and bubble alignment, as a button styled as text, with the
+ * design's history-tab triangle for the state and no underline on hover —
+ * that one is spent on "this opens a file" (#279).
+ */
+.activity-disclosure {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+}
+.disclosure-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.disclosure-arrow {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentcolor;
+}
+.activity-disclosure.is-open .disclosure-arrow {
+  rotate: 90deg;
+}
+.activity-disclosure:hover,
+.activity-disclosure:focus-visible {
+  color: var(--color-cream);
+}
+.activity-disclosure:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 /*
  * `screens/mine.md`'s own amendment (#279): a button styled as text, not an

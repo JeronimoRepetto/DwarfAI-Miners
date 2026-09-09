@@ -368,10 +368,21 @@ describe('opening an activity line’s path', () => {
     ]
   }
 
+  /**
+   * #294 folded the run this line belongs to into one collapsed disclosure row,
+   * so reaching the line is a press first. The three tests below are AMENDED
+   * with that press and nothing else — what each claims about the relay is what
+   * it claimed before.
+   */
+  async function openLine(wrapper: VueWrapper): Promise<void> {
+    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.find('.activity-line').trigger('click')
+  }
+
   it('asks main with the current mine id and the exact target, not the display text', async () => {
     const { wrapper, api } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id)
 
-    await wrapper.find('.activity-line').trigger('click')
+    await openLine(wrapper)
     await flushPromises()
 
     expect(api.openMinePath).toHaveBeenCalledWith({
@@ -388,7 +399,7 @@ describe('opening an activity line’s path', () => {
       })
     })
 
-    await wrapper.find('.activity-line').trigger('click')
+    await openLine(wrapper)
     await flushPromises()
 
     expect(wrapper.find('.notice').text()).toBe("That path is outside this mine's folder.")
@@ -397,7 +408,7 @@ describe('opening an activity line’s path', () => {
   it('says nothing when the file opened successfully', async () => {
     const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id)
 
-    await wrapper.find('.activity-line').trigger('click')
+    await openLine(wrapper)
     await flushPromises()
 
     expect(wrapper.find('.notice').exists()).toBe(false)

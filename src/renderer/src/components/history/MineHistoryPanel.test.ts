@@ -165,6 +165,17 @@ describe('MineHistoryPanel transcript', () => {
 })
 
 /**
+ * #294 folded every run of consecutive activity lines into one collapsed
+ * disclosure row here too, so the lines the two blocks below are about are one
+ * press away rather than on screen from the start. Every test in them is
+ * AMENDED with this press and nothing else; the folding itself is pinned by
+ * #294's own block further down.
+ */
+async function openRun(wrapper: ReturnType<typeof panel>): Promise<void> {
+  await wrapper.find('.activity-disclosure').trigger('click')
+}
+
+/**
  * One line per tool call, same rule as the interactive MessagePanel (#240):
  * `screens/mine.md` draws it in both surfaces from the same wire shape, so a
  * call reads the same whichever tab shows it.
@@ -183,27 +194,31 @@ describe('MineHistoryPanel activity lines (#240)', () => {
     ]
   }
 
-  it('draws a tool call as its own muted line rather than a bubble', () => {
+  it('draws a tool call as its own muted line rather than a bubble', async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.exists()).toBe(true)
     expect(line.text()).toBe('Ran pnpm test')
     expect(line.attributes('title')).toBe('Ran pnpm test')
   })
 
-  it('draws no portrait for a tool-call line', () => {
+  it('draws no portrait for a tool-call line', async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').find('.portrait').exists()).toBe(false)
   })
 
-  it('counts the tool-call line as one row, alongside the ordinary bubbles', () => {
+  it('counts the tool-call line as one row, alongside the ordinary bubbles', async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    await openRun(wrapper)
     expect(wrapper.findAll('.bubble')).toHaveLength(2)
     expect(wrapper.findAll('.activity-line')).toHaveLength(1)
   })
 
-  it('draws a run line as a plain paragraph rather than a clickable control', () => {
+  it('draws a run line as a plain paragraph rather than a clickable control', async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_ACTIVITY] } })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').element.tagName).toBe('P')
   })
 })
@@ -229,8 +244,9 @@ describe('MineHistoryPanel path-opening lines (#279)', () => {
     ]
   }
 
-  it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', () => {
+  it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_EDIT] } })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.element.tagName).toBe('BUTTON')
     expect(line.attributes('type')).toBe('button')
@@ -239,31 +255,108 @@ describe('MineHistoryPanel path-opening lines (#279)', () => {
 
   it("emits the row's key and the activity's own target on click, not the display text", async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_EDIT] } })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     await line.trigger('click')
     const [payload] = wrapper.emitted('open-path')?.[0] as [{ key: string; target: string }]
     expect(payload.target).toBe('src/main/index.ts')
   })
 
-  it("shows main's refusal as the row's own title, in place of the display text", () => {
+  it("shows main's refusal as the row's own title, in place of the display text", async () => {
     const wrapper = panel({ history: { readable: true, speakers: [OLDER, WITH_EDIT] } })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     const key = line.attributes('data-row-key')
     const withRefusal = panel({
       history: { readable: true, speakers: [OLDER, WITH_EDIT] },
       pathRefusal: { key, reason: 'That file no longer exists.' }
     })
+    await openRun(withRefusal)
     expect(withRefusal.find('.activity-line').attributes('title')).toBe(
       'That file no longer exists.'
     )
   })
 
-  it("leaves an unrelated row's title untouched by another row's refusal", () => {
+  it("leaves an unrelated row's title untouched by another row's refusal", async () => {
     const wrapper = panel({
       history: { readable: true, speakers: [OLDER, WITH_EDIT] },
       pathRefusal: { key: 'not-this-row', reason: 'That file no longer exists.' }
     })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').attributes('title')).toBe('Edited src/main/index.ts')
+  })
+})
+
+/**
+ * The same folding the interactive MessagePanel does (#294): both panels draw
+ * `PanelMessage` rows, so a run of tool calls has to read the same in the
+ * history tab as it does live. One difference, and it is a fact rather than a
+ * style: a tab is a RECORD, so no run in it is still growing and none of them
+ * ever says "Working...".
+ */
+describe('MineHistoryPanel activity disclosure (#294)', () => {
+  const WITH_RUN: MineHistorySpeaker = {
+    ...NEWEST,
+    messages: [
+      ...NEWEST.messages,
+      {
+        role: 'assistant',
+        text: 'Read src/shared/contracts.ts',
+        timestamp: '2026-09-04T09:06:00Z',
+        activity: { kind: 'read', target: 'src/shared/contracts.ts' }
+      },
+      {
+        role: 'assistant',
+        text: 'Edited src/main/index.ts',
+        timestamp: '2026-09-04T09:07:00Z',
+        activity: { kind: 'edit', target: 'src/main/index.ts' }
+      }
+    ]
+  }
+
+  function withRun(props: Record<string, unknown> = {}) {
+    return panel({ history: { readable: true, speakers: [OLDER, WITH_RUN] }, ...props })
+  }
+
+  it('folds the run into one closed disclosure row, counted and named by its last call', () => {
+    const wrapper = withRun()
+    const row = wrapper.find('.activity-disclosure')
+    expect(wrapper.findAll('.activity-line')).toHaveLength(0)
+    expect(row.text()).toBe('2 steps — Edited src/main/index.ts')
+    expect(row.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('never says Working... in a tab, because a record has nothing still running', () => {
+    expect(withRun().find('.activity-disclosure').text()).not.toContain('Working')
+  })
+
+  it('opens in place to the run’s own lines, in order, on a press', async () => {
+    const wrapper = withRun()
+    await wrapper.find('.activity-disclosure').trigger('click')
+
+    expect(wrapper.findAll('.activity-line').map((line) => line.text())).toEqual([
+      'Read src/shared/contracts.ts',
+      'Edited src/main/index.ts'
+    ])
+    expect(wrapper.find('.activity-disclosure').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('collapses again on a second press', async () => {
+    const wrapper = withRun()
+    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.find('.activity-disclosure').trigger('click')
+    expect(wrapper.findAll('.activity-line')).toHaveLength(0)
+  })
+
+  it("still emits an opened line's own row key and target from inside an expanded run", async () => {
+    const wrapper = withRun()
+    await wrapper.find('.activity-disclosure').trigger('click')
+    const line = wrapper.findAll('.activity-line.is-openable')[1]!
+    await line.trigger('click')
+
+    const [payload] = wrapper.emitted('open-path')?.[0] as [{ key: string; target: string }]
+    expect(payload.target).toBe('src/main/index.ts')
+    expect(payload.key).toBe(line.attributes('data-row-key'))
   })
 })
 

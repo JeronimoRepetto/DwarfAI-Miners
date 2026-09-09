@@ -16,7 +16,13 @@ import {
   refusalLine
 } from '../../lib/delivery/actionBar'
 import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
-import { authorOf, conversationOf, latestText } from '../../lib/message/conversation'
+import { groupActivity } from '../../lib/message/activityGroup'
+import {
+  authorOf,
+  conversationEnded,
+  conversationOf,
+  latestText
+} from '../../lib/message/conversation'
 import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
@@ -165,6 +171,44 @@ const rows = computed(() =>
     author: authorOf(message, props.dwarf)
   }))
 )
+
+/*
+ * The rows as they are DRAWN: every run of consecutive tool calls folded into
+ * one disclosure row under the bubble above it (#294). The rule is
+ * lib/message/activityGroup's, like every other decision about what the panel
+ * shows; whether the trailing run is still growing is the one fact this
+ * component has to supply, and it comes off the board's own reading of the
+ * session rather than out of a timer.
+ *
+ * Deliberately independent of which runs are OPEN: the two stick-to-bottom
+ * watchers below watch `rows`, so a reader unfolding a run changes nothing
+ * they watch and the list stays exactly where they left it (#195, #243).
+ */
+const entries = computed(() => groupActivity(rows.value, { ended: conversationEnded(props.dwarf) }))
+
+/*
+ * Which runs this reader has unfolded, by group key — per group, and per MOUNT
+ * for the reason the opening height is taken once: closing the panel and
+ * opening it again is a fresh mount and therefore a fresh reading, and a run
+ * left open on a dwarf nobody is looking at is not state worth keeping.
+ *
+ * Keyed rather than indexed so a new run cannot inherit an older one's state:
+ * a group's key is its first line's, which is the one thing about a run that
+ * does not move as the run grows.
+ */
+const openRuns = ref<Record<string, true>>({})
+
+function isRunOpen(key: string): boolean {
+  return openRuns.value[key] === true
+}
+
+function toggleRun(key: string): void {
+  if (isRunOpen(key)) {
+    delete openRuns.value[key]
+    return
+  }
+  openRuns.value[key] = true
+}
 
 /**
  * The success lines say whether the action was merely handed over or actually
@@ -388,32 +432,63 @@ function onKick(): void {
       :aria-label="conversation.note"
     >
       <p v-if="conversation.messages.length === 0" class="panel-empty">{{ conversation.note }}</p>
-      <template v-for="entry in rows" :key="entry.key">
+      <template v-for="entry in entries" :key="entry.key">
         <!--
-          One tool call, drawn as a line rather than a turn (#240): the design's
-          own summary rule spoken in the past tense, in the panel's muted meta
-          ink, with no icon, no bubble surface and no portrait — see
-          `screens/mine.md`'s activity-line amendment. Still one row in `rows`,
-          so it is still one message in the panel's window.
+          AMENDED for #294 (was: one line per tool call, always drawn). A run of
+          consecutive tool calls is now ONE disclosure row under the bubble it
+          follows, closed on arrival — an agent acts far more often than it
+          speaks, and thirty lines between two replies leave no conversation to
+          read. Nothing is hidden: the same lines are one press away, and the
+          run is still the same rows in the panel's window.
+
+          The label is lib/message/activityGroup's; the triangle is the
+          design's own history-tab affordance reused rather than an icon
+          invented for it (`screens/mine.md`'s #294 amendment).
         -->
-        <!--
-          AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
-          FILE, so it draws as a button styled as text rather than an anchor
-          (`screens/mine.md`'s own amendment: keyboard reachable, same ink,
-          underline only on hover/focus) — `run` and `search` stay the plain
-          paragraph #240 drew.
-        -->
-        <button
-          v-if="entry.activity && isOpenablePath(entry.activity)"
-          type="button"
-          class="activity-line is-openable"
-          :title="entry.text"
-          @click="emit('open-path', entry.activity.target)"
+        <template v-if="entry.kind === 'activity'">
+          <button
+            type="button"
+            class="activity-disclosure"
+            :class="{ 'is-open': isRunOpen(entry.key) }"
+            :aria-expanded="isRunOpen(entry.key)"
+            :title="entry.label"
+            @click="toggleRun(entry.key)"
+          >
+            <span class="disclosure-arrow" aria-hidden="true"></span>
+            <span class="disclosure-label">{{ entry.label }}</span>
+          </button>
+          <!--
+            One tool call, drawn as a line rather than a turn (#240): the
+            design's own summary rule spoken in the past tense, in the panel's
+            muted meta ink, with no icon, no bubble surface and no portrait.
+          -->
+          <!--
+            AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
+            FILE, so it draws as a button styled as text rather than an anchor
+            (`screens/mine.md`'s own amendment: keyboard reachable, same ink,
+            underline only on hover/focus) — `run` and `search` stay the plain
+            paragraph #240 drew.
+          -->
+          <template v-if="isRunOpen(entry.key)">
+            <template v-for="line in entry.rows" :key="line.key">
+              <button
+                v-if="line.activity && isOpenablePath(line.activity)"
+                type="button"
+                class="activity-line is-openable"
+                :title="line.text"
+                @click="emit('open-path', line.activity.target)"
+              >
+                {{ line.text }}
+              </button>
+              <p v-else class="activity-line" :title="line.text">{{ line.text }}</p>
+            </template>
+          </template>
+        </template>
+        <article
+          v-else
+          class="message"
+          :class="entry.message.from === 'agent' ? 'is-agent' : 'is-user'"
         >
-          {{ entry.text }}
-        </button>
-        <p v-else-if="entry.activity" class="activity-line" :title="entry.text">{{ entry.text }}</p>
-        <article v-else class="message" :class="entry.from === 'agent' ? 'is-agent' : 'is-user'">
           <!--
             Whose face this is, from lib/message/conversation (#175). A prompt an
             agent issued is drawn as that agent — its rank picks the portrait and
@@ -422,16 +497,16 @@ function onKick(): void {
             the one thing `ui-rebuild` refuses.
           -->
           <img
-            v-if="entry.from === 'agent'"
+            v-if="entry.message.from === 'agent'"
             class="portrait"
-            :src="PORTRAIT_SRC[entry.author.role]"
-            :alt="`${entry.author.name}, ${entry.author.role}`"
-            :title="`${entry.author.name}, ${entry.author.role}`"
+            :src="PORTRAIT_SRC[entry.message.author.role]"
+            :alt="`${entry.message.author.name}, ${entry.message.author.role}`"
+            :title="`${entry.message.author.name}, ${entry.message.author.role}`"
             draggable="false"
           />
-          <p class="bubble">{{ entry.text }}</p>
+          <p class="bubble">{{ entry.message.text }}</p>
           <img
-            v-if="entry.from === 'user'"
+            v-if="entry.message.from === 'user'"
             class="portrait"
             :src="USER_PORTRAIT_SRC"
             alt="You"
@@ -728,7 +803,8 @@ function onKick(): void {
  * would sit — there is no portrait beside it to align with instead. Truncated
  * to one line with an ellipsis at the panel's width; the full text is `title`.
  */
-.activity-line {
+.activity-line,
+.activity-disclosure {
   flex: none;
   margin: 0;
   margin-left: calc(var(--size-portrait) + var(--space-nav-gap));
@@ -737,6 +813,53 @@ function onKick(): void {
   font-size: var(--text-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+ * The folded run (#294): the activity line's own ink, size and bubble
+ * alignment — it stands where the lines it replaces stood — as a button styled
+ * as text, like #279's openable line beside it.
+ *
+ * NOT underlined on hover, deliberately: #279 spends that on "this one opens a
+ * file", and a row that only unfolds must not borrow the promise. The triangle
+ * is the design's own history-tab affordance at the panel's own scale, and the
+ * ink brightening to the panel's primary cream is the hover tell —
+ * `screens/mine.md`'s #294 amendment, since the source draws no disclosure.
+ */
+.activity-disclosure {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+}
+.disclosure-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.disclosure-arrow {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentcolor;
+}
+.activity-disclosure.is-open .disclosure-arrow {
+  rotate: 90deg;
+}
+.activity-disclosure:hover,
+.activity-disclosure:focus-visible {
+  color: var(--color-cream);
+}
+.activity-disclosure:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 /*
  * `screens/mine.md`'s own amendment (#279): a button styled as text, not an
