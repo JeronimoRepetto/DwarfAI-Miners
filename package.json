@@ -14,6 +14,7 @@
     "directories": {
       "output": "release"
     },
+    "afterPack": "scripts/pruneSdkRuntimes.mjs",
     "files": [
       "out/**/*",
       "package.json"
