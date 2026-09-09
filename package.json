@@ -101,6 +101,12 @@
     "markdown-it": "^15.0.1",
     "vue": "3.5.42"
   },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.258",
+    "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.258",
+    "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.258",
+    "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.258"
+  },
   "devDependencies": {
     "@types/node": "26.4.0",
     "@vitejs/plugin-vue": "6.0.8",
