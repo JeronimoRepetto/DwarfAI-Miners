@@ -584,59 +584,71 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
 })
 
 /*
- * Issue #308. A dwarf whose two halves of the matrix disagree — the relay for
- * a message, the console for an interrupt — is the first one where the SEND
- * hint and the KICK hint must describe two different mechanisms for one
- * session. The copy is asserted rather than only the wiring, because a hint
- * that still said "typed straight into the session console" would be telling
- * somebody their message is about to take over their screen when it is not.
+ * AMENDED for #319 (was, under #308: 'the copy for a session that relays
+ * messages and interrupts at its console'). That block was built around a dwarf
+ * whose two halves disagreed — `sendText: 'claude-relay'`, `cancel: 'terminal'`
+ * — and asserted the send hint was the relay's ('describes the send as a
+ * hand-over…') and the console hint warned it was the FALLBACK that TYPES
+ * ('warns that the console tier focuses the window and types into it').
+ *
+ * #319 pastes the message at the console again, so that asymmetric dwarf no
+ * longer exists: a named console session is 'terminal' for both halves, and its
+ * send hint describes the PASTE, not the relay. The relay's own hint is still
+ * asserted, on the headless session where it is now shown.
+ *
+ * This block is 4 tests where #308's was 5 (net -1 for the file). One removed:
+ * 'keeps that warning on the composer of a session whose only channel it is'
+ * asserted a terminal-only dwarf's composer hint is CHANNEL_HINT.terminal —
+ * exactly what `consolePaste()` (sendText/cancel both 'terminal') is here, so
+ * 'describes the send as focusing the terminal and pasting the message in'
+ * covers it. Coverage folded in, not dropped.
  */
-describe('the copy for a session that relays messages and interrupts at its console (#308)', () => {
-  function relayFirst(): Dwarf {
+describe('the copy for a named console session that pastes messages and interrupts at its console (#319)', () => {
+  function consolePaste(): Dwarf {
     return defaultDwarf({
-      textDelivery: 'claude-relay',
-      capabilities: { sendText: 'claude-relay', cancel: 'terminal', adjustEffort: null }
+      textDelivery: 'terminal',
+      capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
     })
   }
 
-  it('describes the send as a hand-over the session reads between tool calls', () => {
-    const chat = buildActionBar(relayFirst(), IDLE).find((action) => action.id === 'chat')
+  function headless(): Dwarf {
+    return defaultDwarf({
+      textDelivery: 'claude-relay',
+      capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+    })
+  }
+
+  it('describes the send as focusing the terminal and pasting the message in', () => {
+    const chat = buildActionBar(consolePaste(), IDLE).find((action) => action.id === 'chat')
+    expect(chat?.enabled).toBe(true)
+    expect(chat?.hint).toBe(CHANNEL_HINT.terminal)
+    // Focus and paste, and NOT the typing it replaced: a person should be able
+    // to predict the message landing at once, not being typed out.
+    expect(CHANNEL_HINT.terminal).toMatch(/focus/i)
+    expect(CHANNEL_HINT.terminal).toMatch(/paste/i)
+    expect(CHANNEL_HINT.terminal).not.toMatch(/\btyp/i)
+    // No longer the fallback — it is the primary channel again.
+    expect(CHANNEL_HINT.terminal).not.toMatch(/fallback/i)
+  })
+
+  it("describes the kick as a keystroke at that session's console", () => {
+    const kick = buildActionBar(consolePaste(), IDLE).find((action) => action.id === 'kick')
+    expect(kick?.hint).toBe(KICK_HINT.terminal)
+  })
+
+  it('describes the relay send as a hand-over the session reads between tool calls, and its fallback role', () => {
+    const chat = buildActionBar(headless(), IDLE).find((action) => action.id === 'chat')
     expect(chat?.enabled).toBe(true)
     expect(chat?.hint).toBe(CHANNEL_HINT['claude-relay'])
     // Never a claim that anything has READ it: `delivered` means the queue,
     // and the ✓✓ is the renderer's own observed-reaction rule (reaction.ts).
     expect(CHANNEL_HINT['claude-relay']).toContain('between tool calls')
-    expect(CHANNEL_HINT['claude-relay']).not.toMatch(/headless/i)
+    expect(CHANNEL_HINT['claude-relay']).toMatch(/fallback/i)
   })
 
-  it('says nothing about a console or about typing in the send hint', () => {
+  it('says nothing about a console, a window or typing in the relay send hint', () => {
+    // The relay's whole point is that it touches no window — its copy must not
+    // borrow the console's.
     expect(CHANNEL_HINT['claude-relay']).not.toMatch(/console|typ|window|focus/i)
-  })
-
-  it("still describes the kick as a keystroke at that session's console", () => {
-    const kick = buildActionBar(relayFirst(), IDLE).find((action) => action.id === 'kick')
-    expect(kick?.hint).toBe(KICK_HINT.terminal)
-  })
-
-  /*
-   * The console tier's own hint has to say two things it never had to say
-   * while it was the default: that it is the FALLBACK, and what it does — it
-   * focuses the console and types. A person who reads it should be able to
-   * predict the screen taking over, which is exactly what #308 exists to stop
-   * happening unannounced.
-   */
-  it('warns that the console tier focuses the window and types into it', () => {
-    expect(CHANNEL_HINT.terminal).toMatch(/fallback/i)
-    expect(CHANNEL_HINT.terminal).toMatch(/focus/i)
-    expect(CHANNEL_HINT.terminal).toMatch(/typ/i)
-  })
-
-  it('keeps that warning on the composer of a session whose only channel it is', () => {
-    const consoleOnly = defaultDwarf({
-      textDelivery: 'terminal',
-      capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
-    })
-    const chat = buildActionBar(consoleOnly, IDLE).find((action) => action.id === 'chat')
-    expect(chat?.hint).toBe(CHANNEL_HINT.terminal)
   })
 })

@@ -115,6 +115,7 @@ import {
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
+  ClipboardPort,
   TextDeliveryOutcome,
   TextDeliveryPort,
   TextDeliveryTarget
@@ -167,6 +168,15 @@ const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
+/**
+ * A console the runtime resolved a paste to, on a port with no paste tier
+ * (#319). It carries `neverStarted`, so the relay behind it takes the message:
+ * on the verified platform (Windows) this never happens — the port always
+ * pastes — but a non-Windows port that kept a terminal endpoint (console input
+ * force-enabled) has no paste, and its message must degrade to the relay rather
+ * than be dropped, exactly as macOS/Linux already relay a named session.
+ */
+const NO_PASTE_TIER = "This build can't paste into a session's console."
 /**
  * The two held-session refusals (#210).
  *
@@ -340,21 +350,6 @@ function combineFallbackErrors(
 }
 
 /**
- * The same one-line-each shape for a SEND, whose two tiers run the other way
- * round (#308): the relay first, the console behind it. Named in the order
- * they were tried, so the two sentences can be read as a sequence.
- */
-function combineConsoleFallbackErrors(
-  relayError: string | undefined,
-  consoleError: string | undefined
-): string {
-  return (
-    `Relay: ${relayError ?? NO_REASON_GIVEN}\n` +
-    `Console fallback: ${consoleError ?? NO_REASON_GIVEN}`
-  )
-}
-
-/**
  * The stage breakdown appended to a delivery's log line, e.g.
  * ` [focus=12ms spawn=30ms total=45ms]` (issue #21).
  *
@@ -439,6 +434,14 @@ export interface RuntimeOptions {
   launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   /** Writes a typed message into a live session; injected for tests. */
   textDelivery?: TextDeliveryPort
+  /**
+   * The system clipboard the Windows paste path uses (#319), composed from
+   * Electron's `clipboard` at the composition root and forwarded to the
+   * platform adapters this constructor builds. Absent — as in every test, which
+   * injects `textDelivery` directly and never builds a real Windows port — the
+   * port falls back to a process-local clipboard.
+   */
+  clipboard?: ClipboardPort
   /**
    * What to type into an observed session's console to answer its permission
    * dialog, or null while nothing this build accepts has been measured (#203).
@@ -766,7 +769,11 @@ export class AgentRuntime {
         // the provider blocks (#78), so a backend added to the table has its
         // override honoured here without a line of its own.
         fs,
-        cliOverrides: cliOverridesFrom(options.config)
+        cliOverrides: cliOverridesFrom(options.config),
+        // Forwarded to the Windows text-delivery port for the paste path (#319);
+        // this constructor never imports Electron, so the clipboard is composed
+        // at the app's root and passed through here.
+        ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
       })
 
     this.now = options.now ?? Date.now
@@ -2035,19 +2042,20 @@ export class AgentRuntime {
   }
 
   /**
-   * Second attempt behind a failed console delivery (issue #24): an
-   * interactive session with a registry name is also relay-addressable, so a
-   * window that cannot be focused or typed into no longer swallows the
-   * instruction — the exact same text goes over the relay instead. On success
-   * the verdict names 'claude-relay', the channel that actually delivered, so
-   * the panel's ✓ stays honest; on a double failure it carries both reasons,
-   * terminal first. Logs the verdict only, never the text.
+   * Second attempt behind a failed console delivery: an observed session with a
+   * registry name is also relay-addressable, so a window that cannot be focused
+   * no longer swallows the instruction — the exact same text goes over the relay
+   * instead. On success the verdict names 'claude-relay', the channel that
+   * actually delivered, so the panel's ✓ stays honest; on a double failure it
+   * carries both reasons, terminal first. Logs the verdict only, never the text.
    *
-   * KICK's fallback, and since #308 only Kick's: a message's tiers run the
-   * other way round, so its second attempt is `consoleFallback` below. The
-   * `attempt` parameter survives because the log line reads better naming the
-   * act, and because retiring it would churn a line every runtime log grep in
-   * the issues is written against.
+   * Both acts now use it. Kick has always fallen back this way (#24: Esc at the
+   * console, the relay behind it), and since #319 a MESSAGE does too — its
+   * console PASTE is the primary tier again and this relay is its fallback,
+   * reached only when the paste proved it delivered nothing (`neverStarted`).
+   * The `attempt` parameter names which act, both for the log line and because
+   * retiring it would churn a line every runtime log grep in the issues is
+   * written against.
    */
   private async relayFallback(options: {
     dwarfId: string
@@ -2081,56 +2089,6 @@ export class AgentRuntime {
           delivered: false,
           via: options.channel,
           error: combineFallbackErrors(options.terminalError, relay.error)
-        }
-  }
-
-  /**
-   * Second attempt behind a relay that never started — the mirror of
-   * `relayFallback`, for the tier order a MESSAGE now takes (#308).
-   *
-   * Reached only where the relay is the primary tier AND the session owns a
-   * console: `resolveTextDelivery` carries the pid for exactly that case and
-   * carries nothing anywhere else. Its one precondition is the caller's, and
-   * it is the whole reason this is not simply "the relay failed" — see
-   * `TextDeliveryOutcome.neverStarted`. A relay that RAN and failed may
-   * already have handed the message over, and typing it a second time would
-   * put the person's words into the session twice; only a relay that never
-   * started proves there is nothing to duplicate.
-   *
-   * On success the verdict names 'terminal', the channel that actually
-   * delivered, exactly as the other direction names 'claude-relay'. Logs the
-   * verdict only, never the text.
-   */
-  private async consoleFallback(options: {
-    dwarfId: string
-    /** The channel the verdict reports when this fallback fails too. */
-    channel: TextDeliveryChannel
-    pid: number
-    text: string
-    pressEnter: boolean
-    relayError: string | undefined
-  }): Promise<DwarfTextResult> {
-    // A second attempt is a second attempt: its own timings, rather than being
-    // folded into the relay attempt that failed before it.
-    const timer = createStageTimer(this.now)
-    const outcome = await timer.measure('total', () =>
-      this.textDelivery.sendToConsole({
-        pid: options.pid,
-        text: options.text,
-        pressEnter: options.pressEnter
-      })
-    )
-    timer.absorb(outcome.stages)
-    console.log(
-      `[runtime] Console fallback (message) for ${options.dwarfId}: ` +
-        `${outcome.delivered ? 'delivered' : 'failed'}${stageSuffix(timer.timings())}`
-    )
-    return outcome.delivered
-      ? { delivered: true, via: 'terminal' }
-      : {
-          delivered: false,
-          via: options.channel,
-          error: combineConsoleFallbackErrors(options.relayError, outcome.error)
         }
   }
 
@@ -2440,10 +2398,11 @@ export class AgentRuntime {
    * here logs the message: only its length, the channel and the verdict.
    *
    * The tier is `resolveTextDelivery`'s answer and never a preference decided
-   * here — which since #308 means an observed Claude session with a registry
-   * name is written to invisibly, and its console is only what a relay that
-   * never started falls back to. `kickDwarf` below keeps the opposite order on
-   * purpose; see `sendRouteOf` in resolve.ts for why the two part company.
+   * here — which since #319 means an observed Claude session with a registry
+   * name is written to by PASTING at its console, and the relay is only what a
+   * paste that could not focus the window falls back to. `kickDwarf` keeps the
+   * console for its interrupt too; see `sendRouteOf` in resolve.ts for the one
+   * axis on which send and kick still part company.
    */
   async sendDwarfText(request: DwarfTextRequest): Promise<DwarfTextResult> {
     const dwarf = this.mines
@@ -2497,7 +2456,25 @@ export class AgentRuntime {
           return Promise.resolve(this.sendToHostedProcess(endpoint.hostedId, payload))
         }
         if (endpoint.kind === 'terminal') {
-          return this.textDelivery.sendToConsole({
+          // The console PASTES the message now, the primary tier again (#319):
+          // the text goes on the clipboard, Ctrl+V lands it at once, and the
+          // relay below is the fallback. `sendToConsole` still exists and still
+          // TYPES — it is what the permission digit (#203) uses — but a message
+          // never types any more.
+          //
+          // A port with no paste tier (a non-Windows port that kept a terminal
+          // endpoint, console input force-enabled) reports `neverStarted` so the
+          // relay fallback carries the message rather than dropping it — the
+          // same degrade macOS/Linux already make for a named session.
+          const paste = this.textDelivery.pasteToConsole
+          if (paste === undefined) {
+            return Promise.resolve<TextDeliveryOutcome>({
+              delivered: false,
+              error: NO_PASTE_TIER,
+              neverStarted: true
+            })
+          }
+          return paste.call(this.textDelivery, {
             pid: endpoint.pid,
             text: payload,
             pressEnter: request.pressEnter
@@ -2528,26 +2505,28 @@ export class AgentRuntime {
           stageSuffix(timer.timings())
       )
       if (outcome.delivered) return { delivered: true, via: resolved.channel }
-      // The relay never started, so nothing was handed over and the session's
-      // own console may take the same text (#308, reversing #24's order). Both
-      // halves of that condition are load-bearing: a relay that RAN and failed
-      // may already have delivered — a non-zero exit or a timeout kill can
-      // land after SendMessage succeeded — and keystrokes behind it would put
-      // the person's message into the session a second time. Duplicating
-      // somebody's words is worse than an honest failure, so anything but
-      // `neverStarted` stops here with the relay's own reason.
+      // The console paste never focused, so nothing was pasted and the session's
+      // registry name may take the same text over the relay (#319, reversing
+      // #308's direction). Both halves of that condition are load-bearing: a
+      // paste that RAN and failed may already have landed — Ctrl+V can put the
+      // clipboard into the window before the command reports a non-zero exit —
+      // and relaying behind it would put the person's message into the session
+      // a second time. Duplicating somebody's words is worse than an honest
+      // failure, so anything but a proven `neverStarted` (a window that would
+      // not come forward, so no key was sent) stops here with the console's own
+      // reason.
       if (
-        endpoint.kind === 'claude-relay' &&
+        endpoint.kind === 'terminal' &&
         outcome.neverStarted === true &&
-        resolved.consoleFallbackPid !== undefined
+        resolved.relayFallbackSessionName !== undefined
       ) {
-        return this.consoleFallback({
+        return this.relayFallback({
           dwarfId: request.dwarfId,
+          attempt: 'message',
           channel: resolved.channel,
-          pid: resolved.consoleFallbackPid,
+          sessionName: resolved.relayFallbackSessionName,
           text: payload,
-          pressEnter: request.pressEnter,
-          relayError: outcome.error
+          terminalError: outcome.error
         })
       }
       return { delivered: false, via: resolved.channel, error: outcome.error }

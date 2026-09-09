@@ -938,9 +938,13 @@ describe('AgentRuntime.sendDwarfText', () => {
     ])
   }
 
+  // pasteToConsole is the message tier since #319 (sendToConsole still TYPES,
+  // for the permission digit of #203). A fake for both is on the port so a test
+  // can assert which one a message reached.
   function fakePort() {
     return {
       sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      pasteToConsole: vi.fn().mockResolvedValue({ delivered: true }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
     } satisfies TextDeliveryPort
@@ -966,7 +970,10 @@ describe('AgentRuntime.sendDwarfText', () => {
     return { runtime, port }
   }
 
-  it('types the message into the console of a terminal-hosted dwarf', async () => {
+  // AMENDED for #319 (was: 'types the message into the console of a
+  // terminal-hosted dwarf', which asserted `sendToConsole` was called). A
+  // message PASTES now — it reaches `pasteToConsole`, never the typing tier.
+  it('pastes the message into the console of a terminal-hosted dwarf', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
     })
@@ -974,11 +981,12 @@ describe('AgentRuntime.sendDwarfText', () => {
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'run the tests', pressEnter: true })
     ).resolves.toEqual({ delivered: true, via: 'terminal' })
-    expect(port.sendToConsole).toHaveBeenCalledWith({
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
       pid: 42,
       text: 'run the tests',
       pressEnter: true
     })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
@@ -1048,6 +1056,8 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #319: the trimmed text reaches `pasteToConsole` now, the tier a
+  // message takes, not `sendToConsole`.
   it('trims the message to the 4000-character limit', async () => {
     const port = fakePort()
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
@@ -1056,12 +1066,15 @@ describe('AgentRuntime.sendDwarfText', () => {
       text: 'x'.repeat(5_000),
       pressEnter: false
     })
-    expect(port.sendToConsole.mock.calls[0]?.[0].text).toHaveLength(4_000)
+    expect(port.pasteToConsole.mock.calls[0]?.[0].text).toHaveLength(4_000)
   })
 
+  // AMENDED for #319: the failing tier is the console PASTE now (`pasteToConsole`),
+  // not the typing `sendToConsole`. Same verdict shape, same channel.
   it('reports the failure reason the delivery port gave', async () => {
     const port = {
-      sendToConsole: vi
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi
         .fn()
         .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
       relayToClaudeSession: vi.fn(),
@@ -1079,23 +1092,24 @@ describe('AgentRuntime.sendDwarfText', () => {
   })
 
   /*
-   * AMENDED for #308 (was: 'falls back to the relay when the console fails and
-   * the session has a name', which sent to a named console session, asserted
-   * `sendToConsole` was called FIRST with the payload, and only then the relay
-   * — #24's order).
+   * AMENDED for #319 (was, under #308: 'falls back to the console when the relay
+   * could not be started at all', which asserted the relay was tried first and
+   * the console second, verdict `via: 'terminal'`).
    *
-   * The two tiers have swapped places for a message. Same subject, same
-   * honesty rule about the verdict naming the channel that actually
-   * delivered; only the direction is reversed.
+   * The two tiers swapped back. The console PASTE is the primary; when it
+   * proves it delivered nothing (a window that would not come forward,
+   * `neverStarted`), the relay behind it takes the same text. The verdict names
+   * the channel that actually delivered, so the ✓ stays honest.
    */
-  it('falls back to the console when the relay could not be started at all', async () => {
+  it('falls back to the relay when the console paste could not focus at all', async () => {
     const port = {
-      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
-      relayToClaudeSession: vi.fn().mockResolvedValue({
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockResolvedValue({
         delivered: false,
-        error: 'The relay could not be started.',
+        error: 'The agent terminal could not be brought to the foreground.',
         neverStarted: true
       }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
@@ -1103,62 +1117,61 @@ describe('AgentRuntime.sendDwarfText', () => {
       port
     )
 
-    // The verdict names the channel that actually delivered, not the one that
-    // was tried first, so the panel's ✓ stays honest about the fallback.
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'run the tests', pressEnter: true })
-    ).resolves.toEqual({ delivered: true, via: 'terminal' })
-    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'sample-project-70',
-      text: 'run the tests'
-    })
-    expect(port.sendToConsole).toHaveBeenCalledWith({
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
       pid: 42,
       text: 'run the tests',
       pressEnter: true
     })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'sample-project-70',
+      text: 'run the tests'
+    })
   })
 
   /*
-   * AMENDED for #308 (was: 'never touches the relay while the console delivery
-   * succeeds', which asserted `relayToClaudeSession` was never called for a
-   * named console session and that the verdict was `via: 'terminal'`, on the
-   * ground that "the relay is slower than keystrokes … so it is strictly the
-   * fallback").
+   * AMENDED for #319 (was, under #308: 'never touches the console while the
+   * relay delivers', which asserted the relay was the primary and
+   * `sendToConsole` was never called, verdict `via: 'claude-relay'`).
    *
-   * The mirror of that sentence now. Speed lost to safety: the console tier
-   * types into whatever holds the foreground, so a person who clicks away
-   * mid-typing has their own message written into an unrelated application.
+   * The mirror of that sentence. The console paste is the primary again — it
+   * lands the message at once, as the person's own prompt — so a paste that
+   * succeeds never reaches for the relay.
    */
-  it('never touches the console while the relay delivers', async () => {
+  it('never touches the relay while the console paste delivers', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' }
     })
 
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: true })
-    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
-    expect(port.sendToConsole).not.toHaveBeenCalled()
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
   /*
-   * AMENDED for #308 (was: 'combines both reasons, terminal first, when the
-   * relay fallback also fails', which asserted
-   * `'Terminal: …\nRelay fallback: …'` and `via: 'terminal'`).
+   * AMENDED for #319 (was, under #308: 'combines both reasons, relay first, when
+   * the console fallback also fails', which asserted
+   * `'Relay: …\nConsole fallback: …'` and `via: 'claude-relay'`).
    *
    * Both reasons still travel, one line each, in the order they were tried —
-   * which is the reverse of what it was, and the verdict names the tier the
-   * panel was told about.
+   * which is reversed again: the console paste first, the relay behind it. The
+   * verdict names the primary the panel was told about.
    */
-  it('combines both reasons, relay first, when the console fallback also fails', async () => {
+  it('combines both reasons, console first, when the relay fallback also fails', async () => {
     const port = {
-      sendToConsole: vi
-        .fn()
-        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockResolvedValue({
+        delivered: false,
+        error: 'The agent terminal could not be brought to the foreground.',
+        neverStarted: true
+      }),
       relayToClaudeSession: vi.fn().mockResolvedValue({
         delivered: false,
-        error: 'The relay could not be started.',
-        neverStarted: true
+        error: 'The relay could not be started.'
       }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
@@ -1171,18 +1184,23 @@ describe('AgentRuntime.sendDwarfText', () => {
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
     ).resolves.toEqual({
       delivered: false,
-      via: 'claude-relay',
+      via: 'terminal',
       error:
-        'Relay: The relay could not be started.\n' +
-        'Console fallback: The terminal would not come forward.'
+        'Terminal: The agent terminal could not be brought to the foreground.\n' +
+        'Relay fallback: The relay could not be started.'
     })
   })
 
+  // AMENDED for #319: the primary is the console PASTE; a nameless terminal has
+  // no relay address to fall back to, so a failed paste stops there.
   it('never falls back for a terminal session that has no relay address', async () => {
     const port = {
-      sendToConsole: vi
-        .fn()
-        .mockResolvedValue({ delivered: false, error: 'The terminal would not come forward.' }),
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockResolvedValue({
+        delivered: false,
+        error: 'The agent terminal could not be brought to the foreground.',
+        neverStarted: true
+      }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
@@ -1193,23 +1211,23 @@ describe('AgentRuntime.sendDwarfText', () => {
     ).resolves.toEqual({
       delivered: false,
       via: 'terminal',
-      error: 'The terminal would not come forward.'
+      error: 'The agent terminal could not be brought to the foreground.'
     })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  // AMENDED for #308: the relay's failure now carries `neverStarted` so the
-  // console fallback still runs and this still covers a fallback path. Nothing
-  // else changed — it asserted the payload stays out of the log before, and it
-  // asserts the same thing now.
+  // AMENDED for #319: the fallback path is the console paste (`neverStarted`)
+  // then the relay behind it. Nothing else changed — it asserted the payload
+  // stays out of the log before, and it asserts the same thing now.
   it('keeps the message text out of the log on the fallback path too', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const port = {
-      sendToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' }),
-      relayToClaudeSession: vi
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi
         .fn()
-        .mockResolvedValue({ delivered: false, error: 'still no', neverStarted: true }),
+        .mockResolvedValue({ delivered: false, error: 'nope', neverStarted: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: false, error: 'still no' }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
@@ -1228,9 +1246,11 @@ describe('AgentRuntime.sendDwarfText', () => {
     log.mockRestore()
   })
 
+  // AMENDED for #319: the tier a message throws from is the console PASTE now.
   it('turns a throwing delivery port into a failed verdict', async () => {
     const port = {
-      sendToConsole: vi.fn().mockRejectedValue(new Error('boom')),
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockRejectedValue(new Error('boom')),
       relayToClaudeSession: vi.fn(),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
@@ -1311,11 +1331,13 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #319: the message tier is `pasteToConsole` now.
   it('never writes the message content to the log', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const port = {
-      sendToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' }),
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockResolvedValue({ delivered: false, error: 'nope' }),
       relayToClaudeSession: vi.fn(),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
@@ -1399,18 +1421,20 @@ describe('AgentRuntime.sendDwarfText', () => {
   })
 
   /*
-   * Issue #308. The console tier does not merely take the person's screen: it
-   * types the message into whatever window holds the foreground, so clicking
-   * elsewhere mid-typing writes the rest of the sentence into an unrelated
-   * application (maintainer's live report, Windows 11, 2026-09-09). That is a
-   * hazard rather than a UX preference, and it costs the console tier the
-   * primary slot #24 gave it.
+   * AMENDED for #319 (was, under #308: 'relays a named console session on
+   * Windows, where the console tier does exist', which asserted the relay was
+   * the primary here too, `via: 'claude-relay'`, `sendToConsole` never called).
    *
-   * The platform is fixed to Windows in these tests on purpose: it is the ONE
-   * platform where the console tier exists at all, so it is the only place
-   * where the order could still have differed after this change.
+   * #319 pastes the message at the console again — the primary tier on the one
+   * platform that has one. The console defect was the letter-by-letter typing,
+   * not the console itself; a paste lands the message at once, as the person's
+   * own prompt, so the console wins the primary slot back and the relay is its
+   * fallback.
+   *
+   * The platform is fixed to Windows on purpose: it is the ONE platform where
+   * the console tier exists at all, so it is the only place the order differs.
    */
-  it('relays a named console session on Windows, where the console tier does exist', async () => {
+  it('pastes at a named console session on Windows, the console tier primary again', async () => {
     const port = { ...fakePort(), supportsConsoleInput: true }
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
@@ -1419,17 +1443,25 @@ describe('AgentRuntime.sendDwarfText', () => {
 
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'run the tests', pressEnter: true })
-    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
-    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
-      sessionName: 'sample-project-70',
-      text: 'run the tests'
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'run the tests',
+      pressEnter: true
     })
-    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  it('advertises the relay for sending and the console for cancelling on the same dwarf', async () => {
-    // The capability the bar reads must be the channel the send will actually
-    // use, or the hint promises one thing and main does another.
+  /*
+   * AMENDED for #319 (was, under #308: 'advertises the relay for sending and the
+   * console for cancelling on the same dwarf', which asserted
+   * `textDelivery: 'claude-relay'` with `sendText: 'claude-relay'`, `cancel:
+   * 'terminal'` — the two halves disagreeing).
+   *
+   * The message pastes at the console now, so both halves are 'terminal' again:
+   * the capability the bar reads is the console the send will actually use.
+   */
+  it('advertises the console for both sending and cancelling on the same dwarf', async () => {
     const port = { ...fakePort(), supportsConsoleInput: true }
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
@@ -1437,8 +1469,8 @@ describe('AgentRuntime.sendDwarfText', () => {
     )
 
     const dwarf = runtime.getMines()[0]!.dwarfs.find((item) => item.id === FOREMAN_ID)
-    expect(dwarf?.textDelivery).toBe('claude-relay')
-    expect(dwarf?.capabilities).toMatchObject({ sendText: 'claude-relay', cancel: 'terminal' })
+    expect(dwarf?.textDelivery).toBe('terminal')
+    expect(dwarf?.capabilities).toMatchObject({ sendText: 'terminal', cancel: 'terminal' })
   })
 
   it('relays for a session with a name and no console of its own', async () => {
@@ -1454,32 +1486,36 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 
-  it('types into the console of a session with a pid and no name, its only channel', async () => {
+  // AMENDED for #319: a nameless console session PASTES too (`pasteToConsole`).
+  it('pastes into the console of a session with a pid and no name, its only channel', async () => {
     const port = { ...fakePort(), supportsConsoleInput: true }
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
 
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: true })
     ).resolves.toEqual({ delivered: true, via: 'terminal' })
-    expect(port.sendToConsole).toHaveBeenCalledWith({ pid: 42, text: 'hi', pressEnter: true })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({ pid: 42, text: 'hi', pressEnter: true })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  /**
-   * The one rule that decides whether the fallback may run at all, and the
-   * reason it is a typed flag rather than a failed verdict: a relay that RAN
-   * and exited non-zero may already have called SendMessage before whatever
-   * killed it, so a second delivery by keystrokes would put the person's
-   * message into the session twice. Only a relay that never started proves
-   * nothing was handed over.
+  /*
+   * AMENDED for #319 (was, under #308: 'does not fall back after a relay that ran
+   * and exited non-zero', which gated the console fallback on the RELAY's
+   * `neverStarted`). The tiers reversed, so the gate is now on the console
+   * PASTE: a paste that RAN and reported a non-zero exit may already have landed
+   * — Ctrl+V can put the clipboard into the window before the command fails — so
+   * the runtime must not relay the same text behind it. Only a paste that
+   * proved it delivered nothing (a window that would not come forward,
+   * `neverStarted`) may fall back.
    */
-  it('does not fall back after a relay that ran and exited non-zero', async () => {
+  it('does not fall back to the relay after a paste that ran and reported failure', async () => {
     const port = {
-      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
-      relayToClaudeSession: vi.fn().mockResolvedValue({
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockResolvedValue({
         delivered: false,
-        error: 'The relay could not deliver the message (exit 1).'
+        error: 'The paste keystroke could not be sent to the terminal.'
       }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
@@ -1491,20 +1527,23 @@ describe('AgentRuntime.sendDwarfText', () => {
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
     ).resolves.toEqual({
       delivered: false,
-      via: 'claude-relay',
-      error: 'The relay could not deliver the message (exit 1).'
+      via: 'terminal',
+      error: 'The paste keystroke could not be sent to the terminal.'
     })
-    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  it('does not fall back after a relay that timed out, which may have delivered first', async () => {
-    // A timeout kills the turn; it does not prove the turn had not already
-    // called SendMessage. Same rule, second failure mode.
+  /*
+   * AMENDED for #319 (was, under #308: 'does not fall back after a relay that
+   * timed out, which may have delivered first'). Same rule, the paste's second
+   * failure mode: a paste that THREW may have landed after the throw, so it is
+   * not `neverStarted` and the runtime must not relay behind it.
+   */
+  it('does not fall back to the relay after a paste that threw, which may have landed first', async () => {
     const port = {
-      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
-      relayToClaudeSession: vi
-        .fn()
-        .mockResolvedValue({ delivered: false, error: 'The relay timed out after 60s.' }),
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockRejectedValue(new Error('boom mid-paste')),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
@@ -1514,12 +1553,8 @@ describe('AgentRuntime.sendDwarfText', () => {
 
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
-    ).resolves.toEqual({
-      delivered: false,
-      via: 'claude-relay',
-      error: 'The relay timed out after 60s.'
-    })
-    expect(port.sendToConsole).not.toHaveBeenCalled()
+    ).resolves.toMatchObject({ delivered: false, via: 'terminal' })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
   it('has no console to fall back to for a session that never had one', async () => {
@@ -2871,10 +2906,12 @@ describe('AgentRuntime delivery instrumentation', () => {
     }
   }
 
+  // AMENDED for #319: the console tier a message measures is the PASTE now.
   it('logs the stages the console tier measured, alongside the verdict', async () => {
     const clock = { value: 0 }
     const port = {
-      sendToConsole: vi.fn().mockImplementation(async () => {
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockImplementation(async () => {
         clock.value += 45
         return { delivered: true, stages: { focusMs: 12, spawnMs: 30 } }
       }),
@@ -2940,10 +2977,12 @@ describe('AgentRuntime delivery instrumentation', () => {
     logged.restore()
   })
 
+  // AMENDED for #319: a failed message attempt is a failed PASTE now.
   it('times a failed attempt too — the slow ones are the ones worth measuring', async () => {
     const clock = { value: 0 }
     const port = {
-      sendToConsole: vi.fn().mockImplementation(async () => {
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockImplementation(async () => {
         clock.value += 90
         return { delivered: false, error: 'nope', stages: { focusMs: 90 } }
       }),
@@ -2996,17 +3035,24 @@ describe('AgentRuntime delivery instrumentation', () => {
     logged.restore()
   })
 
-  it('instruments the console fallback of a message as its own attempt too (#308)', async () => {
-    // The mirror of the line above, for the tier order a message now takes.
+  /*
+   * AMENDED for #319 (was, under #308: 'instruments the console fallback of a
+   * message as its own attempt too', which drove a console fallback behind a
+   * relay that never started). The tiers reversed: a message's fallback is the
+   * RELAY behind a console paste that could not focus (`neverStarted`), and it
+   * is timed as its own attempt just as the kick's relay fallback is.
+   */
+  it('instruments the relay fallback of a message as its own attempt too', async () => {
     const clock = { value: 0 }
     const port = {
-      sendToConsole: vi.fn().mockImplementation(async () => {
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockImplementation(async () => {
         clock.value += 40
-        return { delivered: true, stages: { focusMs: 40 } }
+        return { delivered: false, error: 'nope', neverStarted: true, stages: { focusMs: 40 } }
       }),
       relayToClaudeSession: vi.fn().mockImplementation(async () => {
-        clock.value += 120
-        return { delivered: false, error: 'nope', neverStarted: true }
+        clock.value += 3_000
+        return { delivered: true }
       }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
@@ -3019,17 +3065,19 @@ describe('AgentRuntime delivery instrumentation', () => {
 
     await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
 
-    const fallbackLine = logged.lines().find((entry) => entry.includes('Console fallback')) ?? ''
-    expect(fallbackLine).toContain('focus=40ms')
-    expect(fallbackLine).toContain('total=40ms')
+    const fallbackLine = logged.lines().find((entry) => entry.includes('Relay fallback')) ?? ''
+    expect(fallbackLine).toContain('relay=3000ms')
+    expect(fallbackLine).toContain('total=3000ms')
     expect(fallbackLine).toContain('delivered')
     logged.restore()
   })
 
+  // AMENDED for #319: a message is measured on the PASTE tier now.
   it('never lets the message anywhere near the instrumentation line', async () => {
     const clock = { value: 0 }
     const port = {
-      sendToConsole: vi.fn().mockResolvedValue({
+      sendToConsole: vi.fn(),
+      pasteToConsole: vi.fn().mockResolvedValue({
         delivered: true,
         stages: { focusMs: 1, spawnMs: 2 }
       }),

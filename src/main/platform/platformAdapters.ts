@@ -15,7 +15,7 @@ import {
   createOsascriptConsoleInput,
   type ConsoleInputAdapter
 } from '../textDelivery/osascriptInput'
-import type { TextDeliveryPort } from '../textDelivery/port'
+import type { ClipboardPort, TextDeliveryPort } from '../textDelivery/port'
 import { PosixTextDelivery } from '../textDelivery/posixTextDelivery'
 import type { CodexQueueRunner } from '../textDelivery/codexQueue'
 import type { RelayRunner } from '../textDelivery/relayRunner'
@@ -94,6 +94,14 @@ export interface PlatformAdapterOptions {
   darwinConsoleInput?: boolean
   /** Injected for tests; defaults to a real powershell.exe run. */
   runShell?: ShellRunner
+  /**
+   * The system clipboard the Windows paste path uses (#319), composed from
+   * Electron's `clipboard` at the app's root and passed in — this module holds
+   * no Electron import, exactly as it holds none for the launch command
+   * (autostart). Absent, the Windows port falls back to a process-local
+   * clipboard, harmless for a build that never pastes.
+   */
+  clipboard?: ClipboardPort
   /** Injected for tests; defaults to a real ps/osascript run. */
   runCommand?: CommandRunner
   /** Injected for tests; defaults to a real process-list probe. */
@@ -161,7 +169,8 @@ function createTextDelivery(
   if (platform === 'win32') {
     return new WindowsTextDelivery({
       ...shared,
-      ...(options.runShell === undefined ? {} : { runPowerShell: options.runShell })
+      ...(options.runShell === undefined ? {} : { runPowerShell: options.runShell }),
+      ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
     })
   }
   return new PosixTextDelivery({

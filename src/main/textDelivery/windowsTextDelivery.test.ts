@@ -119,6 +119,137 @@ describe('WindowsTextDelivery.sendToConsole', () => {
   })
 })
 
+/**
+ * The paste path (#319): a MESSAGE is delivered by putting it on the clipboard
+ * and pressing Ctrl+V, not by typing it character by character. `sendToConsole`
+ * above is untouched — it still TYPES, and since #319 the one thing that still
+ * needs it is the permission digit of #203, a measured keystroke a paste must
+ * not silently replace.
+ */
+describe('WindowsTextDelivery.pasteToConsole', () => {
+  /** Records reads and writes in `order`, so the save/restore dance is assertable. */
+  function trackingClipboard(order: string[], initial = 'previous clipboard') {
+    const writes: string[] = []
+    let value = initial
+    return {
+      port: {
+        read: () => {
+          order.push('read')
+          return value
+        },
+        write: (text: string) => {
+          order.push('write')
+          writes.push(text)
+          value = text
+        }
+      },
+      writes,
+      current: () => value
+    }
+  }
+
+  it('saves the clipboard, writes the message, focuses, pastes, then restores the clipboard', async () => {
+    const order: string[] = []
+    const focus = vi.fn().mockImplementation(async () => {
+      order.push('focus')
+      return true
+    })
+    const runPowerShell = vi.fn().mockImplementation(async () => {
+      order.push('paste')
+      return { stdout: '', exitCode: 0 }
+    })
+    const clip = trackingClipboard(order)
+    const port = delivery({ focus, runPowerShell, clipboard: clip.port })
+
+    await expect(
+      port.pasteToConsole({ pid: 42, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({
+      delivered: true,
+      stages: { focusMs: expect.any(Number), spawnMs: expect.any(Number) }
+    })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(order).toEqual(['read', 'write', 'focus', 'paste', 'write'])
+    // The message rode the clipboard; the command pressed the keys and never
+    // carried the text a shell could re-parse.
+    expect(clip.writes[0]).toBe('run the tests')
+    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('^v')")
+    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('{ENTER}')")
+    expect(runPowerShell.mock.calls[0]?.[0]).not.toContain('run the tests')
+    // Left exactly as it was found.
+    expect(clip.current()).toBe('previous clipboard')
+    expect(clip.writes[clip.writes.length - 1]).toBe('previous clipboard')
+  })
+
+  it('pastes without an Enter when pressEnter is false', async () => {
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const clip = trackingClipboard([])
+    const port = delivery({ runPowerShell, clipboard: clip.port })
+
+    await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('^v')")
+    expect(runPowerShell.mock.calls[0]?.[0]).not.toContain("SendWait('{ENTER}')")
+  })
+
+  it('sends no paste and reports the fallback-triggering outcome when the window will not come forward', async () => {
+    const runPowerShell = vi.fn()
+    const clip = trackingClipboard([])
+    const port = delivery({
+      focus: vi.fn().mockResolvedValue(false),
+      runPowerShell,
+      clipboard: clip.port
+    })
+
+    const result = await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    // `neverStarted` is the whole point: it proves nothing was pasted, so the
+    // runtime may hand the same text to the relay without a double delivery.
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/foreground|terminal/i)
+    // Nothing was pasted, and the clipboard is left holding what it held before —
+    // never the message the method briefly set on it.
+    expect(runPowerShell).not.toHaveBeenCalled()
+    expect(clip.current()).toBe('previous clipboard')
+  })
+
+  it('restores the clipboard even when the paste command throws', async () => {
+    const clip = trackingClipboard([])
+    const port = delivery({
+      runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing')),
+      clipboard: clip.port
+    })
+
+    const result = await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    expect(result.delivered).toBe(false)
+    // A throw can land after the paste, so it is NOT neverStarted: the runtime
+    // must not relay the same text behind it.
+    expect(result.neverStarted).toBeUndefined()
+    expect(clip.current()).toBe('previous clipboard')
+  })
+
+  it('does not mark a non-zero paste exit as neverStarted, since Ctrl+V may already have landed', async () => {
+    const clip = trackingClipboard([])
+    const port = delivery({
+      runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 }),
+      clipboard: clip.port
+    })
+
+    const result = await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    expect(result.delivered).toBe(false)
+    expect(result.neverStarted).toBeUndefined()
+    expect(clip.current()).toBe('previous clipboard')
+  })
+
+  it('keeps the message out of the failure text', async () => {
+    const clip = trackingClipboard([])
+    const port = delivery({ focus: vi.fn().mockResolvedValue(false), clipboard: clip.port })
+    const result = await port.pasteToConsole({
+      pid: 42,
+      text: 'my-secret-payload',
+      pressEnter: false
+    })
+    expect(result.error).not.toContain('my-secret-payload')
+  })
+})
+
 describe('WindowsTextDelivery.relayToClaudeSession', () => {
   it('spawns one claude turn addressed at the target session', async () => {
     const runRelay = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })

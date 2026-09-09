@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { focusPid, type ShellRunner } from '../platform/focus'
 import type {
+  ClipboardPort,
   CodexQueueRequest,
   ConsoleTextRequest,
   InterruptRequest,
@@ -23,10 +24,30 @@ import {
   type RelayResult,
   type RelayRunner
 } from './relayRunner'
-import { buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
+import { buildPasteCommand, buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
 import { createStageTimer } from './timing'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
+
+/**
+ * A process-local clipboard, the default when none is injected (#319).
+ *
+ * The real port is Electron's `clipboard`, composed at the app's root and
+ * injected in — this module holds no Electron import, exactly as it holds none
+ * for focus. This fallback keeps the port constructible for a build that never
+ * pastes (the runtime composing adapters whose delivery it then overrides, a
+ * test exercising another tier); a real paste always runs against the injected
+ * system clipboard.
+ */
+function createInMemoryClipboard(): ClipboardPort {
+  let value = ''
+  return {
+    read: () => value,
+    write: (text: string) => {
+      value = text
+    }
+  }
+}
 
 /**
  * Windows implementation of TextDeliveryPort.
@@ -51,6 +72,13 @@ export interface WindowsTextDeliveryOptions {
   env?: NodeJS.ProcessEnv
   /** Injected for tests; defaults to the real window-focus path. */
   focus?: (pid: number) => Promise<boolean>
+  /**
+   * The system clipboard the paste path saves, sets and restores (#319).
+   * Injected — composed from Electron's `clipboard` at the app's root — so this
+   * module holds no Electron import; defaults to a process-local clipboard for a
+   * build that never pastes.
+   */
+  clipboard?: ClipboardPort
   /**
    * The per-action fallback shell runner.
    *
@@ -102,6 +130,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly relayModel: string
   private readonly relayTimeoutMs: number
   private readonly focus: (pid: number) => Promise<boolean>
+  private readonly clipboard: ClipboardPort
   private readonly runPowerShell: ShellRunner
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
@@ -116,6 +145,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.relayModel = options.relayModel
     this.relayTimeoutMs = options.relayTimeoutMs
     this.focus = options.focus ?? focusPid
+    this.clipboard = options.clipboard ?? createInMemoryClipboard()
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
@@ -174,6 +204,73 @@ export class WindowsTextDelivery implements TextDeliveryPort {
         error: 'The agent terminal could not be reached.',
         stages: timer.timings()
       }
+    }
+  }
+
+  /**
+   * Deliver a MESSAGE by PASTING it, not typing it (#319): put the text on the
+   * clipboard, bring the window forward, press Ctrl+V (and Enter unless
+   * `pressEnter` is false), then restore the clipboard. A 441-char message that
+   * took ~16 s to type lands at once, and the window in which a mid-typing focus
+   * change could steal the rest of it nearly disappears.
+   *
+   * The console-paste tier is the PRIMARY channel again for a named observed
+   * session, the relay its fallback — the reverse of #315 — because pasting
+   * lands the message as the person's own prompt rather than as another
+   * session's, and does it in under a second. `sendToConsole` above still types,
+   * for the one caller that still needs a measured single keystroke (#203).
+   */
+  async pasteToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
+    // Save/restore race (#319): anything that sets the clipboard between the
+    // read here and the restore in `finally` loses its value to the restore.
+    // The window is one focus plus one keystroke command, and not restoring at
+    // all would be worse — the person's clipboard would silently become their
+    // last sent message — so the race is accepted and stated rather than closed.
+    //
+    // Awaited because the installed Electron clipboard is promise-based; a sync
+    // in-memory fake awaits to itself.
+    const previousClipboard = await this.clipboard.read()
+    await this.clipboard.write(request.text)
+    try {
+      if (!(await timer.measure('focus', () => this.focus(request.pid)))) {
+        // The focus precondition it always was: nothing is pasted into a window
+        // that would not come forward. Nothing was handed over, so this is the
+        // one send failure that licenses the relay behind it — `neverStarted`
+        // says so, the mirror of a relay that never started falling back to the
+        // console (#308). The clipboard the finally restores was only ever this
+        // method's own write, never a paste into the session.
+        return {
+          delivered: false,
+          error: 'The agent terminal could not be brought to the foreground.',
+          neverStarted: true,
+          stages: timer.timings()
+        }
+      }
+      const result = await timer.measure('spawn', () =>
+        this.runPowerShell(buildPasteCommand(request.pressEnter))
+      )
+      if (result.exitCode !== 0) {
+        // NOT neverStarted: Ctrl+V may already have pasted before the command
+        // reported a non-zero exit, so the runtime must not relay the same text
+        // behind it — the mirror of a relay that ran and then failed.
+        return {
+          delivered: false,
+          error: 'The paste keystroke could not be sent to the terminal.',
+          stages: timer.timings()
+        }
+      }
+      return { delivered: true, stages: timer.timings() }
+    } catch {
+      // Also not neverStarted, and for the same reason: a throw can land after
+      // the paste. The finally still restores the clipboard.
+      return {
+        delivered: false,
+        error: 'The agent terminal could not be reached.',
+        stages: timer.timings()
+      }
+    } finally {
+      await this.clipboard.write(previousClipboard)
     }
   }
 
