@@ -77,7 +77,9 @@ export function crewFrameSignals(
   // The sheet's own `impactFrames`, never a frame named again here: the strike
   // and the sparks it throws are one event and must not be able to drift.
   if (declared.strike !== undefined && isImpactFrame(sheet, now.frame)) {
-    signals.push({ cue: 'strike' })
+    // `declared.strike.gain`, exactly as `crewWalkSignal` copies its own gain
+    // rather than inventing one: absent stays absent, which is full level.
+    signals.push({ cue: 'strike', gain: declared.strike.gain })
   }
 
   const shift = declared.shift

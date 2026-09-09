@@ -54,15 +54,26 @@ export type DwarfSheetSet = { idle: SpriteSheet } & Partial<Record<DwarfSheetNam
  * that survives an artist re-exporting the same movement at another tempo.
  */
 export interface CrewSoundSet {
-  /**
-   * A cue on every frame the `working` strip already declares an impact on.
-   *
-   * A POINTER at that declaration rather than a second copy of frame 4: the
-   * strike and the sparks it throws are one event, so the two must not be
-   * able to drift apart. There is nothing to tune here — retiming the hit
-   * means moving `impactFrames`, and the sound follows.
-   */
-  readonly strike?: { readonly on: 'impactFrames' }
+  readonly strike?: {
+    /**
+     * A cue on every frame the `working` strip already declares an impact on.
+     *
+     * A POINTER at that declaration rather than a second copy of frame 4: the
+     * strike and the sparks it throws are one event, so the two must not be
+     * able to drift apart. There is nothing to tune about WHEN it fires —
+     * retiming the hit means moving `impactFrames`, and the sound follows.
+     */
+    readonly on: 'impactFrames'
+    /**
+     * How loud the recording opens; absent means its own full level.
+     *
+     * Optional for the same reason `CrewSoundSignal.gain` is: a rank whose
+     * strike needs no taming plays it unscaled, exactly as the worker2's
+     * grind always has. See `STRIKE_GAIN` below for why the worker's own
+     * needs one.
+     */
+    readonly gain?: number
+  }
   /**
    * One cue per shift, opened as the named strip reaches the named frame.
    *
@@ -110,6 +121,15 @@ const FRAME_MS = 100
  * louder a crew walking in reads as the loudest thing in the panel.
  */
 const WALK_GAIN = 0.05
+
+/**
+ * How loud the pick strike opens: a tenth of the recording (#330 follow-up).
+ *
+ * The maintainer's first live listen of the crew (PR #339) found the
+ * pickaxe recording hot against the room tone — measured by ear, not
+ * derived, on 2026-09-09 — the same way WALK_GAIN above was.
+ */
+const STRIKE_GAIN = 0.1
 
 export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
   worker: {
@@ -246,7 +266,7 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
 export const DWARF_CREW: Record<DwarfRole, DwarfCrewSet> = {
   worker: {
     swings: 2,
-    sound: { strike: { on: 'impactFrames' }, walk: { gain: WALK_GAIN } }
+    sound: { strike: { on: 'impactFrames', gain: STRIKE_GAIN }, walk: { gain: WALK_GAIN } }
   },
   worker2: {
     swings: 8,
