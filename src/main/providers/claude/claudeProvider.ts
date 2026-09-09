@@ -1346,8 +1346,26 @@ export class ClaudeProvider implements Provider {
    * - The transcript must have been written inside this session's silence
    *   window, the very one the staleness rule already weighs it by, so an open
    *   terminal nobody touches still leaves (#47/#68). Past the window it drops
-   *   exactly as it did before, and a session with no transcript at all has
-   *   produced no evidence for this to find fresh.
+   *   exactly as it did before.
+   *
+   * ...and when there is NO transcript, the registry entry's own stamp is
+   * weighed in its place, against that same window (#313). A session nobody
+   * has prompted yet has never had a transcript to write — measured
+   * 2026-09-09, the entry landed 97 seconds before the first prompt did — so
+   * the rule as first written could not fire for the one session a person is
+   * most likely to want to reach. The entry is not a weaker substitute here:
+   * `statusUpdatedAt` dates the write that `statusReported` already reads the
+   * existence of, and both come from the REPL that IS the console. Being
+   * timestamped is what keeps it honest — an abandoned console ages out of
+   * the window exactly as a quiet transcript does.
+   *
+   * Only while there is no transcript, though. Once one exists its mtime
+   * decides alone, or a console left open for an hour would be held on the
+   * board by a status stamp that never moves again.
+   *
+   * A live pid whose `procStart` matches is required as ever, and nothing is
+   * added for it here: scan() already drops a mismatch before this is reached,
+   * exactly as it does for every other registry entry.
    */
   private sitsAtAnOpenPrompt(
     session: ClaudeSessionEntry,
@@ -1356,7 +1374,12 @@ export class ClaudeProvider implements Provider {
   ): boolean {
     if (claudeSessionAttendance(session) !== 'attended') return false
     if (!session.statusReported) return false
-    return this.writtenWithinWindow(transcriptMtimeMs, now, this.sessionSilenceMs(session))
+    // `startedAt` behind it for a build that reports a status and no stamp
+    // for it: a session that started inside the window has not been open long
+    // enough to have gone quiet. Both are absent on an entry that carries
+    // neither, and writtenWithinWindow reads that as the absence of evidence.
+    const lastWriteMs = transcriptMtimeMs ?? session.statusUpdatedAt ?? session.startedAt
+    return this.writtenWithinWindow(lastWriteMs, now, this.sessionSilenceMs(session))
   }
 
   /**

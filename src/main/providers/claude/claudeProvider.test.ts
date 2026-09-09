@@ -3191,13 +3191,229 @@ describe('ClaudeProvider', () => {
       expect((await provider.scan())[0]!.dwarfs).toEqual([])
     })
 
-    it('rests no dwarf on an idle interactive session that has no transcript at all', async () => {
-      // A missing transcript is the absence of evidence, never fresh evidence
-      // — the same reading silenceField and #40's staleness rule already give
-      // it. Nothing here may promote "I know nothing" into "it just spoke".
-      fake.addFile(REGISTRY, idleEntryOfKind('interactive'), 1_000)
+    it('rests no dwarf when neither the transcript nor the entry is fresh', async () => {
+      // AMENDED for #313, which widened what counts as evidence here: a
+      // session with no transcript now falls back to its own registry entry,
+      // so "no transcript" alone no longer settles this. What survives from
+      // #255 is the half that mattered — a missing transcript is never
+      // promoted into "it just spoke" on its own — and the entry has to be
+      // stale too before the dwarf goes. The positive case is pinned in the
+      // #313 block below.
+      const entry: Record<string, unknown> = JSON.parse(idleEntryOfKind('interactive'))
+      entry.statusUpdatedAt = LAST_WRITE - FOREMAN_WINDOW
+      entry.startedAt = LAST_WRITE - FOREMAN_WINDOW
+      fake.addFile(REGISTRY, JSON.stringify(entry), 1_000)
       fake.removeFile(TRANSCRIPT)
       expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+  })
+
+  /*
+   * Issue #313. #255 put an idle terminal back on the board, but its evidence
+   * is a recent write to the session's own transcript — and a session nobody
+   * has prompted yet has no transcript at all, so the rule could not fire for
+   * the one session a person is most likely to want to reach: the one they
+   * just opened. Measured 2026-09-09: the registry entry was written at
+   * 10:10:40, the first prompt went in at 10:12:17, and the transcript came
+   * into existence only then. For 97 seconds the folder had no mine and no
+   * dwarf while somebody sat at its open prompt.
+   *
+   * The entry is itself first-hand, timestamped evidence of that prompt:
+   * `statusUpdatedAt` is when the REPL last wrote its status, and the REPL is
+   * the console. So it stands in for the transcript, judged by the same
+   * attended window, and only while there is no transcript — once one exists
+   * its mtime decides again, exactly as before.
+   */
+  describe('a session at its very first prompt (#313)', () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const REGISTRY = `${ROOT1}\\sessions\\32896.json`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    /** Stand-ins for the product's hour and half hour, as #255's tests use. */
+    const FOREMAN_WINDOW = 60_000
+    const WORKER_WINDOW = 30_000
+    /** When the REPL wrote the entry, and where this block's clock starts. */
+    const ENTRY_WRITE = 42_000
+    /** session-entry.json's procStart ("134324755721362761") as epoch ms. */
+    const REGISTRY_START_MS = 1_788_001_972_136
+
+    let clock = ENTRY_WRITE
+
+    /**
+     * The fixture entry as a just-opened console writes it: idle, a status
+     * reported, every stamp at ENTRY_WRITE. Overrides land last, and an
+     * `undefined` among them drops the key the way an older build would.
+     */
+    function freshEntry(overrides: Record<string, unknown> = {}): string {
+      return JSON.stringify({
+        ...(JSON.parse(sessionEntry) as Record<string, unknown>),
+        status: 'idle',
+        startedAt: ENTRY_WRITE,
+        updatedAt: ENTRY_WRITE,
+        statusUpdatedAt: ENTRY_WRITE,
+        ...overrides
+      })
+    }
+
+    /** This block's clock and windows, plus a probe that confirms the pid. */
+    function providerHere(): ClaudeProvider {
+      return new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        processStartTimeMs: async () => REGISTRY_START_MS,
+        now: () => clock,
+        foremanSilenceMs: FOREMAN_WINDOW,
+        workerSilenceMs: WORKER_WINDOW
+      })
+    }
+
+    beforeEach(() => {
+      clock = ENTRY_WRITE
+      // The whole of the gap: an entry on disk and no transcript beside it,
+      // because nothing has been typed into the session yet.
+      fake.removeFile(TRANSCRIPT)
+      fake.addFile(REGISTRY, freshEntry(), 1_000)
+    })
+
+    it('rests a foreman on a session whose entry is written and whose transcript is not', async () => {
+      const snapshot = (await providerHere().scan())[0]!
+
+      expect(snapshot.status).toBe('idle')
+      expect(snapshot.dwarfs).toHaveLength(1)
+      expect(snapshot.dwarfs[0]).toMatchObject({
+        id: MAIN_ID,
+        role: 'foreman',
+        attendance: 'attended',
+        status: 'waiting',
+        sessionId: SESSION_ID
+      })
+      // It has said nothing, and nothing here may invent a sentence for it —
+      // the panel's own copy already draws "nothing said yet" honestly.
+      expect(snapshot.dwarfs[0]!.lastMessage).toBeUndefined()
+      // Neither may the absence of a transcript become an age or a stamp: no
+      // key at all is what silenceField and transcriptUpdatedAtField say when
+      // there is no file, and being on the board does not change that.
+      expect(snapshot.dwarfs[0]!.silentForMs).toBeUndefined()
+      expect(snapshot.dwarfs[0]!.transcriptUpdatedAt).toBeUndefined()
+      // Resting, never blocked: nothing asked it anything (issue #60).
+      expect(snapshot.dwarfs[0]!.waitingReason).toBeUndefined()
+    })
+
+    it('hands the panel a channel into that dwarf, which is the point of drawing it', async () => {
+      const provider = providerHere()
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+      expect(provider.textDelivery(MAIN_ID)).toEqual({
+        kind: 'terminal',
+        pid: 32896,
+        sessionName: 'sample-project-70'
+      })
+    })
+
+    it('measures the entry by the attended window, not the headless one', async () => {
+      // The window is #255's, unchanged: only the file it is measured against
+      // moved. A reading past the HEADLESS window and still on the board is
+      // what proves the attended one is the one being applied (#47/#68).
+      const provider = providerHere()
+      expect((await provider.scan())[0]!.dwarfs).toHaveLength(1)
+
+      clock = ENTRY_WRITE + WORKER_WINDOW + 1
+      expect((await provider.scan())[0]!.dwarfs).toHaveLength(1)
+    })
+
+    it('drops the session once the entry itself has gone stale', async () => {
+      // A console opened and abandoned leaves like anything else, and on the
+      // same "exactly elapsed reads as stale" side writtenWithinWindow picked.
+      const provider = providerHere()
+      clock = ENTRY_WRITE + FOREMAN_WINDOW
+      expect((await provider.scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('falls back to startedAt for a build that records no statusUpdatedAt', async () => {
+      // `statusUpdatedAt` is the closer fact — it stamps the very write that
+      // proved a REPL exists — but it is not guaranteed to be there, and a
+      // session that started inside the window has not been open long enough
+      // to have gone quiet.
+      fake.addFile(REGISTRY, freshEntry({ statusUpdatedAt: undefined }), 1_000)
+      expect((await providerHere().scan())[0]!.dwarfs).toHaveLength(1)
+
+      clock = ENTRY_WRITE + FOREMAN_WINDOW
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('leaves a headless session dwarfless however fresh its entry is', async () => {
+      // Attendance is still the first gate, and it is the only thing that can
+      // say a human is there (#68): a `claude -p` run is a root too, and its
+      // registry entry is written just as promptly.
+      fake.addFile(REGISTRY, freshEntry({ kind: 'bg' }), 1_000)
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('leaves a session whose kind proves nothing about attendance dwarfless', async () => {
+      fake.addFile(REGISTRY, freshEntry({ kind: undefined }), 1_000)
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('leaves an SDK-hosted session dwarfless, whose entry is the freshest of all', async () => {
+      // It writes no status ever, because the REPL is what writes that field
+      // and there is no REPL (#191) — so there is no console to keep
+      // reachable, and `startedAt` alone must not smuggle one onto the board.
+      // The app's OWN hosted sessions are unaffected: holding the stream is
+      // what puts those there.
+      fake.addFile(
+        REGISTRY,
+        freshEntry({ status: undefined, statusUpdatedAt: undefined, entrypoint: 'sdk-ts' }),
+        1_000
+      )
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('lets the transcript take over the moment one exists', async () => {
+      // The entry is not a second opinion about a session that HAS spoken: a
+      // transcript gone quiet past its window still ends the dwarf, or a
+      // console left open for an hour would be held on the board by a
+      // status stamp that never moves again.
+      clock = ENTRY_WRITE + 1
+      fake.addFile(TRANSCRIPT, noAgentTranscript, ENTRY_WRITE - FOREMAN_WINDOW)
+      expect((await providerHere().scan())[0]!.dwarfs).toEqual([])
+    })
+
+    it('keeps the same dwarf across its first prompt, rather than leaving and coming back', async () => {
+      // The failure this is worth avoiding: an id that changes, or a dwarf
+      // that vanishes for a poll, reads on the board as one miner walking off
+      // and another arriving — and every stamp the panel keyed on the old id
+      // goes with it.
+      const provider = providerHere()
+      const before = (await provider.scan())[0]!.dwarfs[0]!
+      expect(before).toMatchObject({ id: MAIN_ID, status: 'waiting' })
+
+      // The person types. The REPL flips the entry to busy and the transcript
+      // comes into existence in the same moment.
+      clock = ENTRY_WRITE + 1_000
+      fake.addFile(REGISTRY, freshEntry({ status: 'busy', statusUpdatedAt: clock }), 1_000)
+      fake.addFile(TRANSCRIPT, noAgentTranscript, clock)
+
+      const after = (await provider.scan())[0]!.dwarfs[0]!
+      expect(after.id).toBe(before.id)
+      expect(after).toMatchObject({ role: 'foreman', status: 'working' })
+      // ...and it has a sentence now, where a moment ago it truthfully had none.
+      expect(after.lastMessage).toBe('Placeholder text block.')
+    })
+
+    it('drops a session whose pid was recycled, however fresh its entry reads', async () => {
+      // The live-pid requirement is untouched and still upstream of all of
+      // this (see scan): an entry that outlived its process must never put a
+      // dwarf on the board whose Send lands in an unrelated application.
+      const provider = new ClaudeProvider({
+        fs: fake,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        processStartTimeMs: async () => REGISTRY_START_MS + 60_000,
+        now: () => clock,
+        foremanSilenceMs: FOREMAN_WINDOW,
+        workerSilenceMs: WORKER_WINDOW
+      })
+      expect(await provider.scan()).toEqual([])
+      expect(provider.textDelivery(MAIN_ID)).toBeNull()
     })
   })
 
