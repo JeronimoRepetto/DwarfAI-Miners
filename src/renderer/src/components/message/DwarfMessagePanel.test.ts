@@ -9,7 +9,7 @@ import {
 } from '../../lib/message/panelHeight'
 import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
-import { NO_TRANSCRIPT_NOTE, READING_NOTE } from '../../lib/message/conversation'
+import { NO_TRANSCRIPT_NOTE, NOTHING_SAID_NOTE, READING_NOTE } from '../../lib/message/conversation'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
 import { MAX_DWARF_TEXT_CHARS, type DwarfPermissionRequest, type DwarfSendState } from '../../types'
@@ -532,16 +532,21 @@ describe('DwarfMessagePanel scroll (#195)', () => {
 
   it('scrolls to the newest message once a delayed read lands, even though the panel mounted with nothing to show', async () => {
     // The core of #195: a brand new dwarf mounts before its feed has come
-    // back, so onMounted's own scroll-to-bottom is a no-op against an empty
-    // list. App.vue keeps this same component instance once the feed lands
-    // (see its own tests) rather than remounting, so nothing but a watch on
-    // the rows themselves can still catch the moment they arrive.
+    // back, so onMounted's own scroll-to-bottom lands on whatever is there.
+    // App.vue keeps this same component instance once the feed lands (see its
+    // own tests) rather than remounting, so nothing but a watch on the rows
+    // themselves can still catch the moment they arrive.
+    //
+    // AMENDED for #332 (was: asserting scrollTop stayed at 0 on mount). The
+    // empty state now draws its own placeholder row — the dwarf's portrait,
+    // no conversation yet — so `showLatest` lands on THAT row's height first;
+    // there is still no real conversation to have scrolled past.
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: undefined }), feed: undefined })
     const list = wrapper.find('.panel-conversation').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
-    expect(list.scrollTop).toBe(0)
+    expect(list.scrollTop).toBe(40) // 1 row (the empty-state placeholder) * 40.
 
     await wrapper.setProps({
       feed: {
@@ -1163,17 +1168,59 @@ describe('DwarfMessagePanel honesty', () => {
   })
 
   it('draws an empty state, never a bubble, for a session it cannot read', () => {
+    // AMENDED for #332 (was: asserting no `.message` row at all — the panel
+    // drew a bare paragraph with no face). The empty state now draws as an
+    // agent row so the dwarf's own portrait is never blank; what this case
+    // still guarantees is that nothing said is invented — no bubble, ever.
     const wrapper = panel({
       dwarf: defaultDwarf(),
       feed: { readable: false, messages: [] }
     })
-    expect(wrapper.findAll('.message')).toHaveLength(0)
+    expect(wrapper.findAll('.bubble')).toHaveLength(0)
     expect(wrapper.find('.panel-empty').text()).toBe(NO_TRANSCRIPT_NOTE)
   })
 
   it('says it is still reading rather than that there is nothing', () => {
     const wrapper = panel({ dwarf: defaultDwarf() })
     expect(wrapper.find('.panel-empty').text()).toBe(READING_NOTE)
+  })
+})
+
+/**
+ * #332: silence says nothing about a dwarf's rank, and a dwarf that has not
+ * spoken still has a face. `dwarf.role` is on the prop regardless of what the
+ * transcript holds, so the empty state draws as an agent row — the same
+ * portrait treatment, same alignment as any other agent row — with the note
+ * standing where the bubble text would, never inferring the rank from
+ * anything the session said.
+ */
+describe('DwarfMessagePanel empty portrait (#332)', () => {
+  it("draws the dwarf's own portrait beside the empty-state note", () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ conversation: undefined }),
+      feed: { readable: true, messages: [] }
+    })
+    const row = wrapper.find('.message.is-agent')
+    expect(row.find('.portrait').attributes('src')).toContain('worker-face')
+    expect(row.find('.panel-empty').text()).toBe(NOTHING_SAID_NOTE)
+  })
+
+  it('draws no empty row once the conversation has messages', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: HELD }) })
+    expect(wrapper.find('.panel-empty').exists()).toBe(false)
+    expect(wrapper.findAll('.message')).toHaveLength(HELD.length)
+  })
+
+  it.each([
+    ['worker', 'worker-face'],
+    ['worker2', 'worker2-face'],
+    ['foreman', 'foreman-face']
+  ] as const)("shows %s's own face, never the message's", (role, needle) => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ role, conversation: undefined }),
+      feed: { readable: true, messages: [] }
+    })
+    expect(wrapper.find('.message.is-agent .portrait').attributes('src')).toContain(needle)
   })
 })
 
