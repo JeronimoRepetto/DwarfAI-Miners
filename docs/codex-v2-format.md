@@ -631,3 +631,284 @@ and the absent columns are **verified** against this machine's live store. The p
 is **reasoned from the uniqueness of a live pid**, not observed — no reuse occurred in the window.
 The hook route and the rollout-`process_id` ancestor walk are **unmeasured candidates**, explicitly
 so. Everything is one build on one OS: `0.153.4` on Windows 11.
+
+## 9. Approval and plan prompts on disk, measured 2026-09-09, codex-cli 0.153.4
+
+Issue #265, the evidence half. **Three verdicts, and they are not the same verdict.**
+
+1. **An approval prompt writes nothing while it waits — negative, and now measured from both
+   ends.** The 2026-08-30 finding in `docs/provider-formats.md` §2.3 holds on a corpus 42% larger
+   and on the current build. What is new is that the RESOLUTION _is_ recorded, in
+   `logs_2.sqlite`, which lets the silence be proved rather than inferred: the store knows an
+   approval happened and knows only its answer.
+2. **A question the MODEL asks does have a record — positive, and it is the fixture #265 needs.**
+   `response_item` / `function_call` / `name: "request_user_input"`, whose `arguments` carry
+   `{questions:[{header,id,question,options:[{label,description}]}]}` — the shape
+   `DwarfQuestion` already declares. This was hiding in plain sight: `provider-formats.md`
+   §2.2.1's tool-name table lists `request_user_input` among "71 combined … no subject field a
+   line could name", which is right for a FEED line and wrong for a question.
+3. **A plan is not a prompt — negative for #265's second half.** `update_plan` and the `Plan`
+   item are the agent writing its own to-do list. Nothing about them waits on a person.
+
+So #265 splits. The permission card stays unbuildable on observation alone; the question card
+becomes buildable, for one rare-but-real record.
+
+### The exact procedure, so nobody walks it again
+
+Everything read-only. No session was started, resumed, prompted, focused or signalled; nothing
+under the Codex home was written.
+
+1. Walk every `*.jsonl` under the sessions tree, `JSON.parse` each line, and tally the triple
+   `(type, payload.type, payload.item.type)` — the third element is the part §5 and
+   `provider-formats.md` never enumerated, and it is where this build now puts most of its
+   content. Tally `payload.name` separately for `function_call` and `custom_tool_call`.
+2. Grep the same lines for approval-shaped literals BEFORE interpreting them, then for each hit
+   walk the parsed object to record the JSON PATH the literal sits at. This is the step that
+   matters: every literal in this corpus turned out to be inside somebody's text, and only a path
+   distinguishes a record type from a word in a tool's stdout.
+3. Copy the five `~/.codex/*.sqlite` files plus their `-wal`/`-shm` siblings and the two `*.db`
+   under `~/.codex/sqlite` to a scratch directory, then open the copies with `node:sqlite`
+   `DatabaseSync(file, { readOnly: true })`. §3 opened the live files and hit no locks; copying
+   first costs nothing and removes the question.
+4. For every `thread_items` row, union the top-level keys of `item_json` per `item_type`, and
+   filter that union for approval-shaped key NAMES. A vocabulary of `item_type` values answers
+   "is there a waiting record"; only a key inventory answers "is there a waiting FIELD".
+5. In `logs_2.sqlite`, extract the distinct `app-server event: <name>` vocabulary out of
+   `feedback_log_body`, and for every approval reply take the gap to the immediately preceding
+   row by `id`. The gap is the human's thinking time, and what sits in it is the finding.
+6. `Get-CimInstance Win32_Process` for the process facts, `~/.codex/thread-writer-locks/` for
+   which threads have a live writer, and a size poll of the newest rollout — never `mtime`, for
+   the reason §4 gives and this measurement re-confirmed.
+
+Corpus: 193 rollouts, 557 MB, 61 750 records, 0 unparsable lines — every rollout on the machine,
+18 distinct `cli_version` values from `0.145.0-alpha.27` to `0.153.4`. The 14-day window inside it
+is 66 rollouts / 200 MB / 16 967 records, and its vocabulary is a strict subset of the whole.
+
+### (a) The record vocabulary, whole corpus
+
+Top-level `type` — **`token_usage_record` is new** since `provider-formats.md` §2.2:
+
+| `type`                               | Records |
+| ------------------------------------ | ------: |
+| `response_item`                      |  29 870 |
+| `event_msg`                          |  29 640 |
+| `turn_context`                       |     857 |
+| `token_usage_record`                 |     429 |
+| `world_state`                        |     404 |
+| `inter_agent_communication_metadata` |     289 |
+| `session_meta`                       |     223 |
+| `compacted`                          |      38 |
+
+`event_msg.payload.type` has **collapsed** rather than grown. The 2026-08-30 corpus listed sixteen
+values; six remain, because the per-kind events (`agent_message`, `patch_apply_end`,
+`mcp_tool_call_end`, `web_search_end`, `sub_agent_activity`, `image_generation_end`,
+`context_compacted`, `thread_rolled_back`, `agent_reasoning`, `user_message`) are now carried
+inside `item_completed` as `payload.item.type` instead:
+
+| `event_msg.payload.type`  | Records |
+| ------------------------- | ------: |
+| `item_completed`          |  18 864 |
+| `token_count`             |   8 308 |
+| `task_started`            |     936 |
+| `task_complete`           |     883 |
+| `thread_settings_applied` |     628 |
+| `turn_aborted`            |      21 |
+
+**This matters to `parse.ts` beyond #265**: `parseCodexRolloutTail`'s `case 'agent_message'` reads
+an `event_msg` type this build no longer writes. It is harmless — the `response_item`/`message`
+branch beside it still finds the reply — but it is dead against 0.153.4, and the live text is now
+also in `item_completed`/`AgentMessage`.
+
+`payload.item.type` inside `item_completed`, enumerated here for the first time:
+
+| `item.type`           | Records |
+| --------------------- | ------: |
+| `Reasoning`           |   7 699 |
+| `AgentMessage`        |   4 595 |
+| `CommandExecution`    |   2 207 |
+| `McpToolCall`         |   1 838 |
+| `UserMessage`         |     829 |
+| `FileChange`          |     669 |
+| `SubAgentActivity`    |     237 |
+| `Extension`           |     194 |
+| `WebSearch`           |     178 |
+| `ImageView`           |     135 |
+| `DynamicToolCall`     |     124 |
+| `CollabAgentToolCall` |     121 |
+| `ContextCompaction`   |      36 |
+| `Plan`                |       1 |
+| `FunctionCallOutput`  |       1 |
+
+`response_item.payload.type` adds `tool_search_call` / `tool_search_output` (9 each) to the six
+§2.2 documents. Tool names: `custom_tool_call` is `exec` (5 953) and `apply_patch` (93);
+`function_call` is `shell_command` 404, `wait` 294, `wait_agent` 149, `send_message` 88,
+`spawn_agent` 64, `followup_task` 42, `list_agents` 38, `js` 27, `run` 18, `view_image` 11,
+**`update_plan` 6**, `_create_pull_request` 5, **`request_user_input` 3**,
+`load_workspace_dependencies` 2, `interrupt_agent` 1.
+
+**Nothing in any of those three vocabularies names an approval, a permission, an elicitation or a
+pending input.** The literals were searched for directly and every hit was located by JSON path:
+`exec_approval` (1), `approval_request` (1), `permission_request` (3), `ask_user` (2) and
+`AskUser` (73) occur ONLY inside `.payload.output[…].text`, `.payload.item.stdout`,
+`.payload.item.result.content[…].text` or a message body — tool output and prose, several of them
+this repository's own issue text being read back by an agent. `elicit` (42) additionally occurs as
+a POLICY key, `turn_context.payload.approval_policy.granular.mcp_elicitations`, mirrored in
+`event_msg`/`thread_settings_applied`. A policy is not a request; that distinction is the same one
+§2.3 drew and it survives the re-measurement.
+
+### (b) The approval prompt: silence, now provable
+
+The store records the ANSWER. `logs_2.sqlite` carries, at `codex_core::session::handlers`,
+15 rows of the shape
+
+```
+session_loop{thread_id=<uuid>}: Submission sub=Submission { id: "<uuid>",
+  op: ExecApproval { id: "exec-<uuid>", turn_id: Some("<uuid>"),
+                     decision: Approved | Abort | ApprovedExecpolicyAmendment { … } }, … }
+```
+
+and, at `codex_app_server::outgoing_message`, the app-server side of the same moment —
+`<- response: CommandExecutionRequestApproval { request_id, response: { decision: Accept |
+AcceptWithExecpolicyAmendment { … } } }` (3) and `<- response: McpServerElicitationRequest {
+request_id, response: { action: Accept, … } }` (1). So an approval decision is a first-class,
+thread-scoped, timestamped record, and `Abort` and `Denied` are in the vocabulary beside
+`Approved`.
+
+**The request is not.** The complete `app-server event: <name>` vocabulary in the retained window
+is 26 values, and the only one in the request/response family is **`serverRequest/resolved`** (4).
+There is no `serverRequest/issued`, no `…/started`, no `-> request:` line anywhere: the logger
+records inbound responses and omits outbound requests. `thread/status/changed` (80) fires around
+an approval but its body is `targeted_connections=0` and carries no status VALUE, so it says
+something changed and never what.
+
+The gap measurement closes it. Taking every `op: ExecApproval` row and the row immediately before
+it by `id`, the gaps are 0, 0, 0, 1, 3, 4, 6, 8, 9, 12, 12, 153, 205, 209 and 263 seconds. The
+long ones are the human deciding — and **nothing at all is written during them**. The row before a
+263-second gap is an unrelated `list_models` line from a different span; the row before the short
+ones is the stream event that produced the prompt. A wait leaves no row, only its end does.
+
+The rollout says the same thing more weakly. While an exec approval sits open the rollout tail is
+a `custom_tool_call` (`exec`) with no `custom_tool_call_output` yet — which is **exactly** what a
+command that is simply still running looks like, and that is the overwhelmingly common case. The
+open turn is still open, `busy` is still true, and the panel would be guessing.
+
+Nor is the sequencing in doubt any more. Across 7 198 tool calls in the corpus, **one** call has no
+output and the file continues for 234 more records afterwards. A call line is therefore appended
+when the call is emitted, not batched with its result — which is what makes an unanswered call at
+the tail a real observation rather than an artefact, and is the load-bearing fact behind (c).
+
+### (c) `request_user_input`: the one positive record
+
+Three calls, all in one `source: "cli"` / `originator: "codex-tui"` thread on `0.149.0`. Verbatim
+shape, keys only:
+
+```
+{"timestamp":"…","type":"response_item","payload":{
+  "type":"function_call","name":"request_user_input",
+  "call_id":"call_…","id":"fc_…",
+  "arguments":"{\"questions\":[{\"header\":…,\"id\":…,\"question\":…,
+                 \"options\":[{\"label\":…,\"description\":…}]}]}",
+  "internal_chat_message_metadata_passthrough":{"turn_id":"…","create_time":…}}}
+```
+
+`arguments` is a JSON-encoded STRING, the same double-parse `shell_command` needs. Each of the
+three was followed by a `function_call_output` with the SAME `call_id` and **no records in
+between**, after 91.5 s, 159.5 s and 807.4 s. Thirteen and a half minutes of one gap is a person
+reading a question; combined with the append-at-emission proof above, an unanswered
+`request_user_input` at a rollout's tail is a session waiting on its human, and the record says so
+in the model's own words.
+
+It maps onto `DwarfQuestion` without this app inventing anything: `call_id` → `toolUseId`,
+`questions[0].question` → `question`, `questions[0].header` → `header`, `options[]`
+`{label,description}` → `DwarfQuestionOption`, the record `timestamp` → `askedAt`. No
+multi-select field was observed, so `multiSelect` is `false` until one is.
+
+**The two caveats are real and belong next to the finding.** It is rare — 3 calls in 193 rollouts
+— and no call appears on `0.153.4` in this corpus. What IS true of `0.153.4` is that the tool is
+still OFFERED: the name occurs in `turn_context` / `thread_settings_applied` (the tool list) in
+10 of its 19 rollouts, and in 26 `session_meta` `base_instructions`. So the record can appear on
+the current build; it was simply not chosen in the window. Treat the parser as reading a record
+that is proven in shape and unproven in frequency.
+
+### (d) Plans
+
+`update_plan` is a `function_call` with `arguments` `{explanation?, plan}` — 6 calls, every one
+answered by a `function_call_output`. Separately, one `event_msg`/`item_completed` carries
+`item.type: "Plan"` with `{id, text, type}` and a 6 613-character body, and that is the single
+`thread_items.item_type = 'plan'` row `docs/codex-v2-format.md` §3 recorded; `turn/plan/updated`
+exists as an app-server event (1 row). All of it is the agent publishing its own checklist. **No
+plan record has a pending, proposed, awaiting or accepted state, and none is followed by a wait.**
+The "plan question" half of #265 has no evidence behind it on this build: what a user experiences
+as "Codex is showing me a plan and waiting" is an approval prompt (b) or prose in an
+`AgentMessage`, and prose is forbidden as a signal by `contracts.ts`'s `DwarfBlockedOn`.
+
+### (e) The stores say nothing a rollout does not
+
+- **`thread_items.item_type`** — 15 values, none approval-shaped: `reasoning` 5 546,
+  `agentMessage` 4 261, `commandExecution` 2 207, `mcpToolCall` 1 775, `fileChange` 641,
+  `userMessage` 547, `webSearch` 365, `subAgentActivity` 213, `imageView` 135, `dynamicToolCall`
+  124, `collabAgentToolCall` 121, `contextCompaction` 33, `imageGeneration` 3, `plan` 1,
+  `functionCallOutput` 1. **`request_user_input` is not among them** — the projection reads
+  `item_completed` events, and a `response_item`/`function_call` is not one. The rollout is the
+  only witness for (c).
+- **One approval-shaped KEY exists in the whole `item_json` corpus, and it is empty.**
+  `agentMessage.questions` is present on 3 703 of 4 261 `agentMessage` rows and is `null` on every
+  single one. Codex reserves a questions field on an assistant message and has never filled it
+  here. Worth a re-check on a future build; worth nothing today. (Beside it, `agentMessage.phase`
+  is `commentary` 502 / `final_answer` 216 / null 2 985, and `delivery` is null on all 3 703.)
+- **`thread_turns.status`** — four values, `completed` 545, `interrupted` 18, `failed` 16,
+  `inProgress` 2. No waiting, blocked or pending status. §4's warning stands: both `inProgress`
+  rows are stale orphans, and `inProgress` never distinguished "thinking" from "asking".
+- **`threads.approval_mode`** across 194 threads — `never` 104, `on-request` 87, and **a new
+  granular JSON on 3**: `{"granular":{"sandbox_approval":false,"rules":false,"skill_approval":
+false,"request_permissions":true,"mcp_elicitations":true}}`. Still a policy, still says only
+  whether this thread CAN be asked, never whether it IS being asked.
+- No column in any table of `state_5.sqlite` names a pending question; filtering all 15 tables'
+  columns for `pend|approv|quest|wait|block|prompt|input|elicit` returns `threads.approval_mode`
+  and `thread_dynamic_tools.input_schema`, both of them schema. `queued_items` 0 rows,
+  `thread_goals` 0 rows, `thread_realtime_items` 0 rows.
+- **`codex-dev.db` has an `inbox_items` table** (`id, title, description, thread_id, read_at,
+created_at`) whose name is exactly what this question wants — and it holds **0 rows**. Whatever
+  the desktop app surfaces there, an approval prompt is not it. Its `thread_timeline_ledger`
+  (538 rows) is a sync ledger keyed by `host_id`.
+
+### (f) No live prompt was available, and here is what to capture when one is
+
+At measurement time one thread had a live writer lock and its rollout had not grown in five polls
+twelve seconds apart; its last record was `task_complete`, i.e. **open but idle, not waiting**. The
+only `codex.exe` was the desktop app's `app-server` backend (a child of the app), with no TUI
+running. So step 3 of the #265 diagnosis — inspect a rollout while a prompt is actually on screen
+— is **not answered by observation**, and (b) is argued from resolution records and gap silence
+instead. That is strong for the negative and it is not the same thing as watching one.
+
+Incidentally re-confirmed while polling: the newest rollout's `mtime` read 17:32:19 while its last
+record was timestamped 17:38:21. §4's mtime freeze is alive on this build. Size or content, never
+mtime.
+
+When a prompt IS on screen, capture, in this order and without answering it:
+
+1. `~/.codex/thread-writer-locks/` — the waiting thread's lock file names its uuid, and that is
+   the cheapest way to identify the thread without touching the session.
+2. The size of that thread's rollout, polled three times ~10 s apart, and its last five records'
+   `(type, payload.type, payload.item.type)`. The prediction from (b) is: size frozen, tail a
+   `custom_tool_call`/`exec` with no output. A tail carrying anything else is the discovery.
+3. `SELECT id, ts, level, target, substr(feedback_log_body,1,200) FROM logs WHERE thread_id = ?
+ORDER BY id DESC LIMIT 40` on a COPY of `logs_2.sqlite`. The prediction is that the newest row
+   predates the prompt and nothing arrives until the answer. A row written DURING the wait — an
+   `app-server event: serverRequest/…` other than `resolved`, or any outbound `-> request:` — is
+   the record this section could not find, and it would make the permission card buildable.
+4. `SELECT status, started_at, completed_at FROM thread_turns WHERE thread_id = ?` and
+   `SELECT item_type, count(*) FROM thread_items WHERE thread_id = ? GROUP BY 1`, before and
+   after answering. Anything that flips only while waiting is the answer to #265's question 3.
+5. `threads.approval_mode` for that thread, to record which policy produced the prompt.
+
+### Confidence
+
+The vocabularies, counts, key inventories, JSON paths, the absent columns, the empty
+`agentMessage.questions`, the `serverRequest/resolved`-only event family and the approval gap
+distribution are **verified** against this machine's complete corpus and a copy of its live stores.
+The `request_user_input` shape is **verified** on three real records, and its usefulness rests on
+the append-at-emission proof, which is **verified once** (1 orphan in 7 198 calls) rather than
+repeatedly. "An approval prompt writes nothing while it waits" is **verified for the resolution
+side and inferred for the wait itself** — no prompt was open to watch. Everything is Windows 11,
+one machine, builds `0.145.0-alpha.27` through `0.153.4`.
