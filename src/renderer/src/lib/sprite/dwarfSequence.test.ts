@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus } from '../../types'
-import { DWARF_SHEETS } from './dwarfSheets'
+import { DWARF_CREW, DWARF_SHEETS } from './dwarfSheets'
 import { dwarfClips, isResting, stillFrameOf } from './dwarfSequence'
 import { isImpactFrame, loopOf, onceOf, sequenceFrameAt } from './spriteSheet'
 
@@ -354,14 +354,15 @@ describe('dwarfClips', () => {
       expect(sheetsOf(dwarfClips('worker2', false, false, true, false, false))).toEqual(
         sheetsOf([loopOf(WORKER2.idle)])
       )
-      // AMENDED for #325 alongside the worker's own entry above, and for the
-      // same reason: what is pinned here is the GATE, not which clips are
-      // behind it.
+      // AMENDED for #325 alongside the worker's own entry above, and again for
+      // #330 when the swing count became the rank's own declaration (this rank
+      // swings eight times, not two). What is pinned here is the GATE, not
+      // which clips are behind it or how many.
+      const swings = DWARF_CREW.worker2.swings!
       expect(sheetsOf(dwarfClips('worker2', false, false, true, false, true))).toEqual(
         sheetsOf([
           loopOf(WORKER2['start-working']!),
-          loopOf(WORKER2.working!),
-          loopOf(WORKER2.working!),
+          ...Array.from({ length: swings }, () => loopOf(WORKER2.working!)),
           loopOf(WORKER2['end-working']!)
         ])
       )
@@ -398,18 +399,25 @@ describe('dwarfClips', () => {
    * end-working ONCE and idles.
    */
   describe('work is a shift cycle (#325)', () => {
-    /** The cycle a rank plays at the rock, in order, so a failure names the art. */
+    /**
+     * The cycle a rank plays at the rock, in order, so a failure names the art.
+     *
+     * AMENDED for #330: the swing count is the rank's own declaration now
+     * (`DWARF_CREW`) rather than the literal two this helper built, because a
+     * sound had to fit inside the shift — worker 2, worker2 8. What every test
+     * below pins is unchanged; only the length of the middle is data.
+     */
     function cycleOf(role: 'worker' | 'worker2'): string[] {
       const sheets = DWARF_SHEETS[role]
+      const swings = DWARF_CREW[role].swings!
       return sheetsOf([
         loopOf(sheets['start-working']!),
-        loopOf(sheets.working!),
-        loopOf(sheets.working!),
+        ...Array.from({ length: swings }, () => loopOf(sheets.working!)),
         loopOf(sheets['end-working']!)
       ])
     }
 
-    it('picks the pick up, swings twice, sets it down and starts again', () => {
+    it('picks the pick up, swings as often as it declares, sets it down and starts again', () => {
       for (const role of ['worker', 'worker2'] as const) {
         expect(sheetsOf(dwarfClips(role, false, false, true, false)), role).toEqual(cycleOf(role))
       }
@@ -449,16 +457,25 @@ describe('dwarfClips', () => {
       expect(sequenceFrameAt(clips, start + swing + swing + end)).toEqual({ clip: 0, frame: 0 })
     })
 
-    it('runs worker2 through its own 53, the art being longer at both ends', () => {
-      // 16 + 10 + 10 + 17 = 53 frames, 5.3s a turn. A slower pick-up and a
-      // set-down nearly three times the worker's — that is the art (#211).
+    it('runs worker2 through a cycle of its own, the art being longer at both ends', () => {
+      /*
+       * AMENDED for #330. It read "its own 53" and pinned 16 + 10 + 10 + 17 =
+       * 5300ms, which was this rank's cycle while every rank swung twice; it
+       * swings eight times now, so the sum is 11_300 and that arithmetic is
+       * pinned in the #330 block below rather than restated here. What this
+       * test keeps is what it was really about: the cycle CLOSES back onto the
+       * pick-up, and the swing after the first is a clip of its own — a slower
+       * pick-up and a set-down nearly three times the worker's is the art
+       * (#211), whatever the count between them.
+       */
       const clips = dwarfClips('worker2', false, false, true, false)
       const start = WORKER2['start-working']!.frames * 100
       const swing = WORKER2.working!.frames * 100
       const end = WORKER2['end-working']!.frames * 100
-      expect(start + swing + swing + end).toBe(5300)
-      expect(sequenceFrameAt(clips, start + swing + swing + end)).toEqual({ clip: 0, frame: 0 })
+      const cycle = start + swing * DWARF_CREW.worker2.swings! + end
+      expect(sequenceFrameAt(clips, cycle)).toEqual({ clip: 0, frame: 0 })
       expect(sequenceFrameAt(clips, start + swing)).toEqual({ clip: 2, frame: 0 })
+      expect(end).toBeGreaterThan(start)
     })
 
     it('bites the rock on both turns of the swing, not only the first', () => {
@@ -711,6 +728,80 @@ describe('states that no longer have a drawing of their own', () => {
     // sheets were the first thing drawn.
     expect(sheetsOf(dwarfClips('foreman', true, false))).not.toEqual(
       sheetsOf(dwarfClips('foreman', false, false))
+    )
+  })
+})
+
+/*
+ * The shift's LENGTH, which #325 shipped as the literal "twice" and #330 turns
+ * into a per-rank declaration (`DWARF_CREW`). Not a taste either time: the
+ * worker2's grind is one 8.53 s recording of the whole movement, so its shift
+ * has to be as long as the recording rather than the other way round.
+ */
+describe('the shift swings as many times as the rank declares (#330)', () => {
+  it('takes the worker2 through eight swings, not the two the worker takes', () => {
+    const swings = (role: 'worker' | 'worker2'): number =>
+      dwarfClips(role, false, false, true, false).filter(
+        (clip) => clip.sheet.src === DWARF_SHEETS[role].working!.src
+      ).length
+    expect(swings('worker')).toBe(2)
+    expect(swings('worker2')).toBe(8)
+  })
+
+  it('reads the count off the declaration rather than a literal of its own', () => {
+    // The property that matters: change `DWARF_CREW`'s number and the cycle
+    // changes with it, for either rank, with no branch moving.
+    for (const role of ['worker', 'worker2'] as const) {
+      const declared = DWARF_CREW[role].swings!
+      const clips = dwarfClips(role, false, false, true, false)
+      // The pick-up and the set-down either side of the swings it declares.
+      expect(clips, role).toHaveLength(declared + 2)
+    }
+  })
+
+  it('runs the worker2 through 113 frames of shift, 11.3s a turn', () => {
+    // 16 + (8 x 10) + 17. The worker's 35 are pinned in the block above and
+    // are untouched: only the count between the two transitions moved.
+    const clips = dwarfClips('worker2', false, false, true, false)
+    const start = WORKER2['start-working']!.frames * 100
+    const swing = WORKER2.working!.frames * 100
+    const end = WORKER2['end-working']!.frames * 100
+    const cycle = start + swing * DWARF_CREW.worker2.swings! + end
+    expect(cycle).toBe(11_300)
+    // Round it goes: the frame after the set-down's last is the pick-up again.
+    expect(sequenceFrameAt(clips, cycle)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(clips, cycle - 100)).toEqual({
+      clip: DWARF_CREW.worker2.swings! + 1,
+      frame: WORKER2['end-working']!.frames - 1
+    })
+  })
+
+  it('reaches the last of the eight swings, so none of them is unreachable', () => {
+    // A cycle is one movement whose position picks the clip (see
+    // `sequenceCycle`), so an eighth swing that could never be drawn would be
+    // a declaration the model quietly ignored.
+    const clips = dwarfClips('worker2', false, false, true, false)
+    const start = WORKER2['start-working']!.frames * 100
+    const swing = WORKER2.working!.frames * 100
+    const eighth = sequenceFrameAt(clips, start + swing * 7)
+    expect(eighth).toEqual({ clip: 8, frame: 0 })
+    expect(clips[eighth.clip]?.sheet.src).toBe(WORKER2.working!.src)
+  })
+
+  it('still holds a swinging frame for reduced motion, eight swings or two', () => {
+    // `heldClipOf` picks the first clip the cycle REPEATS, which is the first
+    // swing whatever the count — never the set-down, where the pick is down.
+    for (const role of ['worker', 'worker2'] as const) {
+      const clips = dwarfClips(role, false, false, true, false)
+      const held = stillFrameOf(clips)
+      expect(clips[held.clip]?.sheet.src, role).toBe(DWARF_SHEETS[role].working!.src)
+    }
+  })
+
+  it('leaves the foreman with no shift to count, as he has no swing drawn', () => {
+    expect(DWARF_CREW.foreman.swings).toBeUndefined()
+    expect(sheetsOf(dwarfClips('foreman', false, false, true, false))).toEqual(
+      sheetsOf([loopOf(FOREMAN.idle)])
     )
   })
 })

@@ -2153,9 +2153,16 @@ describe('App audio (#174, #173)', () => {
     })
     wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
     await flushPromises()
-    // The working bed, because a worker is working — read off the same
-    // snapshot the sprites are drawn from.
-    expect(opened.some((src) => src.includes('mine-inside-working'))).toBe(true)
+    /*
+     * AMENDED for #330. It expected `mine-inside-working` here, "the working
+     * bed, because a worker is working". That bed is retired — it was one
+     * recording of a mine being worked, the same whether one worker or nine
+     * were at the rock — and the crew makes the mine's noise itself now, cue
+     * by cue off the frames each sprite draws. What is left for an interior to
+     * open is the room tone, which is what this asserts.
+     */
+    expect(opened.some((src) => src.includes('mine-inside-silence'))).toBe(true)
+    expect(opened.some((src) => src.includes('mine-inside-working'))).toBe(false)
 
     await wrapper.find('.close-mine').trigger('click')
     await flushPromises()

@@ -26,24 +26,33 @@
  */
 import type { AudioPreferences, DwarfRole } from '../../types'
 import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
+import type { CrewCue } from '../sprite/crewSound'
 import {
   AMBIENCE_CROSSFADE_MS,
+  ambienceBedFor,
   ambienceMove,
   shouldCrossfadeLoopSeam,
   type AmbienceBed,
   type AmbienceStanding
 } from './ambience'
+import { CREW_POLYPHONY, CREW_RELEASE_MS, crewVariantIndex, type CrewSoundEvent } from './crew'
 import { musicTimeline, MUSIC_GAP_MS } from './musicTimeline'
 import type { AudioClip, AudioPlayer } from './player'
 import { createPlaylist, type Playlist } from './playlist'
-import { channelVolume, sfxVolume, type AudioGates, type UiSfx } from './volume'
+import { channelVolume, crewVolume, sfxVolume, type AudioGates, type UiSfx } from './volume'
 
-/** What the engine needs to know about the mine on screen. */
+/**
+ * What the engine needs to know about the mine on screen, which since #330 is
+ * the mine and nothing else.
+ *
+ * It used to carry `working`, a reading of the crew, because that chose between
+ * two beds. The crew sounds for ITSELF now — one clip per thing a dwarf is
+ * drawn doing, arriving through `playCrew` — so all the scene still decides is
+ * which mine a cue must have come from to be heard at all.
+ */
 export interface AudioScene {
   /** The mine whose interior is open, or null when none is. */
   mineId: string | null
-  /** Whether at least one worker in that mine is working (see hasWorkingWorker). */
-  working: boolean
 }
 
 export interface AudioEngineOptions {
@@ -54,6 +63,11 @@ export interface AudioEngineOptions {
   voices: Record<DwarfRole, string>
   /** The interface sounds (#323): the navigation click and the panel's own. */
   sfx: Record<UiSfx, string>
+  /**
+   * The crew's own recordings (#330), by rank and cue, each a list of variants
+   * — one recording is a list of one, so every cue is picked the same way.
+   */
+  crew: Record<DwarfRole, Partial<Record<CrewCue, readonly string[]>>>
   /** Injected so a test can name which track plays. */
   random?: () => number
   /** Injected for the same reason every clock in this repo is. */
@@ -75,6 +89,12 @@ export interface AudioEngine {
   playVoice: (role: DwarfRole) => void
   /** The interface answering a press (#323): a navigation click, or the panel. */
   playSfx: (kind: UiSfx) => void
+  /**
+   * A crew member's drawing did something audible (#330) — or, with `ending`,
+   * stopped doing it. WHEN is the sprite's answer entirely; this only holds
+   * the clips and decides how many of them a mine may have at once.
+   */
+  playCrew: (event: CrewSoundEvent) => void
   /** Settle every deadline and check both seams. Cheap; call it often. */
   tick: () => void
   /** Release every sound. Nothing plays after this. */
@@ -87,15 +107,34 @@ interface FadingBed {
   releaseAt: number
 }
 
+/**
+ * One crew clip sounding, and what it was opened at (#330).
+ *
+ * `count` and `gain` are held because a moved slider has to re-aim a clip
+ * without losing its place in the mix: a grind runs for eight and a half
+ * seconds, which is long enough for somebody to reach for the Ambience slider
+ * while it plays, and re-aiming it at the whole channel would make the one clip
+ * still going the loudest thing in the mine.
+ */
+interface CrewClip {
+  dwarfId: string
+  cue: CrewCue
+  clip: AudioClip
+  /** How many were sounding when it opened, which is its share of the mix. */
+  count: number
+  /** The gain the cue itself declared — the footsteps' 5 %, or 1. */
+  gain: number
+}
+
 export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
-  const { player, beds, voices, sfx } = options
+  const { player, beds, voices, sfx, crew: crewSrc } = options
   const now = options.now ?? Date.now
   const random = options.random ?? Math.random
   const playlist: Playlist<string> = createPlaylist(options.tracks, random)
 
   let settings: AudioPreferences = { ...DEFAULT_AUDIO_PREFERENCES }
   let gates: AudioGates = { hidden: false, collapsed: false }
-  let scene: AudioScene = { mineId: null, working: false }
+  let scene: AudioScene = { mineId: null }
   let ambienceMuted = false
   let disposed = false
 
@@ -113,6 +152,19 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
 
   let ambience: { clip: AudioClip; standing: AmbienceStanding } | undefined
   const fading: FadingBed[] = []
+  /**
+   * The crew clips sounding right now (#330), oldest first.
+   *
+   * ONE LIST rather than a slot per dwarf or per cue, because the limit that
+   * matters is how many are audible AT ONCE across the whole crew — nine
+   * workers each entitled to a clip is a rattle, whoever they are. It is at
+   * most `CREW_POLYPHONY` long, and that is also what keeps the ELEMENT player
+   * honest here: three `Audio` elements is nothing, so no Web Audio buffer
+   * player is needed in this slice. It is the optimisation to reach for if the
+   * cap ever has to rise — and see the note at the top of player.ts for why
+   * that trade is not free.
+   */
+  const crew: CrewClip[] = []
 
   let voice: AudioClip | undefined
   /**
@@ -125,6 +177,26 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
 
   function volumeOf(channel: 'music' | 'ambience' | 'voice'): number {
     return channelVolume(channel, settings, gates)
+  }
+
+  /**
+   * Whether a crew clip may be opened at all.
+   *
+   * Read off `ambienceBedFor` — the same answer the room tone gets — and that
+   * IS the rule: the crew is audible exactly when the room it is standing in
+   * is. A mine open and unmuted, the window on screen, the shell not collapsed
+   * to its rail. Deriving it twice, once for the bed and once for the crew, is
+   * how the two would come to disagree about a muted mine.
+   */
+  function crewAudible(): boolean {
+    return (
+      ambienceBedFor({
+        mineId: scene.mineId,
+        muted: ambienceMuted,
+        hidden: gates.hidden,
+        collapsed: gates.collapsed
+      }) !== null
+    )
   }
 
   // ── music ────────────────────────────────────────────────────────────────
@@ -197,15 +269,39 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
     ambience = undefined
     // A cut discards the outgoing bed too: it belongs to a mine or a state
     // that is no longer on screen, and letting it finish its fade would be the
-    // panel still saying something about it.
+    // panel still saying something about it. The same goes for a crew clip
+    // part-way through its release.
     for (const bed of fading) bed.clip.stop()
     fading.length = 0
+    // The crew goes with the room it was standing in (#330), and it goes HERE
+    // rather than anywhere else on purpose: every way the ambience can stop —
+    // a mine cut, a mute, a hidden window, a collapsed rail, dispose — already
+    // arrives at this one function, so nothing has to remember to stop the
+    // crew as well. A clip that survived any of them would be a dwarf heard
+    // working in a mine nobody is looking at.
+    for (const sounding of crew) sounding.clip.stop()
+    crew.length = 0
+  }
+
+  /**
+   * Let a sustained crew clip go, over the release rather than as a cut.
+   *
+   * Onto the same `fading` list the outgoing bed uses, so it is settled by the
+   * same tick and discarded by the same stop. A cut would be audible: both
+   * sustained recordings are of one continuous motion, and stopping one dead
+   * leaves a click where the movement ended.
+   */
+  function releaseCrew(dwarfId: string, cue: CrewCue): void {
+    const at = crew.findIndex((sounding) => sounding.dwarfId === dwarfId && sounding.cue === cue)
+    const sounding = crew[at]
+    if (sounding === undefined) return
+    retire(sounding.clip, CREW_RELEASE_MS)
+    crew.splice(at, 1)
   }
 
   function applyAmbience(): void {
     const move = ambienceMove(ambience?.standing ?? null, {
       mineId: scene.mineId,
-      working: scene.working,
       muted: ambienceMuted,
       hidden: gates.hidden,
       collapsed: gates.collapsed
@@ -215,21 +311,19 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       stopAmbience()
       return
     }
-    if (move.kind === 'cut') {
-      stopAmbience()
-      openBed({ mineId: move.mineId, bed: move.bed }, volumeOf('ambience'))
-      return
-    }
-    crossfadeTo({ mineId: move.mineId, bed: move.bed }, move.ms)
+    // A cut is all that is left (#330): one bed means no state flip to fade
+    // between, and the loop seam below is the ambience's only crossfade now.
+    stopAmbience()
+    openBed({ mineId: move.mineId, bed: move.bed }, volumeOf('ambience'))
   }
 
   /**
-   * The one crossfade, shared by the state flip and the loop seam.
+   * The one crossfade, which since #330 belongs to the loop seam alone.
    *
-   * They are the same act — two seconds of the outgoing bed falling while the
-   * incoming one rises — so a flip that lands ON the seam runs once, not
-   * twice: whichever of the two got here first leaves `ambience` holding a
-   * fresh copy at position 0, and a bed at position 0 has no seam to detect.
+   * The state flip was its other caller and went with the `working` bed. Two
+   * seconds of the outgoing bed falling while the incoming one rises is now
+   * only ever a bed handing over to a fresh copy of ITSELF — born at position
+   * 0, with its own seam to reach later, which is the whole of #322.
    */
   function crossfadeTo(standing: AmbienceStanding, overMs: number): void {
     const outgoing = ambience?.clip
@@ -275,6 +369,11 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       // it at a slider would be reviving a track that is ending.
       if (!musicFadingOut) music?.retargetVolume(volumeOf('music'))
       ambience?.clip.retargetVolume(volumeOf('ambience'))
+      // Each crew clip keeps its OWN share of the mix rather than being aimed
+      // at the whole channel — see `CrewClip` for why that matters for a grind.
+      for (const sounding of crew) {
+        sounding.clip.retargetVolume(crewVolume(settings, gates, sounding.count) * sounding.gain)
+      }
     },
     setGates(next: AudioGates): void {
       if (disposed) return
@@ -356,6 +455,60 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
         }
       })
       interfaceSfx = clip
+      clip.play()
+    },
+    playCrew(event: CrewSoundEvent): void {
+      if (disposed) return
+      /*
+       * The ending comes FIRST, and deliberately before the mine is checked.
+       * A sprite reporting that it has stopped walking is exactly what leaving
+       * a scene looks like from down here, and gating the stop on the mine
+       * still being open would leave the footsteps of a dwarf nobody can see
+       * running until the recording ran out.
+       */
+      if (event.ending === true) {
+        releaseCrew(event.dwarfId, event.cue)
+        return
+      }
+      // A cue from a mine that is not on screen opens nothing: what you hear
+      // is what is drawn, and a scene the viewer has left is still ticking.
+      if (event.mineId !== scene.mineId) return
+      if (!crewAudible()) return
+
+      const variants = crewSrc[event.role][event.cue] ?? []
+      // Which recording is the DWARF's own answer, not a draw: it walked in on
+      // one pair of boots and it has to leave in the same pair (see
+      // crewVariantIndex). A cue with one recording answers 0 for everybody.
+      const src = variants[crewVariantIndex(event.dwarfId, variants.length)]
+      // A rank that declared a cue with nothing recorded for it is silent
+      // rather than borrowed from — the sheets' own rule about missing art.
+      if (src === undefined) return
+
+      // One dwarf, one clip per cue. A re-render that restarts the sequence is
+      // a new shift (#330), and a worker2 grinding twice over itself is one
+      // worker2 too many — so its own previous clip is RELEASED, which is not
+      // a grind being cut by another grind.
+      releaseCrew(event.dwarfId, event.cue)
+      // The fourth is dropped rather than queued: a strike paid back a second
+      // late belongs to a pick that has already lifted again.
+      if (crew.length >= CREW_POLYPHONY) return
+
+      const count = crew.length + 1
+      const gain = event.gain ?? 1
+      const volume = crewVolume(settings, gates, count) * gain
+      // Nothing to hear, so nothing to decode — playVoice's own rule.
+      if (volume <= 0) return
+      const clip = player.open(src, {
+        volume,
+        onEnded: () => {
+          clip.stop()
+          const at = crew.findIndex((sounding) => sounding.clip === clip)
+          // The slot has to come back, or a mine would fall silent for the
+          // rest of the run after its first three strikes.
+          if (at >= 0) crew.splice(at, 1)
+        }
+      })
+      crew.push({ dwarfId: event.dwarfId, cue: event.cue, clip, count, gain })
       clip.play()
     },
     tick(): void {

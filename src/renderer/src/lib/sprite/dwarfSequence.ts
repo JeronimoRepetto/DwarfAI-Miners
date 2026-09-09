@@ -52,10 +52,11 @@
  * stutter, not a movement.
  *
  * Today that means a worker also plays a working sequence of its own — a shift
- * cycle, the pick picked up, swung twice and set down, round and round for as
- * long as the work lasts, and set down ONCE on the way out (see `workingCycle`
- * below, issue #325) — while waiting, walking and leaving (without having
- * worked first) still fall back to the one idle loop, because none of those
+ * cycle, the pick picked up, swung as many times as its rank declares and set
+ * down, round and round for as long as the work lasts, and set down ONCE on the
+ * way out (see `workingCycle` below, issues #325 and #330) — while waiting,
+ * walking and leaving (without having worked first) fall back to the one idle
+ * loop, because none of those
  * has been drawn. Only the foreman's sleep is drawn besides. The panel has not
  * stopped saying which state a dwarf is in — the sleep marker still marks a
  * resting one and the leaving fade still marks a departure — but the SPRITE
@@ -74,7 +75,7 @@
  * note below for what this does to `wasWorking`'s meaning.
  */
 import type { DwarfRole, DwarfStatus } from '../../types'
-import { DWARF_SHEETS, type DwarfSheetName, type DwarfSheetSet } from './dwarfSheets'
+import { DWARF_CREW, DWARF_SHEETS, type DwarfSheetName, type DwarfSheetSet } from './dwarfSheets'
 import {
   loopOf,
   onceOf,
@@ -121,25 +122,36 @@ function cycleStep(sheets: DwarfSheetSet, name: DwarfSheetName): SpriteClip[] {
 /**
  * The shift a dwarf at the rock plays, round and round (issue #325).
  *
- * PICK UP, SWING, SWING, SET DOWN — all four `loop` clips, because the cycle is
- * what repeats and no single strip inside it does (see `SpritePlayback` in
+ * PICK UP, SWING, SET DOWN — all `loop` clips, because the cycle is what
+ * repeats and no single strip inside it does (see `SpritePlayback` in
  * spriteSheet.ts). An endless swing was watched for the first time on
  * 2026-09-09 and could not be read as work at all; a movement that ends and
- * begins again says "still working" every three to five seconds, which is what
- * the eye needs. Twice through the swing rather than once because a shift with
+ * begins again says "still working" every few seconds, which is what the eye
+ * needs. More than one turn of the swing rather than one because a shift with
  * a single strike reads as a dwarf tapping the rock and giving up.
+ *
+ * HOW MANY TURNS IS THE RANK'S OWN DECLARATION (`DWARF_CREW`, issue #330), not
+ * a number this file knows: #325's literal "twice" became a per-rank count the
+ * moment a sound had to fit inside the shift — the worker2's grind is one 8.53s
+ * recording of its whole movement, so its shift is eight swings long and the
+ * worker's stays at two. See `dwarfSheets.ts` for that arithmetic; it is the
+ * maintainer's and is judged by ear.
+ *
+ * A rank that declares no count swings ONCE rather than inheriting a number
+ * from somewhere: a forgotten declaration should be visibly the wrong length,
+ * not silently the length the last rank happened to want.
  *
  * A rank with no swing drawn gets its plain idle instead of a cycle built out
  * of the fallback: the idle twice over is not a shift, it is the idle with a
  * seam in it. That is the foreman, and it is why he is untouched by all of this.
  */
-function workingCycle(sheets: DwarfSheetSet): SpriteClip[] {
+function workingCycle(sheets: DwarfSheetSet, swings: number | undefined): SpriteClip[] {
   const swing = sheets.working
   if (swing === undefined) return [loopOf(sheets.idle)]
+  const turns = Math.max(1, Math.floor(swings ?? 1))
   return [
     ...cycleStep(sheets, 'start-working'),
-    loopOf(swing),
-    loopOf(swing),
+    ...Array.from({ length: turns }, () => loopOf(swing)),
     ...cycleStep(sheets, 'end-working')
   ]
 }
@@ -211,7 +223,7 @@ export function dwarfClips(
   // rock plays the same four clips however it came to be there, which is what
   // the interruption rule above asks of every axis. Nothing replays as a
   // result — the caller recomputes clips only when a state it watches changes.
-  if (atWork) return workingCycle(sheets)
+  if (atWork) return workingCycle(sheets, DWARF_CREW[role].swings)
   if (wasWorking === true) return [...transition(sheets, 'end-working'), loopOf(sheets.idle)]
   return [loopOf(sheets.idle)]
 }

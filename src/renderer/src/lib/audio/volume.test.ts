@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
-import { AUDIO_BASE_VOLUME, channelVolume, sfxVolume, UI_SFX_KINDS } from './volume'
+import { AUDIO_BASE_VOLUME, channelVolume, crewVolume, sfxVolume, UI_SFX_KINDS } from './volume'
 
 const OPEN = { hidden: false, collapsed: false }
 
@@ -115,5 +115,42 @@ describe('sfxVolume', () => {
 
   it('still lets hidden win over the collapsed rail for the panel press', () => {
     expect(sfxVolume('panel', FULL, { hidden: true, collapsed: true })).toBe(0)
+  })
+})
+
+describe('crewVolume (#330)', () => {
+  it('is the ambience channel, because the crew IS the mine now', () => {
+    // The `working` bed is retired: what the crew does is what the mine sounds
+    // like, so it rides the Ambience slider and every gate that slider does.
+    expect(crewVolume(FULL, OPEN, 1)).toBe(channelVolume('ambience', FULL, OPEN))
+  })
+
+  it('divides by the square root of how many are sounding', () => {
+    // Nine workers sound FULLER than one, not nine times louder — which is
+    // what summing the clips would do, and it is how a busy mine turns into a
+    // wall of noise while a quiet one stays too quiet to hear.
+    expect(crewVolume(FULL, OPEN, 1)).toBeCloseTo(0.5)
+    expect(crewVolume(FULL, OPEN, 2)).toBeCloseTo(0.5 / Math.SQRT2)
+    expect(crewVolume(FULL, OPEN, 4)).toBeCloseTo(0.25)
+  })
+
+  it('never divides by less than one, whatever it is handed', () => {
+    // A count of zero means "this one, and nothing else" rather than silence:
+    // the caller counts the clip it is about to open.
+    for (const count of [0, -1, Number.NaN]) {
+      expect(crewVolume(FULL, OPEN, count), `${count}`).toBeCloseTo(0.5)
+    }
+  })
+
+  it('follows the ambience slider, and opens nothing when it is down', () => {
+    expect(crewVolume({ ...FULL, ambienceVolume: 0.5 }, OPEN, 1)).toBeCloseTo(0.25)
+    expect(crewVolume({ ...FULL, ambienceVolume: 0 }, OPEN, 1)).toBe(0)
+  })
+
+  it('is silent while the app is hidden or the shell is its bare rail', () => {
+    // Exactly the ambience's own answers: there is no interior on screen for
+    // a crew to be heard in (#174).
+    expect(crewVolume(FULL, { hidden: true, collapsed: false }, 1)).toBe(0)
+    expect(crewVolume(FULL, { hidden: false, collapsed: true }, 1)).toBe(0)
   })
 })

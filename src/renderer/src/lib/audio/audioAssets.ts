@@ -11,6 +11,7 @@
  * the playlist or silencing a rank at runtime, where nobody would notice.
  */
 import type { DwarfRole } from '../../types'
+import type { CrewCue } from '../sprite/crewSound'
 import type { AmbienceBed } from './ambience'
 import type { UiSfx } from './volume'
 
@@ -26,8 +27,12 @@ import trackWhimsicalTheatricalCircus from '../../assets/audio/music/whimsical-t
 import sfxClick from '../../assets/audio/sfx/button_sound.mp3'
 import sfxPanel from '../../assets/audio/sfx/open_sound.mp3'
 
+import sfxPickaxe from '../../assets/audio/sfx/pickaxe-sfx.mp3'
+import sfxHands from '../../assets/audio/sfx/hands-sfx.mp3'
+import sfxSteps from '../../assets/audio/sfx/steps-sfx.mp3'
+import sfxSteps2 from '../../assets/audio/sfx/steps2-sfx.mp3'
+
 import bedSilence from '../../assets/art/inside-mines/sfx/mine-inside-silence.mp3'
-import bedWorking from '../../assets/art/inside-mines/sfx/mine-inside-working.mp3'
 
 import foremanVoice from '../../assets/art/dwarf-foreman/voce/dwarf-foreman-voice.mp3'
 import workerVoice from '../../assets/art/dwarf-worker/voice/dwarf-worker-voice.mp3'
@@ -55,13 +60,18 @@ export const MUSIC_TRACK_SRC: readonly string[] = [
 ]
 
 /**
- * The two mine beds (#173). They live under the ART tree, in
- * `inside-mines/sfx/`, because that is where the maintainer filed them beside
- * the five interior paintings they belong to — the path is the artist's
+ * The mine's room tone (#173). It lives under the ART tree, in
+ * `inside-mines/sfx/`, because that is where the maintainer filed it beside
+ * the five interior paintings it belongs to — the path is the artist's
  * filing, exactly as `worker2`'s sheets sitting in the worker's directory is.
+ *
+ * There were two. `mine-inside-working.mp3` was one recording of "a mine being
+ * worked", the same whether one worker or nine were at the rock, and #330
+ * retires it in favour of the crew's own clips below. IT IS STILL ON DISK AND
+ * DELIBERATELY NOT IMPORTED HERE — the maintainer's to delete or keep, and a
+ * renamed or removed file must not break a build that no longer plays it.
  */
 export const AMBIENCE_SRC = {
-  working: bedWorking,
   silence: bedSilence
 } satisfies Record<AmbienceBed, string>
 
@@ -94,3 +104,44 @@ export const UI_SFX_SRC = {
   click: sfxClick,
   panel: sfxPanel
 } satisfies Record<UiSfx, string>
+
+/**
+ * The two footstep recordings (#330), which every rank shares.
+ *
+ * A PAIR because a crew walking in on one recording is nine copies of the same
+ * gait; each dwarf wears one of the two for its whole life, picked from its own
+ * id (see `crewVariantIndex`). Far longer than any walk in the panel — 17.96 s
+ * and 13.06 s against a crossing measured in seconds — so they play from their
+ * start and are never looped: a walk that outlasted one would simply go quiet,
+ * which is the right failure.
+ */
+const CREW_WALK_SRC: readonly string[] = [sfxSteps, sfxSteps2]
+
+/**
+ * What each rank sounds like, cue by cue (#330), under `assets/audio/sfx/`
+ * beside the interface sounds rather than under the art tree the room tone
+ * lives in: these are the maintainer's own recordings of a crew, not an
+ * interior's furniture.
+ *
+ * WHEN each of these plays is not here — it is declared on the rank's sheets
+ * (`DWARF_CREW` in lib/sprite/dwarfSheets.ts), because a cue is a claim about
+ * FRAMES. This is only what it plays with, and `audioAssets.test.ts` holds the
+ * two tables against each other: a cue declared with no recording fires into
+ * silence nobody notices, and a recording for a cue no rank declares never
+ * plays at all.
+ *
+ * A LIST PER CUE, even where there is one recording, so that every cue is
+ * picked the same way — `crewVariantIndex` answers 0 for a single-element list
+ * without anything special being written for it.
+ *
+ * `.mp3`, as delivered, decoded natively by Electron's Chromium exactly as the
+ * beds and the voices already are.
+ */
+export const CREW_SFX_SRC = {
+  worker: { strike: [sfxPickaxe], walk: CREW_WALK_SRC },
+  worker2: { shift: [sfxHands], walk: CREW_WALK_SRC },
+  // No strike and no shift: a foreman's `working` is a session producing
+  // tokens rather than a pick on a rock (#173's own example), and he has no
+  // working art for a frame cue to be read off. He walks, so he has boots.
+  foreman: { walk: CREW_WALK_SRC }
+} satisfies Record<DwarfRole, Partial<Record<CrewCue, readonly string[]>>>

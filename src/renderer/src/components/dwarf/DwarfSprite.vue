@@ -8,6 +8,12 @@ import {
   sendMarker as sendMarkerFor
 } from '../../lib/delivery/deliveryVerdict'
 import { LEAVING_EXIT_MS, statusAnimationClass } from '../../lib/presentation'
+import {
+  crewEndingSignal,
+  crewFrameSignals,
+  crewWalkSignal,
+  type CrewSoundSignal
+} from '../../lib/sprite/crewSound'
 import { dwarfClips, isResting, stillFrameOf } from '../../lib/sprite/dwarfSequence'
 import {
   SPRITE_FRAME_SIZE,
@@ -75,6 +81,16 @@ const emit = defineEmits<{
   'bubble-hold': []
   /** The expanded bubble closed: the owner resumes auto-hide with a fresh TTL (board.release). */
   'bubble-release': []
+  /**
+   * This dwarf's drawing did something audible (#330) — or, with `ending`,
+   * stopped doing it.
+   *
+   * The sprite is where the cues are NOTICED and nowhere near where they are
+   * played: two of the three are frames, and this is the one place that knows
+   * which frame is showing. Which mine and which dwarf is MineScene's to add,
+   * and whether anything can be heard at all belongs to the audio engine.
+   */
+  'crew-sound': [signal: CrewSoundSignal]
 }>()
 
 const hitRef = ref<HTMLButtonElement | null>(null)
@@ -451,13 +467,87 @@ const SPARKS_PER_HIT = 5
 const impactCount = ref(0)
 watch(
   () => position.value,
-  (now) => {
+  (now, previous) => {
     if (props.dwarf.status !== 'working') return
     if (props.walking === true) return
     const strip = clips.value[now.clip]?.sheet
     if (strip !== undefined && isImpactFrame(strip, now.frame)) impactCount.value++
+    /*
+     * The crew's own sounds ride here (#330) rather than in a watcher of their
+     * own, because they answer the same two guards: at the rock, and actually
+     * arrived. The debris and the strike are one event, and a burst thrown
+     * with no sound behind it — or the other way round — is the drift that
+     * putting them a few lines apart would eventually cause.
+     *
+     * REDUCED MOTION HEARS NONE OF IT. The two cues below are FRAMES, and a
+     * viewer who asked for less movement is shown one held pose with no timer
+     * running, so there are no frames to sound. Guarded outright as well,
+     * beside the strike glow's own guard, rather than left to the held frame
+     * happening not to be an impact one. The footsteps are the exception and
+     * are emitted elsewhere: a walk is a position, not an animation.
+     */
+    if (reducedMotion.value) return
+    for (const signal of crewFrameSignals(props.dwarf.role, clips.value, previous, now)) {
+      emit('crew-sound', signal)
+    }
   }
 )
+
+/**
+ * The grind stops with the shift that opened it (#330).
+ *
+ * `atWork` covers every way a worker2 leaves the cycle that the sprite can
+ * see: its status stops being `working`, or the scene starts walking it
+ * somewhere (#262's own gate is what makes those one question). A rank that
+ * declared no shift has none to end, so nothing is emitted for it.
+ */
+watch(atWork, (working, was) => {
+  if (working || was !== true) return
+  const signal = crewEndingSignal(props.dwarf.role, 'shift')
+  if (signal !== undefined) emit('crew-sound', signal)
+})
+
+/**
+ * The footsteps, for exactly as long as the scene is walking this dwarf.
+ *
+ * `immediate`, because a sprite can MOUNT already walking — a dwarf that turns
+ * up after the mine was opened comes in at the nearest entrance and walks its
+ * route (see MineScene), so its first walk begins before there is a change to
+ * watch. The first run has no old value, which is why the ending is emitted
+ * only for a walk that was actually seen to be under way.
+ */
+watch(
+  () => props.walking === true,
+  (walking, was) => {
+    if (walking) {
+      const signal = crewWalkSignal(props.dwarf.role)
+      if (signal !== undefined) emit('crew-sound', signal)
+      return
+    }
+    if (was !== true) return
+    const signal = crewEndingSignal(props.dwarf.role, 'walk')
+    if (signal !== undefined) emit('crew-sound', signal)
+  },
+  { immediate: true }
+)
+
+/**
+ * A sprite leaving the scene takes its sustained sounds with it.
+ *
+ * The mine's own cut silences the crew whenever the interior changes, so this
+ * is for the case that cut does not see: a dwarf dropping out of the crew
+ * between two polls, with no status left to change through. An unmount is the
+ * strongest form of "no longer drawn" there is, and a grind outliving the
+ * dwarf that made it is the promise the panel exists to keep, broken.
+ */
+onBeforeUnmount(() => {
+  for (const cue of ['walk', 'shift'] as const) {
+    if (cue === 'walk' && props.walking !== true) continue
+    if (cue === 'shift' && !atWork.value) continue
+    const signal = crewEndingSignal(props.dwarf.role, cue)
+    if (signal !== undefined) emit('crew-sound', signal)
+  }
+})
 
 /**
  * The strike's own light (issue #74's last piece): a brief glow layered over

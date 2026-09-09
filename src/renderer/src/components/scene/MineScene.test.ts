@@ -21,6 +21,7 @@ import {
 import { SPRITE_FRAME_SIZE } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../../testing/factories'
 import type { Dwarf, MineTier } from '../../types'
+import DwarfSprite from '../dwarf/DwarfSprite.vue'
 import MineScene from './MineScene.vue'
 
 /*
@@ -924,5 +925,57 @@ describe('MineScene session strip (#96)', () => {
       }
     })
     expect(wrapper.get('.session-refusal').text()).toBe('The session did not answer in time.')
+  })
+})
+
+/*
+ * The crew's own sounds (#330) pass THROUGH the scene, which adds the two
+ * facts a sprite cannot know about itself — which mine it is standing in, and
+ * which dwarf it is — and then decides nothing else. Both are what the engine
+ * checks the cue against: a cue from a mine the viewer has left opens nothing,
+ * and a sustained clip is released by the dwarf that opened it.
+ */
+describe('MineScene crew sounds (#330)', () => {
+  it('forwards a sprite cue with the mine and the dwarf it came from', () => {
+    const dwarf = defaultDwarf({ id: 'claude:s9', role: 'worker2', status: 'working' })
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ id: 'mine-7', dwarfs: [dwarf] }) }
+    })
+    wrapper.findComponent(DwarfSprite).vm.$emit('crew-sound', { cue: 'shift' })
+    expect(wrapper.emitted('crew-sound')).toEqual([
+      [{ cue: 'shift', mineId: 'mine-7', dwarfId: 'claude:s9', role: 'worker2' }]
+    ])
+  })
+
+  it('carries the whole signal through, gain and ending included', () => {
+    // The scene must not read the cue, only address it: the gain is the
+    // rank's declaration and the ending is what releases a sustained clip.
+    const dwarf = defaultDwarf({ id: 'claude:s1', status: 'working' })
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ id: 'mine-7', dwarfs: [dwarf] }) }
+    })
+    const sprite = wrapper.findComponent(DwarfSprite)
+    sprite.vm.$emit('crew-sound', { cue: 'walk', gain: 0.05 })
+    sprite.vm.$emit('crew-sound', { cue: 'walk', ending: true })
+    expect(wrapper.emitted('crew-sound')).toEqual([
+      [{ cue: 'walk', gain: 0.05, mineId: 'mine-7', dwarfId: 'claude:s1', role: 'worker' }],
+      [{ cue: 'walk', ending: true, mineId: 'mine-7', dwarfId: 'claude:s1', role: 'worker' }]
+    ])
+  })
+
+  it('names the dwarf that made the cue, not the first one in the crew', () => {
+    const crew = [
+      defaultDwarf({ id: 'claude:s1', role: 'foreman', status: 'working' }),
+      defaultDwarf({ id: 'claude:s2', role: 'worker', status: 'working' })
+    ]
+    const wrapper = mount(MineScene, {
+      props: { mine: defaultMine({ id: 'mine-7', dwarfs: crew }) }
+    })
+    const sprites = wrapper.findAllComponents(DwarfSprite)
+    expect(sprites.length).toBeGreaterThan(1)
+    sprites[1]!.vm.$emit('crew-sound', { cue: 'strike' })
+    const forwarded = wrapper.emitted('crew-sound')?.[0]?.[0] as { dwarfId: string; role: string }
+    expect(forwarded.dwarfId).toBe(sprites[1]!.props('dwarf').id)
+    expect(forwarded.role).toBe(sprites[1]!.props('dwarf').role)
   })
 })
