@@ -19,8 +19,8 @@ import DwarfMessagePanel from './DwarfMessagePanel.vue'
  * The interim icon bar (#27) died here and this file is where its behaviours
  * are now pinned: the console action, Escape, the whole send path (Enter,
  * Shift+Enter, the blank refusal, the char cap, the channel hint, the in-flight
- * lock, the two-phase verdict), the whole kick path (arm-then-fire, the
- * channel-specific refusals, the in-flight lock, the verdict) and Boost's
+ * lock, the two-phase verdict), the whole kick path (one click since #293, the
+ * channel-specific hints, the in-flight lock, the verdict) and Boost's
  * disabled reason with its per-provider effort label.
  *
  * Three of its behaviours went with the bar rather than moving, and none of
@@ -33,9 +33,10 @@ import DwarfMessagePanel from './DwarfMessagePanel.vue'
  *   without submitting it.
  * - **The chat toggle** and its two tests (hide until clicked, collapse on a
  *   second click). The design's panel has no toggle: the input is the surface.
- * - **The disarm-on-chat-open test**, whose gesture no longer exists. A
- *   half-confirmed kick is still cleared when the panel moves to another
- *   dwarf, which is the case that survived.
+ * - **The disarm-on-chat-open test**, whose gesture no longer exists. The case
+ *   that survived it — a half-confirmed kick cleared when the panel moved to
+ *   another dwarf — has since gone the same way: #293 took the confirmation off
+ *   the control, so there is no half-confirmed state left to clear.
  *
  * The bar's four shape tests (icon order, inline pixel art, aria-labels, the
  * hover tooltip) described a surface that no longer exists; this file's own
@@ -585,7 +586,15 @@ describe('DwarfMessagePanel input', () => {
     expect(wrapper.find('.panel-note').exists()).toBe(true)
   })
 
-  it("shows the kick's refusal in the panel when the composer works and it does not", () => {
+  /*
+   * AMENDED for #293 (was: "shows the kick's refusal in the panel when the
+   * composer works and it does not", expecting the queue's "between turns"
+   * sentence on the refusal row). Neither control refuses this dwarf any more —
+   * the composer sends and the kick dismisses — so the row would be the panel
+   * apologising for two controls that both work. What the kick does is on the
+   * control itself.
+   */
+  it('draws no refusal for a queue-only thread: the composer sends, the kick dismisses', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         provider: 'codex',
@@ -594,7 +603,8 @@ describe('DwarfMessagePanel input', () => {
       })
     })
     expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.panel-refusal').text()).toContain('between turns')
+    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+    expect(wrapper.find('.control-kick').attributes('title')).toContain('off the rock')
   })
 
   it('draws no refusal row at all when both controls work', () => {
@@ -638,28 +648,53 @@ describe('DwarfMessagePanel controls', () => {
     capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
   })
 
-  it('asks for a second click before it kicks', async () => {
+  /*
+   * AMENDED for #293 (was: 'asks for a second click before it kicks', which
+   * asserted the arm state and its 'is-armed' class). The arming was #11's
+   * implementation choice, the design source listed the confirmation under
+   * Unspecified, and a first click that visibly did nothing read as a kick that
+   * had failed.
+   */
+  it('kicks on one click, with no confirmation to press through', async () => {
     const wrapper = panel({ dwarf: kickable })
-    await wrapper.find('.control-kick').trigger('click')
-    expect(wrapper.emitted('kick')).toBeUndefined()
-    expect(wrapper.find('.control-kick').classes()).toContain('is-armed')
-
     await wrapper.find('.control-kick').trigger('click')
     expect(wrapper.emitted('kick')).toHaveLength(1)
     expect(wrapper.find('.control-kick').classes()).not.toContain('is-armed')
   })
 
-  it('disables kick, with the reason, when the session cannot be cancelled', () => {
+  /*
+   * AMENDED for #293 (was: 'disables kick, with the reason, when the session
+   * cannot be cancelled', expecting the disabled attribute and "can't be
+   * canceled yet"). Nothing can interrupt this session, which is now the reason
+   * the control means something else rather than the reason it is dead.
+   */
+  it('keeps kick live where nothing can be cancelled, and says it dismisses', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({ capabilities: { sendText: null, cancel: null, adjustEffort: null } })
     })
-    expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.control-kick').attributes('title')).toContain("can't be canceled yet")
+    expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.control-kick').attributes('title')).toContain('off the rock')
   })
 
-  it('disables kick when the dwarf carries no capability matrix at all', () => {
+  /* AMENDED for #293, same reason (was: 'disables kick when the dwarf ...'). */
+  it('keeps kick live when the dwarf carries no capability matrix at all', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ capabilities: undefined }) })
-    expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
+  })
+
+  /*
+   * A finished worker (#219, #293). Its session ended, so there is nothing to
+   * interrupt — and that is exactly why the control is worth having here: it
+   * ends the leaving walk instead of leaving the dwarf standing on the rock
+   * for the rest of its grace.
+   */
+  it('offers kick on a session that has ended, to end its walk', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ status: 'leaving' }) })
+    const control = wrapper.find('.control-kick')
+    expect(control.attributes('disabled')).toBeUndefined()
+    expect(control.attributes('title')).toContain('has ended')
+    await control.trigger('click')
+    expect(wrapper.emitted('kick')).toHaveLength(1)
   })
 
   it('names what kicking THIS channel actually does, rather than one generic promise', () => {
@@ -1055,5 +1090,28 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
     })
     await wrapper.find('.answer-jump').trigger('click')
     expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+})
+
+/*
+ * The dismissal's own verdict line (#293). The panel has to keep three acts
+ * apart under one control: an interrupt handed to a session, a session this
+ * app ended, and a dwarf taken off the board without the session being asked
+ * anything at all.
+ */
+describe('DwarfMessagePanel on a dismissed dwarf', () => {
+  it('says the dwarf was sent off, and never that anything was handed over', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        provider: 'codex',
+        textDelivery: 'codex-queue',
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+      }),
+      kickState: { phase: 'delivered', via: 'dismiss' }
+    })
+    const line = wrapper.find('.panel-status').text()
+    expect(line).toContain('off the rock')
+    expect(line).not.toContain('handed over')
+    expect(line).not.toContain('Ended the session')
   })
 })

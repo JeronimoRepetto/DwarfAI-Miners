@@ -104,7 +104,6 @@ const emit = defineEmits<{
 }>()
 
 const message = ref('')
-const kickArmed = ref(false)
 const historyOpen = ref(false)
 
 const conversation = computed(() => conversationOf(props.dwarf, props.feed))
@@ -125,7 +124,7 @@ const height = ref(
 /** The height to give back when the history tab closes again. */
 const collapsedHeight = ref(height.value)
 
-const transient = computed(() => ({ kicking: isKicking.value, kickArmed: kickArmed.value }))
+const transient = computed(() => ({ kicking: isKicking.value }))
 const actions = computed(() => buildActionBar(props.dwarf, transient.value))
 /*
  * Why a disabled control is disabled, on screen (#217). The `title` attributes
@@ -135,7 +134,7 @@ const actions = computed(() => buildActionBar(props.dwarf, transient.value))
  * is belongs to lib/delivery/actionBar, like every other thing this panel says
  * about a capability.
  */
-const refusal = computed(() => refusalLine(props.dwarf, transient.value))
+const refusal = computed(() => refusalLine(props.dwarf))
 /*
  * Where a permission dialog this panel cannot answer is being held open, and
  * therefore where the person has to go (#203). Its own line rather than the
@@ -311,24 +310,21 @@ function onInputKeydown(event: KeyboardEvent): void {
   submit()
 }
 
-/** First click arms the confirmation, second click fires it. */
+/**
+ * One click kicks (#293).
+ *
+ * It used to arm on the first click and fire on the second, with the button's
+ * own name carrying the question ("Confirm kick?"). Nothing in the design asked
+ * for that — `screens/mine.md` listed the confirmation under Unspecified — and
+ * what it produced in use was a kick that read as not having worked. What the
+ * control DOES still varies, and the action model is where that is decided:
+ * a session with an interrupt channel has its turn cut short, and one nothing
+ * can interrupt has its dwarf dismissed from the board.
+ */
 function onKick(): void {
   if (action('kick')?.enabled !== true) return
-  if (!kickArmed.value) {
-    kickArmed.value = true
-    return
-  }
-  kickArmed.value = false
   emit('kick')
 }
-
-// A half-confirmed kick must not survive the panel moving to another dwarf.
-watch(
-  () => props.dwarf.id,
-  () => {
-    kickArmed.value = false
-  }
-)
 </script>
 
 <template>
@@ -518,7 +514,6 @@ watch(
       <div class="panel-controls">
         <button
           class="control-kick"
-          :class="{ 'is-armed': kickArmed }"
           type="button"
           :disabled="action('kick')?.enabled !== true"
           :aria-label="action('kick')?.name"
@@ -902,9 +897,6 @@ watch(
   background: var(--color-accent);
 }
 /* An armed kick turns hostile-red until it is confirmed. */
-.control-kick.is-armed .control-glyph {
-  background: var(--danger-line);
-}
 .control-kick:disabled,
 .control-boost:disabled {
   cursor: not-allowed;

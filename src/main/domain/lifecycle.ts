@@ -20,6 +20,42 @@ interface LeavingEntry extends RealDwarfContext {
 }
 
 /**
+ * Whether this snapshot of `dwarf` shows its session moving since `sinceMs` —
+ * the one thing that lifts a dismissal (#293).
+ *
+ * Two pieces of evidence, and both are facts about THIS dwarf. A status of
+ * `'working'` is the provider stating that a turn is open right now, so it is
+ * newer than any earlier dismissal without needing a timestamp at all; it is
+ * the signal every provider writes, and it is what a Codex thread flips to the
+ * moment somebody types into its TUI. `transcriptUpdatedAt` is the raw mtime of
+ * this dwarf's own transcript, which moves for ANY writer — a human turn typed
+ * into a console included — so it catches a session that has been written to
+ * before the status has caught up.
+ *
+ * What is deliberately NOT the evidence, each for a reason:
+ *
+ * - **The mine's `updatedAt`.** A mine is a FOLDER, and several sessions and
+ *   several dwarfs share one. A neighbour digging would resurrect a dwarf
+ *   nobody touched, which makes the dismissal useless in exactly the busy mine
+ *   where somebody would reach for it.
+ * - **`silentForMs`.** It is `now - mtime`, so it changes on every poll purely
+ *   because the clock advances — the trap `transcriptUpdatedAt`'s own doc
+ *   comment in contracts.ts was added to avoid.
+ * - **`lastMessage`.** Only the ASSISTANT's side of the transcript, so a human
+ *   turn leaves it untouched — and a human returning to the session is the very
+ *   case that has to bring the dwarf back.
+ *
+ * A dwarf that was already `'working'` when it was dismissed therefore comes
+ * back on the next poll. That is the intended direction and not a hole:
+ * #46's record exists so the board never hides an agent that is running, and a
+ * dismissal is the person's act, never a finding that the session stopped.
+ */
+function showsActivitySince(dwarf: Dwarf, sinceMs: number): boolean {
+  if (dwarf.status === 'working') return true
+  return dwarf.transcriptUpdatedAt !== undefined && dwarf.transcriptUpdatedAt > sinceMs
+}
+
+/**
  * Tracks dwarfs across runtime ticks so a session that finishes/disappears
  * doesn't just vanish: it stays visible with status 'leaving' for a grace
  * period. Stateful by design (poller ticks only carry the latest snapshot,
@@ -36,6 +72,12 @@ export class DwarfLifecycleTracker {
    * provider itself stopped reporting them — undefined while it still is.
    */
   private retired = new Map<string, number | undefined>()
+  /**
+   * When each DISMISSED dwarf was sent off (#293) — the instant the activity
+   * rule below measures against. Only a dismissal is keyed here; a retirement
+   * from #46 never is, which is what keeps the two suppressions apart.
+   */
+  private dismissedAt = new Map<string, number>()
 
   constructor(options: DwarfLifecycleOptions) {
     this.graceMs = options.graceMs
@@ -62,6 +104,27 @@ export class DwarfLifecycleTracker {
     }
   }
 
+  /**
+   * Take a dwarf off the board because the PERSON asked for it (#293) — a kick
+   * on a session nothing here can interrupt, or on one that has already ended.
+   *
+   * Not a claim about the session, which is the whole difference from `retire`
+   * above: nothing has been observed stopping, and usually nothing has stopped
+   * at all. So the suppression is conditional — `showsActivitySince` below
+   * lifts it the moment the provider reports the session moving again — where a
+   * retirement's only has to outlast the provider's own belief.
+   *
+   * A dwarf already walking out goes NOW rather than finishing its grace: what
+   * somebody pressing Kick on a finished worker is asking to be rid of is
+   * precisely that walk.
+   */
+  dismiss(dwarfId: string): void {
+    const walkingOut = this.leaving.has(dwarfId)
+    this.retire(dwarfId)
+    this.dismissedAt.set(dwarfId, this.now())
+    if (walkingOut) this.leaving.delete(dwarfId)
+  }
+
   /** Merge grace-period 'leaving' dwarfs into a fresh set of real mines. */
   apply(mines: Mine[]): Mine[] {
     const nowMs = this.now()
@@ -71,10 +134,18 @@ export class DwarfLifecycleTracker {
     const suppressed = new Set<string>()
     for (const item of mines) {
       for (const dwarf of item.dwarfs) {
-        // A retired dwarf is not real any more, whatever the provider says.
+        // A retired dwarf is not real any more, whatever the provider says —
+        // unless it was DISMISSED and this snapshot shows it moving since
+        // (#293), in which case the person's decision is over and the dwarf is
+        // real again.
         if (this.retired.has(dwarf.id)) {
-          suppressed.add(dwarf.id)
-          continue
+          const dismissedAt = this.dismissedAt.get(dwarf.id)
+          if (dismissedAt === undefined || !showsActivitySince(dwarf, dismissedAt)) {
+            suppressed.add(dwarf.id)
+            continue
+          }
+          this.retired.delete(dwarf.id)
+          this.dismissedAt.delete(dwarf.id)
         }
         incomingIds.add(dwarf.id)
         nextReal.set(dwarf.id, {
@@ -96,7 +167,10 @@ export class DwarfLifecycleTracker {
     for (const [id, absentSince] of this.retired) {
       if (suppressed.has(id)) this.retired.set(id, undefined)
       else if (absentSince === undefined) this.retired.set(id, nowMs)
-      else if (nowMs - absentSince >= this.graceMs) this.retired.delete(id)
+      else if (nowMs - absentSince >= this.graceMs) {
+        this.retired.delete(id)
+        this.dismissedAt.delete(id)
+      }
     }
 
     // Newly missing: real last tick, absent now. missingSince is set once and

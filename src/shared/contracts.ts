@@ -1151,6 +1151,12 @@ export interface DwarfCapabilities {
    * else: it ends the SESSION rather than the turn, which the panel has to say
    * out loud. Read both halves; neither implies the other, and
    * resolveKickDelivery remains the one place the cancel rule lives.
+   *
+   * AMENDED for #293: null means nothing can INTERRUPT this session, and no
+   * longer that the Kick control is dead. The control stays enabled and its
+   * act changes — the dwarf is dismissed from the board rather than the turn
+   * being cut short (see DwarfKickVia). So nothing may read a null here as
+   * "offer no kick"; it decides WHICH kick to offer.
    */
   cancel: TextDeliveryChannel | null
   /**
@@ -1548,11 +1554,29 @@ export interface DwarfKickRequest {
   dwarfId: string
 }
 
+/**
+ * What a kick actually did, and it is not always a channel (#293).
+ *
+ * 'none' was already one such member: no attempt was possible. 'dismiss' is
+ * the second, and it is the opposite — the attempt WAS made and it succeeded,
+ * it just went nowhere near the session. Where nothing can interrupt a turn
+ * (the Codex queue, a protocol with no cancel, a one-shot nothing here
+ * started) or the session has already ended, Kick means "I am done with this
+ * one": main takes the dwarf off the board and no message is sent anywhere.
+ *
+ * Deliberately NOT a member of TextDeliveryChannel. That union answers how a
+ * live session can be REACHED, every member of it is a real route, and the
+ * total maps keyed on it (see the renderer's CHANNEL_HINT and KICK_HINT) would
+ * each need an entry describing a route that does not exist. A dismissal
+ * touches no session at all, so it belongs to the verdict and to nothing else.
+ */
+export type DwarfKickVia = TextDeliveryChannel | 'none' | 'dismiss'
+
 /** Verdict of one kick attempt. Same shape as DwarfTextResult for a consistent panel. */
 export interface DwarfKickResult {
   delivered: boolean
-  /** The channel used, or 'none' when no attempt was possible. */
-  via: TextDeliveryChannel | 'none'
+  /** The channel used, 'none' when no attempt was possible, or 'dismiss' — see DwarfKickVia. */
+  via: DwarfKickVia
   /** Human-readable reason shown in the panel when delivered is false. */
   error?: string
 }

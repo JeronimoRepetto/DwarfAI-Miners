@@ -364,3 +364,43 @@ describe('useDwarfKicking on a session that was ended', () => {
     expect(stateFor('codex:t1')).toBeUndefined()
   })
 })
+
+/*
+ * A kick that DISMISSED the dwarf (#293). Main answered its own verdict rather
+ * than a channel's, because nothing was asked of the session at all: it cannot
+ * be interrupted from here, so what the kick did was take the dwarf off the
+ * board. There is therefore nothing to watch for — the same conclusion as an
+ * ended session, from the opposite premise — and no retirement to report,
+ * because main has already made that decision itself.
+ */
+describe('useDwarfKicking on a dwarf that was dismissed', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    retireDwarf.mockClear()
+    useDwarfKicking().clearAll()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens no reaction watch, and never promotes itself to reacted', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'dismiss' }))
+    const { kick, observe, stateFor } = useDwarfKicking()
+
+    await kick('codex:t1')
+    expect(stateFor('codex:t1')).toEqual({ phase: 'delivered', via: 'dismiss' })
+
+    // The exact snapshot pair that PROVES a reaction on every other channel.
+    // It proves nothing here: this session was never asked to stop.
+    observe([defaultDwarf({ id: 'codex:t1', status: 'working' })])
+    observe([defaultDwarf({ id: 'codex:t1', status: 'waiting' })])
+    expect(stateFor('codex:t1')?.phase).toBe('delivered')
+
+    // And main is never told to retire it: main is what dismissed it.
+    expect(retireDwarf).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('codex:t1')).toBeUndefined()
+  })
+})

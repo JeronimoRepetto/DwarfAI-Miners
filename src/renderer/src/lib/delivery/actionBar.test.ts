@@ -6,12 +6,12 @@ import {
   approvalNote,
   buildActionBar,
   CHANNEL_HINT,
-  HELD_NO_CANCEL_REASON,
+  DISMISS_HINT,
+  ENDED_DISMISS_HINT,
   KICK_HINT,
   launchedNoInboxReason,
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
-  NO_KICK_REASON,
   oneShotNoExitReason,
   refusalLine,
   SESSION_ENDED_REASON,
@@ -20,7 +20,7 @@ import {
   type ActionTransientState
 } from './actionBar'
 
-const IDLE: ActionTransientState = { kicking: false, kickArmed: false }
+const IDLE: ActionTransientState = { kicking: false }
 
 /** A dwarf whose session supports both text delivery and cancellation. */
 function capableDwarf(overrides: Partial<Dwarf> = {}): Dwarf {
@@ -51,16 +51,13 @@ function entryFor(id: ActionId, dwarf: Dwarf, state: ActionTransientState = IDLE
  * the kick does not, which is every ordinary Codex thread (#97).
  */
 describe('refusalLine', () => {
-  const IDLE_STATE: ActionTransientState = { kicking: false, kickArmed: false }
-
   it('has nothing to say when both controls work', () => {
     expect(
       refusalLine(
         defaultDwarf({
           textDelivery: 'terminal',
           capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
-        }),
-        IDLE_STATE
+        })
       )
     ).toBeNull()
   })
@@ -70,33 +67,37 @@ describe('refusalLine', () => {
       provider: 'codex',
       capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
     })
-    expect(refusalLine(dwarf, IDLE_STATE)).toBe(launchedNoInboxReason('codex'))
+    expect(refusalLine(dwarf)).toBe(launchedNoInboxReason('codex'))
   })
 
-  it("shows the kick's own reason when the composer works and the kick does not", () => {
+  /*
+   * AMENDED for #293 (was: "shows the kick's own reason when the composer works
+   * and the kick does not", expecting KICK_HINT['codex-queue'] on the panel).
+   * The kick on such a dwarf is no longer refused - it dismisses the dwarf - so
+   * there is no refusal left to show, and the queue's own sentence would now be
+   * a refusal of a control that works. What it does is on the control itself.
+   */
+  it('has nothing to refuse when the composer works and the kick dismisses', () => {
     const dwarf = defaultDwarf({
       provider: 'codex',
       textDelivery: 'codex-queue',
       capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
     })
-    expect(refusalLine(dwarf, IDLE_STATE)).toBe(KICK_HINT['codex-queue'])
+    expect(refusalLine(dwarf)).toBeNull()
   })
 
   it('says a session has ended once its agent is gone', () => {
-    expect(refusalLine(defaultDwarf({ status: 'leaving' }), IDLE_STATE)).toBe(SESSION_ENDED_REASON)
+    expect(refusalLine(defaultDwarf({ status: 'leaving' }))).toBe(SESSION_ENDED_REASON)
   })
 
   /*
-   * An in-flight kick is not a refusal: the control is disabled because it is
-   * working, and the verdict line is what has something to say about it.
+   * REMOVED for #293: 'says nothing about a kick that is merely in flight'.
+   * Its subject went with the code — `refusalLine` no longer reads the kick
+   * entry at all, so it takes no transient state and there is no in-flight
+   * kick for it to stay quiet about. The coverage that outlived it is
+   * 'locks and reports progress while a kick is in flight' below, which is
+   * where the in-flight state is now pinned in full.
    */
-  it('says nothing about a kick that is merely in flight', () => {
-    const dwarf = defaultDwarf({
-      textDelivery: 'terminal',
-      capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
-    })
-    expect(refusalLine(dwarf, { kicking: true, kickArmed: false })).toBeNull()
-  })
 })
 
 describe('buildActionBar', () => {
@@ -123,29 +124,45 @@ describe('buildActionBar', () => {
       expect(entry.hint).toBe('Asks the agent to stop — it decides how.')
     })
 
-    it('is disabled with a reason when the session has no cancel channel', () => {
+    /*
+     * AMENDED for #293 (was: 'is disabled with a reason when the session has no
+     * cancel channel', expecting NO_KICK_REASON - a constant that has gone with
+     * it). Nothing can interrupt this session, and the person's intent when
+     * they press Kick on it is not "interrupt the turn" but "I am done with
+     * this one": the control stays live and dismisses the dwarf.
+     */
+    it('is enabled, and says it dismisses, when the session has no cancel channel', () => {
       const entry = entryFor(
         'kick',
         capableDwarf({ capabilities: { sendText: null, cancel: null, adjustEffort: null } })
       )
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(NO_KICK_REASON)
-    })
-
-    it('is disabled when the dwarf carries no capability matrix at all', () => {
-      const entry = entryFor('kick', defaultDwarf())
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(NO_KICK_REASON)
-    })
-
-    it('asks for confirmation once armed, staying enabled for the second click', () => {
-      const entry = entryFor('kick', capableDwarf(), { kicking: false, kickArmed: true })
       expect(entry.enabled).toBe(true)
-      expect(entry.name).toBe('Confirm kick?')
+      expect(entry.name).toBe('Kick')
+      expect(entry.hint).toBe(DISMISS_HINT)
+    })
+
+    /* AMENDED for #293, same reason as above (was: 'is disabled when ...'). */
+    it('is enabled and dismisses when the dwarf carries no capability matrix at all', () => {
+      const entry = entryFor('kick', defaultDwarf())
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(DISMISS_HINT)
+    })
+
+    /*
+     * The one click that used to be two (#293). The arm-then-confirm gesture
+     * was #11's implementation choice and the design source never asked for it
+     * - `screens/mine.md` listed the confirmation under Unspecified - and in
+     * use it read as a kick that had not worked. The test it replaces was
+     * 'asks for confirmation once armed, staying enabled for the second click'.
+     */
+    it('never asks for a confirmation: the name says Kick and the entry fires', () => {
+      const entry = entryFor('kick', capableDwarf())
+      expect(entry.enabled).toBe(true)
+      expect(entry.name).toBe('Kick')
     })
 
     it('locks and reports progress while a kick is in flight', () => {
-      const entry = entryFor('kick', capableDwarf(), { kicking: true, kickArmed: false })
+      const entry = entryFor('kick', capableDwarf(), { kicking: true })
       expect(entry.enabled).toBe(false)
       expect(entry.name).toBe('Kicking...')
     })
@@ -157,7 +174,15 @@ describe('buildActionBar', () => {
      * chat action is enabled on the very same channel — so the disabled kick
      * names the queue's own limit and where a kick does still land.
      */
-    it('names the queue limit, not the generic reason, when only the queue can deliver', () => {
+    /*
+     * AMENDED for #293 (was: 'names the queue limit, not the generic reason,
+     * when only the queue can deliver' - a disabled entry carrying
+     * KICK_HINT['codex-queue']). That sentence ended by sending the reader to
+     * the session console, which was true while the control did nothing and is
+     * misleading now that it does something. The queue's limit is still stated;
+     * it is now the first half of what Kick does instead.
+     */
+    it('offers the dismissal where only the queue can deliver, and says why', () => {
       const entry = entryFor(
         'kick',
         capableDwarf({
@@ -165,10 +190,10 @@ describe('buildActionBar', () => {
           capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
         })
       )
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).not.toBe(NO_KICK_REASON)
-      expect(entry.hint).toBe(KICK_HINT['codex-queue'])
-      expect(entry.hint).toContain('console')
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(DISMISS_HINT)
+      expect(entry.hint).toContain("can't be interrupted")
+      expect(entry.hint).not.toBe(KICK_HINT['codex-queue'])
     })
 
     /*
@@ -181,7 +206,15 @@ describe('buildActionBar', () => {
      * exactly what cannot happen, and the generic reason reads as a feature
      * this app has not got round to.
      */
-    it('says a held protocol has no cancel, rather than promising an interrupt', () => {
+    /*
+     * AMENDED for #293 (was: 'says a held protocol has no cancel, rather than
+     * promising an interrupt', expecting HELD_NO_CANCEL_REASON - a constant
+     * that has gone with it). One dismissal sentence now covers every session
+     * nothing can interrupt, whatever makes it so; what must still never
+     * happen is this dwarf being promised the interrupt of a turn, which is
+     * exactly what its protocol has no event for.
+     */
+    it('offers the dismissal for a held protocol with no cancel, never the interrupt', () => {
       const entry = entryFor(
         'kick',
         capableDwarf({
@@ -190,9 +223,8 @@ describe('buildActionBar', () => {
           capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
         })
       )
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(HELD_NO_CANCEL_REASON)
-      expect(entry.hint).not.toBe(NO_KICK_REASON)
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(DISMISS_HINT)
       expect(entry.hint).not.toBe(KICK_HINT['held-session'])
     })
 
@@ -268,10 +300,18 @@ describe('buildActionBar', () => {
       expect(entry.hint).toBe(SESSION_ENDED_REASON)
     })
 
-    it('disables kick with the ended reason: there is nothing left to interrupt', () => {
+    /*
+     * AMENDED for #293 (was: 'disables kick with the ended reason: there is
+     * nothing left to interrupt'). There is still nothing left to interrupt -
+     * and that is the reason the kick on a finished worker means something
+     * else: it ends the walk now rather than leaving the dwarf standing there
+     * for the rest of its grace (#219).
+     */
+    it('offers kick on an ended session, to end the walk rather than interrupt it', () => {
       const entry = entryFor('kick', capableDwarf({ status: 'leaving' }))
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(SESSION_ENDED_REASON)
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(ENDED_DISMISS_HINT)
+      expect(entry.hint).toContain('has ended')
     })
   })
 
@@ -368,15 +408,22 @@ describe('buildActionBar', () => {
       expect(entry.hint).toContain('codex exec')
     })
 
-    it('says outright that this panel has no exit for it', () => {
+    /*
+     * AMENDED for #293 (was: 'says outright that this panel has no exit for
+     * it', a disabled kick carrying oneShotNoExitReason). This panel still has
+     * no exit for the SESSION and never claims one - the dismissal is about the
+     * board, and the composer beside it still carries the sentence about the
+     * session, which is where that fact belongs.
+     */
+    it('offers the dismissal, without ever claiming an exit for the session', () => {
       const entry = entryFor('kick', foreign())
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).not.toBe(NO_KICK_REASON)
-      expect(entry.hint).toBe(oneShotNoExitReason('codex'))
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(DISMISS_HINT)
+      expect(entry.hint).not.toBe(oneShotNoExitReason('codex'))
     })
 
     it('is the sentence the panel shows, not one a hover has to be gone looking for', () => {
-      expect(refusalLine(foreign(), IDLE)).toBe(oneShotNoExitReason('codex'))
+      expect(refusalLine(foreign())).toBe(oneShotNoExitReason('codex'))
     })
 
     /*
@@ -519,12 +566,19 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
     expect(chat?.hint).toBe(CHANNEL_HINT['held-session'])
   })
 
-  it('shows the kick’s reason on the panel, since chat is not the one refusing', () => {
+  /*
+   * AMENDED for #293 (was: 'shows the kick’s reason on the panel, since chat
+   * is not the one refusing', expecting HELD_NO_CANCEL_REASON). Nothing about
+   * this dwarf is refused any more: the composer works and the kick dismisses,
+   * so a refusal row would be the panel apologising for two controls that both
+   * do something.
+   */
+  it('draws no refusal at all, since neither control is refusing anything', () => {
     const dwarf = defaultDwarf({
       provider: 'antigravity',
       textDelivery: 'held-session',
       capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
     })
-    expect(refusalLine(dwarf, IDLE)).toBe(HELD_NO_CANCEL_REASON)
+    expect(refusalLine(dwarf)).toBeNull()
   })
 })
