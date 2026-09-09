@@ -1000,3 +1000,30 @@ describe('preload message-panel contract (#162)', () => {
     expect(removeListener).toHaveBeenLastCalledWith('panel:message:delivery:changed', wrapped)
   })
 })
+
+/**
+ * A link inside a bubble, handed to main (#347).
+ *
+ * The same shape #279's open-path contract above has, and for the same reason:
+ * main resolves and refuses, this bridge only carries a string over and hands
+ * the verdict back. The renderer never receives anything it could act on.
+ */
+describe('preload open-link contract (#347)', () => {
+  it('asks on the shell:openExternalLink channel with the address as written', async () => {
+    invoke.mockResolvedValueOnce({ opened: true })
+    await api.openExternalLink('https://example.test/347')
+    expect(invoke).toHaveBeenLastCalledWith('shell:openExternalLink', 'https://example.test/347')
+  })
+
+  it('collapses a non-string address to an empty string before it crosses', async () => {
+    invoke.mockResolvedValueOnce({ opened: false, reason: 'That link could not be opened.' })
+    await api.openExternalLink(42 as unknown as string)
+    expect(invoke).toHaveBeenLastCalledWith('shell:openExternalLink', '')
+  })
+
+  it("hands back main's verdict untouched, the fixed refusal included", async () => {
+    const refusal = { opened: false, reason: 'That link could not be opened.' }
+    invoke.mockResolvedValueOnce(refusal)
+    await expect(api.openExternalLink('javascript:alert(1)')).resolves.toEqual(refusal)
+  })
+})

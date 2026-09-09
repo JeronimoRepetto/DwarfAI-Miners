@@ -23,6 +23,7 @@ import type {
   HostedLaunchRequest,
   HostedLaunchResult,
   DwarfDeliveryReport,
+  ExternalLinkResult,
   LaunchFailedPush,
   MessagePanelDragPhase,
   MessagePanelState,
@@ -261,6 +262,15 @@ export interface DwarfAiMinersApi {
    * renderer never receives a filesystem verdict of its own to act on.
    */
   openMinePath: (request: MineOpenPathRequest) => Promise<MineOpenPathResult>
+  /**
+   * Open a link from a message bubble in the SYSTEM browser (#347).
+   *
+   * Validated entirely in MAIN, which admits `http:` and `https:` and nothing
+   * else: this bridge carries the raw address over and hands back main's
+   * verdict — `opened`, or the one fixed reason main wrote. The renderer never
+   * navigates and never learns anything about the machine's browser.
+   */
+  openExternalLink: (url: string) => Promise<ExternalLinkResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
@@ -540,6 +550,12 @@ const api: DwarfAiMinersApi = {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
       target: typeof request?.target === 'string' ? request.target : ''
     }),
+  // Same discipline again, on a channel that carries one value: a non-string
+  // address crosses as '', which main refuses like any other non-address. The
+  // string is NOT parsed or normalised here — main re-runs the whole rule, and
+  // re-running a rule on somebody else's parse result is not re-running it.
+  openExternalLink: (url) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openExternalLink, typeof url === 'string' ? url : ''),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
   kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
   // Same discipline as setToggleShortcut, applied field by field: a launch

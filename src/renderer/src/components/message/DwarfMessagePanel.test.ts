@@ -1605,3 +1605,97 @@ describe('DwarfMessagePanel echo scroll (#309)', () => {
     expect(list.scrollTop).toBe(5)
   })
 })
+
+/**
+ * Markdown in the bubbles (#347).
+ *
+ * What a construct MEANS is `lib/message/markdown`'s and how it is drawn is
+ * `MarkdownBubble`'s; both have their own tests. What is pinned HERE is the
+ * panel's own three decisions: that the bubble is that component, that the
+ * person's rows and echoes get the same treatment as the agent's — the
+ * maintainer's ruling, where the issue had left it open — and that the rows
+ * which are not speech are untouched by any of it.
+ */
+describe('DwarfMessagePanel markdown (#347)', () => {
+  const REPLY = '**Done**\n\n- Updated the provider\n- Added `pnpm test` coverage'
+
+  function withReply(text: string, role: 'assistant' | 'user' = 'assistant') {
+    return panel({
+      dwarf: defaultDwarf({
+        conversation: [{ role, text, timestamp: '2026-09-09T09:00:00.000Z' }]
+      })
+    })
+  }
+
+  it("renders an agent's Markdown as real elements, not as delimiters", () => {
+    const wrapper = withReply(REPLY)
+    expect(wrapper.find('.bubble strong').text()).toBe('Done')
+    expect(wrapper.findAll('.bubble ul > li')).toHaveLength(2)
+    expect(wrapper.find('.bubble code').text()).toBe('pnpm test')
+    expect(wrapper.find('.bubble').text()).not.toContain('**')
+  })
+
+  /*
+   * Symmetric, by maintainer ruling: the issue left the person's own bubbles
+   * open, and half a panel that renders formatting is worse than either whole.
+   */
+  it("renders the person's own transcript rows the same way", () => {
+    expect(withReply('**Done**', 'user').find('.message.is-user .bubble strong').text()).toBe(
+      'Done'
+    )
+  })
+
+  it('renders an echo the same way, so a message does not change on delivery', () => {
+    const wrapper = panel({
+      echoes: [
+        {
+          id: 'e1',
+          text: '**now**',
+          sentAt: Date.parse('2026-09-09T10:00:00.000Z'),
+          state: { phase: 'sending' }
+        }
+      ]
+    })
+    expect(wrapper.findAll('.message').at(-1)!.find('.bubble strong').text()).toBe('now')
+  })
+
+  it('leaves plain text exactly as it was, line breaks included', () => {
+    expect(withReply('Found the seam.\nTwo lines.').find('.bubble').text()).toBe(
+      'Found the seam.\nTwo lines.'
+    )
+  })
+
+  /*
+   * An activity line is a sentence this app wrote about a tool call (#240), not
+   * something anybody said — so it is not Markdown, and a path with an
+   * underscore in it must not come out italic.
+   */
+  it('leaves an activity line as the literal text it always was', async () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        conversation: [
+          {
+            role: 'assistant',
+            text: 'Edited src/_internal_/index.ts',
+            timestamp: 't0',
+            activity: { kind: 'edit', target: 'src/_internal_/index.ts' }
+          }
+        ]
+      })
+    })
+    await wrapper.find('.activity-disclosure').trigger('click')
+    const line = wrapper.find('.activity-line')
+    expect(line.text()).toBe('Edited src/_internal_/index.ts')
+    expect(line.find('em').exists()).toBe(false)
+  })
+
+  /*
+   * The panel reports the press and opens nothing, exactly as it does for an
+   * activity line's own path (#279): opening happens in MAIN.
+   */
+  it("reports a pressed link's address and opens nothing itself", async () => {
+    const wrapper = withReply('see [the issue](https://example.test/347)')
+    await wrapper.find('.bubble .markdown-link').trigger('click')
+    expect(wrapper.emitted('open-link')).toEqual([['https://example.test/347']])
+  })
+})

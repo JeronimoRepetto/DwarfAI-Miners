@@ -29,6 +29,7 @@ import type {
   DwarfTextResult,
   DwarfTuningRequest,
   DwarfTuningResult,
+  ExternalLinkResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
   HostedLaunchRequest,
@@ -79,6 +80,7 @@ import {
   parseMineOpenPathRequest,
   verifyMinePath
 } from './shell/openMineFile'
+import { EXTERNAL_LINK_REFUSED_REASON, parseExternalLinkRequest } from './shell/openExternalLink'
 import { currentPlatform } from './platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from './appDatabase/appDatabase'
 import { runCoalBackfill } from './ledger/coalBackfill'
@@ -167,6 +169,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setDwarfTuning)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
+  ipcMain.removeHandler(IPC_CHANNELS.openExternalLink)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
@@ -1005,6 +1008,31 @@ async function init(): Promise<void> {
       if (openError !== '') {
         console.warn(`[shell] could not open a mine file: ${openError}`)
         return { opened: false, reason: MINE_PATH_UNOPENABLE_REASON }
+      }
+      return { opened: true }
+    }
+  )
+
+  // A press on a link inside a message bubble (#347). Opened in the SYSTEM
+  // browser and never inside the app: `shell.openExternal` hands the address to
+  // whatever the machine registered, and this window is never navigated.
+  //
+  // The renderer already refused anything that is not `http:`/`https:` before
+  // drawing the link at all, and the SAME rule runs again here — a renderer's
+  // word is never a permission, and this channel is reachable by anything
+  // holding the bridge. The one refusal is this app's own sentence, and
+  // openExternal's own error is swallowed for the reason openMinePath's is.
+  ipcMain.handle(
+    IPC_CHANNELS.openExternalLink,
+    async (_event, payload: unknown): Promise<ExternalLinkResult> => {
+      const refused: ExternalLinkResult = { opened: false, reason: EXTERNAL_LINK_REFUSED_REASON }
+      const url = parseExternalLinkRequest(payload)
+      if (url === null) return refused
+      try {
+        await shell.openExternal(url)
+      } catch (error) {
+        console.warn(`[shell] could not open a link: ${String(error)}`)
+        return refused
       }
       return { opened: true }
     }

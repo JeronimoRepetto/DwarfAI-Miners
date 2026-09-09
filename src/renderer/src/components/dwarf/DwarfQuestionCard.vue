@@ -151,7 +151,13 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   font-size: var(--text-meta);
   font-weight: 700;
 }
-/* The agent message surface from the design: cream, accent border, dark ink. */
+/*
+ * The agent message surface from the design: cream, accent border, dark ink.
+ *
+ * AMENDED for #347: the question is the agent SPEAKING, so it takes the
+ * conversation face and size rather than the Pixel UI chrome around it. The
+ * header above stays Tiny5 — that one is a headline, not a sentence.
+ */
 .question-text {
   overflow-y: auto;
   margin: 0;
@@ -161,7 +167,8 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   border-radius: 12px;
   color: var(--color-panel);
   background: var(--color-cream);
-  font-size: var(--text-meta);
+  font-family: var(--font-conversation);
+  font-size: var(--text-conversation);
   line-height: 1.35;
   user-select: text;
   -webkit-user-select: text;
@@ -190,7 +197,14 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   cursor: pointer;
   background: var(--color-cream);
   font: inherit;
-  font-size: var(--text-meta);
+  /*
+   * #347: an option's label and its description are the agent's OWN words on
+   * the agent's own cream surface, exactly like the question above — so the
+   * whole card takes the conversation face rather than drawing the label in
+   * one face and its sentence in another.
+   */
+  font-family: var(--font-conversation);
+  font-size: var(--text-conversation);
   line-height: 1.3;
   text-align: left;
 }

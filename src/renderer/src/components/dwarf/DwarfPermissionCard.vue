@@ -203,10 +203,16 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   font-size: var(--text-meta);
   font-weight: 700;
 }
+/*
+ * #347: the title and the description below are the agent SAYING what it wants
+ * to do, so both take the conversation face and size. The header above stays
+ * Tiny5 — that one is the tool's NAME, which is metadata.
+ */
 .permission-title {
   margin: 0;
   color: var(--color-cream);
-  font-size: var(--text-meta);
+  font-family: var(--font-conversation);
+  font-size: var(--text-conversation);
   font-weight: 700;
   line-height: 1.3;
 }
@@ -227,7 +233,8 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   border-radius: 12px;
   color: var(--color-panel);
   background: var(--color-cream);
-  font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
+  /* #347 made this stack a token, so a bubble's code and this card share one. */
+  font-family: var(--font-code);
   font-size: var(--text-meta);
   line-height: 1.35;
   white-space: pre-wrap;
@@ -238,7 +245,8 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 .permission-description {
   margin: 0;
   color: var(--color-cream);
-  font-size: var(--text-meta);
+  font-family: var(--font-conversation);
+  font-size: var(--text-conversation);
   line-height: 1.3;
   opacity: 0.85;
 }

@@ -236,6 +236,23 @@ describe('design-tokens.css against the design foundations', () => {
     // picked — which for a 10px UI is not a survivable outcome.
     expect(family!.split(',').length).toBeGreaterThan(1)
   })
+
+  /*
+   * The SECOND face (#347, maintainer amendment 2026-09-09). Tiny5 has one
+   * weight and is a display face; what a dwarf or the person says is now
+   * paragraphs with real bold, lists and code, and a single-weight pixel face
+   * can draw none of that. Same fallback shape as --font-pixel above, and for
+   * the same reason.
+   */
+  it('names the conversation family the design added for what the crew says', () => {
+    const family = valueOf('--font-conversation')
+    expect(family).toContain('Pixelify Sans')
+    expect(family!.split(',').length).toBeGreaterThan(1)
+  })
+
+  it('carries the conversation body size the amendment fixes at 14px', () => {
+    expect(valueOf('--text-conversation')).toBe('14px')
+  })
 })
 
 /*
@@ -267,5 +284,32 @@ describe('renderer components against the type scale tokens', () => {
       if (matches !== null) offenders.push(`${file}: ${matches.join(', ')}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  /*
+   * #347: the amendment is only real if the surfaces it names actually ask for
+   * the second face. Walked off disk for the reason the size check above is —
+   * a `<style>` block has no import a test could assert against — and named
+   * one surface at a time, because "the crew's own words" is a judgement about
+   * WHICH element, not a pattern a regex could find on its own.
+   */
+  it.each([
+    ['components/message/DwarfMessagePanel.vue', '.bubble'],
+    ['components/dwarf/DwarfQuestionCard.vue', '.question-text'],
+    ['components/dwarf/DwarfPermissionCard.vue', '.permission-description']
+  ])('sets %s, which carries %s, in the conversation family', (file) => {
+    expect(readFileSync(join(RENDERER_SRC, file), 'utf8')).toContain('var(--font-conversation)')
+  })
+
+  /*
+   * Both faces are BUNDLED, never fetched. index.html's policy admits no remote
+   * origin (see lib/contentSecurityPolicy), so a token naming a family nobody
+   * imported would silently render the fallback stack in a shipped build and
+   * nowhere else — exactly the failure #156 was.
+   */
+  it('bundles both faces rather than trusting the machine to have them', () => {
+    const entry = readFileSync(join(RENDERER_SRC, 'main.ts'), 'utf8')
+    expect(entry).toContain('@fontsource/tiny5')
+    expect(entry).toContain('@fontsource-variable/pixelify-sans')
   })
 })

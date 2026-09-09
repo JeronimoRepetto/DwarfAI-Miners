@@ -653,6 +653,28 @@ async function openPath(target: string): Promise<void> {
   }
 }
 
+/**
+ * Open a link from a message bubble in the system browser (#347).
+ *
+ * The same division `openPath` above draws, and for a stronger reason: the
+ * address came out of an untrusted transcript. Main validates it — `http:` or
+ * `https:`, nothing else — and main owns the only `shell.openExternal` in the
+ * app, so this window relays the press and shows whatever main decided on the
+ * same `.notice` line the two cases above use.
+ *
+ * No mine is needed and none is checked, unlike `openPath`: a web address is
+ * not resolved against anything, so there is no folder for it to belong to.
+ */
+async function openLink(href: string): Promise<void> {
+  error.value = null
+  try {
+    const result = await window.api.openExternalLink(href)
+    if (!result.opened) error.value = result.reason
+  } catch {
+    error.value = 'That link could not be opened.'
+  }
+}
+
 /** Close whatever this window has open, which the shell then hears about. */
 function close(): void {
   closeLaunchPanel()
@@ -898,6 +920,7 @@ onBeforeUnmount(() => {
         @decide="decidePermission(selectedDwarf, $event)"
         @open-console="activate(selectedDwarf)"
         @open-path="openPath"
+        @open-link="openLink"
         @close="close"
       />
     </div>
