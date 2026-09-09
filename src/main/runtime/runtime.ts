@@ -340,6 +340,21 @@ function combineFallbackErrors(
 }
 
 /**
+ * The same one-line-each shape for a SEND, whose two tiers run the other way
+ * round (#308): the relay first, the console behind it. Named in the order
+ * they were tried, so the two sentences can be read as a sequence.
+ */
+function combineConsoleFallbackErrors(
+  relayError: string | undefined,
+  consoleError: string | undefined
+): string {
+  return (
+    `Relay: ${relayError ?? NO_REASON_GIVEN}\n` +
+    `Console fallback: ${consoleError ?? NO_REASON_GIVEN}`
+  )
+}
+
+/**
  * The stage breakdown appended to a delivery's log line, e.g.
  * ` [focus=12ms spawn=30ms total=45ms]` (issue #21).
  *
@@ -1817,6 +1832,13 @@ export class AgentRuntime {
    * relay — so intersecting it with console support would delete a working
    * channel from macOS and Linux, the two platforms with the fewest to spare
    * (#97).
+   *
+   * This is where a console this MACHINE cannot reach is removed, and nothing
+   * more. Which tier a given act prefers when the machine can reach it is a
+   * different question and not one target can answer, because send and kick
+   * answer it differently: resolve.ts owns that split (`sendRouteOf` versus
+   * `kickEndpointOf`), and putting the relay-first rule here would hand it to
+   * the kick as well (#308).
    */
   private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
     const consoleSupported = this.textDelivery.supportsConsoleInput !== false
@@ -2016,10 +2038,16 @@ export class AgentRuntime {
    * Second attempt behind a failed console delivery (issue #24): an
    * interactive session with a registry name is also relay-addressable, so a
    * window that cannot be focused or typed into no longer swallows the
-   * payload — the exact same text goes over the relay instead. On success the
-   * verdict names 'claude-relay', the channel that actually delivered, so the
-   * panel's ✓ stays honest; on a double failure it carries both reasons,
+   * instruction — the exact same text goes over the relay instead. On success
+   * the verdict names 'claude-relay', the channel that actually delivered, so
+   * the panel's ✓ stays honest; on a double failure it carries both reasons,
    * terminal first. Logs the verdict only, never the text.
+   *
+   * KICK's fallback, and since #308 only Kick's: a message's tiers run the
+   * other way round, so its second attempt is `consoleFallback` below. The
+   * `attempt` parameter survives because the log line reads better naming the
+   * act, and because retiring it would churn a line every runtime log grep in
+   * the issues is written against.
    */
   private async relayFallback(options: {
     dwarfId: string
@@ -2053,6 +2081,56 @@ export class AgentRuntime {
           delivered: false,
           via: options.channel,
           error: combineFallbackErrors(options.terminalError, relay.error)
+        }
+  }
+
+  /**
+   * Second attempt behind a relay that never started — the mirror of
+   * `relayFallback`, for the tier order a MESSAGE now takes (#308).
+   *
+   * Reached only where the relay is the primary tier AND the session owns a
+   * console: `resolveTextDelivery` carries the pid for exactly that case and
+   * carries nothing anywhere else. Its one precondition is the caller's, and
+   * it is the whole reason this is not simply "the relay failed" — see
+   * `TextDeliveryOutcome.neverStarted`. A relay that RAN and failed may
+   * already have handed the message over, and typing it a second time would
+   * put the person's words into the session twice; only a relay that never
+   * started proves there is nothing to duplicate.
+   *
+   * On success the verdict names 'terminal', the channel that actually
+   * delivered, exactly as the other direction names 'claude-relay'. Logs the
+   * verdict only, never the text.
+   */
+  private async consoleFallback(options: {
+    dwarfId: string
+    /** The channel the verdict reports when this fallback fails too. */
+    channel: TextDeliveryChannel
+    pid: number
+    text: string
+    pressEnter: boolean
+    relayError: string | undefined
+  }): Promise<DwarfTextResult> {
+    // A second attempt is a second attempt: its own timings, rather than being
+    // folded into the relay attempt that failed before it.
+    const timer = createStageTimer(this.now)
+    const outcome = await timer.measure('total', () =>
+      this.textDelivery.sendToConsole({
+        pid: options.pid,
+        text: options.text,
+        pressEnter: options.pressEnter
+      })
+    )
+    timer.absorb(outcome.stages)
+    console.log(
+      `[runtime] Console fallback (message) for ${options.dwarfId}: ` +
+        `${outcome.delivered ? 'delivered' : 'failed'}${stageSuffix(timer.timings())}`
+    )
+    return outcome.delivered
+      ? { delivered: true, via: 'terminal' }
+      : {
+          delivered: false,
+          via: options.channel,
+          error: combineConsoleFallbackErrors(options.relayError, outcome.error)
         }
   }
 
@@ -2289,7 +2367,16 @@ export class AgentRuntime {
     }
     // Before the rescan, because it costs nothing and a session with no
     // console cannot be typed into however fresh the board is.
-    const resolved = resolveTextDelivery(dwarf.id, (id) => this.deliveryTargetOf(id))
+    //
+    // The KICK's route, not the send's, and since #308 the two differ: a
+    // permission decision is a keystroke aimed at the dialog that terminal is
+    // drawing, exactly as Kick's Esc is, so it takes the route that still ends
+    // at a console. Read off `resolveTextDelivery` it would find the relay a
+    // named session's messages now travel on and refuse every observed dialog
+    // for want of a terminal — and the queue behind that relay is read between
+    // tool calls, which is precisely where a session waiting on a dialog is
+    // not (see this method's own note above).
+    const resolved = resolveKickDelivery(dwarf.id, (id) => this.deliveryTargetOf(id))
     if (resolved === null || resolved.endpoint.kind !== 'terminal') {
       return { answered: false, error: CANNOT_REACH_TERMINAL }
     }
@@ -2351,6 +2438,12 @@ export class AgentRuntime {
    * an empty message, no channel at all) so the panel can explain itself
    * instead of leaving the user wondering whether the text landed. Nothing
    * here logs the message: only its length, the channel and the verdict.
+   *
+   * The tier is `resolveTextDelivery`'s answer and never a preference decided
+   * here — which since #308 means an observed Claude session with a registry
+   * name is written to invisibly, and its console is only what a relay that
+   * never started falls back to. `kickDwarf` below keeps the opposite order on
+   * purpose; see `sendRouteOf` in resolve.ts for why the two part company.
    */
   async sendDwarfText(request: DwarfTextRequest): Promise<DwarfTextResult> {
     const dwarf = this.mines
@@ -2435,16 +2528,26 @@ export class AgentRuntime {
           stageSuffix(timer.timings())
       )
       if (outcome.delivered) return { delivered: true, via: resolved.channel }
-      // The console attempt failed, but a session with a registry name is
-      // also relay-addressable: same payload, second channel (issue #24).
-      if (resolved.endpoint.kind === 'terminal' && resolved.endpoint.sessionName !== undefined) {
-        return this.relayFallback({
+      // The relay never started, so nothing was handed over and the session's
+      // own console may take the same text (#308, reversing #24's order). Both
+      // halves of that condition are load-bearing: a relay that RAN and failed
+      // may already have delivered — a non-zero exit or a timeout kill can
+      // land after SendMessage succeeded — and keystrokes behind it would put
+      // the person's message into the session a second time. Duplicating
+      // somebody's words is worse than an honest failure, so anything but
+      // `neverStarted` stops here with the relay's own reason.
+      if (
+        endpoint.kind === 'claude-relay' &&
+        outcome.neverStarted === true &&
+        resolved.consoleFallbackPid !== undefined
+      ) {
+        return this.consoleFallback({
           dwarfId: request.dwarfId,
-          attempt: 'message',
           channel: resolved.channel,
-          sessionName: resolved.endpoint.sessionName,
+          pid: resolved.consoleFallbackPid,
           text: payload,
-          terminalError: outcome.error
+          pressEnter: request.pressEnter,
+          relayError: outcome.error
         })
       }
       return { delivered: false, via: resolved.channel, error: outcome.error }

@@ -604,9 +604,14 @@ export function dwarfSilenceWindowKey(
 /**
  * How a live session can be handed a typed message.
  *
- * terminal: the session owns a console window — keystrokes are injected into it.
- * claude-relay: the session is headless but addressable by name, so a one-shot
- *   `claude -p` turn delivers the text over Claude Code's cross-session messaging.
+ * terminal: the session owns a console window — its window is focused and
+ *   keystrokes are injected into it. A MESSAGE reaches this tier only where
+ *   nothing else can reach the session at all (#308); a KICK still reaches it
+ *   first, because an interrupt is a keystroke by nature.
+ * claude-relay: the session is addressable by name, so a one-shot `claude -p`
+ *   turn delivers the text over Claude Code's cross-session messaging. The
+ *   PRIMARY channel for any observed Claude session that has a registry name,
+ *   on every platform, whether or not it also owns a console (#308).
  * foreman-relay: the dwarf is a subagent with no channel of its own; the text
  *   goes to its foreman (parent session) under an explicit `[for agent X] ` prefix.
  * codex-queue: the session is a Codex thread whose own message queue accepts an
@@ -620,6 +625,15 @@ export function dwarfSilenceWindowKey(
  *   from stdin and exits with its turn, so there is no inbox behind it and no
  *   process left to read one. It is `cancel` without `sendText`, the mirror of
  *   the queue's `sendText` without `cancel`.
+ *
+ * A dwarf can carry two of these at once, one per half of the matrix, and one
+ * pairing is now ordinary rather than exceptional: an observed Claude session
+ * with a registry name reports `sendText: 'claude-relay'` and
+ * `cancel: 'terminal'` (#308). The console tier can only deliver a message by
+ * focusing somebody's window and typing into it — measured live writing the
+ * remainder of a sentence into whatever the person clicked on next — so a
+ * message takes the invisible channel and the interrupt, which carries no
+ * user text, keeps the keystroke. `textDelivery` follows `sendText`.
  *
  * held-session outranks every other channel for the same dwarf, and that
  * ordering is the fix #210 exists for: an SDK-hosted session registers as
