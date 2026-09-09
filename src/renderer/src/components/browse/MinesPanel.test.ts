@@ -490,3 +490,37 @@ describe('MinesPanel removing a mine', () => {
     ).toBe(false)
   })
 })
+
+/**
+ * The worktree question (#348), over the same panel as the removal
+ * confirmation and in the same shell.
+ */
+describe('MinesPanel worktree question', () => {
+  const WORKTREE_OF = {
+    worktree: 'C:\\Code\\Anvil-worktrees\\forge',
+    root: 'C:\\Code\\Anvil',
+    branch: 'feat/forge'
+  }
+
+  it('asks nothing while nothing has been picked', () => {
+    expect(panel().find('.worktree-modal').exists()).toBe(false)
+  })
+
+  it('asks about the folder main resolved, when there is a question', () => {
+    const wrapper = panel({ worktreeQuestion: WORKTREE_OF })
+    expect(wrapper.get('.worktree-modal .modal-message').text()).toContain('C:\\Code\\Anvil')
+  })
+
+  it('reports the answer without deciding anything itself', async () => {
+    const wrapper = panel({ worktreeQuestion: WORKTREE_OF })
+    await wrapper.get('.modal-open').trigger('click')
+    expect(wrapper.emitted('open-main-project')).toHaveLength(1)
+  })
+
+  it('reports a dismissal, which adds nothing', async () => {
+    const wrapper = panel({ worktreeQuestion: WORKTREE_OF })
+    await wrapper.get('.modal-cancel').trigger('click')
+    expect(wrapper.emitted('dismiss-worktree')).toHaveLength(1)
+    expect(wrapper.emitted('open-main-project')).toBeUndefined()
+  })
+})

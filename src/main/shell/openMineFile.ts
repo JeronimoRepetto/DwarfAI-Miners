@@ -105,8 +105,16 @@ export async function verifyMinePath(
 export function parseMineOpenPathRequest(payload: unknown): MineOpenPathRequest | null {
   if (typeof payload !== 'object' || payload === null) return null
   const record = payload as Record<string, unknown>
-  const { mineId, target } = record
+  const { mineId, target, dwarfId } = record
   if (typeof mineId !== 'string' || mineId === '') return null
   if (typeof target !== 'string' || target === '') return null
-  return { mineId, target }
+  // Optional, unlike the two above (#348): a click that names no dwarf is a
+  // click resolved against the mine's own folder, exactly as before. Anything
+  // that is not a non-empty string is dropped rather than refused, because the
+  // request still means something without it.
+  return {
+    mineId,
+    target,
+    ...(typeof dwarfId === 'string' && dwarfId !== '' ? { dwarfId } : {})
+  }
 }

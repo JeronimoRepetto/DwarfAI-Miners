@@ -330,6 +330,15 @@ export interface DwarfAiMinersApi {
    */
   declareMine: () => Promise<MineDeclareResult>
   /**
+   * Answer declareMine s worktree question by adopting the project instead
+   * (#348).
+   *
+   * No argument either, and for the same reason: main remembers the project it
+   * resolved for the folder it opened the picker for, so this confirms a
+   * question rather than naming a path. Lands exactly where a plain Add lands.
+   */
+  declareMainProject: () => Promise<MineDeclareResult>
+  /**
    * Remove a mine, by MINE ID and never by path — the id is what both
    * processes already agree on, and a path would be a second key to keep in
    * step.
@@ -544,11 +553,13 @@ const api: DwarfAiMinersApi = {
   getMineHistory: (mineId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getMineHistory, typeof mineId === 'string' ? mineId : ''),
   // Same discipline as every other request channel: rebuilt field by field,
-  // so a caller cannot attach anything beyond a mine id and a target string.
+  // so a caller cannot attach anything beyond a mine id, a target string and
+  // the dwarf the click came from (#348) — still never a folder.
   openMinePath: (request) =>
     ipcRenderer.invoke(IPC_CHANNELS.openMinePath, {
       mineId: typeof request?.mineId === 'string' ? request.mineId : '',
-      target: typeof request?.target === 'string' ? request.target : ''
+      target: typeof request?.target === 'string' ? request.target : '',
+      ...(typeof request?.dwarfId === 'string' ? { dwarfId: request.dwarfId } : {})
     }),
   // Same discipline again, on a channel that carries one value: a non-string
   // address crosses as '', which main refuses like any other non-address. The
@@ -593,6 +604,8 @@ const api: DwarfAiMinersApi = {
     ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : ''),
   getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild),
   declareMine: () => ipcRenderer.invoke(IPC_CHANNELS.declareMine),
+  // No payload to coerce: main is holding the project this answers about.
+  declareMainProject: () => ipcRenderer.invoke(IPC_CHANNELS.declareMainProject),
   // No payload to coerce: the question is "what does this machine have", and
   // there is nothing about it for a caller to name.
   listAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.listAgentProviders),

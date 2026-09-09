@@ -147,13 +147,53 @@ describe('DwarfMessagePanel shape', () => {
     expect(messages[1]!.classes()).toContain('is-agent')
   })
 
+  /*
+   * AMENDED for #348. The name is now wrapped in `.panel-who`, so that the
+   * worktree label can ride beside it without taking a column of the header's
+   * three-column grid — which is what centres the history tab. The subject is
+   * unchanged: three cells, the tab in the middle.
+   */
   it('centres the history tab between the name and the close, as the design does', () => {
     const bar = [...panel().find('.panel-bar').element.children]
     expect(bar.map((child) => child.className)).toEqual([
-      'panel-agent',
+      'panel-who',
       'panel-history',
       'panel-close'
     ])
+    expect(panel().find('.panel-who .panel-agent').exists()).toBe(true)
+  })
+
+  /**
+   * Which worktree the dwarf is in, beside its name (#348) — a mine is a
+   * project, and its crew can be spread over every worktree of that project.
+   */
+  it('names the branch beside the dwarf when it works in a worktree', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        name: 'Scout',
+        conversation: HELD,
+        workplace: { path: 'C:\\Code\\Anvil-worktrees\\forge', branch: 'feat/console-paste' }
+      })
+    })
+    expect(wrapper.find('.panel-workplace').text()).toBe('· feat/console-paste')
+    // Text, never a control: there is nothing to press about where a dwarf is.
+    expect(wrapper.find('.panel-workplace').element.tagName).toBe('SPAN')
+  })
+
+  it('names the worktree s folder when its HEAD is detached and carries no branch', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        conversation: HELD,
+        workplace: { path: 'C:\\Code\\Anvil-worktrees\\forge' }
+      })
+    })
+    expect(wrapper.find('.panel-workplace').text()).toBe('· forge')
+  })
+
+  it('says nothing beside the name for a dwarf in the mine s own folder', () => {
+    // Absent means the mine's own folder, and most dwarfs are there. A label
+    // with nothing in it would read as a fact that failed to load.
+    expect(panel().find('.panel-workplace').exists()).toBe(false)
   })
 
   it('carries the three controls the design draws: kick, boost and close', () => {

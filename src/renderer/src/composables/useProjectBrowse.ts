@@ -8,7 +8,7 @@ import {
   toggledDirection
 } from '../lib/browse/browseQuery'
 import { removeFailureNotice } from '../lib/browse/removeMine'
-import type { MineTier, ProjectSummary } from '../types'
+import type { MineTier, MineWorktreeOf, ProjectSummary } from '../types'
 
 /**
  * What the panel says when a browse could not be read and main gave no reason.
@@ -52,6 +52,16 @@ export function useProjectBrowse() {
   const exhausted = ref(false)
   /** True while main is showing the folder picker (#85). */
   const adding = ref(false)
+  /**
+   * The worktree the person just picked, while the panel is asking whether to
+   * open its project instead (#348), or null.
+   *
+   * Kept LOCAL to the browse, exactly as MinesPanel keeps which card is
+   * awaiting its removal confirmation: it is a question on screen, and the only
+   * thing that leaves is the answer. Cleared by either answer, so a cancel
+   * leaves the list exactly as it was.
+   */
+  const worktreeQuestion = ref<MineWorktreeOf | null>(null)
   /**
    * Why the last adopt did not happen, or null.
    *
@@ -172,6 +182,13 @@ export function useProjectBrowse() {
       // Null for an adopted folder AND for a closed picker: the list is the
       // feedback for the first, and backing out is not a fault to report.
       addError.value = declareFailureNotice(result)
+      // A worktree is a QUESTION, not a refusal (#348): nothing was added and
+      // nothing went wrong, so the dialog goes up and the list stays as it is
+      // until the person answers.
+      if (result.outcome === 'worktree-of') {
+        worktreeQuestion.value = result.worktreeOf ?? null
+        return
+      }
       if (result.outcome !== 'added') return
       filters.value = defaultBrowseFilters()
       await load()
@@ -191,6 +208,47 @@ export function useProjectBrowse() {
     } finally {
       adding.value = false
     }
+  }
+
+  /**
+   * Answer the worktree question by adopting the project instead (#348).
+   *
+   * Lands where a plain Add lands, and deliberately shares its whole tail: the
+   * filters go back to their defaults and the new card is prepended when the
+   * reload did not bring it, because the reasoning there — a re-declared folder
+   * keeps the date it was first seen and can sit pages down — applies exactly
+   * as much to a project adopted this way.
+   *
+   * The question is dismissed FIRST, whatever happens next. Main has already
+   * forgotten the project by the time it answers, so a dialog left on screen
+   * could only offer a button that no longer works.
+   */
+  async function openMainProject(): Promise<void> {
+    if (adding.value) return
+    worktreeQuestion.value = null
+    adding.value = true
+    addError.value = null
+    try {
+      const result = await window.api.declareMainProject()
+      addError.value = declareFailureNotice(result)
+      if (result.outcome !== 'added') return
+      filters.value = defaultBrowseFilters()
+      await load()
+      const added = result.project
+      if (added === undefined) return
+      if (!projects.value.some((project) => project.id === added.id)) {
+        projects.value = [added, ...projects.value]
+      }
+    } catch {
+      addError.value = UNREACHABLE
+    } finally {
+      adding.value = false
+    }
+  }
+
+  /** Dismiss the worktree question, having added nothing (#348). */
+  function dismissWorktreeQuestion(): void {
+    worktreeQuestion.value = null
   }
 
   /**
@@ -251,6 +309,9 @@ export function useProjectBrowse() {
     setTier,
     toggleDirection,
     addProject,
+    worktreeQuestion,
+    openMainProject,
+    dismissWorktreeQuestion,
     removeProject
   }
 }

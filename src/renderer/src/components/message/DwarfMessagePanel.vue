@@ -32,6 +32,7 @@ import {
 } from '../../lib/message/conversation'
 import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
 import { isOpenablePath } from '../../lib/message/openablePath'
+import { dwarfWorkplaceLabel } from '../../lib/worktree'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
   nextScrollTop,
@@ -165,6 +166,16 @@ const height = ref(
 )
 /** The height to give back when the history tab closes again. */
 const collapsedHeight = ref(height.value)
+
+/*
+ * Which worktree this dwarf is in, beside its name in the header (#348).
+ *
+ * A mine is a project, and every worktree of that project folds into it — so a
+ * crew can be spread over several folders, and the header is where you find
+ * out which one you are talking to. Empty for a dwarf working in the mine's own
+ * folder, which is most of them; see lib/worktree for branch versus folder.
+ */
+const workplaceLabel = computed(() => dwarfWorkplaceLabel(props.dwarf.workplace))
 
 const transient = computed(() => ({ kicking: isKicking.value }))
 const actions = computed(() => buildActionBar(props.dwarf, transient.value))
@@ -491,9 +502,23 @@ function onKick(): void {
         IS the control that focuses this session's console — which is where
         the old action bar's console icon went.
       -->
-      <button class="panel-agent" type="button" :title="CONSOLE_HINT" @click="emit('open-console')">
-        {{ dwarf.name }}
-      </button>
+      <span class="panel-who">
+        <button
+          class="panel-agent"
+          type="button"
+          :title="CONSOLE_HINT"
+          @click="emit('open-console')"
+        >
+          {{ dwarf.name }}
+        </button>
+        <!--
+          Which worktree this dwarf is in (#348). Text, never a control: a mine
+          folded from several worktrees has a crew in several folders, and this
+          is the only place that says which one you are talking to. Absent for a
+          dwarf working in the mine's own folder, which is most of them.
+        -->
+        <span v-if="workplaceLabel" class="panel-workplace">· {{ workplaceLabel }}</span>
+      </span>
       <button
         class="panel-history"
         type="button"
@@ -856,8 +881,19 @@ function onKick(): void {
   align-items: center;
   padding: 4px 8px;
 }
-.panel-agent {
+/*
+ * The name and, when there is one, the worktree beside it (#348). One grid
+ * cell so the header stays the three-column row it was: the label rides with
+ * the name rather than taking a column of its own.
+ */
+.panel-who {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  align-items: baseline;
   justify-self: start;
+}
+.panel-agent {
   max-width: 100%;
   overflow: hidden;
   padding: 0;
@@ -874,6 +910,18 @@ function onKick(): void {
 }
 .panel-agent:hover {
   color: var(--color-accent);
+}
+/*
+ * The meta size and the panel s muted note ink, the same pair every other
+ * aside in this panel takes. Text, never a control: it says where the dwarf is,
+ * and there is nothing to press.
+ */
+.panel-workplace {
+  overflow: hidden;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .panel-history {
   justify-self: center;

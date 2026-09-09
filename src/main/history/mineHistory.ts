@@ -121,6 +121,17 @@ export interface MineHistoryReaderOptions {
 /** The port the runtime reads through, so a test can hand it a fake. */
 export interface MineHistorySource {
   read(cwd: string): Promise<MineHistorySpeaker[]>
+  /**
+   * Every folder ONE mine's work happens in (#348): the project's own, plus
+   * each worktree of it somebody has been working in.
+   *
+   * A provider files a transcript under the cwd the session ran in, so a mine
+   * folded from three worktrees has its history in three places on disk. The
+   * cap on how many transcripts one read opens is applied to the whole set
+   * rather than to each folder, so a folded mine costs exactly what an
+   * unfolded one does.
+   */
+  readAcross(cwds: readonly string[]): Promise<MineHistorySpeaker[]>
 }
 
 /** One transcript found for the mine, before its tail is read. */
@@ -159,12 +170,27 @@ export class MineHistoryReader implements MineHistorySource {
     this.platform = options.platform ?? currentPlatform()
   }
 
+  /** One folder's transcripts — the plain, unfolded case. */
   async read(cwd: string): Promise<MineHistorySpeaker[]> {
-    const candidates = [
-      ...(await this.claudeCandidates(cwd)),
-      ...(await this.codexCandidates(cwd)),
-      ...(await this.antigravityCandidates(cwd))
-    ]
+    return this.readAcross([cwd])
+  }
+
+  async readAcross(cwds: readonly string[]): Promise<MineHistorySpeaker[]> {
+    const candidates: Candidate[] = []
+    // Deduplicated on the platform's own path key, so a caller that passes a
+    // project and a worktree spelled two ways does not open one transcript
+    // twice and hand the panel a speaker with its messages doubled.
+    const folders = new Set<string>()
+    for (const cwd of cwds) {
+      const key = normalizePathKey(cwd, this.platform)
+      if (folders.has(key)) continue
+      folders.add(key)
+      candidates.push(
+        ...(await this.claudeCandidates(cwd)),
+        ...(await this.codexCandidates(cwd)),
+        ...(await this.antigravityCandidates(cwd))
+      )
+    }
     // Newest first, so the cap below drops the oldest files and nothing else.
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const chosen = candidates.slice(0, MINE_HISTORY_TRANSCRIPT_LIMIT)

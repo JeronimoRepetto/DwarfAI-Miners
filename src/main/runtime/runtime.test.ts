@@ -624,6 +624,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     const runtime = new AgentRuntime({
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed }],
+      // #348: the poll now resolves each session's project off the filesystem,
+      // and a tick driven by fake timers must not be waiting on the real disk.
+      fs: new FakeFs(),
       onMinesUpdated
     })
     try {
@@ -3091,6 +3094,8 @@ describe('AgentRuntime.nudge', () => {
     const runtime = new AgentRuntime({
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
+      // #348: as above — no real disk inside a tick driven by fake timers.
+      fs: new FakeFs(),
       onMinesUpdated
     })
     try {
@@ -3120,6 +3125,8 @@ describe('AgentRuntime.nudge', () => {
     const runtime = new AgentRuntime({
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
+      // #348: as above — no real disk inside a tick driven by fake timers.
+      fs: new FakeFs(),
       onMinesUpdated
     })
     try {
@@ -7325,11 +7332,11 @@ describe('AgentRuntime.mineHistory', () => {
   }
 
   it("resolves the mine to its folder and answers with the folder's speakers", async () => {
-    const read = vi.fn().mockResolvedValue([SPEAKER])
+    const readAcross = vi.fn().mockResolvedValue([SPEAKER])
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [source],
-      history: { read },
+      history: { read: vi.fn(), readAcross },
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -7338,15 +7345,17 @@ describe('AgentRuntime.mineHistory', () => {
       readable: true,
       speakers: [SPEAKER]
     })
-    expect(read).toHaveBeenCalledWith('C:\\work\\project')
+    // #348: every folder this mine's work happens in — for a mine nothing
+    // folded into, exactly the one folder it always was.
+    expect(readAcross).toHaveBeenCalledWith(['C:\\work\\project'])
   })
 
   it('reads nothing for a mine that is not on the board, and says it could not', async () => {
-    const read = vi.fn().mockResolvedValue([SPEAKER])
+    const readAcross = vi.fn().mockResolvedValue([SPEAKER])
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [source],
-      history: { read },
+      history: { read: vi.fn(), readAcross },
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -7355,7 +7364,7 @@ describe('AgentRuntime.mineHistory', () => {
       readable: false,
       speakers: []
     })
-    expect(read).not.toHaveBeenCalled()
+    expect(readAcross).not.toHaveBeenCalled()
   })
 
   it('answers unreadable rather than throwing when the read itself fails', async () => {
@@ -7363,7 +7372,7 @@ describe('AgentRuntime.mineHistory', () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [source],
-      history: { read: vi.fn().mockRejectedValue(new Error('disk')) },
+      history: { read: vi.fn(), readAcross: vi.fn().mockRejectedValue(new Error('disk')) },
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -8549,5 +8558,413 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
       error: PROMPT_CLOSED
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Every worktree of one repository is one mine — the main working tree's
+ * (#348). The board is a map of projects, and a worktree is a place a project
+ * is being worked on; five terminals in five worktrees are five dwarfs in ONE
+ * mine, each still knowing which folder it is actually in.
+ */
+describe('AgentRuntime worktree folding (#348)', () => {
+  const ROOT = 'C:\\Code\\Anvil'
+  const FORGE = 'C:\\Code\\Anvil-worktrees\\forge'
+  const BELL = 'C:\\Code\\Anvil-worktrees\\bell'
+
+  /** One repository with two linked worktrees, laid out exactly as git does. */
+  function repoFs(): FakeFs {
+    const fs = new FakeFs()
+    fs.addFile('C:/Code/Anvil/.git/HEAD', 'ref: refs/heads/main\n')
+    fs.addFile('C:/Code/Anvil/README.md', '#')
+    for (const [name, branch] of [
+      ['forge', 'feat/forge'],
+      ['bell', 'feat/bell']
+    ]) {
+      fs.addFile(
+        'C:/Code/Anvil-worktrees/' + name + '/.git',
+        'gitdir: C:/Code/Anvil/.git/worktrees/' + name + '\n'
+      )
+      fs.addFile('C:/Code/Anvil/.git/worktrees/' + name + '/commondir', '../..\n')
+      fs.addFile(
+        'C:/Code/Anvil/.git/worktrees/' + name + '/HEAD',
+        'ref: refs/heads/' + branch + '\n'
+      )
+    }
+    return fs
+  }
+
+  function sessionIn(cwd: string, sessionId: string, tokens = 0): ProviderSnapshot {
+    return {
+      provider: 'claude',
+      sessionId,
+      cwd,
+      status: 'busy',
+      updatedAt: 7,
+      dwarfs: [
+        {
+          id: 'claude:' + sessionId,
+          provider: 'claude',
+          role: 'foreman',
+          name: sessionId,
+          status: 'working',
+          sessionId,
+          tokensObserved: tokens
+        }
+      ]
+    }
+  }
+
+  function runtimeOver(snapshots: ProviderSnapshot[], fs: FsLike, extra = {}): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [
+        { kind: 'claude', scan: vi.fn().mockResolvedValue(snapshots), feed: vi.fn() } as Provider
+      ],
+      fs,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000,
+      ...extra
+    })
+  }
+
+  it('shows ONE mine, named after the main folder, for sessions in two worktrees', async () => {
+    const runtime = runtimeOver([sessionIn(FORGE, 's1'), sessionIn(BELL, 's2')], repoFs())
+
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines).toHaveLength(1)
+    expect(mines[0]!.path).toBe(ROOT)
+    expect(mines[0]!.name).toBe('Anvil')
+    expect(mines[0]!.id).toBe(mineIdForPath(ROOT))
+    expect(mines[0]!.dwarfs.map((dwarf) => dwarf.id).sort()).toEqual(['claude:s1', 'claude:s2'])
+  })
+
+  it('keeps each dwarf pointed at the worktree it is actually in, with its branch', async () => {
+    const runtime = runtimeOver([sessionIn(FORGE, 's1'), sessionIn(BELL, 's2')], repoFs())
+
+    await runtime.refresh()
+    const crew = runtime.getMines()[0]!.dwarfs
+    runtime.stop()
+
+    expect(crew.find((dwarf) => dwarf.id === 'claude:s1')!.workplace).toEqual({
+      path: FORGE,
+      branch: 'feat/forge'
+    })
+    expect(crew.find((dwarf) => dwarf.id === 'claude:s2')!.workplace).toEqual({
+      path: BELL,
+      branch: 'feat/bell'
+    })
+  })
+
+  it('leaves a session in the main working tree with no workplace at all', async () => {
+    const runtime = runtimeOver([sessionIn(ROOT, 's1')], repoFs())
+
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines[0]!.path).toBe(ROOT)
+    expect(mines[0]!.dwarfs[0]!.workplace).toBeUndefined()
+  })
+
+  it('gives a submodule its own mine, exactly as before', async () => {
+    const fs = repoFs()
+    fs.addFile('C:/Code/Anvil/vendor/lib/.git', 'gitdir: ../../.git/modules/lib\n')
+    fs.addFile('C:/Code/Anvil/.git/modules/lib/HEAD', 'ref: refs/heads/main\n')
+    const runtime = runtimeOver([sessionIn('C:\\Code\\Anvil\\vendor\\lib', 's1')], fs)
+
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines.map((mine) => mine.path)).toEqual(['C:\\Code\\Anvil\\vendor\\lib'])
+  })
+
+  it('sums the crew of every worktree into the one mine it folded them into', async () => {
+    // Tokens are counted per dwarf and belong to the project the work was done
+    // for. Which mine a count belongs to is the only thing folding changes;
+    // nothing is converted and nothing crosses a material.
+    const runtime = runtimeOver(
+      [sessionIn(FORGE, 's1', 1_000), sessionIn(BELL, 's2', 2_500)],
+      repoFs()
+    )
+
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines[0]!.tokensObserved).toBe(3_500)
+  })
+
+  it('resolves a clicked path against the DWARF s worktree, not the project folder', async () => {
+    const runtime = runtimeOver([sessionIn(FORGE, 's1'), sessionIn(BELL, 's2')], repoFs())
+
+    await runtime.refresh()
+    const id = mineIdForPath(ROOT)
+    const forge = runtime.mineFolderOf(id, 'claude:s1')
+    const bell = runtime.mineFolderOf(id, 'claude:s2')
+    const noDwarf = runtime.mineFolderOf(id)
+    const strangerId = runtime.mineFolderOf(id, 'claude:not-here')
+    runtime.stop()
+
+    expect(forge).toBe(FORGE)
+    expect(bell).toBe(BELL)
+    // No dwarf named, and a dwarf this mine has not got, both fall back to the
+    // project's own folder — never to another mine's crew.
+    expect(noDwarf).toBe(ROOT)
+    expect(strangerId).toBe(ROOT)
+  })
+
+  it('reads a folded mine s history from the project AND every worktree its crew is in', async () => {
+    const readAcross = vi.fn().mockResolvedValue([])
+    const runtime = runtimeOver([sessionIn(FORGE, 's1'), sessionIn(BELL, 's2')], repoFs(), {
+      history: { read: vi.fn(), readAcross }
+    })
+
+    await runtime.refresh()
+    await runtime.mineHistory(mineIdForPath(ROOT))
+    runtime.stop()
+
+    expect(readAcross).toHaveBeenCalledWith([ROOT, FORGE, BELL])
+  })
+})
+
+/**
+ * A worktree the user declared before #348 landed. The board folds it on read,
+ * and the store learns the project on the next write.
+ */
+describe('AgentRuntime declared worktrees (#348, #169)', () => {
+  const ROOT = 'C:\\Code\\Anvil'
+  const FORGE = 'C:\\Code\\Anvil-worktrees\\forge'
+
+  function repoFs(): FakeFs {
+    const fs = new FakeFs()
+    fs.addFile('C:/Code/Anvil/.git/HEAD', 'ref: refs/heads/main\n')
+    fs.addFile('C:/Code/Anvil-worktrees/forge/.git', 'gitdir: C:/Code/Anvil/.git/worktrees/forge\n')
+    fs.addFile('C:/Code/Anvil/.git/worktrees/forge/commondir', '../..\n')
+    fs.addFile('C:/Code/Anvil/.git/worktrees/forge/HEAD', 'ref: refs/heads/feat/forge\n')
+    return fs
+  }
+
+  function runtimeWithStore(projects: ProjectsStore, fs: FsLike): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [],
+      projects,
+      fs,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  it('draws a declared worktree as its project, on the very first read', async () => {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite()
+    })
+    await projects.declare({ path: FORGE, at: 1 })
+    const runtime = runtimeWithStore(projects, repoFs())
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    runtime.stop()
+
+    expect(mines.map((mine) => mine.path)).toEqual([ROOT])
+    expect(mines[0]!.declared).toBe(true)
+  })
+
+  it('teaches the store the project, and stops the worktree row drawing a card', async () => {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite()
+    })
+    await projects.declare({ path: FORGE, at: 1 })
+    const runtime = runtimeWithStore(projects, repoFs())
+
+    await runtime.loadDeclared()
+    const rows = await projects.list()
+    runtime.stop()
+
+    const byId = new Map((rows.ok ? rows.value : []).map((row) => [row.id, row]))
+    expect(byId.get(mineIdForPath(ROOT))?.origin).toBe('declared')
+    expect(byId.get(mineIdForPath(ROOT))?.hiddenAt).toBeNull()
+    // FLAGGED, never deleted: the row keeps the ore already credited to that
+    // folder's mine id (see ProjectsStore.forget).
+    expect(byId.get(mineIdForPath(FORGE))?.hiddenAt).not.toBeNull()
+  })
+
+  /**
+   * The case #348 asked to be decided out loud. A hidden worktree row is left
+   * exactly as it is, and its hiding is NEVER carried up to the project:
+   * "hide this branch's folder" must not take the whole repository off the
+   * board, which is a disappearance with no card left to bring it back from.
+   */
+  it('never lets a HIDDEN worktree hide the project it folds into', async () => {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite()
+    })
+    await projects.declare({ path: FORGE, at: 1 })
+    await projects.forget({ id: mineIdForPath(FORGE), at: 2 })
+    const runtime = new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [
+        {
+          kind: 'claude',
+          scan: vi.fn().mockResolvedValue([
+            {
+              provider: 'claude' as const,
+              sessionId: 's1',
+              cwd: FORGE,
+              status: 'busy' as const,
+              updatedAt: 7,
+              dwarfs: [
+                {
+                  id: 'claude:s1',
+                  provider: 'claude' as const,
+                  role: 'foreman' as const,
+                  name: 's1',
+                  status: 'working' as const,
+                  sessionId: 's1'
+                }
+              ]
+            }
+          ]),
+          feed: vi.fn()
+        } as Provider
+      ],
+      projects,
+      fs: repoFs(),
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+
+    await runtime.loadDeclared()
+    await runtime.refresh()
+    const mines = runtime.getMines()
+    const rows = await projects.list()
+    runtime.stop()
+
+    // The project is on the board with its crew, and it is NOT hidden: the
+    // flag on the worktree row stayed where it was.
+    expect(mines.map((mine) => mine.path)).toEqual([ROOT])
+    expect(mines[0]!.dwarfs).toHaveLength(1)
+    const byId = new Map((rows.ok ? rows.value : []).map((row) => [row.id, row]))
+    expect(byId.get(mineIdForPath(FORGE))?.hiddenAt).not.toBeNull()
+    // The project's own row is the observer's ordinary sighting of a mine with
+    // a crew in it — DISCOVERED, never declared on the user's behalf, because
+    // they never declared this project, only one of its worktrees.
+    const project = byId.get(mineIdForPath(ROOT))
+    expect(project?.origin).toBe('discovered')
+    expect(project?.hiddenAt).toBeNull()
+  })
+})
+
+/**
+ * Adding a folder that turns out to be a worktree (#348). The runtime asks
+ * rather than declaring: the board folds every worktree into its project, so a
+ * row for the worktree would name a folder that is never a mine.
+ */
+describe('AgentRuntime.declareMine — worktrees (#348)', () => {
+  const ROOT = 'C:\\Code\\Anvil'
+  const FORGE = 'C:\\Code\\Anvil-worktrees\\forge'
+
+  function repoFs(head = 'ref: refs/heads/feat/forge\n'): FakeFs {
+    const fs = new FakeFs()
+    fs.addFile('C:/Code/Anvil/.git/HEAD', 'ref: refs/heads/main\n')
+    fs.addFile('C:/Code/Anvil-worktrees/forge/.git', 'gitdir: C:/Code/Anvil/.git/worktrees/forge\n')
+    fs.addFile('C:/Code/Anvil/.git/worktrees/forge/commondir', '../..\n')
+    fs.addFile('C:/Code/Anvil/.git/worktrees/forge/HEAD', head)
+    return fs
+  }
+
+  function runtimeFor(picked: string, fs: FakeFs, projects?: ProjectsStore): AgentRuntime {
+    return new AgentRuntime({
+      config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
+      providers: [],
+      projects:
+        projects ??
+        createProjectsStore({
+          filePath: 'C:\\userData\\projects-v1.db',
+          sqlite: new MemoryWritableSqlite()
+        }),
+      chooseDirectory: async () => picked,
+      fs,
+      onMinesUpdated: vi.fn(),
+      now: () => 9_000
+    })
+  }
+
+  it('asks about a picked worktree instead of declaring it', async () => {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite()
+    })
+    const runtime = runtimeFor(FORGE, repoFs(), projects)
+
+    const result = await runtime.declareMine()
+    const rows = await projects.list()
+    runtime.stop()
+
+    expect(result).toEqual({
+      outcome: 'worktree-of',
+      worktreeOf: { worktree: FORGE, root: ROOT, branch: 'feat/forge' }
+    })
+    // Nothing was written: the question has not been answered yet.
+    expect(rows.ok ? rows.value : []).toEqual([])
+  })
+
+  it('names the commit of a detached worktree, which has no branch to name', async () => {
+    const runtime = runtimeFor(FORGE, repoFs('3f2a1b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a\n'))
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.worktreeOf).toEqual({ worktree: FORGE, root: ROOT, commit: '3f2a1b9' })
+  })
+
+  it('declares a picked MAIN working tree with no question at all', async () => {
+    const runtime = runtimeFor(ROOT, repoFs())
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
+  })
+
+  it('adopts the project on the answer, and lands exactly where a plain Add lands', async () => {
+    const runtime = runtimeFor(FORGE, repoFs())
+
+    await runtime.declareMine()
+    const result = await runtime.declareMainProject()
+    runtime.stop()
+
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
+    expect(result.project).toMatchObject({ id: mineIdForPath(ROOT), path: ROOT, declared: true })
+  })
+
+  it('refuses an answer to a question nobody asked, and never guesses a folder', async () => {
+    const runtime = runtimeFor(FORGE, repoFs())
+
+    const result = await runtime.declareMainProject()
+    runtime.stop()
+
+    expect(result.outcome).toBe('failed')
+    expect(result.reason).toBeDefined()
+  })
+
+  it('forgets the project once it is used, so a second press adopts nothing', async () => {
+    const runtime = runtimeFor(FORGE, repoFs())
+
+    await runtime.declareMine()
+    await runtime.declareMainProject()
+    const again = await runtime.declareMainProject()
+    runtime.stop()
+
+    expect(again.outcome).toBe('failed')
   })
 })

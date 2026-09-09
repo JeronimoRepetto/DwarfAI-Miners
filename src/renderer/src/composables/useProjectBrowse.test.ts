@@ -21,10 +21,16 @@ function stubQuery(queryProjects: unknown) {
  * Every half of the browse surface, for the tests that adopt a folder (#85) or
  * remove a mine (#169).
  *
- * AMENDED for #169: `undeclareMine` joined the accepted keys. No assertion
- * changed — the helper only widened.
+ * AMENDED for #169: `undeclareMine` joined the accepted keys, and for #348:
+ * `declareMainProject` did too. No assertion changed either time — the helper
+ * only widened.
  */
-function stubApi(api: { queryProjects?: unknown; declareMine?: unknown; undeclareMine?: unknown }) {
+function stubApi(api: {
+  queryProjects?: unknown
+  declareMine?: unknown
+  declareMainProject?: unknown
+  undeclareMine?: unknown
+}) {
   Object.defineProperty(window, 'api', { configurable: true, value: api })
 }
 
@@ -614,5 +620,101 @@ describe('useProjectBrowse removing a mine', () => {
     await removeProject('mine:lalo')
     await removeProject('mine:lalo')
     expect(removeError.value).toBeNull()
+  })
+})
+
+/**
+ * A picked folder that turned out to be a worktree (#348).
+ *
+ * The panel asks rather than adopting: the board folds every worktree into its
+ * project, so declaring the worktree would put a row in the store for a folder
+ * that never appears as a mine.
+ */
+describe('useProjectBrowse worktree question', () => {
+  const WORKTREE_OF = {
+    worktree: 'C:\\Code\\Anvil-worktrees\\forge',
+    root: 'C:\\Code\\Anvil',
+    branch: 'feat/forge'
+  }
+
+  it('holds the question instead of adding anything, and reports no failure', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'worktree-of', worktreeOf: WORKTREE_OF })
+    })
+    const { addProject, worktreeQuestion, addError } = useProjectBrowse()
+
+    await addProject()
+
+    expect(worktreeQuestion.value).toEqual(WORKTREE_OF)
+    // Nothing went wrong: a question is not a refusal, and a notice here would
+    // tell the person their folder was rejected.
+    expect(addError.value).toBeNull()
+  })
+
+  it('adopts the project on the answer, naming no path', async () => {
+    const declareMainProject = vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'mine:anvil' })
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'worktree-of', worktreeOf: WORKTREE_OF }),
+      declareMainProject
+    })
+    const { addProject, openMainProject, worktreeQuestion } = useProjectBrowse()
+
+    await addProject()
+    await openMainProject()
+
+    // Main is holding the project it resolved; the renderer confirms.
+    expect(declareMainProject).toHaveBeenCalledWith()
+    expect(worktreeQuestion.value).toBeNull()
+  })
+
+  it('puts the adopted project at the head of the list, exactly as a plain Add does', async () => {
+    const added = defaultProject({ id: 'mine:anvil', name: 'Anvil' })
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(1)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'worktree-of', worktreeOf: WORKTREE_OF }),
+      declareMainProject: vi
+        .fn()
+        .mockResolvedValue({ outcome: 'added', mineId: 'mine:anvil', project: added })
+    })
+    const { addProject, openMainProject, projects } = useProjectBrowse()
+
+    await addProject()
+    await openMainProject()
+
+    expect(projects.value[0]).toEqual(added)
+  })
+
+  it('adds nothing when the question is dismissed', async () => {
+    const declareMainProject = vi.fn()
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'worktree-of', worktreeOf: WORKTREE_OF }),
+      declareMainProject
+    })
+    const { addProject, dismissWorktreeQuestion, worktreeQuestion } = useProjectBrowse()
+
+    await addProject()
+    dismissWorktreeQuestion()
+
+    expect(worktreeQuestion.value).toBeNull()
+    expect(declareMainProject).not.toHaveBeenCalled()
+  })
+
+  it('says why the project could not be adopted', async () => {
+    stubApi({
+      queryProjects: vi.fn().mockResolvedValue(page(0)),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'worktree-of', worktreeOf: WORKTREE_OF }),
+      declareMainProject: vi
+        .fn()
+        .mockResolvedValue({ outcome: 'failed', reason: 'The projects database is locked.' })
+    })
+    const { addProject, openMainProject, addError } = useProjectBrowse()
+
+    await addProject()
+    await openMainProject()
+
+    expect(addError.value).toBe('The projects database is locked.')
   })
 })

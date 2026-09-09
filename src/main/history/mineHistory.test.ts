@@ -815,3 +815,76 @@ describe('MineHistoryReader over a resumed subagent (#338)', () => {
     expect(worker?.lastMessageAt).toBe(Date.parse(AT_12))
   })
 })
+
+/**
+ * A mine folded from several worktrees (#348) has its transcripts in several
+ * places on disk, because a provider files one under the cwd the session ran
+ * in. One read has to open all of them.
+ */
+describe('MineHistoryReader.readAcross (#348)', () => {
+  const FORGE = 'C:\\work\\forge'
+  /** encodeClaudeProjectDir(FORGE). */
+  const FORGE_DIR = `${ROOT}\\projects\\C--work-forge`
+  const FORGE_SESSION = '8b2c3d4e-0000-4000-8000-000000000002'
+
+  function reader(fs: FsLike): MineHistoryReader {
+    return new MineHistoryReader({ fs, claudeRoots: [ROOT], platform: 'win32' })
+  }
+
+  /** One Claude assistant record filed under a second cwd. */
+  function forgeLine(text: string, timestamp: string): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+      timestamp,
+      cwd: FORGE,
+      sessionId: FORGE_SESSION
+    })
+  }
+
+  it('reads the project s own transcripts AND every worktree s, in one answer', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${PROJECT_DIR}\\${SESSION}.jsonl`,
+      lines(userLine('dig here', AT_9), assistantLine('Found the seam.', AT_10)),
+      50_000
+    )
+    fs.addFile(
+      `${FORGE_DIR}\\${FORGE_SESSION}.jsonl`,
+      lines(forgeLine('Forging on the branch.', AT_10)),
+      60_000
+    )
+
+    const speakers = await reader(fs).readAcross([CWD, FORGE])
+
+    expect(speakers.map((speaker) => speaker.id).sort()).toEqual(
+      [`claude:${SESSION}`, `claude:${FORGE_SESSION}`].sort()
+    )
+  })
+
+  it('opens one folder once, however many spellings of it a caller passes', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${PROJECT_DIR}\\${SESSION}.jsonl`,
+      lines(userLine('dig here', AT_9), assistantLine('Found the seam.', AT_10)),
+      50_000
+    )
+
+    // A speaker read twice would arrive with its messages doubled.
+    const speakers = await reader(fs).readAcross([CWD, 'c:\WORK\project'])
+    expect(speakers).toHaveLength(1)
+    expect(speakers[0]!.messages).toHaveLength(2)
+  })
+
+  it('reads exactly the one folder when read() is asked for one', async () => {
+    const fs = new FakeFs()
+    fs.addFile(
+      `${FORGE_DIR}\\${FORGE_SESSION}.jsonl`,
+      lines(forgeLine('Forging on the branch.', AT_10)),
+      60_000
+    )
+
+    await expect(reader(fs).read(CWD)).resolves.toEqual([])
+    await expect(reader(fs).read(FORGE)).resolves.toHaveLength(1)
+  })
+})
