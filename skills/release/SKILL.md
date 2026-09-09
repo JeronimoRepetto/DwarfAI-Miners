@@ -64,7 +64,9 @@ happen, or a build that fails late.
    the others.
 7. **Packaging never self-publishes.** All three package scripts pass a never-publish flag, and the
    workflow's own release step owns publishing. Tag builds once tried to publish on their own and
-   failed on a missing token. The Linux target also requires an author email to be set.
+   failed on a missing token. The Linux target also requires an author email AND a `homepage` in
+   `package.json`: the deb (fpm) target refuses to build without either, while the AppImage builds
+   fine, so a Windows-only check never sees the gap (found packaging v0.8.0 by hand, #345).
 8. **The macOS leg fails alone, silently, on the other two.** `release-mac` is its own job (not a
    matrix entry, so it can carry the `release` GitHub Environment and its five secrets without
    handing them to Windows/Linux) with `needs: checks` and no dependency on the `release` job. An
