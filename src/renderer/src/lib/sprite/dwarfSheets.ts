@@ -17,14 +17,15 @@
  *
  * THE ORDER THE WORKING TRIAD IS PLAYED IN is not this file's to decide and is
  * stated here only because the counts above are read as evidence of it: since
- * #325 a dwarf at the rock plays `start-working`, `working`, `working`,
- * `end-working` and then begins again — a shift cycle rather than a swing that
- * never stops — and plays `end-working` alone, once, on the way out.
- * `dwarfSequence.ts` owns that. The previews' own repeat counts (the worker's
- * several turns, the worker2's four) are the artist showing a movement
- * REPEATING, and are evidence of which strips belong to one animation and in
- * what order — never of how many turns the panel takes before setting the pick
- * down, which is a reading decision and was made in #325.
+ * #325 a dwarf at the rock plays `start-working`, its swing however many times
+ * `DWARF_CREW` below says, then `end-working`, and then begins again — a shift
+ * cycle rather than a swing that never stops — and plays `end-working` alone,
+ * once, on the way out. `dwarfSequence.ts` owns that. The previews' own repeat
+ * counts (the worker's several turns, the worker2's four) are the artist
+ * showing a movement REPEATING, and are evidence of which strips belong to one
+ * animation and in what order — never of how many turns the panel takes before
+ * setting the pick down, which is a reading decision: #325 made it, and #330
+ * moved it into `DWARF_CREW` where a sound could be held against it.
  *
  * ONE SHEET PER RANK IS REQUIRED and it is `idle`. Everything else is optional,
  * and a state a rank has no drawing for falls back to that idle rather than to
@@ -40,8 +41,75 @@ export type { DwarfSheetName }
 /** A rank's strips. `idle` is guaranteed; the rest are as drawn. */
 export type DwarfSheetSet = { idle: SpriteSheet } & Partial<Record<DwarfSheetName, SpriteSheet>>
 
+/**
+ * What a rank sounds like, cue by cue (issue #330).
+ *
+ * DATA RATHER THAN A BRANCH ON THE RANK, which is the whole point: a worker
+ * strikes and a worker2 grinds because their sheets say so, and the foreman is
+ * silent at the rock because his say nothing. Nothing that plays a sound is
+ * allowed to know which rank it is holding.
+ *
+ * The cues name FRAMES, never seconds. Every strip here is held at 100ms
+ * (see the note at the top of this file), so a frame index is the one figure
+ * that survives an artist re-exporting the same movement at another tempo.
+ */
+export interface CrewSoundSet {
+  /**
+   * A cue on every frame the `working` strip already declares an impact on.
+   *
+   * A POINTER at that declaration rather than a second copy of frame 4: the
+   * strike and the sparks it throws are one event, so the two must not be
+   * able to drift apart. There is nothing to tune here — retiming the hit
+   * means moving `impactFrames`, and the sound follows.
+   */
+  readonly strike?: { readonly on: 'impactFrames' }
+  /**
+   * One cue per shift, opened as the named strip reaches the named frame.
+   *
+   * The worker2's grind is a single recording of the WHOLE movement — arms
+   * winding up, biting the rock, and stopping — so it is timed against the
+   * cycle rather than triggered by a hit inside it. See `DWARF_CREW` below
+   * for the arithmetic that fixes both numbers.
+   */
+  readonly shift?: { readonly sheet: DwarfSheetName; readonly frame: number }
+  /**
+   * A cue for as long as the dwarf is walking, at its own quiet gain.
+   *
+   * THE ONE CUE THAT IS NOT A FRAME. The other two are read off the strip
+   * showing; a walk is the sprite being moved ACROSS the interior, which is a
+   * position rather than an animation — so it is declared by every rank that
+   * walks, which is all of them, and it is the one crew sound a viewer who
+   * asked for less movement still hears.
+   */
+  readonly walk?: { readonly gain: number }
+}
+
+/** A rank's shift: how long it is, and what it sounds like. */
+export interface DwarfCrewSet {
+  /**
+   * How many times the shift swings before the pick goes down (#325, #330).
+   *
+   * Per rank rather than the literal "twice" #325 shipped, because the count
+   * is what holds a sound against the art: see `DWARF_CREW`. Absent for a rank
+   * with no swing drawn, which is the foreman.
+   */
+  readonly swings?: number
+  /** What this rank sounds like, or nothing where it makes no sound. */
+  readonly sound?: CrewSoundSet
+}
+
 /** The tempo every sheet was exported at; see the note above. */
 const FRAME_MS = 100
+
+/**
+ * How loud footsteps are: five percent of the ambience channel (#330).
+ *
+ * One literal for all three ranks, because it is one maintainer decision and
+ * not three. Footsteps run under everything else in the mine for as long as
+ * somebody is crossing the floor — texture, not an event — and at anything
+ * louder a crew walking in reads as the loudest thing in the panel.
+ */
+const WALK_GAIN = 0.05
 
 export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
   worker: {
@@ -144,5 +212,54 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
     'start-sleep': { src: DWARF_SHEET_SRC.foreman['start-sleep'], frames: 8, frameMs: FRAME_MS },
     sleeping: { src: DWARF_SHEET_SRC.foreman.sleeping, frames: 12, frameMs: FRAME_MS },
     'end-sleep': { src: DWARF_SHEET_SRC.foreman['end-sleep'], frames: 11, frameMs: FRAME_MS }
+  }
+}
+
+/**
+ * Each rank's shift and its own sounds (issues #325, #330).
+ *
+ * BESIDE THE STRIPS RATHER THAN INSIDE THEM. Every value in a `DwarfSheetSet`
+ * is a claim about bytes on disk that `dwarfSheets.test.ts` reads the PNG
+ * headers to check; these are claims about the READING of that art, and a
+ * non-sheet sitting among the sheets would make that check iterate over
+ * something it cannot open. Same file, keyed the same way, one table along.
+ *
+ * ## Where the worker2's numbers come from
+ *
+ * `hands-sfx.mp3` is 8.53 s of the whole grind — the arms winding up, biting
+ * the rock and stopping — so the shift has to be as long as the recording
+ * rather than the recording as long as the shift. The maintainer's own ruling
+ * fixes both ends: it starts "just before the working begins", 200 ms out,
+ * and must die away as the arms do, about three frames into the set-down.
+ * With 16 frames of pick-up at 100 ms that puts the cue at frame 14, and
+ *
+ *     0.2 s + 8 x 1.0 s + 0.3 s = 8.5 s
+ *
+ * leaves eight swings as the only count that fits between the two. The cycle
+ * is then 16 + 80 + 17 = 113 frames, 11.3 s a shift. THE NUMBERS ARE THE
+ * MAINTAINER'S AND ARE JUDGED BY EAR: do not retune either by eye.
+ *
+ * The worker's stays at two, which is what #325 read as a shift, and its
+ * cycle at 3 + 26 + 6 = 35 frames, 3.5 s. Its strike is 0.57 s against a
+ * 1.3 s swing, so a pick lands and is over well before the next one.
+ */
+export const DWARF_CREW: Record<DwarfRole, DwarfCrewSet> = {
+  worker: {
+    swings: 2,
+    sound: { strike: { on: 'impactFrames' }, walk: { gain: WALK_GAIN } }
+  },
+  worker2: {
+    swings: 8,
+    // No strike, and there is no frame for one to point at: the worker2
+    // carries no pick and its strips declare no impact (see the note on this
+    // rank above, and #211). Its whole shift is the sound instead of the hit.
+    sound: { shift: { sheet: 'start-working', frame: 14 }, walk: { gain: WALK_GAIN } }
+  },
+  foreman: {
+    // No swing count, because no swing is drawn — `dwarfSequence` never builds
+    // a cycle for him at all — and no sound at the rock for the same reason:
+    // his `working` is a session producing tokens, not a pick on a rock. He
+    // walks like everybody else, so the footsteps are the one cue he has.
+    sound: { walk: { gain: WALK_GAIN } }
   }
 }

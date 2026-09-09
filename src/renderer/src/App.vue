@@ -91,6 +91,7 @@ const {
   setCollapsed: setAudioCollapsed,
   playVoice,
   playSfx,
+  playCrew,
   dispose: disposeAudio
 } = useAudio()
 
@@ -632,25 +633,16 @@ watch(
 )
 
 /**
- * What the ambience is a reading of (#173): the mine held open, and each of
- * its crew's rank and status.
+ * What the ambience is a reading of (#173), and since #330 it is the mine held
+ * open and nothing else.
  *
- * Folded into one string for the reason `crewSignal` above is: the watch then
- * fires on a change to any of them and stays silent on a poll that moved none,
- * so an idle mine costs nothing. Rank and status are the only fields the beds
- * depend on — see `hasWorkingWorker` — and naming just those two is what keeps
- * a dwarf's message or token count from re-deciding the sound.
+ * It used to fold each of the crew's rank and status into the signal, because
+ * the bed was a reading of what the crew was doing. The crew sounds for itself
+ * now — cue by cue, off the frames each sprite draws, arriving through
+ * `playCrew` below — so what is left for the scene to decide is the room tone,
+ * and a poll that moves a dwarf's status no longer touches the sound at all.
  */
-const audioSceneSignal = computed(
-  () =>
-    `${viewState.mineId ?? ''}|${(currentMine.value?.dwarfs ?? [])
-      .map((dwarf) => `${dwarf.role}:${dwarf.status}`)
-      .join(',')}`
-)
-
-watch(audioSceneSignal, () => setAudioScene(viewState.mineId, currentMine.value?.dwarfs ?? []), {
-  immediate: true
-})
+watch(() => viewState.mineId, setAudioScene, { immediate: true })
 
 /*
  * The shell collapsed to its bare rail silences the ambience and the voices
@@ -911,6 +903,7 @@ onBeforeUnmount(() => {
             @history="openHistory"
             @tune="tuneSession"
             @toggle-ambience-mute="toggleAmbienceMute"
+            @crew-sound="playCrew"
           />
         </PanelFrame>
       </div>

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole } from '../../types'
-import { DWARF_SHEETS } from './dwarfSheets'
+import { DWARF_CREW, DWARF_SHEETS } from './dwarfSheets'
 import { SPRITE_FRAME_SIZE, type SpriteSheet } from './spriteSheet'
 
 // Amended by #157: 'worker2' joined DwarfRole, and a hand-written list is
@@ -327,5 +327,78 @@ describe('DWARF_SHEETS', () => {
       expect(sheet.impactFrames, where).toBeUndefined()
       expect(sheet.glowFrames, where).toBeUndefined()
     }
+  })
+})
+
+/*
+ * The rank's shift and its own sounds (#325's count, #330's cues), which are
+ * declarations about the art rather than about the bytes — so unlike the frame
+ * counts above, nothing on disk can be read to confirm them. What CAN be held
+ * is their arithmetic against the counts, and that is most of this block: the
+ * grind recording is 8.53 s long and the numbers have to add up to it.
+ */
+describe('DWARF_CREW (#330)', () => {
+  it('swings the worker twice a shift and the worker2 eight times', () => {
+    // Not a taste: the worker2's grind is one 8.53 s recording of the whole
+    // movement, and it is asked to start 200 ms before the first swing and to
+    // die out three frames into the set-down. Eight swings is the only count
+    // that fits between the two.
+    expect(DWARF_CREW.worker.swings).toBe(2)
+    expect(DWARF_CREW.worker2.swings).toBe(8)
+  })
+
+  it('declares no count for the foreman, who has no swing to repeat', () => {
+    expect(DWARF_CREW.foreman.swings).toBeUndefined()
+  })
+
+  it('sounds the worker on the frames its own sheet already calls impacts', () => {
+    // A pointer at the sheet rather than a second copy of frame 4: the strike
+    // and its sparks are one event, so the two must not be able to drift.
+    expect(DWARF_CREW.worker.sound?.strike).toEqual({ on: 'impactFrames' })
+    expect(DWARF_CREW.worker.sound?.shift).toBeUndefined()
+  })
+
+  it("starts the worker2's grind 200ms before its first swing, at frame 14 of 16", () => {
+    expect(DWARF_CREW.worker2.sound?.shift).toEqual({ sheet: 'start-working', frame: 14 })
+    // The worker2 has no strike to name and never will (#211): it carries no
+    // pick, which is why its whole shift is one sound instead of a hit.
+    expect(DWARF_CREW.worker2.sound?.strike).toBeUndefined()
+    const pickUp = DWARF_SHEETS.worker2['start-working']!
+    expect((pickUp.frames - 14) * pickUp.frameMs).toBe(200)
+  })
+
+  it('lands the end of the grind three frames into the set-down', () => {
+    // The whole arithmetic, read off the sheets rather than restated. The cue
+    // leaves 0.2s of pick-up, then eight 1.0s swings — and `hands-sfx.mp3` is
+    // 8.53s, so its tail runs 0.33s past the last swing: three frames into
+    // end-working, which is where the arms stop in the art.
+    const GRIND_MS = 8530
+    const cue = DWARF_CREW.worker2.sound!.shift!
+    const pickUp = DWARF_SHEETS.worker2['start-working']!
+    const swing = DWARF_SHEETS.worker2.working!
+    const setDown = DWARF_SHEETS.worker2['end-working']!
+    const lead = (pickUp.frames - cue.frame) * pickUp.frameMs
+    const swinging = DWARF_CREW.worker2.swings! * swing.frames * swing.frameMs
+    expect(lead + swinging).toBe(8200)
+    expect(Math.floor((GRIND_MS - lead - swinging) / setDown.frameMs)).toBe(3)
+  })
+
+  it('names the strip the grind is timed against, and it is one the rank has', () => {
+    // A cue pointing at a strip this rank was never drawn would never fire,
+    // silently — the same failure `everySheet` above exists to stop for frames.
+    const cue = DWARF_CREW.worker2.sound!.shift!
+    expect(DWARF_SHEETS.worker2[cue.sheet]).toBeDefined()
+    expect(cue.frame).toBeLessThan(DWARF_SHEETS.worker2[cue.sheet]!.frames)
+  })
+
+  it('gives every rank the same footsteps, the foreman included', () => {
+    // The one cue that is not a frame: it is the walk, and every rank walks.
+    // Quiet on purpose — footsteps are texture under the mine, not an event.
+    for (const role of ROLES) expect(DWARF_CREW[role].sound?.walk, role).toEqual({ gain: 0.05 })
+  })
+
+  it('leaves the foreman silent at work, having neither a strike nor a shift', () => {
+    expect(DWARF_CREW.foreman.sound?.strike).toBeUndefined()
+    expect(DWARF_CREW.foreman.sound?.shift).toBeUndefined()
   })
 })

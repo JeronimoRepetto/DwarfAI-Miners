@@ -3,10 +3,16 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
+import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { dwarfClips } from '../../lib/sprite/dwarfSequence'
 import { SPRITE_FRAME_SIZE, loopOf } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf } from '../../testing/factories'
-import { DWARF_SILENCE_WINDOW_MS, type DwarfKickState, type DwarfSendState } from '../../types'
+import {
+  DWARF_SILENCE_WINDOW_MS,
+  type Dwarf,
+  type DwarfKickState,
+  type DwarfSendState
+} from '../../types'
 import DwarfSprite from './DwarfSprite.vue'
 import spriteSource from './DwarfSprite.vue?raw'
 
@@ -1750,5 +1756,226 @@ describe('DwarfSprite selection styling', () => {
 
   it('animates nothing, so a viewer who asked for less movement keeps the marker', () => {
     expect(styleRule('.is-selected .dwarf-frame')).not.toMatch(/animation:/)
+  })
+})
+
+/*
+ * The crew's own sounds (#330). The sprite is where they are noticed, because
+ * two of the three ARE frames — a strike is the frame the sheet already calls
+ * an impact, and a shift is a moment inside the pick-up — and this is the one
+ * place that knows which frame is showing. It decides nothing about sound: it
+ * emits a cue, MineScene says which mine and which dwarf, and the engine
+ * decides whether anything can be heard at all.
+ */
+describe('DwarfSprite crew sounds (#330)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    Reflect.deleteProperty(window, 'matchMedia')
+    vi.mocked(dwarfClips).mockImplementation(realDwarfClips)
+  })
+
+  /** Reduced motion, stubbed the way the block above stubs it. */
+  function stubReducedMotion(matches: boolean): void {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined
+      })
+    })
+  }
+
+  /**
+   * A sprite, and every crew cue it emits, in order.
+   *
+   * Collected through the LISTENER rather than read off `wrapper.emitted()`,
+   * because two of the cases below are about what a sprite emits as it
+   * unmounts and the wrapper's own record does not carry across teardown.
+   */
+  function mountSprite(
+    dwarf: Dwarf,
+    walking?: boolean
+  ): { wrapper: ReturnType<typeof mount>; cues: CrewSoundSignal[] } {
+    const cues: CrewSoundSignal[] = []
+    const wrapper = mount(DwarfSprite, {
+      props: {
+        dwarf,
+        anchored: true,
+        walking,
+        onCrewSound: (signal: CrewSoundSignal) => cues.push(signal)
+      }
+    })
+    return { wrapper, cues }
+  }
+
+  it('strikes on the frame its own sheet calls an impact', async () => {
+    // 300ms clears the worker's 3-frame pick-up; +400ms lands exactly on index
+    // 4 of the swing behind it, which is the frame the sparks fire on. One
+    // exact jump rather than a long advance, for the reason the spark test
+    // above gives: Vue coalesces a run of interval callbacks into one job.
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
+    vi.advanceTimersByTime(700)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'strike' }])
+  })
+
+  it('strikes on both swings of the shift, not only the first', async () => {
+    // The second swing is a clip of its own drawn from the same strip (#325).
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
+    vi.advanceTimersByTime(700)
+    await wrapper.vm.$nextTick()
+    // 3 frames of pick-up + 13 of the first swing + 4 into the second.
+    vi.advanceTimersByTime(1300)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'strike' }, { cue: 'strike' }])
+  })
+
+  it('sounds the worker2 grind once, as its pick-up crosses the declared frame', async () => {
+    // A COARSE advance, and deliberately so: Vue coalesces the interval's
+    // callbacks into one watcher job, so the position steps from frame 0
+    // straight to 15 and frame 14 is never drawn. The cue is a CROSSING for
+    // exactly this — a grind that silently did not start is a worker2 miming
+    // its whole shift.
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    vi.advanceTimersByTime(1500)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }])
+
+    // And not again on the frames after it, however far into the shift.
+    vi.advanceTimersByTime(3000)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }])
+  })
+
+  it('sounds a new grind on the next shift, a cycle being a shift', async () => {
+    // Stepped frame by frame here (the async advance lets the watcher run
+    // between ticks) rather than coalesced, because what is under test is the
+    // cycle coming round: 113 frames, 11.3s, and the pick-up crosses its
+    // declared frame at 1.4s of each of them.
+    const { cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    await vi.advanceTimersByTimeAsync(12_800)
+    expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift' }])
+  })
+
+  it('says nothing at all while the dwarf is still walking to the vein', async () => {
+    // Except its footsteps, which are what walking sounds like — the strike
+    // and the shift are the work, and the work has not started.
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }), true)
+    vi.advanceTimersByTime(5000)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'walk', gain: 0.05 }])
+  })
+
+  it('says nothing off a dwarf that is resting or walking out', async () => {
+    for (const status of ['waiting', 'leaving'] as const) {
+      const { wrapper, cues } = mountSprite(defaultDwarf({ status }))
+      vi.advanceTimersByTime(5000)
+      await wrapper.vm.$nextTick()
+      expect(cues, status).toEqual([])
+    }
+  })
+
+  it('strikes nothing under reduced motion, the cue being a frame', async () => {
+    // A viewer who asked for no motion sees no frames — the sprite holds one
+    // pose and runs no timer — so there is no strike to hear. Guarded here as
+    // well as by the held frame, for the reason the strike glow is: belt and
+    // suspenders on the one preference this panel must not get wrong.
+    stubReducedMotion(true)
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
+    vi.advanceTimersByTime(10_000)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([])
+  })
+
+  it('still walks audibly under reduced motion, the walk being a position', () => {
+    // THE ONE CREW CUE THAT SURVIVES IT. The scene still moves the sprite
+    // across the interior — that is a position, not an animation — so the
+    // footsteps are still the truth about what is on screen.
+    stubReducedMotion(true)
+    const { cues } = mountSprite(defaultDwarf({ status: 'working' }), true)
+    expect(cues).toEqual([{ cue: 'walk', gain: 0.05 }])
+  })
+
+  it('starts the footsteps when a dwarf sets off and ends them when it arrives', async () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }), false)
+    expect(cues).toEqual([])
+
+    await wrapper.setProps({ walking: true })
+    expect(cues).toEqual([{ cue: 'walk', gain: 0.05 }])
+
+    await wrapper.setProps({ walking: false })
+    expect(cues).toEqual([
+      { cue: 'walk', gain: 0.05 },
+      { cue: 'walk', ending: true }
+    ])
+  })
+
+  it('walks every rank, the foreman included', () => {
+    for (const role of ['worker', 'worker2', 'foreman'] as const) {
+      const { cues } = mountSprite(defaultDwarf({ role, status: 'working' }), true)
+      expect(cues, role).toEqual([{ cue: 'walk', gain: 0.05 }])
+    }
+  })
+
+  it('leaves the foreman silent at the rock, having no working art to sound', async () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'foreman', status: 'working' }))
+    vi.advanceTimersByTime(10_000)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([])
+  })
+
+  it('ends the grind when its worker2 stops working', async () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    vi.advanceTimersByTime(1500)
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ dwarf: defaultDwarf({ role: 'worker2', status: 'waiting' }) })
+    expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift', ending: true }])
+  })
+
+  it('ends the grind when its worker2 walks away from the rock', async () => {
+    // Leaving the cycle is leaving the cycle, whether the status changed or
+    // the scene simply started walking it somewhere (#262's own gate).
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    vi.advanceTimersByTime(1500)
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ walking: true })
+    expect(cues).toEqual([
+      { cue: 'shift' },
+      { cue: 'shift', ending: true },
+      { cue: 'walk', gain: 0.05 }
+    ])
+  })
+
+  it('takes a grind with it when the sprite leaves the scene', async () => {
+    // A dwarf can vanish from the crew between polls with no status to change
+    // through — the mine's own cut catches most of that, but a sprite
+    // unmounting is the strongest form of "no longer drawn" there is, and a
+    // grind outliving the dwarf that made it is the promise broken.
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    vi.advanceTimersByTime(1500)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }])
+
+    wrapper.unmount()
+    expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift', ending: true }])
+  })
+
+  it('takes the footsteps with it too, mid-walk', () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }), true)
+    wrapper.unmount()
+    expect(cues).toEqual([
+      { cue: 'walk', gain: 0.05 },
+      { cue: 'walk', ending: true }
+    ])
+  })
+
+  it('ends nothing on unmount for a dwarf that was neither walking nor at work', () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'waiting' }))
+    wrapper.unmount()
+    expect(cues).toEqual([])
   })
 })

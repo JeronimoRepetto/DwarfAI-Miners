@@ -16,7 +16,7 @@
  *
  * What it settles into is a CYCLE rather than a single strip (issue #325): a run
  * of consecutive `loop` clips repeats as one movement, which is what lets a
- * dwarf's shift be a pick-up, two swings and a set-down played round and round
+ * dwarf's shift be a pick-up, its swings and a set-down played round and round
  * instead of a swing that never stops. One `loop` clip is a cycle of one.
  */
 
@@ -66,8 +66,9 @@ export interface SpriteSheet {
  * `loop` used to mean "this one strip repeats for ever", and for a sequence
  * whose settled state is one strip it still does. Since #325 it means the wider
  * thing it always implied: A RUN OF CONSECUTIVE `loop` CLIPS IS ONE CYCLE, and
- * the cycle is what repeats. A dwarf's shift is four strips — pick the pick up,
- * swing, swing, set it down — and it is that whole movement that goes round,
+ * the cycle is what repeats. A dwarf's shift is several strips — pick the pick
+ * up, swing (as often as the rank declares), set it down — and it is that whole
+ * movement that goes round,
  * not any one strip inside it. A lone `loop` clip is a cycle of one, which is
  * exactly the old behaviour and is why every sequence written before #325 draws
  * identically.

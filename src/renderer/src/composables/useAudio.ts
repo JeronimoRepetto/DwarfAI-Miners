@@ -1,13 +1,14 @@
 import { ref } from 'vue'
-import type { AudioPreferences, Dwarf, DwarfRole } from '../types'
+import type { AudioPreferences, DwarfRole } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES, parseAudioPreferences } from '../types'
-import { hasWorkingWorker } from '../lib/audio/ambience'
 import {
   AMBIENCE_SRC,
+  CREW_SFX_SRC,
   DWARF_VOICE_SRC,
   MUSIC_TRACK_SRC,
   UI_SFX_SRC
 } from '../lib/audio/audioAssets'
+import type { CrewSoundEvent } from '../lib/audio/crew'
 import { createAudioEngine } from '../lib/audio/engine'
 import { createElementAudioPlayer, type AudioPlayer } from '../lib/audio/player'
 import type { UiSfx } from '../lib/audio/volume'
@@ -66,6 +67,7 @@ export function useAudio(options: UseAudioOptions = {}) {
     beds: AMBIENCE_SRC,
     voices: DWARF_VOICE_SRC,
     sfx: UI_SFX_SRC,
+    crew: CREW_SFX_SRC,
     random: options.random,
     now: options.now
   })
@@ -171,11 +173,16 @@ export function useAudio(options: UseAudioOptions = {}) {
   }
 
   /**
-   * The mine on screen and the crew inside it, straight off the snapshot the
-   * sprites are drawn from (#173) — never inferred from anything else.
+   * The mine on screen (#173), and since #330 that is all it is.
+   *
+   * It used to carry the crew as well, because the bed was a reading of what
+   * the crew was doing. The crew sounds for itself now — see `playCrew` — so
+   * what is left is the room tone, and the mine is the only thing that decides
+   * it. The scene is still the one thing a crew cue is checked against, which
+   * is why it is set here rather than inferred anywhere below.
    */
-  function setScene(mineId: string | null, crew: readonly Dwarf[]): void {
-    engine.setScene({ mineId, working: hasWorkingWorker(crew) })
+  function setScene(mineId: string | null): void {
+    engine.setScene({ mineId })
   }
 
   /** Whether the shell is drawn as its bare rail; only the music survives it. */
@@ -202,6 +209,19 @@ export function useAudio(options: UseAudioOptions = {}) {
     engine.playSfx(kind)
   }
 
+  /**
+   * A crew member's drawing did something audible (#330), forwarded by
+   * MineScene from the sprite that drew it.
+   *
+   * Hands the intent down and nothing else, exactly as `playVoice` does: WHEN
+   * a dwarf strikes is the sprite's answer, read off the frames it declares;
+   * whether it can be heard, how loud, and how many at once belong to the
+   * engine and to `lib/audio/`.
+   */
+  function playCrew(event: CrewSoundEvent): void {
+    engine.playCrew(event)
+  }
+
   /** Release every sound and stop the tick. */
   function dispose(): void {
     if (ticker !== undefined) clearInterval(ticker)
@@ -222,6 +242,7 @@ export function useAudio(options: UseAudioOptions = {}) {
     setCollapsed,
     playVoice,
     playSfx,
+    playCrew,
     dispose
   }
 }

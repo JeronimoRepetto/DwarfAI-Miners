@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AudioPreferences, Dwarf } from '../types'
+import type { AudioPreferences } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES } from '../types'
 import { createFakeAudioPlayer, type FakeAudioPlayer } from '../lib/audio/fakeAudioPlayer'
 import { AUDIO_TICK_MS, useAudio } from './useAudio'
@@ -37,17 +37,13 @@ function stubApi(api: StubApi = {}): void {
   })
 }
 
-function dwarf(overrides: Partial<Dwarf>): Dwarf {
-  return {
-    id: 'd1',
-    provider: 'claude',
-    role: 'worker',
-    name: 'Dwarf',
-    status: 'waiting',
-    sessionId: 's1',
-    ...overrides
-  }
-}
+/*
+ * REMOVED for #330: the `dwarf` factory this file used to build a crew with.
+ * `setScene` took the crew because the ambience bed was a reading of it; it
+ * takes the mine alone now, and no case here has a dwarf to make. No test went
+ * with it — it was a helper, and what the crew sounds like is covered a layer
+ * down, in `engine.test.ts` and `lib/sprite/crewSound.test.ts`.
+ */
 
 /** The tracks and beds are real asset URLs; a test only ever counts clips. */
 function audio(player: FakeAudioPlayer) {
@@ -157,22 +153,48 @@ describe('useAudio', () => {
     surface.dispose()
   })
 
-  it('reads the working bed off the crew the mine is drawing', async () => {
+  /*
+   * AMENDED for #330. It read 'reads the working bed off the crew the mine is
+   * drawing' and asserted that a mine with only a foreman got `silence` while
+   * a mine with a working worker got the `working` bed. That bed is retired —
+   * the crew makes the mine's noise itself now — so the room tone is the same
+   * whoever is inside, and what is worth pinning here is exactly that.
+   */
+  it('plays the one room tone for an interior, whoever is inside it', async () => {
     const surface = audio(player)
     await surface.sync()
 
-    surface.setScene('mine-a', [dwarf({ role: 'foreman', status: 'working' })])
+    surface.setScene('mine-a')
     expect(player.live().some((clip) => clip.src.includes('silence'))).toBe(true)
+    expect(player.live().some((clip) => clip.src.includes('mine-inside-working'))).toBe(false)
+    surface.dispose()
+  })
 
-    surface.setScene('mine-a', [dwarf({ role: 'worker', status: 'working' })])
-    expect(player.live().some((clip) => clip.src.includes('working'))).toBe(true)
+  it('plays a crew cue through the engine, on the ambience channel (#330)', async () => {
+    const surface = audio(player)
+    await surface.sync()
+    surface.setScene('mine-a')
+
+    surface.playCrew({ mineId: 'mine-a', dwarfId: 'd1', role: 'worker', cue: 'strike' })
+    expect(player.live().some((clip) => clip.src.includes('pickaxe'))).toBe(true)
+    surface.dispose()
+  })
+
+  it('opens nothing for a cue from a mine that is not on screen', async () => {
+    const surface = audio(player)
+    await surface.sync()
+    surface.setScene('mine-a')
+    const before = player.clips.length
+
+    surface.playCrew({ mineId: 'mine-b', dwarfId: 'd1', role: 'worker', cue: 'strike' })
+    expect(player.clips).toHaveLength(before)
     surface.dispose()
   })
 
   it('stops the ambience when the shell collapses to its rail, and keeps the music', async () => {
     const surface = audio(player)
     await surface.sync()
-    surface.setScene('mine-a', [dwarf({ status: 'working' })])
+    surface.setScene('mine-a')
     const beds = () => player.live().filter((clip) => clip.src.includes('mine-inside'))
     expect(beds()).toHaveLength(1)
 
@@ -186,7 +208,7 @@ describe('useAudio', () => {
     const surface = audio(player)
     await surface.sync()
     const stop = surface.listen()
-    surface.setScene('mine-a', [dwarf({ status: 'working' })])
+    surface.setScene('mine-a')
     expect(pushVisibility).toBeDefined()
 
     ;(pushVisibility as VisibilityListener)(false)
@@ -204,7 +226,7 @@ describe('useAudio', () => {
   it('mutes the mine ambience for this run without touching the music', async () => {
     const surface = audio(player)
     await surface.sync()
-    surface.setScene('mine-a', [dwarf({ status: 'working' })])
+    surface.setScene('mine-a')
 
     surface.toggleAmbienceMute()
     expect(surface.ambienceMuted.value).toBe(true)
@@ -286,7 +308,7 @@ describe('useAudio', () => {
   it('releases every sound on dispose', async () => {
     const surface = audio(player)
     await surface.sync()
-    surface.setScene('mine-a', [dwarf({ status: 'working' })])
+    surface.setScene('mine-a')
     surface.playVoice('worker')
     expect(player.live()).toHaveLength(3)
 

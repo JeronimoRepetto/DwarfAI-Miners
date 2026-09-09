@@ -1,38 +1,49 @@
 /**
- * The mine's ambience, as a pure function of what is on screen (#173).
+ * The mine's room tone, as a pure function of what is on screen (#173, #330).
  *
- * Two beds and two rules. WHICH bed is a reading of the crew — `working` while
- * at least one worker is swinging, `silence` otherwise — and HOW it changes
- * depends on whether the mine itself changed: a bed replacing another bed in
- * the same mine crossfades over two seconds, and a different mine cuts.
+ * ONE BED. There were two, and which one played was a reading of the crew —
+ * `working` while at least one worker was swinging — but that bed was a single
+ * recording of "a mine being worked", identical whether one worker or nine were
+ * at the rock, and it said nothing about WHO was working or WHEN a pick landed.
+ * #330 retires it: the crew makes the mine's noise itself now, one clip per
+ * thing a dwarf is drawn doing (see `crew.ts` and `lib/sprite/crewSound.ts`),
+ * and what is left here is the quiet room under all of it. So the bed no longer
+ * depends on the crew at all, and the only question left is WHETHER an interior
+ * is open and audible.
+ *
+ * With one bed the two-bed crossfade goes too: there is nothing to fade into.
+ * The two seconds survive for the LOOP SEAM alone, which is the engine's
+ * (#322). A different mine still cuts.
  *
  * All of it lives here rather than in MineScene because none of it is Vue's
  * business, and because the interesting cases are the ones nobody would think
- * to click through by hand: a mine with only a foreman, a mine whose workers
- * are all resting, switching mines mid-crossfade, muting while a flip is in
+ * to click through by hand: switching mines mid-seam, muting while one is in
  * flight.
  */
-import type { DwarfRole, DwarfStatus } from '../../types'
 
-/** How long a crossfade takes — the loop seam and a state flip alike (#173). */
+/** How long a crossfade takes — the loop seam, which is all that is left (#173). */
 export const AMBIENCE_CROSSFADE_MS = 2000
 
-export const AMBIENCE_BEDS = ['working', 'silence'] as const
+/**
+ * The beds, and there is one. Kept as a list rather than collapsed to a string
+ * so `AMBIENCE_SRC` still has to name a file for each and the shape survives a
+ * second room tone being recorded.
+ */
+export const AMBIENCE_BEDS = ['silence'] as const
 
 export type AmbienceBed = (typeof AMBIENCE_BEDS)[number]
 
 /**
  * Everything the ambience depends on, and nothing else.
  *
- * `working` is a boolean rather than the crew itself, so the reading of the
- * snapshot (`hasWorkingWorker`) is separable from the decision about the bed —
- * they fail differently and they are tested apart.
+ * The crew is NOT in here any more (#330). It used to carry `working`, a
+ * reading of the snapshot, because that decided which of two beds played; the
+ * crew now sounds for itself, so the room tone under it depends on nothing but
+ * whether there is a room on screen to hear.
  */
 export interface AmbienceScene {
   /** The mine whose interior is open, or null when none is. */
   mineId: string | null
-  /** Whether at least one worker in THAT mine is working. */
-  working: boolean
   /** The interior's own mute, which silences the ambience alone (#173). */
   muted: boolean
   /** Main's answer about the shell window: minimised or hidden (#174). */
@@ -50,55 +61,44 @@ export interface AmbienceStanding {
 /**
  * The one act the machine asks for.
  *
- * `cut` is instant and `crossfade` is not, and the difference is never a
- * matter of taste: a cut is what a DIFFERENT mine gets, because fading one
- * mine's crew out over another mine's interior would be the panel saying
- * something untrue about what is on screen.
+ * A `cut` is instant, and that it is never anything else is a decision rather
+ * than a simplification: a cut is what a DIFFERENT mine gets, because fading
+ * one mine's room out over another mine's interior would be the panel saying
+ * something untrue about what is on screen. There used to be a `crossfade`
+ * here as well, for the flip between the two beds; it went with the second bed
+ * (#330), and the only crossfade left is the loop seam's, which the engine runs
+ * without asking this.
  */
 export type AmbienceMove =
-  | { kind: 'none' }
-  | { kind: 'stop' }
-  | { kind: 'cut'; mineId: string; bed: AmbienceBed }
-  | { kind: 'crossfade'; mineId: string; bed: AmbienceBed; ms: number }
-
-/**
- * Whether any of the crew is actually mining.
- *
- * A FOREMAN DOES NOT COUNT, and that is #173's own example rather than an
- * omission: a mine with only a foreman hears `silence`. The foreman's
- * `working` is a session producing tokens; the working bed is picks on rock,
- * which is what the workers are drawn doing. Read off the same snapshot the
- * sprites read, and never inferred from anything else.
- */
-export function hasWorkingWorker(
-  crew: readonly { role: DwarfRole; status: DwarfStatus }[]
-): boolean {
-  return crew.some(
-    (dwarf) => (dwarf.role === 'worker' || dwarf.role === 'worker2') && dwarf.status === 'working'
-  )
-}
+  { kind: 'none' } | { kind: 'stop' } | { kind: 'cut'; mineId: string; bed: AmbienceBed }
 
 /**
  * Which bed belongs to this scene, or null for silence.
  *
+ * The ROOM TONE whenever an interior is open and audible, whatever the crew is
+ * doing (#330) — the crew's own clips are what say anything about the crew.
+ *
  * Null is NOT the `silence` bed. That bed is a recording of a quiet mine, and
  * with no interior open there is no mine to be quiet — the same distinction
  * between "nothing to say" and "saying nothing happened" that the rest of this
- * panel keeps.
+ * panel keeps. It is also the answer the engine reads to decide whether a crew
+ * clip may be opened at all: the crew is audible exactly when the room it is
+ * standing in is.
  */
 export function ambienceBedFor(scene: AmbienceScene): AmbienceBed | null {
   if (scene.mineId === null) return null
   if (scene.muted || scene.hidden || scene.collapsed) return null
-  return scene.working ? 'working' : 'silence'
+  return 'silence'
 }
 
 /**
  * What to do about the difference between what is playing and what should be.
  *
- * The order of the checks is the contract. A mine change is tested BEFORE the
- * bed change, so switching from one mine's `working` to another mine's
- * `working` is still a cut — the bed is the same and the mine is not, and the
- * mine is what decides.
+ * A mine change is a CUT, and that is the one decision in here: fading one
+ * mine's room out under another mine's interior would be the panel saying
+ * something untrue about what is on screen. With a single bed there is no
+ * other change left to make — a bed replacing itself in the same mine is the
+ * loop seam, which belongs to the engine and to #322.
  */
 export function ambienceMove(
   standing: AmbienceStanding | null,
@@ -110,7 +110,6 @@ export function ambienceMove(
   const mineId = scene.mineId as string
   if (standing === null) return { kind: 'cut', mineId, bed }
   if (standing.mineId !== mineId) return { kind: 'cut', mineId, bed }
-  if (standing.bed !== bed) return { kind: 'crossfade', mineId, bed, ms: AMBIENCE_CROSSFADE_MS }
   return { kind: 'none' }
 }
 

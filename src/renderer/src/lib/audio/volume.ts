@@ -128,3 +128,27 @@ export function sfxVolume(kind: UiSfx, settings: AudioPreferences, gates: AudioG
     collapsed: gates.collapsed && !SFX_SURVIVES_COLLAPSE[kind]
   })
 }
+
+/**
+ * The volume one crew clip opens at, with `count` of them sounding including
+ * itself (issue #330).
+ *
+ * The AMBIENCE channel, because the crew is what the mine sounds like now that
+ * the `working` bed is retired: the same slider, the same interior mute, the
+ * same silence while the app is hidden or collapsed to its rail.
+ *
+ * Divided by the square root of the count, which is the one arithmetic choice
+ * here. Nine workers must sound FULLER than one rather than nine times louder
+ * — adding the clips does the second, and it is how a busy mine becomes a wall
+ * of noise while a quiet one stays too quiet to hear. The root is the ordinary
+ * answer for sources that are not correlated: doubling them lifts the mix by
+ * about 3 dB, and the panel's own ear test is whether nine dwarfs read as a
+ * busy mine rather than as a drum machine.
+ *
+ * A count below one is read as one. The caller counts the clip it is about to
+ * open, so zero means "this one alone" and never silence.
+ */
+export function crewVolume(settings: AudioPreferences, gates: AudioGates, count: number): number {
+  const sounding = Number.isFinite(count) ? Math.max(1, count) : 1
+  return channelVolume('ambience', settings, gates) / Math.sqrt(sounding)
+}

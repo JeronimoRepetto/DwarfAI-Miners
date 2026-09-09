@@ -10,6 +10,7 @@ import {
   MUSIC_ON_ICON_SRC,
   maskImageValue
 } from '../../lib/art'
+import type { CrewSoundEvent } from '../../lib/audio/crew'
 import { createBubbleBoard } from '../../lib/overlay/bubbles'
 import { assignScene } from '../../lib/scene/sceneAssignment'
 import { clampToBox, projectToBox } from '../../lib/scene/sceneGeometry'
@@ -102,6 +103,17 @@ const emit = defineEmits<{
    * which is where every cross-cutting surface in this window is owned.
    */
   'toggle-ambience-mute': []
+  /**
+   * One of the crew made a sound (#330), forwarded from the sprite that drew
+   * it with the two facts a sprite cannot know about itself: which mine it is
+   * standing in, and which dwarf it is.
+   *
+   * Both are what the engine checks the cue against — a cue from a mine the
+   * viewer has already left opens nothing, and a sustained clip is released by
+   * the dwarf that opened it. The scene addresses the cue and reads none of
+   * it; whether anything can be heard belongs to the audio engine above.
+   */
+  'crew-sound': [event: CrewSoundEvent]
 }>()
 
 /*
@@ -408,6 +420,14 @@ onBeforeUnmount(() => {
             @select="emit('select', slot.dwarf)"
             @bubble-hold="board.hold(slot.dwarf.id)"
             @bubble-release="board.release(slot.dwarf.id)"
+            @crew-sound="
+              emit('crew-sound', {
+                ...$event,
+                mineId: mine.id,
+                dwarfId: slot.dwarf.id,
+                role: slot.dwarf.role
+              })
+            "
           />
         </div>
       </div>
