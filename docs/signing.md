@@ -181,6 +181,12 @@ electron-builder's own documented defaults, both already covered above:
   happens to offer an ad-hoc identity.
 - `notarize: true` only has a signed build to submit once signing actually produced one with a
   Developer ID identity. Without `CSC_LINK`, there is nothing to hand to Apple's notary service.
+  And the flag itself does not fail a build that lacks credentials: read in the installed
+  `app-builder-lib` 26.15.3 (`out/mac/MacTargetHelper.js`, `notarizeIfProvided`), with none of
+  `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` set it logs
+  `skipped macOS notarization` (reason: "`notarize` options were unable to be generated") and
+  carries on. It throws only when SOME of the three are set and the others are missing, which is
+  the one misconfiguration worth failing loudly on.
 
 The alternative design was a CI-only flag threaded through `package:mac` (e.g. a `--publish`-style
 switch, or a second script) that only enables `notarize`/signing when the workflow passes it. That
