@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { emptyMessagePanel } from './messagePanelState'
 import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
 import {
+  MESSAGE_PANEL_REVEAL_TIMEOUT_MS,
   applyAlwaysOnTop,
   buildMessagePanelWindowOptions,
   applyPanelBounds,
   applyUiScale,
   buildMainWindowOptions,
   formatShellTrace,
+  messagePanelNeedsReveal,
   messagePanelState,
   panelLayout,
   raisePanelWindow,
@@ -17,6 +19,7 @@ import {
   setPanelLayout,
   shellDebugEnabled,
   type AlwaysOnTopTarget,
+  type MessagePanelRevealTarget,
   type PanelBoundsTarget,
   type RaiseTarget,
   type UiScaleTarget
@@ -475,6 +478,60 @@ describe('setMessagePanel', () => {
     const read = messagePanelState()
     read.dwarfId = 'claude:someone-else'
     expect(messagePanelState().dwarfId).toBe('claude:s1')
+  })
+})
+
+/**
+ * The window opens even when its renderer never measured anything (#312).
+ *
+ * The first open of a run created the window and stopped there: the height
+ * report that is the ONE thing which reveals it never arrived, and main had no
+ * second answer — so a click produced a halo on the dwarf and no panel, and
+ * only closing and reopening got one. A report is still what sizes the window;
+ * this is what keeps a silent renderer from costing the click entirely.
+ *
+ * Asserted through a narrow target with a fake, the way `raisePanelWindow` and
+ * the three `apply*` above are: the wait itself happens inside Electron and
+ * cannot be reached from here, but every rule about whether to reveal can.
+ */
+describe('revealing a panel window nothing measured', () => {
+  function fakeRevealTarget(state: { visible?: boolean; destroyed?: boolean } = {}) {
+    const target: MessagePanelRevealTarget = {
+      isDestroyed: () => state.destroyed ?? false,
+      isVisible: () => state.visible ?? false
+    }
+    return target
+  }
+
+  it('reveals a window that is still hidden on a surface that is still open', () => {
+    expect(messagePanelNeedsReveal(fakeRevealTarget(), 'message')).toBe(true)
+    expect(messagePanelNeedsReveal(fakeRevealTarget(), 'launch')).toBe(true)
+  })
+
+  it('leaves a window a height report already revealed alone', () => {
+    // The ordinary run: the report landed inside the wait, sized the window
+    // and showed it. Showing it again would be a raise nobody asked for.
+    expect(messagePanelNeedsReveal(fakeRevealTarget({ visible: true }), 'message')).toBe(false)
+  })
+
+  it('never opens a window onto a surface that closed while it waited', () => {
+    // A second click can deselect before the wait is out, and main's state is
+    // then 'none' — the panel would come back showing the dwarf nobody has
+    // selected any more.
+    expect(messagePanelNeedsReveal(fakeRevealTarget(), 'none')).toBe(false)
+  })
+
+  it('has nothing to reveal once the window has been destroyed', () => {
+    expect(messagePanelNeedsReveal(fakeRevealTarget({ destroyed: true }), 'message')).toBe(false)
+  })
+
+  it('waits longer than a page load and less than a person reads as a failure', () => {
+    // The bound is the requirement, not the number: long enough that the
+    // ordinary report wins the race and this never fires, short enough that
+    // what the person sees is the panel opening rather than a click that did
+    // nothing and a panel arriving later.
+    expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeGreaterThanOrEqual(500)
+    expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeLessThanOrEqual(2000)
   })
 })
 

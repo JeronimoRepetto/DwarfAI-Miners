@@ -9,6 +9,7 @@ import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
+import { feedMessagesOf } from './lib/message/conversation'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
@@ -16,6 +17,7 @@ import type {
   DwarfKickState,
   DwarfPermissionDecision,
   DwarfSendState,
+  FeedMessage,
   Mine,
   MinesSnapshot,
   WatchedFeedPush
@@ -57,7 +59,15 @@ import type {
  */
 
 const { state, setMines } = useMines()
-const { state: messagingState, send: sendDwarfText, observe: observeSends } = useDwarfMessaging()
+const {
+  state: messagingState,
+  echoes: sentEchoes,
+  send: sendDwarfText,
+  retry: retryDwarfText,
+  observe: observeSends,
+  reconcile: reconcileEchoes,
+  keepEchoesFor
+} = useDwarfMessaging()
 const { state: kickingState, kick, observe: observeKicks } = useDwarfKicking()
 const {
   state: questionState,
@@ -453,6 +463,48 @@ watch(
   { immediate: true }
 )
 
+/**
+ * The messages this panel is still holding on the person's behalf, and the
+ * transcript they are measured against (#309).
+ *
+ * `feedMessagesOf` rather than a second reading of "held wins over observed":
+ * it is the very precedence `conversationOf` draws the panel from, so the rows
+ * an echo is reconciled against are exactly the rows it would otherwise be
+ * drawn beside.
+ */
+const echoTranscript = computed<readonly FeedMessage[]>(() =>
+  selectedDwarf.value === undefined ? [] : feedMessagesOf(selectedDwarf.value, selectedFeed.value)
+)
+
+/**
+ * Drop an echo the moment the transcript accounts for it, so the person's
+ * words appear once rather than twice (#309).
+ *
+ * Here rather than in the panel because the panel is thin and this is a store
+ * write; on the default ('pre') flush, so the drop lands before the render
+ * that would otherwise have drawn the row and the echo side by side. For a
+ * held session the stream carries the user turn almost at once, which is why
+ * this watches the conversation and not only a completed feed read.
+ */
+watch(
+  [openDwarfId, echoTranscript],
+  ([dwarfId, messages]) => {
+    if (dwarfId === null) return
+    reconcileEchoes(dwarfId, messages)
+  },
+  { immediate: true }
+)
+
+/**
+ * An echo belongs to the conversation on screen, and to no other (#309).
+ *
+ * A panel that moved to another dwarf is no longer holding anything for the
+ * one it left: those bubbles are gone from the surface, and keeping their
+ * verdicts alive would mean a message failing invisibly for a dwarf nobody is
+ * looking at.
+ */
+watch(openDwarfId, (dwarfId) => keepEchoesFor(dwarfId), { immediate: true })
+
 /** A verdict as a plain object, because a Vue proxy cannot cross the bridge. */
 function plainVerdicts<T extends DwarfSendState | DwarfKickState>(
   source: Record<string, T>
@@ -485,6 +537,28 @@ function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }):
   void deliverText(dwarf, payload)
 }
 
+/** Hand the composer's text over, then refresh on the verdict (#183). */
+async function deliverText(
+  dwarf: Dwarf,
+  payload: { text: string; pressEnter: boolean }
+): Promise<void> {
+  refreshAfterDelivery(dwarf.id, await sendDwarfText(dwarf.id, payload.text, payload.pressEnter))
+}
+
+/**
+ * Send a failed message again, from its own bubble (#309).
+ *
+ * Fire-and-observe and post-delivery re-read exactly as an ordinary send: it
+ * IS an ordinary send, of words the store already holds. The store mints a new
+ * echo for it and leaves the failed one marked — a retry is a second delivery
+ * with its own verdict, not a correction of the first.
+ */
+function sendAgain(dwarf: Dwarf, echoId: string): void {
+  void retryDwarfText(dwarf.id, echoId).then((delivered) =>
+    refreshAfterDelivery(dwarf.id, delivered)
+  )
+}
+
 /**
  * A delivered send is also a reason to re-read the feed (issue #183): the
  * sending dwarf is always the one this panel has open, so the human's own
@@ -495,16 +569,16 @@ function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }):
  * captured before the await: the relay can take seconds, and the user is free
  * to close the panel, or select someone else, while it is in flight. A stale
  * delivery for a dwarf nobody has open any more has nothing left to refresh.
+ *
+ * Shared by both ways of handing text over since #309 — the composer's send
+ * and a retry from a failed bubble — because a retry is the same delivery with
+ * the same aftermath.
  */
-async function deliverText(
-  dwarf: Dwarf,
-  payload: { text: string; pressEnter: boolean }
-): Promise<void> {
-  const delivered = await sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
+function refreshAfterDelivery(dwarfId: string, delivered: boolean): void {
   if (!delivered) return
-  if (openDwarfId.value !== dwarf.id) return
+  if (openDwarfId.value !== dwarfId) return
   if (selectedDwarf.value?.conversation !== undefined) return
-  void readSelectedFeed(dwarf.id)
+  void readSelectedFeed(dwarfId)
 }
 
 /** Same reasoning as sendText: fire-and-observe, verdict lands on the dwarf itself. */
@@ -681,7 +755,22 @@ function reportHeight(): void {
 }
 
 /**
- * Report again whenever the SURFACE changes, and not only when it resizes.
+ * What the surface is DRAWING, as one comparable value: which panel, and for
+ * which dwarf.
+ *
+ * A string rather than the three parts, for the reason the `state.mines` watch
+ * above gives its own shape: `selectedDwarf` is recomputed from every poll, so
+ * a getter answering a fresh array would fire the watch below twice a second
+ * and re-place the window each time. Identity is the whole of what matters
+ * here, and it fits in a string.
+ */
+const surfaceContentKey = computed(
+  () => `${panel.value.surface}|${launchOpen.value}|${selectedDwarf.value?.id ?? ''}`
+)
+
+/**
+ * Report again whenever the surface's CONTENT changes, and not only when it
+ * resizes.
  *
  * The window is created hidden and main reveals it on the first height report
  * (see setMessagePanelHeight in main/shell/window.ts), so leaving the report to
@@ -690,13 +779,38 @@ function reportHeight(): void {
  * as though it did nothing. `nextTick` because the report is a measurement:
  * the panel this state asks for has to be on screen before there is anything
  * to measure.
+ *
+ * ## Why the surface alone was not enough (#312)
+ *
+ * The surface is what main was ASKED for; the content is what arrived. On the
+ * first open of a run those are two different moments and in that order: this
+ * window learns the surface from `syncPanel`, and the board that decides WHICH
+ * dwarf to draw lands on the `getMines` after it. So the report the surface
+ * change fired measured an empty surface, was suppressed by the rule below as
+ * a zero, and nothing reported again when the dwarf's panel finally mounted —
+ * leaving main holding a created, hidden window with no height and no second
+ * way to reveal it. Selecting another dwarf had the same gap: the surface stays
+ * 'message' throughout, so only the observer saw the new panel.
+ *
+ * And the observer cannot cover either, because the window it would cover them
+ * for is HIDDEN. A ResizeObserver callback is delivered while the page's
+ * rendering is updated, and Electron's own contract for a backgrounded page is
+ * that "animations and timers are paused" unless `backgroundThrottling` is
+ * disabled, in which case "frames will continue to be drawn and swapped for
+ * the entire window". That flag is deliberately NOT set here: it would keep a
+ * window that spends most of the app's life hidden drawing frames, and it
+ * "also impacts the Page Visibility API" for both surfaces — a real cost for a
+ * report this window can simply make at the moment it knows about, which is
+ * the change of content itself. Once the window is visible the observer works,
+ * which is why one report is all that has to be guaranteed.
+ *
+ * One `nextTick` is enough to measure the final panel: DwarfMessagePanel takes
+ * its opening height during setup and binds it on its own root, so the first
+ * render already carries it.
  */
-watch(
-  () => panel.value.surface,
-  () => {
-    void nextTick(reportHeight)
-  }
-)
+watch(surfaceContentKey, () => {
+  void nextTick(reportHeight)
+})
 
 let unsubscribe: (() => void) | undefined
 let unlistenPanel: (() => void) | undefined
@@ -774,9 +888,11 @@ onBeforeUnmount(() => {
         :dwarf="selectedDwarf"
         :feed="selectedFeed"
         :send-state="messagingState.byDwarfId[selectedDwarf.id]"
+        :echoes="sentEchoes[selectedDwarf.id]"
         :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
         :answer-state="questionState.byDwarfId[selectedDwarf.id]"
         @send="sendText(selectedDwarf, $event)"
+        @send-again="sendAgain(selectedDwarf, $event)"
         @kick="kickDwarf(selectedDwarf)"
         @answer="answerQuestion(selectedDwarf, $event)"
         @decide="decidePermission(selectedDwarf, $event)"

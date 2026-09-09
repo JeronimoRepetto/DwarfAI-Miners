@@ -624,6 +624,87 @@ describe('reporting its own height', () => {
     const { api } = await openOn([OBSERVED_DWARF], 'claude:s1')
     expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
   })
+
+  /**
+   * A surface that measures what it actually CONTAINS, with no observer
+   * watching it change (#312).
+   *
+   * `fakeMeasurement` above answers one constant height whatever is on the
+   * page, and that is what hid the first open of a run: it makes the report
+   * fired from `onMounted` succeed before either panel exists, so the ORDER
+   * the two answers arrive in never mattered. A real surface is 0 tall until
+   * it holds a panel, and this getter says so.
+   *
+   * No ResizeObserver on purpose, and jsdom shipping none is the real
+   * situation rather than an approximation of it: the panel window is created
+   * hidden, a hidden window's frames are not drawn, and the observer callback
+   * is delivered as part of drawing one. So the observer that backs up a
+   * VISIBLE window is exactly what the open that has to reveal it cannot have.
+   */
+  function fakeContentMeasurement(height: number) {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.querySelector('.message-panel, .add-panel') === null ? 0 : height
+      }
+    })
+    return { restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight') }
+  }
+
+  /** An answer from main this test holds back, so the two can land in one order. */
+  function deferred<T>() {
+    let settle: (value: T) => void = () => undefined
+    const promise = new Promise<T>((resolve) => {
+      settle = resolve
+    })
+    return { promise, settle }
+  }
+
+  it('reports the height once the dwarf’s panel mounts, not only when the surface changes', async () => {
+    // The first open of a run, in the order the two answers actually arrive
+    // (#312): main names the surface, and the board that decides WHICH dwarf
+    // is drawn lands afterwards. So the report the surface change fires
+    // measures a surface with nothing in it yet, and the one thing that
+    // reveals the window is a report — which makes the panel that appears when
+    // the board lands the moment there is finally something to say.
+    const measured = fakeContentMeasurement(426)
+    const board = deferred<unknown>()
+    try {
+      const { wrapper, api } = await mountPanel(
+        { surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' },
+        { getMines: vi.fn().mockReturnValue(board.promise) }
+      )
+      expect(wrapper.find('.message-panel').exists()).toBe(false)
+      expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
+
+      board.settle({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+      await flushPromises()
+
+      expect(wrapper.find('.message-panel').exists()).toBe(true)
+      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
+    } finally {
+      measured.restore()
+    }
+  })
+
+  it('reports again for the next dwarf, whose panel is a fresh one of its own height', async () => {
+    // Selecting another dwarf never changes the SURFACE — it stays 'message' —
+    // so the watch that only followed the surface left this to the observer,
+    // which says nothing when the two panels happen to be the same height.
+    const measured = fakeContentMeasurement(300)
+    try {
+      const { api } = await openOn([OBSERVED_DWARF, HELD_DWARF], 'claude:s1')
+      api.setMessagePanelHeight.mockClear()
+
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
+      await flushPromises()
+
+      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(300)
+    } finally {
+      measured.restore()
+    }
+  })
 })
 
 /**
@@ -1371,5 +1452,179 @@ describe('the add panel', () => {
     expect(wrapper.find<HTMLTextAreaElement>('.launch-input').element.value).toBe(
       'dig the east gallery'
     )
+  })
+})
+
+/**
+ * The sent message on screen at once, with its own verdict (#309).
+ *
+ * This is where the two halves meet: the store mints the echo before it asks
+ * any channel anything, and the panel draws it. The block above pins that the
+ * SHELL still hears one verdict per dwarf, and the last test here pins that
+ * nothing about an echo has joined that report — the sprite marker's semantics
+ * are deliberately untouched.
+ */
+describe('the sent message, drawn at once (#309)', () => {
+  const ECHO_DWARF = { ...OBSERVED_DWARF, lastMessage: '', textDelivery: 'terminal' }
+
+  async function sendFrom(wrapper: VueWrapper, text: string) {
+    await wrapper.find('.panel-input').setValue(text)
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+  }
+
+  it('draws the message before any channel has answered, and clears the composer with it', async () => {
+    // The delivery never resolves, which is the case the issue is about: a
+    // relay that takes seconds, or a terminal that cannot be focused.
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
+      sendDwarfText: vi.fn(() => new Promise(() => {}))
+    })
+
+    await sendFrom(wrapper, 'dig deeper')
+
+    expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
+    expect(wrapper.find('.bubble-marker').text()).toBe('…')
+    expect((wrapper.find('.panel-input').element as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it("turns the bubble's own marker into one tick when the delivery lands", async () => {
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1')
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+
+    const marker = wrapper.find('.bubble-marker')
+    expect(marker.text()).toBe('✓')
+    expect(marker.attributes('title')).toContain('Handed to the session')
+  })
+
+  it('marks the bubble with a ✕ and its reason, keeping the words on screen', async () => {
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
+      sendDwarfText: vi.fn().mockResolvedValue({
+        delivered: false,
+        via: 'terminal',
+        error: 'The terminal would not come forward.'
+      })
+    })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+
+    expect(wrapper.find('.bubble-marker').text()).toBe('✕')
+    expect(wrapper.find('.bubble-marker').attributes('title')).toBe(
+      'The terminal would not come forward.'
+    )
+    expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
+  })
+
+  it('sends a failed message again from its own bubble, and keeps the failed one marked', async () => {
+    const sendDwarfText = vi
+      .fn()
+      .mockResolvedValueOnce({ delivered: false, via: 'terminal', error: 'nope' })
+      .mockResolvedValue({ delivered: true, via: 'claude-relay' })
+    const { wrapper, api } = await openOn([ECHO_DWARF], 'claude:s1', { sendDwarfText })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+
+    await wrapper.find('.bubble-retry').trigger('click')
+    await flushPromises()
+
+    expect(api.sendDwarfText).toHaveBeenCalledTimes(2)
+    expect(api.sendDwarfText).toHaveBeenLastCalledWith({
+      dwarfId: 'claude:s1',
+      text: 'dig deeper',
+      pressEnter: true
+    })
+    const markers = wrapper.findAll('.bubble-marker')
+    expect(markers.map((marker) => marker.text())).toEqual(['✕', '✓'])
+  })
+
+  it('shows the words once, not twice, when the transcript catches up', async () => {
+    // The reconciliation (#309): a `user` turn with the same words, stamped
+    // after the send, IS this message — so the feed's row replaces the echo
+    // rather than standing beside it.
+    let reads = 0
+    const getDwarfFeed = vi.fn(() => {
+      reads++
+      return Promise.resolve(
+        reads === 1
+          ? { readable: true, messages: [] }
+          : {
+              readable: true,
+              messages: [
+                {
+                  role: 'user',
+                  text: 'dig deeper',
+                  timestamp: new Date(Date.now() + 1_000).toISOString()
+                }
+              ]
+            }
+      )
+    })
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', { getDwarfFeed })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+
+    const bubbles = wrapper.findAll('.message.is-user .bubble')
+    expect(bubbles.map((bubble) => bubble.text())).toEqual(['dig deeper'])
+    // The row that survived is the transcript's, which carries no verdict of
+    // its own: the session HAS the message now.
+    expect(wrapper.find('.bubble-marker').exists()).toBe(false)
+  })
+
+  it('keeps the echo when the transcript carries an older turn with the same words', async () => {
+    // The near miss: the person said this before, the transcript already had
+    // it, and saying it again is exactly why there is an echo.
+    const getDwarfFeed = vi.fn().mockResolvedValue({
+      readable: true,
+      messages: [
+        { role: 'user', text: 'dig deeper', timestamp: new Date(Date.now() - 60_000).toISOString() }
+      ]
+    })
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', { getDwarfFeed })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+
+    expect(wrapper.findAll('.message.is-user .bubble')).toHaveLength(2)
+    expect(wrapper.find('.bubble-marker').text()).toBe('✓')
+  })
+
+  it('forgets the echoes when the panel moves to another dwarf, and coming back does not revive them', async () => {
+    // The panel is keyed by dwarf, so ANOTHER dwarf's surface draws none of
+    // these anyway — going away and coming back is what proves the store let
+    // go of them rather than the component merely not asking.
+    const SECOND = { ...ECHO_DWARF, id: 'claude:s3', sessionId: 's3', name: 'Digger' }
+    const { wrapper, api } = await openOn([ECHO_DWARF, SECOND], 'claude:s1', {
+      sendDwarfText: vi.fn(() => new Promise(() => {}))
+    })
+
+    await sendFrom(wrapper, 'dig deeper')
+    expect(wrapper.find('.message.is-user .bubble').exists()).toBe(true)
+
+    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s3' })
+    await flushPromises()
+    expect(wrapper.find('.message.is-user .bubble').exists()).toBe(false)
+
+    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+    await flushPromises()
+    expect(wrapper.find('.message.is-user .bubble').exists()).toBe(false)
+  })
+
+  it('reports nothing about an echo to the shell: a dwarf still has one verdict', async () => {
+    // #309 adds no wire shape. The sprite marker reads the same two maps it
+    // always did, and an echo is renderer-only state that never crosses.
+    const { wrapper, api } = await openOn([ECHO_DWARF], 'claude:s1')
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+
+    const last = api.reportDwarfDelivery.mock.lastCall?.[0] as Record<string, unknown>
+    expect(Object.keys(last).sort()).toEqual(['kick', 'send'])
+    expect(last.send).toEqual({
+      'claude:s1': { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+    })
   })
 })
