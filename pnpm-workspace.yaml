@@ -5,3 +5,32 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+
+# pnpm 11 gotcha: non-auth/registry settings are IGNORED in .npmrc (pnpm 11
+# moved them here). @anthropic-ai/claude-agent-sdk ships its runtime as one
+# optional package per platform+arch; pnpm only installs the one matching
+# the host running `pnpm install`. macOS builds both arm64 and x64 targets
+# from one host (see build.mac.target in package.json), so a Mac needs BOTH
+# darwin arches regardless of which one it is. os/cpu is a cross product, not
+# a set of pairs, so widening it to cover darwin's two arches also pulls in
+# linux-arm64, win32-arm64 and every linux libc variant (glibc AND musl) —
+# all already optional deps of the SDK itself, none declared by this project
+# and none built here. A `libc` restriction was tried and does not reliably
+# exclude the musl duplicates when cross-installing from a non-Linux host
+# (verified on Windows: still fetched with `libc: [glibc]` set), so it was
+# dropped rather than kept for a false sense of precision. The leak is
+# harmless in node_modules itself: `scripts/pruneSdkRuntimes.mjs` (wired in as
+# `build.afterPack`) is what actually strips every arch but the one being
+# built out of the packaged app before it ships — electron-builder 26.15.3,
+# which this project pins, does not do that pruning on its own (see the trap
+# in skills/release/SKILL.md and #349).
+supportedArchitectures:
+  os:
+    - current
+    - darwin
+    - linux
+    - win32
+  cpu:
+    - current
+    - x64
+    - arm64

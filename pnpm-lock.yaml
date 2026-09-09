@@ -81,6 +81,19 @@ importers:
       vue-tsc:
         specifier: 3.3.11
         version: 3.3.11(typescript@6.0.3)
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64':
+        specifier: 0.3.258
+        version: 0.3.258
+      '@anthropic-ai/claude-agent-sdk-darwin-x64':
+        specifier: 0.3.258
+        version: 0.3.258
+      '@anthropic-ai/claude-agent-sdk-linux-x64':
+        specifier: 0.3.258
+        version: 0.3.258
+      '@anthropic-ai/claude-agent-sdk-win32-x64':
+        specifier: 0.3.258
+        version: 0.3.258
 
 packages:
 

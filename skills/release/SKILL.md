@@ -79,6 +79,22 @@ happen, or a build that fails late.
    independent of, and in addition to, the job's own `if: startsWith(github.ref, 'refs/tags/v')`.
    See [`docs/signing.md`](../../docs/signing.md) for what the five secrets are and where they
    live.
+10. **A per-platform optional dependency needs pruning by hand, twice.** `@anthropic-ai/claude-agent-sdk`
+    ships one ~200MB runtime package per platform+arch; pnpm only installs the host's own match, so the
+    x64 macOS installer built on an arm64 runner shipped without an x64 runtime at all (found packaging
+    v0.8.0 by hand, #349). Declaring the four this app builds (`darwin-arm64`, `darwin-x64`, `linux-x64`,
+    `win32-x64`) in `optionalDependencies`, pinned to the exact `dependencies` SDK version, is only half
+    the fix — `supportedArchitectures` in `pnpm-workspace.yaml` (not `.npmrc`: pnpm 11 ignores non-auth
+    settings there) still resolves as a cross product, so a mac host ends up with all eight platform
+    variants (including musl and arm64 Linux/Windows, never declared or built here) sitting in
+    `node_modules`. **electron-builder does not prune any of that on its own here** — the
+    "node_modules are now arch/os-filtered on every build" behavior is a v27 feature, and this project
+    pins 26.15.3 (see `docs/signing.md` for why). Verified by hand: without `scripts/pruneSdkRuntimes.mjs`
+    wired in as `build.afterPack`, a `--win --x64 --dir` build shipped all eight runtimes into
+    `app.asar.unpacked` — a ~1.4GB regression, not a rounding error. The hook removes every
+    `@anthropic-ai/claude-agent-sdk-*` folder except the one matching the artifact actually being built,
+    before code signing runs. `scripts/sdkRuntimeVersions.test.mjs` guards the version pins from drifting
+    apart on a future SDK bump.
 
 ## Before pushing a tag
 
