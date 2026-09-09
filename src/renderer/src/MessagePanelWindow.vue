@@ -9,6 +9,7 @@ import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
+import { feedMessagesOf } from './lib/message/conversation'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
@@ -16,6 +17,7 @@ import type {
   DwarfKickState,
   DwarfPermissionDecision,
   DwarfSendState,
+  FeedMessage,
   Mine,
   MinesSnapshot,
   WatchedFeedPush
@@ -57,7 +59,15 @@ import type {
  */
 
 const { state, setMines } = useMines()
-const { state: messagingState, send: sendDwarfText, observe: observeSends } = useDwarfMessaging()
+const {
+  state: messagingState,
+  echoes: sentEchoes,
+  send: sendDwarfText,
+  retry: retryDwarfText,
+  observe: observeSends,
+  reconcile: reconcileEchoes,
+  keepEchoesFor
+} = useDwarfMessaging()
 const { state: kickingState, kick, observe: observeKicks } = useDwarfKicking()
 const {
   state: questionState,
@@ -453,6 +463,48 @@ watch(
   { immediate: true }
 )
 
+/**
+ * The messages this panel is still holding on the person's behalf, and the
+ * transcript they are measured against (#309).
+ *
+ * `feedMessagesOf` rather than a second reading of "held wins over observed":
+ * it is the very precedence `conversationOf` draws the panel from, so the rows
+ * an echo is reconciled against are exactly the rows it would otherwise be
+ * drawn beside.
+ */
+const echoTranscript = computed<readonly FeedMessage[]>(() =>
+  selectedDwarf.value === undefined ? [] : feedMessagesOf(selectedDwarf.value, selectedFeed.value)
+)
+
+/**
+ * Drop an echo the moment the transcript accounts for it, so the person's
+ * words appear once rather than twice (#309).
+ *
+ * Here rather than in the panel because the panel is thin and this is a store
+ * write; on the default ('pre') flush, so the drop lands before the render
+ * that would otherwise have drawn the row and the echo side by side. For a
+ * held session the stream carries the user turn almost at once, which is why
+ * this watches the conversation and not only a completed feed read.
+ */
+watch(
+  [openDwarfId, echoTranscript],
+  ([dwarfId, messages]) => {
+    if (dwarfId === null) return
+    reconcileEchoes(dwarfId, messages)
+  },
+  { immediate: true }
+)
+
+/**
+ * An echo belongs to the conversation on screen, and to no other (#309).
+ *
+ * A panel that moved to another dwarf is no longer holding anything for the
+ * one it left: those bubbles are gone from the surface, and keeping their
+ * verdicts alive would mean a message failing invisibly for a dwarf nobody is
+ * looking at.
+ */
+watch(openDwarfId, (dwarfId) => keepEchoesFor(dwarfId), { immediate: true })
+
 /** A verdict as a plain object, because a Vue proxy cannot cross the bridge. */
 function plainVerdicts<T extends DwarfSendState | DwarfKickState>(
   source: Record<string, T>
@@ -485,6 +537,28 @@ function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }):
   void deliverText(dwarf, payload)
 }
 
+/** Hand the composer's text over, then refresh on the verdict (#183). */
+async function deliverText(
+  dwarf: Dwarf,
+  payload: { text: string; pressEnter: boolean }
+): Promise<void> {
+  refreshAfterDelivery(dwarf.id, await sendDwarfText(dwarf.id, payload.text, payload.pressEnter))
+}
+
+/**
+ * Send a failed message again, from its own bubble (#309).
+ *
+ * Fire-and-observe and post-delivery re-read exactly as an ordinary send: it
+ * IS an ordinary send, of words the store already holds. The store mints a new
+ * echo for it and leaves the failed one marked — a retry is a second delivery
+ * with its own verdict, not a correction of the first.
+ */
+function sendAgain(dwarf: Dwarf, echoId: string): void {
+  void retryDwarfText(dwarf.id, echoId).then((delivered) =>
+    refreshAfterDelivery(dwarf.id, delivered)
+  )
+}
+
 /**
  * A delivered send is also a reason to re-read the feed (issue #183): the
  * sending dwarf is always the one this panel has open, so the human's own
@@ -495,16 +569,16 @@ function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }):
  * captured before the await: the relay can take seconds, and the user is free
  * to close the panel, or select someone else, while it is in flight. A stale
  * delivery for a dwarf nobody has open any more has nothing left to refresh.
+ *
+ * Shared by both ways of handing text over since #309 — the composer's send
+ * and a retry from a failed bubble — because a retry is the same delivery with
+ * the same aftermath.
  */
-async function deliverText(
-  dwarf: Dwarf,
-  payload: { text: string; pressEnter: boolean }
-): Promise<void> {
-  const delivered = await sendDwarfText(dwarf.id, payload.text, payload.pressEnter)
+function refreshAfterDelivery(dwarfId: string, delivered: boolean): void {
   if (!delivered) return
-  if (openDwarfId.value !== dwarf.id) return
+  if (openDwarfId.value !== dwarfId) return
   if (selectedDwarf.value?.conversation !== undefined) return
-  void readSelectedFeed(dwarf.id)
+  void readSelectedFeed(dwarfId)
 }
 
 /** Same reasoning as sendText: fire-and-observe, verdict lands on the dwarf itself. */
@@ -774,9 +848,11 @@ onBeforeUnmount(() => {
         :dwarf="selectedDwarf"
         :feed="selectedFeed"
         :send-state="messagingState.byDwarfId[selectedDwarf.id]"
+        :echoes="sentEchoes[selectedDwarf.id]"
         :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
         :answer-state="questionState.byDwarfId[selectedDwarf.id]"
         @send="sendText(selectedDwarf, $event)"
+        @send-again="sendAgain(selectedDwarf, $event)"
         @kick="kickDwarf(selectedDwarf)"
         @answer="answerQuestion(selectedDwarf, $event)"
         @decide="decidePermission(selectedDwarf, $event)"

@@ -15,7 +15,14 @@ import {
   buildActionBar,
   refusalLine
 } from '../../lib/delivery/actionBar'
-import { kickStatusLine, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
+import {
+  SEND_AGAIN_LABEL,
+  SEND_AGAIN_TITLE,
+  kickStatusLine,
+  sendMarker,
+  sendStatusLine,
+  type DeliveryMarker
+} from '../../lib/delivery/deliveryVerdict'
 import { groupActivity } from '../../lib/message/activityGroup'
 import {
   authorOf,
@@ -23,6 +30,7 @@ import {
   conversationOf,
   latestText
 } from '../../lib/message/conversation'
+import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
 import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
@@ -41,7 +49,8 @@ import {
   type DwarfFeedResult,
   type DwarfKickState,
   type DwarfPermissionDecision,
-  type DwarfSendState
+  type DwarfSendState,
+  type MessageIssuer
 } from '../../types'
 import DwarfPermissionCard from '../dwarf/DwarfPermissionCard.vue'
 import DwarfQuestionCard from '../dwarf/DwarfQuestionCard.vue'
@@ -81,6 +90,16 @@ const props = defineProps<{
    */
   feed?: DwarfFeedResult
   sendState?: DwarfSendState
+  /**
+   * The messages this panel has sent and the transcript has yet to carry
+   * (#309), oldest first — each with its own verdict, so a bubble can show
+   * what happened to the words it holds rather than to the dwarf.
+   *
+   * A prop and not a store read, like everything else here: which messages are
+   * still pending is the delivery store's decision, and this component only
+   * draws them.
+   */
+  echoes?: readonly MessageEcho[]
   kickState?: DwarfKickState
   /**
    * The verdict of the last answer or decision given for this dwarf, whatever
@@ -98,6 +117,12 @@ const emit = defineEmits<{
   answer: [label: string]
   /** One of Claude Code's own two answers to a permission prompt (#203). */
   decide: [decision: DwarfPermissionDecision]
+  /**
+   * Send a failed message again (#309) — its own echo id, never the text: the
+   * same words may be pending twice, and only the store knows which bubble
+   * this is.
+   */
+  'send-again': [echoId: string]
   /** Focus this session's console — where the old bar's fourth icon went. */
   'open-console': []
   /**
@@ -160,12 +185,21 @@ const canReceive = computed(() => action('chat')?.enabled === true)
 const isSending = computed(() => props.sendState?.phase === 'sending')
 const isKicking = computed(() => props.kickState?.phase === 'kicking')
 
+/**
+ * One row of the conversation as this panel draws it: whatever the transcript
+ * (or a pending echo) carried, plus the two things resolved per row here —
+ * whose portrait it takes (#175) and, for an echo only, its delivery marker
+ * (#309). Named because the two lists below have to be the SAME row type for
+ * the echoes to be appended to the entries the rest were grouped into.
+ */
+type Row = PanelRow & { author: MessageIssuer; marker?: DeliveryMarker | null }
+
 /*
  * Each row with the agent it belongs to already resolved (#175). Usually this
  * dwarf, and for a prompt another agent issued the agent that issued it — which
  * `authorOf` decides, like everything else about who said what here.
  */
-const rows = computed(() =>
+const rows = computed<Row[]>(() =>
   conversation.value.messages.map((message) => ({
     ...message,
     author: authorOf(message, props.dwarf)
@@ -184,7 +218,28 @@ const rows = computed(() =>
  * watchers below watch `rows`, so a reader unfolding a run changes nothing
  * they watch and the list stays exactly where they left it (#195, #243).
  */
-const entries = computed(() => groupActivity(rows.value, { ended: conversationEnded(props.dwarf) }))
+/*
+ * The messages the person just sent, as their own rows (#309) — the same
+ * author treatment every other row gets, so the human's portrait is decided in
+ * one place. An echo has no issuer, which is exactly what says the human wrote
+ * it (see MessageIssuer).
+ */
+const echoRows = computed(() =>
+  echoRowsOf(props.echoes ?? []).map((row) => ({
+    ...row,
+    author: authorOf(row, props.dwarf),
+    /*
+     * The bubble's tick, from the SAME function the sprite marker in the shell
+     * reads (#21). Resolved on the row rather than in the template so the
+     * glyph, the class and the hover sentence are one reading of one verdict.
+     */
+    marker: sendMarker(row.echo?.state)
+  }))
+)
+
+const entries = computed(() =>
+  mergeEchoes(groupActivity(rows.value, { ended: conversationEnded(props.dwarf) }), echoRows.value)
+)
 
 /*
  * Which runs this reader has unfolded, by group key — per group, and per MOUNT
@@ -282,6 +337,25 @@ watch(
     list.scrollTop = nextScrollTop(list.scrollTop, list.scrollHeight, pendingStickToBottom)
   },
   { flush: 'post' }
+)
+
+/*
+ * A message the person just sent is the one row the panel DOES chase them down
+ * for (#309).
+ *
+ * The rule above is deliberately conservative — a row arriving from the
+ * session must not yank a reader mid-sentence — and this is the case it does
+ * not cover: the reader is the author, they pressed Enter a moment ago, and a
+ * bubble drawn somewhere they cannot see is the same disappearance #309 exists
+ * to end. Keyed on the newest echo's ID and nothing else, so a tick changing
+ * on a bubble already on screen moves nothing: the verdict is news about a
+ * message, not a new message.
+ */
+watch(
+  () => props.echoes?.at(-1)?.id,
+  (echoId) => {
+    if (echoId !== undefined) void showLatest()
+  }
 )
 
 function toggleHistory(): void {
@@ -511,6 +585,36 @@ function onKick(): void {
             draggable="false"
           />
           <p class="bubble">{{ entry.message.text }}</p>
+          <!--
+            The verdict of a message this panel sent, beside the words it is
+            about (#309). Drawn only on an echo: a row read off a transcript is
+            a message the session HAS, and a tick on it would be an unfounded
+            claim about a delivery nobody watched.
+
+            Glyph, class and hover sentence all come from `sendMarker` — the
+            same reading the marker on the dwarf's sprite is drawn from — so
+            the two can never say different things about one delivery. A ✕
+            keeps its bubble and offers the one control that sends the words
+            again, and only where the session can still be written to at all.
+          -->
+          <span v-if="entry.message.echo" class="bubble-verdict">
+            <span
+              v-if="entry.message.marker"
+              class="bubble-marker"
+              :class="entry.message.marker.cls"
+              :title="entry.message.marker.title"
+              >{{ entry.message.marker.glyph }}</span
+            >
+            <button
+              v-if="entry.message.echo.state.phase === 'failed' && canReceive"
+              class="bubble-retry"
+              type="button"
+              :title="SEND_AGAIN_TITLE"
+              @click="emit('send-again', entry.message.echo.id)"
+            >
+              {{ SEND_AGAIN_LABEL }}
+            </button>
+          </span>
           <img
             v-if="entry.message.from === 'user'"
             class="portrait"
@@ -924,6 +1028,68 @@ function onKick(): void {
   white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
+}
+/*
+ * A sent message's own verdict, at the trailing edge of its bubble (#309).
+ *
+ * `screens/mine.md` lists delivery/error/retry states under Unspecified, so
+ * this is the maintainer-approved amendment rather than a reading of the
+ * source — and it is drawn with what the panel already has. Beside the bubble
+ * rather than inside it, so the cream surface keeps the message and nothing
+ * else: the marker stands on the panel's own dark ground and takes the panel's
+ * primary ink and meta size, and the four states are told apart by the GLYPH —
+ * the app's existing vocabulary (`…`, ✓, ✓✓, ✕ from
+ * lib/delivery/deliveryVerdict) — rather than by four new colours.
+ *
+ * Two exceptions, both existing tokens: a message still in flight is the
+ * muted ink the panel's own notes take, because it is not a verdict yet, and
+ * a failure is the danger ink the alert row below already speaks in.
+ * Bottom-aligned so a marker sits against the last line of a long message
+ * rather than floating beside its first.
+ */
+.bubble-verdict {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+  align-self: flex-end;
+}
+.bubble-marker {
+  color: var(--color-cream);
+  font-size: var(--text-meta);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -1px;
+}
+.bubble-marker.is-sending {
+  color: var(--color-tooltip-text);
+  opacity: 0.6;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+.bubble-marker.is-failed {
+  color: var(--danger-ink);
+}
+/*
+ * The retry, drawn as the text button #279 established for this panel: no new
+ * colour, the accent ink the design reserves for a control, underlined so it
+ * reads as the one thing here that can be pressed.
+ */
+.bubble-retry {
+  padding: 0;
+  border: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-meta);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.bubble-retry:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 /*
  * The approval row introduces no new type, colour or spacing either: it is the

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfKickState, DwarfSendState } from '../../types'
 import {
+  SEND_AGAIN_LABEL,
+  SEND_AGAIN_TITLE,
   kickDismissedTheDwarf,
   kickEndedTheSession,
   kickHasNothingToAwait,
@@ -237,5 +239,24 @@ describe('a kick that dismissed the dwarf', () => {
     expect(kickHasNothingToAwait('launched-process')).toBe(true)
     expect(kickHasNothingToAwait('terminal')).toBe(false)
     expect(kickHasNothingToAwait('codex-queue')).toBe(false)
+  })
+})
+
+/**
+ * The retry a failed message offers on its own bubble (#309).
+ *
+ * Copy about a delivery verdict, so it lives with the rest of it and is pinned
+ * here rather than eyeballed in the panel.
+ */
+describe('sending a failed message again', () => {
+  it('names the act in the imperative, short enough to sit beside a bubble', () => {
+    expect(SEND_AGAIN_LABEL).toBe('Send again')
+  })
+
+  it('says the failed one stays marked, because a retry is a second delivery', () => {
+    // Nothing is corrected: the first attempt keeps its ✕, which is the only
+    // thing on screen saying the channel let the person down once.
+    expect(SEND_AGAIN_TITLE).toContain('stays marked')
+    expect(SEND_AGAIN_TITLE).not.toMatch(/reacted/i)
   })
 })

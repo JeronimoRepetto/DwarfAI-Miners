@@ -8,9 +8,11 @@ import {
   initialPanelHeight
 } from '../../lib/message/panelHeight'
 import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
+import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
 import { NO_TRANSCRIPT_NOTE, READING_NOTE } from '../../lib/message/conversation'
+import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
-import { MAX_DWARF_TEXT_CHARS, type DwarfPermissionRequest } from '../../types'
+import { MAX_DWARF_TEXT_CHARS, type DwarfPermissionRequest, type DwarfSendState } from '../../types'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
 
 /*
@@ -1327,5 +1329,207 @@ describe('DwarfMessagePanel on a dismissed dwarf', () => {
     expect(line).toContain('off the rock')
     expect(line).not.toContain('handed over')
     expect(line).not.toContain('Ended the session')
+  })
+})
+
+/**
+ * The message the person just sent, drawn before any channel answered (#309).
+ *
+ * The panel takes these as a prop and decides nothing about them: which
+ * messages are pending is the delivery store's, the glyph and the hover copy
+ * are `lib/delivery/deliveryVerdict`'s, and where the row goes is
+ * `lib/message/echo`'s. What is pinned here is that the panel draws them, that
+ * the tick copy is the SAME copy the sprite marker in the shell uses rather
+ * than a second wording of it, and that a failed message keeps its words and
+ * offers the one control that sends them again.
+ */
+describe('DwarfMessagePanel echoes (#309)', () => {
+  function echo(overrides: Partial<MessageEcho> = {}): MessageEcho {
+    return {
+      id: 'e1',
+      text: 'dig deeper',
+      sentAt: Date.parse('2026-09-09T10:00:00.000Z'),
+      state: { phase: 'sending' },
+      ...overrides
+    }
+  }
+
+  /** The last bubble in the conversation, which is where an echo belongs. */
+  function lastMessageRow(wrapper: ReturnType<typeof panel>) {
+    return wrapper.findAll('.message').at(-1)!
+  }
+
+  it("draws a sent message as the person's own bubble, after everything the transcript carried", () => {
+    const wrapper = panel({ echoes: [echo()] })
+    const rows = wrapper.findAll('.message')
+    // HELD is two rows; the echo is the third and last.
+    expect(rows).toHaveLength(3)
+    expect(rows.at(-1)!.classes()).toContain('is-user')
+    expect(rows.at(-1)!.find('.bubble').text()).toBe('dig deeper')
+    expect(rows.at(-1)!.find('.portrait').attributes('alt')).toBe('You')
+  })
+
+  it('carries the pending glyph while the message is still in flight', () => {
+    const wrapper = panel({ echoes: [echo({ state: { phase: 'sending' } })] })
+    const marker = lastMessageRow(wrapper).find('.bubble-marker')
+    expect(marker.text()).toBe(sendMarker({ phase: 'sending' })!.glyph)
+    expect(marker.classes()).toContain('is-sending')
+  })
+
+  it("carries one tick when the message reached the session's queue, in the verdict's own words", () => {
+    const state: DwarfSendState = { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+    const wrapper = panel({ echoes: [echo({ state })] })
+    const marker = lastMessageRow(wrapper).find('.bubble-marker')
+    expect(marker.text()).toBe('✓')
+    expect(marker.attributes('title')).toBe(sendMarker(state)!.title)
+    // Handed over, never a claimed reaction — the whole point of #21.
+    expect(marker.attributes('title')).not.toContain('reacted')
+  })
+
+  it('says so on the tick when the watch closed without seeing a reaction', () => {
+    const state: DwarfSendState = { phase: 'delivered', via: 'terminal', awaitingReaction: false }
+    const wrapper = panel({ echoes: [echo({ state })] })
+    expect(lastMessageRow(wrapper).find('.bubble-marker').attributes('title')).toBe(
+      sendMarker(state)!.title
+    )
+  })
+
+  it('carries two ticks only once the session was seen acting', () => {
+    const state: DwarfSendState = { phase: 'reacted', via: 'terminal' }
+    const wrapper = panel({ echoes: [echo({ state })] })
+    const marker = lastMessageRow(wrapper).find('.bubble-marker')
+    expect(marker.text()).toBe('✓✓')
+    expect(marker.attributes('title')).toBe(sendMarker(state)!.title)
+    expect(marker.classes()).toContain('is-reacted')
+  })
+
+  it('carries a ✕ with the reason on hover, and keeps the words readable', () => {
+    const state: DwarfSendState = { phase: 'failed', error: 'The relay never started.' }
+    const wrapper = panel({ echoes: [echo({ state })] })
+    const row = lastMessageRow(wrapper)
+    expect(row.find('.bubble-marker').text()).toBe('✕')
+    expect(row.find('.bubble-marker').attributes('title')).toBe('The relay never started.')
+    // The bubble is kept rather than removed: it is the only copy of what the
+    // person typed, and it is about to be sent again.
+    expect(row.find('.bubble').text()).toBe('dig deeper')
+  })
+
+  it('falls back to the verdict’s own sentence when the channel gave no reason', () => {
+    const state: DwarfSendState = { phase: 'failed' }
+    const wrapper = panel({ echoes: [echo({ state })] })
+    expect(lastMessageRow(wrapper).find('.bubble-marker').attributes('title')).toBe(
+      sendMarker(state)!.title
+    )
+  })
+
+  it('offers Send again on a failed message, and on no other', () => {
+    const failed = panel({ echoes: [echo({ state: { phase: 'failed', error: 'nope' } })] })
+    expect(failed.find('.bubble-retry').text()).toBe(SEND_AGAIN_LABEL)
+
+    for (const phase of ['sending', 'delivered', 'reacted'] as const) {
+      const other = panel({ echoes: [echo({ state: { phase } })] })
+      expect(other.find('.bubble-retry').exists()).toBe(false)
+    }
+  })
+
+  it("emits the failed message's own id, so a retry cannot land on another bubble", async () => {
+    const wrapper = panel({
+      echoes: [
+        echo({ id: 'e1', text: 'first', state: { phase: 'delivered' } }),
+        echo({ id: 'e2', text: 'second', state: { phase: 'failed', error: 'nope' } })
+      ]
+    })
+    await wrapper.find('.bubble-retry').trigger('click')
+    expect(wrapper.emitted('send-again')).toEqual([['e2']])
+  })
+
+  it('offers no retry for a session that can no longer be written to', () => {
+    // A dwarf whose session has ended, or one with no channel at all: sending
+    // again would promise a delivery the capability model has already refused.
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: undefined, conversation: HELD }),
+      echoes: [echo({ state: { phase: 'failed', error: 'nope' } })]
+    })
+    expect(wrapper.find('.bubble-retry').exists()).toBe(false)
+  })
+
+  it('draws no marker at all against a row read off the transcript', () => {
+    const wrapper = panel()
+    expect(wrapper.find('.bubble-marker').exists()).toBe(false)
+  })
+
+  it('never folds an echo into a run of tool calls, because it is not the agent working', () => {
+    // #294 groups consecutive activity rows and labels an open run
+    // "Working...". A message somebody typed must not close that run.
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'terminal',
+        conversation: [
+          { role: 'assistant', text: 'Ran pnpm test', timestamp: 't0' },
+          { role: 'assistant', text: 'Edited src/foo.ts', timestamp: 't1' }
+        ]
+      }),
+      feed: undefined,
+      echoes: [echo()]
+    })
+    expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
+  })
+})
+
+/**
+ * Stick-to-bottom, for the one row the reader wrote themselves (#195/#243, #309).
+ *
+ * The existing rule is deliberately conservative: a row arriving from the
+ * session must not yank somebody who scrolled up. A message the person just
+ * sent is the opposite case — it is their own action, and they are owed the
+ * sight of it — and a tick changing on a bubble is neither, so it moves
+ * nothing.
+ */
+describe('DwarfMessagePanel echo scroll (#309)', () => {
+  function growingScrollHeight(list: Element, perMessage = 40): void {
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () => list.querySelectorAll('.message').length * perMessage
+    })
+  }
+
+  function fixedClientHeight(list: Element, value: number): void {
+    Object.defineProperty(list, 'clientHeight', { value, configurable: true })
+  }
+
+  function echo(id: string, state: DwarfSendState): MessageEcho {
+    return { id, text: 'dig deeper', sentAt: 0, state }
+  }
+
+  it('goes to a new echo even for a reader who had scrolled away, because they wrote it', async () => {
+    const wrapper = panel({ echoes: [] })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    fixedClientHeight(list, 30)
+    await wrapper.vm.$nextTick()
+    list.scrollTop = 5 // 80 - 30 - 5 = 45, well past the tolerance: scrolled up.
+
+    await wrapper.setProps({ echoes: [echo('e1', { phase: 'sending' })] })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(120) // 3 rows * 40, the new bottom.
+  })
+
+  it('leaves the list exactly where it was when only a tick changed', async () => {
+    const wrapper = panel({ echoes: [echo('e1', { phase: 'sending' })] })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    fixedClientHeight(list, 30)
+    await wrapper.vm.$nextTick()
+    list.scrollTop = 5
+
+    await wrapper.setProps({
+      echoes: [echo('e1', { phase: 'delivered', via: 'terminal', awaitingReaction: true })]
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(5)
   })
 })
