@@ -233,7 +233,8 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   border-radius: 12px;
   color: var(--color-panel);
   background: var(--color-cream);
-  font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
+  /* #347 made this stack a token, so a bubble's code and this card share one. */
+  font-family: var(--font-code);
   font-size: var(--text-meta);
   line-height: 1.35;
   white-space: pre-wrap;

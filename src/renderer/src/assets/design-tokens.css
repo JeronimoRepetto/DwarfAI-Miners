@@ -31,6 +31,14 @@
    * synthesised one. Same fallback shape as --font-pixel, for the same reason.
    */
   --font-conversation: 'Pixelify Sans Variable', 'Segoe UI', system-ui, sans-serif;
+  /*
+   * Code, wherever this app shows any: a permission prompt's own redacted
+   * input, and the inline and fenced code inside a bubble (#347). Not a design
+   * value at all — the source names no monospace face — but it was already a
+   * literal in DwarfPermissionCard, and #347 needed the same one, so it is a
+   * token here rather than the same stack spelled twice.
+   */
+  --font-code: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
 
   /* Closed edge rail. */
   --color-rail: #f6b644;

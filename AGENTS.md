@@ -169,8 +169,8 @@ there. When a document and the history disagree, the history is usually right: r
 [`src/README.md`](src/README.md) has the path map and the filing rule in full; read it before
 adding a file. This is the index — one line per group, so you can tell what a thing is _for_.
 
-- **`shared/`** — the wire boundary: `contracts.ts`, `accelerator.ts`, `truncate.ts`. No Electron
-  and no Node imports anywhere in it.
+- **`shared/`** — the wire boundary: `contracts.ts`, `accelerator.ts`, `truncate.ts`,
+  `externalLink.ts`. No Electron and no Node imports anywhere in it.
 - **`preload/`** — the one typed API surface handed to the renderer.
 
 <!-- BEGIN GENERATED: main-tree -->

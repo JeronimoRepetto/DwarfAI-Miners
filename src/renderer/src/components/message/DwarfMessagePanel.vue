@@ -54,6 +54,7 @@ import {
 } from '../../types'
 import DwarfPermissionCard from '../dwarf/DwarfPermissionCard.vue'
 import DwarfQuestionCard from '../dwarf/DwarfQuestionCard.vue'
+import MarkdownBubble from './MarkdownBubble.vue'
 
 /**
  * The design's MessagePanel (#159): the surface a selected dwarf opens at the
@@ -132,6 +133,16 @@ const emit = defineEmits<{
    * reports one without itself trying to focus anything.
    */
   'open-path': [target: string]
+  /**
+   * A link inside a bubble was pressed (#347) — the address exactly as the
+   * transcript wrote it, already known to be `http:` or `https:` because
+   * nothing else is ever drawn as a link at all.
+   *
+   * Reported and not opened, for the reason `open-path` is: opening happens in
+   * MAIN, which validates the address a second time and owns the only
+   * `shell.openExternal` in the app. A renderer's word is never a permission.
+   */
+  'open-link': [href: string]
 }>()
 
 const message = ref('')
@@ -600,7 +611,23 @@ function onKick(): void {
             :title="`${entry.message.author.name}, ${entry.message.author.role}`"
             draggable="false"
           />
-          <p class="bubble">{{ entry.message.text }}</p>
+          <!--
+            The bubble is the one surface here that is PROSE (#347): an agent
+            writes Markdown, and showing the delimiters was showing the ink
+            rather than the writing. The component builds vnodes from a tree
+            (see lib/message/markdown); this file still owns the surface, which
+            is why the class stays here.
+
+            The person's own rows and echoes go through it too — the
+            maintainer's ruling on the one thing the issue left open. A panel
+            that renders half its conversation would make the same words look
+            like two different kinds of message.
+          -->
+          <MarkdownBubble
+            class="bubble"
+            :text="entry.message.text"
+            @open-link="emit('open-link', $event)"
+          />
           <!--
             The verdict of a message this panel sent, beside the words it is
             about (#309). Drawn only on an echo: a row read off a transcript is
@@ -1039,12 +1066,25 @@ function onKick(): void {
  * Both bubbles use the same surface and the same ink; only the alignment
  * differs, exactly as the design has it.
  *
- * AMENDED for #347 (was: --font-pixel inherited from the body, at the panel's
- * meta size). What a dwarf or the person SAYS is now the conversation face at
- * the conversation size — the one surface in this panel that is prose rather
- * than chrome, and the only one Tiny5's single weight could not draw.
+ * AMENDED for #347, twice. It was `--font-pixel` at the panel's meta size:
+ * what a dwarf or the person SAYS is now the conversation face at the
+ * conversation size, the one surface in this panel that is prose rather than
+ * chrome and the only one Tiny5's single weight could not draw.
+ *
+ * And it held `white-space: pre-wrap` over the raw text, which moved INTO
+ * MarkdownBubble onto the paragraphs it builds. A bubble is a stack of blocks
+ * now, and pre-wrap out here would turn the gaps between them into blank
+ * lines. Everything below is still the surface, which is this file's; the
+ * shape of what stands on it is the component's.
  */
 .bubble {
+  /*
+   * A flex item of the row above, so its intrinsic width would otherwise win:
+   * a fenced code block inside it is wider than the panel on purpose, and
+   * without this the whole conversation column scrolls sideways instead of the
+   * block scrolling inside its bubble (#307, from the other direction).
+   */
+  min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
   padding: 8px 10px;
@@ -1055,7 +1095,6 @@ function onKick(): void {
   font-family: var(--font-conversation);
   font-size: var(--text-conversation);
   line-height: 1.35;
-  white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
 }

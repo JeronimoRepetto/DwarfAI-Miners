@@ -46,7 +46,7 @@ Two conventions that keep the rule enforceable:
 
 ```
 src/
-├── shared/          the wire boundary: contracts.ts, plus accelerator and truncate
+├── shared/          the wire boundary: contracts.ts, plus accelerator, truncate and externalLink
 ├── preload/         the API surface exposed to the renderer
 ├── main/
 │   ├── index.ts     composition root — the only file that owns Electron's ipcMain and globalShortcut
@@ -76,7 +76,7 @@ src/
     │                  map/       the authored dig sites of the valley and the trails between them
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
-    │                  message/   what a dwarf's panel may honestly show, and how tall it opens
+    │                  message/   what a dwarf's panel may honestly show, how tall it opens, and what its Markdown means
     │                  history/   the mine-wide history: tab order, the 50-message cap, the timestamp's spelling
     │                  launch/    starting an agent: the gates, the chips, and whose dwarf arrived
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
