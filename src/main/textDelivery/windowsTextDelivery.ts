@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
-import { focusPid, type ShellRunner } from '../platform/focus'
+import { focusSessionConsole, type FocusOutcome, type ShellRunner } from '../platform/focus'
+import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
 import type {
   ClipboardPort,
   CodexQueueRequest,
   ConsoleTextRequest,
+  EndSessionRequest,
   InterruptRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
@@ -25,7 +27,7 @@ import {
   type RelayRunner
 } from './relayRunner'
 import { buildPasteCommand, buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
-import { createStageTimer } from './timing'
+import { createStageTimer, type StageTimings } from './timing'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
 
@@ -62,6 +64,37 @@ function createInMemoryClipboard(): ClipboardPort {
 /** How long the local keystroke command may run before it is abandoned. */
 const CONSOLE_COMMAND_TIMEOUT_MS = 120_000
 
+/**
+ * Why a keystroke stops at a window the ancestor walk had to reach (#329).
+ *
+ * Windows Terminal and VS Code draw several sessions in tabs of ONE window and
+ * expose no way to select a tab by pid, so foregrounding that window raises
+ * whichever tab the person last used. A `true` from focus was read as "this
+ * session's console is in front" and it is not: measured live, an Esc aimed at
+ * one Claude foreman interrupted the other one, in the tab that happened to be
+ * active. Nothing is sent, and `neverStarted` says nothing was — so the relay
+ * behind the console tier carries the message instead, labelled as another
+ * session, which is a price the maintainer accepted where a keystroke in the
+ * wrong session is not.
+ */
+const SHARED_TERMINAL_WINDOW =
+  'This session shares its terminal window with other tabs, and the panel cannot tell ' +
+  'which tab is its own.'
+
+/** That refusal, identical for every keystroke this port can send (#329). */
+function sharedWindowRefusal(stages: StageTimings): TextDeliveryOutcome {
+  return { delivered: false, error: SHARED_TERMINAL_WINDOW, neverStarted: true, stages }
+}
+
+/**
+ * What a tree kill that did not happen is called (#329).
+ *
+ * Never "the session was ended": `endProcessTree` reports false for a refusal,
+ * a missing binary and a pid taskkill cannot find alike, and the last of those
+ * is what a second kick on an already-ended session looks like.
+ */
+const SESSION_NOT_ENDED = 'This session could not be ended.'
+
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
   relayModel: string
@@ -70,8 +103,14 @@ export interface WindowsTextDeliveryOptions {
   home?: string
   /** Environment the relay child inherits; defaults to this process's. */
   env?: NodeJS.ProcessEnv
-  /** Injected for tests; defaults to the real window-focus path. */
-  focus?: (pid: number) => Promise<boolean>
+  /**
+   * Injected for tests; defaults to the real window-focus path.
+   *
+   * The SCOPED focus, not the boolean one click-to-focus reads (#329): every
+   * method below sends a keystroke, and a keystroke may only follow a window
+   * this session is provably alone on. See `FocusReach` in platform/focus.ts.
+   */
+  focus?: (pid: number) => Promise<FocusOutcome>
   /**
    * The system clipboard the paste path saves, sets and restores (#319).
    * Injected — composed from Electron's `clipboard` at the app's root — so this
@@ -100,6 +139,14 @@ export interface WindowsTextDeliveryOptions {
   codexBinary?: () => Promise<string | undefined>
   /** Injected for tests; defaults to a real codex.exe spawn. */
   runCodexQueue?: CodexQueueRunner
+  /**
+   * Ends a process and everything below it — Kick's terminal tier (#329).
+   *
+   * The same per-OS port a launched session's exit uses (#217), injected the way
+   * `focus` and `clipboard` are so a test never spawns a real taskkill; absent,
+   * this composes the Windows one itself.
+   */
+  processEnd?: ProcessEndPort
   /** Injected for tests; defaults to Date.now. Only ever reads durations. */
   now?: () => number
 }
@@ -129,12 +176,13 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly env: NodeJS.ProcessEnv
   private readonly relayModel: string
   private readonly relayTimeoutMs: number
-  private readonly focus: (pid: number) => Promise<boolean>
+  private readonly focus: (pid: number) => Promise<FocusOutcome>
   private readonly clipboard: ClipboardPort
   private readonly runPowerShell: ShellRunner
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
+  private readonly processEnd: ProcessEndPort
   private readonly now: () => number
   /** Null when the transport was replaced outright and there is nothing to keep alive. */
   private readonly consoleWorker: ConsoleWorker | null
@@ -144,11 +192,15 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.env = options.env ?? process.env
     this.relayModel = options.relayModel
     this.relayTimeoutMs = options.relayTimeoutMs
-    this.focus = options.focus ?? focusPid
+    this.focus = options.focus ?? focusSessionConsole
     this.clipboard = options.clipboard ?? createInMemoryClipboard()
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
+    // Pinned to 'win32' rather than asked of the machine: this class IS the
+    // Windows port, and reading process.platform here would be a fourth call
+    // site for an answer the composition already made (see platform-ports).
+    this.processEnd = options.processEnd ?? createProcessEnd({ platform: 'win32' })
     this.now = options.now ?? Date.now
 
     // An injected runner with no worker spawn is a test replacing the whole
@@ -176,17 +228,23 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * Keystrokes land in whatever window holds the foreground, so the focus step
    * is a precondition, not an optimization: if the terminal will not come
    * forward, nothing is typed at all rather than typed into the wrong window.
+   *
+   * A window that DID come forward is not the end of that precondition (#329):
+   * it also has to be one this session is alone on, or the keystroke goes to
+   * whichever tab of a shared terminal is active. Both refusals type nothing.
    */
   async sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
     const timer = createStageTimer(this.now)
     try {
-      if (!(await timer.measure('focus', () => this.focus(request.pid)))) {
+      const focus = await timer.measure('focus', () => this.focus(request.pid))
+      if (!focus.focused) {
         return {
           delivered: false,
           error: 'The agent terminal could not be brought to the foreground.',
           stages: timer.timings()
         }
       }
+      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
       const result = await timer.measure('spawn', () =>
         this.runPowerShell(buildSendKeysCommand(request.text, request.pressEnter))
       )
@@ -233,7 +291,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     const previousClipboard = await this.clipboard.read()
     await this.clipboard.write(request.text)
     try {
-      if (!(await timer.measure('focus', () => this.focus(request.pid)))) {
+      const focus = await timer.measure('focus', () => this.focus(request.pid))
+      if (!focus.focused) {
         // The focus precondition it always was: nothing is pasted into a window
         // that would not come forward. Nothing was handed over, so this is the
         // one send failure that licenses the relay behind it — `neverStarted`
@@ -247,6 +306,12 @@ export class WindowsTextDelivery implements TextDeliveryPort {
           stages: timer.timings()
         }
       }
+      // The same statement about the same thing (#329): a window came forward
+      // and it is a terminal HOST, so the message would be pasted into whichever
+      // of its tabs is active — Enter included. `neverStarted` for the reason
+      // above, and the relay is then the honest channel: a message labelled as
+      // another session beats a message typed into one.
+      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
       const result = await timer.measure('spawn', () =>
         this.runPowerShell(buildPasteCommand(request.pressEnter))
       )
@@ -303,20 +368,28 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * Kick's terminal path: bring the console forward, same as sendToConsole,
-   * then synthesize a bare ESC — the keystroke the Claude Code TUI interrupts
-   * a turn on — instead of typing anything.
+   * A bare ESC into the console at `pid`: bring it forward, same as
+   * sendToConsole, then synthesize the one keystroke the Claude Code TUI
+   * interrupts a turn on instead of typing anything.
+   *
+   * Kick's terminal path until #329, and no longer — a kick ends the session's
+   * process now, which needs no window and cannot miss. What still presses Esc
+   * through here is the permission DENY of #203, a keystroke aimed at the dialog
+   * that terminal is drawing; the shared-window refusal below is what stops it
+   * cancelling the turn of whichever tab happened to be active.
    */
   async sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome> {
     const timer = createStageTimer(this.now)
     try {
-      if (!(await timer.measure('focus', () => this.focus(request.pid)))) {
+      const focus = await timer.measure('focus', () => this.focus(request.pid))
+      if (!focus.focused) {
         return {
           delivered: false,
           error: 'The agent terminal could not be brought to the foreground.',
           stages: timer.timings()
         }
       }
+      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
       const result = await timer.measure('spawn', () =>
         this.runPowerShell(buildSendInterruptCommand())
       )
@@ -334,6 +407,32 @@ export class WindowsTextDelivery implements TextDeliveryPort {
         error: 'The agent terminal could not be reached.',
         stages: timer.timings()
       }
+    }
+  }
+
+  /**
+   * Kick's terminal tier: end the session's process tree (#329).
+   *
+   * No focus step and no keystroke, which is the repair rather than an
+   * optimization — every window this path used to need was a window that could
+   * turn out to be another session's. `taskkill /T` walks DOWN from the pid it
+   * is given, so the session's own tool processes go with it and the shell, the
+   * terminal host and every other tab above it are untouched.
+   *
+   * `delivered: true` is a fact this process observed — the platform reported
+   * the tree gone — and not a message handed to somebody who may act on it,
+   * exactly as the launched tier's end reads (see endLaunchedSession). Every
+   * other answer is a failure with a reason, never a session reported ended.
+   */
+  async endConsoleSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
+    try {
+      const ended = await timer.measure('spawn', () => this.processEnd.endProcessTree(request.pid))
+      return ended
+        ? { delivered: true, stages: timer.timings() }
+        : { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
+    } catch {
+      return { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
     }
   }
 }

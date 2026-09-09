@@ -23,8 +23,8 @@ import type { StageTimings } from './timing'
  * 'claude-relay' target uses. Which of the two a given ACT reaches for is not
  * a property of the target — send and kick answer it differently, and
  * resolve.ts owns both answers (`sendRouteOf`, `kickEndpointOf`). A message
- * pastes at the console and falls back to the name; an interrupt goes to the
- * console and falls back to the name (#319, over #308, over #24).
+ * pastes at the console and falls back to the name; a kick ENDS the session at
+ * that pid and falls back to the name (#329, #319, over #308, over #24).
  *
  * A 'codex-queue' target has no such second address and needs none: it wants
  * neither a window nor a pid, only the thread's own UUID, which is why it is
@@ -131,6 +131,15 @@ export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-proce
 /**
  * The endpoints a KICK can land on — every writable one except the Codex queue.
  *
+ * 'terminal' ENDS the session since #329, and no longer interrupts the turn.
+ * Kick meant "press Esc at that console" from #24 until then, and what the
+ * report showed is that a console is not addressable: several sessions share
+ * one terminal window, only one of its tabs is in front, and the Esc reached
+ * whichever session that was. Ending the pid the provider named needs no window
+ * and cannot reach a session nobody pointed at — and a person pressing Kick on
+ * a dwarf is asking for that dwarf to stop, which the harsher act delivers
+ * where the keystroke had stopped delivering it at all.
+ *
  * 'held-session' is the strongest of them: the panel holds the session's own
  * stream, so a kick there is a real interrupt of the running turn rather than an
  * instruction the session may decline (#210) — for a session whose protocol has
@@ -202,9 +211,32 @@ export interface CodexQueueRequest {
   text: string
 }
 
-/** Kick's terminal path: no text at all, just a keystroke. */
+/** A raw interrupt keystroke: no text at all, just the key. */
 export interface InterruptRequest {
   /** The session pid; its hosting terminal window receives the keystroke. */
+  pid: number
+}
+
+/**
+ * Kick's terminal path since #329: end the session at this pid, no window
+ * involved.
+ *
+ * A pid rather than a window, and that is the whole repair. A keystroke lands
+ * in whatever holds the foreground, and a session in a terminal TAB cannot be
+ * foregrounded on its own — so an Esc aimed at one session reached another one
+ * (see SHARED_TERMINAL_WINDOW in windowsTextDelivery.ts). Ending a process
+ * needs no window and cannot miss.
+ */
+export interface EndSessionRequest {
+  /**
+   * The session's OWN CLI pid, never an ancestor's.
+   *
+   * The tree below it is the session's own tool processes; the tree above it is
+   * the shell, the terminal host and every other tab in that window. Ending an
+   * ancestor would end all of them, which is precisely the blast radius #329
+   * exists to stop. The runtime passes the pid the provider reported for this
+   * dwarf and nothing derived from it — there is no ancestor walk on this path.
+   */
   pid: number
 }
 
@@ -295,11 +327,37 @@ export interface TextDeliveryPort {
    */
   queueToCodexThread?(request: CodexQueueRequest): Promise<TextDeliveryOutcome>
   /**
-   * Send a raw interrupt keystroke (ESC) to the console hosting `pid` —
-   * Kick's terminal path. Never routed through the message path: there is no
-   * text to escape, only a keystroke to synthesize.
+   * Send a raw interrupt keystroke (ESC) to the console hosting `pid`. Never
+   * routed through the message path: there is no text to escape, only a
+   * keystroke to synthesize.
+   *
+   * Kick's terminal path until #329, and no longer — a kick ends the session
+   * through `endConsoleSession` below. What still presses Esc here is the
+   * permission DENY of #203, which is a key aimed at the dialog that terminal
+   * is drawing rather than an act on the session.
    */
   sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome>
+  /**
+   * End the session running in the console at `pid` — the whole process tree,
+   * not the turn it is in (#329).
+   *
+   * Kick's terminal tier, and the third one that ends rather than interrupts
+   * (see KickEndpoint). It takes no window and sends no key: which tab of a
+   * shared terminal window is in front is unknowable from here, so the act that
+   * cannot miss is the only honest one left. The terminal tab stays open at its
+   * shell prompt.
+   *
+   * Optional for the reason `pasteToConsole` is, and absent for a stronger
+   * one: only the Windows port implements it. The POSIX tree kill signals the
+   * process GROUP — correct for a process this panel STARTED as a group leader
+   * (#217), and wrong for a session somebody else launched, whose pid leads no
+   * group of ours. Rather than signal a group that may not be the session's,
+   * the POSIX port omits this and the runtime states the refusal; a `terminal`
+   * target does not reach a kick there today in any case, because
+   * `supportsConsoleInput` is false on both POSIX platforms and degrades it to
+   * the relay first. A per-OS end is a follow-up, noted in `platform-ports`.
+   */
+  endConsoleSession?(request: EndSessionRequest): Promise<TextDeliveryOutcome>
   /**
    * Release anything this tier keeps alive between actions — today, the
    * long-lived console shell (see consoleWorker.ts). Optional because most

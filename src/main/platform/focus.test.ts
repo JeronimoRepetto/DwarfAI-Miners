@@ -5,10 +5,12 @@ import {
   buildFocusHandleCommand,
   buildProcessQueryCommand,
   focusPid,
+  focusSessionConsole,
   parseConsoleWindowHandle,
   parseProcessRows,
   planFocusCandidates,
   processChain,
+  resolveFocusTarget,
   selectFocusTargetPid,
   WINDOWS_TERMINAL_HOSTS,
   type ProcessRow
@@ -383,52 +385,66 @@ describe('buildFocusCommand', () => {
   })
 })
 
-describe('focusPid', () => {
-  const processJson = JSON.stringify([
-    { ProcessId: 100, ParentProcessId: 80, Name: 'claude.exe' },
-    { ProcessId: 80, ParentProcessId: 1, Name: 'WindowsTerminal.exe' }
-  ])
+/**
+ * A session in a Windows Terminal tab: its own pid owns no visible console,
+ * and the walk reaches the host. HOISTED to module scope for #329, which
+ * exercises the same two shapes through `resolveFocusTarget` and
+ * `focusSessionConsole` below; the bodies that read it are untouched.
+ */
+const processJson = JSON.stringify([
+  { ProcessId: 100, ParentProcessId: 80, Name: 'claude.exe' },
+  { ProcessId: 80, ParentProcessId: 1, Name: 'WindowsTerminal.exe' }
+])
 
-  /**
-   * Builds a fake ShellRunner that dispatches on which command was sent:
-   * the console-window probe (AttachConsole), the process-list query
-   * (Get-CimInstance), or a foreground command (buildFocusCommand /
-   * buildFocusHandleCommand) — everything else falls to that last bucket.
-   *
-   * A probe answers per pid when `consoleProbes` names that pid, so one fake
-   * can hand a hidden console to the session and a visible one to its
-   * ancestors (issue #190); any pid it does not name gets `consoleHandleStdout`.
-   */
-  function fakeRunner(options: {
-    consoleHandleStdout?: string
-    consoleProbes?: Record<number, string>
-    consoleProbeExitCode?: number
-    focusExitCode?: number
-    processJson?: string
-  }) {
-    const {
-      consoleHandleStdout = '0',
-      consoleProbes = {},
-      consoleProbeExitCode = 0,
-      focusExitCode = 0,
-      processJson: rowsJson = processJson
-    } = options
-    const executed: string[] = []
-    const run = async (command: string) => {
-      executed.push(command)
-      const probed = /AttachConsole\((\d+)\)/.exec(command)
-      if (probed !== null) {
-        const stdout = consoleProbes[Number(probed[1])] ?? consoleHandleStdout
-        return { stdout, exitCode: consoleProbeExitCode }
-      }
-      if (command.includes('Get-CimInstance')) {
-        return { stdout: rowsJson, exitCode: 0 }
-      }
-      return { stdout: '', exitCode: focusExitCode }
+/**
+ * Builds a fake ShellRunner that dispatches on which command was sent:
+ * the console-window probe (AttachConsole), the process-list query
+ * (Get-CimInstance), or a foreground command (buildFocusCommand /
+ * buildFocusHandleCommand) — everything else falls to that last bucket.
+ *
+ * A probe answers per pid when `consoleProbes` names that pid, so one fake
+ * can hand a hidden console to the session and a visible one to its
+ * ancestors (issue #190); any pid it does not name gets `consoleHandleStdout`.
+ */
+function fakeRunner(options: {
+  consoleHandleStdout?: string
+  consoleProbes?: Record<number, string>
+  consoleProbeExitCode?: number
+  focusExitCode?: number
+  processJson?: string
+}) {
+  const {
+    consoleHandleStdout = '0',
+    consoleProbes = {},
+    consoleProbeExitCode = 0,
+    focusExitCode = 0,
+    processJson: rowsJson = processJson
+  } = options
+  const executed: string[] = []
+  const run = async (command: string) => {
+    executed.push(command)
+    const probed = /AttachConsole\((\d+)\)/.exec(command)
+    if (probed !== null) {
+      const stdout = consoleProbes[Number(probed[1])] ?? consoleHandleStdout
+      return { stdout, exitCode: consoleProbeExitCode }
     }
-    return { executed, run }
+    if (command.includes('Get-CimInstance')) {
+      return { stdout: rowsJson, exitCode: 0 }
+    }
+    return { stdout: '', exitCode: focusExitCode }
   }
+  return { executed, run }
+}
 
+/** The classic cmd.exe console of #190: hidden on the session, visible above it. */
+const cmdConsoleJson = JSON.stringify([
+  { ProcessId: 100, ParentProcessId: 90, Name: 'claude.exe' },
+  { ProcessId: 90, ParentProcessId: 85, Name: 'node.exe' },
+  { ProcessId: 85, ParentProcessId: 70, Name: 'cmd.exe' },
+  { ProcessId: 70, ParentProcessId: 1, Name: 'explorer.exe' }
+])
+
+describe('focusPid', () => {
   it('resolves the console window straight from the session pid and skips the ancestor chain walk', async () => {
     const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 1' })
     const ok = await focusPid(100, run)
@@ -540,5 +556,97 @@ describe('focusPid', () => {
       ['90', '80', '70']
     )
     expect(executed.some((command) => command.includes('SetForegroundWindow'))).toBe(false)
+  })
+})
+
+/**
+ * Which of the two windows resolution ended on (#329).
+ *
+ * The distinction was always in the type — a `handle` is a console, a `pid` is
+ * a named host — and nothing read it, because click-to-focus wants either. A
+ * keystroke does not: a host window draws many sessions at once and only one of
+ * its tabs is in front, so the caller has to be able to tell them apart. Pure,
+ * over the same fake runner the focusPid tests use.
+ */
+describe('resolveFocusTarget', () => {
+  it("answers a handle for the session's own visible console, which nothing else shares", async () => {
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 1' })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'handle', handle: 555555 })
+  })
+
+  it('answers the host pid when only the ancestor walk reaches a window, tabs and all', async () => {
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 0' })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 80 })
+  })
+
+  /*
+   * An ancestor's console is still a handle, and deliberately: in a classic
+   * cmd.exe console the shell and the session sit on ONE window and the session
+   * is the only thing running on it (#190). That is the session's own window in
+   * every sense a keystroke cares about — unlike a host, which draws other
+   * sessions in its other tabs.
+   */
+  it('answers a handle for the shell console the session shares with its own launcher', async () => {
+    const { run } = fakeRunner({
+      processJson: cmdConsoleJson,
+      consoleProbes: { 100: '131732 0', 90: '133320 1' }
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'handle', handle: 133320 })
+  })
+
+  it('answers null when neither the probes nor the names find a window', async () => {
+    const { run } = fakeRunner({
+      processJson: JSON.stringify([{ ProcessId: 100, ParentProcessId: 1, Name: 'claude.exe' }])
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toBeNull()
+  })
+})
+
+/**
+ * The same act as `focusPid`, reporting WHICH window it foregrounded (#329).
+ *
+ * `focusPid` keeps its boolean because click-to-focus is content with either
+ * window — the person asked for the terminal, and they got the terminal. Text
+ * delivery reads this instead.
+ */
+describe('focusSessionConsole', () => {
+  it("reports the session's own console when its probe hit", async () => {
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 1' })
+    await expect(focusSessionConsole(100, run)).resolves.toEqual({
+      focused: true,
+      reach: 'own-console'
+    })
+  })
+
+  it('reports a terminal host when the walk had to reach one, so the tab in front is unknown', async () => {
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 0' })
+    await expect(focusSessionConsole(100, run)).resolves.toEqual({
+      focused: true,
+      reach: 'terminal-host'
+    })
+  })
+
+  it("reports the session's own console for an ancestor shell console (#190)", async () => {
+    const { run } = fakeRunner({
+      processJson: cmdConsoleJson,
+      consoleProbes: { 100: '131732 0', 90: '133320 1' }
+    })
+    await expect(focusSessionConsole(100, run)).resolves.toEqual({
+      focused: true,
+      reach: 'own-console'
+    })
+  })
+
+  it('reports no reach at all when nothing came forward', async () => {
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 1', focusExitCode: 1 })
+    await expect(focusSessionConsole(100, run)).resolves.toEqual({ focused: false, reach: null })
+  })
+
+  it('reports no reach when PowerShell itself errors', async () => {
+    await expect(
+      focusSessionConsole(100, async () => {
+        throw new Error('powershell missing')
+      })
+    ).resolves.toEqual({ focused: false, reach: null })
   })
 })

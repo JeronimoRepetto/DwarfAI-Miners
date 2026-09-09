@@ -60,11 +60,18 @@ import type { DwarfPermissionDecision } from '../domain/types'
  * One key press, and which of the console tier's two doors it goes through.
  *
  * `escape` addresses `TextDeliveryPort.sendInterrupt`, which already presses
- * exactly this key behind each platform's own builder — it is Kick's path,
- * and Kick's path is a raw Esc into the focused console, which is precisely
- * what a decline is here. Nothing per-OS is added for this: reaching for a
- * new port method would have meant a second Windows SendKeys builder and a
- * second posix one, both spelling the key the existing pair already spells.
+ * exactly this key behind each platform's own builder: a raw Esc into the
+ * focused console, which is precisely what a decline is here. Nothing per-OS is
+ * added for this — reaching for a new port method would have meant a second
+ * Windows SendKeys builder and a second posix one, both spelling the key the
+ * existing pair already spells.
+ *
+ * That method was Kick's path when this was written and is not any more (#329):
+ * a kick ends the session's process instead, because a keystroke could not be
+ * aimed at one tab of a shared terminal window. This IS still a keystroke at a
+ * window and cannot be anything else — the dialog is drawn there and nowhere
+ * else — so it inherits that limit rather than escaping it, and the port
+ * refuses a shared-window focus rather than pressing Esc into another session.
  */
 export type PermissionKeystroke =
   | {
