@@ -6,7 +6,6 @@ import {
   MCP_STATUS_LABEL,
   NO_EFFORT_CONTROL_REASON,
   NO_MODEL_CONTROL_REASON,
-  NO_SESSION_SURFACE_REASON,
   sessionStrip
 } from './sessionStrip'
 
@@ -39,19 +38,23 @@ describe('sessionStrip', () => {
     expect(sessionStrip(undefined)).toEqual({ kind: 'none' })
   })
 
-  it('refuses, with the reason, for a session this panel only observes', () => {
+  it('draws no strip at all for a session this panel only observes (#295)', () => {
+    // AMENDED for #295 (was: "refuses, with the reason, for a session this
+    // panel only observes", expecting `{ kind: 'unavailable', reason:
+    // NO_SESSION_SURFACE_REASON }`). The maintainer reversed the disabled
+    // reading: the sentence repeated on every observed dwarf and told the
+    // reader nothing they could act on, so this session now draws no strip
+    // rather than a control that quietly does nothing.
     const observed = defaultDwarf({ textDelivery: 'terminal' })
-    expect(sessionStrip(observed)).toEqual({
-      kind: 'unavailable',
-      reason: NO_SESSION_SURFACE_REASON
-    })
+    expect(sessionStrip(observed)).toEqual({ kind: 'none' })
   })
 
-  it('refuses for a session with no channel at all, rather than drawing an empty strip', () => {
-    expect(sessionStrip(defaultDwarf())).toEqual({
-      kind: 'unavailable',
-      reason: NO_SESSION_SURFACE_REASON
-    })
+  it('draws no strip for a session with no channel at all, same as one this panel observes (#295)', () => {
+    // AMENDED for #295 (was: "refuses for a session with no channel at all,
+    // rather than drawing an empty strip"). No delivery channel is not held
+    // either, so it now reads the same as any other session this panel does
+    // not hold: nothing drawn.
+    expect(sessionStrip(defaultDwarf())).toEqual({ kind: 'none' })
   })
 
   it('refuses for a held session that has already ended, in the action bar’s own words', () => {
@@ -334,11 +337,13 @@ describe('sessionStrip controls (#96)', () => {
     )
   })
 
-  it('offers no control whatsoever on a strip that is already refusing', () => {
-    // A session this panel only observes, and one whose stream has ended: the
-    // refusal is the whole content, exactly as the read-only half already is.
+  it('offers no control whatsoever on a strip that draws nothing or is refusing (#295)', () => {
+    // AMENDED for #295: a session this panel only observes now draws no
+    // strip at all, live catalogue supplied or not — there is no control
+    // standing there to disable. A held session whose stream has ended is
+    // still a refusal, exactly as the read-only half already is.
     const observed = sessionStrip(defaultDwarf({ textDelivery: 'terminal' }), [CLAUDE_LIVE])
-    expect(observed).toEqual({ kind: 'unavailable', reason: NO_SESSION_SURFACE_REASON })
+    expect(observed).toEqual({ kind: 'none' })
     const ended = sessionStrip(tunableDwarf({ status: 'leaving' }), [CLAUDE_LIVE])
     expect(ended).toEqual({ kind: 'unavailable', reason: SESSION_ENDED_REASON })
   })

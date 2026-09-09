@@ -1,11 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import {
-  NO_EFFORT_CONTROL_REASON,
-  NO_MODEL_CONTROL_REASON,
-  NO_SESSION_SURFACE_REASON
-} from '../../lib/scene/sessionStrip'
+import { SESSION_ENDED_REASON } from '../../lib/delivery/actionBar'
+import { NO_EFFORT_CONTROL_REASON, NO_MODEL_CONTROL_REASON } from '../../lib/scene/sessionStrip'
 import { defaultDwarf } from '../../testing/factories'
 import type { AgentModelCatalog, Dwarf } from '../../types'
 import SessionStrip from './SessionStrip.vue'
@@ -83,14 +80,34 @@ describe('SessionStrip', () => {
     expect(wrapper.find('.session-mcp').exists()).toBe(false)
   })
 
-  it('disables the strip with its reason for a session this panel only observes', () => {
+  it('renders no strip at all for a session this panel only observes (#295)', () => {
+    // AMENDED for #295 (was: "disables the strip with its reason for a
+    // session this panel only observes", asserting `is-unavailable` and a
+    // `.session-reason` sentence). The maintainer reversed the disabled
+    // reading: the sentence repeated on every observed dwarf and told the
+    // reader nothing actionable, so this session now draws no row at all.
     const wrapper = mount(SessionStrip, {
       props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }) }
+    })
+    expect(wrapper.find('.session-strip').exists()).toBe(false)
+  })
+
+  it('renders no strip at all for a session with no delivery channel (#295)', () => {
+    const wrapper = mount(SessionStrip, { props: { dwarf: defaultDwarf() } })
+    expect(wrapper.find('.session-strip').exists()).toBe(false)
+  })
+
+  it('still disables the strip with its reason for a held session that has ended (#295)', () => {
+    // The one refusal #295 leaves in place: unlike "not held at all", a held
+    // session whose stream has ended names a fact about a session this app
+    // DID hold.
+    const wrapper = mount(SessionStrip, {
+      props: { dwarf: heldDwarf({ status: 'leaving' }) }
     })
     const strip = wrapper.get('.session-strip')
     expect(strip.classes()).toContain('is-unavailable')
     expect(strip.attributes('aria-disabled')).toBe('true')
-    expect(wrapper.get('.session-reason').text()).toBe(NO_SESSION_SURFACE_REASON)
+    expect(wrapper.get('.session-reason').text()).toBe(SESSION_ENDED_REASON)
     // Nothing invented for a session that cannot report: no model, no bar, no
     // roster — the refusal is the whole content.
     expect(wrapper.find('.session-model').exists()).toBe(false)
@@ -244,8 +261,11 @@ describe('SessionStrip controls (#96)', () => {
   })
 
   it('draws no select at all on a strip that is already refusing', () => {
+    // AMENDED for #295: an observed session now draws no strip at all rather
+    // than a refusing one (see the "renders no strip" cases above), so the
+    // remaining refusal this asserts against is a held session that ended.
     const wrapper = mount(SessionStrip, {
-      props: { dwarf: defaultDwarf({ textDelivery: 'terminal' }), catalogs: [CLAUDE_LIVE] }
+      props: { dwarf: heldDwarf({ status: 'leaving' }), catalogs: [CLAUDE_LIVE] }
     })
     expect(wrapper.find('.session-model-select').exists()).toBe(false)
     expect(wrapper.find('.session-effort-select').exists()).toBe(false)
