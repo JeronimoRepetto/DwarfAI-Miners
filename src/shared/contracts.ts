@@ -125,11 +125,12 @@ export type MaterialTotals = Record<Material, number>
  * of those would name the wrong thing. What this app can do with it is
  * narrower than what it can do with the other two: step 3 gave it explicit
  * Mine History discovery, step 4 gave it a DETACHED one-shot launch (see
- * `LAUNCHABLE_PROVIDERS` in main/domain/launchProviders.ts), and it is still
- * absent from `HELDABLE_PROVIDERS` — no round trip through its documented
- * stream-json protocol has been proven by this app. Membership in
- * `DWARF_PROVIDERS` alone says only that a store can be READ; the other two
- * lists are what say how far past reading this app may go.
+ * `LAUNCHABLE_PROVIDERS` in main/domain/launchProviders.ts), and step 5 proved
+ * a held round trip through its documented stream-json protocol, so it now
+ * sits in `HELDABLE_PROVIDERS` too — see that constant's own comment for what
+ * the held protocol still cannot do. Membership in `DWARF_PROVIDERS` alone
+ * says only that a store can be READ; the other two lists are what say how
+ * far past reading this app may go.
  */
 export const DWARF_PROVIDERS = ['claude', 'codex', 'antigravity'] as const
 
