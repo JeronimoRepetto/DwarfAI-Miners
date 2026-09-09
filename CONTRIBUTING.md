@@ -19,8 +19,16 @@ The panel starts hidden — press **Ctrl+Alt+Shift+P** or click the tray icon to
 pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`; if the
 Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
 
-Configuration is env-based: copy `.env.example` to `.env` if you want to override defaults.
-Every key is optional and invalid values fail fast at startup (`src/main/config/config.ts`).
+Configuration in a checkout is env-based: copy `.env.example` to `.env` if you want to override
+defaults. Every key is optional and invalid values fail fast at startup
+(`src/main/config/config.ts`). One thing to know before adding a setting: **an installed app never
+sees `.env`**, because `dotenv` resolves it against the working directory. It reads a
+`config-v1.json` under Electron's `userData` instead, layered underneath the real environment. So a
+new setting that is only reachable from `.env` is unreachable from the product — see
+[`skills/config-layering/SKILL.md`](skills/config-layering/SKILL.md) and the README's
+[Configuration](README.md#configuration) section. Preferences somebody sets _in the app_ (a volume,
+the panel's side) are the other kind, and belong in their own `userData` document rather than in the
+config layers at all.
 
 ## Verification
 
@@ -97,7 +105,8 @@ desktops. That run is the single most useful contribution a Mac or Linux user ca
 1. `pnpm install && pnpm dev` (or a packaged build) on your machine, with real Claude Code
    or Codex sessions running.
 2. Walk the matrix rows: session detection, click-to-focus, the transcript viewer, message
-   relay, autostart, tray behavior, packaging.
+   delivery (the relay on your platform; the console-paste path is Windows-only today), autostart,
+   tray behavior, packaging.
 3. File an issue per broken row — with your OS version, desktop environment (for Linux:
    X11 or Wayland matters), and what actually happened.
 
@@ -118,6 +127,14 @@ That means contributed art must sit on a **flat, uniform backdrop** (any color t
 in all four corners), and dwarf animations come as pose pairs (two working swings, two
 resting poses, two walking poses). Open an issue with a sample before producing a full set,
 so style fit gets settled cheaply.
+
+**Audio is not processed by that pipeline.** The six music tracks, the two mine ambience beds and
+the three dwarf voices are committed exactly as delivered — the music as `.ogg` under
+`src/renderer/src/assets/audio/music/` because Electron's bundled Chromium decodes it natively, and
+the beds and voices as `.mp3` filed beside the art they belong to. Every one is imported explicitly
+in `src/renderer/src/lib/audio/audioAssets.ts` rather than globbed, so a renamed or missing file
+fails the build instead of quietly shortening the playlist or silencing a rank. Add a file there
+when you add a sound.
 
 **Inbound terms.** Artwork is not an open contribution surface by default. Please discuss an art
 contribution with the maintainer before opening a pull request. Any accepted artwork must have
@@ -152,4 +169,9 @@ So that nobody invests work the project will decline:
 - Bugs, features, roadmap discussion → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues)
 - Vulnerabilities → [`SECURITY.md`](SECURITY.md), privately
 - Data-boundary questions → [`docs/privacy.md`](docs/privacy.md)
+- "Why is it built this way?" → [`docs/README.md`](docs/README.md) indexes every research note,
+  evaluation and format survey in the repository, and says which of them are dated rather than
+  maintained
+- Rules an agent working here keeps getting wrong → [`AGENTS.md`](AGENTS.md) and the skills under
+  [`skills/`](skills/README.md)
 - Supporting the project financially → [Ko-fi](https://ko-fi.com/jeronimorepetto)
