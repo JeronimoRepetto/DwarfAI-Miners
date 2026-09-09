@@ -356,12 +356,16 @@ describe('parseAudioPreferences', () => {
 })
 
 describe('DEFAULT_AUDIO_PREFERENCES', () => {
-  it('starts the music on and every channel at full, which is what #174 specifies', () => {
+  it('starts the music on, and quiet, which is what the first listen asked for', () => {
+    // AMENDED for #323 (was: every channel at full, #174's own first guess).
+    // The maintainer heard it: the music dominated and the dwarfs barked over
+    // everything, so a first run gets music at 10% and the effects at 70%. The
+    // ambience is a reading of the crew and stays where it was.
     expect(DEFAULT_AUDIO_PREFERENCES).toEqual({
       musicAtStartup: true,
-      musicVolume: 1,
+      musicVolume: 0.1,
       ambienceVolume: 1,
-      voiceVolume: 1
+      voiceVolume: 0.7
     })
   })
 })

@@ -4,6 +4,13 @@ import type { AudioPreferences } from '../../types'
 /**
  * The Audio section of the Settings screen (#174, with #173's two volumes).
  *
+ * The third row is `Effects` rather than `Voices` since #323: the slider it
+ * draws scales the interface sounds as well as the dwarf barks, because they
+ * are one channel (see volume.ts), and a row named after half of what it moves
+ * is a label that lies. The stored field is still `voiceVolume` — the name of a
+ * value that crosses processes is not a label, and renaming it would be a
+ * migration bought for nothing.
+ *
  * A maintainer-specified EXTENSION of `screens/settings.md`, which has no
  * Audio section at all — the amendment text is proposed with this change and
  * the maintainer applies it (ui-rebuild discipline). Everything drawn here
@@ -98,14 +105,14 @@ function ask(field: keyof AudioPreferences, event: Event): void {
     </label>
 
     <label class="slider-row">
-      <span class="slider-name">Voices</span>
+      <span class="slider-name">Effects</span>
       <input
         class="voice-volume"
         type="range"
         min="0"
         max="1"
         step="0.05"
-        aria-label="Dwarf voice volume"
+        aria-label="Dwarf voice and interface sound volume"
         :value="props.settings.voiceVolume"
         @input="ask('voiceVolume', $event)"
       />
@@ -113,8 +120,8 @@ function ask(field: keyof AudioPreferences, event: Event): void {
     </label>
 
     <p class="hint">
-      Music plays while the shell is open; the mine's ambience and a dwarf's voice only inside a
-      mine.
+      Music plays while the shell is open, and the mine's ambience only inside a mine. Effects are a
+      dwarf's voice and the interface's own sounds.
     </p>
   </section>
 </template>

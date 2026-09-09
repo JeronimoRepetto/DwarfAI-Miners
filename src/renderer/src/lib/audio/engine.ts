@@ -36,7 +36,7 @@ import {
 import { musicTimeline, MUSIC_GAP_MS } from './musicTimeline'
 import type { AudioClip, AudioPlayer } from './player'
 import { createPlaylist, type Playlist } from './playlist'
-import { channelVolume, type AudioGates } from './volume'
+import { channelVolume, sfxVolume, type AudioGates, type UiSfx } from './volume'
 
 /** What the engine needs to know about the mine on screen. */
 export interface AudioScene {
@@ -52,6 +52,8 @@ export interface AudioEngineOptions {
   tracks: readonly string[]
   beds: Record<AmbienceBed, string>
   voices: Record<DwarfRole, string>
+  /** The interface sounds (#323): the navigation click and the panel's own. */
+  sfx: Record<UiSfx, string>
   /** Injected so a test can name which track plays. */
   random?: () => number
   /** Injected for the same reason every clock in this repo is. */
@@ -71,6 +73,8 @@ export interface AudioEngine {
   setAmbienceMuted: (muted: boolean) => void
   /** A dwarf was clicked: its rank speaks, once. */
   playVoice: (role: DwarfRole) => void
+  /** The interface answering a press (#323): a navigation click, or the panel. */
+  playSfx: (kind: UiSfx) => void
   /** Settle every deadline and check both seams. Cheap; call it often. */
   tick: () => void
   /** Release every sound. Nothing plays after this. */
@@ -84,7 +88,7 @@ interface FadingBed {
 }
 
 export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
-  const { player, beds, voices } = options
+  const { player, beds, voices, sfx } = options
   const now = options.now ?? Date.now
   const random = options.random ?? Math.random
   const playlist: Playlist<string> = createPlaylist(options.tracks, random)
@@ -113,6 +117,13 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
   const fading: FadingBed[] = []
 
   let voice: AudioClip | undefined
+  /**
+   * The interface sound playing, held apart from `voice` on purpose: one press
+   * can be both — a dwarf clicked inside a mine speaks while the interface
+   * answers the press — and they must not cut each other. One of EACH at a
+   * time, never two of either.
+   */
+  let interfaceSfx: AudioClip | undefined
 
   function volumeOf(channel: 'music' | 'ambience' | 'voice'): number {
     return channelVolume(channel, settings, gates)
@@ -274,6 +285,9 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
         // when the window returns would be a dwarf speaking at nobody.
         voice?.stop()
         voice = undefined
+        // Same reasoning, same act: an interface sound is shorter still.
+        interfaceSfx?.stop()
+        interfaceSfx = undefined
       } else if (wasHidden && musicOn) {
         // Resumed if there is a track, STARTED if there is not. The second
         // half is the ordinary launch: the window is created hidden and the
@@ -323,6 +337,24 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       voice = clip
       clip.play()
     },
+    playSfx(kind: UiSfx): void {
+      if (disposed) return
+      // The voice channel's volume, with the one gate the panel press is
+      // allowed through — see sfxVolume. Zero opens nothing, for playVoice's
+      // own reason: a slider at zero must not decode a sound nobody can hear.
+      const volume = sfxVolume(kind, settings, gates)
+      if (volume <= 0) return
+      interfaceSfx?.stop()
+      const clip = player.open(sfx[kind], {
+        volume,
+        onEnded: () => {
+          clip.stop()
+          if (interfaceSfx === clip) interfaceSfx = undefined
+        }
+      })
+      interfaceSfx = clip
+      clip.play()
+    },
     tick(): void {
       if (disposed) return
       tickMusic()
@@ -334,6 +366,8 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       stopAmbience()
       voice?.stop()
       voice = undefined
+      interfaceSfx?.stop()
+      interfaceSfx = undefined
     }
   }
 }

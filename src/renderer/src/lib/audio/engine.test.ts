@@ -8,6 +8,7 @@ import { MUSIC_FADE_MS, MUSIC_GAP_MS } from './musicTimeline'
 const TRACKS = ['t1.ogg', 't2.ogg', 't3.ogg'] as const
 const BEDS = { working: 'working.mp3', silence: 'silence.mp3' } as const
 const VOICES = { foreman: 'foreman.mp3', worker: 'worker.mp3', worker2: 'worker2.mp3' } as const
+const SFX = { click: 'click.mp3', panel: 'panel.mp3' } as const
 
 /** A clock the test advances by hand, the way the rest of the suite does. */
 function clock(start = 1_000): { now: number } {
@@ -35,6 +36,7 @@ describe('createAudioEngine — music (#174)', () => {
       tracks: TRACKS,
       beds: BEDS,
       voices: VOICES,
+      sfx: SFX,
       random: inOrderRandom(),
       now: () => time.now
     })
@@ -51,7 +53,8 @@ describe('createAudioEngine — music (#174)', () => {
     expect(track.playing).toBe(true)
     // Opened at silence, then ramped: the first sample must never be a click.
     expect(track.volume).toBe(0)
-    expect(track.ramp).toEqual({ to: 1, ms: MUSIC_FADE_MS })
+    // The DEFAULT music slider, which #323 lowered to 10 % of the base.
+    expect(track.ramp).toEqual({ to: DEFAULT_AUDIO_PREFERENCES.musicVolume, ms: MUSIC_FADE_MS })
   })
 
   it('fades in to the volume the settings ask for, not to full', () => {
@@ -221,6 +224,7 @@ describe('createAudioEngine — music (#174)', () => {
       tracks: [],
       beds: BEDS,
       voices: VOICES,
+      sfx: SFX,
       random: inOrderRandom(),
       now: () => time.now
     })
@@ -244,6 +248,7 @@ describe('createAudioEngine — ambience (#173)', () => {
       tracks: TRACKS,
       beds: BEDS,
       voices: VOICES,
+      sfx: SFX,
       random: inOrderRandom(),
       now: () => time.now
     })
@@ -431,6 +436,7 @@ describe('createAudioEngine — voices (#173)', () => {
       tracks: TRACKS,
       beds: BEDS,
       voices: VOICES,
+      sfx: SFX,
       random: inOrderRandom(),
       now: () => time.now
     })
@@ -443,7 +449,8 @@ describe('createAudioEngine — voices (#173)', () => {
     expect(clips[0]!.src).toBe(VOICES[role])
     expect(clips[0]!.playing).toBe(true)
     // A bark is a cut, not a fade: it is over before a fade would finish.
-    expect(clips[0]!.volume).toBe(0.75)
+    // 75 % base against the default Effects slider, which #323 put at 70 %.
+    expect(clips[0]!.volume).toBeCloseTo(0.525)
     expect(clips[0]!.ramp).toBeUndefined()
   })
 
@@ -494,6 +501,114 @@ describe('createAudioEngine — voices (#173)', () => {
   })
 })
 
+/**
+ * A fourth kind of clip, on the voice channel (#323): the navigation buttons
+ * click, and the secondary panel makes a sound when it opens and closes.
+ */
+describe('createAudioEngine — interface sounds (#323)', () => {
+  let player: FakeAudioPlayer
+  let time: { now: number }
+  let engine: AudioEngine
+
+  beforeEach(() => {
+    player = createFakeAudioPlayer()
+    time = clock()
+    engine = createAudioEngine({
+      player,
+      tracks: TRACKS,
+      beds: BEDS,
+      voices: VOICES,
+      sfx: SFX,
+      random: inOrderRandom(),
+      now: () => time.now
+    })
+  })
+
+  it.each(['click', 'panel'] as const)('plays %s its own recording, once', (kind) => {
+    engine.playSfx(kind)
+    const clips = player.live()
+    expect(clips).toHaveLength(1)
+    expect(clips[0]!.src).toBe(SFX[kind])
+    expect(clips[0]!.playing).toBe(true)
+    // A cut, like a bark: it is over before a fade would finish.
+    expect(clips[0]!.volume).toBeCloseTo(0.525)
+    expect(clips[0]!.ramp).toBeUndefined()
+  })
+
+  it('plays at the Effects slider, scaled against the voice base', () => {
+    engine.setSettings({ ...DEFAULT_AUDIO_PREFERENCES, voiceVolume: 0.5 })
+    engine.playSfx('click')
+    expect(player.live()[0]!.volume).toBeCloseTo(0.375)
+  })
+
+  it('replaces an interface sound still playing rather than layering two', () => {
+    engine.playSfx('click')
+    const first = player.live()[0]!
+    engine.playSfx('click')
+    expect(first.stopped).toBe(true)
+    expect(player.live()).toHaveLength(1)
+  })
+
+  it('lets a voice and an interface sound overlap, because they are different acts', () => {
+    // One press can be both — a dwarf clicked inside a mine speaks while the
+    // interface answers the press — and cutting either would be wrong.
+    engine.playVoice('worker')
+    engine.playSfx('click')
+    expect(player.live().map((clip) => clip.src)).toEqual(['worker.mp3', 'click.mp3'])
+  })
+
+  it('releases the clip when the sound finishes', () => {
+    engine.playSfx('panel')
+    const clip = player.clips[0]!
+    clip.end()
+    expect(clip.stopped).toBe(true)
+  })
+
+  it('makes no sound while the app is hidden', () => {
+    engine.setGates({ hidden: true, collapsed: false })
+    engine.playSfx('click')
+    engine.playSfx('panel')
+    expect(player.clips).toHaveLength(0)
+  })
+
+  it('cuts an interface sound mid-play when the app is hidden', () => {
+    engine.playSfx('panel')
+    const clip = player.live()[0]!
+    engine.setGates({ hidden: true, collapsed: false })
+    expect(clip.stopped).toBe(true)
+  })
+
+  it('says nothing when the Effects slider is all the way down', () => {
+    // Nothing to hear, so nothing to decode — the rule playVoice already holds.
+    engine.setSettings({ ...DEFAULT_AUDIO_PREFERENCES, voiceVolume: 0 })
+    engine.playSfx('click')
+    engine.playSfx('panel')
+    expect(player.clips).toHaveLength(0)
+  })
+
+  it('swallows a click on the collapsed rail but still plays the panel opening', () => {
+    // The five area buttons are not drawn on the rail, so a click there has
+    // nothing to answer. The arrow that opens the panel is the exception, and
+    // it is the whole reason the exception exists.
+    engine.setGates({ hidden: false, collapsed: true })
+    engine.playSfx('click')
+    expect(player.clips).toHaveLength(0)
+
+    engine.playSfx('panel')
+    expect(player.live().map((clip) => clip.src)).toEqual(['panel.mp3'])
+  })
+
+  it('releases an interface sound on dispose, and makes none afterwards', () => {
+    engine.playSfx('panel')
+    const clip = player.live()[0]!
+    engine.dispose()
+    expect(clip.stopped).toBe(true)
+
+    engine.playSfx('click')
+    expect(player.live()).toHaveLength(0)
+  })
+})
+
 describe('createAudioEngine — dispose', () => {
   it('releases every sound it opened', () => {
     const player = createFakeAudioPlayer()
@@ -503,6 +618,7 @@ describe('createAudioEngine — dispose', () => {
       tracks: TRACKS,
       beds: BEDS,
       voices: VOICES,
+      sfx: SFX,
       random: inOrderRandom(),
       now: () => time.now
     })
@@ -523,6 +639,7 @@ describe('createAudioEngine — dispose', () => {
       tracks: TRACKS,
       beds: BEDS,
       voices: VOICES,
+      sfx: SFX,
       random: inOrderRandom(),
       now: () => time.now
     })

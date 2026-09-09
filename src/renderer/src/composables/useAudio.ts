@@ -2,9 +2,15 @@ import { ref } from 'vue'
 import type { AudioPreferences, Dwarf, DwarfRole } from '../types'
 import { DEFAULT_AUDIO_PREFERENCES, parseAudioPreferences } from '../types'
 import { hasWorkingWorker } from '../lib/audio/ambience'
-import { AMBIENCE_SRC, DWARF_VOICE_SRC, MUSIC_TRACK_SRC } from '../lib/audio/audioAssets'
+import {
+  AMBIENCE_SRC,
+  DWARF_VOICE_SRC,
+  MUSIC_TRACK_SRC,
+  UI_SFX_SRC
+} from '../lib/audio/audioAssets'
 import { createAudioEngine } from '../lib/audio/engine'
 import { createElementAudioPlayer, type AudioPlayer } from '../lib/audio/player'
+import type { UiSfx } from '../lib/audio/volume'
 
 /**
  * The one place the panel's sound is wired up (#174, #173): the engine, a
@@ -59,6 +65,7 @@ export function useAudio(options: UseAudioOptions = {}) {
     tracks: MUSIC_TRACK_SRC,
     beds: AMBIENCE_SRC,
     voices: DWARF_VOICE_SRC,
+    sfx: UI_SFX_SRC,
     random: options.random,
     now: options.now
   })
@@ -182,6 +189,19 @@ export function useAudio(options: UseAudioOptions = {}) {
     engine.playVoice(role)
   }
 
+  /**
+   * The interface answering a press (#323): a navigation button, or the
+   * secondary panel opening or closing.
+   *
+   * Which press makes which sound is App.vue's, exactly as which dwarf speaks
+   * is: this only hands the intent down. Whether it is audible at all belongs
+   * to the engine and to `volume.ts` — the Effects slider, the window's
+   * visibility, and the one exception the collapsed rail makes for the panel.
+   */
+  function playSfx(kind: UiSfx): void {
+    engine.playSfx(kind)
+  }
+
   /** Release every sound and stop the tick. */
   function dispose(): void {
     if (ticker !== undefined) clearInterval(ticker)
@@ -201,6 +221,7 @@ export function useAudio(options: UseAudioOptions = {}) {
     setScene,
     setCollapsed,
     playVoice,
+    playSfx,
     dispose
   }
 }

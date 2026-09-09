@@ -27,7 +27,14 @@ describe('AudioSettings — rendering', () => {
     expect(wrapper.text()).toContain('Music at startup')
     expect(wrapper.text()).toContain('Music')
     expect(wrapper.text()).toContain('Ambience')
-    expect(wrapper.text()).toContain('Voices')
+    // AMENDED for #323 (was: 'Voices'). The same slider now scales the
+    // interface sounds as well as the barks, so the row says what it does.
+    expect(wrapper.text()).toContain('Effects')
+    expect(wrapper.text()).not.toContain('Voices')
+  })
+
+  it('says in the helper sentence that the row covers the interface too (#323)', () => {
+    expect(render().find('.hint').text()).toContain('interface')
   })
 
   it('renders the startup choice as a pressed control that says which state it is in', () => {
