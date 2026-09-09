@@ -771,3 +771,47 @@ describe('MineHistoryReader over Antigravity conversations', () => {
     await expect(reader(fs).read(CWD)).resolves.toEqual([])
   })
 })
+
+describe('MineHistoryReader over a resumed subagent (#338)', () => {
+  function reader(fs: FsLike): MineHistoryReader {
+    return new MineHistoryReader({ fs, claudeRoots: [ROOT], platform: 'win32' })
+  }
+
+  it('lists the turns a resumed agent took after the ending that took it off the board', async () => {
+    // The live board keys an agent's presence on its ending (#179, #338); this
+    // panel keys nothing on one, and the difference is the point of it. A
+    // resumed agent's later turns are in the same file its earlier ones are,
+    // so they read out together whether or not the provider ever redrew the
+    // dwarf — which is exactly the guarantee the reported bug leaned on while
+    // the board was wrong.
+    const fs = new FakeFs()
+    const subagents = `${PROJECT_DIR}\\${SESSION}\\subagents`
+    fs.addFile(
+      `${subagents}\\agent-${AGENT}.jsonl`,
+      lines(
+        userLine('Map the seam.', AT_9),
+        assistantLine('Mapped it.', AT_10),
+        // The agent stopped here, and was resumed by SendMessage.
+        userLine('Now check the second seam.', AT_11),
+        assistantLine('Checked it.', AT_12)
+      ),
+      1
+    )
+    fs.addFile(
+      `${subagents}\\agent-${AGENT}.meta.json`,
+      JSON.stringify({ description: 'Map the seam', spawnDepth: 1 }),
+      1
+    )
+
+    const worker = (await reader(fs).read(CWD)).find(
+      (speaker) => speaker.id === `claude:${SESSION}:${AGENT}`
+    )
+    expect(worker?.messages.map((message) => message.text)).toEqual([
+      'Map the seam.',
+      'Mapped it.',
+      'Now check the second seam.',
+      'Checked it.'
+    ])
+    expect(worker?.lastMessageAt).toBe(Date.parse(AT_12))
+  })
+})

@@ -147,6 +147,44 @@ export interface ClaudeToolUse {
   askedAt?: string
 }
 
+/**
+ * One `SendMessage` result in which Claude Code states that it RESTARTED a
+ * background agent that had already stopped (issue #338).
+ *
+ * The record #179 said did not exist. A resume writes no second
+ * `async_launched` line, so that issue had to infer one from the agent's own
+ * transcript growing again — and inference cannot reach an agent whose ending
+ * said `completed`, which is what the reported session's had. This is the
+ * first-hand evidence instead: the harness answering the orchestrator's own
+ * tool call with the id it resumed, in the same machine-readable position an
+ * `async_launched` result occupies. The provider treats it as the launch
+ * record it is.
+ */
+export interface ClaudeAgentResume {
+  agentId: string
+  /** The resuming line's own timestamp, when it carried one. */
+  timestamp?: string
+  /**
+   * The payload's own one-line summary of the message that resumed the agent,
+   * when it named one. A description of last resort, and never invented: the
+   * launch record's own description is preferred wherever one is remembered.
+   */
+  summary?: string
+  /**
+   * Whether a `<task-notification>` for the same id follows this record in the
+   * tail — the agent stopping AGAIN after the resume.
+   *
+   * The one discriminator there is. A second ending is byte-identical to the
+   * first (docs/provider-formats.md §1.4), so nothing in the blob can say which
+   * one it is; position can, and it is sound here for the reason a suffix read
+   * is sound everywhere else in this file — a resume is written after the
+   * ending it answers, so a tail that still shows that ending still shows the
+   * resume too. Order within one window is therefore the whole question, and
+   * this field is its answer.
+   */
+  endedSince: boolean
+}
+
 /** Everything the provider needs from the tail of a session transcript. */
 export interface ClaudeTranscriptInfo {
   model?: string
@@ -180,6 +218,28 @@ export interface ClaudeTranscriptInfo {
    * observed resuming, so neither buys the relaxation.
    */
   failedAgents: ClaudeInFlightAgent[]
+  /**
+   * The launch-time identity of every agent that BOTH ended in this tail and
+   * had its `async_launched` record inside it (issue #338) — `failedAgents`
+   * above is the subset of these whose latest ending said `failed`.
+   *
+   * Two lists rather than one with a status, because they answer to two rules
+   * that must not be able to widen each other by accident. #179 reopens a
+   * `failed` ending on inference, and its door stays exactly that narrow;
+   * this one is what it TAKES to redraw any ended agent once a record proves
+   * the harness restarted it, whatever the ending said. Neither is a claim
+   * that anybody is running: both are terminal above and stay terminal.
+   */
+  endedLaunches: ClaudeInFlightAgent[]
+  /**
+   * The latest resume record this tail carries for each agent it names (issue
+   * #338), in the order the agents were first resumed in the window.
+   *
+   * Only the latest per agent: an agent resumed, ended and resumed again is
+   * described by its last record, exactly as `finished` keeps only the last
+   * ending. The endings between them are what `endedSince` reports.
+   */
+  resumedAgents: ClaudeAgentResume[]
   pendingBackgroundAgentCount?: number
   /**
    * The latest usage block seen in this tail (input+output+cache tokens for
@@ -694,6 +754,69 @@ function notificationStrings(line: Rec): string[] {
 }
 
 /**
+ * The key Claude Code names a resumed agent with, and the cheap gate that keeps
+ * `JSON.parse` off every tool result in the poll's hot path (issue #338).
+ */
+const RESUMED_AGENT_KEY = 'resumedAgentId'
+
+/**
+ * The agent one tool-result PAYLOAD says was resumed, or undefined when it says
+ * nothing of the kind (issue #338).
+ *
+ * A top-level key of a parsed object, never a substring of anything. That is
+ * the same "who wrote it, not what it looks like" test `notificationStrings`
+ * applies to an ending, for the same reason: a transcript quotes tool output
+ * constantly, and adopting an agent out of a Bash result that happened to print
+ * a resume payload would put a dwarf on the board on a quotation. Reading the
+ * key off the payload keeps a printed one nested inside `stdout`, where it
+ * cannot be mistaken for the harness's own answer.
+ *
+ * `success: false` is refused: a resume the harness says did not happen is not
+ * one. An ABSENT `success` is accepted, because the field is the payload's
+ * report of its own outcome and a later shape that stops writing it must not
+ * silently cost the redraw.
+ */
+function resumeIn(payload: unknown): { agentId: string; summary?: string } | undefined {
+  if (!isRecord(payload)) return undefined
+  const agentId = asString(payload.resumedAgentId)
+  if (agentId === undefined || payload.success === false) return undefined
+  const summary = asString(payload.summary)
+  return { agentId, ...(summary === undefined ? {} : { summary }) }
+}
+
+/**
+ * The agent Claude Code says it resumed on this line (issue #338).
+ *
+ * Both shapes one tool result is written in, because the launch record's own
+ * §1.4 note says the line carries both: `toolUseResult` is the machine-readable
+ * copy, and `message.content[].tool_result` the one the model reads, whose text
+ * is the same payload as JSON. Either is the harness answering the
+ * orchestrator's `SendMessage` call, so either will do, and a line that is not
+ * a tool result at all reaches neither.
+ */
+function resumedAgentIn(line: Rec): { agentId: string; summary?: string } | undefined {
+  const direct = resumeIn(line.toolUseResult)
+  if (direct !== undefined) return direct
+  for (const block of contentBlocks(line.message)) {
+    if (block.type !== 'tool_result') continue
+    for (const text of messageStrings(block.content)) {
+      if (!text.includes(RESUMED_AGENT_KEY)) continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        // Text that merely mentions the key: a tool printing a payload rather
+        // than the harness returning one.
+        continue
+      }
+      const resumed = resumeIn(parsed)
+      if (resumed !== undefined) return resumed
+    }
+  }
+  return undefined
+}
+
+/**
  * Terminal statuses a `<task-notification>` can report. `killed` is the one an
  * accidental stop writes — leaving it out was the ghost-dwarf bug: the agent
  * never notified as completed, so it mined forever (see docs/provider-formats.md).
@@ -720,6 +843,14 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   // session #179 was reported from), so only the last one describes the agent
   // as this window leaves it; membership alone is what makes it terminal.
   const finished = new Map<string, string>()
+  // Where in this window each agent's last ending and last resume record sit
+  // (issue #338). A second ending is byte-identical to the first, so ORDER is
+  // the only thing that can say whether a resume is still the agent's latest
+  // word — see ClaudeAgentResume.endedSince for why a suffix read may be
+  // trusted with that question.
+  const finishedAt = new Map<string, number>()
+  const resumed = new Map<string, { record: Omit<ClaudeAgentResume, 'endedSince'>; at: number }>()
+  let position = 0
   // The same asked-then-resolved bookkeeping the launches above use, on the
   // tool's own ids. Insertion order is ask order, so the last survivor is the
   // latest open question (issue #94).
@@ -733,13 +864,17 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
   const called = new Map<string, ClaudeToolUse>()
 
   for (const line of jsonlObjects(tailText)) {
+    position++
     // Runs for every line, not inside the `user` branch: the envelopes that
     // carry most endings are not user lines at all (issue #64).
     for (const text of notificationStrings(line)) {
       for (const match of text.matchAll(TASK_NOTIFICATION_RE)) {
         const taskId = match[1]
         const status = match[2]
-        if (taskId !== undefined && status !== undefined) finished.set(taskId, status)
+        if (taskId !== undefined && status !== undefined) {
+          finished.set(taskId, status)
+          finishedAt.set(taskId, position)
+        }
       }
     }
     if (line.type === 'assistant') {
@@ -768,6 +903,17 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
           })
         }
       }
+      // The other record that starts an agent (issue #338). Same envelope as
+      // the launch above — a tool result on a `user` line — because it IS one:
+      // the harness answering a `SendMessage` call with the id it restarted.
+      const restarted = resumedAgentIn(line)
+      if (restarted !== undefined) {
+        const timestamp = asString(line.timestamp)
+        resumed.set(restarted.agentId, {
+          record: { ...restarted, ...(timestamp === undefined ? {} : { timestamp }) },
+          at: position
+        })
+      }
       continue
     }
     if (line.type === 'system' && line.subtype === 'turn_duration') {
@@ -785,6 +931,11 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
     failedAgents: [...launched.values()].filter(
       (agent) => finished.get(agent.agentId) === 'failed'
     ),
+    endedLaunches: [...launched.values()].filter((agent) => finished.has(agent.agentId)),
+    resumedAgents: [...resumed.values()].map(({ record, at }) => ({
+      ...record,
+      endedSince: (finishedAt.get(record.agentId) ?? -1) > at
+    })),
     pendingBackgroundAgentCount,
     tokensObserved,
     // Matched by id over the whole tail rather than by line order: a suffix read

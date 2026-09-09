@@ -4071,3 +4071,321 @@ describe('ClaudeProvider observed permission prompt (#203)', () => {
     expect(foreman.pendingQuestion?.toolUseId).toBe('toolu_ask')
   })
 })
+
+describe('ClaudeProvider resumed by a SendMessage record (#338)', () => {
+  const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+  const MAIN_ID = `claude:${SESSION_ID}`
+  /** Stand-ins for the product's hour and half hour, as #40's tests use. */
+  const FOREMAN_WINDOW = 60_000
+  const WORKER_WINDOW = 30_000
+
+  /**
+   * One agent launched, ended, resumed by `SendMessage` and ended again, in the
+   * shapes Claude Code writes each of those four records in. Hand-written from
+   * the record shapes docs/provider-formats.md §1.4 tabulates and the payload
+   * issue #338 reports, never captured from a real machine.
+   */
+  const resumeRecord = readFileSync(join(FIXTURES, 'resume-record.jsonl'), 'utf8')
+  const resumeLines = resumeRecord.split('\n').filter(Boolean)
+  const RESUMED_AGENT = 'c72a10f4b8e93d65a'
+  const WORKER_ID = `${MAIN_ID}:${RESUMED_AGENT}`
+  const SUBAGENT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents\\agent-${RESUMED_AGENT}.jsonl`
+
+  /** The fixture up to and including line `end`, as one tail read would return it. */
+  const upTo = (end: number): string => resumeLines.slice(0, end + 1).join('\n') + '\n'
+
+  /** The launch, and the turn that ended with it still pending. */
+  const atLaunch = upTo(1)
+  /** ...its first `<task-notification>`, in the queue-operation envelope. */
+  const afterEnding = upTo(2)
+  /** ...the `SendMessage` call, its resume result, and the next turn's count. */
+  const afterResume = upTo(5)
+  /** ...and the second ending, which is byte-identical to the first. */
+  const afterSecondEnding = upTo(6)
+
+  let fake: FakeFs
+  let clock: number
+
+  function makeProvider(): ClaudeProvider {
+    return new ClaudeProvider({
+      fs: fake,
+      roots: [ROOT1],
+      isPidAlive: () => true,
+      now: () => clock,
+      foremanSilenceMs: FOREMAN_WINDOW,
+      workerSilenceMs: WORKER_WINDOW
+    })
+  }
+
+  /** A `system`/`turn_duration` line, the only record the session's count rides. */
+  function turnDuration(pendingBackgroundAgentCount: number): string {
+    return (
+      JSON.stringify({
+        type: 'system',
+        subtype: 'turn_duration',
+        durationMs: 1_000,
+        messageCount: 1,
+        pendingBackgroundAgentCount
+      }) + '\n'
+    )
+  }
+
+  /**
+   * A resume result at a chosen timestamp, for the cases one fixture line
+   * cannot cover: a second resume of the same agent, and a payload that names
+   * no agent at all.
+   */
+  function resumeLine(
+    agentId: string | undefined,
+    timestamp: string,
+    summary = 'Placeholder follow-up message.'
+  ): string {
+    return (
+      JSON.stringify({
+        type: 'user',
+        timestamp,
+        message: {
+          role: 'user',
+          content: [{ tool_use_id: 'toolu_01PlaceholderSendCall02', type: 'tool_result' }]
+        },
+        toolUseResult: {
+          success: true,
+          message: agentId === undefined ? 'Message delivered' : `Resuming agent ${agentId}`,
+          ...(agentId === undefined ? {} : { resumedAgentId: agentId }),
+          summary
+        }
+      }) + '\n'
+    )
+  }
+
+  /** The registry entry with its status replaced. */
+  function entryWithStatus(status: string): string {
+    return JSON.stringify({ ...JSON.parse(sessionEntry), status })
+  }
+
+  function withTranscript(text: string): void {
+    fake.addFile(TRANSCRIPT, text, clock)
+  }
+
+  async function crew(provider: ClaudeProvider): Promise<string[]> {
+    return (await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)
+  }
+
+  beforeEach(() => {
+    fake = new FakeFs()
+    clock = 100_000
+    fake.addFile(`${ROOT1}\\sessions\\32896.json`, sessionEntry, 1_000)
+    withTranscript(atLaunch)
+    fake.addFile(SUBAGENT, subagentTranscript, 100_000)
+  })
+
+  it('draws the agent, lets it go on its notification, and draws it again on the resume', async () => {
+    // The whole reported timeline in one provider, poll by poll. What the
+    // board promises is that what is drawn is what is running, and between
+    // the second and third polls the agent is running again.
+    const provider = makeProvider()
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID])
+
+    clock = 110_000
+    withTranscript(afterEnding)
+    expect(await crew(provider)).toEqual([MAIN_ID])
+
+    clock = 120_000
+    withTranscript(afterResume)
+    fake.addFile(SUBAGENT, subagentTranscript, 118_000)
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID])
+  })
+
+  it('redraws it as the same dwarf, with the identity its launch record gave it', async () => {
+    // The same id above all: a worker that leaves and comes back under a new
+    // id is a new dwarf to everything downstream — the scene, the ledger and
+    // whatever the panel had open on it.
+    const provider = makeProvider()
+    const first = (await provider.scan())[0]!.dwarfs[1]!
+
+    clock = 110_000
+    withTranscript(afterEnding)
+    await provider.scan()
+
+    clock = 120_000
+    withTranscript(afterResume)
+    const second = (await provider.scan())[0]!.dwarfs[1]!
+    expect(second.id).toBe(first.id)
+    expect(second).toMatchObject({
+      role: 'worker',
+      name: 'Placeholder resumed agent task',
+      model: 'claude-fable-5',
+      status: 'working'
+    })
+    expect(provider.textDelivery(WORKER_ID)).toEqual({
+      kind: 'foreman-relay',
+      foremanDwarfId: MAIN_ID,
+      workerName: 'Placeholder resumed agent task'
+    })
+  })
+
+  it('lets the resumed agent go again on its next notification', async () => {
+    // Ending again is ordinary. The second blob is byte-identical to the
+    // first, so only its position after the resume can say it is a new one.
+    const provider = makeProvider()
+    clock = 120_000
+    withTranscript(afterResume)
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID])
+
+    clock = 130_000
+    withTranscript(afterSecondEnding)
+    expect(await crew(provider)).toEqual([MAIN_ID])
+  })
+
+  it('brings it back a second time on a second resume record', async () => {
+    const provider = makeProvider()
+    clock = 130_000
+    withTranscript(afterSecondEnding)
+    expect(await crew(provider)).toEqual([MAIN_ID])
+
+    clock = 140_000
+    withTranscript(
+      afterSecondEnding + resumeLine(RESUMED_AGENT, '2026-09-09T17:02:18.400Z') + turnDuration(1)
+    )
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID])
+  })
+
+  it('keeps the resumed worker while the resume record stays in the tail', async () => {
+    // The record never leaves the window, and neither does the ending it
+    // outranks. A provider that re-read either as news every 2s would flicker
+    // the dwarf in and out for as long as the agent worked.
+    const provider = makeProvider()
+    clock = 120_000
+    withTranscript(afterResume)
+    await provider.scan()
+
+    for (const poll of [3, 4, 5]) {
+      clock += 10_000
+      expect(await crew(provider), `poll ${poll}`).toEqual([MAIN_ID, WORKER_ID])
+    }
+  })
+
+  it('changes nothing when the resumed agent never ended in the first place', async () => {
+    // A follow-up to an agent still at the rock. The crew is what the launch
+    // record already proved, and the record adds nobody and renames nobody.
+    const provider = makeProvider()
+    const before = (await provider.scan())[0]!.dwarfs
+
+    clock = 120_000
+    withTranscript(atLaunch + resumeLines[3]! + '\n' + resumeLines[4]! + '\n' + turnDuration(1))
+    const after = (await provider.scan())[0]!.dwarfs
+    expect(after.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID])
+    expect(after[1]!.name).toBe(before[1]!.name)
+    expect(after[1]!.model).toBe(before[1]!.model)
+  })
+
+  it('adopts nobody from a SendMessage result that is not a resume', async () => {
+    // A plain cross-session message. The payload says it was delivered and
+    // names no agent, so there is no launch record here to read.
+    const provider = makeProvider()
+    clock = 110_000
+    withTranscript(afterEnding)
+    expect(await crew(provider)).toEqual([MAIN_ID])
+
+    clock = 120_000
+    withTranscript(
+      afterEnding + resumeLine(undefined, '2026-09-09T16:36:24.118Z') + turnDuration(1)
+    )
+    expect(await crew(provider)).toEqual([MAIN_ID])
+  })
+
+  it('adopts nobody from a tool result that merely printed a resume payload', async () => {
+    // The #64 rule, one record further on: a transcript quotes tool output
+    // constantly, and a Bash run that printed a payload must not start an
+    // agent any more than one that printed a notification may end one.
+    const printed =
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-09-09T16:36:24.118Z',
+        message: {
+          role: 'user',
+          content: [
+            {
+              tool_use_id: 'toolu_01PlaceholderBashCall01',
+              type: 'tool_result',
+              content: `Resuming agent c72a10f4 {"success":true,"resumedAgentId":"${RESUMED_AGENT}"}`
+            }
+          ]
+        },
+        toolUseResult: {
+          stdout: `{"success":true,"resumedAgentId":"${RESUMED_AGENT}"}`,
+          stderr: '',
+          interrupted: false,
+          isImage: false
+        }
+      }) + '\n'
+
+    const provider = makeProvider()
+    clock = 110_000
+    withTranscript(afterEnding)
+    await provider.scan()
+
+    clock = 120_000
+    withTranscript(afterEnding + printed + turnDuration(1))
+    expect(await crew(provider)).toEqual([MAIN_ID])
+  })
+
+  it('lifts an agent the surplus prune abandoned back out of the set', async () => {
+    // The other half of the report. #45's ceiling is sticky on purpose, and
+    // permanent: an id it sheds can never come back, whatever it writes
+    // afterwards. A resume record is Claude Code stating that this one did.
+    const other = 'd18b5e07c93af264b'
+    const provider = makeProvider()
+    withTranscript(
+      launch(RESUMED_AGENT, 'Placeholder resumed agent task') +
+        launch(other, 'Other') +
+        turnDuration(2)
+    )
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID, `${MAIN_ID}:${other}`])
+
+    // Both launch records scroll out and the count comes in one short: the
+    // ceiling sheds the oldest belief, which is the agent resumed below.
+    clock = 110_000
+    withTranscript(turnDuration(1))
+    expect(await crew(provider)).toEqual([MAIN_ID, `${MAIN_ID}:${other}`])
+
+    clock = 120_000
+    withTranscript(resumeLine(RESUMED_AGENT, '2026-09-09T16:36:24.118Z') + turnDuration(2))
+    expect(await crew(provider)).toEqual([MAIN_ID, `${MAIN_ID}:${other}`, WORKER_ID])
+  })
+
+  it('never re-adopts on a resume record it has already acted on', async () => {
+    // #40 still closes a resumed agent, and the record that brought it back
+    // stays in the tail afterwards. Acting on it twice would resurrect the
+    // ghost on the very next poll, so an id leaves the abandoned set for a
+    // record this provider has not seen before and for nothing else.
+    fake.addFile(`${ROOT1}\\sessions\\32896.json`, entryWithStatus('idle'), 1_000)
+    const provider = makeProvider()
+    clock = 120_000
+    withTranscript(afterResume)
+    fake.addFile(SUBAGENT, subagentTranscript, 118_000)
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID])
+
+    // Both windows elapse with neither transcript written.
+    clock = 300_000
+    expect(await crew(provider)).toEqual([])
+
+    clock = 310_000
+    fake.addFile(SUBAGENT, subagentTranscript, 305_000)
+    expect(await crew(provider)).toEqual([])
+  })
+
+  it('never lets a count line written before the resume shed the agent it brought back', async () => {
+    // The exemption #28 and #45 already give a launch still visible in the
+    // tail, for the record that is one: a count is written at the end of a
+    // turn, so it cannot speak for an agent resumed after it.
+    const provider = makeProvider()
+    clock = 110_000
+    withTranscript(afterEnding)
+    await provider.scan()
+
+    clock = 120_000
+    withTranscript(afterEnding + turnDuration(0) + resumeLines[4]! + '\n')
+    expect(await crew(provider)).toEqual([MAIN_ID, WORKER_ID])
+  })
+})

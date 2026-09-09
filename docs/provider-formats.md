@@ -269,6 +269,42 @@ Known limit, and the reason the count still binds: a **second** ending after a r
 byte-identical to the first, so a resumed agent that finishes leaves by the ordinary exits — a
 count of zero, the #45 ceiling, or #40's silence — rather than on its own notification.
 
+#### The resume IS written down — the `SendMessage` result (2026-09-09, issue #338)
+
+The sentence above — "a resume writes no second `async_launched` record" — is true and was read as
+more than it says. No second **launch** record is written; a **resume** record is. Observed live on
+2026-09-09: a background agent notified `completed` at 16:34:56, the orchestrator sent it a
+follow-up at 16:36:24, and Claude Code answered that `SendMessage` call on an ordinary `user` line
+whose `toolUseResult` reads
+`{"success":true,"message":"Resuming agent <short id>","resumedAgentId":"<agent id>","summary":"…"}`
+— the same machine-readable position an `async_launched` result occupies, naming the id it
+restarted. The agent's own `subagents/agent-<id>.jsonl` resumed growing within seconds and kept
+growing for minutes; its sidecar was unchanged, as ever. The board drew three workers for four
+running agents, and then two for three: the missing one was the resumed agent both times.
+
+Two things follow, and #338 acts on both.
+
+- **The record is the evidence, and it reaches endings inference cannot.** #179 had to infer a
+  resume from the agent writing again, which is why it only ever reopened `failed` — the one status
+  where a later write is not ordinary. This ending said `completed`, so nothing above could fire at
+  all. The record says which agent, in the harness's own words, whatever the ending said. The
+  growing transcript is corroboration and nothing is adopted from an mtime alone: a late flush
+  after a `<task-notification>` is ordinary, and a resumed agent stays on the board through the
+  same `workerSilenceMs` staleness every other worker has.
+- **Order in the window is what separates the two endings.** The second notification really is
+  byte-identical to the first, so the blob cannot say which it is; its POSITION relative to the
+  resume can, and a suffix read may be trusted with that question — a resume is written after the
+  ending it answers, so a tail that still shows that ending still shows the resume too. An ending
+  later in the window than the resume closes the agent again; one earlier is the ending the resume
+  already outranked, re-read.
+
+Read from a top-level key of a parsed tool-result payload only, never from a substring — the same
+"who wrote it, not what it looks like" test the notification envelopes above are subject to, and
+for the same reason: a Bash run that printed a payload must not start an agent any more than one
+that printed a notification may end one. `__fixtures__/claude/resume-record.jsonl` carries the
+whole timeline — launch, ending, `SendMessage` call, resume result, second ending — hand-written
+from the shapes tabulated here rather than captured.
+
 ### 1.5 Liveness — RUNNING session detection
 
 **Best signal: `~/.claude/sessions/<pid>.json`** **[V]** — one file per live interactive session:
