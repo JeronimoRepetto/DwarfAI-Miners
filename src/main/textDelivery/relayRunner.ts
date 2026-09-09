@@ -106,6 +106,11 @@ export async function deliverViaRelay(options: RelayDeliveryOptions): Promise<Te
     }
     return { delivered: true }
   } catch {
-    return { delivered: false, error: 'The relay could not be started.' }
+    // The one failure that PROVES nothing was handed over: the binary never
+    // ran, so no SendMessage call can have happened. Both branches above are
+    // deliberately not marked — a non-zero exit and a timeout kill can each
+    // land after the tool call succeeded — and that is what decides whether
+    // the console tier behind this may retry the same text (#308).
+    return { delivered: false, error: 'The relay could not be started.', neverStarted: true }
   }
 }

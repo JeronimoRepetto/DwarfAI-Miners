@@ -582,3 +582,61 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
     expect(refusalLine(dwarf)).toBeNull()
   })
 })
+
+/*
+ * Issue #308. A dwarf whose two halves of the matrix disagree — the relay for
+ * a message, the console for an interrupt — is the first one where the SEND
+ * hint and the KICK hint must describe two different mechanisms for one
+ * session. The copy is asserted rather than only the wiring, because a hint
+ * that still said "typed straight into the session console" would be telling
+ * somebody their message is about to take over their screen when it is not.
+ */
+describe('the copy for a session that relays messages and interrupts at its console (#308)', () => {
+  function relayFirst(): Dwarf {
+    return defaultDwarf({
+      textDelivery: 'claude-relay',
+      capabilities: { sendText: 'claude-relay', cancel: 'terminal', adjustEffort: null }
+    })
+  }
+
+  it('describes the send as a hand-over the session reads between tool calls', () => {
+    const chat = buildActionBar(relayFirst(), IDLE).find((action) => action.id === 'chat')
+    expect(chat?.enabled).toBe(true)
+    expect(chat?.hint).toBe(CHANNEL_HINT['claude-relay'])
+    // Never a claim that anything has READ it: `delivered` means the queue,
+    // and the ✓✓ is the renderer's own observed-reaction rule (reaction.ts).
+    expect(CHANNEL_HINT['claude-relay']).toContain('between tool calls')
+    expect(CHANNEL_HINT['claude-relay']).not.toMatch(/headless/i)
+  })
+
+  it('says nothing about a console or about typing in the send hint', () => {
+    expect(CHANNEL_HINT['claude-relay']).not.toMatch(/console|typ|window|focus/i)
+  })
+
+  it("still describes the kick as a keystroke at that session's console", () => {
+    const kick = buildActionBar(relayFirst(), IDLE).find((action) => action.id === 'kick')
+    expect(kick?.hint).toBe(KICK_HINT.terminal)
+  })
+
+  /*
+   * The console tier's own hint has to say two things it never had to say
+   * while it was the default: that it is the FALLBACK, and what it does — it
+   * focuses the console and types. A person who reads it should be able to
+   * predict the screen taking over, which is exactly what #308 exists to stop
+   * happening unannounced.
+   */
+  it('warns that the console tier focuses the window and types into it', () => {
+    expect(CHANNEL_HINT.terminal).toMatch(/fallback/i)
+    expect(CHANNEL_HINT.terminal).toMatch(/focus/i)
+    expect(CHANNEL_HINT.terminal).toMatch(/typ/i)
+  })
+
+  it('keeps that warning on the composer of a session whose only channel it is', () => {
+    const consoleOnly = defaultDwarf({
+      textDelivery: 'terminal',
+      capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+    })
+    const chat = buildActionBar(consoleOnly, IDLE).find((action) => action.id === 'chat')
+    expect(chat?.hint).toBe(CHANNEL_HINT.terminal)
+  })
+})

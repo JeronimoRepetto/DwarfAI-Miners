@@ -19,6 +19,18 @@ export interface ResolvedTextDelivery {
   endpoint: SendEndpoint
   /** Prepended to the user's text, e.g. '[for agent Explorer] '. Empty for a direct send. */
   prefix: string
+  /**
+   * The console this send may fall back to, when the relay above it could not
+   * be started at all (#308). Absent wherever there is no second tier —
+   * which is every endpoint but a relay reached off a session that owns a
+   * console too.
+   *
+   * A pid rather than an endpoint, because the fallback is not a channel the
+   * panel may advertise: `channel` is what the bar reads, and it names the
+   * relay. See `sendRouteOf` for the rule, and `TextDeliveryOutcome.neverStarted`
+   * for the single condition under which the runtime is allowed to use this.
+   */
+  consoleFallbackPid?: number
 }
 
 /** Same shape as ResolvedTextDelivery; kept as its own type since Kick's prefix means something different. */
@@ -102,6 +114,47 @@ function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): Forem
 }
 
 /**
+ * The channel and endpoint one resolved chain answers a MESSAGE with, or null
+ * when it has none — the mirror of `kickEndpointOf` below, and the third place
+ * send and kick routing part company (#308).
+ *
+ * The rule it adds: a session that owns a console AND is addressable by
+ * registry name is written to through the RELAY, on every platform, with the
+ * console kept only as the tier a relay that never started falls back to.
+ *
+ * #24 chose the opposite order, and chose it for an honest reason —
+ * keystrokes are instant where a relay turn is a whole `claude -p` run. What
+ * reversed it is not a preference but a hazard measured live: the console tier
+ * focuses the session's window and then types the message into whatever holds
+ * the foreground, so a person who clicks elsewhere while it types has the rest
+ * of their own sentence written into an unrelated application (#308). A slow
+ * channel that cannot do that beats a fast one that can, and the seconds are
+ * paid by the panel rather than by the person's other windows.
+ *
+ * Kick keeps #24's order deliberately, which is why this rule lives here and
+ * not in `deliveryTargetOf` where both would inherit it: an interrupt IS a
+ * keystroke, it carries no user text that could land somewhere else, and Esc
+ * at the wrong window costs a cancelled turn rather than a leaked message.
+ *
+ * `channel` follows the endpoint so that the capability the bar reads is the
+ * channel the send will actually use. A worker's chain keeps 'foreman-relay',
+ * because what the panel is describing there is still the hop and not the tier
+ * underneath it.
+ */
+function sendRouteOf(hops: ForemanHops): Omit<ResolvedTextDelivery, 'prefix'> | null {
+  if (!canCarryText(hops.endpoint)) return null
+  const endpoint = hops.endpoint
+  if (endpoint.kind !== 'terminal' || endpoint.sessionName === undefined) {
+    return { channel: hops.channel, endpoint }
+  }
+  return {
+    channel: hops.workerNames.length === 0 ? 'claude-relay' : hops.channel,
+    endpoint: { kind: 'claude-relay', sessionName: endpoint.sessionName },
+    consoleFallbackPid: endpoint.pid
+  }
+}
+
+/**
  * Follow `dwarfId` to a writable endpoint, or null when no channel exists.
  * A worker contributes an `[for agent <name>] ` prefix so the foreman reading
  * the message knows who it was meant for.
@@ -111,10 +164,11 @@ export function resolveTextDelivery(
   targetOf: TextDeliveryLookup
 ): ResolvedTextDelivery | null {
   const hops = followForemanHops(dwarfId, targetOf)
-  if (hops === null || !canCarryText(hops.endpoint)) return null
+  if (hops === null) return null
+  const route = sendRouteOf(hops)
+  if (route === null) return null
   return {
-    channel: hops.channel,
-    endpoint: hops.endpoint,
+    ...route,
     prefix: hops.workerNames.map((name) => `[for agent ${name}] `).join('')
   }
 }
@@ -219,16 +273,22 @@ export function resolveKickDelivery(
  * The two halves of the matrix are resolved from ONE walk and can disagree,
  * which is the whole reason it is a matrix. `sendText` is null wherever the
  * endpoint cannot take text and `cancel` is null wherever it cannot take a
- * kick, both read off the same predicates resolveTextDelivery and
- * resolveKickDelivery enforce (#97, #217) rather than re-derived here — a
- * second copy of either rule is how the panel and the runtime would start
- * refusing different dwarfs.
+ * kick, both read off the same routing functions resolveTextDelivery and
+ * resolveKickDelivery enforce (#97, #217, #308) rather than re-derived here —
+ * a second copy of either rule is how the panel and the runtime would start
+ * refusing different dwarfs, or start describing a send main will not make.
  *
- * Two channels are asymmetric today, in opposite directions: the Codex queue
- * delivers and cannot interrupt, and a process this panel launched can be
- * ended and takes no messages. `textDelivery` mirrors sendText only, because
- * it is the field the composer reads — stamping a channel that cannot carry
- * text there would enable a box whose message main is bound to refuse.
+ * Three channels are asymmetric today, and the third one differs from the
+ * other two in kind: the Codex queue delivers and cannot interrupt, a process
+ * this panel launched can be ended and takes no messages, and an observed
+ * Claude session with a registry name takes MESSAGES over the relay while its
+ * interrupt still goes to its console (#308). The first two are facts about a
+ * session type; the third is one session answering two channels, which is why
+ * `sendChannel` comes off sendRouteOf rather than off the shared walk.
+ * `textDelivery` mirrors sendText only, because it is the field the composer
+ * reads — stamping a channel that cannot carry text there would enable a box
+ * whose message main is bound to refuse, and stamping the kick's channel there
+ * would put the console tier's hint on a send that never touches a console.
  *
  * One walk per dwarf, which is why both halves come off `followForemanHops`
  * here rather than from two resolve calls: the poll asks each provider once
@@ -242,7 +302,7 @@ export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): 
       if (dwarf.status === 'leaving') return dwarf
       const hops = followForemanHops(dwarf.id, targetOf)
       if (hops === null) return dwarf
-      const sendChannel = canCarryText(hops.endpoint) ? hops.channel : null
+      const sendChannel = sendRouteOf(hops)?.channel ?? null
       const kickChannel = kickEndpointOf(hops) === null ? null : hops.channel
       return {
         ...dwarf,

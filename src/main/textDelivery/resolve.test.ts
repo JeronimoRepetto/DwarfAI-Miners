@@ -36,17 +36,64 @@ describe('resolveTextDelivery', () => {
     })
   })
 
-  it("carries a terminal endpoint's relay fallback address through unchanged", () => {
-    // The runtime reads sessionName off the resolved endpoint when the console
-    // attempt fails (issue #24); dropping it here would silently disable the
-    // fallback for every send.
+  /*
+   * AMENDED for #308 (was: "carries a terminal endpoint's relay fallback
+   * address through unchanged", which asserted `channel: 'terminal'` with
+   * `endpoint: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' }`
+   * — #24's order, the console first and the name only read off the endpoint
+   * after a focus had failed).
+   *
+   * A MESSAGE goes the other way round now. The name is the address it uses
+   * and the pid is only what a relay that never started falls back to; see
+   * sendRouteOf in resolve.ts for why the reversal is a hazard fix rather than
+   * a preference.
+   */
+  it('sends a named console session over the relay, keeping its console as the fallback', () => {
     const resolved = resolveTextDelivery(
       'claude:s1',
       targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } })
     )
     expect(resolved).toEqual({
+      channel: 'claude-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
+      consoleFallbackPid: 42,
+      prefix: ''
+    })
+  })
+
+  it("keeps a worker's prefix while its named foreman's message crosses to the relay", () => {
+    // The flip happens at the endpoint, so the hop that produced the prefix
+    // must survive it: the session at the top is still being asked to pass
+    // the text on to the agent the person pointed at (#308, #157).
+    const resolved = resolveTextDelivery(
+      'claude:s1:agent-9',
+      targetsFrom({
+        'claude:s1:agent-9': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': { kind: 'terminal', pid: 7, sessionName: 'sample-project-70' }
+      })
+    )
+    expect(resolved).toEqual({
+      channel: 'foreman-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
+      consoleFallbackPid: 7,
+      prefix: '[for agent Explorer] '
+    })
+  })
+
+  it('leaves a console session with no name on its console, having nothing else to offer', () => {
+    // The one case the console tier is still the primary for (#308): no
+    // registry name, so no relay address exists at all.
+    const resolved = resolveTextDelivery(
+      'claude:s1',
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42 } })
+    )
+    expect(resolved).toEqual({
       channel: 'terminal',
-      endpoint: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' },
+      endpoint: { kind: 'terminal', pid: 42 },
       prefix: ''
     })
   })
@@ -209,6 +256,22 @@ describe('resolveKickDelivery', () => {
       channel: 'foreman-relay',
       endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
       prefix: '[cancel agent Explorer] '
+    })
+  })
+
+  it('keeps a named console session on its console, where the message now leaves it (#308)', () => {
+    // The one asymmetry #308 introduces, and the whole reason send and kick
+    // resolve separately: an interrupt IS a keystroke and carries no user
+    // text, so Esc into the wrong window costs a cancelled turn rather than a
+    // leaked sentence. The relay stays this tier's fallback (#24).
+    const resolved = resolveKickDelivery(
+      'claude:s1',
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } })
+    )
+    expect(resolved).toEqual({
+      channel: 'terminal',
+      endpoint: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' },
+      prefix: ''
     })
   })
 
@@ -477,6 +540,28 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: null,
       cancel: 'launched-process',
+      adjustEffort: null
+    })
+  })
+
+  /**
+   * The third asymmetric channel, and the first where the two halves disagree
+   * for one session rather than for one session TYPE (#308). An observed
+   * Claude session with a registry name takes messages over the relay and
+   * interrupts at its console, so the matrix has to publish two different
+   * channels for one dwarf — and `textDelivery` must follow sendText, because
+   * it is the field the composer reads: a bar that advertised 'terminal' here
+   * would promise a hint main is no longer going to honour.
+   */
+  it('stamps the relay for sending and the console for cancelling on a named session', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf()])],
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } })
+    )
+    expect(stamped?.dwarfs[0]?.textDelivery).toBe('claude-relay')
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'claude-relay',
+      cancel: 'terminal',
       adjustEffort: null
     })
   })

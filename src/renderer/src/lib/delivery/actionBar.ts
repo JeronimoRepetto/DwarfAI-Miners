@@ -98,10 +98,31 @@ export function oneShotNoExitReason(provider: DwarfProvider): string {
   )
 }
 
-/** What each channel means, in the sender's terms. */
+/**
+ * What each channel means, in the sender's terms.
+ *
+ * Read off `capabilities.sendText`, which since #308 can name a different
+ * channel from `capabilities.cancel` for the same dwarf — so these sentences
+ * describe the SEND and only the send, and KICK_HINT below describes the other
+ * half. Two of them changed with that reordering, and both had to: the console
+ * hint described the default it no longer is, and the relay hint described a
+ * headless session it is no longer exclusive to.
+ */
 export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
-  terminal: 'Typed straight into the session console.',
-  'claude-relay': 'Relayed to the headless session by name.',
+  // Says the two things the default channel never had to say (#308): that it
+  // is the fallback, and what it costs. It focuses somebody's console and
+  // types — a person about to have their screen taken over should be able to
+  // read that here first.
+  terminal:
+    'The fallback when nothing else can reach the session: its console is focused and the ' +
+    'message typed in.',
+  // Never "headless": since #308 this is the channel an ordinary session at an
+  // ordinary terminal uses too, and it reaches that session without touching
+  // its window. Says "reads it between tool calls" rather than claiming
+  // anything read it — a ✓ here is a hand-over to the queue and nothing more
+  // (see reaction.ts and the delivered-versus-reacted invariant).
+  'claude-relay':
+    "Handed to the session through Claude Code's own messaging; it reads it between tool calls.",
   'foreman-relay': "Delivered to this worker's foreman, tagged for them.",
   'codex-queue': "Added to this Codex session's queue; it reads it between turns.",
   'held-session': 'Put straight onto the session this panel is holding open.',

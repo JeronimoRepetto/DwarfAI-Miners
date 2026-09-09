@@ -20,11 +20,11 @@ import type { StageTimings } from './timing'
  * Where one dwarf's text should physically go, as reported by its provider.
  *
  * A 'terminal' target may also carry `sessionName`: the same relay address a
- * 'claude-relay' target uses. It is the fallback, not the channel — the
- * runtime tries the console first (keystrokes are instant; a relay turn is a
- * whole `claude -p` run) and reaches for the name only when the console
- * cannot be focused or typed into, so a failed focus no longer loses the
- * message (issue #24).
+ * 'claude-relay' target uses. Which of the two a given ACT reaches for is not
+ * a property of the target — send and kick answer it differently, and
+ * resolve.ts owns both answers (`sendRouteOf`, `kickEndpointOf`). A message
+ * goes by name and falls back to the console; an interrupt goes to the console
+ * and falls back to the name (#308, over #24).
  *
  * A 'codex-queue' target has no such second address and needs none: it wants
  * neither a window nor a pid, only the thread's own UUID, which is why it is
@@ -189,6 +189,23 @@ export interface InterruptRequest {
 export interface TextDeliveryOutcome {
   delivered: boolean
   error?: string
+  /**
+   * Whether this attempt never reached its channel at all — the tier could not
+   * be STARTED, so nothing was handed over anywhere (#308).
+   *
+   * The one thing that licenses a second tier to send the SAME text. A failed
+   * verdict is not enough on its own: a relay turn that ran and then exited
+   * non-zero, or was killed by the timeout, may already have called
+   * SendMessage before it died, and keystrokes behind it would put the
+   * person's message into the session twice. So the flag says "provably
+   * nothing was delivered" rather than "this did not report success", and
+   * absence of it means the caller must assume a possible hand-over and stop.
+   *
+   * Optional and false-by-absence for the reason `stages` is: a tier that
+   * cannot tell the two apart simply never sets it, and the caller then treats
+   * every failure as possibly-delivered — the safe direction.
+   */
+  neverStarted?: boolean
   /**
    * How long this tier's own stages took, when it measured them (issue #21).
    * Durations only — there is no way for a payload to travel in here. The

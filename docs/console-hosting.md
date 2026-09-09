@@ -416,6 +416,62 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 
 ---
 
+## 4b. The delivery channel matrix, and which tier each act takes
+
+§4 is about **questions**. This one is about **text going the other way**, and it is the table #308
+reordered. Two acts, two orders, one target: a `terminal` target that also carries a registry
+`sessionName` is one session with two answers, and `resolveTextDelivery` / `resolveKickDelivery`
+give them separately [code: `src/main/textDelivery/resolve.ts`].
+
+| Target                             | Message (`sendDwarfText`)                       | Interrupt (`kickDwarf`)                      | Touches a window? |
+| ---------------------------------- | ----------------------------------------------- | -------------------------------------------- | ----------------- |
+| `terminal` **with** a session name | `claude-relay`, console only if it never starts | `terminal`, relay as the fallback            | message: no       |
+| `terminal` **without** one         | `terminal` — the only channel it has            | `terminal`, nothing behind it                | yes               |
+| `claude-relay`                     | `claude-relay`                                  | `claude-relay` (a semantic ask)              | no                |
+| `codex-queue`                      | `codex-queue`                                   | refused — drains between turns (#97)         | no                |
+| `held-session`                     | the stream this panel holds                     | a real interrupt, where the protocol has one | no                |
+| `hosted-stdin`                     | the pipe this panel holds                       | ends the process (#194)                      | no                |
+| `launched-process`                 | refused — no inbox (#217)                       | ends the process                             | no                |
+
+**Row one is #308, and it reverses #24.** #24 made the console the primary and the relay its
+fallback for the honest reason that keystrokes are instant where a relay turn is a whole `claude -p`
+run. What reversed it was measured live by the maintainer on Windows 11, 2026-09-09 [V, #308]: the
+console tier types the message character by character into the **focused** window, and a person who
+clicks somewhere else while it types has the remainder of their own sentence written into **that**
+application. A channel that can write a person's message into an unrelated program is a hazard, not
+a latency trade, so the message pays seconds and the person's other windows pay nothing.
+
+**The fallback is one-directional and conditional.** A relay that never STARTED (the binary is not
+where `resolveClaudeBinaryPath` looks) proves nothing was handed over, and only then may the console
+take the same text. A relay that ran and exited non-zero, or was killed by `SENDTEXT_TIMEOUT_S`, may
+already have called `SendMessage` before it died — so it does **not** fall back, because a second
+delivery by keystrokes would put the message into the session twice. `TextDeliveryOutcome.neverStarted`
+is that distinction, carried rather than inferred from the error string.
+
+**Kick keeps the old order deliberately.** An interrupt is a keystroke by nature, it carries no user
+text that could land in the wrong window, and Esc is the only key this app has measured against a
+live Claude TUI [V, #203, see §4 row four]. The same is true of the permission digits: a decision is
+answered at the terminal drawing the dialog, so it reads the kick's route and not the message's.
+
+### What is not measured yet
+
+Step 2 of #308 asks for these numbers and they are **not in this document yet**. Listed as columns
+so the gap is visible rather than filled with plausible ones:
+
+| Quantity                                                     | Value                | How it will be taken                                            |
+| ------------------------------------------------------------ | -------------------- | --------------------------------------------------------------- |
+| Wall-clock latency of one relay turn                         | **not yet measured** | the `relay=` stage already in every `[runtime] Message to` line |
+| Token cost of one relay turn                                 | **not yet measured** | the relay session's own usage, at `SENDTEXT_RELAY_MODEL`        |
+| When a queued message is read — target mid-turn              | **not yet measured** | send during a long tool call, watch the transcript              |
+| When a queued message is read — target at its prompt         | **not yet measured** | send to an idle session, watch the transcript                   |
+| Whether `REACTION_WINDOW_MS` (60 s) covers the read boundary | **not yet measured** | follows from the two rows above                                 |
+
+#21's earlier estimate of 5–20 s for a relay turn is an **estimate**, taken from the issue text and
+not from this app's own stage timings; it is why the first row says not measured rather than
+repeating it as a finding.
+
+---
+
 ## 5. Session lifetime, per mode
 
 | Mode                            | Survives the panel quitting                        | Loses                                         |
@@ -442,6 +498,10 @@ already written. Both models are supported; neither had to win.
 ---
 
 ## 6. The terminal handoff, when the panel is not the host
+
+> **Since #308 a message never takes this path where the session has a registry name** — see §4b:
+> the relay reaches it without a window. What is below still governs Kick, the permission
+> keystrokes of #203, and a message to a session with no name at all.
 
 Path 4 keeps one act the other three never need: bringing **somebody else's** terminal window to the
 front before typing into it. Two things about that are counter-intuitive enough to have cost #190

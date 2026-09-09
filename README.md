@@ -124,7 +124,9 @@ explains how the shipped assets are processed.
   marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
 - **Panel motion** — pages and floating panels open and close in 250 ms, independent of display
   scale. The system's reduced-motion preference makes these transitions instantaneous.
-- **Send and kick** — deliver a message to a session or kick an agent straight from the panel.
+- **Send and kick** — deliver a message to a session or kick an agent straight from the panel. A
+  message to a named Claude session travels over Claude Code's own cross-session messaging, so
+  nothing is typed and no terminal is brought forward.
 - **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
   milliseconds.
 - **Terminal focus** — clicking a dwarf focuses its terminal window, with a live transcript
@@ -201,11 +203,17 @@ or Linux desktop, so the table is honest about the difference.
 | Codex liveness probe                    | PowerShell `Win32_Process`    | `pgrep -f codex`                       | `pgrep -f codex`                       |
 | Click-to-focus a terminal               | user32 via PowerShell         | `ps` + System Events (`osascript`)     | **Unsupported** — falls back to viewer |
 | Live transcript viewer                  | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
-| Type a message into a terminal session  | SendKeys                      | **Disabled** (built, gated)            | **Unsupported**                        |
-| Relay a message to a named session      | Supported                     | Supported                              | Supported                              |
+| Relay a message to a named session      | Supported — the default       | Supported — the default                | Supported — the default                |
+| Type a message into a terminal session  | SendKeys — fallback only      | **Disabled** (built, gated)            | **Unsupported**                        |
 | Queue a message to a Codex CLI session  | **Verified**                  | Expected to work (spawns `codex`)      | Expected to work (spawns `codex`)      |
 | Start at login                          | HKCU Run key                  | `~/Library/LaunchAgents` plist         | `~/.config/autostart` desktop entry    |
 | Packaging                               | NSIS + portable               | dmg + zip (arm64 & x64)                | AppImage + deb                         |
+
+A message to a Claude session with a registry name takes the relay on **every** platform, including
+Windows. Typing into a console is what remains for a session with no name — it focuses that window
+and synthesizes keystrokes, which also means a window switch mid-typing lands the rest of the text
+somewhere else, so it is the last channel tried and never the first. An interrupt (Kick) is
+unchanged: it is a keystroke by nature and still goes to the console where one exists.
 
 Notes on the three honest gaps:
 
