@@ -41,7 +41,8 @@ volume: a 7-day window holds dozens of long-dead rollouts and each is refused on
 (or `true`) makes `src/main/shell/window.ts` narrate what it does to the message panel's
 own window: the rectangle a first open asked for and what became of a persisted position,
 each height report with the window's visibility before and after it, the branch every
-later open takes instead, and the window's own `close` handler firing (#312). It exists
+later open takes instead, the window's own `close` handler firing, and the fallback that
+reveals a window no height report ever arrived for (#312). It exists
 because that whole path is silent — the window is created hidden and revealed only by the
 renderer's first height report, and every refusal on the way there was a bare `return`, so
 a first open that produced no panel produced no line either. Read per call like

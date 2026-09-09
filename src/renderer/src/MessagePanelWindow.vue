@@ -755,7 +755,22 @@ function reportHeight(): void {
 }
 
 /**
- * Report again whenever the SURFACE changes, and not only when it resizes.
+ * What the surface is DRAWING, as one comparable value: which panel, and for
+ * which dwarf.
+ *
+ * A string rather than the three parts, for the reason the `state.mines` watch
+ * above gives its own shape: `selectedDwarf` is recomputed from every poll, so
+ * a getter answering a fresh array would fire the watch below twice a second
+ * and re-place the window each time. Identity is the whole of what matters
+ * here, and it fits in a string.
+ */
+const surfaceContentKey = computed(
+  () => `${panel.value.surface}|${launchOpen.value}|${selectedDwarf.value?.id ?? ''}`
+)
+
+/**
+ * Report again whenever the surface's CONTENT changes, and not only when it
+ * resizes.
  *
  * The window is created hidden and main reveals it on the first height report
  * (see setMessagePanelHeight in main/shell/window.ts), so leaving the report to
@@ -764,13 +779,38 @@ function reportHeight(): void {
  * as though it did nothing. `nextTick` because the report is a measurement:
  * the panel this state asks for has to be on screen before there is anything
  * to measure.
+ *
+ * ## Why the surface alone was not enough (#312)
+ *
+ * The surface is what main was ASKED for; the content is what arrived. On the
+ * first open of a run those are two different moments and in that order: this
+ * window learns the surface from `syncPanel`, and the board that decides WHICH
+ * dwarf to draw lands on the `getMines` after it. So the report the surface
+ * change fired measured an empty surface, was suppressed by the rule below as
+ * a zero, and nothing reported again when the dwarf's panel finally mounted —
+ * leaving main holding a created, hidden window with no height and no second
+ * way to reveal it. Selecting another dwarf had the same gap: the surface stays
+ * 'message' throughout, so only the observer saw the new panel.
+ *
+ * And the observer cannot cover either, because the window it would cover them
+ * for is HIDDEN. A ResizeObserver callback is delivered while the page's
+ * rendering is updated, and Electron's own contract for a backgrounded page is
+ * that "animations and timers are paused" unless `backgroundThrottling` is
+ * disabled, in which case "frames will continue to be drawn and swapped for
+ * the entire window". That flag is deliberately NOT set here: it would keep a
+ * window that spends most of the app's life hidden drawing frames, and it
+ * "also impacts the Page Visibility API" for both surfaces — a real cost for a
+ * report this window can simply make at the moment it knows about, which is
+ * the change of content itself. Once the window is visible the observer works,
+ * which is why one report is all that has to be guaranteed.
+ *
+ * One `nextTick` is enough to measure the final panel: DwarfMessagePanel takes
+ * its opening height during setup and binds it on its own root, so the first
+ * render already carries it.
  */
-watch(
-  () => panel.value.surface,
-  () => {
-    void nextTick(reportHeight)
-  }
-)
+watch(surfaceContentKey, () => {
+  void nextTick(reportHeight)
+})
 
 let unsubscribe: (() => void) | undefined
 let unlistenPanel: (() => void) | undefined
