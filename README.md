@@ -130,9 +130,9 @@ are processed.
   acting, ✕ with the reason and a **Send again** beside it.
 - **Kick in one click** — one press cuts a session's turn short. Where nothing can be interrupted,
   the same press sends the dwarf off the rock instead, and says so.
-- **Sound** — six shuffled background tracks, a mine ambience that follows whether the crew is
-  actually mining, and a voice per dwarf rank on click. All of it optional, from
-  [Settings](#settings).
+- **Sound** — eight shuffled background tracks, a mine ambience that follows whether the crew is
+  actually mining, and a voice per dwarf rank on click plus the shell's own interface sounds. All
+  of it optional, from [Settings](#settings).
 - **Panel motion** — pages and floating panels open and close in 250 ms, independent of display
   scale. The system's reduced-motion preference makes these transitions instantaneous.
 - **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
@@ -478,7 +478,7 @@ tail can never come back as a ghost. Codex promotion still comes from a verified
 
 Three independent channels, all off one engine:
 
-- **Music.** Six background tracks, shuffled — nothing plays them in the order they are declared.
+- **Music.** Eight background tracks, shuffled — nothing plays them in the order they are declared.
   The note button at the bottom of the navigation column starts and stops them **for this run**;
   Settings' **Music at startup** is the separate statement about what should happen tomorrow.
   Silencing the music for one meeting is not a preference, which is why the button persists nothing.
@@ -486,9 +486,11 @@ Three independent channels, all off one engine:
   picks on rock while a worker is producing tokens, and the quiet bed otherwise. A mine holding only
   a foreman hears the quiet one — a foreman is not a worker. The round **mute** at the interior's
   top-left corner silences the ambience alone, also for this run.
-- **Dwarf voices.** One recording per rank, played when you click a dwarf and on nothing else.
-  There is no fallback: a rank with no recording would simply be silent rather than borrow another
-  rank's voice.
+- **Effects.** One recording per dwarf rank, played when you click a dwarf, plus the shell's own
+  interface sounds — a click on the five navigation buttons and a sound when the side panel opens
+  and closes. One channel, one volume: a rank with no recording is simply silent rather than
+  borrowing another rank's voice, and the same is true of an interface action with no sound of its
+  own.
 
 All of it stops while the window is away — hidden, minimised, or sent to the tray — and the music
 alone survives the shell being collapsed to its rail. Nothing a media element refuses ever reaches
@@ -508,7 +510,7 @@ application controls:
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Panel shortcut** | Record a new global toggle combination, or reset it to **Ctrl+Alt+Shift+P**. If another application already owns the one you record, registration fails, the previous shortcut is re-claimed, and this section says so rather than showing a shortcut that does nothing. |
 | **Position**       | Which screen edge the docked shell opens on — left or right. Right by default.                                                                                                                                                                                           |
-| **Audio**          | **Music at startup** (on by default), plus a volume slider each for music, ambience and voices. All three start at 100%. See [Sound](#sound).                                                                                                                            |
+| **Audio**          | **Music at startup** (on by default), plus a volume slider each for **Music**, **Ambience** and **Effects**. They start at 10%, 100% and 70%. See [Sound](#sound).                                                                                                       |
 | **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
 | _Application_      | **Always on top**, **Hide panel**, and the running version.                                                                                                                                                                                                              |
 
