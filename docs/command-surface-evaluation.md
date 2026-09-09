@@ -284,7 +284,7 @@ In dependency order, each blocked on the one before it and named reasons only:
 AMENDED for #96 (was: items 1-4 above all read "not started"). Items (1)-(3) landed in an earlier
 slice — `sdkHeldSession.ts` reads `model`, `mcp_servers` and the latest `total_cost_usd`/`usage` off
 `init`/`result` (§4 items 1-2), and `heldTelemetryToWire`/`stampHeldTelemetry` in
-`main/sessionLaunch/heldSession.ts` narrow them onto `Dwarf.model`/`Dwarf.effort`/`Dwarf.mcpServers`/
+`src/main/sessionLaunch/heldSession.ts` narrow them onto `Dwarf.model`/`Dwarf.effort`/`Dwarf.mcpServers`/
 `Dwarf.totalCostUsd` (§4 item 3, first two bullets). The cost field's own open question (§7, "is cost
 worth showing at all") was answered **no** for this surface by the maintainer's 2026-09-07 ruling:
 the mine's session strip shows no currency figure at all, so `totalCostUsd` stays wired but undrawn —
@@ -294,7 +294,7 @@ This change ships item (4)'s read-only rendering, scoped exactly to the maintain
 than to §2a's full row: model and MCP status (both already flowing, per above) plus context usage,
 in the **mine view** (not the dwarf action bar, not the MessagePanel), for **held sessions only** —
 see `docs/dwarfai-miners-design/screens/mine.md`, "Session strip", and
-`renderer/src/lib/scene/sessionStrip.ts`.
+`src/renderer/src/lib/scene/sessionStrip.ts`.
 
 One finding this document did not anticipate: **context usage needed a mechanism §1 never named**,
 because it is the one field of the three that arrives on no stream message at all — neither `init`
