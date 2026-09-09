@@ -178,6 +178,17 @@ describe('DwarfMessagePanel shape', () => {
 })
 
 /**
+ * #294 folded every run of consecutive activity lines into one collapsed
+ * disclosure row, so the lines the two blocks below are about are one press
+ * away rather than on screen from the start. Every test in them is AMENDED with
+ * this press and nothing else: what each one claims about a line is exactly
+ * what it claimed before, and #294's own block pins the folding itself.
+ */
+async function openRun(wrapper: ReturnType<typeof panel>): Promise<void> {
+  await wrapper.find('.activity-disclosure').trigger('click')
+}
+
+/**
  * One line per tool call, interleaved between the speech bubbles (#240).
  * `screens/mine.md`'s activity-line amendment: the meta token, no icon, no
  * bubble surface and no portrait, ellipsis-truncated with the full text as
@@ -195,20 +206,23 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
     { role: 'assistant' as const, text: 'Tests pass.', timestamp: 't2' }
   ]
 
-  it('draws a tool call as its own muted line rather than a bubble', () => {
+  it('draws a tool call as its own muted line rather than a bubble', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.exists()).toBe(true)
     expect(line.text()).toBe('Ran pnpm test')
   })
 
-  it('carries the full text as the title, for the truncated line to expand on hover', () => {
+  it('carries the full text as the title, for the truncated line to expand on hover', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').attributes('title')).toBe('Ran pnpm test')
   })
 
-  it('draws no portrait and no bubble surface for a tool-call line', () => {
+  it('draws no portrait and no bubble surface for a tool-call line', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.find('.portrait').exists()).toBe(false)
     expect(line.classes()).not.toContain('bubble')
@@ -222,14 +236,16 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
     ])
   })
 
-  it('counts the tool-call line as one row in the conversation, same as a bubble', () => {
+  it('counts the tool-call line as one row in the conversation, same as a bubble', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    await openRun(wrapper)
     expect(wrapper.findAll('.bubble')).toHaveLength(2)
     expect(wrapper.findAll('.activity-line')).toHaveLength(1)
   })
 
-  it('draws a run line as a plain paragraph rather than a clickable control', () => {
+  it('draws a run line as a plain paragraph rather than a clickable control', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').element.tagName).toBe('P')
   })
 })
@@ -260,28 +276,226 @@ describe('DwarfMessagePanel path-opening lines (#279)', () => {
     }
   ]
 
-  it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', () => {
+  it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.element.tagName).toBe('BUTTON')
     expect(line.attributes('type')).toBe('button')
     expect(line.classes()).toContain('is-openable')
   })
 
-  it('draws a read line the same way an edit line is drawn', () => {
+  it('draws a read line the same way an edit line is drawn', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_READ }) })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').element.tagName).toBe('BUTTON')
   })
 
   it("emits the activity's own target on click, not the display text", async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    await openRun(wrapper)
     await wrapper.find('.activity-line').trigger('click')
     expect(wrapper.emitted('open-path')).toEqual([['src/main/index.ts']])
   })
 
-  it('still carries the full text as the title, same as a plain activity line', () => {
+  it('still carries the full text as the title, same as a plain activity line', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    await openRun(wrapper)
     expect(wrapper.find('.activity-line').attributes('title')).toBe('Edited src/main/index.ts')
+  })
+})
+
+/**
+ * One run of consecutive tool calls, folded into one disclosure row under the
+ * preceding bubble (#294). `lib/message/activityGroup` owns where a run
+ * starts and what it is called; what is pinned here is the row itself — closed
+ * on arrival, a button so a keyboard reaches it, and opening in place to the
+ * exact lines #240 drew with the paths #279 made clickable still clickable.
+ */
+describe('DwarfMessagePanel activity disclosure (#294)', () => {
+  const RUN_OF_THREE = [
+    { role: 'user' as const, text: 'fix the bug', timestamp: 't0' },
+    {
+      role: 'assistant' as const,
+      text: 'Read src/shared/contracts.ts',
+      timestamp: 't1',
+      activity: { kind: 'read' as const, target: 'src/shared/contracts.ts' }
+    },
+    {
+      role: 'assistant' as const,
+      text: 'Ran pnpm test',
+      timestamp: 't2',
+      activity: { kind: 'run' as const, target: 'pnpm test' }
+    },
+    {
+      role: 'assistant' as const,
+      text: 'Edited src/main/index.ts',
+      timestamp: 't3',
+      activity: { kind: 'edit' as const, target: 'src/main/index.ts' }
+    },
+    { role: 'assistant' as const, text: 'Fixed it.', timestamp: 't4' }
+  ]
+
+  it('draws one disclosure row for the whole run, and none of its lines, until it is pressed', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    expect(wrapper.findAll('.activity-disclosure')).toHaveLength(1)
+    expect(wrapper.findAll('.activity-line')).toHaveLength(0)
+    expect(wrapper.findAll('.bubble')).toHaveLength(2)
+  })
+
+  it('is a button carrying its own state, so Enter and Space reach it like any other control', () => {
+    const row = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) }).find(
+      '.activity-disclosure'
+    )
+    expect(row.element.tagName).toBe('BUTTON')
+    expect(row.attributes('type')).toBe('button')
+    expect(row.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('counts the run and names its last call, once a bubble has closed it', () => {
+    const row = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) }).find(
+      '.activity-disclosure'
+    )
+    expect(row.text()).toBe('3 steps — Edited src/main/index.ts')
+    expect(row.attributes('title')).toBe('3 steps — Edited src/main/index.ts')
+  })
+
+  it('reads Working... while the run is the last thing a live session has done', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ status: 'working', conversation: RUN_OF_THREE.slice(0, 4) })
+    })
+    expect(wrapper.find('.activity-disclosure').text()).toBe('Working...')
+  })
+
+  it('counts the run instead, once the session behind it has ended', () => {
+    // Nothing further can join it, so the honest label is the finished one —
+    // a "Working..." row on an ended session claims work still going on.
+    const wrapper = panel({
+      dwarf: defaultDwarf({ status: 'leaving', conversation: RUN_OF_THREE.slice(0, 4) })
+    })
+    expect(wrapper.find('.activity-disclosure').text()).toBe('3 steps — Edited src/main/index.ts')
+  })
+
+  it('opens in place to the exact lines of the run, in order, on a press', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    await wrapper.find('.activity-disclosure').trigger('click')
+
+    expect(wrapper.findAll('.activity-line').map((line) => line.text())).toEqual([
+      'Read src/shared/contracts.ts',
+      'Ran pnpm test',
+      'Edited src/main/index.ts'
+    ])
+    expect(wrapper.find('.activity-disclosure').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('collapses again on a second press', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.find('.activity-disclosure').trigger('click')
+
+    expect(wrapper.findAll('.activity-line')).toHaveLength(0)
+    expect(wrapper.find('.activity-disclosure').attributes('aria-expanded')).toBe('false')
+  })
+
+  it("still emits an opened line's own target from inside an expanded run", async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.findAll('.activity-line.is-openable')[1]!.trigger('click')
+
+    expect(wrapper.emitted('open-path')).toEqual([['src/main/index.ts']])
+  })
+
+  it('keeps each run its own, so opening one leaves the other closed', async () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        conversation: [
+          ...RUN_OF_THREE,
+          {
+            role: 'assistant' as const,
+            text: 'Searched TODO',
+            timestamp: 't5',
+            activity: { kind: 'search' as const, target: 'TODO' }
+          }
+        ]
+      })
+    })
+    const rows = wrapper.findAll('.activity-disclosure')
+    expect(rows).toHaveLength(2)
+
+    await rows[1]!.trigger('click')
+
+    const after = wrapper.findAll('.activity-disclosure')
+    expect(after[0]!.attributes('aria-expanded')).toBe('false')
+    expect(after[1]!.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findAll('.activity-line').map((line) => line.text())).toEqual(['Searched TODO'])
+  })
+})
+
+/**
+ * The disclosure and the stick-to-bottom rule (#294 against #195/#243). Two
+ * separate promises: a run that GROWS while collapsed must leave a reader who
+ * scrolled up alone, and OPENING one must not move the list at all — the reader
+ * asked to see more, not to be taken somewhere.
+ */
+describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
+  /** As the #195 block's own helper, but counting every row the list holds. */
+  function growingScrollHeight(list: Element, perRow = 40): void {
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () =>
+        list.querySelectorAll('.message, .activity-line, .activity-disclosure').length * perRow
+    })
+  }
+
+  const WITH_RUN = [
+    { role: 'user' as const, text: 'fix the bug', timestamp: 't0' },
+    {
+      role: 'assistant' as const,
+      text: 'Ran pnpm test',
+      timestamp: 't1',
+      activity: { kind: 'run' as const, target: 'pnpm test' }
+    }
+  ]
+
+  it('leaves the list exactly where the reader had it when a run is opened', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_RUN }) })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    Object.defineProperty(list, 'clientHeight', { value: 30, configurable: true })
+    await wrapper.vm.$nextTick()
+    list.scrollTop = 5
+
+    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(5)
+  })
+
+  it('does not yank a reader who scrolled up when a collapsed run grows', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_RUN }) })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    Object.defineProperty(list, 'clientHeight', { value: 30, configurable: true })
+    await wrapper.vm.$nextTick()
+    list.scrollTop = 5 // 80 - 30 - 5 = 45, well past the tolerance: scrolled up.
+
+    await wrapper.setProps({
+      dwarf: defaultDwarf({
+        conversation: [
+          ...WITH_RUN,
+          {
+            role: 'assistant',
+            text: 'Edited src/main/index.ts',
+            timestamp: 't2',
+            activity: { kind: 'edit', target: 'src/main/index.ts' }
+          }
+        ]
+      })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(5)
   })
 })
 
