@@ -17,8 +17,8 @@ export interface ActionBarEntry {
   id: ActionId
   /**
    * The short name the hover tooltip and aria-label carry. Kick's name doubles
-   * as its state label ("Confirm kick?", "Kicking...") because an icon has no
-   * button text to change.
+   * as its state label ("Kicking...") because an icon has no button text to
+   * change.
    */
   name: string
   enabled: boolean
@@ -27,13 +27,13 @@ export interface ActionBarEntry {
 }
 
 /**
- * Per-click state the bar owns but the model must reflect: an armed kick
- * confirmation and an in-flight kick. Send state is deliberately absent — a
- * pending send locks the composer's Send button, never the chat icon.
+ * Per-click state the bar owns but the model must reflect: an in-flight kick,
+ * and nothing else. Send state is deliberately absent — a pending send locks
+ * the composer's Send button, never the chat icon. An armed kick was here too
+ * until #293 took the confirmation off the control.
  */
 export interface ActionTransientState {
   kicking: boolean
-  kickArmed: boolean
 }
 
 export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
@@ -117,29 +117,40 @@ export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   'hosted-stdin': 'Written onto the stdin of the process this panel is holding.'
 }
 
-export const NO_KICK_REASON = "This session type can't be canceled yet."
+/**
+ * What Kick does on a dwarf nothing here can interrupt (#293).
+ *
+ * The one sentence for every session in that position, whatever puts it there:
+ * a Codex thread's queue drains only between turns (#97), a held protocol may
+ * carry no cancel event at all (#237), a one-shot run this app did not start
+ * has no exit (#231). Those were three separate REFUSALS, and refusals are
+ * what this replaced — the control is live now, so a sentence explaining why
+ * it is dead would be describing something else. What they had in common is
+ * the only thing this has to say.
+ *
+ * Two clauses, in KICK_HINT's idiom: the limit first, then what the control
+ * actually does with it. The second sentence is not decoration — a dismissal
+ * is the PERSON's act and never a finding that the session stopped, so the
+ * board reverses it the moment the session is seen moving again (see
+ * DwarfLifecycleTracker), and a person told only "sends the dwarf off" would
+ * read the dwarf's return as a bug.
+ */
+export const DISMISS_HINT =
+  "This session can't be interrupted from here; Kick sends the dwarf off the rock. " +
+  'It comes back if the session shows new activity.'
 
 /**
- * Why a session the panel HOLDS still cannot be kicked (#237, step 5).
+ * The same act on a dwarf whose session has already ended (#293, #219).
  *
- * The mirror of `KICK_HINT['codex-queue']`, from the opposite direction: that
- * channel delivers and cannot interrupt because of when a queue drains, and
- * this one delivers and cannot interrupt because its protocol has no cancel
- * event in it at all. Neither of the two sentences already here would be true.
- * `KICK_HINT['held-session']` promises an interrupt of the turn, which is
- * exactly the thing that cannot happen; `NO_KICK_REASON`'s "yet" describes a
- * gap in this app, and this is a fact about the session type.
- *
- * So it says what is missing and then what still works, exactly as the queue's
- * sentence does — a refusal that leaves somebody with only a no sends them
- * looking for a fault that is not there. Named for the CAPABILITY rather than
- * for Antigravity: a second held protocol without a cancel gets this sentence
- * with no edit, and the one provider it applies to today is not what makes it
- * true.
+ * Its own sentence because the first clause of the one above would be false —
+ * nothing is refusing an interrupt here, there is simply no session left — and
+ * because what the person gets is different: the walk is already running and
+ * this ends it. No "comes back" clause either, for the reason it needs one:
+ * a session that has finished has no activity left to show.
  */
-export const HELD_NO_CANCEL_REASON =
-  "This session's protocol has no cancel, so the turn can't be cut short from here. " +
-  'Messages still go straight onto the stream.'
+export const ENDED_DISMISS_HINT =
+  'This session has ended; Kick sends the dwarf off the rock now, ' +
+  'rather than waiting out its walk.'
 
 /**
  * What kicking that channel actually does, in honest terms — or, where a
@@ -239,44 +250,34 @@ function noOneShotExitReason(dwarf: Dwarf): string | null {
   return oneShotNoExitReason(provider)
 }
 
+/**
+ * Kick: one click, and two different acts behind it (#293).
+ *
+ * The capability matrix decides which. A dwarf whose session HAS an interrupt
+ * channel gets exactly what it always got — the turn is interrupted, and the
+ * dwarf leaves only once the panel has seen it stop (#46). A dwarf nothing here
+ * can interrupt, or one whose session has already ended, is DISMISSED: the
+ * person is done with it, so it walks off the rock. That is an act about the
+ * BOARD and not a claim about the session, which is why the dismissal lifts
+ * again the moment the session shows activity (see DwarfLifecycleTracker).
+ *
+ * So the control is never disabled for want of a channel, and the three
+ * refusals it used to carry are gone with the confirmation: `cancel: null`
+ * decides which kick to offer rather than whether to offer one (see
+ * DwarfCapabilities). The arming — first click arms, second fires — was #11's
+ * implementation choice; `screens/mine.md` listed the confirmation under
+ * Unspecified, so nothing in the design ever asked for it, and in use it read
+ * as a kick that had not worked.
+ */
 function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
-  if (hasEnded(dwarf))
-    return { id: 'kick', name: 'Kick', enabled: false, hint: SESSION_ENDED_REASON }
-  const channel = dwarf.capabilities?.cancel ?? null
-  // A session reachable for text but not for a kick (the Codex queue, #97) is
-  // told apart from one with no way in at all: the generic reason would deny a
-  // channel the chat action next to it has just offered, so the send channel
-  // supplies the refusal in its own terms. Read off the SAME matrix as `cancel`
-  // rather than off textDelivery, so the two halves of one refusal can never
-  // come from two different facts.
-  const sendChannel = dwarf.capabilities?.sendText ?? undefined
+  // Read off the status rather than the channel for the reason the bar always
+  // did (#192): the grace window freezes the last real snapshot, so a leaving
+  // dwarf still carries the channel it had and main would refuse to use it.
+  const channel = hasEnded(dwarf) ? null : (dwarf.capabilities?.cancel ?? null)
   const hint =
-    channel !== null
-      ? KICK_HINT[channel]
-      : // A held session with a send and no cancel is one whose PROTOCOL has
-        // none (#237, step 5) — the only way that pair can arise, since the
-        // channel is stamped from the same walk. Checked before the general
-        // send-channel fallback below, which would otherwise hand it
-        // KICK_HINT['held-session'] and promise the interrupt that cannot
-        // happen.
-        sendChannel === 'held-session'
-        ? HELD_NO_CANCEL_REASON
-        : sendChannel !== undefined
-          ? KICK_HINT[sendChannel]
-          : // A one-shot run nothing here started has no kick for a stated
-            // reason rather than for want of a feature (#231), and it is the
-            // same sentence the composer beside it shows: one fact refuses both.
-            (noOneShotExitReason(dwarf) ?? NO_KICK_REASON)
+    channel !== null ? KICK_HINT[channel] : hasEnded(dwarf) ? ENDED_DISMISS_HINT : DISMISS_HINT
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
-  if (channel === null) return { id: 'kick', name: 'Kick', enabled: false, hint }
-  return {
-    id: 'kick',
-    // First click arms the confirmation, second click fires — the name is the
-    // only place an icon can surface that state, so it carries the question.
-    name: state.kickArmed ? 'Confirm kick?' : 'Kick',
-    enabled: true,
-    hint
-  }
+  return { id: 'kick', name: 'Kick', enabled: true, hint }
 }
 
 function boostAction(dwarf: Dwarf): ActionBarEntry {
@@ -326,19 +327,15 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
  * composer and a dead kick with nothing said. A tooltip is not a refusal; it
  * is a refusal somebody has to go looking for.
  *
- * Chat first, because the composer is the control somebody is looking at when
- * they try to say something. The kick's reason surfaces when chat works and
- * the kick does not, which is every ordinary Codex thread (#97). An in-flight
- * kick is not a refusal — the control is disabled because it is working, and
- * the verdict line has that covered.
+ * The composer alone since #293, and that is a narrowing rather than a loss:
+ * Kick is no longer refused for want of a channel, so the only kick this could
+ * report is an in-flight one — which was never a refusal either. It reads
+ * `chatAction` directly for that reason: there is no transient state left in
+ * the answer, so taking one would invite a caller to think it mattered.
  */
-export function refusalLine(dwarf: Dwarf, state: ActionTransientState): string | null {
-  const entries = buildActionBar(dwarf, state)
-  const chat = entries.find((entry) => entry.id === 'chat')
-  if (chat !== undefined && !chat.enabled) return chat.hint
-  if (state.kicking) return null
-  const kick = entries.find((entry) => entry.id === 'kick')
-  return kick !== undefined && !kick.enabled ? kick.hint : null
+export function refusalLine(dwarf: Dwarf): string | null {
+  const chat = chatAction(dwarf)
+  return chat.enabled ? null : chat.hint
 }
 
 /**

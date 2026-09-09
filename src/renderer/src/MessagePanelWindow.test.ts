@@ -279,8 +279,7 @@ describe('the message panel window', () => {
       'claude:s1'
     )
 
-    // Arm, then fire — the confirmation the old action bar carried.
-    await wrapper.find('.control-kick').trigger('click')
+    // One click since #293: the arm-then-fire confirmation is gone.
     await wrapper.find('.control-kick').trigger('click')
     await flushPromises()
 
@@ -462,7 +461,6 @@ describe('publishing the delivery verdicts', () => {
       'claude:s1'
     )
     await wrapper.find('.control-kick').trigger('click')
-    await wrapper.find('.control-kick').trigger('click')
     await flushPromises()
     expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('delivered')
 
@@ -504,7 +502,6 @@ describe('publishing the delivery verdicts', () => {
       ],
       'claude:s1'
     )
-    await wrapper.find('.control-kick').trigger('click')
     await wrapper.find('.control-kick').trigger('click')
     await flushPromises()
 
