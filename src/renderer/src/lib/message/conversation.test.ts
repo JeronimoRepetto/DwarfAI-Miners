@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
-import type { DwarfFeedResult } from '../../types'
+import type { DwarfFeedResult, DwarfStatus } from '../../types'
 import {
   ENDED_NOTE,
   NOTHING_SAID_NOTE,
@@ -9,6 +9,7 @@ import {
   HELD_NOTE,
   READING_NOTE,
   authorOf,
+  conversationEnded,
   conversationOf,
   latestText
 } from './conversation'
@@ -226,5 +227,45 @@ describe('latestText', () => {
 
   it('answers with nothing when nothing was said', () => {
     expect(latestText(conversationOf(defaultDwarf()))).toBe('')
+  })
+
+  /**
+   * #294 folds consecutive activity rows into a disclosure row with a label of
+   * its own ("Working...", "12 steps — ..."). That label is a rendering, and
+   * this function answers with the panel's own MESSAGES: the height the panel
+   * opens at derives from what was actually said or done, never from a caption
+   * describing it.
+   */
+  it('answers with a row of the conversation, never a group label the panel drew over it', () => {
+    const ending = conversationOf(defaultDwarf(), {
+      readable: true,
+      messages: [
+        { role: 'assistant', text: 'Found the seam.', timestamp: 't0' },
+        {
+          role: 'assistant',
+          text: 'Ran pnpm test',
+          timestamp: 't1',
+          activity: { kind: 'run', target: 'pnpm test' }
+        }
+      ]
+    })
+    expect(latestText(ending)).toBe('Ran pnpm test')
+  })
+})
+
+/**
+ * The one status that means the session behind a dwarf is over (#192), asked
+ * by the note above and by #294's activity disclosure.
+ */
+describe('conversationEnded', () => {
+  it('says a leaving dwarf has nothing further to say', () => {
+    expect(conversationEnded(defaultDwarf({ status: 'leaving' }))).toBe(true)
+  })
+
+  it('says every other status may still say something next poll', () => {
+    const live: DwarfStatus[] = ['working', 'waiting']
+    for (const status of live) {
+      expect(conversationEnded(defaultDwarf({ status }))).toBe(false)
+    }
   })
 })

@@ -111,8 +111,22 @@ export function conversationOf(
   feed?: DwarfFeedResult
 ): PanelConversation {
   const shown = liveConversationOf(dwarf, feed)
-  if (dwarf.status !== 'leaving') return shown
+  if (!conversationEnded(dwarf)) return shown
   return { ...shown, note: `${ENDED_NOTE} ${shown.note}` }
+}
+
+/**
+ * Whether nothing further will be said here (#192's ending), spelled once
+ * because two consumers now ask it: the note above, and #294's activity
+ * disclosure, whose trailing run reads "Working..." only while there is still
+ * a session to do the work.
+ *
+ * `leaving` is the board reporting the session behind this dwarf as over. It is
+ * the only status that means that — a dwarf that is merely idle or unknown may
+ * still say something next poll, and a run under one of those is still growing.
+ */
+export function conversationEnded(dwarf: Pick<Dwarf, 'status'>): boolean {
+  return dwarf.status === 'leaving'
 }
 
 /** What the panel draws while the session is still there to be drawn. */
