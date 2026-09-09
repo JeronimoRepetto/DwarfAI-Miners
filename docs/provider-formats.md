@@ -639,6 +639,11 @@ Every `function_call`/`custom_tool_call` name on this machine, 2026-09-07 — 18
 | `function_call`    | `followup_task`                                                                                                       |          39 | No — agent traffic, drawn as a dwarf already                        |
 | `function_call`    | `js`, `view_image`, `update_plan`, `run`, `request_user_input`, `load_workspace_dependencies`, `_create_pull_request` | 71 combined | No — no subject field a line could name, or not this app's business |
 
+Two names in that last row earn a line elsewhere even though they earn none here. `request_user_input`
+carries the questions the model is waiting on — right to omit from a feed, wrong to omit from the
+panel — and `update_plan` carries the agent's own checklist. Both are measured in
+`codex-v2-format.md` §9 (issue #265).
+
 Of the 93 `apply_patch` calls, all 93 open with an action line and 39 name more than one file.
 `domain/permissionSummary.ts`'s `TOOL_ACTIVITY_KINDS` comment cites the same `shell_command` (404)
 and `apply_patch` (93) counts.
@@ -974,36 +979,36 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 
 ## 5. Confidence summary
 
-| Claim                                                                                         | Status                                                                                                                  |
-| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Claude dir encoding lossy; `cwd` field per line                                               | Verified                                                                                                                |
-| Claude line schema, `effort`, model, thinking blocks                                          | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                                    |
-| `sessions/<pid>.json` busy/idle + PID mapping                                                 | Verified live (cleanup-on-crash not tested)                                                                             |
-| Agent async launch / task-notification completion / `subagents\` layout                       | Verified live + on completed session                                                                                    |
-| `<status>` is one of completed/failed/killed; all terminal                                    | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                                        |
-| Three delivery envelopes carry the notification; the rest quote it                            | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                                       |
-| `agent-*.meta.json` and `tasks\*.output` carry no completion state                            | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                                |
-| `waitingFor` is the six values of §1.5, plus absent                                           | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                                   |
-| Subagents expose no status or blocked condition anywhere                                      | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                                  |
-| Codex writes no approval / user-input record at all                                           | Verified (140 rollouts / ~393 MB, 2026-08-30; complete event_msg vocabulary in §2.3)                                    |
-| Codex rollout layout & record types                                                           | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                                 |
-| Codex liveness = mtime + task_started/complete + process                                      | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                                 |
-| Gemini CLI: nothing on disk here                                                              | Verified absence                                                                                                        |
-| Antigravity CLI store layout, record schema and key inventory                                 | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise                |
-| Antigravity: newest step's RUNNING status is the only open-turn evidence                      | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                                   |
-| Antigravity: no token usage, no blocked-on-a-human record anywhere                            | Verified absence in that corpus                                                                                         |
-| Antigravity: eight tool names map to a feed activity line, rest omitted                       | Verified (180 calls / 3 conversations, 2026-09-07; re-confirmed against the same store during #280)                     |
-| Antigravity: conversation_summaries.db describes CLI sessions                                 | **Refuted** - no CLI conversation id was in it; nothing reads it                                                        |
-| Antigravity: a running agy.exe can be mapped to a conversation                                | **Refuted** - its command line carries no conversation id; no pid is published                                          |
-| Antigravity: `-p`/`--input-format`/`--output-format`/`--effort`/`--model` all exist on 1.1.26 | Verified live, 2026-09-07, `agy --help` (read-only, no conversation started)                                            |
-| Antigravity: bare `-p` with no positional prompt reads it from stdin                          | **Refuted** - `-p` takes a value; `agy -p --input-format ...` exits 2 without running (§3.1.9)                          |
-| Antigravity: `--input-format` alone puts the CLI in print mode, prompt on stdin               | Verified live, 2026-09-07 (both `text` and `stream-json`)                                                               |
-| Antigravity: a held two-turn round trip over bidirectional `stream-json`                      | Verified live on 1.1.26, 2026-09-07 (one process, two turns, one conversation id; stdout committed)                     |
-| Antigravity: `text_delta` is an incremental delta, not the whole reply                        | Verified live (two ACTIVE chunks plus a DONE carrying only the final newline)                                           |
-| Antigravity: `init` is emitted once per process, so nothing marks a turn's start              | Verified live (turn 2 opened with a `user_input` step and no `init`)                                                    |
-| Antigravity: `result.usage` is cumulative and a step's own `usage` is not                     | Verified live (turn 2 step 4739 vs result 21524 = 16785 + 4739)                                                         |
-| Antigravity: a stream-json conversation writes a `history.jsonl` record                       | **Refuted** - four probe conversations, four locks, zero workspace records (§3.1.9)                                     |
-| Antigravity: the stream input side documents a cancel / question / permission answer          | **Refuted** - user text events only; those capabilities are absent from the handle                                      |
-| Antigravity: `subagent_info` appears on a held stream                                         | Documented on the page; **not observed live** - no crew is claimed for a held session                                   |
-| Antigravity: a `models` subcommand exists and lists available models                          | Verified live, 2026-09-07 (step 5's probe and #282's own capture): a status line, then one `<id>	<label>` line per model |
-| Click-to-focus via PPID walk to terminal                                                      | Process data verified; focusing mechanics inferred                                                                      |
+| Claim                                                                                         | Status                                                                                                                    |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Claude dir encoding lossy; `cwd` field per line                                               | Verified                                                                                                                  |
+| Claude line schema, `effort`, model, thinking blocks                                          | Verified (v2.1.251; older versions differ, e.g. sidechains inline, `Task` tool name)                                      |
+| `sessions/<pid>.json` busy/idle + PID mapping                                                 | Verified live (cleanup-on-crash not tested)                                                                               |
+| Agent async launch / task-notification completion / `subagents\` layout                       | Verified live + on completed session                                                                                      |
+| `<status>` is one of completed/failed/killed; all terminal                                    | Verified (21/2/4 occurrences in one real transcript, 2026-08-29)                                                          |
+| Three delivery envelopes carry the notification; the rest quote it                            | Verified (366 files / ~372 MB, 2026-08-30; 188 of 188 endings recovered, 0 false)                                         |
+| `agent-*.meta.json` and `tasks\*.output` carry no completion state                            | Verified (12 real sidecars across 4 sessions; 5 of 6 output files empty)                                                  |
+| `waitingFor` is the six values of §1.5, plus absent                                           | Verified (v2.1.251 binary's own derivation, 2026-08-30; `dialog open` also seen live)                                     |
+| Subagents expose no status or blocked condition anywhere                                      | Verified (256 `agent-*.meta.json` on this machine, 2026-08-30; 7 distinct keys in all)                                    |
+| Codex writes no approval record at all                                                        | Verified for approvals (193 rollouts / 557 MB, 2026-09-09); **user input is the exception** — see `codex-v2-format.md` §9 |
+| Codex rollout layout & record types                                                           | Verified on 2 files (0.149.0 TUI + 0.150-alpha Desktop); function_call variant inferred                                   |
+| Codex liveness = mtime + task_started/complete + process                                      | Verified live 2026-08-29 (real codex.exe + a real 347KB task_started/task_complete gap)                                   |
+| Gemini CLI: nothing on disk here                                                              | Verified absence                                                                                                          |
+| Antigravity CLI store layout, record schema and key inventory                                 | Verified on 1.1.26 (389 records / 3 conversations, 2026-09-07); private format, no compatibility promise                  |
+| Antigravity: newest step's RUNNING status is the only open-turn evidence                      | Verified (status written once, never rewritten; a RUNNING step outlived 14 DONE ones)                                     |
+| Antigravity: no token usage, no blocked-on-a-human record anywhere                            | Verified absence in that corpus                                                                                           |
+| Antigravity: eight tool names map to a feed activity line, rest omitted                       | Verified (180 calls / 3 conversations, 2026-09-07; re-confirmed against the same store during #280)                       |
+| Antigravity: conversation_summaries.db describes CLI sessions                                 | **Refuted** - no CLI conversation id was in it; nothing reads it                                                          |
+| Antigravity: a running agy.exe can be mapped to a conversation                                | **Refuted** - its command line carries no conversation id; no pid is published                                            |
+| Antigravity: `-p`/`--input-format`/`--output-format`/`--effort`/`--model` all exist on 1.1.26 | Verified live, 2026-09-07, `agy --help` (read-only, no conversation started)                                              |
+| Antigravity: bare `-p` with no positional prompt reads it from stdin                          | **Refuted** - `-p` takes a value; `agy -p --input-format ...` exits 2 without running (§3.1.9)                            |
+| Antigravity: `--input-format` alone puts the CLI in print mode, prompt on stdin               | Verified live, 2026-09-07 (both `text` and `stream-json`)                                                                 |
+| Antigravity: a held two-turn round trip over bidirectional `stream-json`                      | Verified live on 1.1.26, 2026-09-07 (one process, two turns, one conversation id; stdout committed)                       |
+| Antigravity: `text_delta` is an incremental delta, not the whole reply                        | Verified live (two ACTIVE chunks plus a DONE carrying only the final newline)                                             |
+| Antigravity: `init` is emitted once per process, so nothing marks a turn's start              | Verified live (turn 2 opened with a `user_input` step and no `init`)                                                      |
+| Antigravity: `result.usage` is cumulative and a step's own `usage` is not                     | Verified live (turn 2 step 4739 vs result 21524 = 16785 + 4739)                                                           |
+| Antigravity: a stream-json conversation writes a `history.jsonl` record                       | **Refuted** - four probe conversations, four locks, zero workspace records (§3.1.9)                                       |
+| Antigravity: the stream input side documents a cancel / question / permission answer          | **Refuted** - user text events only; those capabilities are absent from the handle                                        |
+| Antigravity: `subagent_info` appears on a held stream                                         | Documented on the page; **not observed live** - no crew is claimed for a held session                                     |
+| Antigravity: a `models` subcommand exists and lists available models                          | Verified live, 2026-09-07 (step 5's probe and #282's own capture): a status line, then one `<id>	<label>` line per model   |
+| Click-to-focus via PPID walk to terminal                                                      | Process data verified; focusing mechanics inferred                                                                        |

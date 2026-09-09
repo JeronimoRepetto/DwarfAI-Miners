@@ -6125,6 +6125,45 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
   })
 
   /*
+   * Issue #265. A question the panel only OBSERVES is shown and not answerable:
+   * the answer channel is a held session's own stream, and an observed session
+   * has none. Codex offers a message queue and no keyboard, and a queued
+   * message is not an answer to a blocked tool call — so the refusal names
+   * where the ask CAN be answered rather than inventing a second channel.
+   *
+   * Distinct from the case above, which is a dwarf that has left the mine. This
+   * dwarf is on the board, carrying the ask, and still cannot be answered here.
+   */
+  it('refuses an observed dwarf’s ask and says where it can be answered', async () => {
+    const port = heldPort()
+    const ask: DwarfQuestion = {
+      toolUseId: 'call_observed',
+      question: 'Which colour?',
+      multiSelect: false,
+      options: [{ label: 'Green' }]
+    }
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider(ask)]
+    })
+    await runtime.refresh()
+
+    const result = runtime.answerDwarfQuestion({
+      dwarfId: 'claude:sess-1',
+      toolUseId: 'call_observed',
+      answers: { 'Which colour?': 'Green' }
+    })
+    runtime.stop()
+
+    expect(result.answered).toBe(false)
+    expect(result.error).toContain('only where the session runs')
+    expect(result.error).toContain('terminal')
+    // Never the registry's own wording, which describes this app rather than
+    // the session the person is looking at.
+    expect(result.error).not.toContain('not one this panel is holding')
+  })
+
+  /*
    * Issue #203. A permission prompt takes the same route an ask does: stamped
    * on the foreman off the registry, decided by dwarf id, and released in
    * main where the blocked call is.

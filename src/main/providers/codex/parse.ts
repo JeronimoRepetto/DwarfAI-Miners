@@ -40,6 +40,46 @@ export interface CodexRolloutInfo {
    */
   completedTurn: boolean
   lastMessage?: string
+  /**
+   * The one question this rollout is waiting on an answer to, when it carries
+   * one — see parseCodexPendingQuestion. Absent is the ordinary case, and it
+   * claims nothing: an approval prompt leaves no record at all, so absence
+   * here never means "not blocked" (docs/codex-v2-format.md §9).
+   */
+  pendingQuestion?: CodexPendingQuestion
+}
+
+/** One answer a Codex question offered, in the model's own words. */
+export interface CodexQuestionOption {
+  label: string
+  description?: string
+}
+
+/**
+ * A `request_user_input` call nothing in this tail has answered — the ONE
+ * record Codex writes that proves a session is waiting on its human (#265).
+ *
+ * Mirrors ClaudePendingQuestion field for field, because it feeds the same
+ * DwarfQuestion and the panel must not be able to tell which CLI asked. The
+ * `call_id` plays the toolUseId's role for the same reason it does there:
+ * "answered" is exact rather than inferred, because the reply arrives later as
+ * a `function_call_output` naming the same id.
+ */
+export interface CodexPendingQuestion {
+  toolUseId: string
+  question: string
+  header?: string
+  /**
+   * Always false. Codex's own argument shape carries no multi-select field —
+   * three real calls were measured and none had one (docs/codex-v2-format.md
+   * §9(c)) — and a default of true would make the panel offer a gesture the
+   * agent never said it would accept. Kept as a field rather than dropped so
+   * this type stays assignable to the shared one.
+   */
+  multiSelect: boolean
+  options: CodexQuestionOption[]
+  /** The asking record's own timestamp, when it carried one. */
+  askedAt?: string
 }
 
 /** Model settings found in one or more `turn_context` records. */
@@ -221,12 +261,105 @@ export function parseCodexRolloutTail(tailText: string): CodexRolloutInfo {
     }
   }
 
+  // Walked separately rather than folded into the switch above, because it
+  // reads `response_item` call/output pairs across the whole tail while that
+  // loop reads `event_msg` turn boundaries. One pass could do both and would
+  // tie two unrelated readings to one another's control flow.
+  const pendingQuestion = parseCodexPendingQuestion(tailText)
+
   return {
     ...context,
     busy: openTurnId !== undefined,
     completedTurn: sawTaskComplete && openTurnId === undefined,
-    lastMessage
+    lastMessage,
+    ...(pendingQuestion === undefined ? {} : { pendingQuestion })
   }
+}
+
+/** The tool name Codex's model calls to put a question to the person. */
+const REQUEST_USER_INPUT = 'request_user_input'
+
+/** One entry of `arguments.questions`, once the double parse has run. */
+function codexQuestionFrom(
+  raw: unknown
+): { question: string; header?: string; options: CodexQuestionOption[] } | undefined {
+  if (!isRecord(raw)) return undefined
+  const question = asString(raw.question)
+  if (question === undefined || question === '') return undefined
+  const header = asString(raw.header)
+  const options = (Array.isArray(raw.options) ? raw.options : [])
+    .filter(isRecord)
+    .flatMap((option) => {
+      const label = asString(option.label)
+      if (label === undefined || label === '') return []
+      const description = asString(option.description)
+      return [{ label, ...(description === undefined ? {} : { description }) }]
+    })
+  return { question, ...(header === undefined ? {} : { header }), options }
+}
+
+/**
+ * The unanswered `request_user_input` call in this tail, or undefined (#265).
+ *
+ * This is the only "waiting on a human" record Codex writes, and it is the
+ * model's own tool call rather than anything this app inferred: an APPROVAL
+ * prompt writes nothing at all while it waits, so it is deliberately not
+ * looked for here (the measurement is docs/codex-v2-format.md §9).
+ *
+ * What makes an unanswered call a real observation rather than an artefact of
+ * reading a file mid-write: a call line is appended when the call is EMITTED,
+ * not batched with its result. Measured — one call in 7 198 across the whole
+ * corpus has no output, and its file continues for 234 more records (§9(b)).
+ *
+ * Two shapes to know. `arguments` is a JSON-encoded STRING, so it takes the
+ * same second parse `shell_command` needs. And the answer arrives as a
+ * `function_call_output` naming the same `call_id`, which is what makes
+ * "answered" exact: a call whose id has been output is gone from the map
+ * before the end of the walk, so a tail that contains both is not pending.
+ *
+ * With several open, the LAST is the one reported — the same rule the Claude
+ * transcript parse follows, and for the same reason: it is the one the person
+ * is looking at. Within one call, only `questions[0]` travels; a call asking
+ * more than one thing at once was never observed, and folding several into one
+ * card would attribute options to a question that did not offer them.
+ *
+ * Reading a bounded tail is safe in the one direction that matters: an output
+ * always follows its call, so a call outside the window cannot be reported as
+ * pending, and a window can only ever miss a question — never invent one.
+ */
+export function parseCodexPendingQuestion(tailText: string): CodexPendingQuestion | undefined {
+  const open = new Map<string, CodexPendingQuestion>()
+  for (const record of jsonlRecords(tailText)) {
+    if (record.type !== 'response_item') continue
+    const payload = record.payload
+    const callId = asString(payload.call_id)
+    if (callId === undefined) continue
+    if (payload.type === 'function_call_output') {
+      open.delete(callId)
+      continue
+    }
+    if (payload.type !== 'function_call' || payload.name !== REQUEST_USER_INPUT) continue
+    const rawArguments = payload.arguments
+    if (typeof rawArguments !== 'string') continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(rawArguments)
+    } catch {
+      continue
+    }
+    if (!isRecord(parsed) || !Array.isArray(parsed.questions)) continue
+    const first = codexQuestionFrom(parsed.questions[0])
+    if (first === undefined) continue
+    open.set(callId, {
+      toolUseId: callId,
+      question: first.question,
+      ...(first.header === undefined ? {} : { header: first.header }),
+      multiSelect: false,
+      options: first.options,
+      ...(record.timestamp === '' ? {} : { askedAt: record.timestamp })
+    })
+  }
+  return [...open.values()].pop()
 }
 
 /** One `*** Add File:`/`*** Update File:`/`*** Delete File:` line of an apply_patch envelope. */
