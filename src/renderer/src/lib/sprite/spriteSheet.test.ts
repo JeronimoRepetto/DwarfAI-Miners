@@ -8,6 +8,7 @@ import {
   isImpactFrame,
   loopOf,
   onceOf,
+  sequenceCycle,
   sequenceDurationMs,
   sequenceFrameAt,
   sequenceIsStill
@@ -106,9 +107,22 @@ describe('sequenceFrameAt', () => {
     expect(sequenceFrameAt([onceOf(THREE)], 60_000)).toEqual({ clip: 0, frame: 2 })
   })
 
-  it('never runs a looping clip out, so nothing behind one is ever reached', () => {
-    const clips = [loopOf(THREE), loopOf(SIX)]
-    expect(sequenceFrameAt(clips, 60_000)).toEqual({ clip: 0, frame: 0 })
+  /*
+   * AMENDED for #325. This case ran `[loopOf(THREE), loopOf(SIX)]` and claimed
+   * nothing behind a looping clip is ever reached. Consecutive loops are now
+   * ONE cycle, and the clip behind the first is reached on every lap of it (the
+   * block below pins that), so the claim moves to what it was actually
+   * protecting: the settled cycle never runs out, so a `once` clip behind it is
+   * unreachable. The old assertion would in fact still have passed, by
+   * arithmetic accident — 60_000ms is a whole number of the two clips' 1200ms
+   * laps, landing back on the first frame of the first clip — which is exactly
+   * why it is restated here rather than left standing as evidence of anything.
+   */
+  it('never runs the settled cycle out, so nothing behind it is ever reached', () => {
+    const clips = [loopOf(THREE), onceOf(SIX)]
+    for (const elapsed of [60_000, 60_200, 60_400]) {
+      expect(sequenceFrameAt(clips, elapsed).clip, String(elapsed)).toBe(0)
+    }
   })
 
   it('treats time before the start as the start', () => {
@@ -120,6 +134,95 @@ describe('sequenceFrameAt', () => {
   })
 })
 
+/*
+ * A CYCLE of clips (issue #325). A dwarf's shift is a pick-up, two turns of the
+ * swing and a set-down, played round and round — four strips that are one
+ * repeating movement, not a loop with a wind-up in front of it. Consecutive
+ * `loop` clips are that movement: the cycle is as long as their holds add up
+ * to, and the position inside it picks the clip as well as the frame.
+ *
+ * THREE is 600ms and SIX is 600ms, so the pair below is a 1200ms cycle with the
+ * boundary exactly halfway — the arithmetic is small enough to step by hand.
+ */
+describe('sequenceFrameAt across a cycle of clips (#325)', () => {
+  const CYCLE = [loopOf(THREE), loopOf(SIX)]
+
+  it('plays the first clip of the cycle first', () => {
+    expect(sequenceFrameAt(CYCLE, 0)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(CYCLE, 400)).toEqual({ clip: 0, frame: 2 })
+  })
+
+  it('crosses the boundary into the next clip of the cycle', () => {
+    // The move a lone looping clip could never make: the first clip plays out
+    // and the second takes over WITHOUT the sequence having settled anywhere.
+    expect(sequenceFrameAt(CYCLE, 600)).toEqual({ clip: 1, frame: 0 })
+    expect(sequenceFrameAt(CYCLE, 700)).toEqual({ clip: 1, frame: 1 })
+    expect(sequenceFrameAt(CYCLE, 1100)).toEqual({ clip: 1, frame: 5 })
+  })
+
+  it('wraps round to the head of the cycle, not to the clip it was on', () => {
+    // What makes it a shift rather than a loop: the last clip hands back to
+    // the FIRST, so the pick is picked up again.
+    expect(sequenceFrameAt(CYCLE, 1200)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(CYCLE, 1600)).toEqual({ clip: 0, frame: 2 })
+    expect(sequenceFrameAt(CYCLE, 1800)).toEqual({ clip: 1, frame: 0 })
+    expect(sequenceFrameAt(CYCLE, 60_000)).toEqual({ clip: 0, frame: 0 })
+  })
+
+  it('leaves a lone looping clip exactly what it always was', () => {
+    // A cycle of one clip is the old behaviour by construction, which is what
+    // keeps every sequence written before this one — idle, sleeping — unmoved.
+    for (const elapsed of [0, 199, 200, 600, 700, 60_000]) {
+      expect(sequenceFrameAt([loopOf(THREE)], elapsed), String(elapsed)).toEqual(
+        sequenceFrameAt([loopOf(THREE)], elapsed % 600)
+      )
+    }
+    expect(sequenceFrameAt([loopOf(THREE)], 700)).toEqual({ clip: 0, frame: 0 })
+  })
+
+  it('reaches the cycle behind a transition played once', () => {
+    // A `once` clip in front of a cycle still hands over the way it always
+    // did, and the cycle's own laps begin from the handover rather than from
+    // time zero.
+    const clips = [onceOf(SIX), loopOf(THREE), loopOf(SIX)]
+    expect(sequenceFrameAt(clips, 500)).toEqual({ clip: 0, frame: 5 })
+    expect(sequenceFrameAt(clips, 600)).toEqual({ clip: 1, frame: 0 })
+    expect(sequenceFrameAt(clips, 1200)).toEqual({ clip: 2, frame: 0 })
+    expect(sequenceFrameAt(clips, 1800)).toEqual({ clip: 1, frame: 0 })
+  })
+
+  it('holds the head of a cycle whose clips have no time in them at all', () => {
+    // A zero-length cycle has no position to compute and must not divide by
+    // its own length — the same guard `framePositionPercent` needs.
+    const empty = [loopOf({ src: 'none.png', frames: 0, frameMs: 100 })]
+    expect(sequenceFrameAt(empty, 5000)).toEqual({ clip: 0, frame: 0 })
+  })
+})
+
+describe('sequenceCycle (#325)', () => {
+  /*
+   * The settled cycle's clips, named once so that both the frame arithmetic
+   * above and reduced motion (see dwarfSequence's `stillFrameOf`) read the same
+   * answer rather than each deriving its own.
+   */
+  it('is the run of loop clips a sequence settles into', () => {
+    expect(sequenceCycle([loopOf(SIX)])).toEqual({ first: 0, last: 0 })
+    expect(sequenceCycle([onceOf(THREE), loopOf(SIX)])).toEqual({ first: 1, last: 1 })
+    expect(sequenceCycle([loopOf(THREE), loopOf(SIX), loopOf(ONE)])).toEqual({ first: 0, last: 2 })
+  })
+
+  it('stops at the first clip that is not part of it', () => {
+    // Everything behind the cycle is unreachable, so it cannot extend past a
+    // `once` and pick the loops up again on the other side.
+    expect(sequenceCycle([loopOf(THREE), onceOf(SIX), loopOf(ONE)])).toEqual({ first: 0, last: 0 })
+  })
+
+  it('is nothing at all for a sequence that settles on a held frame', () => {
+    expect(sequenceCycle([onceOf(THREE)])).toBeUndefined()
+    expect(sequenceCycle([])).toBeUndefined()
+  })
+})
+
 describe('sequenceDurationMs', () => {
   it('adds up the once-clips a sequence has to play before it settles', () => {
     expect(sequenceDurationMs([onceOf(THREE), loopOf(SIX)])).toBe(600)
@@ -127,6 +230,14 @@ describe('sequenceDurationMs', () => {
 
   it('reports a sequence that starts on a loop as settled straight away', () => {
     expect(sequenceDurationMs([loopOf(SIX)])).toBe(0)
+  })
+
+  it('counts none of a cycle, which is the settled state and not a wind-up (#325)', () => {
+    // Time to settle, not time to repeat: a sequence that opens on a cycle is
+    // already showing what it settles on from its very first frame, however
+    // many clips that cycle turns over.
+    expect(sequenceDurationMs([loopOf(THREE), loopOf(SIX), loopOf(THREE)])).toBe(0)
+    expect(sequenceDurationMs([onceOf(SIX), loopOf(THREE), loopOf(SIX)])).toBe(600)
   })
 })
 

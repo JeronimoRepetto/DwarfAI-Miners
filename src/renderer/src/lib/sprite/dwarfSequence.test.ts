@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus } from '../../types'
 import { DWARF_SHEETS } from './dwarfSheets'
 import { dwarfClips, isResting, stillFrameOf } from './dwarfSequence'
-import { loopOf, onceOf } from './spriteSheet'
+import { isImpactFrame, loopOf, onceOf, sequenceFrameAt } from './spriteSheet'
 
 const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
 
@@ -175,9 +175,37 @@ describe('dwarfClips', () => {
    * meaning.
    */
   describe('a worker starting work', () => {
-    it('picks up the pick once, then swings on', () => {
+    /*
+     * AMENDED for #325, three cases in this block. They pinned the sequence
+     * #74 shipped — the pick "picked up once, then swings on", `[once
+     * start-working, loop working]` — which is the behaviour the maintainer
+     * watched for more than a few seconds and could not read. Work is a SHIFT
+     * CYCLE now (see the block that pins it below), so a worker at the rock
+     * plays the same four clips whichever way it arrived there. What each case
+     * was really guaranteeing survives, restated against the cycle:
+     *
+     * - 'picks up the pick once, then swings on' becomes 'picks the pick up
+     *   and swings twice' — the entry still opens on the pick-up.
+     * - 'does not pick the tool back up while it is still swinging it' becomes
+     *   'plays the same cycle whether or not it was already working' — the
+     *   non-replay guarantee, which the cycle keeps by being the sequence for
+     *   both working states rather than by having no pick-up in it. Nothing
+     *   restarts: `DwarfSprite.vue` recomputes clips only when one of the
+     *   states it watches actually changes.
+     * - 'starts working on a first render that already finds it working' keeps
+     *   its name and its reasoning; only the expected clips change.
+     *
+     * 'sets the pick down once, then goes back to idling' is untouched: the
+     * way OUT of work is unchanged by #325.
+     */
+    it('picks the pick up and swings twice, which is one turn of the shift', () => {
       expect(sheetsOf(dwarfClips('worker', false, false, true, false))).toEqual(
-        sheetsOf([onceOf(WORKER['start-working']!), loopOf(WORKER.working!)])
+        sheetsOf([
+          loopOf(WORKER['start-working']!),
+          loopOf(WORKER.working!),
+          loopOf(WORKER.working!),
+          loopOf(WORKER['end-working']!)
+        ])
       )
     })
 
@@ -187,11 +215,12 @@ describe('dwarfClips', () => {
       )
     })
 
-    it('does not pick the tool back up while it is still swinging it', () => {
-      // Same non-replay guarantee as the foreman's sleep: recomputing while
-      // nothing moved must not restart the transition.
+    it('plays the same cycle whether or not it was already working', () => {
+      // Same non-replay guarantee as the foreman's sleep, kept in the shape
+      // the cycle needs: the sequence is a pure function of the two working
+      // states, so recomputing mid-shift cannot restart anything.
       expect(sheetsOf(dwarfClips('worker', false, false, true, true))).toEqual(
-        sheetsOf([loopOf(WORKER.working!)])
+        sheetsOf(dwarfClips('worker', false, false, true, false))
       )
     })
 
@@ -201,7 +230,10 @@ describe('dwarfClips', () => {
       // mid-swing — the same reasoning as the foreman falling asleep on a
       // first render that already finds him asked.
       expect(sheetsOf(dwarfClips('worker', false, undefined, true, undefined))).toEqual(
-        sheetsOf([onceOf(WORKER['start-working']!), loopOf(WORKER.working!)])
+        sheetsOf(dwarfClips('worker', false, false, true, false))
+      )
+      expect(sheetsOf(dwarfClips('worker', false, undefined, true, undefined))[0]).toBe(
+        `loop:${WORKER['start-working']!.src}`
       )
     })
 
@@ -269,10 +301,19 @@ describe('dwarfClips', () => {
       )
     })
 
+    // AMENDED for #325: the expected entry was `[once start-working, loop
+    // working]`, #74's sequence. It is the shift cycle now; the CLAIM — that
+    // arriving already working and starting work while standing are the same
+    // starting line — is what this case is for and is untouched.
     it('starts the working sequence on arrival, the same entry as a dwarf that was already standing', () => {
       const onArrival = dwarfClips('worker', false, false, true, false, true)
       expect(sheetsOf(onArrival)).toEqual(
-        sheetsOf([onceOf(WORKER['start-working']!), loopOf(WORKER.working!)])
+        sheetsOf([
+          loopOf(WORKER['start-working']!),
+          loopOf(WORKER.working!),
+          loopOf(WORKER.working!),
+          loopOf(WORKER['end-working']!)
+        ])
       )
       // Arriving already working and starting to work while already standing
       // are the same starting line — neither has anything to interrupt.
@@ -313,8 +354,16 @@ describe('dwarfClips', () => {
       expect(sheetsOf(dwarfClips('worker2', false, false, true, false, false))).toEqual(
         sheetsOf([loopOf(WORKER2.idle)])
       )
+      // AMENDED for #325 alongside the worker's own entry above, and for the
+      // same reason: what is pinned here is the GATE, not which clips are
+      // behind it.
       expect(sheetsOf(dwarfClips('worker2', false, false, true, false, true))).toEqual(
-        sheetsOf([onceOf(WORKER2['start-working']!), loopOf(WORKER2.working!)])
+        sheetsOf([
+          loopOf(WORKER2['start-working']!),
+          loopOf(WORKER2.working!),
+          loopOf(WORKER2.working!),
+          loopOf(WORKER2['end-working']!)
+        ])
       )
     })
 
@@ -329,6 +378,140 @@ describe('dwarfClips', () => {
       expect(sheetsOf(dwarfClips('foreman', false, false, true, false, true))).toEqual(
         sheetsOf([loopOf(FOREMAN.idle)])
       )
+    })
+  })
+
+  /*
+   * Issue #325 — work is a SHIFT, not an endless swing.
+   *
+   * Seen live for the first time on 2026-09-09: watched for more than a few
+   * seconds, a pick swinging for ever stopped reading as a dwarf working at
+   * all. The sequence a dwarf at the rock plays is now the cycle `start-working
+   * -> working -> working -> end-working`, round and round for as long as the
+   * status holds — a movement with a beginning and an end, which says "still
+   * working" again every three to five seconds instead of once.
+   *
+   * The cycle is the SETTLED state, which is why all four clips are loops: a
+   * `loop` clip says "part of what this sequence settles into", and a run of
+   * them is one cycle (see `sequenceCycle` in spriteSheet.ts). The exit is
+   * untouched and is pinned in the block above — leaving work plays
+   * end-working ONCE and idles.
+   */
+  describe('work is a shift cycle (#325)', () => {
+    /** The cycle a rank plays at the rock, in order, so a failure names the art. */
+    function cycleOf(role: 'worker' | 'worker2'): string[] {
+      const sheets = DWARF_SHEETS[role]
+      return sheetsOf([
+        loopOf(sheets['start-working']!),
+        loopOf(sheets.working!),
+        loopOf(sheets.working!),
+        loopOf(sheets['end-working']!)
+      ])
+    }
+
+    it('picks the pick up, swings twice, sets it down and starts again', () => {
+      for (const role of ['worker', 'worker2'] as const) {
+        expect(sheetsOf(dwarfClips(role, false, false, true, false)), role).toEqual(cycleOf(role))
+      }
+    })
+
+    it('is the same cycle for a dwarf that was already working, having nothing to interrupt', () => {
+      // Both entry cases produce one sequence, which is what the interruption
+      // rule at the top of dwarfSequence.ts requires of every axis: the clips
+      // are a pure function of the two working states and of nothing else.
+      for (const role of ['worker', 'worker2'] as const) {
+        expect(sheetsOf(dwarfClips(role, false, false, true, true)), role).toEqual(cycleOf(role))
+        expect(sheetsOf(dwarfClips(role, false, undefined, true, undefined)), role).toEqual(
+          cycleOf(role)
+        )
+      }
+    })
+
+    it('runs the worker through 35 frames of shift before the pick comes up again', () => {
+      // 3 + 13 + 13 + 6 = 35 frames at 100ms, so 3.5s a turn. Read off the
+      // sheets rather than written down, because the counts belong to the art.
+      const clips = dwarfClips('worker', false, false, true, false)
+      const start = WORKER['start-working']!.frames * 100
+      const swing = WORKER.working!.frames * 100
+      const end = WORKER['end-working']!.frames * 100
+      expect(start + swing + swing + end).toBe(3500)
+
+      expect(sequenceFrameAt(clips, 0)).toEqual({ clip: 0, frame: 0 })
+      expect(sequenceFrameAt(clips, start)).toEqual({ clip: 1, frame: 0 })
+      expect(sequenceFrameAt(clips, start + swing)).toEqual({ clip: 2, frame: 0 })
+      expect(sequenceFrameAt(clips, start + swing + swing)).toEqual({ clip: 3, frame: 0 })
+      // The set-down's last frame, and then the pick-up again: the cycle
+      // closing is the whole point of it.
+      expect(sequenceFrameAt(clips, start + swing + swing + end - 100)).toEqual({
+        clip: 3,
+        frame: WORKER['end-working']!.frames - 1
+      })
+      expect(sequenceFrameAt(clips, start + swing + swing + end)).toEqual({ clip: 0, frame: 0 })
+    })
+
+    it('runs worker2 through its own 53, the art being longer at both ends', () => {
+      // 16 + 10 + 10 + 17 = 53 frames, 5.3s a turn. A slower pick-up and a
+      // set-down nearly three times the worker's — that is the art (#211).
+      const clips = dwarfClips('worker2', false, false, true, false)
+      const start = WORKER2['start-working']!.frames * 100
+      const swing = WORKER2.working!.frames * 100
+      const end = WORKER2['end-working']!.frames * 100
+      expect(start + swing + swing + end).toBe(5300)
+      expect(sequenceFrameAt(clips, start + swing + swing + end)).toEqual({ clip: 0, frame: 0 })
+      expect(sequenceFrameAt(clips, start + swing)).toEqual({ clip: 2, frame: 0 })
+    })
+
+    it('bites the rock on both turns of the swing, not only the first', () => {
+      // The sparks and the strike glow are the sheet's own claim about a frame
+      // (`impactFrames`), and the second turn draws the same sheet — so a hit
+      // lands on every lap exactly as it did when the swing looped alone.
+      const clips = dwarfClips('worker', false, false, true, false)
+      const start = WORKER['start-working']!.frames * 100
+      const swing = WORKER.working!.frames * 100
+      const hit = WORKER.working!.impactFrames![0]! * 100
+      const turns = [start + hit, start + swing + hit].map((elapsed) => {
+        const at = sequenceFrameAt(clips, elapsed)
+        const sheet = clips[at.clip]?.sheet
+        expect(sheet?.src, String(elapsed)).toBe(WORKER.working!.src)
+        expect(isImpactFrame(sheet!, at.frame), String(elapsed)).toBe(true)
+        return at.clip
+      })
+      // Two turns of the same sheet, drawn from two clips of the cycle rather
+      // than from one clip going round twice — which is what makes the
+      // set-down behind them reachable at all.
+      expect(turns).toEqual([1, 2])
+    })
+
+    it('never reaches an idle behind the cycle, because the shift never runs out', () => {
+      // The exit is a change of STATE, not something the sequence plays its
+      // way into — which is why no idle is appended to the cycle at all.
+      const clips = dwarfClips('worker', false, false, true, false)
+      expect(clips.map((clip) => clip.sheet.src)).not.toContain(WORKER.idle.src)
+      expect(sequenceFrameAt(clips, 600_000).clip).toBeLessThan(clips.length)
+    })
+
+    it('leaves work the same way it always did, set the pick down once and idle', () => {
+      // Stated inside this block as well as above, because "the exit is
+      // unchanged" is a claim OF #325 and not merely an untouched neighbour:
+      // the set-down on the way out is a `once` clip, plays one time and hands
+      // over to the idle — it is not the cycle's own end-working going round.
+      for (const role of ['worker', 'worker2'] as const) {
+        const sheets = DWARF_SHEETS[role]
+        expect(sheetsOf(dwarfClips(role, false, false, false, true)), role).toEqual(
+          sheetsOf([onceOf(sheets['end-working']!), loopOf(sheets.idle)])
+        )
+      }
+    })
+
+    it('leaves the foreman on his idle, having no working art to make a shift of', () => {
+      // A cycle built out of the fallback idle would be the same six frames
+      // twice over, which is not a shift — it is the idle with a seam in it.
+      for (const wasWorking of [false, true, undefined]) {
+        expect(
+          sheetsOf(dwarfClips('foreman', false, false, true, wasWorking)),
+          `${wasWorking}`
+        ).toEqual(sheetsOf([loopOf(FOREMAN.idle)]))
+      }
     })
   })
 
@@ -427,11 +610,56 @@ describe('stillFrameOf', () => {
     // The reduced-motion contract this task pins: a still worker mid-work
     // shows the swing, not the pick-up it settled from; one that has left
     // shows idle, not the hand-down on the way out.
+    //
+    // UNCHANGED by #325, and deliberately so — the swing is still the second
+    // clip of what a working dwarf plays, and it is still the frame held. The
+    // block below is what pins WHY that is no longer the last clip.
     const midWork = dwarfClips('worker', false, false, true, false)
     expect(stillFrameOf(midWork)).toEqual({ clip: 1, frame: WORKER.working!.frames - 1 })
 
     const afterLeaving = dwarfClips('worker', false, false, false, true)
     expect(stillFrameOf(afterLeaving)).toEqual({ clip: 1, frame: WORKER.idle.frames - 1 })
+  })
+
+  /*
+   * Reduced motion against a cycle (#325). The old rule — hold the LAST clip —
+   * would now hold the last frame of end-working: a dwarf standing over a pick
+   * on the ground, which says "stopped", not "working". The clip held is the
+   * one the cycle REPEATS, because the strip a shift plays twice is the work
+   * itself while the clips either side of it are only the way in and the way
+   * out of it. Within that clip the frame is the last one, exactly as it has
+   * always been for every other sequence.
+   */
+  describe('a still frame of a shift cycle (#325)', () => {
+    it('holds the swing, never the pick lying on the ground', () => {
+      for (const role of ['worker', 'worker2'] as const) {
+        const sheets = DWARF_SHEETS[role]
+        const cycle = dwarfClips(role, false, false, true, false)
+        const held = stillFrameOf(cycle)
+        expect(cycle[held.clip]?.sheet.src, role).toBe(sheets.working!.src)
+        expect(held, role).toEqual({ clip: 1, frame: sheets.working!.frames - 1 })
+        // The clip it is NOT: the set-down that closes the cycle.
+        expect(held.clip, role).not.toBe(cycle.length - 1)
+      }
+    })
+
+    it('holds the same frame whichever way the dwarf came to be working', () => {
+      const entering = stillFrameOf(dwarfClips('worker', false, false, true, false))
+      expect(stillFrameOf(dwarfClips('worker', false, false, true, true))).toEqual(entering)
+    })
+
+    it('still holds the last clip of a sequence that settles on one clip', () => {
+      // Every sequence written before the cycle is unmoved: a lone loop, and a
+      // transition handing over to one, both hold what they always held.
+      expect(stillFrameOf(dwarfClips('foreman', true, false))).toEqual({
+        clip: 1,
+        frame: FOREMAN.sleeping!.frames - 1
+      })
+      expect(stillFrameOf(dwarfClips('foreman', false, false))).toEqual({
+        clip: 0,
+        frame: FOREMAN.idle.frames - 1
+      })
+    })
   })
 
   it('holds a frame the sheet actually has, for every state either rank can be in', () => {
