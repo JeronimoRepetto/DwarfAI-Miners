@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import type {
   MessagePanelDragPhase,
   MessagePanelState,
+  MessagePanelSurface,
   PanelEdge,
   PanelLayout,
   PanelLayoutRequest
@@ -452,6 +453,10 @@ export function hidePanel(): void {
   // A drag cannot survive the window going away (#296): the press that would
   // have ended it lands on nothing once there is nothing on screen to release.
   endMessagePanelDrag()
+  // Neither can a pending reveal (#312). The surface stays open across a trip
+  // to the tray — that is what brings the panel back with the shell — so a
+  // wait left running would show the panel on its own over other programs.
+  cancelMessagePanelReveal()
   // Hidden WITH the shell, not closed: what the panel is showing is untouched,
   // so the surface that comes back is the one that went away.
   if (messagePanelWindow !== null && !messagePanelWindow.isDestroyed()) {
@@ -488,7 +493,30 @@ const MESSAGE_PANEL_OPENING_HEIGHT = 235
  */
 const MESSAGE_PANEL_SURFACE_QUERY = `${RENDERER_SURFACE_PARAM}=${MESSAGE_PANEL_SURFACE}`
 
+/**
+ * How long main waits for the created window's first height report before
+ * revealing it anyway (#312).
+ *
+ * The window is created hidden and a height report is the ONE thing that
+ * reveals it, so a renderer that does not report costs the click entirely —
+ * which is what the first open of a run did: the report was suppressed while
+ * the surface still had nothing in it, and the ResizeObserver that would have
+ * caught the panel mounting cannot fire in a window whose frames are not being
+ * drawn (see MessagePanelWindow.vue, which is where the reporting was fixed).
+ * That fix is the answer; this is the floor under it, because "the panel never
+ * appeared" must not be reachable from any renderer at all.
+ *
+ * A second is chosen from both ends: longer than the page load and the first
+ * poll the report races, so on an ordinary open this never fires, and short
+ * enough that what a person sees is the panel opening rather than a click that
+ * did nothing. A late report re-places the window this revealed, at the height
+ * it should have had.
+ */
+export const MESSAGE_PANEL_REVEAL_TIMEOUT_MS = 1000
+
 let messagePanelWindow: BrowserWindow | null = null
+/** The wait above, while one is running. */
+let messagePanelRevealTimer: NodeJS.Timeout | null = null
 /** What the panel window is showing — see MessagePanelState; main owns it. */
 let messagePanel: MessagePanelState = emptyMessagePanel()
 /** The panel's own height in DESIGN pixels, as its renderer last measured it. */
@@ -702,6 +730,78 @@ function placeMessagePanel(): void {
   applyPanelBounds(messagePanelWindow, messagePanelRect())
 }
 
+/**
+ * The slice of BrowserWindow the reveal below needs. Narrow for the reason the
+ * four targets above are: the whole of the decision is assertable with a fake,
+ * and the wait it hangs off cannot be reached from a unit test at all.
+ */
+export interface MessagePanelRevealTarget {
+  isDestroyed: () => boolean
+  isVisible: () => boolean
+}
+
+/**
+ * Whether to show a panel window that no height report ever arrived for (#312).
+ *
+ * Three refusals, and each is a state the wait can end in rather than an
+ * unlikely one: the report landed inside the window and already revealed it, so
+ * showing it again would be a raise nobody asked for; the surface closed while
+ * the wait ran, and the panel would come back on a dwarf nobody has selected
+ * any more; or the window is gone.
+ */
+export function messagePanelNeedsReveal(
+  target: MessagePanelRevealTarget,
+  surface: MessagePanelSurface
+): boolean {
+  if (target.isDestroyed()) return false
+  if (surface === 'none') return false
+  return !target.isVisible()
+}
+
+/** End the wait for a height report — it arrived, or what it was for is gone. */
+function cancelMessagePanelReveal(): void {
+  if (messagePanelRevealTimer === null) return
+  clearTimeout(messagePanelRevealTimer)
+  messagePanelRevealTimer = null
+}
+
+/** Start it again, from now: one wait per open, never two. */
+function armMessagePanelReveal(): void {
+  cancelMessagePanelReveal()
+  messagePanelRevealTimer = setTimeout(
+    revealMessagePanelWithoutReport,
+    MESSAGE_PANEL_REVEAL_TIMEOUT_MS
+  )
+}
+
+/**
+ * The wait ran out: place and show the panel at whatever height it is, which
+ * is MESSAGE_PANEL_OPENING_HEIGHT unless some earlier report set one.
+ *
+ * Placed first rather than merely shown, because a display may have been
+ * unplugged or rescaled while this waited — the same re-clamp every other
+ * apply does.
+ */
+function revealMessagePanelWithoutReport(): void {
+  messagePanelRevealTimer = null
+  const panel = messagePanelWindow
+  if (panel === null || !messagePanelNeedsReveal(panel, messagePanel.surface)) return
+  placeMessagePanel()
+  panel.show()
+  if (shellDebugEnabled()) {
+    // The line that says the panel on screen was never measured (#312): a run
+    // printing this is a renderer that reported nothing, not a geometry
+    // problem, and the designHeight names what it was revealed at.
+    console.log(
+      formatShellTrace('message panel revealed without a height report', {
+        designHeight: messagePanelDesignHeight,
+        surface: messagePanel.surface,
+        bounds: panel.getBounds()
+      })
+    )
+  }
+}
+
 /** Stop following the cursor; the gesture is over, or its window has gone. */
 function endMessagePanelDrag(): void {
   if (messagePanelDrag === null) return
@@ -906,6 +1006,9 @@ function createMessagePanelWindow(parent: BrowserWindow): BrowserWindow {
 export function setMessagePanel(state: MessagePanelState): MessagePanelState {
   const opening = state.surface !== 'none'
   messagePanel = { ...state }
+  // Every transition ends the previous wait, whichever way it goes: a close
+  // has nothing left to reveal, and an open is a new race of its own (#312).
+  cancelMessagePanelReveal()
   if (!opening) {
     // The height is a fact about a surface that has closed. Reopening measures
     // again — which is also the design's own rule, that a reopened panel
@@ -937,6 +1040,10 @@ export function setMessagePanel(state: MessagePanelState): MessagePanelState {
     }
     placeMessagePanel()
   }
+  // Both branches, one rule (#312): whichever of them ran, the window is still
+  // hidden and only a height report shows it. The report almost always wins
+  // this race — and when it does not, the click still opens a panel.
+  armMessagePanelReveal()
   return messagePanelState()
 }
 
@@ -972,6 +1079,9 @@ export function setMessagePanelHeight(designHeight: number): void {
     }
     return
   }
+  // The report this was waiting for (#312): it sizes the window and reveals it
+  // below, so there is nothing left for the fallback to do.
+  cancelMessagePanelReveal()
   const visibleBefore = messagePanelWindow.isVisible()
   placeMessagePanel()
   if (!messagePanelWindow.isVisible()) messagePanelWindow.show()
