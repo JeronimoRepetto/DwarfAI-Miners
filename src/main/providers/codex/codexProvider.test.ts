@@ -9,6 +9,7 @@ import {
   formatCodexSkip,
   type CodexProviderOptions
 } from './codexProvider'
+import type { ProviderSnapshot } from '../../domain/types'
 import { extractCodexFeed } from './parse'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'codex')
@@ -1294,5 +1295,107 @@ describe('CodexProvider.firstPrompt', () => {
     // The panel's own read of the same words still redacts them.
     const shown = await provider.feed(`codex:${SESSION_ID}`, 12)
     expect(shown?.[0]?.text).toContain('[redacted]')
+  })
+})
+
+/**
+ * The one question Codex records, reaching the dwarf (#265).
+ *
+ * The fixture is the measured shape (docs/codex-v2-format.md §9(c)): a
+ * `request_user_input` function_call whose `arguments` are a JSON-encoded
+ * string, and no `function_call_output` for its `call_id`.
+ */
+describe('CodexProvider pendingQuestion', () => {
+  const ASK_SESSION_ID = '01a05f7c-1d2e-73a4-9c05-2f81d6b44ae0'
+  const ASK_PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-30-00-${ASK_SESSION_ID}.jsonl`
+  const asking = readFileSync(join(FIXTURES, 'rollout-pending-question.jsonl'), 'utf8')
+
+  /** The same rollout once the person has chosen: the call has its output. */
+  function answered(): string {
+    return (
+      asking +
+      JSON.stringify({
+        timestamp: '2026-08-24T12:39:40.997Z',
+        type: 'response_item',
+        payload: {
+          type: 'function_call_output',
+          call_id: 'call_9c052f81d6b44',
+          output: 'Source only'
+        }
+      }) +
+      '\n'
+    )
+  }
+
+  let fake: FakeFs
+
+  function scan(text: string): Promise<ProviderSnapshot[]> {
+    fake = new FakeFs()
+    fake.addFile(ASK_PATH, text, NOW - 60_000)
+    return new CodexProvider({
+      fs: fake,
+      sessionsRoot: ROOT,
+      livenessWindowS: WINDOW_S,
+      scanDays: 7,
+      idleRetentionS: 0,
+      now: () => NOW
+    }).scan()
+  }
+
+  async function dwarfFor(text: string) {
+    const snapshots = await scan(text)
+    return snapshots.find((s) => s.sessionId === ASK_SESSION_ID)?.dwarfs[0]
+  }
+
+  it('carries the unanswered question and the answers the model offered', async () => {
+    expect((await dwarfFor(asking))?.pendingQuestion).toEqual({
+      toolUseId: 'call_9c052f81d6b44',
+      header: 'Scope',
+      question: "Should the rename cover the sample module's tests as well, or only its source?",
+      multiSelect: false,
+      askedAt: '2026-08-24T12:37:01.545Z',
+      options: [
+        {
+          label: 'Source and tests',
+          description: 'Rename every occurrence, including the fixtures the tests read.'
+        },
+        {
+          label: 'Source only',
+          description: 'Leave the tests untouched so their failures stay readable.'
+        }
+      ]
+    })
+  })
+
+  it('drops the question once a function_call_output names the same call_id', async () => {
+    expect((await dwarfFor(answered()))?.pendingQuestion).toBeUndefined()
+  })
+
+  /**
+   * The deliberate half, and the one an agent is most likely to "fix" (#265).
+   *
+   * A question may REFINE waitingReason and may never ASSERT it — see
+   * DwarfQuestion in contracts.ts, whose own wording covers exactly this case:
+   * "an ask inside a running turn is the model still working rather than a
+   * human being waited on". Claude may name the reason because its REGISTRY
+   * watched the session stop; Codex has no such record and this build writes
+   * none, so the panel repeats the question and claims nothing about blockage.
+   * Setting 'user-input' here would also silently buy the dwarf the eviction
+   * exemption WAITING_ON_HUMAN_REASON promises, off evidence that never proved
+   * the session stopped.
+   */
+  it('claims no waiting reason, because no Codex record proves the session stopped', async () => {
+    const dwarf = await dwarfFor(asking)
+    expect(dwarf?.pendingQuestion).toBeDefined()
+    expect(dwarf?.waitingReason).toBeUndefined()
+    // The turn really is open, and that stays the only thing said about it.
+    expect(dwarf?.status).toBe('working')
+  })
+
+  it('redacts key material out of the question before it leaves the provider', async () => {
+    const leaky = asking.replace('Source only', 'Use sk-abcdefghijklmnopqrstuvwxyz012345 instead')
+    const question = (await dwarfFor(leaky))?.pendingQuestion
+    expect(JSON.stringify(question)).toContain('[redacted]')
+    expect(JSON.stringify(question)).not.toContain('sk-abcdefghijklmnopqrstuvwxyz012345')
   })
 })

@@ -751,13 +751,23 @@ export class CodexProvider implements Provider {
       name: thread?.agentName ?? rollout?.head.agentName ?? `codex-${sessionId.slice(0, 8)}`,
       model: thread?.model ?? rollout?.info.model,
       effort: thread?.effort ?? rollout?.info.effort,
-      // Codex exposes no structured "alive but blocked mid-turn" evidence: its
-      // rollout event vocabulary carries no approval/input-request record and
-      // logs_2.sqlite is a plain tracing log (both verified against real data,
-      // 2026-08-30). So a possibly-blocked in-turn agent deliberately stays
-      // 'working' — issue #34's conservative rule — and turn_aborted (see
-      // parse.ts) is the one structured signal that ends a turn without a
-      // task_complete.
+      // Codex exposes no structured "alive but blocked mid-turn" evidence: an
+      // approval prompt writes nothing at all while it waits, and logs_2.sqlite
+      // records only the decision that ended one (re-measured on 0.153.4 over
+      // every rollout on the machine — docs/codex-v2-format.md §9). So a
+      // possibly-blocked in-turn agent deliberately stays 'working' — issue
+      // #34's conservative rule — and turn_aborted (see parse.ts) is the one
+      // structured signal that ends a turn without a task_complete.
+      //
+      // An outstanding `request_user_input` does not change this, and the
+      // reason is written into the wire contract rather than chosen here:
+      // carrying a question may REFINE waitingReason and may never ASSERT it
+      // (see DwarfQuestion in contracts.ts). Claude can name the reason because
+      // its REGISTRY watched the session stop; Codex has no such record, and
+      // "an ask inside a running turn is the model still working rather than a
+      // human being waited on" is that comment's own wording for exactly this
+      // case. So the question is reported and the reason is not — the panel
+      // shows what was asked without claiming a blocked state nothing proved.
       status: busy ? 'working' : 'waiting',
       // Redacted BEFORE the renderer's bubble truncation can ever slice it: a
       // truncated prefix can still contain a whole key. The rolloutCache keeps
@@ -770,6 +780,27 @@ export class CodexProvider implements Provider {
     // spawn, so it has no agent definition behind it and gets no objective —
     // the prompt in its rollout really was the human's.
     if (thread?.agentPath !== undefined) mainDwarf.description = thread.agentPath
+    // The one question Codex records (#265). Field by field rather than by
+    // spreading the parse, exactly as claudeProvider's pendingQuestionField
+    // does it and for the same reason: a field added to CodexPendingQuestion
+    // later must not ride across unredacted by being forgotten.
+    const asked = rollout?.info.pendingQuestion
+    if (asked !== undefined) {
+      const header = asked.header === undefined ? undefined : redactSecrets(asked.header)
+      mainDwarf.pendingQuestion = {
+        toolUseId: asked.toolUseId,
+        question: redactSecrets(asked.question),
+        ...(header === undefined ? {} : { header }),
+        multiSelect: asked.multiSelect,
+        options: asked.options.map((option) => ({
+          label: redactSecrets(option.label),
+          ...(option.description === undefined
+            ? {}
+            : { description: redactSecrets(option.description) })
+        })),
+        ...(asked.askedAt === undefined ? {} : { askedAt: asked.askedAt })
+      }
+    }
     // Whether this session's whole life is one prompt and one turn (#231).
     // Keyed on the REGISTRY row for the reason the queue capability is: a
     // rollout the registry never recorded proves nothing about the shape of

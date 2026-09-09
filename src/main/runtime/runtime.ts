@@ -178,6 +178,25 @@ const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 /**
+ * A question this panel can only SHOW (#265).
+ *
+ * The answer channel is a held session's own stream, so a session this panel
+ * merely OBSERVES has none — every Codex thread, and any Claude session this
+ * panel did not start. Codex offers a message queue and no keyboard (#94,
+ * #125, #203), and a queued message is not an answer to a blocked tool call,
+ * so there is no second channel to fall back to and none is invented here.
+ *
+ * Phrased off OPEN_TURN_NO_INTERRUPT_HINT's wording, deliberately: that is the
+ * sentence this app already uses for the other thing that can only happen
+ * where the session runs, and two different sentences for one fact is how a
+ * panel starts sounding like two apps. Answered HERE rather than left to the
+ * held registry, whose refusal would be "that session is not one this panel is
+ * holding" — true, and no help to somebody looking at the question.
+ */
+const ANSWER_ONLY_WHERE_IT_RUNS =
+  'This question cannot be answered from here — only where the session runs, which for a ' +
+  'Codex thread is its own terminal. The panel is showing the ask, not holding it.'
+/**
  * A console the runtime resolved a paste to, on a port with no paste tier
  * (#319). It carries `neverStarted`, so the relay behind it takes the message:
  * on the verified platform (Windows) this never happens — the port always
@@ -2570,6 +2589,13 @@ export class AgentRuntime {
       .flatMap((mine) => mine.dwarfs)
       .find((item) => item.id === request.dwarfId)
     if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
+    // An observed session's ask is shown and not answerable — see
+    // ANSWER_ONLY_WHERE_IT_RUNS. Checked before the registry so the person
+    // reads where the answer goes instead of what this panel is not doing;
+    // the permission path beside this one already refuses the same way.
+    if (!this.heldSessions.holds(dwarf.sessionId)) {
+      return { answered: false, error: ANSWER_ONLY_WHERE_IT_RUNS }
+    }
 
     return this.heldSessions.answer({
       sessionId: dwarf.sessionId,
