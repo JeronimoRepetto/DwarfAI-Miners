@@ -366,6 +366,13 @@ What is in it:
   with its reason rather than hiding it. Effort on a held Claude session is changed from the mine's
   session strip instead.
 
+For a Codex session, a question card shows the same kind of question a held Claude session would
+ask — Codex's own `request_user_input` tool call — but it cannot be answered from here: Codex
+offers no answer channel to a session this panel only observes, so the card says to answer it in
+that session's own terminal instead. Codex's approval prompts, by contrast, never reach the panel
+at all, because Codex writes nothing to disk while one is open — measured, not merely unbuilt, in
+[`docs/codex-v2-format.md`](docs/codex-v2-format.md) §9.
+
 The panel resizes by dragging its top edge, or with the arrow keys on that handle.
 
 ### Sending a message to a session
