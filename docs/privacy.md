@@ -1,8 +1,8 @@
 # Privacy and data boundary
 
 DwarfAI-Miners is a local desktop app. Everything it does happens on your machine: it reads
-the local files Claude Code and Codex already write, renders them in a floating panel, and
-keeps a handful of small files of its own. This document states exactly what is read, what is
+the local files Claude Code, Codex and Antigravity already write, renders them in a floating panel,
+and keeps a handful of small files of its own. This document states exactly what is read, what is
 stored, and what is transmitted. Every claim names the source that implements it, so it can be
 checked rather than trusted.
 
@@ -27,6 +27,12 @@ checked rather than trusted.
   (`~/.codex/state_5.sqlite` and `~/.codex/logs_2.sqlite`) are opened **read-only** for
   thread relationships and liveness heartbeats (`src/main/providers/codex/codexProvider.ts`,
   `src/main/adapters/sqliteLike.ts`).
+- **Antigravity's own store.** The `agy` CLI's directory (default `~/.gemini/antigravity-cli`,
+  overridable with `ANTIGRAVITY_STORE_ROOT`) is read for three things: the presence lock the CLI
+  writes per running conversation, `history.jsonl` for which workspace a conversation belongs to,
+  and the conversation's `transcript.jsonl` for the feed and for whether a turn is still open
+  (`src/main/providers/antigravity/antigravityProvider.ts`, `discovery.ts`, `parse.ts`). Read-only,
+  bounded, and in place.
 - **Project directories: names, sizes, and the first 4 KB of every source file counted.** To
   pick a mine's tier, the tier service walks the project directory and adds up the byte size
   of the source files it finds — a bounded, capped walk that skips `node_modules`, `.git`,
@@ -52,6 +58,9 @@ from the start plus 128 KB from the end of a Codex rollout. From each file it ke
 things — the project path the transcript records, and its final token count. Message text is
 parsed and discarded (`src/main/ledger/coalBackfill.ts`, `src/main/ledger/coalScan.ts`).
 
+Antigravity is not part of that scan, and not by choice: its format records no token usage at all,
+so there is nothing in it to count.
+
 The scan is bounded rather than instantaneous: at most 1 500 files or 8 seconds per launch,
 and never more than 400 files out of any single directory. It therefore resumes across
 launches until it has been round the whole tree once, and then never runs again. What it
@@ -60,22 +69,61 @@ past the per-directory limit, and any transcript carrying no project path are al
 
 ## What it stores, and where
 
-In Electron's per-user data directory (on Windows `%APPDATA%\dwarfai-miners`) the app has
-eight files of its own — seven it writes, and one (`config-v1.json`) it only reads. All but
-`hook-token` are plain JSON or an empty marker, so you can read every one of them:
+Everything the app keeps lives in Electron's per-user data directory:
 
-| File                          | Purpose                                                                                                                                                                                                                             |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `autostart-default-v1.marker` | Remembers that the packaged app already applied its one-time autostart default, so a tray opt-out is never overridden (`src/main/index.ts`).                                                                                        |
-| `hooks-enabled.marker`        | Remembers that you opted into instant updates (`src/main/hooks/hookChannel.ts`).                                                                                                                                                    |
-| `hook-token`                  | The per-install random secret that authenticates hook requests. It is embedded in the hook commands in your own Claude config and goes nowhere else (`src/main/hooks/hookToken.ts`).                                                |
-| `pin-preference-v1.json`      | Whether you left the panel pinned always-on-top (`src/main/shell/pinPreference.ts`).                                                                                                                                                |
-| `shortcut-preference-v1.json` | The global panel-toggle accelerator you chose (`src/main/shell/shortcutPreference.ts`).                                                                                                                                             |
-| `config-v1.json`              | Settings for an installed app, which has no repository `.env` to read. It is read on every launch; no screen in the app writes it today, so it exists only if you created it by hand (`src/main/config/configFile.ts`).             |
-| `material-ledger-v1.json`     | The vault: cumulative tokens per material, **keyed by absolute project path**, plus a last-seen counter per session id so the same tokens are never credited twice (`src/main/ledger/ledgerStore.ts`, `src/main/domain/ledger.ts`). |
-| `coal-backfill-v1.json`       | The history scan's bookmark: when it first ran, whether it has finished, and — while it has not — the absolute paths of the transcript directories it has already read (`src/main/ledger/coalBackfill.ts`).                         |
+| Platform | Directory                                      |
+| -------- | ---------------------------------------------- |
+| Windows  | `%APPDATA%\DwarfAI-Miners`                     |
+| macOS    | `~/Library/Application Support/DwarfAI-Miners` |
+| Linux    | `~/.config/DwarfAI-Miners`                     |
 
-The five JSON documents are rewritten through a sibling `.tmp` file and a rename, so an
+Twelve entries: eleven the app writes, and one (`config-v1.json`) it only reads. All but
+`hook-token` and the SQLite database are plain JSON or an empty marker, so you can read them in any
+text editor.
+
+**Your preferences** — one tiny JSON document each, so a corrupt one can only cost you that one
+setting:
+
+| File                             | Purpose                                                                                       |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `pin-preference-v1.json`         | Whether you left the panel pinned always-on-top (`src/main/shell/pinPreference.ts`).          |
+| `shortcut-preference-v1.json`    | The global panel-toggle accelerator you chose (`src/main/shell/shortcutPreference.ts`).       |
+| `panel-edge-v1.json`             | Which screen edge the docked shell opens on (`src/main/shell/panelEdgePreference.ts`).        |
+| `message-panel-position-v1.json` | Where you last dragged the message panel's window (`src/main/shell/messagePanelPosition.ts`). |
+| `audio-preferences-v1.json`      | Whether music starts on launch, and the three volumes (`src/main/shell/audioPreference.ts`).  |
+
+**Markers and secrets:**
+
+| File                          | Purpose                                                                                                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `autostart-default-v1.marker` | Remembers that the packaged app already applied its one-time autostart default, so a tray opt-out is never overridden (`src/main/index.ts`).                                         |
+| `hooks-enabled.marker`        | Remembers that you opted into instant updates (`src/main/hooks/hookChannel.ts`).                                                                                                     |
+| `hook-token`                  | The per-install random secret that authenticates hook requests. It is embedded in the hook commands in your own Claude config and goes nowhere else (`src/main/hooks/hookToken.ts`). |
+
+**Read, never written:**
+
+| File             | Purpose                                                                                                                                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config-v1.json` | Settings for an installed app, which has no repository `.env` to read. It is read on every launch; no screen in the app writes it, so it exists only if you created it by hand (`src/main/config/configFile.ts`). |
+
+**Your history** — the two entries that accumulate, and the ones worth reading the next section
+about:
+
+| File                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `projects-v1.db`        | One SQLite file holding the projects list (name, **absolute path**, measured tier, when it was added, when it was last active, and whether you have removed it from the list), the material vault, and the sessions this app has launched (`src/main/appDatabase/appDatabase.ts`, `src/main/projects/projectsStore.ts`, `src/main/ledger/sqliteLedgerStore.ts`). Opened read-write; nothing else reads it. |
+| `coal-backfill-v1.json` | The history scan's bookmark: when it first ran, whether it has finished, and — while it has not — the absolute paths of the transcript directories it has already read (`src/main/ledger/coalBackfill.ts`).                                                                                                                                                                                                |
+
+One more file may be there from an older version. `material-ledger-v1.json` was the vault before it
+moved into the database. It holds the same thing — cumulative tokens per material, keyed by absolute
+project path, plus a last-seen counter per session id. On the first launch after the move it is read
+once and then **kept as a backup and ignored forever**; nothing in the app ever writes to, renames,
+or deletes it (`src/main/ledger/ledgerMigration.ts`). It becomes the live vault again only on a run
+where the database will not open, which the app says in its log
+(`src/main/ledger/openLedgerStore.ts`). Delete it yourself if you would rather it not sit there —
+after the move, nothing needs it.
+
+Every JSON document above is rewritten through a sibling `.tmp` file and a rename, so an
 interrupted write can only leave the previous file intact, plus at worst a stray `.tmp` beside
 it.
 
@@ -92,11 +140,14 @@ key, a LaunchAgents plist, or an XDG autostart desktop entry; the README's start
 lists the exact locations.
 
 **The vault is a durable record of your projects, and it is worth being plain about it.**
-`material-ledger-v1.json` holds one line per project you have run an agent in, named by its
-absolute path, with a running token total beside it — so it says which projects exist on this
-machine and roughly how much work each has had. Nothing prunes it by project: a project you
-deleted a year ago keeps its entry and its totals. While the history scan is unfinished,
-`coal-backfill-v1.json` likewise lists transcript directory paths.
+`projects-v1.db` holds one row per project you have run an agent in, named by its absolute path,
+with a running token total beside it — so it says which projects exist on this machine and roughly
+how much work each has had. Nothing prunes it by project: a project you deleted a year ago keeps its
+row and its totals, and **removing a mine from the Mines list does not remove it either** — that
+control sets a "you stopped tracking this" timestamp, which is exactly why adding the folder again
+brings the mine back with its ore. Settings' **Reset metrics** wipes the material totals; it is the
+only thing in the app that does. While the history scan is unfinished, `coal-backfill-v1.json`
+likewise lists transcript directory paths.
 
 Beyond those files nothing is copied. Transcripts, rollouts, and Codex's SQLite files are read
 in place, and no message text the panel displays is written to disk by this app.
@@ -113,18 +164,38 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
   hook command written into your Claude config POSTs the hook's own JSON to
   `http://127.0.0.1:<port>` with `--noproxy 127.0.0.1`, so not even a configured proxy can
   route it off the machine (`src/main/hooks/hookCommand.ts`).
-- **The Send action runs your own Claude CLI.** Delivering a message to a session spawns one
-  `claude -p` turn from `~/.local/bin/claude`, restricted to the `ListAgents` and
-  `SendMessage` tools (`src/main/textDelivery/relay.ts`, `relayRunner.ts`). That turn runs
-  under your Claude account, and its network behavior is Claude Code's — the text you typed
-  travels to Anthropic the same way anything you type into Claude Code does, and
-  DwarfAI-Miners itself opens no connection.
+- **The Send action never opens a socket of its own; what it does depends on the channel.** Pasting
+  into a console (the default where the panel can reach one) is entirely local: the message goes on
+  the system clipboard, the console window is brought forward, Ctrl+V is synthesized, and the
+  clipboard's previous contents are put back — see the next section. Handing a message to a Codex
+  thread's queue spawns your own `codex` binary with the thread id and the text as argv. The relay
+  spawns one throwaway `claude -p` turn from `~/.local/bin/claude` (or `claude.exe` under the same
+  path on Windows), in `--safe-mode`, restricted to the `ListAgents` and `SendMessage` tools
+  (`src/main/textDelivery/relay.ts`, `relayRunner.ts`). That turn runs under your Claude account,
+  and its network behavior is Claude Code's — the text you typed travels to Anthropic the same way
+  anything you type into Claude Code does, and DwarfAI-Miners itself opens no connection.
 - **External links open in your browser.** A link that asks for a _new window_ is refused and
   its URL handed to the system browser instead (`setWindowOpenHandler` in
   `src/main/shell/window.ts`). That is the whole of it: there is no `will-navigate` handler,
   so nothing stops the panel's own frame being navigated somewhere else. In practice the
   renderer is a local bundle that navigates nowhere, but the guard is narrower than "all
   navigation is denied" and should not be relied on as if it were that.
+
+## The one thing it borrows: your clipboard
+
+Sending a message into a session's console writes that message to the **system clipboard**, pastes
+it, and restores what was there before, in a `finally` that runs whichever way the paste ends
+(`src/main/textDelivery/windowsTextDelivery.ts`). Two consequences, both accepted rather than
+hidden:
+
+- For the length of one window focus plus one keystroke, your clipboard holds the message you just
+  sent. Anything that reads the clipboard in that window could read it.
+- Anything that _writes_ to the clipboard in that same window loses its value to the restore.
+
+Not restoring at all would be worse — your clipboard would silently become your last sent message —
+so the race is taken deliberately. It happens only on the console-paste channel: the relay, the
+Codex queue, and a session the panel holds open all touch no clipboard, and no other action in the
+app reads or writes one.
 
 ## What is shown on screen
 

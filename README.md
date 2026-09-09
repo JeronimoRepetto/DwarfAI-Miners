@@ -39,10 +39,12 @@ DwarfAI-Miners is a floating desktop panel that turns active AI coding sessions 
 dwarfs. A mine represents one project; workers and foremen represent the agents currently
 operating in that project.
 
-**Status:** functional MVP. Claude Code and Codex session detection, live IPC updates, mine
-tiers, animated dwarfs, terminal focus with transcript fallback, autostart, and packaging are
-implemented. Windows is the verified platform; macOS and Linux build and are unit-tested but
-have not been run end to end yet — see the support matrix below.
+**Status:** functional MVP. Session detection for Claude Code, Codex and Antigravity; live IPC
+updates; mine tiers; animated dwarfs; a floating message panel you can send into, kick from and
+read history in; terminal focus with a transcript fallback; background music, mine ambience and
+dwarf voices; autostart; and packaging are all implemented. Windows is the verified platform;
+macOS and Linux build and are unit-tested but have not been run end to end yet — see the
+[support matrix](#platform-support) below.
 
 ## The bigger picture
 
@@ -53,20 +55,18 @@ observer, and eventually part game.
 
 ### What it is today
 
-- **Observer:** reads local Claude Code and Codex session data and turns projects, agents, status,
-  messages, and mined materials into a living colony.
-- **Control surface:** lets you launch supported sessions, focus their external terminal, open a
-  live transcript viewer, send messages, kick work, and answer agent questions.
+- **Observer:** reads the session data Claude Code, Codex and Antigravity already write locally and
+  turns projects, agents, status, messages, and mined materials into a living colony.
+- **Control surface:** lets you launch supported sessions, choose their model and effort, focus
+  their external terminal, open a live transcript viewer, send messages, kick work, and answer
+  agent questions.
 - **Terminal companion:** it works alongside the provider's terminal rather than replacing it with
   a terminal emulator. The panel is already the interactive surface for the actions it supports;
   the underlying provider still owns the actual process and terminal.
 
-Claude Code and Codex are the two providers the panel can drive end to end. Antigravity (`agy`)
-is supported as an OBSERVER: its sessions appear on the board with their conversation, and
-nothing about them can be started or acted on from here. More providers, and more of each,
-can be added once their session artifacts and interaction paths meet the project's
-verification bar.
-their session artifacts and interaction paths meet the project's verification bar.
+All three providers can be **read** and **launched**; how far past that the panel can go differs
+per provider, and the [provider table](#provider-support) below is the detail. More providers can
+be added once their session artifacts and interaction paths meet the project's verification bar.
 
 ### Where it is going
 
@@ -81,13 +81,10 @@ The goal is not to make agent work less trustworthy by hiding it behind game mec
 layer should make real agent activity easier and more enjoyable to understand — an idle game built
 around work that is actually happening.
 
-## What it looks like
-
-The panel is designed to be understood at a glance: the map answers **where work is happening**,
-and the mine answers **what each agent is doing**. The hero animation uses privacy-safe generic
-content; it contains no real project names, paths, or session data.
-
 ## Feature tour
+
+The panel is designed to be understood at a glance: the map answers **where work is happening**, and
+the mine answers **what each agent is doing**.
 
 <table>
   <tr>
@@ -107,26 +104,37 @@ content; it contains no real project names, paths, or session data.
   </tr>
   <tr>
     <td align="center"><strong>Messages</strong><br>Read history, send, kick, and answer questions.</td>
-    <td align="center"><strong>Launch</strong><br>Start Claude Code or Codex in a project mine.</td>
-    <td align="center"><strong>Settings</strong><br>Configure the shortcut and panel behavior.</td>
+    <td align="center"><strong>Launch</strong><br>Start a session in a project mine, with a model and effort.</td>
+    <td align="center"><strong>Settings</strong><br>Configure the shortcut, the panel's side, and sound.</td>
   </tr>
 </table>
 
-The screenshots in this tour are interface references with generic, privacy-safe content. The
-pixel-art assets and interface design are by Jeronimo Repetto; the [art pipeline](CONTRIBUTING.md#artwork)
-explains how the shipped assets are processed.
+<!-- TODO(maintainer): the tour needs a capture of the message panel as its own floating window, dragged clear of the shell (#296). `messages.png` still shows the older docked panel. -->
+
+Every capture and animation here uses generic, privacy-safe content — no real project names, paths
+or session data — and some predate features described below: the message panel is a floating window
+of its own now, and Settings has gained an Audio section. The pixel-art assets and interface design
+are by Jeronimo Repetto; the [art pipeline](CONTRIBUTING.md#artwork) explains how the shipped assets
+are processed.
 
 ## Highlights
 
-- **Live session detection** — Claude Code and Codex sessions become dwarfs the moment they
-  appear, no configuration required.
+- **Live session detection** — Claude Code, Codex and Antigravity sessions become dwarfs the moment
+  they appear, no configuration required.
 - **Two illustrated views** — a world map that follows the time of day, with one tier-coloured
   marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
+- **A message panel that floats** — click a dwarf and its conversation opens in a window of its
+  own, which you can drag anywhere on the desktop and which stays where you left it.
+- **Send, with an honest verdict** — your message is drawn in the panel the instant you press
+  Enter, and its own bubble carries the delivery mark: ✓ handed over, ✓✓ the session was seen
+  acting, ✕ with the reason and a **Send again** beside it.
+- **Kick in one click** — one press cuts a session's turn short. Where nothing can be interrupted,
+  the same press sends the dwarf off the rock instead, and says so.
+- **Sound** — six shuffled background tracks, a mine ambience that follows whether the crew is
+  actually mining, and a voice per dwarf rank on click. All of it optional, from
+  [Settings](#settings).
 - **Panel motion** — pages and floating panels open and close in 250 ms, independent of display
   scale. The system's reduced-motion preference makes these transitions instantaneous.
-- **Send and kick** — deliver a message to a session or kick an agent straight from the panel. A
-  message to a named Claude session travels over Claude Code's own cross-session messaging, so
-  nothing is typed and no terminal is brought forward.
 - **Instant updates** — an opt-in Claude-hooks push channel turns the 2-second poll into tens of
   milliseconds.
 - **Terminal focus** — clicking a dwarf focuses its terminal window, with a live transcript
@@ -147,13 +155,18 @@ Download the installer for your OS from the
 | macOS    | `DwarfAI-Miners-*.dmg` (arm64 or x64, matching your Mac)      |
 | Linux    | `DwarfAI-Miners-*.AppImage` or the `.deb` package             |
 
-macOS installers are signed and notarized from the next release onward; Windows and Linux are not
-(see [`docs/signing.md`](docs/signing.md)), so:
+Signing, honestly: the Developer ID signing and notarization config is wired into `package.json`
+and CI's macOS release job, so **macOS installers are signed and notarized from the first release
+tagged after that change** — which is any release later than v0.7.0. It has not yet been exercised
+end to end; [`docs/signing.md`](docs/signing.md) carries the checklist the first such tag has to
+pass. Windows and Linux are never signed. So:
 
-- **macOS**: an installer from before the signed release still gets blocked by Gatekeeper on a
-  normal double-click. Right-click (or Control-click) the app and choose **Open**, then confirm
-  in the dialog — only needed once — or clear the quarantine attribute:
+- **macOS**: an installer built before that change — v0.7.0 and earlier — still gets blocked by
+  Gatekeeper on a normal double-click. Right-click (or Control-click) the app and choose **Open**,
+  then confirm in the dialog — only needed once — or clear the quarantine attribute:
   `xattr -cr "/Applications/DwarfAI-Miners.app"`. Neither is needed for a signed release.
+- **Windows**: SmartScreen shows "Windows protected your PC" and an unverified publisher on a
+  fresh machine. Click **More info** → **Run anyway**.
 - **Linux**: make the AppImage executable before running it: `chmod +x DwarfAI-Miners-*.AppImage`.
 
 Every release is built and packaged on the target OS, but Windows is the only platform that has
@@ -166,6 +179,17 @@ Launch DwarfAI-Miners and it will start minimized to the tray. Use **Ctrl+Alt+Sh
 tray menu) to open the panel. Once packaged, the app enables start-at-login by default; you can
 change that choice from the tray menu. The first run never sends session data anywhere — see
 [Privacy](docs/privacy.md).
+
+Three things worth knowing on that first run:
+
+- **You need nothing to configure.** Start a Claude Code, Codex or Antigravity session in any
+  project and its dwarf appears within about two seconds.
+- **Music starts playing.** That is the shipped default; the note button at the bottom of the
+  navigation column silences it for this run, and Settings' **Music at startup** is where you say
+  it should stay off. See [Sound](#sound).
+- **The first few launches do a one-time history scan** of your existing transcripts, to fill the
+  coal pile with the tokens you burned before installing this. It is bounded, resumable, and
+  described in full in [`docs/privacy.md`](docs/privacy.md#the-one-time-history-scan).
 
 ## Quick start
 
@@ -195,35 +219,42 @@ or Linux desktop, so the table is honest about the difference.
 <details>
 <summary><strong>Full support matrix</strong> (Windows verified; macOS/Linux built, integration-pending)</summary>
 
-| Capability                              | Windows                       | macOS                                  | Linux                                  |
-| --------------------------------------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
-| Overall                                 | **Verified**                  | Built, integration-pending             | Built, integration-pending             |
-| Session detection (Claude Code / Codex) | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
-| Antigravity session detection           | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
-| Codex liveness probe                    | PowerShell `Win32_Process`    | `pgrep -f codex`                       | `pgrep -f codex`                       |
-| Click-to-focus a terminal               | user32 via PowerShell         | `ps` + System Events (`osascript`)     | **Unsupported** — falls back to viewer |
-| Live transcript viewer                  | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
-| Relay a message to a named session      | Supported — the default       | Supported — the default                | Supported — the default                |
-| Type a message into a terminal session  | SendKeys — fallback only      | **Disabled** (built, gated)            | **Unsupported**                        |
-| Queue a message to a Codex CLI session  | **Verified**                  | Expected to work (spawns `codex`)      | Expected to work (spawns `codex`)      |
-| Start at login                          | HKCU Run key                  | `~/Library/LaunchAgents` plist         | `~/.config/autostart` desktop entry    |
-| Packaging                               | NSIS + portable               | dmg + zip (arm64 & x64)                | AppImage + deb                         |
+| Capability                               | Windows                       | macOS                                  | Linux                                  |
+| ---------------------------------------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
+| Overall                                  | **Verified**                  | Built, integration-pending             | Built, integration-pending             |
+| Session detection (Claude Code / Codex)  | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
+| Antigravity session detection            | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
+| Codex liveness probe                     | PowerShell `Win32_Process`    | `pgrep -f codex`                       | `pgrep -f codex`                       |
+| Click-to-focus a terminal                | user32 via PowerShell         | `ps` + System Events (`osascript`)     | **Unsupported** — falls back to viewer |
+| Live transcript viewer                   | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
+| Paste a message into a session's console | **Verified — the default**    | **Disabled** (relay instead)           | **Unsupported** (relay instead)        |
+| Relay a message to a named session       | Supported — the fallback      | Supported — the default                | Supported — the default                |
+| Queue a message to a Codex CLI session   | **Verified**                  | Expected to work (spawns `codex`)      | Expected to work (spawns `codex`)      |
+| Start at login                           | HKCU Run key                  | `~/Library/LaunchAgents` plist         | `~/.config/autostart` desktop entry    |
+| Packaging                                | NSIS + portable               | dmg + zip (arm64 & x64)                | AppImage + deb                         |
 
-A message to a Claude session with a registry name takes the relay on **every** platform, including
-Windows. Typing into a console is what remains for a session with no name — it focuses that window
-and synthesizes keystrokes, which also means a window switch mid-typing lands the rest of the text
-somewhere else, so it is the last channel tried and never the first. An interrupt (Kick) is
-unchanged: it is a keystroke by nature and still goes to the console where one exists.
+The two message rows are one decision seen from two sides, and it reversed twice —
+[`docs/console-hosting.md` §4b](docs/console-hosting.md) records both reversals. Where the panel
+can reach a console (Windows today), a message goes on the clipboard, the console comes forward and
+**Ctrl+V pastes the whole thing at once**, so it arrives as your own prompt in well under a second;
+the clipboard is put back afterwards. Where it cannot (macOS, Linux), a Claude session with a
+registry name takes the relay instead, which touches no window at all. The relay is also the
+fallback on Windows, and only for the one failure that proves nothing was written: a console that
+would not come forward. An interrupt (Kick) never moved — it is a keystroke by nature, and goes to
+the console wherever one exists.
 
 Notes on the three honest gaps:
 
 - **Linux window focus** is unsupported on purpose. `wmctrl`/`xdotool` are X11-only, absent by
   default, and blocked outright under Wayland; guessing would mean hanging on a tool that is not
   there. Clicking a dwarf goes straight to the transcript viewer instead.
-- **macOS keystroke injection** is implemented (`osascript` + System Events) and unit-tested,
-  but it is gated off behind `DARWIN_CONSOLE_INPUT_ENABLED` until it has been run on a real Mac —
-  it also needs the user to grant Accessibility permission, which the app cannot detect. While it
-  is off, Send and Kick render disabled with their reason rather than silently typing nowhere.
+- **macOS console input** is implemented (`osascript` + System Events) and unit-tested, but it is
+  gated off behind the `DARWIN_CONSOLE_INPUT_ENABLED` constant in
+  `src/main/platform/platformAdapters.ts` until it has been run on a real Mac — it also needs the
+  user to grant Accessibility permission, which the app cannot detect. While it is off, a session
+  with a registry name still takes the relay, and one without gets a Send and a Kick rendered
+  disabled with their reason rather than silently typing nowhere. A per-OS paste path for macOS
+  and Linux is a follow-up, not a gap in this one.
 - **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`) are assumed
   platforms. They are home-relative already and nothing in the formats is Windows-specific, but
   this has not been confirmed against real macOS/Linux fixtures.
@@ -232,19 +263,42 @@ Notes on the three honest gaps:
 
 ## What the panel shows
 
-The panel is an isometric idle-game with two views:
+The panel docks against one screen edge as a thin rail; the arrow on the rail slides it open. Along
+its outer edge sits the app mark — pressing it takes the window away, exactly as the global
+shortcut does — and under that a column of **five areas**, plus a note button at the bottom for the
+music:
+
+| Area         | What it is                                                                        |
+| ------------ | --------------------------------------------------------------------------------- |
+| **Settings** | The shortcut, the panel's side, sound, the metrics wipe, and the running version. |
+| **Map**      | The default view: every project with a live session, at a glance.                 |
+| **Mines**    | The searchable list of projects, with tier filters and a sort by last activity.   |
+| **Lab**      | Planned. Shows an unavailable state today.                                        |
+| **Market**   | Planned. Shows an unavailable state today.                                        |
+
+An **opened mine** is not a sixth area. It sits beside whichever area is selected, which is why you
+can browse the Mines list and watch a crew at the same time.
 
 **Map view (default).** An illustrated world seen from orbit, in one of four paintings chosen by
-your own clock — morning, day, sunset, night. Every project with an observed AI CLI session
-appears on one of the map's 74 spawn locations as a pulsing hexagon coloured by tier: Bronze
-(cyan), Copper (orange-brown), Silver (grey), Gold (yellow), Uranium (green). A project is
-assigned a free location at random the first time the app sees it and that location is remembered,
-so a mine never moves — not between refreshes and not across restarts. Resting the pointer on a
-marker for a moment shows its tier, the project name and how many agents are working in it;
-clicking enters the mine.
+your own clock — morning (07:00–11:59), day (12:00–16:59), sunset (17:00–19:59) and night
+(20:00–06:59), re-read once a minute. Every project with an observed AI CLI session appears on one
+of the map's 74 spawn locations as a pulsing hexagon coloured by tier: Bronze (cyan), Copper
+(orange-brown), Silver (grey), Gold (yellow), Uranium (green). A project is assigned a free
+location at random the first time the app sees it and that location is remembered, so a mine never
+moves — not between refreshes and not across restarts. Resting the pointer on a marker for a moment
+shows its tier, the project name and how many agents are working in it; clicking enters the mine.
 
-**Mine interior.** The cave art for that tier, with the crew standing on the walkable
-floor along the bottom. Each agent is a dwarf animated by swapping poses:
+**Mines view.** The same projects as a list of cards, ten at a time. A search box matches on the
+project name, a chip row filters to one tier (**All** is the only chip an unmeasured project
+appears under), and the date control flips the order by last activity. A card can also **remove**
+its mine — which hides the row and nothing else: the ore stays, and adding the folder again brings
+the mine back. That is why removal asks a plain confirmation rather than the typed word Settings'
+irreversible metrics wipe asks for.
+
+**Mine interior.** The cave art for that tier, with the crew standing on the walkable floor along
+the bottom, the vault's material chip in the corner, and four round controls: **close**, **history**
+and **add** on the right, and the **ambience mute** alone at the top left. Each agent is a dwarf
+animated by swapping poses:
 
 - **working** alternates two pickaxe swings,
 - **waiting** sits still on one resting pose beneath a drifting "z z z",
@@ -255,6 +309,84 @@ floor along the bottom. Each agent is a dwarf animated by swapping poses:
 The provider is shown by a small badge on the sprite rather than by tinting the art.
 Hovering a dwarf shows name, provider, model, effort, and status. When an agent's last
 message changes, a comic speech bubble appears above it for a few seconds.
+
+Selecting a dwarf opens its [message panel](#the-message-panel), and — for a session this panel is
+holding open — a **session strip** along the interior's lower edge, showing that session's model,
+context window and MCP roster. Where the session's own protocol allows it (Claude Code today), the
+model and effort can be changed from the same line, which is the point of putting the control beside
+the reading that proves it changed: until the session's next `init` names the new value, the strip
+says _pending_ rather than claiming the change landed. A session the panel only observes gets no
+strip at all — there is nothing first-hand to put on it, and drawing one disabled said less than
+drawing none.
+
+### The message panel
+
+Clicking a dwarf opens its conversation in **a window of its own** — not a page inside the panel.
+It arrives docked beside the shell, and from there you can drag it anywhere on the desktop: closing
+it, reopening it, or restarting the app brings it back where you left it, so it can sit beside your
+editor while the shell stays on its edge. If the spot you left it in no longer exists — a monitor
+unplugged, a resolution change — it comes back beside the shell rather than off-screen.
+
+What is in it:
+
+- **The conversation**, oldest first, opening on the newest message. It does not resize itself when
+  a message arrives, and it does not scroll you to the bottom mid-sentence — the exception being a
+  message you just sent, which it does follow.
+- **A composer.** Enter sends, Shift+Enter writes a newline. It is drawn disabled, with the reason
+  on it, whenever the session cannot receive text.
+- **Runs of tool calls, folded.** A stretch of consecutive activity lines collapses into one
+  **Working…** disclosure under the bubble above it; click to unfold. Unfolding one never moves the
+  list. An `edit` or `read` line's own path is clickable and opens that file.
+- **Question and permission cards**, directly above the composer, when the session is blocked on a
+  human. They are cleared only by the session's next snapshot, never by the panel.
+- **A history tab**, which expands the panel to full height and back.
+- **Kick** and **close**, plus a **jump to terminal** control where one exists.
+- **Boost**, which is drawn and permanently disabled, saying so and naming the session's current
+  effort. No provider exposes a channel for raising effort mid-turn, and the panel shows the slot
+  with its reason rather than hiding it. Effort on a held Claude session is changed from the mine's
+  session strip instead.
+
+The panel resizes by dragging its top edge, or with the arrow keys on that handle.
+
+### Sending a message to a session
+
+<!-- TODO(maintainer): screenshot of a message bubble carrying its ✓/✓✓ delivery mark, and one showing a folded "Working..." disclosure — docs/assets/feature-tour/messages.png predates both (#309, #294). -->
+
+Press Enter and **the message is drawn in the panel immediately**, as your own bubble, before
+anything has been delivered. The bubble then carries what actually happened to those words:
+
+| Mark | Means                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------- |
+| `…`  | Being delivered.                                                                            |
+| `✓`  | Handed to the session — it reached the queue or the console, and the panel is now watching. |
+| `✓✓` | The session was **seen acting** on it.                                                      |
+| `✕`  | Not delivered, with the reason. **Send again** appears beside it; the ✕ stays where it is.  |
+
+`✓` and `✓✓` are deliberately different facts, and the panel never promotes one to the other on a
+guess: it watches for up to a minute, and a watch that closes without proof stays at "handed over,
+no reaction seen" rather than claiming a reaction.
+
+Which channel carries it depends on the session, not on a preference:
+
+| The session…                              | Message goes by                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------- |
+| runs in a console the panel can reach     | **clipboard paste** into that console; the relay if it will not come forward |
+| is a named Claude session with no console | Claude Code's own cross-session messaging (`claude -p` relay)                |
+| is a Codex CLI session                    | Codex's own message queue, read between turns                                |
+| is one this panel is **holding** open     | straight onto the stream the panel already owns                              |
+| was launched with a single prompt         | nothing — it has no inbox, and the composer says so                          |
+
+The per-platform half of that is the [support matrix](#platform-support); the reasoning behind both
+reversals of the paste-versus-relay order is [`docs/console-hosting.md`](docs/console-hosting.md).
+A message to a worker is delivered to its foreman, tagged for that worker by name.
+
+**Kick** does one of three things, and says which:
+
+- cuts the current turn short, where the session has an interrupt channel;
+- **ends the process**, for a session this panel launched itself;
+- **sends the dwarf off the rock**, where nothing can be interrupted at all — the board stops
+  showing it, and nothing is asked of the session. It comes back the moment that session shows new
+  activity, which the panel tells you, because otherwise the return reads as a bug.
 
 ### Focusing a session's terminal
 
@@ -299,24 +431,41 @@ twice in a row reproduces every output file byte-for-byte. The README logo
 
 ## Provider support
 
-| Provider    | Support      | Liveness and hierarchy                                                                                                                                                                                                                                                                                                                                  |
-| ----------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | Active       | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported.                                                                                                                                                                                                                 |
-| Codex       | Active       | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` is used for verified worker/foreman relationships.                                                                                                                  |
-| Antigravity | Observe only | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. Sessions cannot be launched, messaged, interrupted or answered from the panel, and report no tokens — see below. |
-| Gemini CLI  | Planned      | No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed.                                                                                                                                                                                                       |
+Three questions get three separate answers, because they are three different bars: can this app
+**read** a provider's sessions, can it **launch** one, and can it **hold** one open so its words
+arrive live.
+
+| Provider    | Read | Launch | Hold   | Notes                                                                                                                                                                                                                                                                                                                                                           |
+| ----------- | ---- | ------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | yes  | yes    | yes    | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported. The one provider with a complete held-session surface: interrupt, context reading, and answers to its own question and permission prompts.                                                                              |
+| Codex       | yes  | yes    | no     | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` gives verified worker/foreman relationships. A launch is detached — `codex exec` in the mine's folder, discovered afterwards by the poll. Messages go to Codex's own queue. |
+| Antigravity | yes  | yes    | partly | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. A held `agy` session can be spoken to; see the paragraph below for what its protocol does not offer.                     |
+| Gemini CLI  | no   | no     | no     | Planned. No Gemini CLI session artifacts were available for verification. The local `.gemini` data belongs to Antigravity and is intentionally not parsed.                                                                                                                                                                                                      |
 
 Codex liveness is heuristic: a recently modified rollout can remain visible until the
 configured liveness window expires after the CLI closes.
 
-Antigravity is deliberately narrower than the other two, and every limit is an absence of
-evidence rather than an unbuilt feature. Its CLI keeps a private on-disk format with no
-compatibility promise, and that format records no token usage, no blocked-on-a-human state, and
-nothing that ties a running `agy` process to a particular conversation. So an Antigravity dwarf
-mines no ore, is never shown as blocked, cannot have its terminal focused, and shows the send,
-kick and boost actions disabled with their reason. Its transcript can still be tailed in a
-terminal, and its conversation still reads in the panel. `docs/provider-formats.md` §3.1 records
-the format and the version it was verified against.
+**Antigravity is narrower than the other two, and every limit is an absence of evidence rather
+than an unbuilt feature.** Its CLI keeps a private on-disk format with no compatibility promise.
+A session the panel launched and is holding can be spoken to, and can be launched with a model and
+one of Antigravity's own three effort levels (low, medium, high) — but the protocol's input side
+carries user text and nothing else: it documents no turn cancellation, no context reading and no
+mid-session model or effort change, so a held Antigravity session offers none of those and answers
+no question or permission prompt. The panel therefore says "this protocol has no cancel" rather
+than "the interrupt was refused". An _observed_ Antigravity conversation — one you started
+yourself in a terminal — records no token usage and no blocked-on-a-human state, and nothing ties a
+running `agy` process to a particular conversation: so its dwarf mines no ore, is never shown as
+blocked, and cannot have its terminal focused. Its transcript can still be tailed in a terminal.
+`docs/provider-formats.md` §3.1 records the format and the version it was verified against.
+
+A session started from the panel's Add panel can also carry a **model and an effort level**. The
+effort levels are each CLI's own documented set, not one shared list — Claude Code accepts `low`,
+`medium`, `high`, `xhigh` and `max`; Codex those five plus `ultra`, which is Codex's alone;
+Antigravity only `low`, `medium` and `high` — and a level a CLI does not have is refused outright
+rather than quietly dropped, because a launch that discarded `max` would start a real session at the
+CLI's default and report success. Model names are never hardcoded here: each provider's
+catalogue is read live from that CLI. For a Claude session the panel is holding, the same model and
+effort can be changed later, from the session strip in the mine.
 
 For Claude, the main session dwarf is always the foreman — it is the orchestrator whether or
 not it currently has subagents out — and subagents are always workers. A subagent leaves the
@@ -324,6 +473,56 @@ crew as soon as its `<task-notification>` reports `completed`, `failed` or `kill
 DwarfAI-Miners remembers that so an agent whose notification later scrolls out of the transcript
 tail can never come back as a ghost. Codex promotion still comes from a verified
 `thread_spawn` parent link.
+
+## Sound
+
+Three independent channels, all off one engine:
+
+- **Music.** Six background tracks, shuffled — nothing plays them in the order they are declared.
+  The note button at the bottom of the navigation column starts and stops them **for this run**;
+  Settings' **Music at startup** is the separate statement about what should happen tomorrow.
+  Silencing the music for one meeting is not a preference, which is why the button persists nothing.
+- **Mine ambience.** Two beds, and which one plays is a reading of the crew currently on screen:
+  picks on rock while a worker is producing tokens, and the quiet bed otherwise. A mine holding only
+  a foreman hears the quiet one — a foreman is not a worker. The round **mute** at the interior's
+  top-left corner silences the ambience alone, also for this run.
+- **Dwarf voices.** One recording per rank, played when you click a dwarf and on nothing else.
+  There is no fallback: a rank with no recording would simply be silent rather than borrow another
+  rank's voice.
+
+All of it stops while the window is away — hidden, minimised, or sent to the tray — and the music
+alone survives the shell being collapsed to its rail. Nothing a media element refuses ever reaches
+the rest of the app: a machine with no audio pipeline at all shows the same map, mines and crew it
+always did.
+
+The three volumes and the startup switch live in [Settings](#settings). Audio assets are the
+maintainer's own and are covered by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md), not by the code's
+MIT license.
+
+## Settings
+
+Reached from the top button of the navigation column. Four sections and a small group of
+application controls:
+
+| Section            | What it holds                                                                                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Panel shortcut** | Record a new global toggle combination, or reset it to **Ctrl+Alt+Shift+P**. If another application already owns the one you record, registration fails, the previous shortcut is re-claimed, and this section says so rather than showing a shortcut that does nothing. |
+| **Position**       | Which screen edge the docked shell opens on — left or right. Right by default.                                                                                                                                                                                           |
+| **Audio**          | **Music at startup** (on by default), plus a volume slider each for music, ambience and voices. All three start at 100%. See [Sound](#sound).                                                                                                                            |
+| **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
+| _Application_      | **Always on top**, **Hide panel**, and the running version.                                                                                                                                                                                                              |
+
+The version is the release number for an installed build, and the same number with a `-dev` suffix
+when the app was started from a checkout. Those four characters are the point of it: both report the
+same number, and a bug report that does not say which was being run has already been misdiagnosed
+once. Hovering spells it out in words. If main cannot answer, no version is shown at all rather than
+a guessed one.
+
+<!-- TODO(maintainer): screenshot of the Settings screen including the Audio section — docs/assets/feature-tour/settings.png predates it (#174). -->
+
+Settings is where the app's own preferences live. It is not where operational
+[configuration](#configuration) goes: a volume is something you set in the app, a poll interval is
+something an operator configures, and the two are stored differently on purpose.
 
 ## Startup and tray behavior
 
@@ -464,7 +663,7 @@ above for an installed app.
 | `TIER_GOLD_KB`                    | `2048`                      | Source-code byte-weight threshold for gold, in KB.                                                    |
 | `TIER_URANIUM_KB`                 | `8192`                      | Source-code byte-weight threshold for uranium, in KB.                                                 |
 | `CLAUDE_CONFIG_DIRS`              | `~/.claude`                 | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`. |
-| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs when delivering a message to a session.                     |
+| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs. The relay only forwards a string, so the cheapest wins.    |
 | `SENDTEXT_TIMEOUT_S`              | `60`                        | How long a message delivery may take before it is reported as timed out.                              |
 | `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                     |
 | `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.     |
@@ -481,6 +680,28 @@ Launching a new Codex session from the Add panel has no such limit: the panel re
 starts the `node` entry it names directly, so an npm or pnpm install launches without an override.
 
 </details>
+
+### Diagnostic switches
+
+These are separate from the table above, and deliberately so: they are **real environment variables
+only**, never keys in `config-v1.json`. A debugging device does not belong in the file an installed
+app reads on every launch. Each is on for `1` or `true` and off for anything else.
+
+| Variable       | What it prints                                                                        |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `DWARFAI_PERF` | What each poll cost, in wall-clock milliseconds, per stage.                           |
+| `TIER_DEBUG`   | One line per file the tier walk skipped and why, plus a tally per project.            |
+| `CODEX_DEBUG`  | Which candidate Codex rollouts the liveness gate refused, and on which rule.          |
+| `SHELL_DEBUG`  | What main does to its two windows — the one place a silent failure was undiagnosable. |
+
+`DWARFAI_PERF` has to be a real environment variable even in a development checkout
+(`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
+arrives too late to be read. The other three work either way.
+
+The development-only simulated valley (`DWARFAI_SIMULATE=1` and its seven `DWARFAI_SIMULATE_*`
+companions) is documented
+in [`docs/simulated-provider.md`](docs/simulated-provider.md). It is likewise environment-only, and
+for a stronger reason: a packaged app must never be talked into inventing mines that do not exist.
 
 ## Verification and packaging
 
@@ -523,20 +744,25 @@ by `pnpm icons` (`scripts/build-icons.mjs`); see `build/icon.*` and `resources/*
 ## Architecture
 
 ```text
-ClaudeProvider / CodexProvider
+ClaudeProvider / CodexProvider / AntigravityProvider     (+ the simulated one, dev only)
             |
-          Poller -> aggregateMines + TierService
-            |
-        AgentRuntime  <- createPlatformAdapters (focus, viewer, text delivery, process probe)
-            |
+          Poller -> aggregateMines + TierService -> MaterialLedger
+            |                                          ^
+        AgentRuntime  <- createPlatformAdapters (focus, viewer, text delivery,
+            |                                    clipboard, process probe, process end)
+            |          <- HeldSessionRegistry (the sessions this panel keeps open)
       Electron IPC / preload
             |
-       Vue renderer
+       Vue renderer  ->  shell window  +  message-panel window
 ```
 
 The shared contract in `src/shared/contracts.ts` is the single type boundary for main,
 preload, and renderer. Providers depend on the `FsLike` port so parsers and scans can be tested
 without the real filesystem.
+
+Both windows are the **same** renderer bundle: main loads `index.html` a second time with
+`?surface=message-panel` and the entry point picks its root component from that. One bundle, one
+stylesheet, one Content-Security-Policy, and every design token already defined in the first.
 
 `src/main/platform/platformAdapters.ts` is the single composition point for everything
 operating-system-specific: the runtime gets a focus function, a `TextDeliveryPort`, a
@@ -556,40 +782,51 @@ handed to the system browser instead. There is no `will-navigate` handler, so na
 the panel's own frame is not intercepted — the panel loads one local document and has no links,
 which is why that has never been reachable, not because it is blocked.
 
+One local side effect is worth stating plainly here rather than only in the privacy document:
+sending a message into a session's console **uses your system clipboard**. The message is written
+to it, pasted, and the previous contents are put back immediately afterwards. Anything that writes
+to the clipboard in that window loses its value to the restore — a single focus plus one keystroke —
+and not restoring at all would be worse, so the race is accepted and stated. Only the paste channel
+does this; the relay and the Codex queue touch no clipboard.
+
 The app makes no outbound network requests of its own — no telemetry, no auto-updater.
 [`docs/privacy.md`](docs/privacy.md) documents the full data boundary (what is read, what is
 stored, what is transmitted, with the source file behind each claim), and
 [`SECURITY.md`](SECURITY.md) covers supported versions and how to report a vulnerability
 privately.
 
+## Reporting a problem
+
+- **Bugs, features and roadmap** → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues).
+  Name your platform, the version the Settings panel shows (the `-dev` suffix matters), and how to
+  reproduce it. Check your platform's row in the [support matrix](#platform-support) first — an
+  integration-pending row is often the whole explanation.
+- **Vulnerabilities** → privately, through the flow in [`SECURITY.md`](SECURITY.md). Never a public
+  issue.
+- **Questions about what the app reads or stores** → [`docs/privacy.md`](docs/privacy.md) answers
+  those with the source file behind each claim.
+
+If you run macOS or Linux, the single most useful thing you can file is what happened when you
+walked the support matrix on real hardware — including "it all worked". See
+[CONTRIBUTING.md](CONTRIBUTING.md#platform-validation--help-wanted).
+
 ## Documentation
 
 The pixel-art assets and interface design are by Jeronimo Repetto. The code is MIT-licensed; the
-artwork has its own [artwork license](ARTWORK-LICENSE.md).
+visual and audio assets have their own [artwork license](ARTWORK-LICENSE.md).
+
+**Start here:**
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — development setup, verification commands, testing
   philosophy, commit conventions, and where help is wanted.
 - [`SECURITY.md`](SECURITY.md) — supported versions, private vulnerability reporting, scope.
 - [`docs/privacy.md`](docs/privacy.md) — the data boundary: what the app reads, stores, and
   transmits.
-- [`docs/signing.md`](docs/signing.md) — why builds are unsigned and what fixing that takes.
-- [`docs/provider-formats.md`](docs/provider-formats.md) — on-disk session-format research
-  for Claude Code and Codex.
-- [`docs/codex-v2-format.md`](docs/codex-v2-format.md) — the Codex SQLite and rollout
-  storage investigation.
-- [`docs/session-topology-and-roles.md`](docs/session-topology-and-roles.md) — what foreman
-  and worker mean, and the contract a new backend inherits.
-- [`docs/hook-detection-evaluation.md`](docs/hook-detection-evaluation.md) — the evaluation
-  behind the instant-updates hooks channel.
-- [`docs/console-hosting.md`](docs/console-hosting.md) — whether the panel can be the console:
-  the four paths to hosting a session, and what shipped from the one that won.
-- [`docs/ecosystem-research.md`](docs/ecosystem-research.md) — the prior-art survey that
-  shaped the design.
-- [`docs/simulated-provider.md`](docs/simulated-provider.md) — the development-only simulated
-  valley: seeing the panel under load without launching real agents (`DWARFAI_SIMULATE=1`).
-- [`docs/custom-launch-command.md`](docs/custom-launch-command.md) — what the Add Panel's
-  **Other** chip starts, the long list of what a held process cannot tell you about itself, and
-  the refusal that was reversed to get here.
+- [`docs/signing.md`](docs/signing.md) — what is signed, what is not, and what fixing the rest
+  takes.
+- [`docs/README.md`](docs/README.md) — **the index to every other document in `docs/`**, including
+  the provider-format research, the design and evaluation notes, and the measurement records.
+
 - [`LICENSE`](LICENSE) — MIT license for the code.
 - [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
   audio assets.

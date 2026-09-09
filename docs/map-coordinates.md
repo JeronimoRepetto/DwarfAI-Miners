@@ -1,7 +1,19 @@
 # Map & Mine-Interior Coordinate Extraction (Issues #90, #89)
 
-**Verdict: usable now for marker placement, one re-anchoring step short of
-authoring `mapSites.ts`/`sceneLayout.ts` directly.** The 74 world-map spawn
+> **Since this was written, both halves shipped.** The re-anchoring step this
+> verdict was waiting on was taken: `docs/map-spawn-points.json` is now compiled
+> by `node scripts/build-map-sites.mjs` into
+> `src/renderer/src/lib/map/spawnPoints.generated.ts`, and the interior work
+> points by `node scripts/build-interior-map.mjs`. `mapSites.ts` — the file this
+> document keeps naming as the eventual consumer — was never created under that
+> name; the generated module took its place, and it carries **image percent**
+> rather than the box percent §4 warns about, projected at draw time by
+> `mapProjection.projectToMapBox`. Read §4 anyway before touching a coordinate:
+> the three coordinate spaces it separates are still the trap, and
+> `.claude/rules/coordinates.md` exists because of it.
+
+**Verdict as recorded: usable now for marker placement, one re-anchoring step
+short of authoring `mapSites.ts`/`sceneLayout.ts` directly.** The 74 world-map spawn
 points and every mine-interior work-point class (spawn/worker/foreman/
 ladder/ramp) extracted at their expected counts, verified against
 `screens/map.md`/`screens/mine.md` and against a rendered overlay, with

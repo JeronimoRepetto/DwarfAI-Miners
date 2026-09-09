@@ -28,8 +28,17 @@ its macOS Swift core was consulted only for the parity matrix, not read line-by-
 optional event source layered on top of the existing 2-second poller — never a
 replacement for it. Ship Claude-only first (Phase 1–2 below); Codex is a
 straightforward fast-follow once the relay mechanism is proven (Phase 3). Do not
-build agentpet's 12-provider hook catalog — `DwarfProvider` is `'claude' | 'codex'`
-today (`src/shared/contracts.ts:79`) and stays that way.
+build agentpet's 12-provider hook catalog — `DwarfProvider` had two members when
+this was written, and a hook catalogue an order of magnitude wider than the
+providers this app reads is cost with no reader.
+
+AMENDED 2026-09-09: `DWARF_PROVIDERS` (`src/shared/contracts.ts`) now has a third
+member, `antigravity` (#237). That does not revive the catalogue argument — the
+push channel is still Claude-only, and Antigravity's CLI documents no hook
+surface at all — but "and stays that way", which is what this line used to say,
+was a prediction rather than a finding and it did not hold. Line citations
+elsewhere in this document have drifted as the files they name have grown; the
+values they quote were re-checked and still hold.
 
 ---
 
