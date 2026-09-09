@@ -14,19 +14,18 @@ import type {
  * CLI's own connection state. Placed here, in `lib/`, rather than as a `v-if`
  * ladder in SessionStrip.vue, because "which sessions can even answer this"
  * is one decision with a test on it: only a session this panel HOLDS reports
- * any of it (see `Dwarf.mcpServers`, `Dwarf.contextUsage`), and the maintainer's
- * 2026-09-07 amendment to `docs/dwarfai-miners-design/screens/mine.md` is
- * explicit that an observed session shows the strip disabled with its reason
- * stated, never an empty one.
+ * any of it (see `Dwarf.mcpServers`, `Dwarf.contextUsage`).
+ *
+ * The maintainer's 2026-09-07 amendment to
+ * `docs/dwarfai-miners-design/screens/mine.md` first drew an observed session
+ * disabled, with its reason stated on the strip. The 2026-09-09 amendment
+ * (#295) REVERSES that for exactly this case: in use, the sentence repeated
+ * itself under almost every mine and told the reader nothing they could act
+ * on, so an observed session now draws no strip at all — no row, no reason.
+ * A held session whose stream has already ended is unchanged: that refusal
+ * names a fact about a session this app DID hold (see `sessionStrip` below),
+ * not a gap in this app, so it keeps its reason drawn.
  */
-
-/**
- * Why the strip is disabled for a session this panel does not hold, in the
- * dwarf action bar's own idiom (`NO_CHANNEL_REASON`/`NO_KICK_REASON` in
- * `lib/delivery/actionBar.ts`) — a fact about the session type, phrased the
- * same way every other "not yet" refusal on this surface is.
- */
-export const NO_SESSION_SURFACE_REASON = "This session type can't report its own configuration yet."
 
 /**
  * Why the model select is drawn but not usable (issue #96) — a held session
@@ -111,9 +110,18 @@ export interface SessionSelectControl {
 }
 
 export type SessionStripState =
-  /** Nothing selected: no session to describe, so no strip at all. */
+  /**
+   * No strip at all — nothing selected, or a session this panel does not
+   * hold (maintainer amendment, 2026-09-09, #295). An absent surface is not
+   * a control that quietly does nothing: there is no control, so nothing is
+   * drawn rather than a reason stated on a strip that could never answer.
+   */
   | { kind: 'none' }
-  /** Selected, but this panel cannot report on it — `reason` says why. */
+  /**
+   * Selected, and this panel DID hold the session, but the stream has since
+   * ended — `reason` says so. The only refusal left: a limit of a session
+   * this app held, never of one it merely observed.
+   */
   | { kind: 'unavailable'; reason: string }
   /**
    * Selected, and this panel holds the stream. Every field is independently
@@ -138,24 +146,24 @@ export type SessionStripState =
  * What the strip should draw for the selected dwarf, or the absence of one.
  *
  * Held sessions only. A session this panel merely observes, or one with no
- * delivery channel at all, refuses with `NO_SESSION_SURFACE_REASON` — the
- * channel is the one fact every held session's wire record carries and every
- * other kind does not (see `TextDeliveryChannel`). A held session whose
- * stream has already ended is a SEPARATE refusal: the lifecycle grace window
- * freezes the last real snapshot, channel included, so `textDelivery` still
- * reads `'held-session'` for a few seconds after the registry has let it go
- * — `status === 'leaving'` is what actually proves it, and the action bar's
- * own `SESSION_ENDED_REASON` is reused rather than a second sentence saying
- * the same thing.
+ * delivery channel at all, draws no strip (`{ kind: 'none' }`, maintainer
+ * amendment, 2026-09-09, #295) — the channel is the one fact every held
+ * session's wire record carries and every other kind does not (see
+ * `TextDeliveryChannel`). A held session whose stream has already ended is a
+ * SEPARATE case, and stays a REFUSAL rather than an absence: the lifecycle
+ * grace window freezes the last real snapshot, channel included, so
+ * `textDelivery` still reads `'held-session'` for a few seconds after the
+ * registry has let it go — `status === 'leaving'` is what actually proves it,
+ * and the action bar's own `SESSION_ENDED_REASON` is reused rather than a
+ * second sentence saying the same thing. That case names a fact about a
+ * session this app DID hold, which is worth stating; "not held at all" is
+ * not.
  */
 export function sessionStrip(
   dwarf: Dwarf | undefined,
   catalogs: readonly AgentModelCatalog[] = []
 ): SessionStripState {
-  if (dwarf === undefined) return { kind: 'none' }
-  if (dwarf.textDelivery !== 'held-session') {
-    return { kind: 'unavailable', reason: NO_SESSION_SURFACE_REASON }
-  }
+  if (dwarf === undefined || dwarf.textDelivery !== 'held-session') return { kind: 'none' }
   if (dwarf.status === 'leaving') {
     return { kind: 'unavailable', reason: SESSION_ENDED_REASON }
   }

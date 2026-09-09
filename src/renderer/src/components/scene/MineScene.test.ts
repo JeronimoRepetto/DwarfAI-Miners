@@ -797,13 +797,16 @@ describe('MineScene session strip (#96)', () => {
     expect(wrapper.get('.session-context-label').text()).toBe('41.2K / 200K')
   })
 
-  it('disables the strip for a selected session this panel only observes', () => {
+  it('draws no strip at all for a selected session this panel only observes (#295)', () => {
+    // AMENDED for #295 (was: "disables the strip for a selected session this
+    // panel only observes", asserting `is-unavailable` and a `.session-reason`
+    // sentence). The maintainer reversed the disabled reading for exactly
+    // this case — see sessionStrip.test.ts and SessionStrip.test.ts.
     const observed = defaultDwarf({ id: 'claude:s2', textDelivery: 'terminal' })
     const wrapper = mount(MineScene, {
       props: { mine: defaultMine({ dwarfs: [observed] }), selectedId: 'claude:s2' }
     })
-    expect(wrapper.get('.session-strip').classes()).toContain('is-unavailable')
-    expect(wrapper.get('.session-reason').text()).not.toBe('')
+    expect(wrapper.find('.session-strip').exists()).toBe(false)
   })
 
   it('follows the selection from one dwarf to another', () => {
