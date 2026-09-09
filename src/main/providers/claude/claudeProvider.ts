@@ -28,6 +28,7 @@ import {
   extractClaudeFeed,
   parseClaudeSessionEntry,
   parseClaudeTranscriptTail,
+  type ClaudeAgentResume,
   type ClaudeInFlightAgent,
   type ClaudePendingQuestion,
   type ClaudeSessionEntry,
@@ -136,19 +137,34 @@ interface EndedAgent {
    */
   seenAtMs: number
   /**
-   * Only for a `failed` ending whose launch record shared a window: the
-   * session that saw it and the launch-time identity a redraw would need.
-   * Absent for every other status, so `completed` and `killed` have nothing to
-   * come back with, and the session id keeps the resume sweep from statting
-   * one session's agents against another session's project directory.
+   * The launch-time identity a redraw would need, and the session that saw it,
+   * for any ending whose `async_launched` record shared a window with it.
+   *
+   * Recorded whatever the status said since #338, because a resume RECORD can
+   * follow any of the three and the redraw needs the same identity for all of
+   * them; `failed` below is what keeps #179's narrower door exactly as narrow
+   * as it was. The session id keeps a resume from statting or drawing one
+   * session's agents against another session's project directory.
    */
-  failedLaunch?: { sessionId: string; agent: ClaudeInFlightAgent }
+  launch?: { sessionId: string; agent: ClaudeInFlightAgent }
   /**
-   * Set once this agent's own transcript was seen written after `seenAtMs`
-   * while the parent's count still ran short. Remembered rather than
-   * re-derived per poll because the ending stays in the tail forever: without
-   * it, every later poll would re-bury the dwarf on the same old notification
-   * and re-provoke the deep read that found it.
+   * Whether an ending seen for this agent said `failed` — the one status #179
+   * reopens on inference alone. Set from the same fold that captures `launch`,
+   * so it is never true without one, and never cleared: a failure superseded
+   * by a later ending kept its candidacy before #338 split these two fields
+   * apart, and this is not the issue that revisits that.
+   */
+  failed?: boolean
+  /**
+   * Set once this agent has been established to be running past this ending:
+   * by its own transcript being written after `seenAtMs` while the parent's
+   * count ran short (#179), or by Claude Code's own record of a resume (#338).
+   * Remembered rather than re-derived per poll because the ending stays in the
+   * tail forever: without it, every later poll would re-bury the dwarf on the
+   * same old notification and re-provoke the deep read that found it.
+   *
+   * Cleared again by an ending written AFTER the resume that set it, which is
+   * the agent stopping a second time (see rememberEndings).
    */
   resumed?: boolean
 }
@@ -451,6 +467,16 @@ export class ClaudeProvider implements Provider {
    * the same stickiness is what stops the panel oscillating between the two
    * headcounts every 2s, as the tail merge and #36's recovery take turns
    * re-adopting exactly what the ceiling just shed.
+   *
+   * An id LEAVES the set on exactly one piece of evidence, and it is the
+   * strongest kind this file has (#338): a `SendMessage` result in which
+   * Claude Code states that it resumed that agent, and that this provider has
+   * not already acted on (see adoptedResumes). Both proofs above are
+   * inferences about an agent that stopped saying anything — the one about its
+   * parent, the other about a headcount — and the harness's own record of
+   * starting it again outranks either. Nothing weaker may: a write to the
+   * agent's own transcript is precisely what those two rules already concluded
+   * against, so re-admitting on one would restore the ghost they exist to bury.
    */
   private readonly abandonedAgents = new Set<string>()
   /**
@@ -550,6 +576,24 @@ export class ClaudeProvider implements Provider {
    * for the life of the process. One small record per agent, like terminalAgents.
    */
   private readonly sidecars = new Map<string, ClaudeSubagentSidecar>()
+  /**
+   * agentId -> the resume record this provider has already acted on for it,
+   * identified by the resuming line's own timestamp (#338).
+   *
+   * The resume record is a launch record, and a launch record is read ONCE.
+   * This is what makes that true of one that never scrolls out: the record sits
+   * in the tail for as long as the ending it outranks does, so a rule that
+   * re-adopted on every poll would undo every later exit the agent has — #40's
+   * silence above all, whose whole point is that it sticks. Keyed on the
+   * timestamp rather than on a flag, so a SECOND resume of the same agent is
+   * fresh evidence and brings it back again, exactly as the first did.
+   *
+   * A record that carried no timestamp keys on the empty string: acted on once
+   * and not again, which is the conservative half of the trade — a missed
+   * redraw rather than a dwarf that cannot leave. Flat and process-lifetime
+   * like terminalAgents, and one short string per agent ever resumed.
+   */
+  private readonly adoptedResumes = new Map<string, string>()
 
   constructor(options: ClaudeProviderOptions) {
     this.fs = options.fs
@@ -786,6 +830,14 @@ export class ClaudeProvider implements Provider {
       this.rememberedLaunches.get(session.sessionId) ?? new Map<string, ClaudeInFlightAgent>()
     this.rememberedLaunches.set(session.sessionId, remembered)
     for (const agent of info.inFlightAgents) remembered.set(agent.agentId, agent)
+    // ...and the other record that starts an agent, read in the same breath
+    // and for the same reason (#338): a resume names a launch this window
+    // declares, it just declares it about an id that already ended once.
+    this.adoptResumeRecords({
+      sessionId: session.sessionId,
+      resumes: info.resumedAgents,
+      remembered
+    })
     // Ended memory always wins: a remembered launch whose end was already
     // established stays gone, even when no record of it is in the tail.
     this.forgetEnded(remembered)
@@ -801,7 +853,14 @@ export class ClaudeProvider implements Provider {
     // that read the count below, because both need the same boundary: a count
     // line is written at the END of a turn, so it can only ever speak for
     // launches older than the window it was found in.
-    const launchedInTail = new Set(info.inFlightAgents.map((agent) => agent.agentId))
+    // A resume record counts as one of them (#338), and for the very reason
+    // the exemption exists: it is a launch this window declares, so a count
+    // line found in the same window may be older than it and cannot speak for
+    // the agent it started.
+    const launchedInTail = new Set([
+      ...info.inFlightAgents.map((agent) => agent.agentId),
+      ...info.resumedAgents.filter((resume) => !resume.endedSince).map((resume) => resume.agentId)
+    ])
     if (info.pendingBackgroundAgentCount === 0) {
       for (const agentId of [...remembered.keys()]) {
         if (!launchedInTail.has(agentId)) remembered.delete(agentId)
@@ -1146,8 +1205,11 @@ export class ClaudeProvider implements Provider {
    * A notification can be outlived: the blob says itself that the same task-id
    * may notify again after a resume, so an ending this provider has since
    * watched the agent write past no longer answers the question (issue #179).
-   * Silence never can be — an abandoned agent outranks everything here,
-   * because #40's proof is about the parent, not about who wrote last.
+   * Silence can be outlived too, but only by the harness saying so in a record
+   * of its own (#338) — the id is out of `abandonedAgents` by then, so nothing
+   * about the order below has changed: an abandoned agent still outranks
+   * everything here, because #40's proof is about the parent rather than about
+   * who wrote last, and no write of the agent's own may answer it.
    */
   private hasEnded(agentId: string): boolean {
     if (this.abandonedAgents.has(agentId)) return true
@@ -1165,16 +1227,90 @@ export class ClaudeProvider implements Provider {
    * first-sight window and far outside the routine one.
    */
   private rememberEndings(info: ClaudeTranscriptInfo, sessionId: string): void {
-    const failed = new Map(info.failedAgents.map((agent) => [agent.agentId, agent]))
+    const launches = new Map(info.endedLaunches.map((agent) => [agent.agentId, agent]))
+    const failed = new Set(info.failedAgents.map((agent) => agent.agentId))
     for (const agentId of info.terminalAgentIds) {
-      const agent = failed.get(agentId)
-      const failedLaunch = agent === undefined ? {} : { failedLaunch: { sessionId, agent } }
+      const agent = launches.get(agentId)
+      const launch = agent === undefined ? {} : { launch: { sessionId, agent } }
       const known = this.terminalAgents.get(agentId)
       if (known === undefined) {
-        this.terminalAgents.set(agentId, { seenAtMs: this.now(), ...failedLaunch })
-      } else if (known.failedLaunch === undefined && agent !== undefined) {
-        known.failedLaunch = { sessionId, agent }
+        this.terminalAgents.set(agentId, {
+          seenAtMs: this.now(),
+          ...(failed.has(agentId) ? { failed: true } : {}),
+          ...launch
+        })
+        continue
       }
+      if (known.launch === undefined && agent !== undefined) known.launch = { sessionId, agent }
+      if (failed.has(agentId)) known.failed = true
+    }
+    // An ending written AFTER the resume that reopened this agent is the agent
+    // stopping a SECOND time, and it closes it again (#338). Position in the
+    // window is the whole discriminator — the two blobs are byte-identical —
+    // and it is only ever consulted on an agent a RECORD reopened: an ending
+    // re-read beside the resume it already lost to leaves `endedSince` false,
+    // so the dwarf does not flicker, and #179's inferred resumes, which no
+    // record accompanies, are not reachable from here at all.
+    for (const resume of info.resumedAgents) {
+      if (!resume.endedSince) continue
+      const ended = this.terminalAgents.get(resume.agentId)
+      if (ended === undefined || ended.resumed !== true) continue
+      ended.resumed = false
+      // Re-stamped, because this is the first observation of the NEW ending:
+      // a write that predates it proves nothing about a further resume.
+      ended.seenAtMs = this.now()
+    }
+  }
+
+  /**
+   * Take this tail's resume records for the launch records they are (#338).
+   * Mutates `remembered`.
+   *
+   * Issue #179 could only reopen an ending by inference — the agent's own
+   * transcript growing while the parent's count ran short — and inference is
+   * why it reached none of the three statuses but `failed`, and why an id the
+   * silence and ceiling rules had already shed could never come back at all.
+   * This is the record those inferences were standing in for: Claude Code
+   * answering the orchestrator's own `SendMessage` call with the id it
+   * restarted, in the same machine-readable position an `async_launched`
+   * result occupies. So it is treated as the launch it is, and the ordinary
+   * rules run from there — the count, the silence, and the next notification.
+   *
+   * Identity comes from the launch record this provider remembers for the
+   * agent, and from the resume's own `summary` when there is none. Never
+   * invented: an agent nothing was ever remembered about is drawn under the
+   * `agent-<id>` fallback every launch without a description already gets.
+   */
+  private adoptResumeRecords(options: {
+    sessionId: string
+    resumes: readonly ClaudeAgentResume[]
+    remembered: Map<string, ClaudeInFlightAgent>
+  }): void {
+    for (const resume of options.resumes) {
+      // Already answered by an ending later in this same window: the agent
+      // came back and stopped again, and rememberEndings has closed it.
+      if (resume.endedSince) continue
+      const key = resume.timestamp ?? ''
+      if (this.adoptedResumes.get(resume.agentId) === key) continue
+      this.adoptedResumes.set(resume.agentId, key)
+      const ended = this.terminalAgents.get(resume.agentId)
+      if (ended !== undefined) ended.resumed = true
+      this.abandonedAgents.delete(resume.agentId)
+      // A resume of an agent already believed in adds nothing and must take
+      // nothing away: the launch record that put it there is the better
+      // identity, and re-setting the key would not even move it in the
+      // insertion order the count judges beliefs by.
+      if (options.remembered.has(resume.agentId)) continue
+      const launch = ended?.launch
+      options.remembered.set(
+        resume.agentId,
+        launch !== undefined && launch.sessionId === options.sessionId
+          ? launch.agent
+          : {
+              agentId: resume.agentId,
+              ...(resume.summary === undefined ? {} : { description: resume.summary })
+            }
+      )
     }
   }
 
@@ -1205,13 +1341,17 @@ export class ClaudeProvider implements Provider {
       if (remembered.size >= options.reportedPending) return
       if (ended.resumed === true || remembered.has(agentId)) continue
       if (this.abandonedAgents.has(agentId)) continue
-      if (ended.failedLaunch?.sessionId !== options.sessionId) continue
+      // Inference reopens a `failed` ending and only that one, exactly as
+      // before #338 split the status off the launch record it used to travel
+      // with. `completed` and `killed` come back on a RECORD or not at all.
+      if (ended.failed !== true) continue
+      if (ended.launch?.sessionId !== options.sessionId) continue
       const stat = await this.fs.stat(
         claudeSubagentTranscriptPath(options.projectDir, options.sessionId, agentId)
       )
       if (stat === null || stat.mtimeMs <= ended.seenAtMs) continue
       ended.resumed = true
-      remembered.set(agentId, ended.failedLaunch.agent)
+      remembered.set(agentId, ended.launch.agent)
     }
   }
 
@@ -1488,6 +1628,12 @@ export class ClaudeProvider implements Provider {
       // terminalAgents exists to bury — and for the one abandoned by silence
       // (issue #40), whose launch record is exactly what this window reaches.
       this.rememberEndings(deep, sessionId)
+      // The one adoption this read was missing (#338). A count higher than
+      // what is known still sends it looking for launch records the routine
+      // window never held, and a resume record older than that window is one
+      // — for an id this provider is sure ended, which is why nothing else
+      // here could have taken it.
+      this.adoptResumeRecords({ sessionId, resumes: deep.resumedAgents, remembered })
       for (const agent of deep.inFlightAgents) {
         if (!this.hasEnded(agent.agentId)) remembered.set(agent.agentId, agent)
       }

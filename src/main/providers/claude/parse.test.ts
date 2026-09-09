@@ -337,6 +337,8 @@ describe('parseClaudeTranscriptTail', () => {
       inFlightAgents: [],
       terminalAgentIds: [],
       failedAgents: [],
+      endedLaunches: [],
+      resumedAgents: [],
       pendingBackgroundAgentCount: undefined,
       tokensObserved: undefined,
       pendingQuestion: undefined,
@@ -1655,5 +1657,154 @@ describe('parseClaudeTranscriptTail unresolved tool uses (#203)', () => {
     // matching is by id over the whole tail, exactly as it is for an ask.
     const tail = answerLine('toolu_r1') + useLine('toolu_r1', 'Bash', { command: 'pnpm test' })
     expect(parseClaudeTranscriptTail(tail).unresolvedToolUses).toEqual([])
+  })
+})
+
+describe('parseClaudeTranscriptTail resume records (#338)', () => {
+  /** The real fixture: one agent launched, ended, resumed and ended again. */
+  const resumeLines = readFileSync(join(FIXTURES, 'resume-record.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+  const RESUMED_AGENT = 'c72a10f4b8e93d65a'
+  const upTo = (end: number): string => resumeLines.slice(0, end + 1).join('\n') + '\n'
+
+  /** A `SendMessage` result in the machine-readable shape, at a chosen time. */
+  function resumeLine(payload: Record<string, unknown>, timestamp?: string): string {
+    return (
+      JSON.stringify({
+        type: 'user',
+        ...(timestamp === undefined ? {} : { timestamp }),
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_s1' }] },
+        toolUseResult: payload
+      }) + '\n'
+    )
+  }
+
+  it('reads the resumed agent off the real record, with its own timestamp', () => {
+    expect(parseClaudeTranscriptTail(upTo(5)).resumedAgents).toEqual([
+      {
+        agentId: RESUMED_AGENT,
+        timestamp: '2026-09-09T16:36:24.118Z',
+        summary: 'Placeholder follow-up message.',
+        endedSince: false
+      }
+    ])
+  })
+
+  it('reads it out of the tool_result text as readily as out of toolUseResult', () => {
+    // Claude Code writes the same payload twice on one line — the model reads
+    // the block, the harness reads the top-level copy — so either will do.
+    const text =
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_s1',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ success: true, resumedAgentId: 'agentx' })
+                }
+              ]
+            }
+          ]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(text).resumedAgents.map((r) => r.agentId)).toEqual(['agentx'])
+  })
+
+  it('says the resume was outlived once an ending follows it in the window', () => {
+    const parsed = parseClaudeTranscriptTail(upTo(6))
+    expect(parsed.resumedAgents).toEqual([
+      {
+        agentId: RESUMED_AGENT,
+        timestamp: '2026-09-09T16:36:24.118Z',
+        summary: 'Placeholder follow-up message.',
+        endedSince: true
+      }
+    ])
+  })
+
+  it('keeps only the latest resume of one agent, judged against the later ending', () => {
+    // Resumed, ended, resumed again: the last record is the one that describes
+    // the agent now, and no ending follows it.
+    const tail =
+      launchLine('agentx') +
+      notificationLine('agentx', 'completed') +
+      resumeLine({ success: true, resumedAgentId: 'agentx' }, 'first') +
+      notificationLine('agentx', 'completed') +
+      resumeLine({ success: true, resumedAgentId: 'agentx' }, 'second')
+    expect(parseClaudeTranscriptTail(tail).resumedAgents).toEqual([
+      { agentId: 'agentx', timestamp: 'second', endedSince: false }
+    ])
+  })
+
+  it('names nobody for a result that carries no resumed agent', () => {
+    const tail = resumeLine({ success: true, message: 'Message delivered' })
+    expect(parseClaudeTranscriptTail(tail).resumedAgents).toEqual([])
+  })
+
+  it('names nobody for a resume the harness says did not happen', () => {
+    const tail = resumeLine({ success: false, resumedAgentId: 'agentx' })
+    expect(parseClaudeTranscriptTail(tail).resumedAgents).toEqual([])
+  })
+
+  it('names nobody for a payload a tool merely printed', () => {
+    // The #64 rule one record further on: a Bash run that echoed a payload is
+    // a quotation, and the key it quotes sits nested inside its output rather
+    // than at the top of a result the harness returned.
+    const printed = JSON.stringify({ success: true, resumedAgentId: 'agentx' })
+    const tail =
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_b1', content: `saw ${printed}` }]
+        },
+        toolUseResult: { stdout: printed, stderr: '', interrupted: false, isImage: false }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(tail).resumedAgents).toEqual([])
+  })
+
+  it('names nobody for prose that only mentions the key', () => {
+    const tail =
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The result carries resumedAgentId, so it resumed.' }]
+        }
+      }) + '\n'
+    expect(parseClaudeTranscriptTail(tail).resumedAgents).toEqual([])
+  })
+
+  it('hands over the launch identity of an agent that ended in the same window', () => {
+    // What a redraw needs, for every status rather than only for `failed`:
+    // a resume record can follow any of the three.
+    const parsed = parseClaudeTranscriptTail(upTo(2))
+    expect(parsed.endedLaunches).toEqual([
+      {
+        agentId: RESUMED_AGENT,
+        description: 'Placeholder resumed agent task',
+        resolvedModel: 'claude-fable-5'
+      }
+    ])
+    // ...while #179's narrower door stays exactly as narrow: this ending said
+    // `completed`, which no inference may reopen.
+    expect(parsed.failedAgents).toEqual([])
+    expect(parsed.terminalAgentIds).toEqual([RESUMED_AGENT])
+  })
+
+  it('hands over nothing for an agent whose launch record left the window', () => {
+    expect(
+      parseClaudeTranscriptTail(notificationLine('agentx', 'completed')).endedLaunches
+    ).toEqual([])
+  })
+
+  it('hands over nothing for an agent that has not ended', () => {
+    expect(parseClaudeTranscriptTail(launchLine('agentx')).endedLaunches).toEqual([])
   })
 })
