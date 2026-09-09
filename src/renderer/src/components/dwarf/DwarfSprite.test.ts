@@ -1815,10 +1815,12 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // 4 of the swing behind it, which is the frame the sparks fire on. One
     // exact jump rather than a long advance, for the reason the spark test
     // above gives: Vue coalesces a run of interval callbacks into one job.
+    // AMENDED for the maintainer's first live listen of #339 (issue #330), dated
+    // 2026-09-09: the strike now carries the gain DWARF_CREW.worker declares.
     const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
     vi.advanceTimersByTime(700)
     await wrapper.vm.$nextTick()
-    expect(cues).toEqual([{ cue: 'strike' }])
+    expect(cues).toEqual([{ cue: 'strike', gain: 0.1 }])
   })
 
   it('strikes on both swings of the shift, not only the first', async () => {
@@ -1829,7 +1831,10 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // 3 frames of pick-up + 13 of the first swing + 4 into the second.
     vi.advanceTimersByTime(1300)
     await wrapper.vm.$nextTick()
-    expect(cues).toEqual([{ cue: 'strike' }, { cue: 'strike' }])
+    expect(cues).toEqual([
+      { cue: 'strike', gain: 0.1 },
+      { cue: 'strike', gain: 0.1 }
+    ])
   })
 
   it('sounds the worker2 grind once, as its pick-up crosses the declared frame', async () => {

@@ -354,7 +354,11 @@ describe('DWARF_CREW (#330)', () => {
   it('sounds the worker on the frames its own sheet already calls impacts', () => {
     // A pointer at the sheet rather than a second copy of frame 4: the strike
     // and its sparks are one event, so the two must not be able to drift.
-    expect(DWARF_CREW.worker.sound?.strike).toEqual({ on: 'impactFrames' })
+    // AMENDED for the maintainer's first live listen of #339 (issue #330):
+    // the recording is hot against the room tone, so it now opens at a tenth
+    // of itself (2026-09-09) — the same shape WALK_GAIN already gave the
+    // footsteps.
+    expect(DWARF_CREW.worker.sound?.strike).toEqual({ on: 'impactFrames', gain: 0.1 })
     expect(DWARF_CREW.worker.sound?.shift).toBeUndefined()
   })
 

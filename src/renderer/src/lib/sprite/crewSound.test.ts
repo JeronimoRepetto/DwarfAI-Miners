@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { DwarfRole } from '../../types'
 import { crewEndingSignal, crewFrameSignals, crewWalkSignal } from './crewSound'
 import { dwarfClips } from './dwarfSequence'
-import { DWARF_CREW, DWARF_SHEETS } from './dwarfSheets'
+import { DWARF_CREW, DWARF_SHEETS, type CrewSoundSet } from './dwarfSheets'
 import type { SequencePosition } from './spriteSheet'
 
 const ROLES: readonly DwarfRole[] = ['worker', 'worker2', 'foreman']
@@ -22,11 +22,17 @@ function step(
 }
 
 describe('crewFrameSignals — the strike (#330)', () => {
+  // AMENDED for the maintainer's first live listen of #339 (issue #330): the
+  // strike now carries the gain `DWARF_CREW.worker` declares for it, read
+  // through rather than hardcoded, exactly as `crewWalkSignal`'s own tests
+  // read `declared.gain` instead of restating the number.
+  const STRIKE = DWARF_CREW.worker.sound!.strike!
+
   it('sounds on the frame the sheet already calls an impact', () => {
     // Clip 1 is the first swing, frame 4 the declared impact — the same frame
     // the sparks fire on, so the sound and the debris are one event.
     expect(step('worker', { clip: 1, frame: 3 }, { clip: 1, frame: 4 })).toEqual([
-      { cue: 'strike' }
+      { cue: 'strike', gain: STRIKE.gain }
     ])
   })
 
@@ -34,7 +40,7 @@ describe('crewFrameSignals — the strike (#330)', () => {
     // The second swing is a clip of its own drawn from the same strip (#325),
     // so the declaration reaches it without naming it.
     expect(step('worker', { clip: 2, frame: 3 }, { clip: 2, frame: 4 })).toEqual([
-      { cue: 'strike' }
+      { cue: 'strike', gain: STRIKE.gain }
     ])
   })
 
@@ -52,7 +58,26 @@ describe('crewFrameSignals — the strike (#330)', () => {
   })
 
   it('needs no previous position: a strike is the frame showing, not a crossing', () => {
-    expect(step('worker', undefined, { clip: 1, frame: 4 })).toEqual([{ cue: 'strike' }])
+    expect(step('worker', undefined, { clip: 1, frame: 4 })).toEqual([
+      { cue: 'strike', gain: STRIKE.gain }
+    ])
+  })
+
+  it('plays at a tenth of the recording, the way footsteps play at a twentieth', () => {
+    // Pinned as a comparison against WALK_GAIN rather than as 0.1 twice: the
+    // number itself is dwarfSheets.ts's to state, and the maintainer's ruling
+    // (2026-09-09) was that the pickaxe recording is hot against the room
+    // tone, not that it should match the footsteps' own gain.
+    expect(STRIKE.gain).toBe(0.1)
+  })
+
+  it('leaves the gain out entirely when a declaration carries none, full level being the default', () => {
+    // The type only requires `on`; `gain` staying optional is what lets a
+    // future rank strike at its own unscaled recording, exactly as the
+    // worker2's grind always has — `crewFrameSignals` copies whatever the
+    // declaration carries rather than inventing a floor when it does not.
+    const bareStrike: NonNullable<CrewSoundSet['strike']> = { on: 'impactFrames' }
+    expect(bareStrike.gain).toBeUndefined()
   })
 
   it('leaves the worker2 silent at the rock, its strips declaring no impact', () => {
