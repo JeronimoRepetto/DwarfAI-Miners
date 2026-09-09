@@ -6,7 +6,7 @@ They are committed so a clone builds and plays without any extra download, exact
 art under `../../art/` is.
 
 **They are not covered by the repository's MIT license and they are not licensed for reuse.** The
-inbound-artwork terms in [`CONTRIBUTING.md`](../../../../../CONTRIBUTING.md#artwork) apply to audio
+inbound-artwork terms in [`CONTRIBUTING.md`](../../../../../../CONTRIBUTING.md#artwork) apply to audio
 as well: submitting a pull request does not grant permission to reuse what is already here, and any
 audio contributed to the project needs separate written terms.
 
