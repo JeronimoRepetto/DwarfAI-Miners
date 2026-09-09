@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
 import type { ShortcutState } from '../../types'
+import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
 import PanelTransition from '../shell/PanelTransition.vue'
 import SettingsPanel from './SettingsPanel.vue'
 
@@ -44,6 +45,7 @@ function render(props: Record<string, unknown> = {}) {
       versionHint: 'Packaged build',
       resetting: false,
       resetError: null,
+      audioSettings: { ...DEFAULT_AUDIO_PREFERENCES },
       ...props
     }
   })
@@ -73,6 +75,30 @@ describe('SettingsPanel — sections in the design’s order', () => {
   it('mounts the Data Base section', () => {
     expect(render().find('.reset-metrics').text()).toBe('Reset metrics')
   })
+
+  /*
+   * The Audio section (#174), a maintainer-specified extension of
+   * `screens/settings.md`. It sits between Position and Data Base — after the
+   * two sections the design draws, before the destructive one that #138's own
+   * comment already carries to the bottom of the panel. #316 adds a
+   * notifications switch beside it, and the same gap is where that lands.
+   */
+  it('mounts the Audio section with the settings it was given', () => {
+    const wrapper = render({
+      audioSettings: { ...DEFAULT_AUDIO_PREFERENCES, musicVolume: 0.4 }
+    })
+    expect((wrapper.find('.music-volume').element as HTMLInputElement).value).toBe('0.4')
+  })
+
+  it('draws Audio after Position and before Data Base', () => {
+    const sections = render()
+      .findAll('section')
+      .map((section) => section.classes()[0])
+    expect(sections.indexOf('audio-settings')).toBeGreaterThan(
+      sections.indexOf('position-settings')
+    )
+    expect(sections.indexOf('audio-settings')).toBeLessThan(sections.indexOf('data-base-settings'))
+  })
 })
 
 describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
@@ -98,6 +124,12 @@ describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
     const wrapper = render()
     await wrapper.find('.hide-panel').trigger('click')
     expect(wrapper.emitted('hide-panel')).toHaveLength(1)
+  })
+
+  it('forwards an Audio change as audio-change, carrying only the field that moved', async () => {
+    const wrapper = render()
+    await wrapper.find('.music-at-startup').trigger('click')
+    expect(wrapper.emitted('audio-change')).toEqual([[{ musicAtStartup: false }]])
   })
 })
 

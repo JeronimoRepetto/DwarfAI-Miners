@@ -10,6 +10,7 @@ import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import ShellNav from './components/shell/ShellNav.vue'
 import UnavailablePanel from './components/shell/UnavailablePanel.vue'
+import { useAudio } from './composables/useAudio'
 import { useDwarfDelivery } from './composables/useDwarfDelivery'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
@@ -67,6 +68,26 @@ const {
  */
 const { report: dwarfDelivery, listen: listenDwarfDelivery } = useDwarfDelivery()
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
+
+/**
+ * Everything the panel plays (#174, #173).
+ *
+ * Owned here for the reason the shortcut and the pin surfaces are: sound is
+ * cross-cutting — the shell's own button starts it, Settings persists its
+ * volumes, the mine interior mutes its ambience and a dwarf's click gives it a
+ * voice — so the four surfaces read one engine rather than each opening one.
+ * Nothing below this file decides anything about audio; see lib/audio/.
+ */
+const {
+  settings: audioSettings,
+  musicPlaying,
+  sync: syncAudio,
+  listen: listenAudio,
+  toggleMusic,
+  setSettings: setAudioSettings,
+  setCollapsed: setAudioCollapsed,
+  dispose: disposeAudio
+} = useAudio()
 
 /**
  * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
@@ -255,6 +276,7 @@ const error = ref<string | null>(null)
 let unsubscribe: (() => void) | undefined
 let unlistenMessagePanel: (() => void) | undefined
 let unlistenDwarfDelivery: (() => void) | undefined
+let unlistenAudio: (() => void) | undefined
 
 /**
  * The dwarf the message panel is open on (#159, #162).
@@ -586,6 +608,14 @@ watch(
   { immediate: true }
 )
 
+/*
+ * The shell collapsed to its bare rail silences the ambience and the voices
+ * and leaves the music playing (#174). Read off the composition rather than
+ * off `expanded`, for the reason that flag could not carry the mine-only
+ * composition either (see lib/shell/composition.ts).
+ */
+watch(composition, (shape) => setAudioCollapsed(shape === 'rail'), { immediate: true })
+
 /**
  * The mine's Add action (#86).
  *
@@ -656,6 +686,11 @@ onMounted(() => {
   // failure can be flagged on the Settings button before anyone opens it.
   void syncShortcut()
   void loadBuild()
+  // Adopts the stored Audio settings and the window's REAL visibility, then
+  // starts the music if the settings say it should be playing (#174).
+  void syncAudio()
+  // Hears the window being shown or hidden, and gives the engine its tick.
+  unlistenAudio = listenAudio()
   unsubscribe = window.api.onMinesUpdated(update)
   // Listening BEFORE the pull, deliberately: the panel window can change what
   // it is showing at any moment, and a state set between the two would
@@ -668,6 +703,10 @@ onBeforeUnmount(() => {
   unsubscribe?.()
   unlistenMessagePanel?.()
   unlistenDwarfDelivery?.()
+  unlistenAudio?.()
+  // Every sound released with the window: a clip left decoding would outlive
+  // the surface that asked for it.
+  disposeAudio()
 })
 </script>
 
@@ -753,6 +792,7 @@ onBeforeUnmount(() => {
               :version-hint="versionHint"
               :resetting="metricsResetting"
               :reset-error="metricsResetError"
+              :audio-settings="audioSettings"
               @start-recording="startShortcutRecording"
               @stop-recording="stopShortcutRecording"
               @record="recordShortcut"
@@ -762,6 +802,7 @@ onBeforeUnmount(() => {
               @toggle-pin="togglePinned"
               @hide-panel="hidePanel"
               @reset-confirm="resetMetrics"
+              @audio-change="setAudioSettings"
             />
           </PanelFrame>
 
@@ -785,8 +826,10 @@ onBeforeUnmount(() => {
         v-if="visibleLayout.expanded || visibleLayout.mineOpen"
         :area="viewState.area"
         :broken="shortcutBroken"
+        :music-playing="musicPlaying"
         @select="selectArea"
         @hide="hidePanel"
+        @toggle-music="toggleMusic"
       />
     </PanelTransition>
 

@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { SHELL_ICON_SRC, TRAY_ICON_SRC, maskImageValue } from '../../lib/art'
+import { computed } from 'vue'
+import {
+  MUSIC_OFF_ICON_SRC,
+  MUSIC_ON_ICON_SRC,
+  SHELL_ICON_SRC,
+  TRAY_ICON_SRC,
+  maskImageValue
+} from '../../lib/art'
 import { SHELL_NAV, type ShellArea } from '../../lib/shell/shellNav'
 
 /**
@@ -10,7 +17,7 @@ import { SHELL_NAV, type ShellArea } from '../../lib/shell/shellNav'
  * that was pressed. The view itself belongs to `useView`, and whether an area
  * can be reached at all belongs to the shell.
  */
-defineProps<{
+const props = defineProps<{
   area: ShellArea
   /**
    * Whether the global panel shortcut failed to register (#17). Flagged here
@@ -19,6 +26,14 @@ defineProps<{
    * a failure nobody looks for.
    */
   broken: boolean
+  /**
+   * Whether the background music is playing right now (#174).
+   *
+   * The verdict, never the wish: the engine above owns playback, so a button
+   * that painted itself on the click could show music playing when nothing had
+   * started — the same rule the pin control holds about the window.
+   */
+  musicPlaying: boolean
 }>()
 
 const emit = defineEmits<{
@@ -39,7 +54,20 @@ const emit = defineEmits<{
    * whatever was drawn is what comes back.
    */
   hide: []
+  /**
+   * The music button was pressed (#174): playback should flip for this run.
+   *
+   * Its own event rather than an area, for the reason `hide` is not one — the
+   * navigation stack selects between five screens and this is not a sixth. It
+   * decides nothing either: the audio engine belongs to App.vue, which is
+   * where every other cross-cutting surface is owned.
+   */
+  'toggle-music': []
 }>()
+
+const musicIcon = computed(() =>
+  maskImageValue(props.musicPlaying ? MUSIC_ON_ICON_SRC : MUSIC_OFF_ICON_SRC)
+)
 </script>
 
 <template>
@@ -89,6 +117,26 @@ const emit = defineEmits<{
         ></span>
       </button>
     </div>
+    <!--
+      The music button, at the BOTTOM of the column — which is the bottom of
+      the shell, since this column is the only full-height chrome the shell
+      has. `margin: auto 0` on the stack above already claims the free space,
+      so this simply follows it and lands against the lower edge.
+
+      One accessible name with the state on `aria-pressed`, and the tooltip
+      saying what a press would DO: the same split the pin control uses, so a
+      screen reader is never told the control changed identity.
+    -->
+    <button
+      class="nav-music"
+      type="button"
+      aria-label="Background music"
+      :aria-pressed="musicPlaying ? 'true' : 'false'"
+      :title="musicPlaying ? 'Stop the background music' : 'Play the background music'"
+      @click="emit('toggle-music')"
+    >
+      <span class="music-icon" :style="{ '--music-icon': musicIcon }" aria-hidden="true"></span>
+    </button>
   </nav>
 </template>
 
@@ -161,8 +209,36 @@ const emit = defineEmits<{
 .nav-button.is-broken .nav-icon {
   background: var(--danger-line);
 }
-.nav-button:focus-visible {
+.nav-button:focus-visible,
+.nav-music:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
+}
+/*
+ * Drawn at the areas' own size and idle colour, so it reads as part of the
+ * same column rather than as a control bolted under it. The margin is what
+ * keeps it off the very edge of the panel's padding.
+ */
+.nav-music {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-nav-gap);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.music-icon {
+  display: block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  background: var(--color-nav-idle);
+  mask: var(--music-icon) center / contain no-repeat;
+}
+/* Playing is the selected state, exactly as a chosen area is. */
+.nav-music[aria-pressed='true'] .music-icon {
+  background: var(--color-cream);
 }
 </style>
