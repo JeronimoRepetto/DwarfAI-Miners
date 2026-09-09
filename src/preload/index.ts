@@ -5,6 +5,7 @@ import type {
   AgentModelCatalogList,
   AgentProviderList,
   AppBuild,
+  AudioPreferences,
   DwarfActivation,
   DwarfFeedResult,
   DwarfKickRequest,
@@ -41,6 +42,7 @@ import type {
 import {
   IPC_CHANNELS,
   isDwarfProvider,
+  parseAudioPreferences,
   isMessagePanelDragPhase,
   isMessagePanelSurface
 } from '../shared/contracts'
@@ -85,6 +87,25 @@ export interface DwarfAiMinersApi {
    * renderer must render this verdict, never the wish.
    */
   setAlwaysOnTop: (pinned: boolean) => Promise<boolean>
+  /**
+   * Whether the shell window is really on screen (#174, #173): not hidden by
+   * the shortcut or the tray, and not minimised.
+   *
+   * Asked once on mount, which is the moment no push can reach — the page
+   * loads while the window is still hidden. Everything after that arrives on
+   * `onPanelVisibility`.
+   */
+  getPanelVisible: () => Promise<boolean>
+  /** Hear the window being shown or hidden (#174). Returns an unsubscribe function. */
+  onPanelVisibility: (listener: (visible: boolean) => void) => () => void
+  /** What Settings' Audio section has stored (#174, #173). */
+  getAudioPreferences: () => Promise<AudioPreferences>
+  /**
+   * Change one or more of them. Resolves with what main STORED — every volume
+   * clamped into 0..1 and any unreadable field replaced by its default — so a
+   * slider is only ever drawn at a value really in force.
+   */
+  setAudioPreferences: (preferences: AudioPreferences) => Promise<AudioPreferences>
   /** What the docked shell IS: its edge, and whether it is open (see #90). */
   getPanelLayout: () => Promise<PanelLayout>
   /**
@@ -384,6 +405,21 @@ const api: DwarfAiMinersApi = {
   // `pinned === true` collapses any non-boolean to false BEFORE it crosses the
   // bridge, so main's boundary validation only ever sees a clean boolean.
   setAlwaysOnTop: (pinned) => ipcRenderer.invoke(IPC_CHANNELS.setAlwaysOnTop, pinned === true),
+  getPanelVisible: () => ipcRenderer.invoke(IPC_CHANNELS.getPanelVisible),
+  onPanelVisibility: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, visible: unknown) =>
+      listener(visible === true)
+    ipcRenderer.on(IPC_CHANNELS.panelVisibilityChanged, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.panelVisibilityChanged, wrapped)
+  },
+  getAudioPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.getAudioPreferences),
+  // Rebuilt through the SHARED parser rather than field by field like the
+  // launch channels, because there is one for this document and all three
+  // processes read it (see parseAudioPreferences): what crosses is four
+  // checked values with every volume already clamped, and nothing else the
+  // caller happened to attach.
+  setAudioPreferences: (preferences) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setAudioPreferences, parseAudioPreferences(preferences)),
   getPanelLayout: () => ipcRenderer.invoke(IPC_CHANNELS.getPanelLayout),
   // Same discipline as setAlwaysOnTop: both flags are collapsed to real
   // booleans BEFORE they cross, so main's boundary check reasons about a clean

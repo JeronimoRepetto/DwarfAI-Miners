@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HISTORY_ICON_SRC, INTERIOR_ART_SIZE, INTERIOR_SRC, maskImageValue } from '../../lib/art'
+import {
+  HISTORY_ICON_SRC,
+  INTERIOR_ART_SIZE,
+  INTERIOR_SRC,
+  MUSIC_OFF_ICON_SRC,
+  MUSIC_ON_ICON_SRC,
+  maskImageValue
+} from '../../lib/art'
 import { BUBBLE_TTL_MS } from '../../lib/overlay/bubbles'
 import { INTERIOR_STATIONS } from '../../lib/scene/interiorMap'
 import { assignScene, type SceneOccupant } from '../../lib/scene/sceneAssignment'
@@ -652,6 +659,57 @@ describe('MineScene interior shell', () => {
     await history.trigger('click')
     expect(wrapper.emitted('history')).toHaveLength(1)
     expect(wrapper.emitted('back')).toBeUndefined()
+  })
+
+  /*
+   * The ambience mute (#173), top-left of the interior — the corner the
+   * design's own three round actions leave free, and a maintainer-specified
+   * extension of `screens/mine.md`, which draws no such control.
+   *
+   * It silences the AMBIENCE alone: not the music, not the voices. Like every
+   * other action on this painting it emits and decides nothing — the audio
+   * engine belongs to App.vue.
+   */
+  it('mutes the mine ambience from the round action at the top left', async () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine(), ambienceMuted: false } })
+    const mute = wrapper.get('.interior .mute-ambience')
+
+    expect(mute.attributes('aria-label')).toBe('Mine ambience')
+    expect(mute.attributes('aria-pressed')).toBe('false')
+    expect(mute.get('.action-glyph').attributes('style')).toContain(
+      maskImageValue(MUSIC_ON_ICON_SRC)
+    )
+
+    await mute.trigger('click')
+    expect(wrapper.emitted('toggle-ambience-mute')).toHaveLength(1)
+    // Still drawn unmuted: the engine above owns whether it is.
+    expect(wrapper.get('.interior .mute-ambience').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('draws the crossed-out glyph while the ambience is muted', () => {
+    const wrapper = mount(MineScene, { props: { mine: defaultMine(), ambienceMuted: true } })
+    const mute = wrapper.get('.interior .mute-ambience')
+    expect(mute.attributes('aria-pressed')).toBe('true')
+    expect(mute.get('.action-glyph').attributes('style')).toContain(
+      maskImageValue(MUSIC_OFF_ICON_SRC)
+    )
+  })
+
+  it('keeps one accessible name for the mute whichever state it is in', () => {
+    // The rule the pin control and the shell's music button both hold: the
+    // name is stable and `aria-pressed` carries the state.
+    const on = mount(MineScene, { props: { mine: defaultMine(), ambienceMuted: false } })
+    const off = mount(MineScene, { props: { mine: defaultMine(), ambienceMuted: true } })
+    expect(on.get('.mute-ambience').attributes('aria-label')).toBe(
+      off.get('.mute-ambience').attributes('aria-label')
+    )
+  })
+
+  it('leaves the mute unpressed when nothing tells the scene about it', () => {
+    // The prop is optional so every existing mount of this scene keeps
+    // working; absent means "not muted", which is the run's own default.
+    const wrapper = mount(MineScene, { props: { mine: defaultMine() } })
+    expect(wrapper.get('.mute-ambience').attributes('aria-pressed')).toBe('false')
   })
 
   it('keeps the mine name as the section own accessible name, with no header on screen', () => {

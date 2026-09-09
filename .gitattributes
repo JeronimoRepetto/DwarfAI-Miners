@@ -5,3 +5,8 @@
 *.jpg binary
 *.ico binary
 *.exe binary
+# Audio (#174, #173). Auto-detection already spares them — every one of these
+# carries NUL bytes — but the art formats above are declared rather than left
+# to it, and a file the panel plays deserves the same certainty.
+*.mp3 binary
+*.ogg binary

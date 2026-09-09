@@ -152,6 +152,20 @@ describe('buildMainWindowOptions', () => {
     expect(options.webPreferences?.contextIsolation).toBe(true)
     expect(options.webPreferences?.nodeIntegration).toBe(false)
   })
+
+  /*
+   * The music has to start on its own (#174), and Chromium's autoplay policy
+   * will not let it: a page that has had no user gesture cannot start audio,
+   * and this window is created hidden and shown by a global shortcut or the
+   * tray — neither of which is a gesture ON the page. The documented switch is
+   * this one, and it is stated here so a future edit cannot drop it and leave
+   * a silent launch that only shows up by ear.
+   */
+  it('lets the renderer start audio without a user gesture, which #174 needs', () => {
+    expect(buildMainWindowOptions(input).webPreferences?.autoplayPolicy).toBe(
+      'no-user-gesture-required'
+    )
+  })
 })
 
 /*

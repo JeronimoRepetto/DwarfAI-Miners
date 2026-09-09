@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { PanelEdge, ShortcutState } from '../../types'
+import type { AudioPreferences, PanelEdge, ShortcutState } from '../../types'
+import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
 import PositionSettings from './PositionSettings.vue'
 import ResetMetricsModal from './ResetMetricsModal.vue'
@@ -21,6 +22,11 @@ import PanelTransition from '../shell/PanelTransition.vue'
  * main verified" rule stays in exactly one place. The one thing kept LOCAL
  * here is whether the reset modal is open — pure display state nothing
  * outside this screen ever needs to read.
+ *
+ * The AUDIO section (#174) is a maintainer-specified extension of
+ * `screens/settings.md`, which has none; it sits between Position and Data
+ * Base, which is after everything the design draws and before the one
+ * destructive action. #316's notifications switch lands in the same gap.
  *
  * The "Application" section (pin, hide panel, version) is an UNSPECIFIED
  * placement decision (#138): the design draws no home for any of the three,
@@ -45,6 +51,8 @@ defineProps<{
   resetting: boolean
   /** Why the last reset attempt failed; null once nothing has gone wrong. */
   resetError: string | null
+  /** What Settings' Audio section has stored (#174, #173) — main's verdict. */
+  audioSettings: AudioPreferences
 }>()
 
 const emit = defineEmits<{
@@ -57,6 +65,8 @@ const emit = defineEmits<{
   'toggle-pin': []
   'hide-panel': []
   'reset-confirm': []
+  /** One field of the Audio settings should change (#174). */
+  'audio-change': [patch: Partial<AudioPreferences>]
 }>()
 
 const resetModalOpen = ref(false)
@@ -82,6 +92,8 @@ const resetModalOpen = ref(false)
     />
 
     <PositionSettings :edge="edge" :applying="edgeApplying" @select="emit('select-edge', $event)" />
+
+    <AudioSettings :settings="audioSettings" @change="emit('audio-change', $event)" />
 
     <DataBaseSection @open-reset="resetModalOpen = true" />
 

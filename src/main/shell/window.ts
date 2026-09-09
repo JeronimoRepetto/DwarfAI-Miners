@@ -187,7 +187,21 @@ export function buildMainWindowOptions(
       preload: input.preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      /*
+       * The music starts on its own (#174), and Chromium's default autoplay
+       * policy forbids exactly that: audio may not start on a page that has
+       * had no user gesture. This window is created HIDDEN and revealed by a
+       * global shortcut or the tray icon, neither of which is a gesture on
+       * the page, so there is no click for the policy to be satisfied by —
+       * and the failure is a rejected `play()` promise with nothing on
+       * screen to say so, which is silence nobody could diagnose.
+       *
+       * `'no-user-gesture-required'` is Electron's own documented switch
+       * for it, and it is set on THIS window only: the message panel's
+       * window plays nothing, so it keeps the default.
+       */
+      autoplayPolicy: 'no-user-gesture-required'
     }
   }
 }

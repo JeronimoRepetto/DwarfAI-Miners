@@ -19,6 +19,7 @@ export type {
   AgentProviderList,
   AgentProviderOption,
   AppBuild,
+  AudioPreferences,
   Dwarf,
   DwarfActivation,
   DwarfAttendance,
@@ -101,6 +102,7 @@ export type {
  * import statement across (#77).
  */
 export {
+  DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
   HELDABLE_PROVIDERS,
@@ -117,6 +119,7 @@ export {
   RENDERER_SURFACE_PARAM,
   TIER_WEIGHT_THRESHOLDS_KB,
   WAITING_ON_HUMAN_REASON,
+  clampAudioVolume,
   dwarfSilenceWindowMs,
   isDwarfProvider,
   isHeldPermissionMode,
@@ -124,7 +127,8 @@ export {
   isMessagePanelDragPhase,
   isMessagePanelSurface,
   isMineTier,
-  isPanelObserved
+  isPanelObserved,
+  parseAudioPreferences
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */
