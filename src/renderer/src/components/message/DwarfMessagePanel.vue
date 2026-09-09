@@ -511,7 +511,23 @@ function onKick(): void {
       tabindex="0"
       :aria-label="conversation.note"
     >
-      <p v-if="conversation.messages.length === 0" class="panel-empty">{{ conversation.note }}</p>
+      <!--
+        #332: silence says nothing about a dwarf's rank, and a dwarf that has
+        not spoken still has a face — `dwarf.role` is on the prop, not on the
+        transcript. Drawn as an agent row like any other so the first real
+        message lands under it without a jump; the note takes the bubble's
+        place rather than its surface, because nothing was actually said.
+      -->
+      <article v-if="conversation.messages.length === 0" class="message is-agent">
+        <img
+          class="portrait"
+          :src="PORTRAIT_SRC[dwarf.role]"
+          :alt="`${dwarf.name}, ${dwarf.role}`"
+          :title="`${dwarf.name}, ${dwarf.role}`"
+          draggable="false"
+        />
+        <p class="panel-empty">{{ conversation.note }}</p>
+      </article>
       <template v-for="entry in entries" :key="entry.key">
         <!--
           AMENDED for #294 (was: one line per tool call, always drawn). A run of
@@ -892,10 +908,17 @@ function onKick(): void {
   min-height: 0;
   padding: 0 8px 8px;
 }
+/*
+ * #332: no longer a standalone centered line — it now stands where a
+ * bubble's text would, in the agent row the portrait always draws, so the
+ * first real message lands under it without a jump. Same note ink as
+ * before; only the alignment changed, to match the bubble it sits beside.
+ */
 .panel-empty {
-  margin: auto;
+  margin: 0;
+  padding: 8px 10px;
   color: var(--color-tooltip-text);
-  text-align: center;
+  line-height: 1.35;
 }
 .message {
   display: flex;
