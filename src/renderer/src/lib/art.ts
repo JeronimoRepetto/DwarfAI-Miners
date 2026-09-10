@@ -54,7 +54,10 @@ import mapNight from '../assets/art/map/map-bg-nigth.jpg'
 import mapSunset from '../assets/art/map/map-bg-suneset.jpg'
 import labArt from '../assets/art/lab/lab.png'
 import marketArt from '../assets/art/market/market.png'
+<<<<<<< Updated upstream
 import laboralUnionArt from '../assets/art/laboral-union/laboral-union.png'
+=======
+>>>>>>> Stashed changes
 
 /*
  * The shell's own icons, imported from `docs/assets/icons` — the path the
