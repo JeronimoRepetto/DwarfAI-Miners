@@ -108,14 +108,15 @@ describe('buildActionBar', () => {
   })
 
   describe('kick', () => {
-    // AMENDED for #329: the terminal channel's sentence says the session is
-    // ended, because that is what the kick does there now.
+    // AMENDED for #358 (was #329's "...Its terminal tab stays open."): the kick
+    // now asks the session to exit cleanly before it force-kills anything, so
+    // the sentence promises a usable terminal rather than merely a surviving tab.
     it('is enabled with the channel-specific hint when a cancel channel exists', () => {
       const entry = entryFor('kick', capableDwarf())
       expect(entry.enabled).toBe(true)
       expect(entry.name).toBe('Kick')
       expect(entry.hint).toBe(
-        'Ends this session — the whole process, not the turn. Its terminal tab stays open.'
+        'Ends this session — the whole process, not the turn. It is asked to exit cleanly first, so its terminal is left usable.'
       )
     })
 

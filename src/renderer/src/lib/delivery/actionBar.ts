@@ -188,9 +188,13 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   // (#329). Kick pressed Esc at this session's console from #24 until then —
   // but several sessions share one terminal window, only one of its tabs is in
   // front, and the keystroke reached whichever session that was. Ending the
-  // process needs no window. Says the tab survives, because a person who has
-  // just been told the session was ended will wonder about the terminal.
-  terminal: 'Ends this session — the whole process, not the turn. Its terminal tab stays open.',
+  // process needs no window. Since #358 the process is asked to exit CLEANLY
+  // first (Ctrl+C twice, measured) so the TUI restores the terminal it left
+  // reporting every mouse move as an escape sequence; the /F kill is only the
+  // fallback. Says the terminal is left usable, because a person just told the
+  // session was ended will wonder whether they can keep typing in it.
+  terminal:
+    'Ends this session — the whole process, not the turn. It is asked to exit cleanly first, so its terminal is left usable.',
   'claude-relay': 'Asks the agent to stop — it decides how.',
   'foreman-relay': "Asks this worker's foreman to stop it — it decides how.",
   'codex-queue':

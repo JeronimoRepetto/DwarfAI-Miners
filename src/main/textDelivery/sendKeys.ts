@@ -126,3 +126,36 @@ export function buildSendInterruptCommand(): string {
     "[System.Windows.Forms.SendKeys]::SendWait('{ESC}')"
   ].join('\n')
 }
+
+/**
+ * PowerShell that asks the foreground CLI to exit the way its own /exit would —
+ * Ctrl+C, a short settle, then Ctrl+C again — so it runs its teardown and hands
+ * the terminal back clean (#358).
+ *
+ * TWO Ctrl+C on purpose: measured live by the maintainer on 2026-09-10, the
+ * Claude Code TUI on Windows exits CLEANLY on Ctrl+C twice (a single Ctrl+C
+ * then Ctrl+D does not), and a clean exit is what resets the mouse-tracking
+ * modes a taskkill /F leaves on — the endless SGR mouse reports #358 is about.
+ * Kick's terminal tier presses this first and only force-kills if the process
+ * survives.
+ *
+ * Deliberately built without escapeSendKeys, exactly as buildSendInterruptCommand
+ * and buildPasteCommand are: `^c` IS the SendKeys keyname for Ctrl+C (`^` is its
+ * Ctrl modifier), and running it through the escaping path meant for arbitrary
+ * user text would turn it into the literal characters `{^}c` instead of the
+ * keystroke. There is no user text here — the command takes no arguments.
+ *
+ * The settle sleeps mirror the other builders': 150ms so the just-focused
+ * terminal is ready for the first Ctrl+C, 120ms between the two so the TUI
+ * registers them as two distinct keystrokes rather than one.
+ */
+export function buildGracefulExitCommand(): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Start-Sleep -Milliseconds 150',
+    "[System.Windows.Forms.SendKeys]::SendWait('^c')",
+    'Start-Sleep -Milliseconds 120',
+    "[System.Windows.Forms.SendKeys]::SendWait('^c')"
+  ].join('\n')
+}
