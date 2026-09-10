@@ -294,9 +294,16 @@ export interface TextDeliveryPort {
    *
    * Linux has no portable way to synthesize a keystroke into someone else's
    * terminal, and the macOS path is not integration-verified yet, so both
-   * report false. The runtime reads this before offering a 'terminal' channel
-   * to the panel: a button that cannot deliver is shown disabled with a reason
-   * rather than failing after the user has typed.
+   * report false. The runtime reads this before offering a 'terminal' SEND
+   * channel to the panel: a button that cannot deliver is shown disabled with a
+   * reason rather than failing after the user has typed.
+   *
+   * The send, and the permission keystroke of #203, and nothing else (#366). It
+   * used to gate the whole 'terminal' target, which took the KICK with it — and
+   * a kick needs no console input at all, only a pid, so the same button ended
+   * the session on Windows and asked the agent to stop by relay on macOS and
+   * Linux. Whether a session can be ENDED is what `endConsoleSession` below
+   * answers by its presence; this flag says nothing about it.
    */
   readonly supportsConsoleInput?: boolean
   /**
