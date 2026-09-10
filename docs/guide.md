@@ -170,9 +170,10 @@ and where the agent said it would accept several the options become toggles and 
 control sends them — nothing is typed until you press it. One shape stays unanswerable from here,
 and the card says so with a jump to the terminal beside it: a call that asked SEVERAL questions at
 once, because only its first reaches the panel and answering that one would move the picker on to a
-question the panel cannot see. Note that a keystroke goes to whichever tab of a shared terminal
-window is in front, so a session sharing its window with other tabs may have its answer land in the
-wrong one until that is fixed (issue #371).
+question the panel cannot see. A session that shares its terminal window with other tabs
+is the one case where this is refused rather than typed — the panel cannot tell which tab is in
+front, and a digit in the wrong one would answer somebody else's question — so it says so and
+points you at the terminal.
 
 For a Codex session, a question card shows the same kind of question — Codex's own
 `request_user_input` tool call — and still cannot be answered from here: a Codex thread is reached

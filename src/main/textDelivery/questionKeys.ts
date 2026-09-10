@@ -43,15 +43,16 @@ import type { DwarfQuestion } from '../domain/types'
  * leave the option exactly as it started, so the answer sent would not be the
  * answer given. Deduplicating instead would send an answer nobody chose.
  *
- * ## The hazard this route carries, which is not this file's to fix
+ * ## Where these digits may be pressed, which is not this file's question
  *
- * A keystroke lands wherever the foreground is, and on Windows Terminal a
- * window with several tabs is focused as a whole (#371): until that lands, a
- * digit aimed at one session's picker can reach another tab's. The port's
- * shared-window refusal stops it where the focus check can tell, and the
- * runtime re-reads the board immediately before pressing anything — but the
- * ConPTY case #371 is about defeats that check, and it is stated rather than
- * worked around here.
+ * A keystroke lands wherever the foreground is, so a session sharing its
+ * terminal window with other tabs must never be typed into: a digit aimed at
+ * one picker would choose an option in another tab's. That is the port's
+ * shared-window refusal (#329), and #371 is what made it fire on the right
+ * fact — a probed console handle can be a phantom OWNED by a Windows Terminal
+ * window, and only an owner proven to draw one console is this session's. So a
+ * shared tab strip is refused here rather than answered blind, and what is left
+ * open is the millisecond after the runtime's re-read of the board.
  */
 
 /** Why no keystroke could be derived — one reason per fact, never a bare null. */

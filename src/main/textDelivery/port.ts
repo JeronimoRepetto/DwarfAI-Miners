@@ -401,8 +401,9 @@ export interface TextDeliveryPort {
    * An implementation MUST refuse a shared terminal window exactly as
    * sendInterrupt does (#329): these are keystrokes at a window, and a digit
    * that lands in the wrong tab chooses an option in a session nobody was
-   * looking at. It is also subject to #371 until that lands — a Windows
-   * Terminal window with several tabs can still defeat the focus check.
+   * looking at. #371 is what made that refusal fire on the right fact, so a
+   * session in one tab of a Windows Terminal window is refused here — the
+   * person answers at their terminal, which is what the refusal says.
    */
   answerQuestionAtConsole?(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome>
   /**

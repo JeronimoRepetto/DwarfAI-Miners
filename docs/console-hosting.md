@@ -449,10 +449,13 @@ panel does not know exists. And **Other** is left inert, because a free-text ans
 the panel would be putting in the person's mouth; the composer already carries free text as a
 message.
 
-**Known hazard, inherited rather than introduced.** This route lands its keys wherever the
-foreground is, so it carries #371 whole: a Windows Terminal window with several tabs can be focused
-as a whole, and until #371 lands a digit aimed at one session's picker can reach another tab's. The
-shared-window refusal catches it wherever the focus check can tell.
+**A shared terminal window is refused, not answered blind.** This route lands its keys wherever
+the foreground is, so it meets the same shared-window refusal every other keystroke here does
+(#329) — and #371, merged before this shipped, is what made that refusal fire on the right fact: a
+probed console handle can be a phantom OWNED by a Windows Terminal window, and only an owner proven
+to draw one console is the session's own. So a session in one tab of a shared window has its answer
+refused with the panel saying the window is shared, rather than a digit choosing an option in
+whichever tab was in front.
 
 **Still to observe.** A late `{RIGHT}{ENTER}` at an idle prompt — expected to be a no-op followed
 by an empty submit, on the same reasoning that made a late `1` one harmless character.

@@ -196,10 +196,11 @@ const ANSWER_DIGITS = /^[1-9]$/
  * terminal is ready for the first key, 120ms between keys so the TUI registers
  * each as its own keystroke rather than folding two together.
  *
- * Known hazard, inherited rather than introduced (#371): on Windows Terminal a
- * window with several tabs can still be focused as a whole, so until #371 lands
- * these keys can reach the wrong tab. The port's shared-window refusal is what
- * stops it where the focus check can tell; this builder presses what it is told.
+ * This builder presses what it is told, and nothing here knows which window is
+ * in front. Where these keys may be pressed at all is the port's question, and
+ * since #371 its focus check can tell a phantom console owned by a tab strip
+ * from a console a session is alone on — so a shared Windows Terminal window is
+ * refused rather than answered in whichever tab was active.
  */
 export function buildQuestionAnswerCommand(
   digits: readonly string[],
