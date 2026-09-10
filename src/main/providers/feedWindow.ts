@@ -170,6 +170,11 @@ export interface FeedWindowRead {
    * always reads at least one window and always knows which of the two
    * happened — but the wire type this feeds (`MineHistorySpeaker.reachedStart`
    * in `contracts.ts`) stays optional for a source that cannot say.
+   *
+   * `readFeedPage` answers with this same shape and narrows the flag: there it
+   * means THIS PAGE IS THE LAST ONE, which is the fact above composed with "and
+   * this page consumed the rest of the file". See its own comment for why the
+   * uncomposed version would stop a reader pages early.
    */
   reachedStart: boolean
 }

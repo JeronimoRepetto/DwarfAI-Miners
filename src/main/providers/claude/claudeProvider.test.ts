@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
 import { PERMISSION_INPUT_MAX_CHARS } from '../../domain/permissionSummary'
-import type { Dwarf } from '../../domain/types'
+import type { Dwarf, FeedPageCursor } from '../../domain/types'
 import { ClaudeProvider } from './claudeProvider'
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'claude')
@@ -1849,6 +1849,86 @@ describe('ClaudeProvider', () => {
         'Placeholder text block.',
         'Latest assistant reply placeholder.'
       ])
+    })
+  })
+
+  /*
+   * Issue #364: the panel showed the newest twelve texts and there was no way
+   * to reach anything older, and raising the count was measured and rejected —
+   * that read runs inside the poll. A page is addressed by a CURSOR, the oldest
+   * row the panel is holding, so replies arriving at the end of the transcript
+   * cannot slide it.
+   */
+  describe('feedPage', () => {
+    /** The cursor a panel holding only the newest text would send. */
+    async function newestCursor(provider: ClaudeProvider): Promise<FeedPageCursor> {
+      const newest = await provider.feed(`claude:${SESSION_ID}`, 1)
+      const row = newest!.find((message) => message.activity === undefined)!
+      return { timestamp: row.timestamp, text: row.text }
+    }
+
+    it('answers the texts older than the cursor the panel is holding', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+
+      const page = await provider.feedPage(`claude:${SESSION_ID}`, 2, await newestCursor(provider))
+      expect(page!.messages.map((m) => m.text)).toEqual([
+        'Placeholder user prompt.',
+        'Placeholder text block.'
+      ])
+      // Two texts precede the cursor and the page spent both, so this is the
+      // last page: the panel says so once and stops asking.
+      expect(page!.reachedStart).toBe(true)
+    })
+
+    it('answers an empty last page below the transcript’s own first text', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      const feed = await provider.feed(`claude:${SESSION_ID}`, 20)
+      const first = feed![0]!
+
+      const page = await provider.feedPage(`claude:${SESSION_ID}`, 12, {
+        timestamp: first.timestamp,
+        text: first.text
+      })
+      expect(page!.messages).toEqual([])
+      expect(page!.reachedStart).toBe(true)
+    })
+
+    it('returns null for an unknown dwarf id, exactly as feed does', async () => {
+      const provider = makeProvider()
+      await provider.scan()
+      expect(await provider.feedPage('claude:nope', 12, { timestamp: '', text: 'x' })).toBeNull()
+    })
+
+    it('matches a cursor against the redacted text that crossed the wire', async () => {
+      /*
+       * Redaction happens INSIDE the page walk (#364), not after it. The
+       * panel's own oldest row has already been through redactSecrets, so a
+       * cursor compared against the raw transcript would never find a row that
+       * had a key struck out of it — and the reader's scrollback would stop
+       * dead at the one message somebody pasted a token into.
+       */
+      const FAKE_PAT = 'ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE1234'
+      fake.addFile(
+        `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`,
+        parentTranscript +
+          JSON.stringify({
+            type: 'user',
+            message: { role: 'user', content: `use ${FAKE_PAT} for the deploy` }
+          }) +
+          '\n',
+        42_000
+      )
+      const provider = makeProvider()
+      await provider.scan()
+
+      const page = await provider.feedPage(`claude:${SESSION_ID}`, 1, {
+        timestamp: '',
+        text: 'use [redacted] for the deploy'
+      })
+      expect(page!.messages.map((m) => m.text)).toEqual(['Latest assistant reply placeholder.'])
+      expect(page!.reachedStart).toBe(false)
     })
   })
 

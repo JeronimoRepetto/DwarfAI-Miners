@@ -1,4 +1,5 @@
-import type { DwarfProvider, FeedMessage, ProviderSnapshot } from '../domain/types'
+import type { DwarfProvider, FeedMessage, FeedPageCursor, ProviderSnapshot } from '../domain/types'
+import type { FeedWindowRead } from './feedWindow'
 import type { TextDeliveryTarget } from '../textDelivery/port'
 
 /**
@@ -11,6 +12,25 @@ export interface Provider {
   scan(): Promise<ProviderSnapshot[]>
   /** Last `limit` messages of the dwarf's transcript; null for unknown ids. */
   feed(dwarfId: string, limit: number): Promise<FeedMessage[] | null>
+  /**
+   * The `limit` things SAID immediately OLDER than `before`, with the tool
+   * calls between them — one page of scrollback (#364). Null for unknown ids,
+   * exactly as `feed` is.
+   *
+   * A sibling of `feed` rather than a third parameter on it, for the reason
+   * #227 kept `readFeedWindowWithReachedStart` beside `readFeedWindow`: this
+   * read has to say whether anything older is left, and `feed` has never
+   * carried that fact. `feed` is the newest page, it rides the poll for the
+   * watched dwarf (#196), and it must stay the exact shape its callers already
+   * read — a page's extra answer is not something they should have to unwrap to
+   * keep not needing it.
+   *
+   * Optional on the port because a provider may have no transcript to page. An
+   * absent method and a null answer are the same fact to the caller: this
+   * conversation cannot be paged, which is NOT "there is nothing older" — see
+   * DwarfFeedPage.
+   */
+  feedPage?(dwarfId: string, limit: number, before: FeedPageCursor): Promise<FeedWindowRead | null>
   /**
    * Path to the file backing feed(), used to open a terminal that tails the
    * transcript live when no window can be focused. Undefined for unknown ids.

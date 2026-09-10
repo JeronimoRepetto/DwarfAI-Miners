@@ -27,6 +27,8 @@ import {
   type AgentProviderList,
   type Dwarf,
   type DwarfActivation,
+  type DwarfFeedPage,
+  type DwarfFeedPageRequest,
   type DwarfFeedResult,
   type DwarfKickRequest,
   type DwarfKickResult,
@@ -146,6 +148,14 @@ import { truncate } from '../../shared/truncate'
  * SAID, never twelve rows (#359). The tool-call lines between them ride along
  * and are bounded on their own; `trimFeed` in `providers/feedWindow.ts` owns
  * both counts.
+ *
+ * Since #364 this is the PAGE size and no longer a ceiling on what a reader
+ * can reach: the panel scrolls back a page at a time through `dwarfFeedPage`
+ * below. Twelve is the right first page precisely because it is cheap — this
+ * read runs inside the poll for the watched dwarf (#196), and raising the
+ * number was measured at 30 ms and 10.25 MiB against a loop budgeted at 15 ms
+ * median. `HELD_CONVERSATION_LIMIT` is a different twelve for a different
+ * reason: it rides every poll's snapshot.
  */
 const FEED_LIMIT = 12
 
@@ -161,6 +171,15 @@ const LAUNCH_FAILURE_STDERR_CHARS = 400
 /** No transcript this app can read — never the same claim as one that is empty. */
 function unreadableFeed(): DwarfFeedResult {
   return { readable: false, messages: [] }
+}
+
+/**
+ * No conversation this app can page (#364) — and deliberately NOT
+ * `reachedStart: true`, which would tell the panel it had reached the beginning
+ * of a transcript nobody could read a word of. See DwarfFeedPage.
+ */
+function unpageableFeed(): DwarfFeedPage {
+  return { readable: false, messages: [], reachedStart: false }
 }
 
 /**
@@ -3368,6 +3387,45 @@ export class AgentRuntime {
     } catch (error) {
       console.warn(`[runtime] Failed to read feed for ${dwarfId}`, error)
       return unreadableFeed()
+    }
+  }
+
+  /**
+   * The page of one dwarf's conversation immediately OLDER than a cursor
+   * (#364) — the panel having scrolled to the top of what it holds.
+   *
+   * The same resolution `dwarfFeed` does and the same page size, so the
+   * renderer never names a count and main cannot be talked into a read it has
+   * not budgeted for. What differs is when it happens: this one is asked for
+   * only when somebody scrolls, never by the poll, which is why it may walk as
+   * wide as the cursor needs.
+   *
+   * A dwarf off the board, a provider with no page surface, one that does not
+   * know this dwarf, and a read that threw all answer `readable: false` —
+   * never a page that claims to have reached the transcript's start, because
+   * that is what stops the panel asking.
+   */
+  async dwarfFeedPage(request: DwarfFeedPageRequest): Promise<DwarfFeedPage> {
+    const board = this.mines.flatMap((mine) => mine.dwarfs)
+    const dwarf = board.find((item) => item.id === request.dwarfId)
+    if (dwarf === undefined) return unpageableFeed()
+    const provider = this.providers.find((item) => item.kind === dwarf.provider)
+    if (provider?.feedPage === undefined) return unpageableFeed()
+    try {
+      const page = await provider.feedPage(request.dwarfId, FEED_LIMIT, request.before)
+      if (page === null) return unpageableFeed()
+      // WHO issued the user half of it (#175), exactly as the newest page is
+      // stamped: a worker's task prompt is an ordinary `user` record wherever
+      // in the transcript it sits, and scrolling back to it must not draw it
+      // under the human's own face.
+      return {
+        readable: true,
+        messages: attributeIssuedMessages(page.messages, launchingAgentOf(dwarf, board)),
+        reachedStart: page.reachedStart
+      }
+    } catch (error) {
+      console.warn(`[runtime] Failed to read a feed page for ${request.dwarfId}`, error)
+      return unpageableFeed()
     }
   }
 
