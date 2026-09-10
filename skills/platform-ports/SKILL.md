@@ -48,11 +48,18 @@ Anything OS-specific produces a **testable value** — a command's argv, a file'
 thin runner executes it. That is what makes per-OS behaviour assertable without the OS.
 
 The text-delivery port is the exemplar. It is a types-only module, and its `supportsConsoleInput`
-capability flag lets a caller ask _"can you?"_ instead of _"which OS?"_. Its single production
-consumer uses it to downgrade a terminal delivery target to a relay when console input is
-unavailable — a decision expressed entirely in capability terms.
+capability flag lets a caller ask _"can you?"_ instead of _"which OS?"_. Its production consumer
+uses it to downgrade a terminal delivery target to a relay when console input is unavailable — a
+decision expressed entirely in capability terms.
 
 Prefer a capability flag to a platform check whenever you can name the capability.
+
+**Name the capability the ACT needs, not the one the platform is famous for.** That downgrade
+applied to Kick as well until #366, and it should not have: ending a session needs a pid, where
+typing needs the window server. So the same button ended the session on Windows and asked the agent
+to stop by relay on macOS and Linux — two acts behind one label, from one capability doing duty for
+two. The degrade now lives on the send route (`degradedForSend` in `resolve.ts`) and the kick route
+keeps the console. A capability flag is only as honest as its scope.
 
 ## An absent method is a per-OS answer too
 
@@ -60,23 +67,32 @@ Prefer a capability flag to a platform check whenever you can name the capabilit
 platform rather than marking a gap somebody forgot to fill. The runtime turns every one of them
 into a stated refusal, never a silent no-op.
 
-`endConsoleSession` is the one to read before adding a fifth (#329). Windows implements it —
-`taskkill /T` walks down from the session's pid — and the POSIX port deliberately does not, because
-the same port's POSIX branch signals the process **group** (`kill -TERM -<pid>`). That is correct
-for a process this panel started as a group leader (#217) and wrong for a session somebody else
-launched, whose pid leads no group of ours: the signal would either miss or reach a group that is
-not the session's. Implementing it there "for symmetry" would be the per-OS branch this whole page
-exists to avoid — a builder producing an argv that is not true of the platform. The honest per-OS
-end for macOS and Linux is a follow-up, and it needs a measurement rather than a symmetry argument.
+`endConsoleSession` is the one to read before adding a fifth (#329, #366). Both ports implement it
+now, and the way the POSIX one arrived is the lesson. It was absent because `ProcessEndPort`'s POSIX
+branch signals the process **group** (`kill -TERM -<pid>`) — correct for a process this panel
+started as a group leader (#217) and wrong for a session somebody else launched, whose pid leads no
+group of ours. Implementing it on that argv "for symmetry" would have been a builder producing a
+command that is not true of the case: the signal would either miss or reach a group we never
+created.
+
+What #366 added instead was a **second pair of builders** for the second case — `kill -TERM <pid>`
+and `kill -KILL <pid>`, the direct pid — with the group form left exactly as it was, and a comment
+at both saying why one act cannot serve both. That is the shape to copy: when a platform cannot do
+the same thing, give the new case its own testable argv rather than bending the existing one, and
+leave a per-OS absence in place only while it states something true.
+
+Note also which absence remains: the POSIX tier is reachable only once `Dwarf.pidStartedAt` can be
+measured there, because the fail-closed pid guard refuses without it. Fail closed and say so; do
+not relax a guard to make a new tier reachable.
 
 ## One port answers one question, everywhere it is asked
 
 `ProcessProbePort.processStartTimeMs` now has two callers with opposite failure directions, and they
 share the port precisely so the two answers about one pid can never come from two different probes.
-The Claude provider reads it to tell a live session from a recycled pid; `endConsoleSession` re-reads
-it immediately before the kill (#231). Both use the same `sameProcessStart` comparison and the same
-`PROCESS_START_TOLERANCE_MS`, which is why that constant lives in `processProbe.ts` rather than in
-either caller.
+The Claude provider reads it to tell a live session from a recycled pid; both ports'
+`endConsoleSession` re-read it immediately before the end (#231, #366). All of them use the same
+`sameProcessStart` comparison and the same `PROCESS_START_TOLERANCE_MS`, which is why that constant
+lives in `processProbe.ts` rather than in any caller.
 
 **What differs is what an unknown means, and that belongs to the caller, never to the port.** The
 probe answers `null` for "could not determine" and says nothing about what to do with it. Liveness

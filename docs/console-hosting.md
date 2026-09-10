@@ -433,6 +433,10 @@ carries a registry `sessionName` is one session with two answers, and `resolveTe
 | `hosted-stdin`                     | the pipe this panel holds                        | ends the process (#194)                        | no                |
 | `launched-process`                 | refused — no inbox (#217)                        | ends the process                               | no                |
 
+The message column assumes a platform that can write into a console, which is Windows alone: where
+`supportsConsoleInput` is false the first two rows' MESSAGE degrades to the relay (or to no channel,
+without a name) and the kick does not — see #366 below, and `degradedForSend` in `resolve.ts`.
+
 **Row one is #319, and it reverses #308 back to #24's order — but not #24's mechanism.** #24 made
 the console the primary for the honest reason that keystrokes are instant where a relay turn is a
 whole `claude -p` run. #308 reversed it because that console tier **typed** the message character by
@@ -501,11 +505,60 @@ Three more consequences worth stating. The dwarf is **retired** on a delivered e
 mid-turn was last reported as), so the walk starts at once instead of waiting out the provider's
 liveness window. A refused end — including a refused verification — still **falls back to the relay
 cancel instruction** where the session has a registry name: weaker than what was asked for, and
-still better than nothing tried. And the POSIX ports implement **no** end tier: their tree kill
-signals the process GROUP, which is right for a process this panel started as a group leader and
-wrong for a session somebody else launched. A `terminal` target does not reach a kick there in any
-case (`supportsConsoleInput` is false on both, so it degrades to the relay first); a per-OS end is a
-follow-up, noted in `platform-ports`.
+still better than nothing tried. And a port with no end tier at all says so
+(`NO_TERMINAL_END_TIER`), rather than having the relay quietly substituted for the act.
+
+**Kick means the same thing on all three platforms — #366.** Until then it did not. On macOS and
+Linux the button fell through to the relay, a `claude -p` turn that _asks_ the agent to stop and
+leaves the decision to it: a request rather than a stop, costing a model turn and declinable. Two
+acts behind one label. The cause was one line of routing: a `terminal` target was degraded to its
+relay address wherever `supportsConsoleInput` was false, and that degrade reached both acts.
+**Console input and an end tier are different capabilities.** A message needs the window server; an
+end needs a pid, which every platform can signal. So the degrade moved to the send route
+(`degradedForSend` in `resolve.ts`) and the kick route keeps the console.
+
+The POSIX act is **strictly simpler than the Windows one**, which is why it was worth doing rather
+than declaring symmetric. Windows had to imitate a clean exit with keystrokes (#358), and a
+keystroke drags in a focus step, the shared-tab refusal (#329) and the whole mouse-mode repair.
+**SIGTERM is catchable**: the signal itself gives the CLI its own exit path, so it resets the
+terminal modes on the way out with no window focused and no key synthesized. The escalation behind
+it is SIGKILL after the same bounded grace, and the two constants are shared with the Windows tier
+(`endSession.ts`) so the two ports cannot drift into refusing in different words.
+
+The signal is aimed at the **pid, not the group** — `kill -TERM <pid>`, never `-<pid>`. The negative
+form the launched tier uses (#217) is right for a process this panel started detached, which is a
+group leader whose children inherit its group; an observed session is one process inside the
+terminal's own group and the panel started none of it, so a negative pid there addresses a group we
+never created. `processEnd.ts` holds both builders and the comment saying why they differ.
+
+### To measure on a real Mac — the POSIX kick's one unverified input
+
+**Undated because it has not been taken; noted 2026-09-10.** The act above is unit-tested per
+platform, but the fail-closed guard's INPUT is not measured on POSIX, and that decides whether the
+tier is reachable at all today.
+
+`EndSessionRequest.expectedStartMs` comes from `Dwarf.pidStartedAt`, which `claudeProvider` sets
+**only** where the session registry's `procStart` agreed with a live probe — and §1.5 records
+`procStart` as a Windows **FILETIME**, read through `filetimeToEpochMs`. What to look for, on a real
+macOS or Linux machine with an interactive `claude` session running:
+
+1. `~/.claude/sessions/<pid>.json` — does it exist at all, and does it carry a `procStart` key?
+2. If it does: what UNIT is it in? A FILETIME is a ~18-digit count of 100ns ticks since 1601;
+   epoch milliseconds is ~13 digits. `filetimeToEpochMs` rejects anything that converts outside
+   2000–2200, so an epoch-ms value there answers `null` rather than a wrong instant.
+3. Is `pidDomain` still `win32:<host>`-shaped, or does it name the platform? That field is the
+   registry's own hint that pid identity is namespaced per OS.
+4. Does the value agree with the platform's own probe — `ps -o lstart=` on macOS,
+   `/proc/<pid>/stat` field 22 plus `/proc/stat`'s `btime` on Linux — inside the 2s tolerance?
+
+**If it carries nothing comparable, the verdict is `'unknown'`, `pidStartedAt` is absent, and the
+runtime refuses the kick before the port is ever called** (`PID_UNVERIFIED`). That is the correct
+failure and the tier simply stays unreached until this is measured. Do **not** weaken the guard to
+make it reachable: signalling a pid nothing verified is how an unrelated process gets killed (#231),
+and the refusal is visible to the person with its reason. Record the finding in
+`docs/provider-formats.md` §1.5 either way — a negative is what tells the next person to solve pid
+identity differently there (a `/proc` read of the CLI's own start time, say) rather than to re-try
+this.
 
 **The permission digits still type.** A decision is answered at the terminal drawing the dialog, so
 it reads the kick's old route rather than the message's — `sendToConsole` for the measured `1`,
