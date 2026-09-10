@@ -1069,8 +1069,15 @@ function typedMidTurnPrompt(line: Rec): string | undefined {
  * `limit` counts the texts and never the activity lines (`trimFeed`, #359):
  * twelve tool calls after the agent's last reply used to be the whole answer,
  * and the panel drew a folded run with nothing said above it.
+ *
+ * `activityLimit` is forwarded rather than defaulted so a PAGE read can ask for
+ * the window whole (#364); see `FeedExtractor`.
  */
-export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[] {
+export function extractClaudeFeed(
+  tailText: string,
+  limit: number,
+  activityLimit?: number
+): FeedMessage[] {
   const feed: FeedMessage[] = []
   for (const line of jsonlObjects(tailText)) {
     const timestamp = asString(line.timestamp) ?? ''
@@ -1088,5 +1095,5 @@ export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[
       feed.push(...assistantFeedEntries(line, timestamp))
     }
   }
-  return trimFeed(feed, limit)
+  return trimFeed(feed, limit, activityLimit)
 }

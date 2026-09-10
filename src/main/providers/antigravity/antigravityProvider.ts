@@ -1,8 +1,13 @@
 import type { FsLike } from '../../adapters/fsLike'
 import { redactSecrets } from '../../domain/redactSecrets'
-import type { Dwarf, FeedMessage, ProviderSnapshot } from '../../domain/types'
+import type { Dwarf, FeedMessage, FeedPageCursor, ProviderSnapshot } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
-import { readFeedWindow } from '../feedWindow'
+import {
+  readFeedPage,
+  readFeedWindow,
+  redactedFeedExtractor,
+  type FeedWindowRead
+} from '../feedWindow'
 import { firstUserMessageIn, readFirstPrompt } from '../firstPrompt'
 import type { Provider } from '../provider'
 import {
@@ -435,6 +440,31 @@ export class AntigravityProvider implements Provider {
     // TRANSCRIPT_TAIL_BYTES and never calls feed().
     const messages = await readFeedWindow(this.fs, path, limit, extractAntigravityFeed)
     return messages.map((message) => ({ ...message, text: redactSecrets(message.text) }))
+  }
+
+  /**
+   * One page of conversation older than the panel's own oldest row (#364), the
+   * same read the other two transcript providers take.
+   *
+   * Redaction rides the EXTRACTOR here rather than the answer: a cursor names
+   * the text that crossed the wire, so the rows it is matched against have to
+   * be the redacted ones — see `redactedFeedExtractor`.
+   */
+  async feedPage(
+    dwarfId: string,
+    limit: number,
+    before: FeedPageCursor
+  ): Promise<FeedWindowRead | null> {
+    const path = this.feedSources.get(dwarfId)
+    if (path === undefined) return null
+    if (!(await this.fs.exists(path))) return { messages: [], reachedStart: true }
+    return readFeedPage(
+      this.fs,
+      path,
+      limit,
+      redactedFeedExtractor(extractAntigravityFeed, redactSecrets),
+      before
+    )
   }
 
   /**

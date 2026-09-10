@@ -1,5 +1,6 @@
 import type { SimulationConfig } from '../../config/config'
-import type { FeedMessage, ProviderSnapshot } from '../../domain/types'
+import type { FeedMessage, FeedPageCursor, ProviderSnapshot } from '../../domain/types'
+import type { FeedWindowRead } from '../feedWindow'
 import type { Provider } from '../provider'
 import { hashInt, hashPick } from './rng'
 import { simulatedMines, simulatedSnapshots, type SimulatedMine } from './world'
@@ -107,6 +108,36 @@ export class SimulatedProvider implements Provider {
       })
     }
     return messages
+  }
+
+  /**
+   * One page of older conversation (#364), invented the same way the newest one
+   * is — so the simulated valley exercises the panel's scrollback rather than
+   * being the one provider where the control does nothing.
+   *
+   * Seeded off the CURSOR's own text rather than off a depth, because a
+   * simulated session has no file whose start could be counted back to. It
+   * answers exactly one page and then `reachedStart: true`, which walks the
+   * panel through both halves of the behaviour — a page prepended without the
+   * viewport moving, and the notice that there is nothing older — deterministically
+   * and without an infinite scrollback nobody could ever reach the end of.
+   */
+  async feedPage(
+    dwarfId: string,
+    limit: number,
+    before: FeedPageCursor
+  ): Promise<FeedWindowRead | null> {
+    if (!this.known.has(dwarfId)) return null
+    const messages: FeedMessage[] = []
+    for (let index = 0; index < Math.max(0, limit); index++) {
+      const seed = `${dwarfId}:page:${before.text}:${index}`
+      messages.push({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        text: hashPick(seed, FEED_LINES),
+        timestamp: `sim+${String(hashInt(`${seed}:age`, 60)).padStart(2, '0')}s`
+      })
+    }
+    return { messages, reachedStart: true }
   }
 
   /**

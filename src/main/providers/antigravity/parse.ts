@@ -340,15 +340,22 @@ function toolCallActivity(step: AntigravityStep): FeedMessage[] {
  * this table has never mapped, and a call whose subject the CLI's own
  * truncation cut through, both publish NOTHING — see those functions' own
  * comments, and docs/provider-formats.md §3.1.6 for the measured counts.
+ *
+ * `activityLimit` is forwarded rather than defaulted so a PAGE read can ask for
+ * the window whole (#364); see `FeedExtractor`.
  */
-export function extractAntigravityFeed(text: string, limit: number): FeedMessage[] {
+export function extractAntigravityFeed(
+  text: string,
+  limit: number,
+  activityLimit?: number
+): FeedMessage[] {
   const feed: FeedMessage[] = []
   for (const step of antigravityTranscriptSteps(text)) {
     const message = spokenMessage(step)
     if (message !== undefined) feed.push(message)
     feed.push(...toolCallActivity(step))
   }
-  return trimFeed(feed, limit)
+  return trimFeed(feed, limit, activityLimit)
 }
 
 /**

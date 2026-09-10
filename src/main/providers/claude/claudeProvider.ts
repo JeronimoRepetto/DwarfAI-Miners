@@ -11,13 +11,19 @@ import {
   type DwarfPermissionRequest,
   type DwarfQuestion,
   type FeedMessage,
+  type FeedPageCursor,
   type ProviderSnapshot,
   type WaitingReason
 } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
 import { rankForSpawnDepth } from '../../sessionLaunch/heldCrew'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
-import { readFeedWindow } from '../feedWindow'
+import {
+  readFeedPage,
+  readFeedWindow,
+  redactedFeedExtractor,
+  type FeedWindowRead
+} from '../feedWindow'
 import { firstUserMessageIn, readFirstPrompt } from '../firstPrompt'
 import type { Provider } from '../provider'
 import {
@@ -711,6 +717,31 @@ export class ClaudeProvider implements Provider {
     // never hold the raw string (see domain/redactSecrets).
     const messages = await readFeedWindow(this.fs, path, limit, extractClaudeFeed)
     return messages.map((message) => ({ ...message, text: redactSecrets(message.text) }))
+  }
+
+  /**
+   * One page of conversation older than the panel's own oldest row (#364).
+   *
+   * Redaction rides the EXTRACTOR here rather than the answer, which is the one
+   * thing this method does differently from `feed` above: a cursor names the
+   * text that crossed the wire, so the rows the cursor is matched against have
+   * to be the redacted ones — see `redactedFeedExtractor`.
+   */
+  async feedPage(
+    dwarfId: string,
+    limit: number,
+    before: FeedPageCursor
+  ): Promise<FeedWindowRead | null> {
+    const path = this.feedSources.get(dwarfId)
+    if (path === undefined) return null
+    if (!(await this.fs.exists(path))) return { messages: [], reachedStart: true }
+    return readFeedPage(
+      this.fs,
+      path,
+      limit,
+      redactedFeedExtractor(extractClaudeFeed, redactSecrets),
+      before
+    )
   }
 
   /** Path backing feed(), used to open a terminal that tails the transcript live. */

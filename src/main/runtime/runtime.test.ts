@@ -507,6 +507,162 @@ describe('AgentRuntime activation', () => {
       })
     })
   })
+
+  /*
+   * Scrolling back past the newest page (#364). The page read is asked for only
+   * when somebody scrolls, never by the poll, which is the whole reason it may
+   * walk wider than the newest page does.
+   */
+  describe('AgentRuntime.dwarfFeedPage', () => {
+    const BEFORE = { timestamp: 't2', text: 'Still working' }
+    const OLDER: FeedMessage[] = [
+      { role: 'user', text: 'dig the east seam', timestamp: 't0' },
+      { role: 'assistant', text: 'On it.', timestamp: 't1' }
+    ]
+
+    function pagingProvider(
+      page: { messages: FeedMessage[]; reachedStart: boolean } | null
+    ): Provider {
+      return {
+        kind: 'claude',
+        scan,
+        feed: vi.fn().mockResolvedValue([]),
+        feedPage: vi.fn().mockResolvedValue(page)
+      }
+    }
+
+    it("asks the provider for a page of the panel's own size, and carries the flag back", async () => {
+      const source = pagingProvider({ messages: OLDER, reachedStart: true })
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(
+        runtime.dwarfFeedPage({ dwarfId: 'claude:session-1', before: BEFORE })
+      ).resolves.toEqual({ readable: true, messages: OLDER, reachedStart: true })
+      // FEED_LIMIT is the PAGE size now, not a ceiling: the renderer never
+      // names a count, so main cannot be asked for a read it has not budgeted.
+      expect(source.feedPage).toHaveBeenCalledWith('claude:session-1', 12, BEFORE)
+    })
+
+    it('reads nothing for a dwarf that is not on the board', async () => {
+      const source = pagingProvider({ messages: OLDER, reachedStart: false })
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(
+        runtime.dwarfFeedPage({ dwarfId: 'claude:nobody', before: BEFORE })
+      ).resolves.toEqual({ readable: false, messages: [], reachedStart: false })
+      expect(source.feedPage).not.toHaveBeenCalled()
+    })
+
+    it('says unreadable for a provider that keeps nothing it can page', async () => {
+      // A provider with no page surface at all, and one that has it but does
+      // not know this dwarf, answer the same thing — and it is not "there is
+      // nothing older", which would tell the panel to stop asking.
+      const noPages: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }
+      for (const source of [noPages, pagingProvider(null)]) {
+        const runtime = new AgentRuntime({
+          config: defaultConfig(),
+          providers: [source],
+          onMinesUpdated: vi.fn()
+        })
+        await runtime.refresh()
+
+        await expect(
+          runtime.dwarfFeedPage({ dwarfId: 'claude:session-1', before: BEFORE })
+        ).resolves.toEqual({ readable: false, messages: [], reachedStart: false })
+      }
+    })
+
+    it('reports unreadable rather than throwing when the page read fails', async () => {
+      const source: Provider = {
+        kind: 'claude',
+        scan,
+        feed: vi.fn().mockResolvedValue([]),
+        feedPage: vi.fn().mockRejectedValue(new Error('the file went away'))
+      }
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(
+        runtime.dwarfFeedPage({ dwarfId: 'claude:session-1', before: BEFORE })
+      ).resolves.toEqual({ readable: false, messages: [], reachedStart: false })
+    })
+
+    it('names the launching foreman as the issuer of a paged row, as the newest page does', async () => {
+      // #175 does not stop at the newest page: a worker's own task prompt is an
+      // ordinary `user` record wherever in the transcript it sits, and scrolling
+      // back to it must not draw it under the human's face.
+      const source: Provider = {
+        kind: 'claude',
+        scan: vi.fn<Provider['scan']>().mockResolvedValue([
+          {
+            provider: 'claude',
+            sessionId: 'session-1',
+            cwd: 'C:\\work\\project',
+            status: 'busy',
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: 'claude:session-1',
+                provider: 'claude',
+                role: 'foreman',
+                name: 'coordinator',
+                status: 'working',
+                sessionId: 'session-1'
+              },
+              {
+                id: 'claude:session-1:agent-77',
+                provider: 'claude',
+                role: 'worker',
+                name: 'survey the seam',
+                status: 'working',
+                sessionId: 'session-1'
+              }
+            ]
+          }
+        ]),
+        feed: vi.fn().mockResolvedValue([]),
+        feedPage: vi.fn().mockResolvedValue({
+          messages: [{ role: 'user', text: 'survey the seam', timestamp: 't0' }],
+          reachedStart: true
+        })
+      }
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [source],
+        onMinesUpdated: vi.fn()
+      })
+      await runtime.refresh()
+
+      await expect(
+        runtime.dwarfFeedPage({ dwarfId: 'claude:session-1:agent-77', before: BEFORE })
+      ).resolves.toEqual({
+        readable: true,
+        reachedStart: true,
+        messages: [
+          {
+            role: 'user',
+            text: 'survey the seam',
+            timestamp: 't0',
+            issuer: { role: 'foreman', name: 'coordinator' }
+          }
+        ]
+      })
+    })
+  })
 })
 
 /**

@@ -18,6 +18,7 @@ import type {
   AgentProviderList,
   AgentLaunchResult,
   AppBuild,
+  DwarfFeedPage,
   DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
@@ -81,6 +82,7 @@ import {
   verifyMinePath
 } from './shell/openMineFile'
 import { EXTERNAL_LINK_REFUSED_REASON, parseExternalLinkRequest } from './shell/openExternalLink'
+import { parseDwarfFeedPageRequest } from './providers/feedWindow'
 import { currentPlatform } from './platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from './appDatabase/appDatabase'
 import { runCoalBackfill } from './ledger/coalBackfill'
@@ -164,6 +166,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
   ipcMain.removeHandler(IPC_CHANNELS.activateDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeed)
+  ipcMain.removeHandler(IPC_CHANNELS.getDwarfFeedPage)
   ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.refreshDwarfTelemetry)
   ipcMain.removeHandler(IPC_CHANNELS.setDwarfTuning)
@@ -756,6 +759,12 @@ async function init(): Promise<void> {
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   /** A dwarf this process cannot read at all — never "it has said nothing". */
   const noFeed: DwarfFeedResult = { readable: false, messages: [] }
+  /**
+   * A page this process cannot answer (#364). `reachedStart` stays false on
+   * purpose: true would tell the panel it had reached the beginning of a
+   * conversation nobody could read a word of, and it would stop asking.
+   */
+  const noFeedPage: DwarfFeedPage = { readable: false, messages: [], reachedStart: false }
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
   // The shell reports every click on itself, because a frameless transparent
   // window is not reliably raised by the platform's own click-to-front (#165).
@@ -946,6 +955,16 @@ async function init(): Promise<void> {
   ipcMain.handle(IPC_CHANNELS.getDwarfFeed, (_event, dwarfId: unknown) => {
     if (typeof dwarfId !== 'string') return noFeed
     return runtime?.dwarfFeed(dwarfId) ?? noFeed
+  })
+  // One page of conversation older than the cursor the panel sent (#364).
+  // Boundary discipline as elsewhere: a payload this process cannot read is
+  // refused outright rather than coerced — a defaulted cursor would answer a
+  // page for a place the reader never was. See parseDwarfFeedPageRequest for
+  // the two refusals and the one field that legitimately arrives empty.
+  ipcMain.handle(IPC_CHANNELS.getDwarfFeedPage, (_event, payload: unknown) => {
+    const request = parseDwarfFeedPageRequest(payload)
+    if (request === null) return noFeedPage
+    return runtime?.dwarfFeedPage(request) ?? noFeedPage
   })
   // The renderer reporting which observed dwarf its message panel has open,
   // or that none is (#196). Boundary is string-or-null, unlike every other id

@@ -7,6 +7,8 @@ import type {
   AppBuild,
   AudioPreferences,
   DwarfActivation,
+  DwarfFeedPage,
+  DwarfFeedPageRequest,
   DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
@@ -205,6 +207,21 @@ export interface DwarfAiMinersApi {
    * from an empty list.
    */
   getDwarfFeed: (dwarfId: string) => Promise<DwarfFeedResult>
+  /**
+   * The page of that same transcript immediately OLDER than a cursor (#364) —
+   * the panel having scrolled to the top of what it holds.
+   *
+   * The cursor is the panel's own oldest row, named by its timestamp and the
+   * text it was given, never by a count from the end of the transcript: the
+   * poll pushes the watched dwarf's feed again on every reply (#196), so a
+   * count would name different rows one second later. See `FeedPageCursor`.
+   *
+   * `reachedStart: true` means this page is the LAST one — say so once and stop
+   * asking. `readable: false` is the other answer to watch for: this
+   * conversation cannot be paged at all, which is not the same as having
+   * reached its beginning.
+   */
+  getDwarfFeedPage: (request: DwarfFeedPageRequest) => Promise<DwarfFeedPage>
   /**
    * Tell main which OBSERVED dwarf the message panel currently has open, or
    * that none is, so the poll can carry that dwarf's feed with its snapshot
@@ -521,6 +538,18 @@ const api: DwarfAiMinersApi = {
   // check only ever sees a real string.
   getDwarfFeed: (dwarfId) =>
     ipcRenderer.invoke(IPC_CHANNELS.getDwarfFeed, typeof dwarfId === 'string' ? dwarfId : ''),
+  // Same field-by-field rebuild as openMinePath, and the same reason: what
+  // crosses is exactly a dwarf id and one cursor, so nothing a caller hung off
+  // the request comes with it. A field that is not a string collapses to '',
+  // which main refuses — never to a value it would page from (#364).
+  getDwarfFeedPage: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getDwarfFeedPage, {
+      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
+      before: {
+        timestamp: typeof request?.before?.timestamp === 'string' ? request.before.timestamp : '',
+        text: typeof request?.before?.text === 'string' ? request.before.text : ''
+      }
+    }),
   // Unlike every other id crossing here, a non-string collapses to null
   // rather than '': this channel's boundary is string-or-null, because null
   // is itself a real answer ("nobody is watched") and not a malformed one.

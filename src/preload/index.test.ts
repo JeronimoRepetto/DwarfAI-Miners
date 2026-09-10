@@ -761,6 +761,56 @@ describe('preload open-path contract (#279)', () => {
 })
 
 /**
+ * Scrolling back past the newest page (#364). A channel of its own rather than
+ * an argument on `dwarf:feed`, because the newest page rides the poll and this
+ * one is asked for only when somebody actually scrolls.
+ */
+describe('preload dwarf feed-page contract (#364)', () => {
+  const CURSOR = { timestamp: '2026-09-10T08:00:00.000Z', text: 'dig here' }
+  const PAGE = { readable: true, messages: [], reachedStart: false }
+
+  it('asks on the dwarf:feed:page channel with the request rebuilt field by field', async () => {
+    invoke.mockResolvedValueOnce(PAGE)
+    await api.getDwarfFeedPage({ dwarfId: 'claude:s1', before: CURSOR })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:feed:page', {
+      dwarfId: 'claude:s1',
+      before: CURSOR
+    })
+  })
+
+  it('collapses anything that is not a string, so main only ever reasons about strings', async () => {
+    invoke.mockResolvedValueOnce({ readable: false, messages: [], reachedStart: false })
+    await (api.getDwarfFeedPage as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 42,
+      before: { timestamp: undefined, text: null }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:feed:page', {
+      dwarfId: '',
+      before: { timestamp: '', text: '' }
+    })
+  })
+
+  it('crosses an absent cursor as one main refuses rather than throwing on the way', async () => {
+    invoke.mockResolvedValueOnce({ readable: false, messages: [], reachedStart: false })
+    await (api.getDwarfFeedPage as unknown as (value: unknown) => Promise<unknown>)(undefined)
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:feed:page', {
+      dwarfId: '',
+      before: { timestamp: '', text: '' }
+    })
+  })
+
+  it("hands back main's answer untouched, the end-of-pages flag included", async () => {
+    // `reachedStart` is what stops the panel asking, so a bridge that dropped
+    // or defaulted it would leave the reader pulling empty pages forever.
+    const last = { readable: true, messages: [], reachedStart: true }
+    invoke.mockResolvedValueOnce(last)
+    await expect(api.getDwarfFeedPage({ dwarfId: 'claude:s1', before: CURSOR })).resolves.toEqual(
+      last
+    )
+  })
+})
+
+/**
  * The panel telling main which observed dwarf it has open (#196), so the poll
  * can carry that dwarf's feed with its snapshot. One-way, like retireDwarf:
  * there is no verdict to wait for.

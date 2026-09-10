@@ -415,8 +415,15 @@ function codexToolInput(name: string, payload: Rec): Record<string, unknown> | u
  *
  * `limit` counts the texts and never the activity lines (`trimFeed`, #359),
  * the same rule the Claude and Antigravity extractors trim by.
+ *
+ * `activityLimit` is forwarded rather than defaulted so a PAGE read can ask for
+ * the window whole (#364); see `FeedExtractor`.
  */
-export function extractCodexFeed(tailText: string, limit: number): FeedMessage[] {
+export function extractCodexFeed(
+  tailText: string,
+  limit: number,
+  activityLimit?: number
+): FeedMessage[] {
   const feed: FeedMessage[] = []
   for (const record of jsonlRecords(tailText)) {
     if (record.type === 'event_msg' && record.payload.type === 'user_message') {
@@ -446,7 +453,7 @@ export function extractCodexFeed(tailText: string, limit: number): FeedMessage[]
     const line = toolActivityLine(name, input)
     if (line !== undefined) feed.push({ ...line, timestamp: record.timestamp })
   }
-  return trimFeed(feed, limit)
+  return trimFeed(feed, limit, activityLimit)
 }
 
 /** The text of a `response_item` message, whichever way its blocks are typed. */
