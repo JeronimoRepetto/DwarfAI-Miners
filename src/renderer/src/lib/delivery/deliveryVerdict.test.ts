@@ -159,6 +159,14 @@ describe('kickStatusLine', () => {
  * there is no session left to react, so a marker that said "watching for it to
  * react" would be waiting for something that cannot happen — and one that
  * promoted itself to ✓✓ would claim a reaction from a process that is gone.
+ *
+ * Three channels end a session outright, not one: `launched-process` and
+ * `hosted-stdin` because the panel is the one holding the process, and
+ * `terminal` because the tier itself now ends the process it once merely
+ * interrupted (#329, Windows clean-exit-then-force #358, POSIX SIGTERM-then-
+ * SIGKILL #366) — runtime.ts retires the dwarf on exactly that outcome
+ * (#383). `claude-relay`, `foreman-relay` and `held-session` are still asks a
+ * session may or may not act on, and stay on the watched path.
  */
 describe('a kick that ended the session', () => {
   it('says the session was ended, never that a turn was interrupted', () => {
@@ -177,15 +185,76 @@ describe('a kick that ended the session', () => {
   })
 
   it('leaves every other channel saying exactly what it said before', () => {
-    expect(kickStatusLine({ phase: 'delivered', via: 'terminal', awaitingReaction: true })).toBe(
-      'Kick handed over via terminal — watching for the session to react.'
-    )
+    // AMENDED for #383 (was: via: 'terminal', expecting
+    // 'Kick handed over via terminal — watching for the session to react.'
+    // — true before #329 made the terminal tier end the session outright;
+    // 'terminal' is no longer an unaffected channel, so a channel that still
+    // only asks, claude-relay, is the honest example now).
+    expect(
+      kickStatusLine({ phase: 'delivered', via: 'claude-relay', awaitingReaction: true })
+    ).toBe('Kick handed over via claude-relay — watching for the session to react.')
   })
 
   it('knows which channels end a session and which only ask', () => {
     expect(kickEndedTheSession('launched-process')).toBe(true)
+    // AMENDED for #383 (was: only 'launched-process' asserted true; 'terminal'
+    // and 'hosted-stdin' were not covered here at all — both now end a
+    // session too, and are appended rather than replacing anything).
+    expect(kickEndedTheSession('terminal')).toBe(true)
+    expect(kickEndedTheSession('hosted-stdin')).toBe(true)
     expect(kickEndedTheSession('held-session')).toBe(false)
+    expect(kickEndedTheSession('claude-relay')).toBe(false)
+    expect(kickEndedTheSession('foreman-relay')).toBe(false)
     expect(kickEndedTheSession(undefined)).toBe(false)
+  })
+})
+
+/*
+ * The terminal tier's own case (#383): before #329 a terminal kick was a
+ * keystroke the session might or might not react to, so it went through the
+ * same watched path as claude-relay. Since #329 it ends the process, the same
+ * as launched-process and hosted-stdin, and the verdict has to say so without
+ * repeating the one claim that is not true of it — "the process this panel
+ * launched" — because a terminal session is very often one the panel merely
+ * observes.
+ */
+describe('a kick delivered via a channel that ends the session, other than launched-process', () => {
+  it('reports the ended verdict for a terminal kick, not "watching"', () => {
+    const line = kickStatusLine({ phase: 'delivered', via: 'terminal' })
+    expect(line).toBe('Ended the session — its terminal is left at its prompt.')
+    expect(line).not.toContain('watching')
+    expect(line).not.toContain('handed over')
+  })
+
+  it('reports the ended verdict for a hosted-stdin kick, not "watching"', () => {
+    const line = kickStatusLine({ phase: 'delivered', via: 'hosted-stdin' })
+    expect(line).toBe('Ended the session — the process is gone.')
+    expect(line).not.toContain('watching')
+    expect(line).not.toContain('handed over')
+  })
+
+  it('marks a terminal kick as ended without claiming the process this panel launched', () => {
+    const marker = kickMarker({ phase: 'delivered', via: 'terminal' })
+    expect(marker?.glyph).toBe('✓')
+    expect(marker?.cls).toBe('is-delivered')
+    expect(marker?.title).toBe('The session was ended: its terminal is left at its prompt.')
+    expect(marker?.title).not.toMatch(/react/i)
+    expect(marker?.title).not.toContain('this panel launched')
+  })
+
+  it('marks a hosted-stdin kick as ended too', () => {
+    const marker = kickMarker({ phase: 'delivered', via: 'hosted-stdin' })
+    expect(marker?.glyph).toBe('✓')
+    expect(marker?.title).toBe('The session was ended: the process is gone.')
+    expect(marker?.title).not.toMatch(/react/i)
+  })
+
+  it('leaves claude-relay, foreman-relay and held-session handed over and watching', () => {
+    for (const via of ['claude-relay', 'foreman-relay', 'held-session'] as const) {
+      const line = kickStatusLine({ phase: 'delivered', via, awaitingReaction: true })
+      expect(line).toContain('watching for the session to react')
+      expect(line).not.toContain('Ended the session')
+    }
   })
 })
 
@@ -238,7 +307,12 @@ describe('a kick that dismissed the dwarf', () => {
   it('awaits nothing, for the same reason an ended session awaits nothing', () => {
     expect(kickHasNothingToAwait('dismiss')).toBe(true)
     expect(kickHasNothingToAwait('launched-process')).toBe(true)
-    expect(kickHasNothingToAwait('terminal')).toBe(false)
+    // AMENDED for #383 (was: expect(kickHasNothingToAwait('terminal')).toBe(false)
+    // — true only while the terminal tier was still a keystroke a session
+    // might react to; since #329 it ends the session outright, so it now has
+    // nothing to await either, same as launched-process and hosted-stdin).
+    expect(kickHasNothingToAwait('terminal')).toBe(true)
+    expect(kickHasNothingToAwait('hosted-stdin')).toBe(true)
     expect(kickHasNothingToAwait('codex-queue')).toBe(false)
   })
 })
