@@ -11,14 +11,23 @@ function mountNav(props: { area?: ShellArea; broken?: boolean; musicPlaying?: bo
 }
 
 describe('ShellNav', () => {
-  it('draws the five buttons the design names, in its order', () => {
+  /*
+   * AMENDED for #335. This was `draws the five buttons the design names, in its
+   * order` and expected `['Settings', 'Map', 'Mines', 'Lab', 'Market']`. The
+   * design source now names a sixth area after Market — the Laboral Union (page
+   * 49) — so the count in the name and the last entry in the list both move. The
+   * subject is unchanged: the column draws exactly what the source lists, in the
+   * source's order, and nothing else.
+   */
+  it('draws the six buttons the design names, in its order', () => {
     const buttons = mountNav().findAll('.nav-button')
     expect(buttons.map((button) => button.attributes('aria-label'))).toEqual([
       'Settings',
       'Map',
       'Mines',
       'Lab',
-      'Market'
+      'Market',
+      'Laboral Union'
     ])
   })
 
@@ -121,13 +130,16 @@ describe('ShellNav', () => {
  * The music button (#174), at the bottom of the navigation column.
  *
  * Here rather than in a component of its own because the column IS the bottom
- * of the shell: the mark sits at its top, the five areas are centred against
+ * of the shell: the mark sits at its top, the areas are centred against
  * the panel, and this is what is left below them. It decides nothing, for the
  * reason the mark and the rail's arrow decide nothing — playback belongs to
  * the audio engine, which App.vue owns.
  */
 describe('ShellNav — the music button', () => {
-  it('draws it below the five areas, at the bottom of the column', () => {
+  // AMENDED for #335: named `draws it below the five areas, at the bottom of the
+  // column`. Only the count moved — the expectation is unchanged, and it was
+  // never about how many areas there are.
+  it('draws it below the six areas, at the bottom of the column', () => {
     const nav = mountNav()
     const button = nav.find('.nav-music')
     expect(button.exists()).toBe(true)

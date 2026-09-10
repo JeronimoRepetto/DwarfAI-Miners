@@ -22,6 +22,7 @@ import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
+import { unavailableAreaOf } from './lib/shell/shellNav'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import type {
   AgentModelCatalog,
@@ -218,6 +219,15 @@ const {
 const shortcutBroken = computed(
   () => shortcutState.value !== null && !shortcutState.value.registered
 )
+
+/**
+ * The area the panel is on, when that area is one the design ships as
+ * unavailable — the Lab, the Market, or the Laboral Union (#335).
+ *
+ * The list belongs to shellNav rather than to this template: `undefined` here
+ * means the area has a screen of its own and one of the branches above draws it.
+ */
+const unavailableArea = computed(() => unavailableAreaOf(viewState.area))
 
 /**
  * Selecting an area never closes the mine held open beside it — that is the
@@ -848,8 +858,16 @@ onBeforeUnmount(() => {
             />
           </PanelFrame>
 
-          <PanelFrame v-else :key="viewState.area" variant="settings">
-            <UnavailablePanel :feature="viewState.area === 'lab' ? 'lab' : 'market'" />
+          <!--
+            The Lab, the Market and the Laboral Union (#335): one overlay for the
+            three areas the design ships as unavailable, keyed so switching
+            between them re-enters the transition rather than swapping the
+            painting under a still frame. `v-else-if` rather than `v-else`,
+            because an area with no screen and no unavailable painting should
+            draw nothing instead of borrowing another hall's sentence.
+          -->
+          <PanelFrame v-else-if="unavailableArea" :key="viewState.area" variant="settings">
+            <UnavailablePanel :feature="unavailableArea" />
           </PanelFrame>
         </PanelTransition>
 

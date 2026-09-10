@@ -11,7 +11,7 @@ import { SHELL_NAV, type ShellArea } from '../../lib/shell/shellNav'
 
 /**
  * The shell navigation stack (#90): the app mark at the top of the panel's
- * outer edge, and below it the five areas, vertically centred against the panel.
+ * outer edge, and below it the six areas, vertically centred against the panel.
  *
  * Thin by construction — it renders the area it is given and asks for the one
  * that was pressed. The view itself belongs to `useView`, and whether an area
@@ -42,8 +42,9 @@ const emit = defineEmits<{
    * The app mark was pressed: hide the whole window (#156).
    *
    * Its own event rather than an area, because it is not one — the design's
-   * navigation stack selects between five screens and the mark above it is not
-   * a sixth. Decides nothing here for the same reason the rail's arrow does not:
+   * navigation stack selects between the areas it lists, and the mark above it
+   * is not one of them. Decides nothing here for the same reason the rail's
+   * arrow does not:
    * the window is main's, and hiding it is main's to do.
    *
    * It collapsed the shell into the rail until the second acceptance run. The
@@ -58,7 +59,8 @@ const emit = defineEmits<{
    * The music button was pressed (#174): playback should flip for this run.
    *
    * Its own event rather than an area, for the reason `hide` is not one — the
-   * navigation stack selects between five screens and this is not a sixth. It
+   * navigation stack selects between the areas the design lists and this is not
+   * one of them. It
    * decides nothing either: the audio engine belongs to App.vue, which is
    * where every other cross-cutting surface is owned.
    */

@@ -39,4 +39,26 @@ describe('UnavailablePanel', () => {
     expect(panel.findAll('button')).toHaveLength(0)
     expect(panel.findAll('a')).toHaveLength(0)
   })
+
+  /*
+   * The Laboral Union (#335), the third feature this panel speaks for. The
+   * design source spells its sentence with the hall capitalised — "the Laboral
+   * Union", where the other two are lowercase nouns — and that is copied here
+   * exactly rather than normalised to match its neighbours.
+   */
+  it('says the Laboral Union is being rebuilt, in the design’s own words', () => {
+    const panel = mount(UnavailablePanel, { props: { feature: 'laboral-union' } })
+    expect(panel.text()).toContain("We're working to rebuild the Laboral Union.")
+    expect(panel.text()).toContain('Please come back later.')
+  })
+
+  it('draws the union over its own painting, not a neighbour’s', () => {
+    const union = mount(UnavailablePanel, { props: { feature: 'laboral-union' } })
+    const lab = mount(UnavailablePanel, { props: { feature: 'lab' } })
+    const market = mount(UnavailablePanel, { props: { feature: 'market' } })
+    const unionArt = union.find('.unavailable-art').attributes('src')
+    expect(unionArt).toBeTruthy()
+    expect(unionArt).not.toBe(lab.find('.unavailable-art').attributes('src'))
+    expect(unionArt).not.toBe(market.find('.unavailable-art').attributes('src'))
+  })
 })

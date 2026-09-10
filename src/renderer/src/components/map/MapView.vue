@@ -80,9 +80,9 @@ const emit = defineEmits<{ open: [mineId: string] }>()
 /**
  * The painting the valley is wearing, re-read from the clock on a slow tick
  * (see MAP_TIME_REFRESH_MS for why a tick and not one alarm at the boundary).
- * The interval is cleared on unmount: the panel switches between five screens
- * all day, and a timer left running per visit is a leak nothing on screen would
- * ever show.
+ * The interval is cleared on unmount: the panel switches between its screens all
+ * day, and a timer left running per visit is a leak nothing on screen would ever
+ * show.
  */
 const timeVariant = ref(mapVariantAt(new Date()))
 const mapArtSrc = computed(() => MAP_BG_SRC[timeVariant.value])

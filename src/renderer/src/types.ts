@@ -8,7 +8,7 @@ import type {
 } from '../../shared/contracts'
 import type { ShellArea } from './lib/shell/shellNav'
 
-/** The five areas the shell's navigation stack selects (#90). */
+/** The six areas the shell's navigation stack selects (#90, #335). */
 export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
@@ -260,7 +260,7 @@ export function defaultDwarfQuestionState(): DwarfQuestionState {
 }
 
 /**
- * Where the panel currently is: which of the five shell areas the navigation
+ * Where the panel currently is: which of the six shell areas the navigation
  * stack has selected, and which mine — if any — is held open beside it.
  *
  * The two are concurrent rather than exclusive (#90). That is the design's

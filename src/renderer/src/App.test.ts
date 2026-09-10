@@ -510,7 +510,7 @@ describe('App settings entry point', () => {
 
   it('opens the settings panel, reporting the state on the button', async () => {
     // AMENDED twice now. First (#90): settings used to TOGGLE open and closed
-    // from the same control; it is one of five areas, and the way out is
+    // from the same control; it is one area among several, and the way out is
     // selecting another area. Second (#138): the rebuilt Settings screen
     // (SettingsPanel) carries no `role="dialog"` at all — that role belonged
     // to the interim overlay ShortcutSettings drew, and #142 already flagged
@@ -1147,6 +1147,17 @@ describe('App shell', () => {
     expect(wrapper.find('.unavailable').text()).toContain('rebuild the lab')
     await wrapper.find(`${NAV}[aria-label="Market"]`).trigger('click')
     expect(wrapper.find('.unavailable').text()).toContain('rebuild the market')
+  })
+
+  it('shows the Laboral Union the same way, as the design’s sixth area', async () => {
+    // #335's first delivery: the area exists so the design's navigation is
+    // complete, and says outright that the hall is not open yet. Selecting it
+    // must reach the SAME shared overlay Lab and Market do — a fourth panel
+    // invented for it would be the gap the source deliberately left.
+    const { wrapper } = await mountOpenApp()
+    await wrapper.find(`${NAV}[aria-label="Laboral Union"]`).trigger('click')
+    expect(wrapper.find('.unavailable').text()).toContain('rebuild the Laboral Union')
+    expect(wrapper.find('.unavailable').text()).toContain('Please come back later.')
   })
 })
 
@@ -2204,10 +2215,18 @@ describe('App audio (#174, #173)', () => {
     expect(voices[0]).toContain('dwarf-worker-voice')
   })
 
-  it('clicks on each of the navigation column’s five area buttons (#323)', async () => {
+  /*
+   * AMENDED for #335. This was `clicks on each of the navigation column’s five
+   * area buttons (#323)` and expected `toHaveLength(5)`. The design source names
+   * a sixth area — the Laboral Union — so the column draws six buttons and the
+   * count follows it. The subject is untouched: EVERY area button must answer
+   * with the click sound, which is why the count is asserted at all rather than
+   * the loop being left to run over whatever it finds.
+   */
+  it('clicks on each of the navigation column’s six area buttons (#323)', async () => {
     const { wrapper } = await audioApp()
     const buttons = wrapper.findAll('.nav-button')
-    expect(buttons).toHaveLength(5)
+    expect(buttons).toHaveLength(6)
 
     for (const button of buttons) {
       const before = opened.length

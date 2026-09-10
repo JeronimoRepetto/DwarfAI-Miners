@@ -58,18 +58,19 @@ around work that is actually happening.
 
 The panel docks against one screen edge as a thin rail; the arrow on the rail slides it open. Along
 its outer edge sits the app mark — pressing it takes the window away, exactly as the global
-shortcut does — and under that a column of **five areas**, plus a note button at the bottom for the
+shortcut does — and under that a column of **six areas**, plus a note button at the bottom for the
 music:
 
-| Area         | What it is                                                                        |
-| ------------ | --------------------------------------------------------------------------------- |
-| **Settings** | The shortcut, the panel's side, sound, the metrics wipe, and the running version. |
-| **Map**      | The default view: every project with a live session, at a glance.                 |
-| **Mines**    | The searchable list of projects, with tier filters and a sort by last activity.   |
-| **Lab**      | Planned. Shows an unavailable state today.                                        |
-| **Market**   | Planned. Shows an unavailable state today.                                        |
+| Area              | What it is                                                                        |
+| ----------------- | --------------------------------------------------------------------------------- |
+| **Settings**      | The shortcut, the panel's side, sound, the metrics wipe, and the running version. |
+| **Map**           | The default view: every project with a live session, at a glance.                 |
+| **Mines**         | The searchable list of projects, with tier filters and a sort by last activity.   |
+| **Lab**           | Planned. Shows an unavailable state today.                                        |
+| **Market**        | Planned. Shows an unavailable state today.                                        |
+| **Laboral Union** | Planned. Shows an unavailable state today.                                        |
 
-An **opened mine** is not a sixth area. It sits beside whichever area is selected, which is why you
+An **opened mine** is not one of them. It sits beside whichever area is selected, which is why you
 can browse the Mines list and watch a crew at the same time.
 
 **Map view (default).** An illustrated world seen from orbit, in one of four paintings chosen by
@@ -319,7 +320,7 @@ Three independent channels, all off one engine:
   a foreman hears the quiet one — a foreman is not a worker. The round **mute** at the interior's
   top-left corner silences the ambience alone, also for this run.
 - **Effects.** One recording per dwarf rank, played when you click a dwarf, plus the shell's own
-  interface sounds — a click on the five navigation buttons and a sound when the side panel opens
+  interface sounds — a click on the six navigation buttons and a sound when the side panel opens
   and closes. One channel, one volume: a rank with no recording is simply silent rather than
   borrowing another rank's voice, and the same is true of an interface action with no sound of its
   own.
