@@ -1,4 +1,5 @@
 import { toolActivityLine } from '../../domain/permissionSummary'
+import { trimFeed } from '../feedWindow'
 import {
   type DwarfAttendance,
   type FeedMessage,
@@ -1058,12 +1059,16 @@ function typedMidTurnPrompt(line: Rec): string | undefined {
 }
 
 /**
- * The last `limit` human-readable messages of a transcript tail: everything a
- * person typed, however it was delivered, assistant text replies, and one
- * line per tool call the design's four verbs name (#240), interleaved between
- * the text in call order. Tool results, task notifications and the harness's
- * own meta lines are skipped, and so is a tool call `toolActivityLine` names
- * no verb for.
+ * The last `limit` things SAID in a transcript tail: everything a person
+ * typed, however it was delivered, assistant text replies, and one line per
+ * tool call the design's four verbs name (#240), interleaved between the text
+ * in call order. Tool results, task notifications and the harness's own meta
+ * lines are skipped, and so is a tool call `toolActivityLine` names no verb
+ * for.
+ *
+ * `limit` counts the texts and never the activity lines (`trimFeed`, #359):
+ * twelve tool calls after the agent's last reply used to be the whole answer,
+ * and the panel drew a folded run with nothing said above it.
  */
 export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
@@ -1083,5 +1088,5 @@ export function extractClaudeFeed(tailText: string, limit: number): FeedMessage[
       feed.push(...assistantFeedEntries(line, timestamp))
     }
   }
-  return feed.slice(-limit)
+  return trimFeed(feed, limit)
 }

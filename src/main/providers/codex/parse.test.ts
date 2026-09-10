@@ -384,6 +384,28 @@ describe('extractCodexFeed activity lines (#240)', () => {
       ['assistant', 'Placeholder text block.']
     ])
   })
+
+  it('keeps both replies when twenty tool calls have run since the last of them (#359)', () => {
+    // `limit` is a count of things SAID here too — one rule for all three
+    // extractors, so a long tool loop cannot empty this panel either.
+    const calls = Array.from({ length: 20 }, (_, index) =>
+      shellCall(
+        `pnpm test --shard ${index}`,
+        `2026-09-07T10:01:${String(index).padStart(2, '0')}.000Z`
+      )
+    ).join('')
+    const tail =
+      assistantLine('Checking.', '2026-09-07T10:00:00.000Z') +
+      assistantLine('Working on it.', '2026-09-07T10:00:02.000Z') +
+      calls
+
+    const feed = extractCodexFeed(tail, 12)
+    expect(feed.filter((m) => m.activity === undefined).map((m) => m.text)).toEqual([
+      'Checking.',
+      'Working on it.'
+    ])
+    expect(feed.filter((m) => m.activity !== undefined)).toHaveLength(20)
+  })
 })
 
 /*

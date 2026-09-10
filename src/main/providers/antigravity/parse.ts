@@ -1,4 +1,5 @@
 import { toolActivityLine } from '../../domain/permissionSummary'
+import { trimFeed } from '../feedWindow'
 import type { FeedMessage } from '../../domain/types'
 
 /**
@@ -311,7 +312,9 @@ function toolCallActivity(step: AntigravityStep): FeedMessage[] {
 }
 
 /**
- * The last `limit` messages of a transcript window.
+ * The last `limit` things SAID in a transcript window, with the tool calls
+ * between them carried — `limit` counts the texts and never the activity
+ * lines (`trimFeed`, #359), the same rule the other two extractors trim by.
  *
  * Only two record shapes are a message, and both are named by their SOURCE as
  * well as their type, because the type alone is not proof of who spoke:
@@ -345,7 +348,7 @@ export function extractAntigravityFeed(text: string, limit: number): FeedMessage
     if (message !== undefined) feed.push(message)
     feed.push(...toolCallActivity(step))
   }
-  return feed.slice(-limit)
+  return trimFeed(feed, limit)
 }
 
 /**

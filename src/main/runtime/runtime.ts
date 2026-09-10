@@ -141,6 +141,12 @@ import { TierService } from '../tier/tierService'
 import { redactSecrets } from '../domain/redactSecrets'
 import { truncate } from '../../shared/truncate'
 
+/**
+ * How much conversation the message panel asks a provider for — twelve things
+ * SAID, never twelve rows (#359). The tool-call lines between them ride along
+ * and are bounded on their own; `trimFeed` in `providers/feedWindow.ts` owns
+ * both counts.
+ */
 const FEED_LIMIT = 12
 
 /**

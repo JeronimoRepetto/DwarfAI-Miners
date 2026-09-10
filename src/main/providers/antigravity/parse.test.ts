@@ -172,6 +172,40 @@ describe('extractAntigravityFeed', () => {
     ])
   })
 
+  it('keeps both replies when twenty tool calls have run since the last of them (#359)', () => {
+    // `limit` counts things SAID for this CLI too — one rule shared with the
+    // Claude and Codex extractors, so a long tool loop cannot empty the panel.
+    // Built inline rather than as a fixture: nothing here is read off a live
+    // capture, only the shape the captured ones already pin above.
+    const step = (index: number, fields: Record<string, unknown>): string =>
+      JSON.stringify({
+        step_index: index,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        status: 'DONE',
+        created_at: `2026-09-07T10:01:${String(index).padStart(2, '0')}Z`,
+        ...fields
+      }) + '\n'
+    const calls = Array.from({ length: 20 }, (_, index) =>
+      step(index + 2, {
+        tool_calls: [
+          { name: 'view_file', args: { AbsolutePath: JSON.stringify(`src/main/step${index}.ts`) } }
+        ]
+      })
+    ).join('')
+    const transcript =
+      step(0, { content: 'Reading the extractor.' }) +
+      step(1, { content: 'Found it; fixing now.' }) +
+      calls
+
+    const feed = extractAntigravityFeed(transcript, 12)
+    expect(feed.filter((message) => message.activity === undefined).map((m) => m.text)).toEqual([
+      'Reading the extractor.',
+      'Found it; fixing now.'
+    ])
+    expect(feed.filter((message) => message.activity !== undefined)).toHaveLength(20)
+  })
+
   it('reads a window whose final line was still being written', () => {
     // A byte tail read against a file the CLI is appending to routinely ends
     // mid-line, and so does a window that starts mid-line.

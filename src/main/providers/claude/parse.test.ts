@@ -687,7 +687,12 @@ describe('extractClaudeFeed activity lines (#240)', () => {
     expect(extractClaudeFeed(tail, 20)[0]!.text).toBe('Ran curl -H "auth: [redacted]" x.test')
   })
 
-  it('counts a tool-call line toward the same limit as a spoken message', () => {
+  // AMENDED for #359 (was: 'counts a tool-call line toward the same limit as a
+  // spoken message', expecting `extractClaudeFeed(tail, 2)` to answer
+  // ['Ran pnpm test', 'two'] — the two newest ROWS). That is the defect #359
+  // reports: `limit` is a count of things said, and a tool call is carried
+  // beside the words rather than instead of them.
+  it('spends the limit on things said, carrying the tool-call line between them', () => {
     const tail =
       assistantLine([{ type: 'text', text: 'one' }], '2026-09-07T10:00:00.000Z') +
       assistantLine(
@@ -695,7 +700,44 @@ describe('extractClaudeFeed activity lines (#240)', () => {
         '2026-09-07T10:00:01.000Z'
       ) +
       assistantLine([{ type: 'text', text: 'two' }], '2026-09-07T10:00:02.000Z')
-    expect(extractClaudeFeed(tail, 2).map((m) => m.text)).toEqual(['Ran pnpm test', 'two'])
+    expect(extractClaudeFeed(tail, 2).map((m) => m.text)).toEqual(['one', 'Ran pnpm test', 'two'])
+  })
+
+  it('keeps both replies when twenty tool calls have run since the last of them (#359)', () => {
+    // The transcript the defect was measured on, in miniature: the agent said
+    // two things and then worked for a long stretch without speaking. Every
+    // one of the twelve rows the panel asked for used to be a tool call, so it
+    // drew one folded run and nothing said.
+    const tools = ['Bash', 'Read', 'Grep', 'Edit'] as const
+    const calls = Array.from({ length: 20 }, (_, index) =>
+      assistantLine(
+        [
+          {
+            type: 'tool_use',
+            id: `toolu_${index}`,
+            name: tools[index % tools.length],
+            input:
+              index % tools.length === 0
+                ? { command: `pnpm test --shard ${index}` }
+                : index % tools.length === 2
+                  ? { pattern: `FeedMessage${index}` }
+                  : { file_path: `src/main/step${index}.ts` }
+          }
+        ],
+        `2026-09-07T10:01:${String(index).padStart(2, '0')}.000Z`
+      )
+    ).join('')
+    const tail =
+      assistantLine([{ type: 'text', text: 'Reading the extractor.' }]) +
+      assistantLine([{ type: 'text', text: 'Found it; fixing now.' }]) +
+      calls
+
+    const feed = extractClaudeFeed(tail, 12)
+    expect(feed.filter((m) => m.activity === undefined).map((m) => m.text)).toEqual([
+      'Reading the extractor.',
+      'Found it; fixing now.'
+    ])
+    expect(feed.filter((m) => m.activity !== undefined)).toHaveLength(20)
   })
 
   it('reads a real transcript unchanged: the Agent calls it carries publish no line of their own', () => {
