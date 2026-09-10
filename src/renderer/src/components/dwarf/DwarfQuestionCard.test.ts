@@ -2,8 +2,8 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
-import { PRESS_ENTER_TO_SEND } from '../../lib/question/questionAnswer'
-import { ANSWER_ONLY_WHERE_IT_RUNS, type DwarfQuestion } from '../../types'
+import { PRESS_ENTER_TO_SEND, SEND_ANSWER_NAME } from '../../lib/question/questionAnswer'
+import { ANSWER_ONLY_WHERE_IT_RUNS, joinAnswerLabels, type DwarfQuestion } from '../../types'
 import DwarfQuestionCard from './DwarfQuestionCard.vue'
 
 function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
@@ -237,13 +237,21 @@ describe('DwarfQuestionCard', () => {
     }
   })
   /*
-   * A question the panel can only SHOW (#354). The card learns it from the
-   * ask's own `channel`, which main derives from the same evidence
-   * `answerDwarfQuestion` guards on — see DwarfPromptChannel.
+   * A question the panel can only SHOW (#354, #362). The card learns it from
+   * the ask's own `channel` and `questionCount`, which main derives from the
+   * same evidence `answerDwarfQuestion` guards on — see DwarfPromptChannel.
+   *
+   * AMENDED for #362: `observed()` was a terminal-channel ask with ONE
+   * question, which was the whole of unanswerable when #354 wrote these. A
+   * one-question ask is now typed into the session's own console, so what is
+   * left unanswerable — and what every case below is therefore about — is a
+   * call that asked SEVERAL questions, because only its first is on the wire.
+   * Not one expectation in the block is weaker; the fixture names the case the
+   * block was always describing.
    */
   describe('a question this panel cannot answer', () => {
     function observed(overrides: Partial<DwarfQuestion> = {}) {
-      return card({ question: question({ channel: 'terminal', ...overrides }) })
+      return card({ question: question({ channel: 'terminal', questionCount: 2, ...overrides }) })
     }
 
     it('keeps the header, the question and every option on screen', () => {
@@ -314,6 +322,14 @@ describe('DwarfQuestionCard', () => {
       ])
     })
 
+    it('says several questions, and names no provider (#360)', () => {
+      // #360: the sentence used to tell the reader about "a Codex thread" on a
+      // card that is drawn for an observed Claude session just as often.
+      const text = observed().find('.answer-error').text()
+      expect(text).toContain('several questions')
+      expect(text).not.toMatch(/codex|claude|gemini/i)
+    })
+
     it('leaves a held session’s question answerable, with no jump beside it', async () => {
       const wrapper = card()
       for (const option of wrapper.findAll('.option-card')) {
@@ -325,5 +341,176 @@ describe('DwarfQuestionCard', () => {
       pressEnter(wrapper.find('.question-card').element)
       expect(wrapper.emitted('answer')).toEqual([['SQLite']])
     })
+  })
+})
+
+/*
+ * A question the panel CAN answer at the session's own console (#362). The
+ * card learns that from the ask's `channel` and `questionCount` — the same two
+ * fields main's own guard reads — so what the card offers and what main will
+ * accept cannot come apart.
+ */
+describe('a question answered at the session’s own terminal', () => {
+  function observedSingle(overrides: Partial<DwarfQuestion> = {}) {
+    return card({ question: question({ channel: 'terminal', ...overrides }) })
+  }
+
+  it('offers every option, exactly as a held session’s ask does', async () => {
+    const wrapper = observedSingle()
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.attributes('disabled')).toBeUndefined()
+    }
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    expect(wrapper.findAll('.option-card')[1]!.classes()).toContain('is-selected')
+  })
+
+  it('sends the chosen option on Enter, as the held channel does', async () => {
+    const wrapper = observedSingle()
+    await wrapper.findAll('.option-card')[2]!.trigger('click')
+    pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toEqual([['Neither']])
+  })
+
+  it('draws no refusal and no jump while it can be answered', () => {
+    const wrapper = observedSingle()
+    expect(wrapper.find('.answer-error').exists()).toBe(false)
+    expect(wrapper.find('.answer-jump').exists()).toBe(false)
+  })
+
+  it('shows main’s refusal with the way to the terminal beside it', async () => {
+    // A refusal on this channel is about a console, so the jump is what the
+    // person needs next — unlike a held refusal, which is about the stream.
+    const wrapper = observedSingle()
+    await wrapper.setProps({
+      answerState: {
+        phase: 'refused',
+        toolUseId: 'toolu_01',
+        error: 'The panel could not reach the console this session runs in.'
+      }
+    })
+    expect(wrapper.find('.answer-error').text()).toContain('could not reach the console')
+    expect(wrapper.find('.answer-jump').exists()).toBe(true)
+  })
+})
+
+/*
+ * A multi-select ask on that channel (#362). Its options are toggles and an
+ * explicit Answer control sends, because that is what the measured keystroke
+ * gesture is — one digit per chosen option, then a confirmation — and because
+ * nothing may be typed into somebody's console until they say so.
+ */
+describe('a multi-select question at the session’s own terminal', () => {
+  function multi(overrides: Partial<DwarfQuestion> = {}) {
+    return card({
+      question: question({ channel: 'terminal', multiSelect: true, ...overrides })
+    })
+  }
+
+  it('keeps every toggled option selected, dimming none of the others', async () => {
+    const wrapper = multi()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.findAll('.option-card')[2]!.trigger('click')
+    const classes = wrapper.findAll('.option-card').map((option) => option.classes())
+    expect(classes[0]).toContain('is-selected')
+    expect(classes[1]).toContain('is-base')
+    expect(classes[2]).toContain('is-selected')
+  })
+
+  it('reports every toggle to a screen reader as pressed', async () => {
+    const wrapper = multi()
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    const pressed = wrapper.findAll('.option-card').map((o) => o.attributes('aria-pressed'))
+    expect(pressed).toEqual(['false', 'true', 'false'])
+  })
+
+  it('turns a toggle off again when it is clicked twice', async () => {
+    const wrapper = multi()
+    const first = wrapper.findAll('.option-card')[0]!
+    await first.trigger('click')
+    await first.trigger('click')
+    expect(first.classes()).toContain('is-base')
+    expect(wrapper.find('.answer-send').exists()).toBe(false)
+  })
+
+  it('offers the Answer control only once something is toggled', async () => {
+    const wrapper = multi()
+    expect(wrapper.find('.answer-send').exists()).toBe(false)
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    expect(wrapper.find('.answer-send').text()).toBe(SEND_ANSWER_NAME)
+  })
+
+  it('sends nothing on a toggle, however many are on', async () => {
+    // The whole reason the control exists: a toggle is not an answer, and the
+    // panel must never type one into a console nobody has released.
+    const wrapper = multi()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it('emits once with every toggled label when the Answer control is pressed', async () => {
+    const wrapper = multi()
+    await wrapper.findAll('.option-card')[2]!.trigger('click')
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.find('.answer-send').trigger('click')
+
+    // In the ask's OWN option order, not the order they were clicked: main
+    // presses a digit per option position.
+    expect(wrapper.emitted('answer')).toEqual([[joinAnswerLabels(['Postgres', 'Neither'])]])
+  })
+
+  it('does not send on Enter: this ask has a control of its own', async () => {
+    const wrapper = multi()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    const event = pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('keeps the free-form box until something is toggled, and never sends it as an answer', async () => {
+    const wrapper = multi()
+    expect(wrapper.find('.freeform-input').exists()).toBe(true)
+    await wrapper.find('.freeform-input').setValue('all of them')
+    pressEnter(wrapper.find('.freeform-input').element)
+    expect(wrapper.emitted('send-text')).toEqual([[{ text: 'all of them', pressEnter: true }]])
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it('takes no toggle and offers no control while an answer is in flight', async () => {
+    const wrapper = multi({ toolUseId: 'toolu_01' })
+    await wrapper.setProps({ answerState: { phase: 'answering', toolUseId: 'toolu_01' } })
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.attributes('disabled')).toBeDefined()
+    }
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    expect(wrapper.find('.answer-send').exists()).toBe(false)
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it('starts a new ask with nothing toggled', async () => {
+    const wrapper = multi()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.setProps({
+      question: question({ channel: 'terminal', multiSelect: true, toolUseId: 'toolu_02' })
+    })
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.classes()).toContain('is-base')
+    }
+    expect(wrapper.find('.answer-send').exists()).toBe(false)
+  })
+
+  it('keeps a HELD multi-select ask on the single-choice gesture it always had', async () => {
+    // Deliberately not toggles. The terminal gesture is measured — one digit
+    // per option — where the agent's own picker's join for several labels is
+    // not, so the held channel still takes a single label per question (see
+    // resolveAnswers in main). Same card, and the channel decides the gesture
+    // because the EVIDENCE differs, not because the ask does.
+    const wrapper = card({ question: question({ multiSelect: true }) })
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-dimmed')
+    expect(wrapper.find('.answer-send').exists()).toBe(false)
+    pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toEqual([['SQLite']])
   })
 })

@@ -3,13 +3,19 @@ import { computed, ref } from 'vue'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import {
   PRESS_ENTER_TO_SEND,
+  SEND_ANSWER_NAME,
   answerStatusLine,
   answerStateForAsk,
   canSendAnswer,
+  canSendToggles,
   isAnswerable,
   optionState,
   selectOption,
-  type QuestionSelection
+  toggleOption,
+  toggleState,
+  toggledAnswer,
+  type QuestionSelection,
+  type QuestionToggles
 } from '../../lib/question/questionAnswer'
 import {
   ANSWER_ONLY_WHERE_IT_RUNS,
@@ -24,14 +30,26 @@ import {
  * Thin, like every component here: which card is selected, whether Enter would
  * send and what an answer carries are all decided in lib/question.
  *
- * An ask on the terminal channel is drawn but not offered (#354): the header,
- * the question and every option stay exactly where they are, the options go
- * inert, and one jump to the session's own terminal appears under main's own
- * sentence — the same control, in the same place, as the permission card's
- * refused terminal decision. The card never derives that from the provider or
- * from the dwarf's capabilities; it reads `question.channel`, which is the
- * very condition main's `answerDwarfQuestion` guards on, so the two cannot
- * come apart.
+ * An ask on the terminal channel used to be drawn but not offered (#354). Since
+ * #362 it is answered by keystroke at the console the session runs in, so what
+ * is left unanswerable is narrower and the card still reads it off the wire
+ * rather than deriving it: `questionCount > 1` on that channel, because only
+ * the first question of a call travels and answering it walks the picker on to
+ * one nothing here knows about. Then the header, the question and every option
+ * stay exactly where they are, the options go inert, and one jump to the
+ * session's own terminal appears under main's own sentence — the same control,
+ * in the same place, as the permission card's refused terminal decision. Both
+ * fields are exactly what main's `answerDwarfQuestion` guards on, so the card
+ * cannot offer an answer main would refuse.
+ *
+ * A MULTI-SELECT ask on that channel is the one place the gesture differs, and
+ * the channel decides it because the EVIDENCE differs rather than because the
+ * ask does. The terminal gesture is measured — one digit per chosen option,
+ * then a confirmation — so several labels can be sent, the options become
+ * toggles, and an explicit Answer control releases them: nothing is typed into
+ * somebody's console until they say so. On the held channel the same ask keeps
+ * the single-choice gesture it always had, because how the agent's own picker
+ * joins several answers is unmeasured (see resolveAnswers in main).
  *
  * Two things this component deliberately does NOT do. It never hides the
  * question — the card is drawn from the dwarf's own `pendingQuestion`, and only
@@ -58,23 +76,41 @@ const emit = defineEmits<{
 }>()
 
 const selection = ref<QuestionSelection | null>(null)
+const toggles = ref<QuestionToggles | null>(null)
 const freeform = ref('')
 
 /** The verdict only where it belongs: a new ask never wears the last one's. */
 const verdict = computed(() => answerStateForAsk(props.answerState, props.question.toolUseId))
 /*
- * An ask nothing here can answer, known before anybody clicks (#354). Off the
- * wire rather than off the dwarf, because the wire is where main put the one
- * reading its own guard uses — see DwarfPromptChannel.
+ * An ask nothing here can answer, known before anybody clicks (#354, #362).
+ * Off the wire rather than off the dwarf, because the wire is where main put
+ * the two readings its own guard uses — see DwarfPromptChannel and
+ * DwarfQuestion.questionCount.
  */
-const unanswerable = computed(() => props.question.channel === 'terminal')
+const unanswerable = computed(
+  () => props.question.channel === 'terminal' && props.question.questionCount > 1
+)
+/*
+ * Whether this ask's options are toggles rather than one choice (#362). The
+ * channel, not just `multiSelect`: only the terminal gesture for several
+ * answers has been measured — see the module comment.
+ */
+const toggling = computed(() => props.question.channel === 'terminal' && props.question.multiSelect)
 const answerable = computed(
   () => !unanswerable.value && isAnswerable(props.answerState, props.question.toolUseId)
 )
 const canSend = computed(
   () =>
     !unanswerable.value &&
+    !toggling.value &&
     canSendAnswer(selection.value, props.question.toolUseId, props.answerState)
+)
+/** Whether the Answer control is there to press, which is the toggling ask's own send. */
+const canAnswerToggles = computed(
+  () =>
+    toggling.value &&
+    !unanswerable.value &&
+    canSendToggles(toggles.value, props.question.toolUseId, props.answerState)
 )
 const selectedLabel = computed(() =>
   selection.value?.toolUseId === props.question.toolUseId ? selection.value.label : null
@@ -91,13 +127,33 @@ const refusalLine = computed(() => {
   if (unanswerable.value) return ANSWER_ONLY_WHERE_IT_RUNS
   return verdict.value?.phase === 'refused' ? verdict.value.error : null
 })
+/*
+ * The jump belongs to a refusal about a CONSOLE, which is every refusal on the
+ * terminal channel: an unanswerable several-question ask, and anything main
+ * returned for one it could not type. A held session's refusal is about the
+ * stream this panel owns, and there is nowhere to send the person for it.
+ */
+const showJump = computed(() => props.question.channel === 'terminal' && refusalLine.value !== null)
 
 function cardClass(label: string): string {
-  return `is-${optionState(selection.value, props.question.toolUseId, label)}`
+  const state = toggling.value
+    ? toggleState(toggles.value, props.question.toolUseId, label)
+    : optionState(selection.value, props.question.toolUseId, label)
+  return `is-${state}`
+}
+
+function isChosen(label: string): boolean {
+  return toggling.value
+    ? toggleState(toggles.value, props.question.toolUseId, label) === 'selected'
+    : selectedLabel.value === label
 }
 
 function choose(label: string): void {
   if (!answerable.value) return
+  if (toggling.value) {
+    toggles.value = toggleOption(toggles.value, props.question.toolUseId, label)
+    return
+  }
   selection.value = selectOption(selection.value, props.question.toolUseId, label)
 }
 
@@ -106,10 +162,23 @@ function submit(): void {
   emit('answer', selectedLabel.value)
 }
 
+/** The toggling ask's send: every toggled label, in the ask's own option order. */
+function answerToggles(): void {
+  if (!canAnswerToggles.value) return
+  const answer = toggledAnswer(toggles.value, props.question)
+  if (answer === null) return
+  emit('answer', answer)
+}
+
 /**
  * Enter sends the selection, and must CONSUME the key: the chosen card still
  * has focus, and the click a browser synthesises from Enter on a focused button
  * is the gesture that deselects it.
+ *
+ * A toggling ask is deliberately not here. What a toggle changes is a SET, so
+ * there is no keypress that could mean "this is my answer now" — its Answer
+ * control is the only thing that sends, and Enter on one of its options is
+ * left to the browser as the ordinary click it is.
  */
 function onKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || event.shiftKey || !canSend.value) return
@@ -141,7 +210,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
         :class="cardClass(option.label)"
         type="button"
         :disabled="!answerable"
-        :aria-pressed="selectedLabel === option.label ? 'true' : 'false'"
+        :aria-pressed="isChosen(option.label) ? 'true' : 'false'"
         @click="choose(option.label)"
       >
         <span class="option-label">{{ option.label }}</span>
@@ -153,8 +222,16 @@ function onFreeformKeydown(event: KeyboardEvent): void {
     <!--
       Swapped for the send prompt once something is chosen, exactly as the
       design has it: one surface, saying either "type instead" or "press Enter".
+
+      A toggling ask puts its Answer control in that same one surface, for the
+      same reason the prompt is there rather than beside it: the card has one
+      place that says what happens next, and a second row would make the panel
+      look like it were offering two different sends (#362).
     -->
-    <p v-if="selectedLabel !== null" class="enter-prompt" role="status">
+    <button v-if="canAnswerToggles" class="answer-send" type="button" @click="answerToggles()">
+      {{ SEND_ANSWER_NAME }}
+    </button>
+    <p v-else-if="!toggling && selectedLabel !== null" class="enter-prompt" role="status">
       {{ PRESS_ENTER_TO_SEND }}
     </p>
     <textarea
@@ -177,7 +254,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
         still does something.
       -->
       <button
-        v-if="unanswerable"
+        v-if="showJump"
         class="answer-jump"
         type="button"
         :title="CONSOLE_HINT"
@@ -316,6 +393,29 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   font-size: var(--text-meta);
   font-weight: 700;
   text-align: center;
+}
+/*
+ * The toggling ask's send (#362), in the enter-prompt's own place and its own
+ * values — it says the same thing in the same surface, and the only difference
+ * is that this one is pressed. Filled with the accent rather than the cream so
+ * it reads as the one live control on a card whose options are all now
+ * "chosen", the same inversion .option-card.is-selected uses.
+ */
+.answer-send {
+  padding: 9px 6px;
+  border: 1px solid var(--color-cream);
+  border-radius: 12px;
+  color: var(--color-cream);
+  cursor: pointer;
+  background: var(--color-accent);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: 700;
+  text-align: center;
+}
+.answer-send:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 1px;
 }
 .answer-error,
 .answer-ok {
