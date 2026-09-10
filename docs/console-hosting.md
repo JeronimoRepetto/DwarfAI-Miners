@@ -414,6 +414,49 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
   said out loud in the panel's status line under a deny. Row one stays unbuilt, and unbuildable from
   anything this app reads.
 
+### 4c. The AskUserQuestion picker's own keys — measured 2026-09-10 (#362)
+
+Row one above is about whether the panel can SEE an observed ask; this is the separate question of
+what it could press if it did, and the answer turned out to be the same shape as a permission
+dialog. Measured [V] by the maintainer on **Claude Code 2.1.267, Windows Terminal**, over three
+rounds — the first two are recorded because each was WRONG in a way that would have shipped a
+miscounted keypress, and re-deriving either produces the wrong sequence.
+
+| Round | What was measured                                     | What it found                                                                                                                                                                               |
+| ----- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | one call carrying two questions, a single and a multi | a digit selects; **Enter does not submit a multi-select** — it toggles the row the cursor is on. Numbering follows the order the agent gave the options                                     |
+| 2     | the same call, hunting the submit gesture             | below the options and below the Other row sits a **Submit row with no digit**, reached by arrow-down; then a **summary**, and a further Enter accepts it                                    |
+| 3     | **one question per call** — the round that settled it | a single-select fires on its digit ALONE, with no confirmation; a multi-select's digits toggle without moving the cursor, and **Right arrow** shows the summary with **Enter** accepting it |
+
+Round 3's isolation is what made the sequences deterministic. `End` does nothing, and `PageDown`
+jumps to the **Other** row and waits for free text — so neither is a route to Submit, and an Enter
+landing there would open a composer nobody asked for. Right arrow is equivalent to arrowing down to
+the Submit row, without the count that made round 2's reading fragile: one miscounted press lands
+Enter on the Other row or on an option it would toggle.
+
+| Question form                   | Keystroke sequence                                      |
+| ------------------------------- | ------------------------------------------------------- |
+| single-select, option _n_       | `n`                                                     |
+| multi-select, options _a, b, …_ | `a`, `b`, … (ascending), then `{RIGHT}`, then `{ENTER}` |
+
+Both are built as pure SendKeys builders beside the graceful exit's (`sendKeys.ts`), from digits
+resolved by `questionKeys.ts`, and sent under the discipline row four's keys already hold: the
+kick's delivery route, the console-input capability, the board re-read and the ask re-matched
+immediately before the press, and never on a shared terminal window. Two things stay refused rather
+than guessed. A call carrying **more than one question** is refused with its reason, because only
+its first question reaches the wire — answering that one walks the picker on to a question the
+panel does not know exists. And **Other** is left inert, because a free-text answer is a payload
+the panel would be putting in the person's mouth; the composer already carries free text as a
+message.
+
+**Known hazard, inherited rather than introduced.** This route lands its keys wherever the
+foreground is, so it carries #371 whole: a Windows Terminal window with several tabs can be focused
+as a whole, and until #371 lands a digit aimed at one session's picker can reach another tab's. The
+shared-window refusal catches it wherever the focus check can tell.
+
+**Still to observe.** A late `{RIGHT}{ENTER}` at an idle prompt — expected to be a no-op followed
+by an empty submit, on the same reasoning that made a late `1` one harmless character.
+
 ---
 
 ## 4b. The delivery channel matrix, and which tier each act takes
