@@ -8,6 +8,7 @@ import {
   kickHasNothingToAwait,
   kickMarker,
   kickStatusLine,
+  messageWasRelayed,
   sendMarker,
   sendStatusLine
 } from './deliveryVerdict'
@@ -239,6 +240,74 @@ describe('a kick that dismissed the dwarf', () => {
     expect(kickHasNothingToAwait('launched-process')).toBe(true)
     expect(kickHasNothingToAwait('terminal')).toBe(false)
     expect(kickHasNothingToAwait('codex-queue')).toBe(false)
+  })
+})
+
+/*
+ * A message the RELAY carried (#378).
+ *
+ * The ✓ is unchanged and still says handed over — that fact did not move. What
+ * the person cannot otherwise see is HOW it arrived: Claude Code wraps a
+ * relayed message in its cross-session envelope and tells the receiving agent
+ * the words came from another session rather than from its user, so the panel
+ * prepends a line naming the author (RELAY_PROVENANCE_LINE) and says as much on
+ * the hover. Somebody whose agent treats their sentence differently deserves to
+ * know why, and no glyph changes: the delivery is the same, the framing is not.
+ */
+describe('a message the relay carried', () => {
+  it('says it arrived as a relayed note that names its author', () => {
+    const state: DwarfSendState = {
+      phase: 'delivered',
+      via: 'claude-relay',
+      awaitingReaction: true
+    }
+    const title = sendMarker(state)?.title ?? ''
+    expect(title).toMatch(/relayed note/i)
+    expect(title).toMatch(/author/i)
+    // Still a hand-over and still watching: #378 explains the framing, it does
+    // not soften the two-phase verdict.
+    expect(title).toMatch(/handed to the session/i)
+    expect(title).not.toMatch(/reacted/i)
+  })
+
+  it('keeps the glyph, because the delivery is the same and only the framing differs', () => {
+    const marker = sendMarker({ phase: 'delivered', via: 'claude-relay', awaitingReaction: true })
+    expect(marker?.glyph).toBe('✓')
+    expect(marker?.cls).toBe('is-delivered')
+  })
+
+  it('still names the framing once the window has closed unobserved', () => {
+    const title =
+      sendMarker({ phase: 'delivered', via: 'claude-relay', awaitingReaction: false })?.title ?? ''
+    expect(title).toMatch(/relayed note/i)
+    expect(title).toMatch(/no reaction/i)
+  })
+
+  it('says nothing of the sort for a channel that delivers the words as a prompt', () => {
+    const pasted = sendMarker({ phase: 'delivered', via: 'terminal', awaitingReaction: true })
+    expect(pasted?.title).toBe('Handed to the session — watching for it to react.')
+    const held = sendMarker({ phase: 'delivered', via: 'held-session', awaitingReaction: true })
+    expect(held?.title).not.toMatch(/relayed note/i)
+  })
+
+  it('claims nothing about a reaction that was actually observed', () => {
+    // A ✓✓ is the session seen ACTING, which settles the question the framing
+    // raised: it read the message. Nothing left to warn about.
+    const marker = sendMarker({ phase: 'reacted', via: 'claude-relay' })
+    expect(marker?.glyph).toBe('✓✓')
+    expect(marker?.title).not.toMatch(/relayed note/i)
+  })
+
+  it('knows the one channel that proves a relay carried it', () => {
+    // 'foreman-relay' names the HOP and not the tier under it: on Windows a
+    // worker's message can reach its foreman by console paste, which carries no
+    // provenance line at all. Claiming it there would describe a message that
+    // was never framed as a peer's.
+    expect(messageWasRelayed('claude-relay')).toBe(true)
+    expect(messageWasRelayed('foreman-relay')).toBe(false)
+    expect(messageWasRelayed('terminal')).toBe(false)
+    expect(messageWasRelayed('held-session')).toBe(false)
+    expect(messageWasRelayed(undefined)).toBe(false)
   })
 })
 

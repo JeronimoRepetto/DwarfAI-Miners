@@ -131,6 +131,7 @@ export {
   MINE_HISTORY_MESSAGE_LIMIT,
   MINE_TIERS,
   PANEL_OBSERVER,
+  RELAY_PROVENANCE_LINE,
   RENDERER_SURFACE_PARAM,
   TIER_WEIGHT_THRESHOLDS_KB,
   WAITING_ON_HUMAN_REASON,
@@ -143,7 +144,8 @@ export {
   isMessagePanelSurface,
   isMineTier,
   isPanelObserved,
-  parseAudioPreferences
+  parseAudioPreferences,
+  stripRelayProvenance
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

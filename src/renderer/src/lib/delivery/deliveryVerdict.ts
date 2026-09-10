@@ -22,6 +22,22 @@ export interface DeliveryMarker {
 
 const HANDED_TITLE = 'Handed to the session — watching for it to react.'
 const UNOBSERVED_TITLE = 'Handed to the session; no reaction seen.'
+/**
+ * The same hand-over, said of a message the RELAY carried (#378).
+ *
+ * The fact is unchanged — handed over, still watching — and the glyph with it.
+ * What these two add is HOW the words arrived: Claude Code wraps a relayed
+ * message in its cross-session envelope and tells the receiving agent they came
+ * from another session rather than from its user, so the panel prepends a line
+ * naming the author (RELAY_PROVENANCE_LINE) and says so here. An agent that may
+ * treat somebody's sentence as a teammate's request rather than their own is
+ * something the person should be able to read off the marker, rather than
+ * discovering it from how the agent answers.
+ */
+const RELAY_HANDED_TITLE =
+  'Handed to the session as a relayed note that names you as its author, not as a prompt you typed — watching for it to react.'
+const RELAY_UNOBSERVED_TITLE =
+  'Handed to the session as a relayed note that names you as its author; no reaction seen.'
 const KICK_REACTED_TITLE = 'The session reacted to the kick.'
 const SEND_REACTED_TITLE = 'The session reacted to the message.'
 const SEND_FAILED_TITLE = 'The message could not be delivered.'
@@ -98,11 +114,36 @@ export function kickHasNothingToAwait(via: string | undefined): boolean {
 export const SEND_AGAIN_LABEL = 'Send again'
 export const SEND_AGAIN_TITLE = 'Send this message again. The one that failed stays marked.'
 
+/**
+ * Whether a message on this channel reached the session as a relayed note
+ * rather than as the prompt the person typed (#378).
+ *
+ * One channel and not two. 'foreman-relay' names the HOP and not the tier under
+ * it — on Windows a worker's message reaches its foreman by console paste,
+ * which carries no provenance line at all — so claiming the framing there would
+ * describe a message that was never framed as a peer's. The panel cannot tell
+ * those apart from the verdict alone, and saying nothing is the honest half of
+ * that: a relayed worker message keeps the plain sentence, which is true as far
+ * as it goes.
+ */
+export function messageWasRelayed(via: string | undefined): boolean {
+  return via === 'claude-relay'
+}
+
 function deliveredMarker(awaitingReaction: boolean | undefined): DeliveryMarker {
   return {
     cls: 'is-delivered',
     glyph: '✓',
     title: awaitingReaction === false ? UNOBSERVED_TITLE : HANDED_TITLE
+  }
+}
+
+/** `deliveredMarker` for a relay-carried message: same glyph, fuller sentence. */
+function relayedDeliveredMarker(awaitingReaction: boolean | undefined): DeliveryMarker {
+  return {
+    cls: 'is-delivered',
+    glyph: '✓',
+    title: awaitingReaction === false ? RELAY_UNOBSERVED_TITLE : RELAY_HANDED_TITLE
   }
 }
 
@@ -113,7 +154,13 @@ function reactedMarker(title: string): DeliveryMarker {
 export function sendMarker(state: DwarfSendState | undefined): DeliveryMarker | null {
   if (state === undefined) return null
   if (state.phase === 'sending') return { cls: 'is-sending', glyph: '…', title: 'Sending...' }
-  if (state.phase === 'delivered') return deliveredMarker(state.awaitingReaction)
+  if (state.phase === 'delivered') {
+    // The relay's own sentence, and only on the delivered phase: a ✓✓ is the
+    // session SEEN acting, which settles the question the framing raised.
+    return messageWasRelayed(state.via)
+      ? relayedDeliveredMarker(state.awaitingReaction)
+      : deliveredMarker(state.awaitingReaction)
+  }
   if (state.phase === 'reacted') return reactedMarker(SEND_REACTED_TITLE)
   return { cls: 'is-failed', glyph: '✕', title: state.error ?? SEND_FAILED_TITLE }
 }

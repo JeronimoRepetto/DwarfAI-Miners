@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { RELAY_PROVENANCE_LINE } from '../../domain/types'
 import {
   type ClaudeSessionEntry,
   claudeSessionAttendance,
@@ -1043,6 +1044,76 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
       ['user', 'And update the docs.'],
       ['user', 'Then tag the release.']
     ])
+  })
+})
+
+/*
+ * Issue #378. A relayed message now leads with RELAY_PROVENANCE_LINE: Claude
+ * Code frames a cross-session message for the receiving agent as a peer's and
+ * not its user's, the envelope is the harness's to write, so the message states
+ * its own author. That line is ours and not something a person typed, so the
+ * reader that already unwraps the envelope takes it off too — the row the panel
+ * draws is the words the person wrote, and #309's echo still reconciles.
+ *
+ * Both landing shapes carry it, because both are the same delivery: the meta
+ * `user` line a relay into a resting session produces, and the `queued_command`
+ * attachment it produces mid-turn.
+ */
+describe('extractClaudeFeed on a relayed message that names its author (#378)', () => {
+  it('shows the words the person typed, never the provenance line', () => {
+    const feed = extractClaudeFeed(
+      relayedMessageLine(`${RELAY_PROVENANCE_LINE}\nShip the vault fix.`),
+      20
+    )
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'Ship the vault fix.']])
+  })
+
+  it('takes the line off a peer origin body, the shape a mid-turn relay lands in', () => {
+    const body = `${RELAY_PROVENANCE_LINE}\nShip it.`
+    const feed = extractClaudeFeed(
+      relayedMidTurnLines(crossSessionEnvelope(body), peerOrigin(body)),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['Ship it.'])
+  })
+
+  it('takes it off the prompt envelope too, where the peer origin carries no body', () => {
+    const feed = extractClaudeFeed(
+      relayedMidTurnLines(crossSessionEnvelope(`${RELAY_PROVENANCE_LINE}\nShip it.`), peerOrigin()),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['Ship it.'])
+  })
+
+  it('keeps the [for agent …] tag, which names the recipient and not the author', () => {
+    // Two prefixes doing two jobs, and only one of them is the panel saying who
+    // wrote the message. The worker tag was in the words the foreman read and
+    // stays in the row (#175).
+    const feed = extractClaudeFeed(
+      relayedMessageLine(`${RELAY_PROVENANCE_LINE}\n[for agent Explorer] Ship it.`),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['[for agent Explorer] Ship it.'])
+  })
+
+  it('leaves a message that never carried the line exactly as it was', () => {
+    // Every relay before #378, and a peer message from something that is not
+    // this panel at all.
+    expect(extractClaudeFeed(relayedMessageLine('Ship it.'), 20).map((m) => m.text)).toEqual([
+      'Ship it.'
+    ])
+  })
+
+  it('says nothing for a provenance line with no message behind it', () => {
+    expect(extractClaudeFeed(relayedMessageLine(RELAY_PROVENANCE_LINE), 20)).toEqual([])
+  })
+
+  it('leaves the line where it is not the first thing said', () => {
+    // Only a LEADING line is the panel's own prefix. One quoted further down is
+    // somebody writing ABOUT a relayed message, and editing that is editing
+    // their words.
+    const quoted = `Look at this:\n${RELAY_PROVENANCE_LINE}\nShip it.`
+    expect(extractClaudeFeed(relayedMessageLine(quoted), 20).map((m) => m.text)).toEqual([quoted])
   })
 })
 

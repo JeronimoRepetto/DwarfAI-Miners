@@ -26,6 +26,7 @@ import {
   DWARF_PROVIDERS,
   MAX_DWARF_TEXT_CHARS,
   NO_ANSWER_KEYSTROKE_TIER,
+  RELAY_PROVENANCE_LINE,
   splitAnswerLabels,
   type AgentLaunchRequest,
   type AgentLaunchResult,
@@ -3050,6 +3051,27 @@ export class AgentRuntime {
     }
 
     const payload = `${resolved.prefix}${text}`
+    /*
+     * The author is stated HERE and not on `resolved.prefix`, for two reasons
+     * (#378).
+     *
+     * `prefix` is applied to every tier, and only the relay needs it: Claude
+     * Code wraps whatever `SendMessage` carries in a cross-session envelope and
+     * tells the receiving agent the words are a peer's, while a paste, a held
+     * stream and the Codex queue all arrive as the person's own prompt — saying
+     * it there would be a sentence the agent has to read past on every message.
+     *
+     * And resolve.ts cannot know which tier will carry the text: the relay
+     * behind a console is reached only once a paste has proved it delivered
+     * nothing (#319). The runtime is where that is known, so the runtime is
+     * where the line goes on — ahead of `[for agent <name>] `, which stays
+     * attached to the words it introduces and still names the RECIPIENT.
+     *
+     * `relayFallback` is shared with the kick, which is why this is a second
+     * payload rather than a change to the first: a cancel instruction has no
+     * author to state.
+     */
+    const relayPayload = `${RELAY_PROVENANCE_LINE}\n${payload}`
     const endpoint = resolved.endpoint
     const timer = createStageTimer(this.now)
     try {
@@ -3113,7 +3135,7 @@ export class AgentRuntime {
         return timer.measure('relay', () =>
           this.textDelivery.relayToClaudeSession({
             sessionName: endpoint.sessionName,
-            text: payload
+            text: relayPayload
           })
         )
       })
@@ -3144,7 +3166,9 @@ export class AgentRuntime {
           attempt: 'message',
           channel: resolved.channel,
           sessionName: resolved.relayFallbackSessionName,
-          text: payload,
+          // The fallback is a relay however it was reached, so the message it
+          // carries states its author exactly as a direct one does (#378).
+          text: relayPayload,
           terminalError: outcome.error
         })
       }

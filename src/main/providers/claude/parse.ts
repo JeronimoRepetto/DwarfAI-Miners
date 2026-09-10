@@ -5,7 +5,8 @@ import {
   type FeedMessage,
   type SessionStatus,
   WAITING_ON_HUMAN_REASON,
-  type WaitingReason
+  type WaitingReason,
+  stripRelayProvenance
 } from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
 
@@ -970,6 +971,23 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
 const CROSS_SESSION_MESSAGE_RE = /<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/
 
 /**
+ * What one unwrapped envelope publishes: the words somebody wrote, or undefined
+ * when nothing is left of it.
+ *
+ * The provenance line comes off in the same breath as the envelope (#378), and
+ * for the same reason: both are framing added AROUND a message — the harness's
+ * in one case, this app's in the other — and the feed shows the message. Two
+ * things depend on it being taken off exactly here. The panel draws the words
+ * the person typed rather than a sentence explaining them, and the echo the
+ * composer is still holding reconciles against this row, so its ✓ can reach ✓✓
+ * (#309). See RELAY_PROVENANCE_LINE for why it is ever prepended.
+ */
+function relayedWords(text: string): string | undefined {
+  const words = stripRelayProvenance(text).trim()
+  return words === '' ? undefined : words
+}
+
+/**
  * The words on one `user` line's content, whichever of its two shapes it took,
  * or undefined when it carries none (issue #216).
  *
@@ -1025,7 +1043,7 @@ function userMessageText(line: Rec): string | undefined {
   if (content === undefined) return undefined
   if (line.toolUseResult === undefined) {
     const relayed = content.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
-    if (relayed !== undefined) return relayed === '' ? undefined : relayed
+    if (relayed !== undefined) return relayedWords(relayed)
   }
   if (line.isMeta === true || content.startsWith('<')) return undefined
   return content
@@ -1063,9 +1081,15 @@ function typedMidTurnPrompt(line: Rec): string | undefined {
   }
   if (origin.kind !== 'peer') return undefined
   const body = asString(origin.body)?.trim()
-  if (body !== undefined && body !== '') return body
+  if (body !== undefined && body !== '') {
+    // A body left with nothing after the provenance line falls through to the
+    // prompt rather than answering undefined: the body-first rule is about
+    // which copy is the direct evidence, not about giving up on the message.
+    const words = relayedWords(body)
+    if (words !== undefined) return words
+  }
   const relayed = prompt?.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
-  return relayed === undefined || relayed === '' ? undefined : relayed
+  return relayed === undefined ? undefined : relayedWords(relayed)
 }
 
 /**
