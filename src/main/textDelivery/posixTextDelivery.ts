@@ -210,6 +210,21 @@ export class PosixTextDelivery implements TextDeliveryPort {
     }
   }
 
+  /*
+   * No `answerQuestionAtConsole` here, and the absence is a per-OS answer
+   * rather than a gap (#362).
+   *
+   * `ConsoleInputAdapter` can type text and press Escape, and that is all it
+   * can press. A single-select answer is one digit and would fit — but a
+   * multi-select needs the RIGHT arrow that shows its summary before the Enter
+   * that accepts it, and there is no arrow key behind this adapter. Adding half
+   * the tier would put two acts behind one label, exactly the conflation #366
+   * had to undo for the kick: the panel's Answer control would answer a
+   * multi-select on Windows and refuse it here, with nothing on the card able
+   * to say which. The arrow key belongs to #367, and until it exists the
+   * runtime states the whole tier as absent (NO_ANSWER_KEYSTROKE_TIER).
+   */
+
   /**
    * Kick's terminal tier on macOS and Linux (#366): ask the session's own
    * process to exit, and force it if it will not.

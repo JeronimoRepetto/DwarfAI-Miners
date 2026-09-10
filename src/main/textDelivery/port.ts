@@ -218,6 +218,26 @@ export interface InterruptRequest {
 }
 
 /**
+ * The keys that answer an `AskUserQuestion` picker drawn in somebody else's
+ * console (#362).
+ *
+ * Digits rather than labels, and that is the whole shape of this request: the
+ * label a person clicked is turned into an option POSITION before it reaches a
+ * platform (see questionKeys.ts, which holds the measurement), so no
+ * agent-authored text crosses into a keystroke command at all. A port
+ * implementing this presses what it is given and decides nothing about which
+ * option that is.
+ */
+export interface ConsoleAnswerRequest {
+  /** The session pid; its hosting terminal window receives the keystrokes. */
+  pid: number
+  /** The chosen options' 1-based positions, ascending, as single characters. */
+  digits: readonly string[]
+  /** Whether the picker needs its confirmation behind the digits (a multi-select does). */
+  submit: boolean
+}
+
+/**
  * Kick's terminal path since #329: end the session at this pid, no window
  * involved.
  *
@@ -357,6 +377,34 @@ export interface TextDeliveryPort {
    * is drawing rather than an act on the session.
    */
   sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome>
+  /**
+   * Answer the `AskUserQuestion` picker the console at `pid` is drawing: press
+   * each chosen option's digit, then the confirmation where the picker needs
+   * one (#362).
+   *
+   * A SIBLING of sendToConsole rather than a caller of it, and the reason is
+   * the reason buildQuestionAnswerCommand is its own builder: this is a
+   * SEQUENCE of measured keynames with settle sleeps between them, where that
+   * one types a string and optionally submits it. Routing an answer through it
+   * would have meant either several focus-and-spawn round trips — a window that
+   * can change hands between the digits — or a "text" argument holding
+   * something that is not text.
+   *
+   * Optional for the reason `pasteToConsole` is, and its absence states the
+   * same kind of per-OS fact rather than a gap somebody forgot: only the
+   * Windows port implements it. The POSIX ConsoleInputAdapter has no arrow key
+   * to press, so a multi-select could not be confirmed there and a
+   * single-select tier alone would be one act behind a label that promises two
+   * — see #367, which is where that key belongs. The runtime turns the absence
+   * into a stated refusal (NO_ANSWER_KEYSTROKE_TIER), never a silent no-op.
+   *
+   * An implementation MUST refuse a shared terminal window exactly as
+   * sendInterrupt does (#329): these are keystrokes at a window, and a digit
+   * that lands in the wrong tab chooses an option in a session nobody was
+   * looking at. It is also subject to #371 until that lands — a Windows
+   * Terminal window with several tabs can still defeat the focus check.
+   */
+  answerQuestionAtConsole?(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome>
   /**
    * End the session running in the console at `pid` — the whole process tree,
    * not the turn it is in (#329).

@@ -813,14 +813,31 @@ export interface DwarfQuestion {
 export type DwarfPromptChannel = 'held' | 'terminal'
 
 /**
- * What main returns, and what the panel prints, when a question came in on the
- * terminal channel (#265, #354).
+ * What main returns, and what the panel prints, for the one ask that still
+ * cannot be answered from here: a call that asked SEVERAL questions (#265,
+ * #354, #360, #362).
  *
  * ONE string, on the wire, because two surfaces say it: `answerDwarfQuestion`
  * returns it to anything that asks anyway, and DwarfQuestionCard prints it in
  * advance so nobody has to click to find out where the answer goes. A second
  * copy in the renderer would be two sentences for one fact, which is how a
  * panel starts sounding like two apps.
+ *
+ * AMENDED for #360: this used to say the answer belonged to a terminal "which
+ * for a Codex thread is its own". The channel is not Codex-specific — a
+ * question read out of an OBSERVED Claude Code session's transcript is stamped
+ * `'terminal'` too — so a Claude session's card was telling its reader about a
+ * Codex thread. Nothing here names a provider now, because the field it is
+ * printed for never implied one.
+ *
+ * AMENDED again for #362 for what it is ABOUT. The terminal channel by itself
+ * is no longer unanswerable: a one-question ask is typed into the session's own
+ * console (see questionKeys.ts for the measurement). What is left is a call
+ * carrying more than one question, because only its first reaches the wire and
+ * an answer typed to it walks the picker on to one the panel cannot see. So
+ * this sentence says which ask it is about, and still says the two things it
+ * always said: the answer belongs to the session's own terminal, and the panel
+ * is showing the ask rather than holding it.
  *
  * Phrased off the renderer's OPEN_TURN_NO_INTERRUPT_HINT deliberately: that is
  * the sentence this app already uses for the other thing that can only happen
@@ -829,8 +846,52 @@ export type DwarfPromptChannel = 'held' | 'terminal'
  * the renderer — the wire boundary is the only place both sides may read.
  */
 export const ANSWER_ONLY_WHERE_IT_RUNS =
-  'This question cannot be answered from here — only where the session runs, which for a ' +
-  'Codex thread is its own terminal. The panel is showing the ask, not holding it.'
+  'This ask carries several questions, and only where the session runs — its own terminal — ' +
+  'can they be answered in order. The panel is showing the ask, not holding it.'
+
+/**
+ * The other four things main can return for an ask it was asked to type, each
+ * a different fact about the person's own session (#362).
+ *
+ * Separate constants rather than one "could not answer" sentence, and beside
+ * ANSWER_ONLY_WHERE_IT_RUNS rather than in main, for the reason that one is
+ * here: main returns them and the card prints them verbatim, so the wire
+ * boundary is the only place both processes may read one spelling of each.
+ *
+ * None of them names a provider, exactly as the sentence above no longer does
+ * (#360). What decides each is the channel and the platform, and a session's
+ * CLI is not what the panel learnt it from.
+ */
+export const ANSWER_NEEDS_ITS_CONSOLE =
+  'The panel could not reach the console this session runs in. Answer the ask there.'
+/**
+ * An optional port method that is absent, stated rather than silently skipped —
+ * the discipline NO_TERMINAL_END_TIER holds for the kick. macOS and Linux have
+ * no arrow key behind their console adapter yet (#367), so they carry no
+ * question-answer tier and this is the honest sentence for one.
+ */
+export const NO_ANSWER_KEYSTROKE_TIER =
+  "This build can't type an answer into a session's own console. Answer the ask at its terminal."
+/** A label with no option behind it: nothing on this route may invent a row to press. */
+export const ANSWER_OPTION_NOT_OFFERED =
+  'The agent did not offer that option, so nothing was typed.'
+/**
+ * A set of choices this ask cannot take — nothing chosen at all, more than the
+ * ask said it accepts, or one option twice (which a toggling digit would leave
+ * switched off). One sentence for the family, because each of them means the
+ * same thing to the person: press again, and what they pressed is still open.
+ */
+export const ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES =
+  'That is not a set of answers this ask takes, so nothing was typed.'
+/**
+ * The ask named by the answer is not the one that is open now (#362).
+ *
+ * The sibling of the permission route's PROMPT_NO_LONGER_OPEN, and it exists
+ * for the same reason a keystroke needs it at all: a key answers whatever
+ * picker is really on screen, so an answer aimed at an ask that has since been
+ * dealt with would choose an option in the NEXT one, unread.
+ */
+export const ASK_NO_LONGER_OPEN = 'That question is no longer the one waiting.'
 
 /**
  * A tool call a session is blocked on until somebody approves it (#203).
@@ -2322,6 +2383,46 @@ export interface DwarfQuestionAnswerRequest {
   dwarfId: string
   toolUseId: string
   answers: Record<string, string>
+}
+
+/**
+ * How several chosen labels ride in the ONE string an answer's value is
+ * (#362).
+ *
+ * The held channel takes a single label per question and will keep taking
+ * exactly that: how the agent's own picker joins several answers is
+ * unmeasured, and inventing a separator for it would make the agent read an
+ * answer nobody gave (see resolveAnswers). The terminal channel is the
+ * opposite case — its multi-select gesture IS measured, one digit per chosen
+ * option — so several labels do have to cross the wire, and `answers` stays
+ * `Record<string, string>` rather than growing a second shape for them.
+ *
+ * A newline, and for the property that makes the ambiguity harmless: main
+ * splits the value back and matches every piece EXACTLY against the options
+ * the ask carried, so a label that itself contained a newline resolves to no
+ * option and is refused rather than mis-pressed. A lone label joins to itself
+ * unchanged, which is why the single-select value on the wire is byte for byte
+ * what it was before this existed.
+ *
+ * A PAIR, exported from the wire boundary and re-exported by both barrels,
+ * because two processes have to agree on it: the renderer joins what a person
+ * toggled and main splits it. Two local spellings of one encoding is how the
+ * two sides would come to disagree about what a person chose.
+ */
+export const ANSWER_LABEL_SEPARATOR = '\n'
+
+/** The chosen labels as one answer value. One label joins to itself. */
+export function joinAnswerLabels(labels: readonly string[]): string {
+  return labels.join(ANSWER_LABEL_SEPARATOR)
+}
+
+/**
+ * One answer value back into the labels it carries. An empty string is no
+ * labels rather than one empty one — nothing chosen, which every caller has to
+ * refuse rather than press.
+ */
+export function splitAnswerLabels(answer: string): string[] {
+  return answer === '' ? [] : answer.split(ANSWER_LABEL_SEPARATOR)
 }
 
 /**

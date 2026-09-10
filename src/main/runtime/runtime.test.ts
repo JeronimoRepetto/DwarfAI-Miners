@@ -13,9 +13,15 @@ import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
 import {
+  ANSWER_NEEDS_ITS_CONSOLE,
+  ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES,
   ANSWER_ONLY_WHERE_IT_RUNS,
+  ANSWER_OPTION_NOT_OFFERED,
+  ASK_NO_LONGER_OPEN,
   MAX_DWARF_TEXT_CHARS,
+  NO_ANSWER_KEYSTROKE_TIER,
   PANEL_OBSERVER,
+  joinAnswerLabels,
   type Dwarf,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
@@ -6073,7 +6079,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     // ...and it CLEARS when the ask is answered, rather than falling back to
     // the tail's post-hoc one, which would resurrect an answered question.
-    runtime.answerDwarfQuestion({
+    //
+    // AMENDED for #362 (was: an unawaited synchronous call). The method is
+    // asynchronous now that a terminal ask can be answered through it too; the
+    // held handover it makes here is still the same local one.
+    await runtime.answerDwarfQuestion({
       dwarfId: 'claude:sess-1',
       toolUseId: 'toolu_live',
       answers: { 'Which colour?': 'Green' }
@@ -6422,13 +6432,16 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     const asked = port.ask(0, 'toolu_live')
     await Promise.resolve()
 
-    expect(
+    // AMENDED for #362 (was: expect(runtime.answerDwarfQuestion({…}))). The
+    // method is asynchronous now that a terminal ask can be answered through
+    // it; the record handed to the agent is asserted exactly as before.
+    await expect(
       runtime.answerDwarfQuestion({
         dwarfId: 'claude:sess-1',
         toolUseId: 'toolu_live',
         answers: { 'Which colour?': 'Green' }
       })
-    ).toEqual({ answered: true })
+    ).resolves.toEqual({ answered: true })
     await expect(asked).resolves.toEqual({
       answered: true,
       answers: { 'Which colour?': 'Green' }
@@ -6440,7 +6453,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     const port = heldPort()
     const runtime = heldRuntime({ heldSessions: heldRegistry(port.port) })
 
-    const result = runtime.answerDwarfQuestion({
+    // AMENDED for #362 (was: a synchronous call). Awaited now; the refusal
+    // for a dwarf that is not on the board is unchanged.
+    const result = await runtime.answerDwarfQuestion({
       dwarfId: 'claude:nobody',
       toolUseId: 'toolu_live',
       answers: { 'Which colour?': 'Green' }
@@ -6461,14 +6476,20 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
    * Distinct from the case above, which is a dwarf that has left the mine. This
    * dwarf is on the board, carrying the ask, and still cannot be answered here.
    */
-  it('refuses an observed dwarf’s ask and says where it can be answered', async () => {
+  it('refuses an observed dwarf’s several-question ask and says where it goes', async () => {
+    // AMENDED for #362 (was: 'refuses an observed dwarf’s ask and says where it
+    // can be answered', with questionCount 1). An observed ask is no longer
+    // unanswerable by itself — a one-question ask is typed into its own console
+    // now. What remains unanswerable is a call that asked SEVERAL questions,
+    // because only its first is on the wire, so that is what this fixture is.
+    // The refusal it asserts is the same shared constant, with #360's wording.
     const port = heldPort()
     const ask: DwarfQuestion = {
       toolUseId: 'call_observed',
       question: 'Which colour?',
       channel: 'terminal',
       multiSelect: false,
-      questionCount: 1,
+      questionCount: 2,
       options: [{ label: 'Green' }]
     }
     const runtime = heldRuntime({
@@ -6477,7 +6498,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
 
-    const result = runtime.answerDwarfQuestion({
+    const result = await runtime.answerDwarfQuestion({
       dwarfId: 'claude:sess-1',
       toolUseId: 'call_observed',
       answers: { 'Which colour?': 'Green' }
@@ -6485,7 +6506,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     runtime.stop()
 
     expect(result.answered).toBe(false)
-    expect(result.error).toContain('only where the session runs')
+    expect(result.error).toContain('several questions')
     expect(result.error).toContain('terminal')
     // #354: the shared constant itself, not a sentence that merely reads like
     // it — the question card draws this exact string beside its jump, and two
@@ -9374,5 +9395,323 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
     runtime.stop()
 
     expect(again.outcome).toBe('failed')
+  })
+})
+
+/*
+ * Issue #362. A question read out of a transcript this panel does not own can
+ * now be answered by keystroke, on exactly the discipline #203's permission
+ * digit holds: the kick's route (a keystroke needs a console, and the send's
+ * route would find the relay), the console-input capability, and the board
+ * re-read and re-matched immediately before anything is pressed.
+ *
+ * What it must never do is type a PARTIAL answer. A call that asked several
+ * questions has only its first on the wire, so answering question 1 walks the
+ * picker to a question the panel does not know exists — refused before a key,
+ * with the reason named.
+ */
+describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () => {
+  const FOREMAN_ID = 'claude:session-1'
+  const TOOL_USE_ID = 'toolu_q1'
+  const QUESTION = 'Which fruit?'
+
+  function askFor(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+    return {
+      toolUseId: TOOL_USE_ID,
+      question: QUESTION,
+      channel: 'terminal',
+      multiSelect: false,
+      questionCount: 1,
+      options: [{ label: 'Fig' }, { label: 'Plum' }, { label: 'Pear' }, { label: 'Sloe' }],
+      ...overrides
+    }
+  }
+
+  function fakePort(overrides: Partial<TextDeliveryPort> = {}) {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      answerQuestionAtConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      ...overrides
+    }
+  }
+
+  interface Wiring {
+    target?: TextDeliveryTarget | null
+    port?: ReturnType<typeof fakePort>
+    question?: DwarfQuestion | null
+    /** What every scan AFTER the first finds — the ask somebody answered themselves. */
+    thenQuestion?: DwarfQuestion | null
+  }
+
+  async function runtimeWith(wiring: Wiring = {}) {
+    const target =
+      wiring.target === undefined ? { kind: 'terminal' as const, pid: 42 } : wiring.target
+    const port = wiring.port ?? fakePort()
+    const first = wiring.question === undefined ? askFor() : wiring.question
+    let scans = 0
+    const source: Provider = {
+      kind: 'claude',
+      scan: async () => {
+        scans += 1
+        const question =
+          scans === 1 || wiring.thenQuestion === undefined ? first : wiring.thenQuestion
+        return [
+          {
+            provider: 'claude' as const,
+            sessionId: 'session-1',
+            cwd: 'C:\\work\\project',
+            status: 'busy' as const,
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: FOREMAN_ID,
+                provider: 'claude' as const,
+                role: 'foreman' as const,
+                name: 'boss',
+                status: 'waiting' as const,
+                waitingReason: 'user-input' as const,
+                sessionId: 'session-1',
+                pid: 42,
+                ...(question === null ? {} : { pendingQuestion: question })
+              }
+            ]
+          }
+        ]
+      },
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) => (dwarfId === FOREMAN_ID ? target : null)
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      textDelivery: port,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, port }
+  }
+
+  function answer(runtime: AgentRuntime, labels: string[], toolUseId = TOOL_USE_ID) {
+    return runtime.answerDwarfQuestion({
+      dwarfId: FOREMAN_ID,
+      toolUseId,
+      answers: { [QUESTION]: joinAnswerLabels(labels) }
+    })
+  }
+
+  it('types the chosen option’s digit, with no submit behind it', async () => {
+    // The shipped single-select path: the digit fires the selection by itself,
+    // so `submit` stays false — a {RIGHT}{ENTER} behind it would land in the
+    // input box of a session whose picker has already closed.
+    const { runtime, port } = await runtimeWith()
+
+    await expect(answer(runtime, ['Pear'])).resolves.toEqual({ answered: true })
+    expect(port.answerQuestionAtConsole).toHaveBeenCalledWith({
+      pid: 42,
+      digits: ['3'],
+      submit: false
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('toggles a multi-select ask in ascending order and submits', async () => {
+    const { runtime, port } = await runtimeWith({ question: askFor({ multiSelect: true }) })
+
+    await expect(answer(runtime, ['Sloe', 'Plum'])).resolves.toEqual({ answered: true })
+    expect(port.answerQuestionAtConsole).toHaveBeenCalledWith({
+      pid: 42,
+      digits: ['2', '4'],
+      submit: true
+    })
+  })
+
+  it('refuses a call that asked more than one question, before any keystroke', async () => {
+    // THE refusal this route exists around. Only question 1 is on the wire, so
+    // a digit here walks the picker to a question nothing in the panel knows
+    // about and leaves the call half answered.
+    const { runtime, port } = await runtimeWith({ question: askFor({ questionCount: 2 }) })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_ONLY_WHERE_IT_RUNS
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses an ask that is no longer the open one, and presses nothing', async () => {
+    // A key answers whatever picker is really on screen, so the board is
+    // re-read immediately before the press and the request re-matched against
+    // what that scan found — the same guard typePermissionDecision holds.
+    const { runtime, port } = await runtimeWith({ thenQuestion: null })
+
+    const result = await answer(runtime, ['Fig'])
+    expect(result.answered).toBe(false)
+    expect(result.error).toBe(ASK_NO_LONGER_OPEN)
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses an ask the rescan replaced with a different one', async () => {
+    const { runtime, port } = await runtimeWith({
+      thenQuestion: askFor({ toolUseId: 'toolu_q2' })
+    })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: ASK_NO_LONGER_OPEN
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a request naming an ask the card was not showing', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    await expect(answer(runtime, ['Fig'], 'toolu_other')).resolves.toEqual({
+      answered: false,
+      error: ASK_NO_LONGER_OPEN
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses on a port without the tier, and says so rather than doing nothing', async () => {
+    // An absent optional port method is a per-OS answer: POSIX has no arrow
+    // key behind its console adapter yet, so it omits the method and the
+    // runtime states that instead of failing silently (#367).
+    const port = fakePort({ answerQuestionAtConsole: undefined })
+    const { runtime } = await runtimeWith({ port })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: NO_ANSWER_KEYSTROKE_TIER
+    })
+  })
+
+  it('refuses where nothing resolves to a console to type into', async () => {
+    const { runtime, port } = await runtimeWith({ target: null })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NEEDS_ITS_CONSOLE
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a Codex thread’s ask, which resolves to a queue and not a keyboard', async () => {
+    // A queue is read between tool calls, and a session stopped at a picker is
+    // inside one — the same reason a permission decision never falls back to
+    // the relay. No provider is named in the refusal; the channel decides.
+    const { runtime, port } = await runtimeWith({
+      target: { kind: 'codex-queue', threadId: 'thread-1' }
+    })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NEEDS_ITS_CONSOLE
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses where this machine cannot type into a console at all', async () => {
+    const port = fakePort({ supportsConsoleInput: false })
+    const { runtime } = await runtimeWith({ port })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NEEDS_ITS_CONSOLE
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a label the agent did not offer, and types nothing', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    await expect(answer(runtime, ['Quince'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_OPTION_NOT_OFFERED
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses an answer that chose nothing', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    const result = await runtime.answerDwarfQuestion({
+      dwarfId: FOREMAN_ID,
+      toolUseId: TOOL_USE_ID,
+      answers: {}
+    })
+    expect(result).toEqual({ answered: false, error: ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses an answer keyed by a question this ask never carried', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    const result = await runtime.answerDwarfQuestion({
+      dwarfId: FOREMAN_ID,
+      toolUseId: TOOL_USE_ID,
+      answers: { 'Which colour?': 'Fig' }
+    })
+    expect(result).toEqual({ answered: false, error: ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses several labels for an ask that said it takes one', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    await expect(answer(runtime, ['Fig', 'Plum'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('reports a keystroke the port could not deliver as unanswered', async () => {
+    const port = fakePort({
+      answerQuestionAtConsole: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'shared window' })
+    })
+    const { runtime } = await runtimeWith({ port })
+
+    const result = await answer(runtime, ['Fig'])
+    expect(result.answered).toBe(false)
+    expect(result.error).toBe(ANSWER_NEEDS_ITS_CONSOLE)
+  })
+
+  it('survives a port that throws, and claims nothing', async () => {
+    const port = fakePort({
+      answerQuestionAtConsole: vi.fn().mockRejectedValue(new Error('no window'))
+    })
+    const { runtime } = await runtimeWith({ port })
+
+    await expect(answer(runtime, ['Fig'])).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NEEDS_ITS_CONSOLE
+    })
+  })
+
+  it('logs the option INDEXES and never the labels the session put on screen', async () => {
+    // The same discipline the permission tier holds: the decision, never the
+    // payload. An option label is transcript text, and a log line is the one
+    // place it could leak out of the redaction the provider boundary applies.
+    const logged: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logged.push(String(line))
+    })
+    const { runtime } = await runtimeWith({ question: askFor({ multiSelect: true }) })
+
+    await answer(runtime, ['Fig', 'Sloe'])
+    log.mockRestore()
+
+    const answerLines = logged.filter((line) => line.includes('[question]'))
+    expect(answerLines).toHaveLength(1)
+    expect(answerLines[0]).toContain('1')
+    expect(answerLines[0]).toContain('4')
+    expect(answerLines.join('\n')).not.toContain('Fig')
+    expect(answerLines.join('\n')).not.toContain('Sloe')
+    expect(answerLines.join('\n')).not.toContain('Which fruit?')
   })
 })

@@ -106,7 +106,15 @@ export type {
  * barrel is what makes a module reach across the process boundary itself.
  */
 export {
+  ANSWER_NEEDS_ITS_CONSOLE,
+  ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES,
   ANSWER_ONLY_WHERE_IT_RUNS,
+  ANSWER_OPTION_NOT_OFFERED,
+  ASK_NO_LONGER_OPEN,
+  NO_ANSWER_KEYSTROKE_TIER,
+  ANSWER_LABEL_SEPARATOR,
+  joinAnswerLabels,
+  splitAnswerLabels,
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,

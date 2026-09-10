@@ -18,9 +18,15 @@ import { MineHistoryReader, type MineHistorySource } from '../history/mineHistor
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
 import {
+  ANSWER_NEEDS_ITS_CONSOLE,
+  ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES,
   ANSWER_ONLY_WHERE_IT_RUNS,
+  ANSWER_OPTION_NOT_OFFERED,
+  ASK_NO_LONGER_OPEN,
   DWARF_PROVIDERS,
   MAX_DWARF_TEXT_CHARS,
+  NO_ANSWER_KEYSTROKE_TIER,
+  splitAnswerLabels,
   type AgentLaunchRequest,
   type AgentLaunchResult,
   type AgentModelCatalogList,
@@ -36,6 +42,7 @@ import {
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
   type DwarfProvider,
+  type DwarfQuestion,
   type DwarfQuestionAnswerRequest,
   type DwarfQuestionAnswerResult,
   type DwarfTextRequest,
@@ -138,6 +145,7 @@ import {
   stampTextDelivery
 } from '../textDelivery/resolve'
 import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
+import { questionKeystrokesFor, type QuestionKeystrokeRefusal } from '../textDelivery/questionKeys'
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
 import { redactSecrets } from '../domain/redactSecrets'
@@ -413,6 +421,41 @@ function combineFallbackErrors(
     `Terminal: ${terminalError ?? NO_REASON_GIVEN}\n` +
     `Relay fallback: ${relayError ?? NO_REASON_GIVEN}`
   )
+}
+
+/**
+ * The labels a terminal-channel answer chose, or none at all (#362).
+ *
+ * `answers` is the record the agent's own tool takes — keyed by the question's
+ * TEXT — and this route can only ever answer the ONE question on the wire, so a
+ * record of any other shape is not an answer to this ask: a second key would be
+ * an answer to a question that never travelled, and a different key an answer
+ * to one this ask does not ask. Both come back as nothing chosen rather than
+ * being searched for a usable entry, and `questionKeystrokesFor` refuses them.
+ *
+ * The value is split rather than read whole, because a multi-select carries
+ * several labels in it — see joinAnswerLabels in contracts, which is the other
+ * half of this encoding and the reason it is not spelled twice.
+ */
+function chosenLabelsFor(question: DwarfQuestion, request: DwarfQuestionAnswerRequest): string[] {
+  const given = Object.entries(request.answers)
+  if (given.length !== 1) return []
+  const [questionText, value] = given[0]!
+  return questionText === question.question ? splitAnswerLabels(value) : []
+}
+
+/**
+ * The sentence for a keystroke that could not be derived (#362).
+ *
+ * Each reason gets the sentence that is TRUE of it rather than one shared
+ * failure: a label the agent never offered and a set of choices this ask cannot
+ * take are two different things to be told, and the several-question refusal is
+ * a third that is about the ask rather than about the press.
+ */
+function answerRefusal(reason: QuestionKeystrokeRefusal): string {
+  if (reason === 'several-questions') return ANSWER_ONLY_WHERE_IT_RUNS
+  if (reason === 'label-not-offered') return ANSWER_OPTION_NOT_OFFERED
+  return ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES
 }
 
 /**
@@ -2615,17 +2658,26 @@ export class AgentRuntime {
    * the agent's own business, and the verdict says only that it was handed the
    * choice — the same narrowness `delivered` has for a message.
    */
-  answerDwarfQuestion(request: DwarfQuestionAnswerRequest): DwarfQuestionAnswerResult {
+  async answerDwarfQuestion(
+    request: DwarfQuestionAnswerRequest
+  ): Promise<DwarfQuestionAnswerResult> {
     const dwarf = this.mines
       .flatMap((mine) => mine.dwarfs)
       .find((item) => item.id === request.dwarfId)
     if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
-    // An observed session's ask is shown and not answerable — see
-    // ANSWER_ONLY_WHERE_IT_RUNS. Checked before the registry so the person
-    // reads where the answer goes instead of what this panel is not doing;
-    // the permission path beside this one already refuses the same way.
+
+    const pending = dwarf.pendingQuestion
+    // An observed session's ask is answered where it is DRAWN, by keystroke
+    // (#362) — the same split answerDwarfPermission draws off the same field,
+    // and off the wire's own reading rather than a second guess at it here.
+    if (pending?.channel === 'terminal') return this.typeQuestionAnswer(dwarf, pending, request)
+    // A dwarf this panel does not hold and whose ask is not a terminal one: the
+    // card was pressed after main stopped naming the ask it was drawn from.
+    // Answered here rather than left to the held registry, whose refusal would
+    // be "that session is not one this panel is holding" — true, and not what
+    // happened. The permission path beside this one refuses the same way.
     if (!this.heldSessions.holds(dwarf.sessionId)) {
-      return { answered: false, error: ANSWER_ONLY_WHERE_IT_RUNS }
+      return { answered: false, error: ASK_NO_LONGER_OPEN }
     }
 
     return this.heldSessions.answer({
@@ -2633,6 +2685,131 @@ export class AgentRuntime {
       toolUseId: request.toolUseId,
       answers: request.answers
     })
+  }
+
+  /**
+   * Answer an OBSERVED session's question by typing into the console drawing
+   * its picker (#362).
+   *
+   * The sibling of typePermissionDecision, and deliberately the same method
+   * shape: read that one first, because every guard here is there for the
+   * reason it gives, and this comment records only what differs.
+   *
+   * ## Which keys
+   *
+   * `questionKeystrokesFor` holds the measurement (see questionKeys.ts): a
+   * single-select option's digit selects and submits by itself, and a
+   * multi-select's digits each toggle, needing `{RIGHT}` then `{ENTER}` behind
+   * them. The labels a person chose are turned into option POSITIONS there, so
+   * nothing agent-authored travels into a keystroke — and a label with no
+   * option behind it is refused rather than pressed as the nearest row.
+   *
+   * The port method is a tier rather than a reuse of `sendToConsole`, and its
+   * absence is a per-OS answer stated as a refusal, exactly as the kick's
+   * `endConsoleSession` is (NO_TERMINAL_END_TIER). macOS and Linux have no
+   * arrow key behind their console adapter, so they carry no tier at all.
+   *
+   * ## What is refused BEFORE anything is pressed, and in this order
+   *
+   * `questionCount > 1` first, because it is the one refusal that is true of
+   * the ASK rather than of this machine: a call that asked several questions
+   * has only its first on the wire, so a digit answers question 1 and walks the
+   * picker on to a question this panel does not know exists — a half-answered
+   * call left in a TUI nothing here can read. That ask belongs to its own
+   * terminal, and the person is told so wherever they are standing, even on a
+   * machine that could not have typed it anyway.
+   *
+   * Then the console, on the KICK's route and not the send's, for the reason
+   * typePermissionDecision gives at length: the send route would find the relay
+   * a named session's messages travel on, and a queue is read BETWEEN tool
+   * calls — which is exactly where a session stopped at a picker is not. That
+   * refusal is also what excludes a Codex thread, whose target is a queue: no
+   * provider is named anywhere on this route, because the channel decides.
+   *
+   * ## The board is re-read immediately before the keys
+   *
+   * THE guard, and it carries more weight here than for a permission. A late
+   * `1` at an idle prompt is one stray character (#203 measured it), but a
+   * late digit at the NEXT picker chooses an option in it, unread — so the
+   * board is rescanned and this ask re-matched against what the scan found, and
+   * anything else refuses. What no guard closes is the millisecond after it, and
+   * a person who toggled rows at their own terminal in between owns that result:
+   * the sequence is deterministic from the picker's INITIAL state, which is the
+   * accepted, stated risk #203 took on the same terms.
+   *
+   * `answered: true` means the keys were typed and nothing more — the panel's
+   * ✓, as narrow as the held path's. The ✓✓ is the transcript writing this
+   * call's `tool_result`, which is also when the card leaves.
+   */
+  private async typeQuestionAnswer(
+    dwarf: Dwarf,
+    pending: DwarfQuestion,
+    request: DwarfQuestionAnswerRequest
+  ): Promise<DwarfQuestionAnswerResult> {
+    if (pending.toolUseId !== request.toolUseId) {
+      return { answered: false, error: ASK_NO_LONGER_OPEN }
+    }
+    if (pending.questionCount > 1) return { answered: false, error: ANSWER_ONLY_WHERE_IT_RUNS }
+    const answerAtConsole = this.textDelivery.answerQuestionAtConsole
+    if (answerAtConsole === undefined) {
+      return { answered: false, error: NO_ANSWER_KEYSTROKE_TIER }
+    }
+    const resolved = resolveKickDelivery(dwarf.id, (id) => this.deliveryTargetOf(id))
+    if (resolved === null || resolved.endpoint.kind !== 'terminal' || !this.canTypeIntoConsole()) {
+      return { answered: false, error: ANSWER_NEEDS_ITS_CONSOLE }
+    }
+    const keystrokes = questionKeystrokesFor(pending, chosenLabelsFor(pending, request))
+    if (!keystrokes.ok) return { answered: false, error: answerRefusal(keystrokes.reason) }
+
+    if (!(await this.stillTheOpenAsk(request))) {
+      return { answered: false, error: ASK_NO_LONGER_OPEN }
+    }
+
+    const pid = resolved.endpoint.pid
+    let delivered = false
+    try {
+      const outcome = await answerAtConsole.call(this.textDelivery, {
+        pid,
+        digits: keystrokes.digits,
+        submit: keystrokes.submit
+      })
+      delivered = outcome.delivered
+    } catch (error) {
+      console.warn(`[question] typing for ${dwarf.id} threw`, error)
+    }
+    // The option INDEXES, never the labels: an option's text is the agent's
+    // own words out of a transcript, and a log line is the one place it could
+    // leave the redaction the provider boundary applied. Exactly as the
+    // permission tier logs the decision and never the payload.
+    console.log(
+      `[question] typed options ${keystrokes.digits.join(',')} for ${dwarf.id}: ` +
+        `${delivered ? 'delivered' : 'failed'}`
+    )
+    return delivered ? { answered: true } : { answered: false, error: ANSWER_NEEDS_ITS_CONSOLE }
+  }
+
+  /**
+   * Rescan, and answer whether the ask this answer names is STILL the open one
+   * for that dwarf (#362).
+   *
+   * `stillTheOpenPrompt`'s twin, split rather than shared because the two read
+   * DIFFERENT fields of the same dwarf — a session can carry an open ask and an
+   * open permission prompt at once, and a helper that took "whichever is there"
+   * would let one satisfy the other's guard. A rescan that fails is answered
+   * `false` for the reason it is there: an unverifiable board is not a matching
+   * one.
+   */
+  private async stillTheOpenAsk(request: DwarfQuestionAnswerRequest): Promise<boolean> {
+    try {
+      await this.refresh()
+    } catch (error) {
+      console.warn('[question] could not re-read the board before typing', error)
+      return false
+    }
+    const current = this.mines
+      .flatMap((mine) => mine.dwarfs)
+      .find((item) => item.id === request.dwarfId)?.pendingQuestion
+    return current?.channel === 'terminal' && current.toolUseId === request.toolUseId
   }
 
   /**
