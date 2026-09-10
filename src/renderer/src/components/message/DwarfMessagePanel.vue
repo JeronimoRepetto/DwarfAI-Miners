@@ -35,7 +35,11 @@ import { isOpenablePath } from '../../lib/message/openablePath'
 import { dwarfWorkplaceLabel } from '../../lib/worktree'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
+  TOP_OF_LIST_TOLERANCE_PX,
   nextScrollTop,
+  reachedTopOfList,
+  rowsWerePrepended,
+  scrollTopAfterPrepend,
   shouldStickToBottom
 } from '../../lib/message/listScroll'
 import {
@@ -91,6 +95,16 @@ const props = defineProps<{
    * rather than an empty one (see conversationOf).
    */
   feed?: DwarfFeedResult
+  /**
+   * The one line to say about paging back through this conversation (#364) —
+   * that a page is being read, that this is where it begins, or that it cannot
+   * be paged at all. Absent means nothing has been asked for.
+   *
+   * A sentence handed down rather than a state to interpret, like every other
+   * claim this panel makes: which of the three is true belongs to
+   * `useDwarfPaging`, and the words themselves to `lib/message/feedPages`.
+   */
+  pagingNote?: string
   sendState?: DwarfSendState
   /**
    * The messages this panel has sent and the transcript has yet to carry
@@ -144,12 +158,41 @@ const emit = defineEmits<{
    * `shell.openExternal` in the app. A renderer's word is never a permission.
    */
   'open-link': [href: string]
+  /**
+   * The reader has scrolled back to the oldest row this panel holds (#364) —
+   * so the page before it is worth fetching.
+   *
+   * A report and not a request: it carries no cursor, because which row the
+   * page is asked for is decided from the wire messages behind these rows (see
+   * `feedPageCursorOf`), and a `PanelMessage` has spent its timestamp on a list
+   * key. Fired on every scroll that lands at the top, however many times: one
+   * read at a time and no read at all once the start is reached are
+   * `useDwarfPaging`'s to refuse, exactly as this panel reports a press without
+   * deciding whether anything opens.
+   */
+  'page-back': []
 }>()
 
 const message = ref('')
 const historyOpen = ref(false)
 
 const conversation = computed(() => conversationOf(props.dwarf, props.feed))
+
+/**
+ * The panel's one note row, with whatever there is to say about paging in front
+ * of it (#364).
+ *
+ * Prefixed rather than substituted, exactly as `conversationOf` puts
+ * ENDED_NOTE in front of the claim it does not replace: "this is the start of
+ * the conversation" and "latest activity, read from this session's own
+ * transcript" are two true statements about the same rows, and the second is
+ * the one the row exists for.
+ */
+const note = computed(() =>
+  props.pagingNote === undefined
+    ? conversation.value.note
+    : `${props.pagingNote} ${conversation.value.note}`
+)
 
 /*
  * The opening height, taken ONCE. Read during setup and never recomputed: the
@@ -339,8 +382,24 @@ onMounted(showLatest)
  * feeds it real DOM numbers (#195).
  */
 let pendingStickToBottom = false
+/*
+ * The other half of that snapshot, since #364: whether the rows that are about
+ * to land go ABOVE everything on screen, and how tall the list was before they
+ * did.
+ *
+ * A page of older conversation is the one growth the rule above cannot decide.
+ * A reader who scrolled up is by definition not sticking to the bottom, so its
+ * verdict is "leave the scroll alone" — and leaving it alone is not leaving the
+ * reader alone at all: the page lands in front of them and slides the sentence
+ * they were half-way through down the panel by its own height. So a prepend
+ * takes the other write, adding that height back to the scroll in the same
+ * tick. `lib/message/listScroll` is the rule for both; this is the plumbing
+ * that feeds it real DOM numbers.
+ */
+let pendingPrepend = false
+let scrollHeightBeforePatch = 0
 
-watch(rows, () => {
+watch(rows, (next, previous) => {
   const list = conversationRef.value
   if (list === null) return
   pendingStickToBottom = shouldStickToBottom(
@@ -349,6 +408,8 @@ watch(rows, () => {
     list.scrollHeight,
     STICK_TO_BOTTOM_TOLERANCE_PX
   )
+  pendingPrepend = rowsWerePrepended(previous ?? [], next)
+  scrollHeightBeforePatch = list.scrollHeight
 })
 
 watch(
@@ -356,10 +417,36 @@ watch(
   () => {
     const list = conversationRef.value
     if (list === null) return
+    if (pendingPrepend) {
+      pendingPrepend = false
+      list.scrollTop = scrollTopAfterPrepend(
+        list.scrollTop,
+        scrollHeightBeforePatch,
+        list.scrollHeight
+      )
+      return
+    }
     list.scrollTop = nextScrollTop(list.scrollTop, list.scrollHeight, pendingStickToBottom)
   },
   { flush: 'post' }
 )
+
+/**
+ * Report that the reader has run out of conversation to scroll back through
+ * (#364), so the page before it can be fetched.
+ *
+ * On the list's own scroll rather than on an observer: the gesture IS a scroll,
+ * and the panel already owns this element's scrollTop for the two rules above.
+ * Nothing is throttled here — every landing at the top reports, and the store
+ * that answers refuses a second read while one is in flight and every read once
+ * the start is reached.
+ */
+function onConversationScroll(): void {
+  const list = conversationRef.value
+  if (list === null) return
+  if (!reachedTopOfList(list.scrollTop, TOP_OF_LIST_TOLERANCE_PX)) return
+  emit('page-back')
+}
 
 /*
  * A message the person just sent is the one row the panel DOES chase them down
@@ -545,7 +632,8 @@ function onKick(): void {
       ref="conversationRef"
       class="panel-conversation"
       tabindex="0"
-      :aria-label="conversation.note"
+      :aria-label="note"
+      @scroll="onConversationScroll"
     >
       <!--
         #332: silence says nothing about a dwarf's rank, and a dwarf that has
@@ -813,7 +901,7 @@ function onKick(): void {
     <p v-if="refusal && !alertLine" class="panel-refusal" role="status">{{ refusal }}</p>
     <p v-if="alertLine" class="panel-alert" role="alert">{{ alertLine }}</p>
     <p v-else-if="statusLine" class="panel-status" role="status">{{ statusLine }}</p>
-    <p v-else class="panel-note">{{ conversation.note }}</p>
+    <p v-else class="panel-note">{{ note }}</p>
   </section>
 </template>
 

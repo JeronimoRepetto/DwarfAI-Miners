@@ -5,8 +5,10 @@ import MessagePanelWindow from './MessagePanelWindow.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
+import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
+import { CONVERSATION_START_NOTE, NO_OLDER_PAGES_NOTE } from './lib/message/feedPages'
 
 /*
  * The message panel's own window (#162).
@@ -57,6 +59,12 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // An observed session's transcript, read on selection (#159); a
     // readable-but-empty answer is the quiet default.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
+    // One page of scrollback (#364), asked for when the reader reaches the top
+    // of what the panel holds. A readable answer with nothing older is the
+    // quiet default, on the same rule as the feed above.
+    getDwarfFeedPage: vi
+      .fn()
+      .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
     setWatchedDwarf: vi.fn(),
     sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
@@ -164,6 +172,9 @@ beforeEach(() => {
   // verdict for a minute while they watch for a reaction — so a test that sent,
   // kicked, answered or launched would leave its state in the next one.
   useMines().clear()
+  // The pages a reader scrolled back to are a singleton too (#364), and one
+  // left standing would be drawn under the next test's dwarf.
+  useDwarfPaging().clear()
   useDwarfMessaging().clearAll()
   useDwarfKicking().clearAll()
   useDwarfQuestion().clearAll()
@@ -1690,5 +1701,230 @@ describe('opening a link inside a bubble', () => {
     await flushPromises()
 
     expect(wrapper.find('.notice').exists()).toBe(false)
+  })
+})
+
+/**
+ * Paging back through a conversation (#364), wired end to end: the panel
+ * reports that the reader reached the top of what it holds, this window asks
+ * main for the page before it, and the answer is drawn in front of the newest
+ * page without the poll's own pushes ever erasing it.
+ *
+ * The two facts this block exists for are the ones the issue calls the hard
+ * part: the accumulated pages are what the panel renders, and a push after
+ * paging back is an ordinary push rather than a feed that lost forty rows.
+ */
+describe('paging back through the conversation (#364)', () => {
+  const PAGED_DWARF = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'Foreman',
+    status: 'working',
+    sessionId: 's1',
+    lastMessage: '',
+    textDelivery: 'terminal'
+  }
+
+  const NEWEST = [
+    { role: 'assistant' as const, text: 'Halfway down the shaft', timestamp: 't2' },
+    { role: 'assistant' as const, text: 'Seam exhausted', timestamp: 't3' }
+  ]
+
+  const OLDER = [
+    { role: 'assistant' as const, text: 'Starting the shaft', timestamp: 't0' },
+    { role: 'assistant' as const, text: 'Through the topsoil', timestamp: 't1' }
+  ]
+
+  /** The panel, open on an observed dwarf whose newest page has come back. */
+  async function openPaged(overrides: Record<string, unknown> = {}) {
+    return openOn([PAGED_DWARF], 'claude:s1', {
+      getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: NEWEST }),
+      ...overrides
+    })
+  }
+
+  /** The reader running out of conversation at the top of the list. */
+  async function scrollToTop(wrapper: VueWrapper) {
+    const list = wrapper.find('.panel-conversation')
+    list.element.scrollTop = 0
+    await list.trigger('scroll')
+    await flushPromises()
+  }
+
+  function textsOf(wrapper: VueWrapper): string[] {
+    return wrapper.findAll('.bubble').map((bubble) => bubble.text())
+  }
+
+  it('asks main for the page before the oldest row it holds', async () => {
+    const { wrapper, api } = await openPaged()
+
+    await scrollToTop(wrapper)
+
+    expect(api.getDwarfFeedPage).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      before: { timestamp: 't2', text: 'Halfway down the shaft' }
+    })
+  })
+
+  it('draws the page in front of the newest one, oldest at the top', async () => {
+    const { wrapper } = await openPaged({
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: false })
+    })
+
+    await scrollToTop(wrapper)
+
+    expect(textsOf(wrapper)).toEqual([
+      'Starting the shaft',
+      'Through the topsoil',
+      'Halfway down the shaft',
+      'Seam exhausted'
+    ])
+  })
+
+  it('asks for the page before the page it just drew, walking back one at a time', async () => {
+    const getDwarfFeedPage = vi
+      .fn()
+      .mockResolvedValueOnce({ readable: true, messages: OLDER, reachedStart: false })
+      .mockResolvedValueOnce({
+        readable: true,
+        messages: [{ role: 'assistant', text: 'Arrived at the mine', timestamp: 't-1' }],
+        reachedStart: true
+      })
+    const { wrapper } = await openPaged({ getDwarfFeedPage })
+
+    await scrollToTop(wrapper)
+    await scrollToTop(wrapper)
+
+    expect(getDwarfFeedPage).toHaveBeenLastCalledWith({
+      dwarfId: 'claude:s1',
+      before: { timestamp: 't0', text: 'Starting the shaft' }
+    })
+    expect(textsOf(wrapper)[0]).toBe('Arrived at the mine')
+  })
+
+  it('says where the conversation begins, and asks for nothing more', async () => {
+    const getDwarfFeedPage = vi
+      .fn()
+      .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: true })
+    const { wrapper } = await openPaged({ getDwarfFeedPage })
+
+    await scrollToTop(wrapper)
+    expect(wrapper.find('.panel-note').text()).toContain(CONVERSATION_START_NOTE)
+
+    await scrollToTop(wrapper)
+    expect(getDwarfFeedPage).toHaveBeenCalledTimes(1)
+  })
+
+  it('says a conversation cannot be paged in its own words, never as a beginning', async () => {
+    const { wrapper } = await openPaged({
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: false, messages: [], reachedStart: false })
+    })
+
+    await scrollToTop(wrapper)
+
+    const note = wrapper.find('.panel-note').text()
+    expect(note).toContain(NO_OLDER_PAGES_NOTE)
+    expect(note).not.toContain(CONVERSATION_START_NOTE)
+  })
+
+  it('keeps every page the reader loaded when the poll pushes a fresh newest one', async () => {
+    const { wrapper, api } = await openPaged({
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: false })
+    })
+    await scrollToTop(wrapper)
+    expect(textsOf(wrapper)).toHaveLength(4)
+
+    // The push the issue names as the hard part (#196): main re-read the
+    // watched dwarf's feed on its own pass and carries the newest twelve with
+    // the snapshot. Four pages of scrollback must not be the price of it.
+    pushSnapshot(api, {
+      mines: [{ ...MINE, dwarfs: [{ ...PAGED_DWARF, transcriptUpdatedAt: 1_000 }] }],
+      tokensObserved: 0,
+      watchedFeed: {
+        dwarfId: 'claude:s1',
+        feed: {
+          readable: true,
+          messages: [...NEWEST, { role: 'assistant', text: 'Packing up', timestamp: 't4' }]
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(textsOf(wrapper)).toEqual([
+      'Starting the shaft',
+      'Through the topsoil',
+      'Halfway down the shaft',
+      'Seam exhausted',
+      'Packing up'
+    ])
+  })
+
+  it('does not cry wolf about a shrinking feed on that push (#249)', async () => {
+    // The warning is about the NEWEST page losing rows. Measured against the
+    // drawn conversation it would fire on every push once somebody had paged
+    // back — twelve pushed rows against forty-eight held ones — and a warning
+    // that fires twice a second says nothing at all.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { wrapper, api } = await openPaged({
+        getDwarfFeedPage: vi
+          .fn()
+          .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: false })
+      })
+      await scrollToTop(wrapper)
+
+      pushSnapshot(api, {
+        mines: [{ ...MINE, dwarfs: [{ ...PAGED_DWARF, transcriptUpdatedAt: 1_000 }] }],
+        tokensObserved: 0,
+        watchedFeed: { dwarfId: 'claude:s1', feed: { readable: true, messages: NEWEST } }
+      })
+      await flushPromises()
+
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('throws the pages away when the panel opens on another dwarf', async () => {
+    const SECOND = { ...PAGED_DWARF, id: 'claude:s3', sessionId: 's3', name: 'Digger' }
+    const getDwarfFeed = vi.fn((dwarfId: string) =>
+      Promise.resolve({
+        readable: true,
+        messages:
+          dwarfId === 'claude:s1'
+            ? NEWEST
+            : [{ role: 'assistant', text: 'Just arrived at the seam', timestamp: 'u0' }]
+      })
+    )
+    const { wrapper, api } = await openOn([PAGED_DWARF, SECOND], 'claude:s1', {
+      getDwarfFeed,
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: false })
+    })
+    await scrollToTop(wrapper)
+    expect(textsOf(wrapper)).toHaveLength(4)
+
+    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s3' })
+    await flushPromises()
+
+    expect(textsOf(wrapper)).toEqual(['Just arrived at the seam'])
+  })
+
+  it('never pages a held session, which carries its own exchange first-hand', async () => {
+    const { wrapper, api } = await openOn([HELD_DWARF], 'claude:s2')
+
+    await scrollToTop(wrapper)
+
+    expect(api.getDwarfFeedPage).not.toHaveBeenCalled()
   })
 })
