@@ -52,8 +52,8 @@ import mapDay from '../assets/art/map/map-bg-day.jpg'
 import mapMorning from '../assets/art/map/map-bg-sunerise.jpg'
 import mapNight from '../assets/art/map/map-bg-nigth.jpg'
 import mapSunset from '../assets/art/map/map-bg-suneset.jpg'
-import labArt from '../assets/art/lab/lab.jpg'
-import marketArt from '../assets/art/market/market.jpg'
+import labArt from '../assets/art/lab/lab.png'
+import marketArt from '../assets/art/market/market.png'
 
 /*
  * The shell's own icons, imported from `docs/assets/icons` — the path the
