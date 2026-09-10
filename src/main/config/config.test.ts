@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DWARF_PROVIDERS, TIER_WEIGHT_THRESHOLDS_KB } from '../domain/types'
 import {
+  DARWIN_CONSOLE_INPUT_ENV_VAR,
   SIMULATION_ENV_VAR,
   cliOverridesFrom,
+  darwinConsoleInputEnabled,
   defaultConfig,
   defaultSimulationConfig,
   loadConfig,
@@ -444,5 +446,50 @@ describe('loadSimulationConfig', () => {
     expect(loadSimulationConfig()).toEqual(defaultSimulationConfig())
     vi.stubEnv(SIMULATION_ENV_VAR, '')
     expect(loadSimulationConfig()).toBeNull()
+  })
+})
+
+/*
+ * Issue #367. Same shape as the diagnostic switches (DWARFAI_PERF, TIER_DEBUG,
+ * CODEX_DEBUG, SHELL_DEBUG): a real-environment-only capability gate for a
+ * route that types keystrokes into another program, so it must never be
+ * expressible through the userData config file the way an ordinary AppConfig
+ * setting is (see the "never leaks into AppConfig" tripwire below, mirrored
+ * from loadSimulationConfig's own).
+ */
+describe('darwinConsoleInputEnabled', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('is off for an empty environment', () => {
+    expect(darwinConsoleInputEnabled({})).toBe(false)
+  })
+
+  it.each(['1', 'true', 'TRUE'])('turns on for the affirmative value %j', (value) => {
+    expect(darwinConsoleInputEnabled({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBe(true)
+  })
+
+  it.each(['0', 'false', 'yes', 'on', '', '   '])('stays off for the value %j', (value) => {
+    expect(darwinConsoleInputEnabled({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBe(false)
+  })
+
+  it('never leaks into AppConfig, so the userData config file cannot carry it', () => {
+    // Same tripwire as the simulated valley's: loadConfig is the only thing
+    // withConfigFileFallback feeds, and a key reachable from it is a key an
+    // installed app can be made to honour — exactly what this capability gate
+    // must not become.
+    expect(loadConfig({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: '1' })).toEqual(defaultConfig())
+    expect('darwinConsoleInput' in loadConfig({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: '1' })).toBe(false)
+  })
+
+  it('reads process.env when no environment is passed', () => {
+    // The default argument matters for the same reason loadSimulationConfig's
+    // does: a caller must read the REAL environment, never anything layered
+    // in from the config file.
+    vi.stubEnv(DARWIN_CONSOLE_INPUT_ENV_VAR, '1')
+    expect(darwinConsoleInputEnabled()).toBe(true)
+    vi.stubEnv(DARWIN_CONSOLE_INPUT_ENV_VAR, '')
+    expect(darwinConsoleInputEnabled()).toBe(false)
   })
 })

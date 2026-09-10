@@ -215,11 +215,12 @@ Notes on the three honest gaps:
   there. Clicking a dwarf goes straight to the transcript viewer instead.
 - **macOS console input** is implemented (`osascript` + System Events) and unit-tested, but it is
   gated off behind the `DARWIN_CONSOLE_INPUT_ENABLED` constant in
-  `src/main/platform/platformAdapters.ts` — it also needs the user to grant Accessibility
-  permission, which the app cannot detect. While it is off, a session with a registry name still
-  takes the relay, and one without gets a Send and a Kick rendered disabled with their reason
-  rather than silently typing nowhere. A per-OS paste path for macOS and Linux is a follow-up, not
-  a gap in this one.
+  `src/main/platform/platformAdapters.ts` — set the `DARWIN_CONSOLE_INPUT` environment variable
+  (see [Diagnostic switches](docs/guide.md#diagnostic-switches)) to test it; it also needs the
+  user to grant Accessibility permission, which the app cannot detect. While it is off, a session
+  with a registry name still takes the relay, and one without gets a Send and a Kick rendered
+  disabled with their reason rather than silently typing nowhere. A per-OS paste path for macOS and
+  Linux is a follow-up, not a gap in this one.
 - **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`) are assumed
   platforms. They are home-relative already and nothing in the formats is Windows-specific, but
   this has not been confirmed against real macOS/Linux fixtures.

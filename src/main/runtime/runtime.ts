@@ -509,6 +509,14 @@ export interface RuntimeOptions {
    */
   clipboard?: ClipboardPort
   /**
+   * The macOS console-input opt-in (#367), read off the REAL environment at
+   * the composition root and forwarded to the platform adapters this
+   * constructor builds. Absent — every test, and every run with the variable
+   * unset — leaves `DARWIN_CONSOLE_INPUT_ENABLED` in charge, so the shipped
+   * default moves only when that constant does.
+   */
+  darwinConsoleInput?: boolean
+  /**
    * What to type into an observed session's console to answer its permission
    * dialog, or null while nothing this build accepts has been measured (#203).
    *
@@ -869,7 +877,10 @@ export class AgentRuntime {
         // Forwarded to the Windows text-delivery port for the paste path (#319);
         // this constructor never imports Electron, so the clipboard is composed
         // at the app's root and passed through here.
-        ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
+        ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
+        ...(options.darwinConsoleInput === undefined
+          ? {}
+          : { darwinConsoleInput: options.darwinConsoleInput })
       })
 
     this.now = options.now ?? Date.now
