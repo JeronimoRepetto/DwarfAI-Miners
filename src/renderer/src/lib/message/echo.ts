@@ -1,5 +1,5 @@
 import { REACTION_WINDOW_MS } from '../delivery/reaction'
-import type { DwarfSendState, FeedMessage } from '../../types'
+import { stripRelayProvenance, type DwarfSendState, type FeedMessage } from '../../types'
 import type { PanelEntry } from './activityGroup'
 import type { PanelMessage } from './conversation'
 
@@ -139,10 +139,18 @@ export function mergeEchoes<Row extends PanelMessage>(
  *   is precisely the case an echo exists to keep separate; a row that cannot
  *   be dated at all proves nothing about when it was written, and the echo
  *   stays.
+ *
+ * The words are compared past the relay's provenance line (#378). A message the
+ * relay carries is prefixed with a line naming its author, and the transcript
+ * reader takes it off before publishing the row — this is the second place it
+ * has to come off, because an echo that never matches its own row is the
+ * person's message drawn twice with a ✓ that can never reach ✓✓. Only that one
+ * known line: `[for agent <name>] ` stays in the comparison, since it names the
+ * recipient and the composer never typed it.
  */
 function accountsFor(echo: MessageEcho, message: FeedMessage): boolean {
   if (message.role !== 'user' || message.issuer !== undefined) return false
-  if (message.text.trim() !== echo.text.trim()) return false
+  if (stripRelayProvenance(message.text).trim() !== echo.text.trim()) return false
   const at = Date.parse(message.timestamp)
   if (Number.isNaN(at)) return false
   return at >= echo.sentAt && at - echo.sentAt <= ECHO_MATCH_WINDOW_MS

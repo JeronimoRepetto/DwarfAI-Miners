@@ -1795,6 +1795,54 @@ export interface DwarfActivation {
 export const MAX_DWARF_TEXT_CHARS = 4000
 
 /**
+ * The one line a RELAY-carried message states about itself (#378).
+ *
+ * Claude Code's cross-session messaging is what the relay tier hands the text
+ * to, and the harness wraps whatever `SendMessage` carries in a
+ * `<cross-session-message>` envelope with its own caveat attached: this came
+ * from another Claude session, not from your user, treat it as a teammate's
+ * request. Measured live on 2026-09-10 while verifying #376. The envelope is
+ * the harness's and cannot be changed, so the only place left to say who wrote
+ * the words is INSIDE them — an agent that reads the message as a peer's may
+ * treat the person's own sentence as noise, as an injection attempt, or as
+ * something that cannot authorise what a user's prompt could.
+ *
+ * A mitigation and not the fix: #371 item 2 writes into the session's own
+ * console by verified pid, which makes the message the user's own prompt on
+ * every platform and tab layout, and this line becomes unnecessary wherever
+ * that lands.
+ *
+ * Only the relay routes prepend it. A console paste and a write onto a stream
+ * this panel holds arrive as the person's prompt already, so saying it there
+ * would be noise the agent has to read past. It sits AHEAD of the
+ * `[for agent <name>] ` tag a worker's chain adds, because the two say
+ * different things: this one names the AUTHOR, that one names the RECIPIENT.
+ */
+export const RELAY_PROVENANCE_LINE =
+  "[Typed by the person in DwarfAI-Miners' message panel — this is your user's own message, relayed because your console could not be reached.]"
+
+/**
+ * `text` with a leading RELAY_PROVENANCE_LINE and the newline behind it taken
+ * off, or `text` unchanged when it carries none (#378).
+ *
+ * The counterpart of prepending it, and the reason it is one function on the
+ * wire rather than a regex in each reader: the line has to come off in the
+ * transcript reader that publishes the feed AND in the renderer's echo
+ * reconciliation (#309), and two copies of the same literal is how one of them
+ * would be left behind — a row still carrying the line matches no echo, so the
+ * panel draws the person's message twice and the ✓ never becomes ✓✓.
+ *
+ * Only a LEADING line is removed. One quoted further down is something the
+ * agent or the person wrote about the message, not the message's own
+ * provenance, and rewriting it would be editing somebody's words.
+ */
+export function stripRelayProvenance(text: string): string {
+  const start = text.trimStart()
+  if (!start.startsWith(RELAY_PROVENANCE_LINE)) return text
+  return start.slice(RELAY_PROVENANCE_LINE.length).replace(/^[ \t]*\r?\n/, '')
+}
+
+/**
  * How many of a held session's own messages this app keeps (see
  * `Dwarf.conversation`), and how much of any one of them.
  *

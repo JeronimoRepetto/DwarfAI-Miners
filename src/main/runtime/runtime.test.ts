@@ -21,6 +21,7 @@ import {
   MAX_DWARF_TEXT_CHARS,
   NO_ANSWER_KEYSTROKE_TIER,
   PANEL_OBSERVER,
+  RELAY_PROVENANCE_LINE,
   joinAnswerLabels,
   type Dwarf,
   type DwarfPermissionDecision,
@@ -1161,6 +1162,10 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #378 (was: `text: 'status?'`). A relay-carried message states
+  // who wrote it, because Claude Code's cross-session envelope tells the
+  // receiving agent the words are a peer's. The channel and the verdict are
+  // unchanged; only the text the relay is handed grew a leading line.
   it('relays the message to a headless session by name', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
@@ -1171,11 +1176,15 @@ describe('AgentRuntime.sendDwarfText', () => {
     ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
       sessionName: 'sample-project-70',
-      text: 'status?'
+      text: `${RELAY_PROVENANCE_LINE}\nstatus?`
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #378 (was: `text: '[for agent Explorer] stop digging'`). The
+  // worker tag is untouched and still leads the words the person typed — the
+  // provenance line sits ahead of it, because the two name different people:
+  // the author and the recipient.
   it("routes a worker's message to its foreman under an explicit prefix", async () => {
     const { runtime, port } = await runtimeWith({
       [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
@@ -1187,7 +1196,7 @@ describe('AgentRuntime.sendDwarfText', () => {
     ).resolves.toEqual({ delivered: true, via: 'foreman-relay' })
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
       sessionName: 'sample-project-70',
-      text: '[for agent Explorer] stop digging'
+      text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] stop digging`
     })
   })
 
@@ -1296,9 +1305,13 @@ describe('AgentRuntime.sendDwarfText', () => {
       text: 'run the tests',
       pressEnter: true
     })
+    // AMENDED for #378 (was: `text: 'run the tests'`). The paste is handed the
+    // words alone — it arrives as the person's own prompt — and the relay
+    // behind it is handed the same words under the provenance line, because
+    // that hand-over is the one the harness frames as a peer's.
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
       sessionName: 'sample-project-70',
-      text: 'run the tests'
+      text: `${RELAY_PROVENANCE_LINE}\nrun the tests`
     })
   })
 
@@ -1569,9 +1582,12 @@ describe('AgentRuntime.sendDwarfText', () => {
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
     ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    // AMENDED for #378 (was: `text: 'hi'`). A degraded console is delivered by
+    // the relay, so it carries the provenance line like every other relay —
+    // this is the macOS and Linux default route, not an edge case.
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
       sessionName: 'sample-project-70',
-      text: 'hi'
+      text: `${RELAY_PROVENANCE_LINE}\nhi`
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
@@ -1751,6 +1767,135 @@ describe('AgentRuntime.sendDwarfText', () => {
       error: 'The relay could not be started.'
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #378. The relay hands the text to Claude Code's own SendMessage, which
+   * wraps it in a `<cross-session-message>` envelope and tells the receiving
+   * agent the words came from another Claude session rather than from its user
+   * — measured live on 2026-09-10 while verifying #376. The envelope is the
+   * harness's to write, so the only place left to state the author is inside
+   * the message, and it is stated on the relay routes ONLY: everything else
+   * already arrives as the person's own prompt.
+   */
+  describe('stating who wrote a relay-carried message (#378)', () => {
+    it('leads the relayed text with the provenance line and nothing else', async () => {
+      const port = fakePort()
+      const { runtime } = await runtimeWith(
+        { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' } },
+        port
+      )
+
+      await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'run the tests', pressEnter: true })
+
+      const relayed = port.relayToClaudeSession.mock.calls[0]?.[0].text as string
+      expect(relayed).toBe(`${RELAY_PROVENANCE_LINE}\nrun the tests`)
+      // The line is one line, and the words follow it verbatim: the relay
+      // instruction forwards whatever it is given, so anything added here
+      // reaches the agent exactly as written.
+      expect(relayed.split('\n')[0]).toBe(RELAY_PROVENANCE_LINE)
+      expect(relayed.slice(RELAY_PROVENANCE_LINE.length + 1)).toBe('run the tests')
+    })
+
+    it("keeps the worker's [for agent …] tag intact, behind the line", async () => {
+      // Two prefixes, two jobs: this one names the author for the session that
+      // reads the message, that one names the agent it is meant for. Order
+      // matters — the tag has to stay attached to the words it introduces.
+      const port = fakePort()
+      const { runtime } = await runtimeWith(
+        {
+          [WORKER_ID]: {
+            kind: 'foreman-relay',
+            foremanDwarfId: FOREMAN_ID,
+            workerName: 'Explorer'
+          },
+          [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+        },
+        port
+      )
+
+      await runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'dig east', pressEnter: true })
+
+      expect(port.relayToClaudeSession.mock.calls[0]?.[0].text).toBe(
+        `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] dig east`
+      )
+    })
+
+    it('carries the line on the relay a console paste falls back to (#319)', async () => {
+      const port = {
+        sendToConsole: vi.fn(),
+        pasteToConsole: vi.fn().mockResolvedValue({
+          delivered: false,
+          error: 'The agent terminal could not be brought to the foreground.',
+          neverStarted: true
+        }),
+        relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+        sendInterrupt: vi.fn()
+      } satisfies TextDeliveryPort
+      const { runtime } = await runtimeWith(
+        { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
+        port
+      )
+
+      await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'dig east', pressEnter: true })
+
+      // The fallback is a RELAY however it was reached, so the message it
+      // carries is framed as a peer's exactly as a direct one is. The paste
+      // that failed first was handed the words alone.
+      expect(port.relayToClaudeSession.mock.calls[0]?.[0].text).toBe(
+        `${RELAY_PROVENANCE_LINE}\ndig east`
+      )
+      expect(port.pasteToConsole.mock.calls[0]?.[0].text).toBe('dig east')
+    })
+
+    it('never prefixes a console paste, which is the prompt the person typed', async () => {
+      const { runtime, port } = await runtimeWith({
+        [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+      })
+
+      await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'dig east', pressEnter: true })
+
+      expect(port.pasteToConsole).toHaveBeenCalledWith({
+        pid: 42,
+        text: 'dig east',
+        pressEnter: true
+      })
+    })
+
+    it('never prefixes the Codex queue, which is not a cross-session message', async () => {
+      const port = {
+        ...fakePort(),
+        queueToCodexThread: vi.fn().mockResolvedValue({ delivered: true })
+      }
+      const { runtime } = await runtimeWith(
+        { [FOREMAN_ID]: { kind: 'codex-queue', threadId: 'thread-1' } },
+        port
+      )
+
+      await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'dig east', pressEnter: true })
+
+      expect(port.queueToCodexThread).toHaveBeenCalledWith({
+        threadId: 'thread-1',
+        text: 'dig east'
+      })
+    })
+
+    it('never prefixes a kick, which is an instruction rather than the person’s words', async () => {
+      // relayFallback is shared with the kick, so the line has to be applied by
+      // the send path and not inside it: a cancel instruction has no author to
+      // state, and a session reading one framed as a quoted message would be
+      // asked to forward it rather than act.
+      const port = fakePort()
+      const { runtime } = await runtimeWith(
+        { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' } },
+        port
+      )
+
+      await runtime.kickDwarf({ dwarfId: FOREMAN_ID })
+
+      const kicked = port.relayToClaudeSession.mock.calls[0]?.[0].text as string
+      expect(kicked).not.toContain(RELAY_PROVENANCE_LINE)
+    })
   })
 })
 
@@ -2154,9 +2299,12 @@ describe('AgentRuntime.kickDwarf', () => {
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
     ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    // AMENDED for #378 (was: `text: 'hi'`). The channel and the verdict are
+    // unchanged; the relay states who wrote the message now, because the
+    // harness frames a cross-session message as another session's.
     expect(port.relayToClaudeSession).toHaveBeenCalledWith({
       sessionName: 'sample-project-70',
-      text: 'hi'
+      text: `${RELAY_PROVENANCE_LINE}\nhi`
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
 
@@ -8078,6 +8226,19 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
     expect(held.interrupts()).toBe(0)
     expect(held.sends()[0]).toContain('[cancel agent Explorer]')
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('never states an author on the stream the panel holds (#378)', async () => {
+    // This is the one tier with nothing between the hand-over and the session:
+    // the message goes onto the SDK's own input stream as the user turn, so it
+    // is the person's prompt already and has no envelope to correct.
+    const held = heldFake()
+    const runtime = await runtimeHolding(held, terminalPort())
+
+    await runtime.sendDwarfText({ dwarfId: HELD_FOREMAN_ID, text: 'dig east', pressEnter: true })
+    runtime.stop()
+
+    expect(held.sends()).toEqual(['dig east'])
   })
 })
 

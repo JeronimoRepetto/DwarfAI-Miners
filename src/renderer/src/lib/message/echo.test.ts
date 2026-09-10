@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { FeedMessage } from '../../types'
+import { RELAY_PROVENANCE_LINE, type FeedMessage } from '../../types'
 import { groupActivity } from './activityGroup'
 import type { PanelMessage } from './conversation'
 import {
@@ -186,6 +186,29 @@ describe('reconcileEchoes', () => {
   it('leaves everything alone for an empty transcript', () => {
     const kept = echo()
     expect(reconcileEchoes([kept], [])).toEqual([kept])
+  })
+
+  /*
+   * #378. A message the relay carries now leads with RELAY_PROVENANCE_LINE,
+   * because Claude Code frames a cross-session message as another session's
+   * rather than the user's. The transcript reader takes the line off, and this
+   * is the second place it has to come off: match on the words the composer
+   * sent, or a relayed message is drawn twice — once as an echo nothing ever
+   * accounts for, once as the transcript row — and its ✓ never reaches ✓✓.
+   */
+  it('accounts for an echo whose transcript row still carries the provenance line (#378)', () => {
+    const sent = echo({ text: 'hello' })
+    const row = turn({ text: `${RELAY_PROVENANCE_LINE}\nhello` })
+    expect(reconcileEchoes([sent], [row])).toEqual([])
+  })
+
+  it("keeps the worker tag in the comparison, since it is not the author's line (#378)", () => {
+    // `[for agent …]` names the RECIPIENT and the composer never typed it, so a
+    // row carrying it is not this echo's words — only the provenance line ours
+    // prepends comes off.
+    const kept = echo({ text: 'hello' })
+    const row = turn({ text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] hello` })
+    expect(reconcileEchoes([kept], [row])).toEqual([kept])
   })
 })
 
