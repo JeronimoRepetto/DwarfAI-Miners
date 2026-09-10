@@ -96,8 +96,12 @@ processed.
 - **Markdown in bubbles** — an agent's bold text, lists, quotes, inline and fenced code draw as
   such instead of raw asterisks and backticks, and a link in a bubble opens in your system
   browser.
-- **Kick in one click** — one press cuts a session's turn short. Where nothing can be interrupted,
-  the same press sends the dwarf off the rock instead, and says so.
+- **Read back through the conversation** — scroll to the top of a dwarf's panel and the twelve
+  things said before those load in place, twelve at a time, as far back as its transcript goes.
+- **Answer an agent's question** — click the option it offered, or toggle several and press
+  **Answer**; the panel presses that at the session's own console. Windows today, and not Codex.
+- **Kick in one click** — one press ends a session running in a terminal, interrupts one the panel
+  is holding, and otherwise sends the dwarf off the rock instead — and says which it did.
 - **Sound** — eight shuffled background tracks, a mine ambience that follows whether the crew is
   actually mining, and a voice per dwarf rank on click plus the shell's own interface sounds. All
   of it optional, from [Settings](docs/guide.md#settings).
@@ -184,19 +188,20 @@ mileage than Windows, so the table keeps the distinction between verified and ex
 <details>
 <summary><strong>Full support matrix</strong> (Windows verified; macOS/Linux run, lighter coverage)</summary>
 
-| Capability                               | Windows                       | macOS                                  | Linux                                  |
-| ---------------------------------------- | ----------------------------- | -------------------------------------- | -------------------------------------- |
-| Overall                                  | **Verified**                  | Run, lighter coverage                  | Run, lighter coverage                  |
-| Session detection (Claude Code / Codex)  | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
-| Antigravity session detection            | Verified                      | Expected to work (home-relative paths) | Expected to work                       |
-| Codex liveness probe                     | PowerShell `Win32_Process`    | `pgrep -f codex`                       | `pgrep -f codex`                       |
-| Click-to-focus a terminal                | user32 via PowerShell         | `ps` + System Events (`osascript`)     | **Unsupported** — falls back to viewer |
-| Live transcript viewer                   | Windows Terminal / PowerShell | Terminal.app via `osascript`           | `x-terminal-emulator` → … → `xterm`    |
-| Paste a message into a session's console | **Verified — the default**    | **Disabled** (relay instead)           | **Unsupported** (relay instead)        |
-| Relay a message to a named session       | Supported — the fallback      | Supported — the default                | Supported — the default                |
-| Queue a message to a Codex CLI session   | **Verified**                  | Expected to work (spawns `codex`)      | Expected to work (spawns `codex`)      |
-| Start at login                           | HKCU Run key                  | `~/Library/LaunchAgents` plist         | `~/.config/autostart` desktop entry    |
-| Packaging                                | NSIS + portable               | dmg + zip (arm64 & x64)                | AppImage + deb                         |
+| Capability                               | Windows                               | macOS                                                           | Linux                                                           |
+| ---------------------------------------- | ------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
+| Overall                                  | **Verified**                          | Run, lighter coverage                                           | Run, lighter coverage                                           |
+| Session detection (Claude Code / Codex)  | Verified                              | Expected to work (home-relative paths)                          | Expected to work                                                |
+| Antigravity session detection            | Verified                              | Expected to work (home-relative paths)                          | Expected to work                                                |
+| Codex liveness probe                     | PowerShell `Win32_Process`            | `pgrep -f codex`                                                | `pgrep -f codex`                                                |
+| Click-to-focus a terminal                | user32 via PowerShell                 | `ps` + System Events (`osascript`)                              | **Unsupported** — falls back to viewer                          |
+| Live transcript viewer                   | Windows Terminal / PowerShell         | Terminal.app via `osascript`                                    | `x-terminal-emulator` → … → `xterm`                             |
+| Paste a message into a session's console | **Verified — the default**            | **Disabled** (relay instead)                                    | **Unsupported** (relay instead)                                 |
+| Relay a message to a named session       | Supported — the fallback              | Supported — the default                                         | Supported — the default                                         |
+| Queue a message to a Codex CLI session   | **Verified**                          | Expected to work (spawns `codex`)                               | Expected to work (spawns `codex`)                               |
+| Kick a session running in a terminal     | **Verified** — clean exit, then force | Implemented (SIGTERM, then SIGKILL); unreachable until measured | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
+| Start at login                           | HKCU Run key                          | `~/Library/LaunchAgents` plist                                  | `~/.config/autostart` desktop entry                             |
+| Packaging                                | NSIS + portable                       | dmg + zip (arm64 & x64)                                         | AppImage + deb                                                  |
 
 The two message rows are one decision seen from two sides, and it reversed twice —
 [`docs/console-hosting.md` §4b](docs/console-hosting.md) records both reversals. Where the panel
@@ -207,8 +212,11 @@ registry name takes the relay instead, which touches no window at all. The relay
 fallback on Windows, and only for the one failure that proves nothing was written: a console that
 would not come forward. A Windows Terminal window with several tabs open is refused too and the
 message takes the relay, because nothing can select a tab by session — one tab works as before
-(#371). An interrupt (Kick) never moved — it is a keystroke by nature, and goes to the console
-wherever one exists.
+(#371). Kick is no longer a keystroke at all: it ends the session's own process by verified pid,
+which needs no window, so its row above is about a signal rather than about reaching a console. What
+macOS and Linux still lack there is not the signal but the reading that verifies a pid — no Claude
+session registry entry has been measured for a process creation time on either — so a kick with no
+verified pid is refused with that reason rather than sent.
 
 Notes on the three honest gaps:
 
