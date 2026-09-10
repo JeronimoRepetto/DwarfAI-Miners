@@ -798,8 +798,146 @@ keystroke** and a probe that could steal the foreground would be the defect it e
 **On step 2 of #371** (`AttachConsole` + `WriteConsoleInput` instead of a foreground at all): nothing
 measured here argues against it, and one row argues for it. Each tab is a **separate `cmd.exe` with
 its own console**, which is exactly the addressing a pid-attached write needs — so the tab the panel
-cannot _raise_ is a console it can already _name_. That remains unmeasured as a write path and is
-not built here.
+cannot _raise_ is a console it can already _name_. **That is now measured — it works; see below.**
+
+### Writing by pid instead of by foreground — measured 2026-09-10 (#371 step 2)
+
+**It works, including the case #371 is actually about.** `FreeConsole` → `AttachConsole(pid)` →
+`CreateFileW("CONIN$")` → `WriteConsoleInput` of key records puts text into the input buffer that
+exact pid is reading, under ConPTY, in a Windows Terminal window with two tabs, addressing the tab
+that is **not** the active one, with no window raised and the foreground unmoved [V, #371,
+2026-09-10]. Every target below is a throwaway console this measurement spawned and ended; nothing
+was ever attached to a console it did not create.
+
+**The target had to be built before anything could be written to it, and the obvious way is wrong.**
+`spawn(node, […], { detached: true, stdio: 'ignore', windowsHide: true })` — the shape #371's plan
+proposed — gives the child **no console at all**: libuv maps `detached` to `DETACHED_PROCESS`, so the
+receiver reported `stdin.isTTY === undefined`, `setRawMode` was never reachable, and stdin ended
+immediately. A hidden console needs `CREATE_NEW_CONSOLE` instead, which on this host means
+`Start-Process -WindowStyle Hidden`; that receiver reported `isTTY true` and `setRawMode` → `isRaw
+true`, the same state Ink puts stdin in.
+
+| Target                                         | `stdin.isTTY` | `setRawMode` | Usable as a target  |
+| ---------------------------------------------- | ------------- | ------------ | ------------------- |
+| `detached` + `stdio: 'ignore'` + `windowsHide` | `undefined`   | unreachable  | **no** — no console |
+| `Start-Process -WindowStyle Hidden` (conhost)  | `true`        | `isRaw true` | yes, hidden         |
+| `wt.exe -w <name> new-tab node …` (ConPTY)     | `true`        | `isRaw true` | yes, the real case  |
+
+**Case 1 — plain hidden conhost.** Target a hidden Node receiver in raw mode, payload
+`hello console` + Enter, 13 characters as **two records each** (key down and key up) plus two for
+`VK_RETURN` = 28 records. `FreeConsole` → `true`; `AttachConsole` → `true`; `CreateFileW("CONIN$",
+GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, OPEN_EXISTING)` → a real handle,
+`GetLastError 0`; `WriteConsoleInput` → `true`, `lpNumberOfEventsWritten` **28 of 28**. The receiver
+logged `bytes=14 … text="hello console\r"` — every character and the Enter, once each, in order. The
+key-up records are inert to a TTY reader, as expected: 28 records produced 14 bytes, not 28.
+
+**The two ways to get the handle are NOT equivalent, and the wrong one fails silently-ish.**
+`GetStdHandle(STD_INPUT_HANDLE)` after the attach returns the caller's **stale inherited** handle:
+`WriteConsoleInput` on it returned `false` with `GetLastError 6` (`ERROR_INVALID_HANDLE`), 0 events
+written, and nothing arrived. `CreateFileW("CONIN$")` is the only route measured to work — the
+attach rebinds the console, not the process's std handles.
+
+**`FreeConsole` first is the precondition, not a defensive flourish.** Skipping it from a caller that
+already owns a console: `AttachConsole` → `false`, `GetLastError 5` (`ERROR_ACCESS_DENIED`), nothing
+written and nothing arrived. A process may be attached to at most one console, and this is what that
+rule looks like from the calling side.
+
+**Case 2 — Unicode and length, on the same target.** Nothing was lost, reordered or truncated, and
+no buffer limit was reached:
+
+| Payload                                       | Records | `EventsWritten` | Arrived                                     |
+| --------------------------------------------- | ------- | --------------- | ------------------------------------------- |
+| 54 chars, accents + em dash + two emoji + `’` | 110     | 110             | verbatim in one 71-byte UTF-8 chunk         |
+| 2 048 ASCII chars, ordinal-marked every 64    | 4 098   | 4 098           | 2 049 bytes, `1024+1024+1`, byte-identical  |
+| 16 384 ASCII chars                            | 32 770  | 32 770          | 16 385 bytes over 17 chunks, byte-identical |
+
+Three things follow. **Emoji cost two records**, because `WriteConsoleInput` takes UTF-16 code units
+and a surrogate pair is two of them — `⛏️` also carries its variation selector as a third — and the
+receiver still read them back as correct UTF-8. **The chunking is the reader's, not the write's**:
+one `WriteConsoleInput` call wrote 32 770 records and node's TTY read them out 1 024 bytes at a
+time. **`EventsWritten` equalled `nLength` every time**, so the input buffer grew rather than
+truncating; no limit was hit at 16 KB, which is far past any message this panel sends.
+
+**Case 3 — the ConPTY target, which is the real case.** A receiver started as
+`wt.exe -w <name> new-tab -d <dir> node receiver.mjs` runs as a direct child of `WindowsTerminal.exe`
+— no `cmd.exe` in between when `wt` is given the command itself — and the read-only shape probe
+reported exactly the window #371 refuses to type into:
+
+| Receiver | Console window          | Class                 | Visible | `GA_ROOTOWNER`                             |
+| -------- | ----------------------- | --------------------- | ------- | ------------------------------------------ |
+| tab A    | its own phantom         | `PseudoConsoleWindow` | true    | the host's `CASCADIA_HOSTING_WINDOW_CLASS` |
+| tab B    | a **different** phantom | `PseudoConsoleWindow` | true    | the **same** host window                   |
+
+Two phantoms, one owner window, one `WindowsTerminal.exe` pid — the several-tab state that
+`buildConsoleSiblingProbeCommand` counts and the keystroke path refuses. The write went through
+anyway: `AttachConsole(<tab A's node pid>)` → `true`, `CONIN$` → a handle, `WriteConsoleInput` → 54
+of 54 records, and **tab A's log received the text while tab B's received nothing**. The reverse
+write addressed tab B and left tab A's log unchanged. Repeating case 2 against the ConPTY pid, all
+five writes to one receiver reconstructed to **18 522 characters, byte-exact and in order**.
+
+So the distinction that defeats the paste path does not exist here. The panel cannot _raise_ a tab;
+it can _write to_ one, because the console is addressed by pid and the tab strip is never consulted.
+
+**Case 4 — the foreground, read only.** `GetForegroundWindow` was sampled before and after every
+write; no user32 focus API was imported by the writer at all. With a throwaway console of this
+measurement's own holding the foreground, a successful write to the ConPTY receiver left the
+foreground handle **identical** before and after, and the host window was **not** the foreground
+afterwards. Repeated with the writer as a `CreateNoWindow` child — the shape an Electron main process
+would use — three samples across the write (before, immediately after, +600 ms) were identical, on an
+unrelated Explorer window the maintainer had focused, and the terminal host was not raised. One
+sample pair out of nine did differ, and the cause was the measurement rather than the mechanism: a
+visible `powershell.exe` console spawned to run the writer takes the foreground itself as it appears.
+That is precisely why the Electron-side call must be hidden — see below.
+
+**What this app would additionally need, and it is a real constraint.** The attaching process must
+own no console. Electron's main process may or may not have one, and it cannot `FreeConsole` itself
+without losing whatever it had, so the write belongs in a **child**: a fresh
+`powershell.exe -NoProfile` that calls `FreeConsole` first (measured above: without it,
+`ERROR_ACCESS_DENIED`) and is spawned with **`windowsHide: true`**. Without `windowsHide` that child
+gets a console window of its own, and under the Windows 11 default-terminal handoff that window is a
+new Windows Terminal window which **takes the foreground** — reintroducing, on the delivery path, the
+exact focus theft this mechanism exists to remove. `focus.ts`'s `runPowerShell` already passes
+`windowsHide: true`; that flag stops being cosmetic here.
+
+**What is NOT measured, marked rather than inferred:**
+
+| Question                                                     | Status                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A console this app did not spawn                             | **Unmeasured on purpose.** Every target here was spawned and ended by the measurement; attaching to the maintainer's live sessions was out of bounds. Same user and same session, so no privilege difference is expected — expected, not shown. |
+| A real Claude Code TUI (Ink) rather than a raw-mode receiver | **Unmeasured.** The receiver reproduces Ink's `setRawMode(true)` and reads the same stdin, but no agent CLI was written to. Whether the TUI's own bracketed-paste and key handling accept these records is the next thing to measure.           |
+| A split pane rather than a tab                               | **Unmeasured**, as in step 1. A pane is its own ConPTY, so the pid addressing should hold.                                                                                                                                                      |
+| Whether Enter should be `VK_RETURN` or `\r` as a character   | Both were sent together (`UnicodeChar 0x0D` **and** `wVirtualKeyCode 0x0D`) and arrived as one `\r`. Which one the TUI needs alone is untested.                                                                                                 |
+| `dwControlKeyState` / `wVirtualScanCode`                     | Sent as **0** throughout and nothing objected. A TUI reading modifiers would need them filled.                                                                                                                                                  |
+
+**One structural note for whoever wires this up.** `INPUT_RECORD` is **20 bytes**: `WORD EventType`,
+two bytes of padding — the union is 4-aligned because `KEY_EVENT_RECORD` opens with a `BOOL` — then
+`bKeyDown` (4), `wRepeatCount` (2), `wVirtualKeyCode` (2), `wVirtualScanCode` (2), `UnicodeChar` (2),
+`dwControlKeyState` (4). Building the records as a `byte[]` and marshalling that as the buffer avoids
+declaring the struct in PowerShell at all, and `nLength` counts **records, not bytes**. Also:
+`0xC0000000` for `GENERIC_READ|GENERIC_WRITE` must be spelled in decimal, because PowerShell 5.1
+parses the hex literal as a signed `Int32` and the `uint32` conversion then fails.
+
+**The builder is the thing that was measured, not a paraphrase of it.**
+`buildConsoleInputWriteCommand` in `src/main/textDelivery/consoleInputWrite.ts` emitted the script
+that was then run against a fresh hidden receiver: exit **0**, and
+`añadí un túnel ⛏️ — it's the builder's own script` arrived verbatim, both apostrophes and the
+variation selector included [V, #371, 2026-09-10]. Re-run unchanged against the same pid after the
+receiver was killed, it exited **2** — the attach refusal, distinguished from a short write rather
+than collapsed into a bare non-zero.
+
+It carries the payload as **base64 of its UTF-16 code units** rather than as a PowerShell
+single-quoted literal, and that is a deliberate departure from `powerShellLiteral` in `sendKeys.ts`.
+That function has to double four separate quote codepoints because PowerShell normalises the three
+typographic variants while parsing, and missing one was an arbitrary-execution hole ordinary prose
+walked into — a word processor's curly apostrophe closed the literal. A base64 blob is
+`[A-Za-z0-9+/=]` only: there is no quote to double, no backtick, no `$(`, no here-string terminator,
+and the text never exists as text in the script at all. Removing the class beats escaping its
+members. UTF-16 is also the unit `WriteConsoleInput` takes, so the decode lands on exactly the code
+units the records carry.
+
+**Not wired in.** No port composes the builder and no delivery route reaches it; a unit test pins the
+absence of every foreground and keystroke API from the script it produces. Which acts move off the
+paste path, and behind which capability, is a product decision — not this measurement's.
 
 ---
 
