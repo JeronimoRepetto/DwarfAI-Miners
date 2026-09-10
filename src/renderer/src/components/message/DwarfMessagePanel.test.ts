@@ -1074,6 +1074,7 @@ describe('DwarfMessagePanel question', () => {
     question: 'Which database should the importer write to?',
     channel: 'held' as const,
     multiSelect: false,
+    questionCount: 1,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }]
   }
 
@@ -1170,6 +1171,7 @@ describe('DwarfMessagePanel permission (#203)', () => {
     question: 'Which database should the importer write to?',
     channel: 'held' as const,
     multiSelect: false,
+    questionCount: 1,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }]
   }
 

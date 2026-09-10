@@ -1354,6 +1354,9 @@ describe('CodexProvider pendingQuestion', () => {
       question: "Should the rename cover the sample module's tests as well, or only its source?",
       channel: 'terminal',
       multiSelect: false,
+      // AMENDED for #362 (was: the same object without `questionCount`). One
+      // field added to the expectation; this call asks one question, so it is 1.
+      questionCount: 1,
       askedAt: '2026-08-24T12:37:01.545Z',
       options: [
         {

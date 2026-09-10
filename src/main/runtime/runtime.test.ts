@@ -6048,6 +6048,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       question: 'Which shape?',
       channel: 'terminal',
       multiSelect: false,
+      questionCount: 1,
       options: [{ label: 'Round' }]
     }
     const runtime = heldRuntime({
@@ -6467,6 +6468,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       question: 'Which colour?',
       channel: 'terminal',
       multiSelect: false,
+      questionCount: 1,
       options: [{ label: 'Green' }]
     }
     const runtime = heldRuntime({

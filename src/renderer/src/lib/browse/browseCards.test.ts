@@ -208,6 +208,7 @@ describe('cardStatusFor', () => {
       question: 'Which branch?',
       channel: 'held',
       multiSelect: false,
+      questionCount: 1,
       options: [{ label: 'main' }]
     }
   })

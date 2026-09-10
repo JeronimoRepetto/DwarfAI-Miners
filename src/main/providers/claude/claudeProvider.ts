@@ -330,6 +330,7 @@ function pendingQuestionField(question: ClaudePendingQuestion | undefined): {
       // field with the registry's own, which says 'held'.
       channel: 'terminal',
       multiSelect: question.multiSelect,
+      questionCount: question.questionCount,
       options: question.options.map((option) => ({
         label: redactSecrets(option.label),
         ...(option.description === undefined

@@ -2209,6 +2209,10 @@ describe('ClaudeProvider', () => {
         header: 'Approach',
         channel: 'terminal',
         multiSelect: false,
+        // AMENDED for #362 (was: the same object without `questionCount`). One
+        // field added to the expectation, carried through from the parse; this
+        // fixture's call asks one question, so it is 1.
+        questionCount: 1,
         options: [{ label: 'Accumulate', description: 'Walk the tail once.' }],
         askedAt: '2026-09-01T09:03:41.062Z'
       })

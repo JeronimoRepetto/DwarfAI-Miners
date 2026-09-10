@@ -766,6 +766,9 @@ export function askToWireQuestion(ask: HeldAsk, askedAt: string): DwarfQuestion 
     // the same thing about the other prompt on the same session (#354).
     channel: 'held',
     multiSelect: first.multiSelect,
+    // Every question the ask carried, not the one that travels: the terminal
+    // answer route has to refuse a call it can only half answer (#362).
+    questionCount: ask.questions.length,
     options: first.options.map((option) => ({
       label: redactSecrets(option.label),
       ...(option.description === undefined

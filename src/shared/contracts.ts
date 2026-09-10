@@ -747,6 +747,24 @@ export interface DwarfQuestion {
   channel: DwarfPromptChannel
   /** Whether the agent said it would accept more than one option. */
   multiSelect: boolean
+  /**
+   * How many questions the CALL that raised this ask carried — 1 for almost
+   * every ask, and more for the one shape this panel cannot answer (#362).
+   *
+   * Only the first question of a call travels, and both writers say so at
+   * length (askedQuestion in the Claude parse, askToWireQuestion for a held
+   * session). This is the fact that omission leaves behind, and it is on the
+   * wire because two surfaces have to act on it rather than guess: an answer
+   * typed at the console walks the picker ON to question 2, which the panel
+   * does not know exists, so a several-question ask is refused before a key is
+   * pressed and the card says why up front (see ANSWER_ONLY_WHERE_IT_RUNS).
+   *
+   * The COUNT and nothing else: it says how many were asked, never which — the
+   * same narrowness Claude's pendingBackgroundAgentCount holds. Required rather
+   * than optional, because every writer counts its own source's array and a
+   * missing value would be a third state a refusal cannot be based on.
+   */
+  questionCount: number
   options: DwarfQuestionOption[]
   /** When the ask was written, as the provider recorded it. */
   askedAt?: string

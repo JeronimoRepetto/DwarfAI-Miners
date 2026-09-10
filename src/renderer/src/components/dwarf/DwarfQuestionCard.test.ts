@@ -14,6 +14,7 @@ function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
     // written against: a session the panel holds. #354 added the field.
     channel: 'held',
     multiSelect: false,
+    questionCount: 1,
     options: [
       { label: 'Postgres', description: 'The one the API already uses.' },
       { label: 'SQLite' },

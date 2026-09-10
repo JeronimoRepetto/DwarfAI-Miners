@@ -42,6 +42,9 @@ describe('parseCodexPendingQuestion', () => {
       header: 'Scope',
       question: "Should the rename cover the sample module's tests as well, or only its source?",
       multiSelect: false,
+      // AMENDED for #362 (was: the same object without `questionCount`). One
+      // field added; the fixture's call asks one question, so it counts 1.
+      questionCount: 1,
       askedAt: '2026-08-24T12:37:01.545Z',
       options: [
         {
