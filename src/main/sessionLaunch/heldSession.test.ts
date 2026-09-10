@@ -957,6 +957,52 @@ describe('retainHeldMessage', () => {
     const kept: FeedMessage[] = [{ role: 'user', text: 'dig here', timestamp: at }]
     expect(retainHeldMessage(kept, { role: 'assistant', text: '   ', timestamp: at })).toEqual(kept)
   })
+
+  it('spends the limit on things said, keeping both replies behind a long tool run (#359)', () => {
+    // The observed feed's defect in the held store (#359): twelve tool calls
+    // after the last reply used to push every word out, so a held session that
+    // had been working for a while showed a folded run and nothing said.
+    let kept: FeedMessage[] = []
+    for (const text of ['dig here', 'Digging.']) {
+      kept = retainHeldMessage(kept, { role: 'assistant', text, timestamp: at })
+    }
+    for (let index = 0; index < HELD_CONVERSATION_LIMIT + 3; index++) {
+      kept = retainHeldMessage(kept, {
+        role: 'assistant',
+        text: `Ran pnpm test --shard ${index}`,
+        timestamp: at,
+        activity: { kind: 'run', target: `pnpm test --shard ${index}` }
+      })
+    }
+    expect(kept.filter((message) => message.activity === undefined).map((m) => m.text)).toEqual([
+      'dig here',
+      'Digging.'
+    ])
+    expect(kept.filter((message) => message.activity !== undefined)).toHaveLength(
+      HELD_CONVERSATION_LIMIT + 3
+    )
+  })
+
+  it('drops the activity of a reply the limit has already pushed out', () => {
+    // The other half of the rule: a tool call older than the oldest kept text
+    // belongs to a turn the panel no longer shows, and carrying it would leave
+    // the run attributed to the wrong reply.
+    let kept: FeedMessage[] = []
+    for (let index = 0; index < HELD_CONVERSATION_LIMIT + 2; index++) {
+      kept = retainHeldMessage(kept, { role: 'assistant', text: `line ${index}`, timestamp: at })
+      kept = retainHeldMessage(kept, {
+        role: 'assistant',
+        text: `Ran step ${index}`,
+        timestamp: at,
+        activity: { kind: 'run', target: `step ${index}` }
+      })
+    }
+    expect(kept[0]!.text).toBe('line 2')
+    expect(kept.filter((message) => message.activity === undefined)).toHaveLength(
+      HELD_CONVERSATION_LIMIT
+    )
+    expect(kept.some((message) => message.text === 'Ran step 1')).toBe(false)
+  })
 })
 
 describe('stampHeldConversation', () => {

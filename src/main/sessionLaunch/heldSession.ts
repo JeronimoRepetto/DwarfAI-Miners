@@ -20,6 +20,7 @@ import type {
   Mine,
   WaitingReason
 } from '../domain/types'
+import { trimFeed } from '../providers/feedWindow'
 import type { TextDeliveryTarget } from '../textDelivery/port'
 import {
   heldCrewDwarfs,
@@ -620,6 +621,12 @@ export function heldMessageEntries(content: unknown): HeldMessageEntry[] {
  *
  * A message with nothing in it once trimmed is not retained at all: an empty
  * bubble in the panel would be this app claiming somebody spoke.
+ *
+ * Bounded by the same rule the observed feed is trimmed by (`trimFeed`, #359):
+ * HELD_CONVERSATION_LIMIT counts things SAID, and the tool-call rows this
+ * store also retains ride between them. A row slice counted them as messages,
+ * so a held session that had run twelve tools since it last spoke pushed every
+ * word out of its own conversation.
  */
 export function retainHeldMessage(
   kept: readonly FeedMessage[],
@@ -627,7 +634,7 @@ export function retainHeldMessage(
 ): FeedMessage[] {
   const text = redactSecrets(message.text.trim()).slice(0, HELD_MESSAGE_MAX_CHARS)
   if (text === '') return [...kept]
-  return [...kept, { ...message, text }].slice(-HELD_CONVERSATION_LIMIT)
+  return trimFeed([...kept, { ...message, text }], HELD_CONVERSATION_LIMIT)
 }
 
 /**

@@ -123,9 +123,11 @@ unplugged, a resolution change — it comes back beside the shell rather than of
 
 What is in it:
 
-- **The conversation**, oldest first, opening on the newest message. It does not resize itself when
-  a message arrives, and it does not scroll you to the bottom mid-sentence — the exception being a
-  message you just sent, which it does follow.
+- **The conversation**, oldest first, opening on the newest message. It shows the latest twelve
+  things said — the agent's replies and your own prompts — with the tool runs between them carried
+  and folded, however long the agent has been working since it last spoke. It does not resize
+  itself when a message arrives, and it does not scroll you to the bottom mid-sentence — the
+  exception being a message you just sent, which it does follow.
 - **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
   inline code, fenced code and links draw as such instead of the raw `**`, `-` and backtick
   characters, with a heading drawn as a bold paragraph rather than at heading size — a bubble is

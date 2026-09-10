@@ -3,10 +3,13 @@ import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
 import type { FeedMessage } from '../domain/types'
 import {
+  FEED_ACTIVITY_LIMIT,
   FEED_WINDOW_CEILING_BYTES,
   FEED_WINDOW_STEPS,
   readFeedWindow,
-  readFeedWindowWithReachedStart
+  readFeedWindowWithReachedStart,
+  textCount,
+  trimFeed
 } from './feedWindow'
 
 /*
@@ -219,5 +222,166 @@ describe('readFeedWindowWithReachedStart', () => {
     const plain = await readFeedWindow(plainFs, PATH, 5, extractLines, [8, 64, 512])
     const rich = await readFeedWindowWithReachedStart(richFs, PATH, 5, extractLines, [8, 64, 512])
     expect(plain).toEqual(rich.messages)
+  })
+})
+
+/*
+ * Issue #359, which is #215 and #188 again after #240 changed what a row is.
+ * Twelve is a count of things SAID, and an agent that has run twelve tools
+ * since it last spoke used to spend the whole window on activity rows: the
+ * panel drew one folded run and no words. So the trim counts texts and carries
+ * the tool calls between them.
+ */
+
+/** Something said — a prompt or a reply, the rows `limit` counts. */
+function said(index: number): FeedMessage {
+  return { role: 'assistant', text: `said ${index}`, timestamp: '' }
+}
+
+/** One tool call, the row `limit` must stop counting. */
+function ran(index: number): FeedMessage {
+  return {
+    role: 'assistant',
+    text: `Ran step ${index}`,
+    timestamp: '',
+    activity: { kind: 'run', target: `step ${index}` }
+  }
+}
+
+const texts = (rows: readonly FeedMessage[]): string[] =>
+  rows.filter((row) => row.activity === undefined).map((row) => row.text)
+
+const activities = (rows: readonly FeedMessage[]): string[] =>
+  rows.filter((row) => row.activity !== undefined).map((row) => row.text)
+
+describe('trimFeed', () => {
+  it('keeps every text when a long run of tool calls follows the last one', () => {
+    // The reported defect, in one assertion: twenty tool calls after the last
+    // reply used to be the whole answer, and both replies were dropped.
+    const rows = [said(0), said(1), ...Array.from({ length: 20 }, (_, index) => ran(index))]
+
+    const kept = trimFeed(rows, 12)
+    expect(texts(kept)).toEqual(['said 0', 'said 1'])
+    expect(activities(kept)).toHaveLength(20)
+  })
+
+  it('counts only texts against the limit, dropping activity older than the oldest kept text', () => {
+    // Fifteen texts, one tool call between each pair. The twelfth-newest text
+    // is the anchor: everything from it to the end is carried, and the
+    // activity rows belonging to the three replies before it are not — they
+    // are someone else's turn.
+    const rows = Array.from({ length: 15 }, (_, index) => [said(index), ran(index)]).flat()
+
+    const kept = trimFeed(rows, 12)
+    expect(texts(kept)).toEqual(Array.from({ length: 12 }, (_, index) => `said ${index + 3}`))
+    expect(activities(kept)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `Ran step ${index + 3}`)
+    )
+    expect(kept[0]!.text).toBe('said 3')
+  })
+
+  it('caps the activity rows on their own, and never at a text’s expense', () => {
+    const rows = [said(0), said(1), ...Array.from({ length: 250 }, (_, index) => ran(index))]
+
+    const kept = trimFeed(rows, 12)
+    expect(texts(kept)).toEqual(['said 0', 'said 1'])
+    expect(activities(kept)).toHaveLength(FEED_ACTIVITY_LIMIT)
+    // The newest are the ones kept: the oldest tool calls of the run go first.
+    expect(activities(kept).at(-1)).toBe('Ran step 249')
+    expect(activities(kept)[0]).toBe(`Ran step ${250 - FEED_ACTIVITY_LIMIT}`)
+  })
+
+  it('takes the activity cap as a parameter, so the rule can be proved small', () => {
+    const rows = [said(0), ran(0), ran(1), ran(2)]
+    expect(trimFeed(rows, 12, 2).map((row) => row.text)).toEqual([
+      'said 0',
+      'Ran step 1',
+      'Ran step 2'
+    ])
+  })
+
+  it('answers a feed of nothing but tool calls with the newest of them', () => {
+    // No text to anchor on is not the same as nothing to show: a session whose
+    // window holds only work still draws its folded run.
+    const rows = Array.from({ length: 4 }, (_, index) => ran(index))
+    expect(trimFeed(rows, 12, 2).map((row) => row.text)).toEqual(['Ran step 2', 'Ran step 3'])
+  })
+
+  it('holds a short feed unchanged, exactly as the slice it replaces did', () => {
+    const rows = [said(0), ran(0), said(1)]
+    expect(trimFeed(rows, 12)).toEqual(rows)
+    expect(trimFeed([], 12)).toEqual([])
+  })
+
+  it('counts a text as a row with no activity, whichever half of the exchange it is', () => {
+    expect(textCount([said(0), ran(0), { role: 'user', text: 'dig', timestamp: '' }])).toBe(2)
+    expect(textCount([ran(0), ran(1)])).toBe(0)
+  })
+
+  it('bounds the activity rows well above one folded run and well below a wire this app would notice', () => {
+    // The cap exists so (1) cannot grow the wire without bound; it is not a
+    // display limit, and must stay generous enough that an ordinary tool loop
+    // reaches the panel whole.
+    expect(FEED_ACTIVITY_LIMIT).toBeGreaterThan(12)
+    expect(FEED_ACTIVITY_LIMIT).toBeLessThanOrEqual(500)
+  })
+})
+
+describe('readFeedWindow past a window of tool calls (#359)', () => {
+  /**
+   * Stand-in for an extractor since #240: a record ending in `!` is a tool
+   * call rather than something said, and the answer is trimmed by the shared
+   * rule exactly as all three real extractors trim theirs.
+   */
+  function extractInterleaved(tailText: string, limit: number): FeedMessage[] {
+    const feed = tailText
+      .split('\n')
+      .filter((line) => /^\d/.test(line))
+      .map((line) => line.trim())
+      .map((line) =>
+        line.endsWith('!')
+          ? {
+              role: 'assistant' as const,
+              text: `Ran ${line}`,
+              timestamp: '',
+              activity: { kind: 'run' as const, target: line }
+            }
+          : { role: 'user' as const, text: line, timestamp: '' }
+      )
+    return trimFeed(feed, limit)
+  }
+
+  /** A 20-byte record of something said, and a 6-byte tool call. */
+  const spoken = (index: number): string => `${index}${'.'.repeat(18)}\n`
+  const toolCall = (index: number): string => `${index}...!\n`
+
+  it('escalates past a window that holds only tool-call rows', async () => {
+    // The stop condition #188 and #215 bought, read the way #240 left it: the
+    // 64-byte window holds eight rows and not one word, which used to satisfy
+    // "eight is more than three" and end the walk on a wordless feed.
+    const fake = new FakeFs()
+    fake.addFile(
+      PATH,
+      spoken(0) + spoken(1) + Array.from({ length: 8 }, (_, index) => toolCall(index)).join('')
+    )
+    const { fs, reads } = spying(fake)
+
+    const messages = await readFeedWindow(fs, PATH, 3, extractInterleaved, [8, 64, 512])
+    expect(reads()).toEqual([8, 64, 512])
+    expect(texts(messages)).toEqual([spoken(0).trim(), spoken(1).trim()])
+    expect(activities(messages)).toHaveLength(8)
+  })
+
+  it('still stops at the first window that holds the texts asked for', async () => {
+    // The escalation above must not become the rule: a conversation at the end
+    // of the file costs one read, tool calls beside it or not.
+    const fake = new FakeFs()
+    fake.addFile(PATH, spoken(0) + spoken(1) + spoken(2) + spoken(3) + toolCall(4))
+    const { fs, reads } = spying(fake)
+
+    const messages = await readFeedWindow(fs, PATH, 2, extractInterleaved, [64, 512])
+    expect(reads()).toEqual([64])
+    expect(texts(messages)).toEqual([spoken(2).trim(), spoken(3).trim()])
+    expect(activities(messages)).toEqual(['Ran ' + toolCall(4).trim()])
   })
 })

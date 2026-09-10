@@ -1,4 +1,5 @@
 import { toolActivityLine } from '../../domain/permissionSummary'
+import { trimFeed } from '../feedWindow'
 import type { FeedMessage } from '../../domain/types'
 
 /**
@@ -404,13 +405,16 @@ function codexToolInput(name: string, payload: Rec): Record<string, unknown> | u
 }
 
 /**
- * The last `limit` human-readable messages of a rollout: user_message events,
+ * The last `limit` things SAID in a rollout: user_message events,
  * assistant response_items, and one line per tool call the design's four
  * verbs name (#240), interleaved between them in the order the rollout
  * carried them. agent_message events are skipped because they duplicate the
  * response_item text of the same reply, and so is a tool call
  * `toolActivityLine` names no verb for — `exec`'s 5000-plus calls above all,
  * whose input is a JavaScript program rather than a command line.
+ *
+ * `limit` counts the texts and never the activity lines (`trimFeed`, #359),
+ * the same rule the Claude and Antigravity extractors trim by.
  */
 export function extractCodexFeed(tailText: string, limit: number): FeedMessage[] {
   const feed: FeedMessage[] = []
@@ -442,7 +446,7 @@ export function extractCodexFeed(tailText: string, limit: number): FeedMessage[]
     const line = toolActivityLine(name, input)
     if (line !== undefined) feed.push({ ...line, timestamp: record.timestamp })
   }
-  return feed.slice(-limit)
+  return trimFeed(feed, limit)
 }
 
 /** The text of a `response_item` message, whichever way its blocks are typed. */
