@@ -63,7 +63,7 @@ import {
   ensureDefaultAutostart,
   migrateLegacyAutostart
 } from './shell/autostart'
-import { loadConfig } from './config/config'
+import { darwinConsoleInputEnabled, loadConfig } from './config/config'
 import {
   CONFIG_FILE_NAME,
   createConfigFileStore,
@@ -643,6 +643,9 @@ async function init(): Promise<void> {
       write: (value: string) => clipboard.writeText(value)
     },
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
+    // Passed only when the variable is set (#367): unset leaves the shipped
+    // constant in charge rather than pinning it to false from here.
+    ...(darwinConsoleInputEnabled() ? { darwinConsoleInput: true } : {}),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the
