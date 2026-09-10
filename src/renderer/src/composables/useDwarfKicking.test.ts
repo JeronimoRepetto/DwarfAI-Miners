@@ -42,13 +42,18 @@ describe('useDwarfKicking', () => {
     const kicking = kick('claude:s1')
     expect(stateFor('claude:s1')).toEqual({ phase: 'kicking' })
 
-    pending.release({ delivered: true, via: 'terminal' })
+    // AMENDED for #383 (was: via: 'terminal' — that channel was still watched
+    // for a reaction before #329/#383; since the terminal tier now ends the
+    // session outright (see 'useDwarfKicking on a session ended via the
+    // terminal tier' below), this generic kicking->delivered->watching case
+    // reads honestly off a channel that still only asks, claude-relay).
+    pending.release({ delivered: true, via: 'claude-relay' })
     await kicking
     // Delivered means the interrupt was handed over — not that the session
     // stopped. The store starts watching for the proof.
     expect(stateFor('claude:s1')).toEqual({
       phase: 'delivered',
-      via: 'terminal',
+      via: 'claude-relay',
       awaitingReaction: true
     })
   })
@@ -402,5 +407,63 @@ describe('useDwarfKicking on a dwarf that was dismissed', () => {
 
     vi.advanceTimersByTime(RESULT_VISIBLE_MS)
     expect(stateFor('codex:t1')).toBeUndefined()
+  })
+})
+
+/*
+ * A kick that ended the session via the TERMINAL tier (#383). Until #329 a
+ * terminal kick was a keystroke a session might or might not react to, so it
+ * went through the same watched path as claude-relay; since #329 it ends the
+ * process outright (Windows: clean exit then force, #358; POSIX: SIGTERM then
+ * SIGKILL, #366), and runtime.ts retires the dwarf on exactly that outcome.
+ * The renderer has to treat it the same way it already treats
+ * launched-process: no reaction watch, and the marker clears on its ordinary
+ * timer rather than waiting out the reaction window.
+ */
+describe('useDwarfKicking on a session ended via the terminal tier', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    retireDwarf.mockClear()
+    useDwarfKicking().clearAll()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens no reaction watch for a delivered terminal kick, and clears on the ordinary timer', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+    const { kick, observe, stateFor } = useDwarfKicking()
+
+    await kick('claude:s1')
+    expect(stateFor('claude:s1')).toEqual({ phase: 'delivered', via: 'terminal' })
+
+    // The exact snapshot pair that PROVES a reaction on a channel that is
+    // still watching. It proves nothing here: the session is already gone.
+    observe([defaultDwarf({ id: 'claude:s1', status: 'working' })])
+    observe([defaultDwarf({ id: 'claude:s1', status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('delivered')
+    expect(retireDwarf).not.toHaveBeenCalled()
+
+    // It leaves on the ordinary schedule, never waiting out the full
+    // REACTION_WINDOW_MS a watched kick would sit for.
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS)
+    expect(stateFor('claude:s1')).toBeUndefined()
+  })
+
+  it('still opens a watch for a delivered claude-relay kick, unaffected by the terminal fix', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'claude-relay' }))
+    const { kick, observe, stateFor } = useDwarfKicking()
+
+    await kick('claude:s1')
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'delivered',
+      via: 'claude-relay',
+      awaitingReaction: true
+    })
+
+    observe([defaultDwarf({ id: 'claude:s1', status: 'working' })])
+    observe([defaultDwarf({ id: 'claude:s1', status: 'waiting' })])
+    expect(stateFor('claude:s1')?.phase).toBe('reacted')
   })
 })

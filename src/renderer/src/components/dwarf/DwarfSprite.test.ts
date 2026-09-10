@@ -790,8 +790,15 @@ describe('DwarfSprite send marker', () => {
 
 describe('DwarfSprite kick marker', () => {
   it('marks a handed-over kick without claiming the session stopped', () => {
+    // AMENDED for #383 (was: via: 'terminal', asserting the title matched
+    // /handed to the session/i — true before #329/#383 made the terminal
+    // tier end the session outright, which now says "The session was
+    // ended…" instead. This test's point is the generic handed-over-not-
+    // stopped wording, not the terminal tier's own, so a channel that still
+    // only asks, claude-relay, keeps that point covered — the same swap the
+    // sibling send-marker test above already makes.)
     const wrapper = markerSprite({
-      kickState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+      kickState: { phase: 'delivered', via: 'claude-relay', awaitingReaction: true }
     })
     const marker = wrapper.get('.kick-result')
 

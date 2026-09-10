@@ -51,9 +51,27 @@ const KICK_FAILED_TITLE = 'The kick could not be delivered.'
  * would wait for something that cannot happen, and promoting it to ✓✓ would
  * claim a reaction from a process that is gone — the exact thing reaction.ts
  * exists to stop. So it says what happened, once, and waits for nothing.
+ *
+ * AMENDED for #383: the wording no longer claims "the process this panel
+ * launched" — since #329 the terminal tier ends a session the panel very
+ * often merely OBSERVES, so that claim was false for it. The terminal case
+ * gets its own sentence for the one further fact worth saying: the process is
+ * asked to exit cleanly before anything stronger (#358), so its terminal
+ * survives, left at its own prompt. Every other ending channel keeps the
+ * plain fact — the process is gone — which is true of all of them.
  */
-const KICK_ENDED_TITLE = 'The session was ended: the process this panel launched is gone.'
-const KICK_ENDED_LINE = 'Ended the session — the process this panel launched is gone.'
+function kickEndedTitle(via: string | undefined): string {
+  return via === 'terminal'
+    ? 'The session was ended: its terminal is left at its prompt.'
+    : 'The session was ended: the process is gone.'
+}
+
+function kickEndedLine(via: string | undefined): string {
+  return via === 'terminal'
+    ? 'Ended the session — its terminal is left at its prompt.'
+    : 'Ended the session — the process is gone.'
+}
+
 /**
  * A kick that took the dwarf off the BOARD without touching the session
  * (#293).
@@ -77,11 +95,31 @@ const KICK_DISMISSED_LINE =
   'Sent the dwarf off the rock — it comes back if the session shows new activity.'
 
 /**
+ * Channels whose kick ends the session outright rather than asking it to
+ * stop. The one set both `kickEndedTheSession` and (through it)
+ * `kickHasNothingToAwait` read, so the copy and the reaction watch can never
+ * drift apart (#383).
+ *
+ * `launched-process` and `hosted-stdin` end the session because the panel is
+ * the one holding the process. `terminal` joined them since #329: the tier
+ * itself now ends the process it once merely interrupted (Windows clean-exit-
+ * then-force #358, POSIX SIGTERM-then-SIGKILL #366), and runtime.ts retires
+ * the dwarf on exactly that delivered outcome. Every other channel —
+ * `claude-relay`, `foreman-relay`, `codex-queue`, `held-session` — is an ask a
+ * session may or may not act on.
+ */
+const SESSION_ENDING_KICK_CHANNELS: ReadonlySet<string> = new Set([
+  'terminal',
+  'launched-process',
+  'hosted-stdin'
+])
+
+/**
  * Whether a kick on this channel ends the session rather than asking it to
  * stop. Read by the copy below and by `kickHasNothingToAwait`.
  */
 export function kickEndedTheSession(via: string | undefined): boolean {
-  return via === 'launched-process'
+  return via !== undefined && SESSION_ENDING_KICK_CHANNELS.has(via)
 }
 
 /** Whether a kick took the dwarf off the board rather than reaching a session (#293). */
@@ -172,7 +210,7 @@ export function kickMarker(state: DwarfKickState | undefined): DeliveryMarker | 
   // observed rather than behaviour it inferred, and ✓✓ means a session was
   // SEEN acting. One tick, and its own sentence.
   if (state.phase === 'delivered' && kickEndedTheSession(state.via)) {
-    return { cls: 'is-delivered', glyph: '✓', title: KICK_ENDED_TITLE }
+    return { cls: 'is-delivered', glyph: '✓', title: kickEndedTitle(state.via) }
   }
   // Nor a reacted one, and for the opposite reason (#293): nothing was asked,
   // so there is nothing a session could be seen doing about it.
@@ -213,7 +251,7 @@ export function kickStatusLine(state: DwarfKickState | undefined): string | null
   // The two acts that are not hand-overs, and never described as one. Both
   // return before `statusLine` below, which would otherwise render the verdict
   // as "via dismiss" — naming a channel that does not exist.
-  if (state.phase === 'delivered' && kickEndedTheSession(state.via)) return KICK_ENDED_LINE
+  if (state.phase === 'delivered' && kickEndedTheSession(state.via)) return kickEndedLine(state.via)
   if (state.phase === 'delivered' && kickDismissedTheDwarf(state.via)) return KICK_DISMISSED_LINE
   return statusLine(state.phase, state.via, state.awaitingReaction, 'Kick handed over')
 }

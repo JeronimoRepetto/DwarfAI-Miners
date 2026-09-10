@@ -1011,9 +1011,16 @@ describe('DwarfMessagePanel controls', () => {
   })
 
   it('shows the kick verdict, keeping handed over apart from reacted', () => {
+    // AMENDED for #383 (was: via: 'terminal', asserting the status contained
+    // 'Kick handed over' — true before #329/#383 made the terminal tier end
+    // the session outright, which now shows "Ended the session…" instead
+    // (see 'says a kick ENDED the session via the terminal tier' below).
+    // This test's point is the generic handed-over wording, not the
+    // terminal tier's own, so a channel that still only asks, claude-relay,
+    // keeps that point covered.)
     const wrapper = panel({
       dwarf: kickable,
-      kickState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+      kickState: { phase: 'delivered', via: 'claude-relay', awaitingReaction: true }
     })
     expect(wrapper.find('.panel-status').text()).toContain('Kick handed over')
   })
@@ -1033,6 +1040,24 @@ describe('DwarfMessagePanel controls', () => {
     const line = wrapper.find('.panel-status').text()
     expect(line).toContain('Ended the session')
     expect(line).not.toContain('handed over')
+  })
+
+  /*
+   * The terminal tier's own case (#383, #329): it ends the session same as
+   * launched-process, but the panel never launched it, so the sentence says
+   * the one further fact worth saying instead — the terminal is left at its
+   * prompt — rather than repeating a claim that would be false here.
+   */
+  it('says a kick ENDED the session via the terminal tier, and names its own terminal detail', () => {
+    const wrapper = panel({
+      dwarf: kickable,
+      kickState: { phase: 'delivered', via: 'terminal' }
+    })
+    const line = wrapper.find('.panel-status').text()
+    expect(line).toContain('Ended the session')
+    expect(line).toContain('its terminal is left at its prompt')
+    expect(line).not.toContain('handed over')
+    expect(line).not.toContain('watching')
   })
 
   it('draws Boost where the design puts it and refuses to pretend it works', () => {

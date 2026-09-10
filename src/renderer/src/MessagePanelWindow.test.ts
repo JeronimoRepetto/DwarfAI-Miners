@@ -288,6 +288,13 @@ describe('the message panel window', () => {
   })
 
   it('kicks through the panel, and the verdict lands where it was asked for', async () => {
+    // AMENDED for #383 (was: relying on the default kickDwarf stub's
+    // `via: 'terminal'`, asserting the status contained 'Kick handed over via
+    // terminal' — true before #329/#383 made the terminal tier end the
+    // session outright, which now reports "Ended the session…" instead. This
+    // test's point is that a click lands its verdict on this exact panel, not
+    // the terminal tier's own wording, so a channel that still only asks,
+    // claude-relay, keeps that point covered.)
     const { wrapper, api } = await openOn(
       [
         {
@@ -295,7 +302,8 @@ describe('the message panel window', () => {
           capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
         }
       ],
-      'claude:s1'
+      'claude:s1',
+      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
     )
 
     // One click since #293: the arm-then-fire confirmation is gone.
@@ -304,7 +312,7 @@ describe('the message panel window', () => {
 
     expect(api.kickDwarf).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
     // Handed over, never "reacted": only a session SEEN stopping earns that.
-    expect(wrapper.find('.panel-status').text()).toContain('Kick handed over via terminal')
+    expect(wrapper.find('.panel-status').text()).toContain('Kick handed over via claude-relay')
     expect(wrapper.find('.panel-status').text()).not.toContain('the session reacted')
   })
 
@@ -485,6 +493,12 @@ describe('publishing the delivery verdicts', () => {
    * in from the other window could never resolve a watch this one opened.
    */
   it('promotes a delivered kick when the next poll shows the session stopped', async () => {
+    // AMENDED for #383 (was: relying on the default kickDwarf stub's
+    // `via: 'terminal'` to promote to 'reacted' on the next poll — true
+    // before #329/#383 made the terminal tier end the session outright,
+    // which now stays 'delivered' forever with nothing watched. This test's
+    // point is the promotion mechanism itself, so it keeps that covered
+    // through a channel that still only asks, claude-relay.)
     const { wrapper, api } = await openOn(
       [
         {
@@ -492,7 +506,8 @@ describe('publishing the delivery verdicts', () => {
           capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
         }
       ],
-      'claude:s1'
+      'claude:s1',
+      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
     )
     await wrapper.find('.control-kick').trigger('click')
     await flushPromises()
@@ -527,6 +542,13 @@ describe('publishing the delivery verdicts', () => {
   })
 
   it('leaves a delivery alone while nothing about the session changed', async () => {
+    // AMENDED for #383 (was: relying on the default kickDwarf stub's
+    // `via: 'terminal'`. Since the terminal tier now ends the session
+    // outright it opens no reaction watch at all, so this assertion would
+    // hold trivially — nothing was ever being watched — rather than
+    // exercising the "watched, but nothing changed" path this test is
+    // actually about. A channel that still only asks, claude-relay, keeps
+    // that path genuinely covered.)
     const { wrapper, api } = await openOn(
       [
         {
@@ -534,7 +556,8 @@ describe('publishing the delivery verdicts', () => {
           capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
         }
       ],
-      'claude:s1'
+      'claude:s1',
+      { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
     )
     await wrapper.find('.control-kick').trigger('click')
     await flushPromises()
