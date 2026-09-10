@@ -12,7 +12,10 @@ import { execFile } from 'node:child_process'
  *    matching — and is the only strategy that works for a host like Herdr,
  *    whose console-hosting process has no discoverable "main window" (its
  *    .NET-style MainWindowHandle stays 0) but does own a real console window
- *    shared with its whole process tree. A visible hit here ends resolution.
+ *    shared with its whole process tree. A visible hit ends resolution — but
+ *    not necessarily as the session's OWN window: where another window owns
+ *    that console it is a tab, and resolution then counts the host's tabs
+ *    before calling it anything (issue #371).
  * 2. The ancestor walk (`planFocusCandidates`): only reached when that window
  *    is hidden or absent, this climbs the parent-pid chain once, nearest
  *    first, and each rung is one of two things. A process name known to host
@@ -145,11 +148,16 @@ export function selectFocusTargetPid(
  *
  * The two kinds are not interchangeable for a KEYSTROKE, which is what #329
  * cost. A `handle` is a console window the session is on, alone or with the
- * shell that launched it. A `pid` is only ever a named terminal HOST, and a
- * host draws several sessions in tabs of one window: foregrounding it raises
- * whichever tab the person last used, so a keystroke sent afterwards lands in
- * whatever session that happens to be. `FocusReach` below is that distinction
- * travelling out to the caller.
+ * shell that launched it. A `pid` is a terminal HOST, and a host draws several
+ * sessions in tabs of one window: foregrounding it raises whichever tab the
+ * person last used, so a keystroke sent afterwards lands in whatever session
+ * that happens to be. `FocusReach` below is that distinction travelling out to
+ * the caller.
+ *
+ * A `pid` is no longer only ever a host matched BY NAME up the ancestor chain
+ * (issue #371). It is also the process owning the window that owns a phantom
+ * console — the same refusal, reached through the same `buildFocusCommand`,
+ * for a host the name walk never meets because the phantom short-circuits it.
  */
 export type FocusTarget = { kind: 'handle'; handle: number } | { kind: 'pid'; pid: number }
 
@@ -160,10 +168,16 @@ export type FocusTarget = { kind: 'handle'; handle: number } | { kind: 'pid'; pi
  * shares with the shell that launched it (#190). Nothing else is drawn there,
  * so a keystroke afterwards reaches this session.
  *
- * `terminal-host` is a window reached by the ancestor walk instead: Windows
- * Terminal, VS Code. It draws many sessions and exposes no way to select a tab
- * by pid, so the panel cannot tell which one is in front. Enough for
- * click-to-focus, never enough for a keystroke.
+ * `terminal-host` is a window that draws many sessions in tabs of its own:
+ * Windows Terminal, VS Code. It exposes no way to select a tab by pid, so the
+ * panel cannot tell which one is in front. Enough for click-to-focus, never
+ * enough for a keystroke.
+ *
+ * The line between them is NOT "found by probe" versus "found by the ancestor
+ * walk", and reading it that way is what #371 cost. A probed handle can be a
+ * phantom console OWNED by a Windows Terminal window, and then it is a tab like
+ * any other; it earns `own-console` only where that owner is proven to draw
+ * this one console and no other. See `resolveFocusTarget`.
  */
 export type FocusReach = 'own-console' | 'terminal-host'
 
@@ -545,7 +559,9 @@ function runPowerShell(command: string): Promise<ShellResult> {
  * the walk runs out, which means there is nothing to focus.
  *
  * The process list is only queried once the session's own probe has missed,
- * so the common pid-exact hit costs one PowerShell process and no walk.
+ * so the common pid-exact hit costs one PowerShell process and no walk. A
+ * console nothing owns still costs exactly that: the tab count of #371 is
+ * asked only where there is an owner to ask about.
  *
  * Exported for #329: which of the two kinds it lands on decides whether a
  * keystroke may follow the focus, so that answer is worth a pure test of its
@@ -560,8 +576,35 @@ export async function resolveFocusTarget(
     return probe.exitCode === 0 ? parseConsoleWindowProbe(probe.stdout) : NO_CONSOLE_WINDOW
   }
 
-  const own = await probeConsole(pid)
-  if (own.handle !== 0) return { kind: 'handle', handle: own.handle }
+  /**
+   * Turn one probe result into a target, which is where a console handle earns
+   * the name "own" or loses it (issue #371).
+   *
+   * A console nothing owns is the session's, as it always was. An owned one is
+   * a tab in somebody's window, and only the tab COUNT can say whether that
+   * somebody is drawing anything else: exactly one means the host has this
+   * console and no other, so it is ours in every sense a keystroke cares
+   * about, and it is foregrounded on the phantom exactly as before — Windows
+   * raises the owner (#190) and the widened verification passes.
+   *
+   * Anything else answers the owner's pid, which is `terminal-host` at the
+   * caller and lands every keystroke on #329's shared-window refusal. That
+   * includes a count this probe could not get: an unanswered count is the one
+   * case this module must never resolve optimistically, because a keystroke
+   * into an unknown tab is delivered into a stranger's session and cannot be
+   * taken back, while refusing costs only the relay.
+   */
+  const classify = async (probe: ConsoleWindowProbe): Promise<FocusTarget | null> => {
+    if (probe.handle === 0) return null
+    if (probe.owner === null) return { kind: 'handle', handle: probe.handle }
+    const count = await run(buildConsoleSiblingProbeCommand(probe.owner.handle))
+    const siblings = count.exitCode === 0 ? parseConsoleSiblingCount(count.stdout) : null
+    if (siblings === 1) return { kind: 'handle', handle: probe.handle }
+    return { kind: 'pid', pid: probe.owner.pid }
+  }
+
+  const own = await classify(await probeConsole(pid))
+  if (own !== null) return own
 
   const query = await run(buildProcessQueryCommand())
   if (query.exitCode !== 0) return null
@@ -569,8 +612,8 @@ export async function resolveFocusTarget(
 
   for (const candidate of planFocusCandidates(rows, pid)) {
     if (candidate.kind === 'host') return { kind: 'pid', pid: candidate.pid }
-    const ancestor = await probeConsole(candidate.pid)
-    if (ancestor.handle !== 0) return { kind: 'handle', handle: ancestor.handle }
+    const ancestor = await classify(await probeConsole(candidate.pid))
+    if (ancestor !== null) return ancestor
   }
   return null
 }
@@ -591,8 +634,10 @@ export async function focusSessionConsole(
     const target = await resolveFocusTarget(pid, run)
     if (target === null) return { focused: false, reach: null }
 
-    // Only ever a named terminal host, which is why a pid target is the
-    // shared-window case and a handle is not; see FocusTarget.
+    // A pid target is a terminal host — named up the ancestor chain, or owning
+    // the window that owns a phantom console with more than one tab under it
+    // (#371) — which is why it is the shared-window case and a handle is not.
+    // `resolveFocusTarget` holds the whole of that decision; see FocusTarget.
     const reach: FocusReach = target.kind === 'handle' ? 'own-console' : 'terminal-host'
     const focus = await run(
       target.kind === 'handle'

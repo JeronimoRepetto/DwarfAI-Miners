@@ -749,6 +749,85 @@ describe('resolveFocusTarget', () => {
     })
     await expect(resolveFocusTarget(100, run)).resolves.toBeNull()
   })
+
+  /*
+   * Issue #371. The owner relation is the fact #329's refusal was missing, and
+   * the count is what turns it into a decision.
+   *
+   * The live shape, measured 2026-09-10: the session's console is phantom
+   * 131398, owned by 131698 — the Windows Terminal window of pid 28704, which
+   * drew three of them. Nothing about the phantom itself changes with the tab
+   * count, so the count is the only thing that can tell the two cases apart.
+   */
+  it('asks nothing about tabs when nothing owns the console, so the common case costs one probe', async () => {
+    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 1 555555 4242' })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'handle', handle: 555555 })
+    expect(executed).toHaveLength(1)
+    expect(executed.some((command) => command.includes('EnumWindows'))).toBe(false)
+  })
+
+  it('answers the handle for an owned console when the host draws exactly one, which is ours', async () => {
+    const { executed, run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: '1 131398'
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'handle', handle: 131398 })
+    // The count is asked about the OWNER window, not about the phantom.
+    expect(executed[1]).toContain('EnumWindows')
+    expect(executed[1]).toContain('131698')
+  })
+
+  it('answers the owner process when the host draws more than one console — a tab strip', async () => {
+    const { executed, run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: '3 2033948,657048,131398'
+    })
+    // The owner's pid, so the existing named-host path foregrounds the window
+    // and every keystroke caller meets #329's shared-window refusal.
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 28704 })
+    // No process list is needed: the probe named the host outright.
+    expect(executed.some((command) => command.includes('Get-CimInstance'))).toBe(false)
+  })
+
+  it('refuses an owned console as its own when the count probe command fails', async () => {
+    const { run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: '',
+      siblingExitCode: 1
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 28704 })
+  })
+
+  it('refuses an owned console as its own when the count probe answers nothing readable', async () => {
+    const { run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: 'no idea'
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 28704 })
+  })
+
+  // A count of zero cannot be right — the probed console is itself one of the
+  // windows being counted — so it is a probe that answered wrong, not a host
+  // with no tabs. Treated like every other unusable count.
+  it('refuses an owned console as its own on a count of none', async () => {
+    const { run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: '0 -'
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 28704 })
+  })
+
+  // The same rule applies to a console found up the chain: an ancestor whose
+  // console is a tab in somebody's window is no more typeable than the
+  // session's own would be.
+  it('applies the same count to an ancestor console that turns out to be owned', async () => {
+    const { run } = fakeRunner({
+      processJson: cmdConsoleJson,
+      consoleProbes: { 100: '131732 0 131732 100', 90: '131398 1 131698 28704' },
+      siblingStdout: '3 2033948,657048,131398'
+    })
+    await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 28704 })
+  })
 })
 
 /**
@@ -797,5 +876,39 @@ describe('focusSessionConsole', () => {
         throw new Error('powershell missing')
       })
     ).resolves.toEqual({ focused: false, reach: null })
+  })
+
+  /*
+   * Issue #371, end to end and the reason the issue exists. Before it, both
+   * cases below answered `own-console` — the phantom is a `handle`, and a
+   * handle was own-console by construction — so the paste went into whichever
+   * tab was in front. Now only the one-tab host does.
+   */
+  it('reports a terminal host for a Windows Terminal window with two tabs, so no keystroke follows', async () => {
+    const { executed, run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: '2 657048,131398'
+    })
+    await expect(focusSessionConsole(100, run)).resolves.toEqual({
+      focused: true,
+      reach: 'terminal-host'
+    })
+    // Click-to-focus still raises the window: the host is foregrounded through
+    // the pid path, whose MainWindowHandle is the owner window itself
+    // (measured live 2026-09-10 — WindowsTerminal.exe 28704 -> 131698).
+    expect(executed[2]).toContain('Get-Process -Id 28704')
+  })
+
+  it("reports the session's own console for a host drawing one tab, which is the session's", async () => {
+    const { executed, run } = fakeRunner({
+      consoleHandleStdout: '131398 1 131698 28704',
+      siblingStdout: '1 131398'
+    })
+    await expect(focusSessionConsole(100, run)).resolves.toEqual({
+      focused: true,
+      reach: 'own-console'
+    })
+    // Foregrounded on the phantom exactly as before, which raises its owner.
+    expect(executed[2]).toContain('[IntPtr]131398')
   })
 })
