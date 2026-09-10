@@ -1648,6 +1648,12 @@ export const MAX_DWARF_TEXT_CHARS = 4000
  * matches the transcript feed's own limit, so a held session and an observed
  * one show a comparable amount of history rather than two arbitrary depths.
  *
+ * Twelve things SAID, in both places (#359). A retained conversation also
+ * carries one row per tool call (#240), and counting those against this number
+ * emptied the panel of words for a session that had been working a while; the
+ * shared rule that trims both feeds is `trimFeed` in
+ * `main/providers/feedWindow.ts`, and it bounds the activity rows separately.
+ *
  * The cap is short of MAX_DWARF_TEXT_CHARS on purpose: that one bounds what a
  * user may SEND, once, and this one bounds what a dozen retained messages cost
  * on every push forever.
