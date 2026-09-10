@@ -15,17 +15,105 @@ import { currentPlatform } from './platform'
  */
 
 /**
- * WQL-side probe for a live Codex CLI process. The probing powershell.exe's
- * own CommandLine contains this very query text (and therefore the string
- * "codex"), so the filter MUST exclude the probe's own process and every
- * PowerShell host — otherwise the probe always matches itself and reports
- * codex as running unconditionally. Exported so tests can pin these guards.
+ * WQL-side probe for a live Codex CLI process — a coarse pre-filter, not the
+ * verdict. It selects every process whose name or command line mentions
+ * "codex" and prints `ProcessId<TAB>Name<TAB>CommandLine` for each, leaving the
+ * decision to `isCodexAgentProcess`.
+ *
+ * The filter used to BE the verdict, and that is issue #374: "mentions codex"
+ * matched the Chrome helper of Codex's bundled browser plugin, whose command
+ * line is a path under `~/.codex/plugins/`, so a session that had died
+ * mid-turn stayed on the board as working for the full idle retention. WQL can
+ * only ask whether a string occurs; telling an executable from a path argument
+ * needs the rows themselves, which is why they come back here.
+ *
+ * Two guards stay in the query. `$_.ProcessId -ne $PID` and the PowerShell
+ * name exclusion cost nothing and remove the probe's own host, whose
+ * CommandLine contains this very query text and therefore the string "codex".
+ *
+ * `[Console]::Out.WriteLine` bypasses PowerShell's output formatter, which
+ * hard-wraps a long line at the host width — a break inside the entry-point
+ * path would hide the marker the node shape is recognised by. Exported so
+ * tests can pin the projection and these guards.
  */
 export const CODEX_PROBE_SCRIPT =
   'Get-CimInstance Win32_Process | Where-Object { ' +
   "$_.ProcessId -ne $PID -and $_.Name -notmatch '^(powershell|pwsh)' " +
   "-and ($_.Name -match 'codex' -or $_.CommandLine -match 'codex') } " +
-  '| Select-Object -First 1 -ExpandProperty ProcessId'
+  '| ForEach-Object { ' +
+  '[Console]::Out.WriteLine(($_.ProcessId, $_.Name, $_.CommandLine) -join [char]9) }'
+
+/**
+ * Executable names the Codex agent itself runs under.
+ *
+ * Measured read-only on 2026-09-10, codex-cli 0.153.4 installed through pnpm
+ * (docs/codex-v2-format.md §10): `@openai/codex`'s `bin/codex.js` resolves its
+ * native binary to `vendor/<target triple>/bin/codex.exe` on Windows and
+ * `.../bin/codex` everywhere else. The triple names the directory, never the
+ * file, so there is no `codex-x86_64-pc-windows-msvc.exe` to match.
+ *
+ * Deliberately not here: `codex-command-runner-<version>.exe` and the other
+ * `codex-*` helpers in `~/.codex/.sandbox-bin`. Each runs one command for a
+ * session and exits, with that session's own `codex.exe` as its parent — a
+ * helper answering for the agent is exactly the mistake #374 was.
+ */
+export const CODEX_BINARY_NAMES: readonly string[] = ['codex', 'codex.exe']
+
+/**
+ * Interpreter names the npm-installed CLI runs under. `codex` on PATH is a
+ * shim that execs `node <pkg>/bin/codex.js`, and that node process is the
+ * native binary's parent for the whole session, so it is a Codex process too.
+ * Bun and Deno are UNMEASURED here; neither shim shape was observed.
+ */
+const NODE_BINARY_NAMES: readonly string[] = ['node', 'node.exe']
+
+/**
+ * The CLI's entry-point script, as the last three segments of its path under
+ * either separator.
+ *
+ * Matching the *script* and not the package directory is the whole point: a
+ * command line mentioning `@openai/codex` alone is also produced by an editor
+ * with a file from that package open and by `pnpm add -g @openai/codex`. The
+ * lookahead requires the path to END there, so a `.map` or a backup beside it
+ * does not read as the entry point. This is the "script argument" test without
+ * argv quoting rules: nothing but node's script argument carries that path.
+ */
+const CODEX_CLI_SCRIPT_PATTERN = /[/\\]codex[/\\]bin[/\\]codex\.js(?=["'\s]|$)/i
+
+/**
+ * The bundled-plugin tree, whose contents are helpers and never the agent.
+ *
+ * Belt and braces over the name test rather than a substitute for it, and it
+ * catches one case the name test cannot: `~/.codex/plugins/.plugin-appserver/`
+ * holds its own `codex.exe` (measured 2026-09-10), which serves plugins rather
+ * than a session. So the exclusion is checked FIRST — a genuine agent is never
+ * launched from inside this tree.
+ */
+const CODEX_PLUGIN_TREE_PATTERN = /\.codex[/\\]plugins[/\\]/i
+
+/** One row of the operating system's process list, as a probe reports it. */
+export interface ProbeProcessRow {
+  pid: number
+  /** The executable's own name, not a path — `codex.exe`, `node`, `cmd.exe`. */
+  name: string
+  commandLine: string
+}
+
+/**
+ * Whether one process row is a Codex agent — the whole verdict, in one pure
+ * function so every shape #374 confused can be asserted without an OS.
+ *
+ * Two accepted shapes, both measured: the native binary by name, and the node
+ * interpreter running the CLI's entry-point script. Nothing is accepted for
+ * merely mentioning `.codex` in an argument, which is what a plugin host, an
+ * editor holding `~/.codex/config.toml`, and this app's own probe all do.
+ */
+export function isCodexAgentProcess(row: ProbeProcessRow): boolean {
+  if (CODEX_PLUGIN_TREE_PATTERN.test(row.commandLine)) return false
+  const name = row.name.trim().toLowerCase()
+  if (CODEX_BINARY_NAMES.includes(name)) return true
+  return NODE_BINARY_NAMES.includes(name) && CODEX_CLI_SCRIPT_PATTERN.test(row.commandLine)
+}
 
 /** One process-list query, as an argv pair that never goes through a shell. */
 export interface ProbeCommand {
@@ -52,33 +140,110 @@ export interface ProcessProbePort {
  * The process-list query for one platform.
  *
  * Windows goes through PowerShell because Win32_Process is the only place a
- * full command line is readable. Every other platform uses `pgrep -f`, which
- * matches the same two things the WQL filter does (the executable name and the
- * full command line) in one call.
+ * full command line is readable. Elsewhere `pgrep -f codex` is the same coarse
+ * filter over the same two fields — but it must PRINT the command line beside
+ * each pid, because a bare pid cannot be judged (#374), and the flag for that
+ * differs: procps prints the full command line under `-a`, while macOS pgrep
+ * has no `-a` and prints it under `-l` when `-f` is also given.
  */
 export function buildCodexProbeCommand(platform: Platform): ProbeCommand {
   if (platform === 'win32') {
     return { command: 'powershell.exe', args: ['-NoProfile', '-Command', CODEX_PROBE_SCRIPT] }
   }
-  return { command: 'pgrep', args: ['-f', 'codex'] }
+  if (platform === 'linux') {
+    return { command: 'pgrep', args: ['-fa', 'codex'] }
+  }
+  return { command: 'pgrep', args: ['-fl', 'codex'] }
 }
 
 /**
- * True when the probe found a codex process other than this one.
+ * Split stdout into rows, folding any line that does not begin a new row into
+ * the one before it.
  *
- * `pgrep -f codex` has the same self-match pitfall as the Windows script: it
- * matches any process whose command line merely mentions "codex", and this
- * app's own process is in that list. pgrep excludes itself, but nothing
- * excludes the caller, so `selfPid` is filtered out here — the POSIX
- * equivalent of the `$_.ProcessId -ne $PID` guard in CODEX_PROBE_SCRIPT.
+ * Concatenated with no separator on purpose: the break this repairs is a
+ * formatter wrap, which splits a line at the host width without inserting
+ * anything, so rejoining restores the original exactly. A command line that
+ * genuinely contains a newline loses that newline and nothing else, which no
+ * test here asks about. A continuation that itself starts like a row is
+ * indistinguishable from one and is read as a row; a wrap landing exactly on
+ * `<digits><separator>` is the only way there, and it costs at most one row.
  */
-export function parseCodexProbeOutput(stdout: string, selfPid: number): boolean {
-  return stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => /^\d+$/.test(line))
-    .map(Number)
-    .some((pid) => pid !== selfPid)
+function foldProbeRows(stdout: string, startsRow: RegExp): string[] {
+  const rows: string[] = []
+  for (const line of stdout.split('\n')) {
+    const text = line.replace(/\r$/, '')
+    if (startsRow.test(text) || rows.length === 0) {
+      rows.push(text)
+      continue
+    }
+    rows[rows.length - 1] += text
+  }
+  return rows
+}
+
+/** `ProcessId<TAB>Name<TAB>CommandLine`, as CODEX_PROBE_SCRIPT prints it. */
+function parseWindowsProcessRows(stdout: string): ProbeProcessRow[] {
+  const rows: ProbeProcessRow[] = []
+  for (const row of foldProbeRows(stdout, /^\d+\t/)) {
+    const match = /^(\d+)\t([^\t]*)\t([\s\S]*)$/.exec(row)
+    if (match !== null) {
+      rows.push({
+        pid: Number(match[1]),
+        name: match[2] as string,
+        commandLine: match[3] as string
+      })
+    }
+  }
+  return rows
+}
+
+/**
+ * `<pid> <full command line>`, as `pgrep -fa` / `pgrep -fl` prints it.
+ *
+ * pgrep reports no executable name of its own, so the name is the basename of
+ * argv[0] — the first whitespace-delimited token. pgrep joins argv with plain
+ * spaces and quotes nothing, so an interpreter path containing a space would
+ * be cut short; that costs a name, and the plugin-tree exclusion and the
+ * entry-point test both read the whole line regardless.
+ */
+function parsePosixProcessRows(stdout: string): ProbeProcessRow[] {
+  const rows: ProbeProcessRow[] = []
+  for (const row of foldProbeRows(stdout, /^\s*\d+\s+\S/)) {
+    const match = /^\s*(\d+)\s+(\S.*)$/.exec(row)
+    if (match === null) continue
+    const commandLine = match[2] as string
+    const argv0 = commandLine.split(/\s+/)[0] as string
+    rows.push({
+      pid: Number(match[1]),
+      name: argv0.slice(argv0.search(/[^/\\]*$/)),
+      commandLine
+    })
+  }
+  return rows
+}
+
+/** Route one platform's process-list output to its row parser. */
+function parseProcessRows(platform: Platform, stdout: string): ProbeProcessRow[] {
+  return platform === 'win32' ? parseWindowsProcessRows(stdout) : parsePosixProcessRows(stdout)
+}
+
+/**
+ * True when the process list holds a Codex agent other than this one.
+ *
+ * `selfPid` is filtered out here rather than in the query: this app's own
+ * command line mentions `~/.codex`, so it is in the coarse filter's results,
+ * and pgrep excludes only itself. That is the POSIX equivalent of the
+ * `$_.ProcessId -ne $PID` guard in CODEX_PROBE_SCRIPT, and the one exclusion
+ * that never has to be inferred from a string.
+ */
+export function parseCodexProbeOutput(
+  platform: Platform,
+  stdout: string,
+  selfPid: number
+): boolean {
+  return parseProcessRows(platform, stdout).some(
+    (row) => row.pid !== selfPid && isCodexAgentProcess(row)
+  )
 }
 
 /**
@@ -269,7 +434,7 @@ export function createProcessProbe(options: ProcessProbeOptions = {}): ProcessPr
   return {
     async isCodexProcessRunning(): Promise<boolean> {
       try {
-        return parseCodexProbeOutput(await run(probe), selfPid)
+        return parseCodexProbeOutput(platform, await run(probe), selfPid)
       } catch {
         // Missing binary, timeout, access denied — all "unknown", reported as
         // not running rather than blocking or throwing inside a poll tick.
@@ -293,8 +458,11 @@ export function createProcessProbe(options: ProcessProbeOptions = {}): ProcessPr
 }
 
 /**
- * True when a process whose name or command line mentions "codex" is currently
- * running, on whichever platform this is. Kept as a free function because it is
+ * True when a Codex agent process is currently running, on whichever platform
+ * this is — the native `codex` binary by name, or the node interpreter running
+ * the CLI's entry-point script. Not "a process that mentions codex": that
+ * counted a bundled-plugin helper and kept a dead session on the board for the
+ * whole idle retention (#374). Kept as a free function because it is
  * CodexProvider's default injection point.
  */
 export function isCodexProcessRunning(): Promise<boolean> {
