@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process'
  * Resolution is one probe, then one walk:
  *
  * 1. Console-window resolution (`buildConsoleWindowProbeCommand` +
- *    `parseConsoleWindowHandle`): AttachConsole(pid) + GetConsoleWindow()
+ *    `parseConsoleWindowProbe`): AttachConsole(pid) + GetConsoleWindow()
  *    directly on the session's own pid. This is pid-exact — it needs no name
  *    matching — and is the only strategy that works for a host like Herdr,
  *    whose console-hosting process has no discoverable "main window" (its
@@ -249,8 +249,17 @@ export function planFocusCandidates(
  * window hidden and draws the session in its own tab, so this probe still
  * returns a real, nonzero handle for it (issue #182). The script reports
  * that visibility alongside the handle rather than deciding on it itself, so
- * the decision stays in `parseConsoleWindowHandle` — pure and unit-tested
+ * the decision stays in `parseConsoleWindowProbe` — pure and unit-tested
  * without PowerShell, like everything else this probe hands back.
+ *
+ * `GetAncestor(GA_ROOTOWNER)` and the owner's pid are reported for issue #371.
+ * A visible console window is NOT proof the session is alone on it: under the
+ * Windows 11 default-terminal handoff the window this resolves is a ConPTY
+ * `PseudoConsoleWindow` phantom OWNED by the Windows Terminal window, so an
+ * owner different from the handle means "this console is a tab in somebody
+ * else's window". The owner's pid comes back too because the refusal path
+ * foregrounds that host through `buildFocusCommand`, which resolves a pid.
+ * Both are printed rather than decided on here, same as visibility.
  */
 export function buildConsoleWindowProbeCommand(targetPid: number): string {
   return `
@@ -260,37 +269,147 @@ Add-Type -Namespace Win32 -Name Console -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint dwProcessId);
 [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 '@
 [void][Win32.Console]::FreeConsole()
 $handle = [IntPtr]::Zero
 $visible = $false
+$owner = [IntPtr]::Zero
+$ownerPid = [uint32]0
 if ([Win32.Console]::AttachConsole(${targetPid})) {
   $handle = [Win32.Console]::GetConsoleWindow()
-  if ($handle -ne [IntPtr]::Zero) { $visible = [Win32.Console]::IsWindowVisible($handle) }
+  if ($handle -ne [IntPtr]::Zero) {
+    $visible = [Win32.Console]::IsWindowVisible($handle)
+    $owner = [Win32.Console]::GetAncestor($handle, 3)
+    if ($owner -ne [IntPtr]::Zero) {
+      [void][Win32.Console]::GetWindowThreadProcessId($owner, [ref]$ownerPid)
+    }
+  }
   [void][Win32.Console]::FreeConsole()
 }
-[Console]::Out.Write("$([int64]$handle) $(if ($visible) { 1 } else { 0 })")
+[Console]::Out.Write("$([int64]$handle) $(if ($visible) { 1 } else { 0 }) $([int64]$owner) $([int64]$ownerPid)")
 `.trim()
 }
 
 /**
- * Parse the handle and visibility `buildConsoleWindowProbeCommand` prints to
- * stdout ("<handle> <0|1>"); malformed, blank, non-positive, or invisible
- * output all mean "no handle".
+ * What the console-window probe found: a window to foreground, and whether
+ * another window owns it.
+ *
+ * `handle` is 0 for "nothing here to act on", which is every kind of miss at
+ * once — no console, an invisible one, or output this parser could not read.
+ * `owner` is non-null only for a console some OTHER window owns, and then it
+ * names that window both ways, because the two facts are only useful together:
+ * the handle decides what a tab count is asked about, the pid is what the host
+ * is foregrounded through.
+ */
+export interface ConsoleWindowProbe {
+  handle: number
+  owner: { handle: number; pid: number } | null
+}
+
+const NO_CONSOLE_WINDOW: ConsoleWindowProbe = { handle: 0, owner: null }
+
+/**
+ * Parse what `buildConsoleWindowProbeCommand` prints to stdout
+ * ("<handle> <0|1> <rootOwner> <rootOwnerPid>"); malformed, blank,
+ * non-positive, or invisible output all mean "no handle".
  *
  * A nonzero handle that IsWindowVisible rejects is the Windows Terminal case
  * (issue #182): a real console window that can never be foregrounded, so it
  * has to be indistinguishable here from a probe that found nothing at all —
  * that is what sends `focusPid` on to the ancestor walk instead of driving
  * the foreground sequence at a window that will only fail its verification.
+ *
+ * `GA_ROOTOWNER` answers the handle itself when nothing owns the window, which
+ * is how an ordinary console reads as unowned with no extra flag. Everything
+ * about the owner fails CLOSED (issue #371), and in the same direction each
+ * time: fewer fields than the script prints, an unreadable owner, or an owner
+ * whose process cannot be named all answer "no handle" rather than "unowned".
+ * The reason is asymmetric cost — reading an owned phantom as unowned is what
+ * lets a keystroke into a stranger's tab, while a spurious miss only costs a
+ * fall-through to the ancestor walk.
  */
-export function parseConsoleWindowHandle(stdout: string): number {
+export function parseConsoleWindowProbe(stdout: string): ConsoleWindowProbe {
   const trimmed = stdout.trim()
-  if (trimmed === '') return 0
-  const [handlePart, visiblePart] = trimmed.split(/\s+/)
-  const value = Number(handlePart)
-  if (!Number.isInteger(value) || value <= 0) return 0
-  return visiblePart === '1' ? value : 0
+  if (trimmed === '') return NO_CONSOLE_WINDOW
+  const parts = trimmed.split(/\s+/)
+  if (parts.length < 4) return NO_CONSOLE_WINDOW
+  const [handlePart, visiblePart, ownerPart, ownerPidPart] = parts
+  const handle = Number(handlePart)
+  if (!Number.isInteger(handle) || handle <= 0) return NO_CONSOLE_WINDOW
+  if (visiblePart !== '1') return NO_CONSOLE_WINDOW
+  const owner = Number(ownerPart)
+  if (!Number.isInteger(owner) || owner <= 0) return NO_CONSOLE_WINDOW
+  if (owner === handle) return { handle, owner: null }
+  const ownerPid = Number(ownerPidPart)
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0) return NO_CONSOLE_WINDOW
+  return { handle, owner: { handle: owner, pid: ownerPid } }
+}
+
+/**
+ * The window class of a ConPTY console phantom, measured live rather than
+ * documented anywhere: 2026-09-10, three of them under one Windows Terminal
+ * window (see `docs/console-hosting.md` §6). One phantom is one console, so
+ * counting them under a host counts its tabs.
+ */
+export const CONSOLE_PHANTOM_WINDOW_CLASS = 'PseudoConsoleWindow'
+
+/**
+ * PowerShell that counts the console phantoms `ownerHandle` owns — how many
+ * consoles that one host window is drawing (issue #371).
+ *
+ * The probe above says a console is a tab; it cannot say whether the host has
+ * any OTHER tab, and that is the whole question a keystroke turns on. user32
+ * exposes no way to map a tab to a pid — which is why #329 refuses a host at
+ * all — but every ConPTY console under a host has a top-level phantom window
+ * of its own, so the tabs are COUNTABLE even though they are not addressable.
+ * `EnumWindows` + `GetClassName` + `GetAncestor(GA_ROOTOWNER)` is the count.
+ *
+ * Read-only user32 throughout, deliberately: this runs on the path to a
+ * keystroke, so it may raise no window and press no key. Hidden phantoms are
+ * counted along with visible ones — a console the host is not currently showing
+ * is still a console the host could put in front, and counting fewer is the
+ * direction that lets a keystroke through.
+ */
+export function buildConsoleSiblingProbeCommand(ownerHandle: number): string {
+  return `
+$ErrorActionPreference = 'Stop'
+Add-Type -Namespace Win32 -Name Siblings -MemberDefinition @'
+public delegate bool EnumProc(System.IntPtr hWnd, System.IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, System.IntPtr lParam);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(System.IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+[DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hWnd, uint gaFlags);
+'@
+$owner = [int64]${ownerHandle}
+$found = New-Object System.Collections.ArrayList
+$callback = [Win32.Siblings+EnumProc] {
+  param($hWnd, $lParam)
+  $name = New-Object System.Text.StringBuilder 64
+  [void][Win32.Siblings]::GetClassName($hWnd, $name, 64)
+  if ($name.ToString() -eq '${CONSOLE_PHANTOM_WINDOW_CLASS}' -and [int64][Win32.Siblings]::GetAncestor($hWnd, 3) -eq $owner) {
+    [void]$found.Add([int64]$hWnd)
+  }
+  return $true
+}
+if (-not [Win32.Siblings]::EnumWindows($callback, [System.IntPtr]::Zero)) { exit 1 }
+[Console]::Out.Write("$($found.Count) $(if ($found.Count -eq 0) { '-' } else { $found -join ',' })")
+`.trim()
+}
+
+/**
+ * Parse the count `buildConsoleSiblingProbeCommand` prints ("<count>
+ * <handle>,<handle>"); the handles are for the record and are not read.
+ *
+ * `null` is "cannot answer", and it is a different answer from 0 on purpose:
+ * the caller refuses on it rather than reasoning from a number it never got.
+ */
+export function parseConsoleSiblingCount(stdout: string): number | null {
+  const trimmed = stdout.trim()
+  if (trimmed === '') return null
+  const count = Number(trimmed.split(/\s+/)[0])
+  if (!Number.isInteger(count) || count < 0) return null
+  return count
 }
 
 /**
@@ -436,13 +555,13 @@ export async function resolveFocusTarget(
   pid: number,
   run: ShellRunner
 ): Promise<FocusTarget | null> {
-  const probeConsole = async (targetPid: number): Promise<number> => {
+  const probeConsole = async (targetPid: number): Promise<ConsoleWindowProbe> => {
     const probe = await run(buildConsoleWindowProbeCommand(targetPid))
-    return probe.exitCode === 0 ? parseConsoleWindowHandle(probe.stdout) : 0
+    return probe.exitCode === 0 ? parseConsoleWindowProbe(probe.stdout) : NO_CONSOLE_WINDOW
   }
 
-  const ownHandle = await probeConsole(pid)
-  if (ownHandle !== 0) return { kind: 'handle', handle: ownHandle }
+  const own = await probeConsole(pid)
+  if (own.handle !== 0) return { kind: 'handle', handle: own.handle }
 
   const query = await run(buildProcessQueryCommand())
   if (query.exitCode !== 0) return null
@@ -450,8 +569,8 @@ export async function resolveFocusTarget(
 
   for (const candidate of planFocusCandidates(rows, pid)) {
     if (candidate.kind === 'host') return { kind: 'pid', pid: candidate.pid }
-    const handle = await probeConsole(candidate.pid)
-    if (handle !== 0) return { kind: 'handle', handle }
+    const ancestor = await probeConsole(candidate.pid)
+    if (ancestor.handle !== 0) return { kind: 'handle', handle: ancestor.handle }
   }
   return null
 }

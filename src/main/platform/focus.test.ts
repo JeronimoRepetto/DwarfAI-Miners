@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildConsoleSiblingProbeCommand,
   buildConsoleWindowProbeCommand,
   buildFocusCommand,
   buildFocusHandleCommand,
   buildProcessQueryCommand,
+  CONSOLE_PHANTOM_WINDOW_CLASS,
   focusPid,
   focusSessionConsole,
-  parseConsoleWindowHandle,
+  parseConsoleSiblingCount,
+  parseConsoleWindowProbe,
   parseProcessRows,
   planFocusCandidates,
   processChain,
@@ -144,25 +147,60 @@ describe('buildConsoleWindowProbeCommand', () => {
     const command = buildConsoleWindowProbeCommand(4242)
     expect(command).toContain('IsWindowVisible')
   })
+
+  // Issue #371: the phantom console of the Windows 11 default-terminal handoff
+  // is OWNED by the Windows Terminal window, which is what makes it a tab
+  // rather than a window of its own. The probe reports that relation instead
+  // of leaving the caller to assume a handle stands alone.
+  it('reports whether another window owns the console, via GetAncestor(GA_ROOTOWNER)', () => {
+    const command = buildConsoleWindowProbeCommand(4242)
+    expect(command).toContain('GetAncestor')
+    // GA_ROOTOWNER is 3, and it answers the handle itself when nothing owns it.
+    expect(command).toContain('GetAncestor($handle, 3)')
+  })
+
+  // Issue #371: an owned console is refused at the OWNER window, foregrounded
+  // through buildFocusCommand — which resolves a pid, so the probe has to name
+  // the owner's process as well as its handle.
+  it('names the process owning that window, so the host can be foregrounded by pid', () => {
+    expect(buildConsoleWindowProbeCommand(4242)).toContain('GetWindowThreadProcessId')
+  })
 })
 
-describe('parseConsoleWindowHandle', () => {
+/*
+ * A `parseConsoleWindowHandle` block stood here with five tests over a parser
+ * that answered a bare handle number. Issue #371 needs the owner relation
+ * beside the handle — a bare number cannot carry it and the function had no
+ * caller but this one — so the parser became `parseConsoleWindowProbe` and
+ * returns a record. REMOVED, and every one of the five cases is below under its
+ * original name and original meaning, reading `.handle` off the record:
+ * "parses a positive, visible handle printed by the probe command", "treats
+ * empty or blank output as no handle", "treats a zero handle as no handle",
+ * "treats malformed output as no handle instead of throwing" and #182's "treats
+ * a nonzero but invisible handle as no handle". No expectation was weakened;
+ * the probe now prints four fields, so the literals gained the two the parser
+ * reads.
+ */
+describe('parseConsoleWindowProbe', () => {
   it('parses a positive, visible handle printed by the probe command', () => {
-    expect(parseConsoleWindowHandle('555555 1')).toBe(555555)
+    expect(parseConsoleWindowProbe('555555 1 555555 4242')).toEqual({
+      handle: 555555,
+      owner: null
+    })
   })
 
   it('treats empty or blank output as no handle', () => {
-    expect(parseConsoleWindowHandle('')).toBe(0)
-    expect(parseConsoleWindowHandle('   ')).toBe(0)
+    expect(parseConsoleWindowProbe('')).toEqual({ handle: 0, owner: null })
+    expect(parseConsoleWindowProbe('   ')).toEqual({ handle: 0, owner: null })
   })
 
   it('treats a zero handle as no handle', () => {
-    expect(parseConsoleWindowHandle('0')).toBe(0)
+    expect(parseConsoleWindowProbe('0 0 0 0')).toEqual({ handle: 0, owner: null })
   })
 
   it('treats malformed output as no handle instead of throwing', () => {
-    expect(parseConsoleWindowHandle('not a number')).toBe(0)
-    expect(parseConsoleWindowHandle('-5')).toBe(0)
+    expect(parseConsoleWindowProbe('not a number at all')).toEqual({ handle: 0, owner: null })
+    expect(parseConsoleWindowProbe('-5 1 -5 4242')).toEqual({ handle: 0, owner: null })
   })
 
   // Issue #182: a nonzero handle that IsWindowVisible rejects is exactly the
@@ -170,7 +208,95 @@ describe('parseConsoleWindowHandle', () => {
   // The caller cannot tell that apart from "no handle", so it must return 0
   // and let focusPid fall through to the ancestor walk.
   it('treats a nonzero but invisible handle as no handle', () => {
-    expect(parseConsoleWindowHandle('555555 0')).toBe(0)
+    expect(parseConsoleWindowProbe('555555 0 555555 4242')).toEqual({ handle: 0, owner: null })
+  })
+
+  // Issue #371, the whole point: measured live 2026-09-10, three phantoms of
+  // class PseudoConsoleWindow (2033948, 657048, 131398) all answering root
+  // owner 131698 — the CASCADIA_HOSTING_WINDOW_CLASS window of
+  // WindowsTerminal.exe, pid 28704. An owner different from the handle is a tab
+  // inside a host window, and that is the fact the reach decision turns on.
+  it('reports the owning window and its process when the root owner is not the handle', () => {
+    expect(parseConsoleWindowProbe('131398 1 131698 28704')).toEqual({
+      handle: 131398,
+      owner: { handle: 131698, pid: 28704 }
+    })
+  })
+
+  // Fail closed: the owner question going unanswered must not read as "nothing
+  // owns it", because that is the answer that lets a keystroke into a tab strip.
+  it('treats output that stops before the owner fields as no handle, not as unowned', () => {
+    expect(parseConsoleWindowProbe('555555 1')).toEqual({ handle: 0, owner: null })
+    expect(parseConsoleWindowProbe('555555 1 131698')).toEqual({ handle: 0, owner: null })
+  })
+
+  it('treats an owned console whose owner process cannot be read as no handle', () => {
+    expect(parseConsoleWindowProbe('131398 1 131698 0')).toEqual({ handle: 0, owner: null })
+  })
+
+  it('treats an unreadable owner handle as no handle', () => {
+    expect(parseConsoleWindowProbe('131398 1 nope 28704')).toEqual({ handle: 0, owner: null })
+  })
+})
+
+/*
+ * Counting the tabs (#371).
+ *
+ * An owned phantom says "this console is a tab in somebody's window"; it does
+ * not say whether that window holds any OTHER tab. Nothing in user32 maps a tab
+ * to a pid, but every ConPTY console under a host has its own top-level
+ * PseudoConsoleWindow, so the tabs are countable even though they are not
+ * addressable: enumerate them and keep the ones the same window owns.
+ */
+describe('buildConsoleSiblingProbeCommand', () => {
+  it('enumerates top-level windows and keeps the phantom consoles the given window owns', () => {
+    const command = buildConsoleSiblingProbeCommand(131698)
+    expect(command).toContain('EnumWindows')
+    expect(command).toContain('GetClassName')
+    expect(command).toContain(CONSOLE_PHANTOM_WINDOW_CLASS)
+    // GA_ROOTOWNER again, on each enumerated window this time.
+    expect(command).toContain('GetAncestor($hWnd, 3)')
+    expect(command).toContain('131698')
+  })
+
+  it('prints the count so the caller can parse it back from stdout', () => {
+    expect(buildConsoleSiblingProbeCommand(131698)).toContain('[Console]::Out.Write')
+  })
+
+  // This command runs on the path to a keystroke, so it must stay a question.
+  // Read-only user32 only: nothing here may raise a window or press a key.
+  it('reads the desktop without touching it — no foreground change and no keystroke', () => {
+    const command = buildConsoleSiblingProbeCommand(131698)
+    expect(command).not.toContain('SetForegroundWindow')
+    expect(command).not.toContain('ShowWindow')
+    expect(command).not.toContain('AttachThreadInput')
+    expect(command).not.toContain('SendKeys')
+    expect(command).not.toContain('keybd_event')
+  })
+})
+
+describe('parseConsoleSiblingCount', () => {
+  it('parses one sibling — the host has a single console and it is ours', () => {
+    expect(parseConsoleSiblingCount('1 131398')).toBe(1)
+  })
+
+  // Measured live 2026-09-10: one Windows Terminal window, three phantoms.
+  it('parses several siblings — the host is a tab strip', () => {
+    expect(parseConsoleSiblingCount('3 2033948,657048,131398')).toBe(3)
+  })
+
+  it('parses a count of none', () => {
+    expect(parseConsoleSiblingCount('0 -')).toBe(0)
+  })
+
+  // Null is "cannot answer", which is not the same as zero: the caller refuses
+  // on it rather than reasoning from a number it never got.
+  it('answers null for output it cannot read, instead of guessing a count', () => {
+    expect(parseConsoleSiblingCount('')).toBeNull()
+    expect(parseConsoleSiblingCount('   ')).toBeNull()
+    expect(parseConsoleSiblingCount('not a number')).toBeNull()
+    expect(parseConsoleSiblingCount('-2 x')).toBeNull()
+    expect(parseConsoleSiblingCount('1.5 x')).toBeNull()
   })
 })
 
@@ -405,6 +531,15 @@ const processJson = JSON.stringify([
  * A probe answers per pid when `consoleProbes` names that pid, so one fake
  * can hand a hidden console to the session and a visible one to its
  * ancestors (issue #190); any pid it does not name gets `consoleHandleStdout`.
+ *
+ * AMENDED for #371: every `consoleHandleStdout` / `consoleProbes` literal in
+ * the blocks below gained the probe's two new fields — the root owner and its
+ * pid — because the probe prints four now and the parser fails closed on
+ * fewer. An owner equal to the handle is the unowned console those literals
+ * always meant, so no expectation in any of those tests moved; `'555555 1'`
+ * became `'555555 1 555555 4242'` and the rest read the same way. `siblings`
+ * is new and answers the count probe of #371, defaulting to the one-tab
+ * output so an unowned fake never needs it.
  */
 function fakeRunner(options: {
   consoleHandleStdout?: string
@@ -412,13 +547,17 @@ function fakeRunner(options: {
   consoleProbeExitCode?: number
   focusExitCode?: number
   processJson?: string
+  siblingStdout?: string
+  siblingExitCode?: number
 }) {
   const {
-    consoleHandleStdout = '0',
+    consoleHandleStdout = '0 0 0 0',
     consoleProbes = {},
     consoleProbeExitCode = 0,
     focusExitCode = 0,
-    processJson: rowsJson = processJson
+    processJson: rowsJson = processJson,
+    siblingStdout = '1 133398',
+    siblingExitCode = 0
   } = options
   const executed: string[] = []
   const run = async (command: string) => {
@@ -427,6 +566,9 @@ function fakeRunner(options: {
     if (probed !== null) {
       const stdout = consoleProbes[Number(probed[1])] ?? consoleHandleStdout
       return { stdout, exitCode: consoleProbeExitCode }
+    }
+    if (command.includes('EnumWindows')) {
+      return { stdout: siblingStdout, exitCode: siblingExitCode }
     }
     if (command.includes('Get-CimInstance')) {
       return { stdout: rowsJson, exitCode: 0 }
@@ -446,7 +588,7 @@ const cmdConsoleJson = JSON.stringify([
 
 describe('focusPid', () => {
   it('resolves the console window straight from the session pid and skips the ancestor chain walk', async () => {
-    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 1' })
+    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 1 555555 4242' })
     const ok = await focusPid(100, run)
     expect(ok).toBe(true)
     // Only the console probe and the handle-based focus command run — no Get-CimInstance call.
@@ -461,7 +603,7 @@ describe('focusPid', () => {
   // fall through exactly like a zero handle, to the ancestor chain walk that
   // resolves WindowsTerminal.exe (already in WINDOWS_TERMINAL_HOSTS).
   it('falls back to the ancestor chain walk when the console handle is nonzero but the window is hidden', async () => {
-    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 0' })
+    const { executed, run } = fakeRunner({ consoleHandleStdout: '555555 0 555555 4242' })
     const ok = await focusPid(100, run)
     expect(ok).toBe(true)
     expect(executed).toHaveLength(3)
@@ -469,7 +611,7 @@ describe('focusPid', () => {
   })
 
   it('falls back to the ancestor chain walk when the console probe returns a zero handle', async () => {
-    const { executed, run } = fakeRunner({ consoleHandleStdout: '0' })
+    const { executed, run } = fakeRunner({ consoleHandleStdout: '0 0 0 0' })
     const ok = await focusPid(100, run)
     expect(ok).toBe(true)
     expect(executed).toHaveLength(3)
@@ -485,7 +627,7 @@ describe('focusPid', () => {
 
   it('returns false when the console probe misses and no terminal host is found in the chain', async () => {
     const ok = await focusPid(100, async (command) => {
-      if (command.includes('AttachConsole')) return { stdout: '0', exitCode: 0 }
+      if (command.includes('AttachConsole')) return { stdout: '0 0 0 0', exitCode: 0 }
       return {
         stdout: JSON.stringify([{ ProcessId: 100, ParentProcessId: 1, Name: 'claude.exe' }]),
         exitCode: 0
@@ -495,7 +637,7 @@ describe('focusPid', () => {
   })
 
   it('returns false when the focus command fails', async () => {
-    const { run } = fakeRunner({ consoleHandleStdout: '0', focusExitCode: 1 })
+    const { run } = fakeRunner({ consoleHandleStdout: '0 0 0 0', focusExitCode: 1 })
     const ok = await focusPid(100, run)
     expect(ok).toBe(false)
   })
@@ -522,7 +664,11 @@ describe('focusPid', () => {
     ])
     const { executed, run } = fakeRunner({
       processJson,
-      consoleProbes: { 100: '131732 0', 90: '133320 1', 85: '133320 1' }
+      consoleProbes: {
+        100: '131732 0 131732 100',
+        90: '133320 1 133320 90',
+        85: '133320 1 133320 85'
+      }
     })
     const ok = await focusPid(100, run)
     expect(ok).toBe(true)
@@ -546,7 +692,10 @@ describe('focusPid', () => {
       { ProcessId: 60, ParentProcessId: 50, Name: 'd.exe' },
       { ProcessId: 50, ParentProcessId: 1, Name: 'e.exe' }
     ])
-    const { executed, run } = fakeRunner({ processJson, consoleHandleStdout: '555555 0' })
+    const { executed, run } = fakeRunner({
+      processJson,
+      consoleHandleStdout: '555555 0 555555 4242'
+    })
     const ok = await focusPid(100, run)
     expect(ok).toBe(false)
     // The session's own probe, the process list, and three ancestor probes —
@@ -570,12 +719,12 @@ describe('focusPid', () => {
  */
 describe('resolveFocusTarget', () => {
   it("answers a handle for the session's own visible console, which nothing else shares", async () => {
-    const { run } = fakeRunner({ consoleHandleStdout: '555555 1' })
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 1 555555 4242' })
     await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'handle', handle: 555555 })
   })
 
   it('answers the host pid when only the ancestor walk reaches a window, tabs and all', async () => {
-    const { run } = fakeRunner({ consoleHandleStdout: '555555 0' })
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 0 555555 4242' })
     await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'pid', pid: 80 })
   })
 
@@ -589,7 +738,7 @@ describe('resolveFocusTarget', () => {
   it('answers a handle for the shell console the session shares with its own launcher', async () => {
     const { run } = fakeRunner({
       processJson: cmdConsoleJson,
-      consoleProbes: { 100: '131732 0', 90: '133320 1' }
+      consoleProbes: { 100: '131732 0 131732 100', 90: '133320 1 133320 90' }
     })
     await expect(resolveFocusTarget(100, run)).resolves.toEqual({ kind: 'handle', handle: 133320 })
   })
@@ -611,7 +760,7 @@ describe('resolveFocusTarget', () => {
  */
 describe('focusSessionConsole', () => {
   it("reports the session's own console when its probe hit", async () => {
-    const { run } = fakeRunner({ consoleHandleStdout: '555555 1' })
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 1 555555 4242' })
     await expect(focusSessionConsole(100, run)).resolves.toEqual({
       focused: true,
       reach: 'own-console'
@@ -619,7 +768,7 @@ describe('focusSessionConsole', () => {
   })
 
   it('reports a terminal host when the walk had to reach one, so the tab in front is unknown', async () => {
-    const { run } = fakeRunner({ consoleHandleStdout: '555555 0' })
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 0 555555 4242' })
     await expect(focusSessionConsole(100, run)).resolves.toEqual({
       focused: true,
       reach: 'terminal-host'
@@ -629,7 +778,7 @@ describe('focusSessionConsole', () => {
   it("reports the session's own console for an ancestor shell console (#190)", async () => {
     const { run } = fakeRunner({
       processJson: cmdConsoleJson,
-      consoleProbes: { 100: '131732 0', 90: '133320 1' }
+      consoleProbes: { 100: '131732 0 131732 100', 90: '133320 1 133320 90' }
     })
     await expect(focusSessionConsole(100, run)).resolves.toEqual({
       focused: true,
@@ -638,7 +787,7 @@ describe('focusSessionConsole', () => {
   })
 
   it('reports no reach at all when nothing came forward', async () => {
-    const { run } = fakeRunner({ consoleHandleStdout: '555555 1', focusExitCode: 1 })
+    const { run } = fakeRunner({ consoleHandleStdout: '555555 1 555555 4242', focusExitCode: 1 })
     await expect(focusSessionConsole(100, run)).resolves.toEqual({ focused: false, reach: null })
   })
 
