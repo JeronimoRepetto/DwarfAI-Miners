@@ -479,16 +479,21 @@ These are separate from the table above, and deliberately so: they are **real en
 only**, never keys in `config-v1.json`. A debugging device does not belong in the file an installed
 app reads on every launch. Each is on for `1` or `true` and off for anything else.
 
-| Variable       | What it prints                                                                        |
-| -------------- | ------------------------------------------------------------------------------------- |
-| `DWARFAI_PERF` | What each poll cost, in wall-clock milliseconds, per stage.                           |
-| `TIER_DEBUG`   | One line per file the tier walk skipped and why, plus a tally per project.            |
-| `CODEX_DEBUG`  | Which candidate Codex rollouts the liveness gate refused, and on which rule.          |
-| `SHELL_DEBUG`  | What main does to its two windows — the one place a silent failure was undiagnosable. |
+| Variable               | What it prints                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                           |
+| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.            |
+| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.          |
+| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable. |
+| `DARWIN_CONSOLE_INPUT` | Turns on the macOS console-input path (`osascript` keystrokes), shipped off (#367).   |
 
 `DWARFAI_PERF` has to be a real environment variable even in a development checkout
 (`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
-arrives too late to be read. The other three work either way.
+arrives too late to be read. The other four work either way.
+
+`DARWIN_CONSOLE_INPUT` is an opt-in for testing macOS console input on a machine that has already
+granted Accessibility permission — and because a shared terminal window is not yet refused on
+macOS (#367), test with one tab only.
 
 The development-only simulated valley (`DWARFAI_SIMULATE=1` and its seven `DWARFAI_SIMULATE_*`
 companions) is documented
