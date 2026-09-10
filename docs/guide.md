@@ -218,6 +218,14 @@ behind both reversals of the paste-versus-relay order is
 [`docs/console-hosting.md`](console-hosting.md). A message to a worker is delivered to its foreman,
 tagged for that worker by name.
 
+A message the **relay** carries is prefixed with one line saying you wrote it in the message panel
+and why it was relayed: Claude Code's cross-session messaging frames it for the receiving agent as
+another session's words rather than its user's, and that framing is the harness's rather than this
+app's to change — so the message states its own author, and the panel's hover says the same. A
+pasted message carries no prefix, because it already arrives as the prompt you typed; writing into
+a session's own console by verified process id is what will make every message arrive that way, on
+every platform.
+
 **Kick** does one of three things, and says which:
 
 - cuts the current turn short, where the session has an interrupt channel;
