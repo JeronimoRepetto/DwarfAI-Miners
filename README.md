@@ -121,6 +121,9 @@ are processed.
 
 - **Live session detection** — Claude Code, Codex and Antigravity sessions become dwarfs the moment
   they appear, no configuration required.
+- **Every worktree, one mine** — start a session in any git worktree of a project and it lands in
+  that project's own mine, not a new one; a dwarf's message panel names which worktree it is
+  actually in whenever a crew is spread across more than one.
 - **Two illustrated views** — a world map that follows the time of day, with one tier-coloured
   marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
 - **A message panel that floats** — click a dwarf and its conversation opens in a window of its
@@ -128,6 +131,9 @@ are processed.
 - **Send, with an honest verdict** — your message is drawn in the panel the instant you press
   Enter, and its own bubble carries the delivery mark: ✓ handed over, ✓✓ the session was seen
   acting, ✕ with the reason and a **Send again** beside it.
+- **Markdown in bubbles** — an agent's bold text, lists, quotes, inline and fenced code draw as
+  such instead of raw asterisks and backticks, and a link in a bubble opens in your system
+  browser.
 - **Kick in one click** — one press cuts a session's turn short. Where nothing can be interrupted,
   the same press sends the dwarf off the rock instead, and says so.
 - **Sound** — eight shuffled background tracks, a mine ambience that follows whether the crew is
@@ -293,7 +299,8 @@ project name, a chip row filters to one tier (**All** is the only chip an unmeas
 appears under), and the date control flips the order by last activity. A card can also **remove**
 its mine — which hides the row and nothing else: the ore stays, and adding the folder again brings
 the mine back. That is why removal asks a plain confirmation rather than the typed word Settings'
-irreversible metrics wipe asks for.
+irreversible metrics wipe asks for. Picking a folder that turns out to be a **git worktree** does
+not add it as its own mine — see [Git worktrees](#git-worktrees) below.
 
 **Mine interior.** The cave art for that tier, with the crew standing on the walkable floor along
 the bottom, the vault's material chip in the corner, and four round controls: **close**, **history**
@@ -332,11 +339,24 @@ What is in it:
 - **The conversation**, oldest first, opening on the newest message. It does not resize itself when
   a message arrives, and it does not scroll you to the bottom mid-sentence — the exception being a
   message you just sent, which it does follow.
+- **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
+  inline code, fenced code and links draw as such instead of the raw `**`, `-` and backtick
+  characters, with a heading drawn as a bold paragraph rather than at heading size — a bubble is
+  not a page. Tables, strikethrough, horizontal rules and images are outside that vocabulary and
+  are shown as the plain characters that were written, on purpose, rather than an invented
+  drawing; raw HTML is never interpreted. A link opens in your system browser and never inside the
+  panel. Conversation text is set in a different typeface (Pixelify Sans) from the rest of the
+  interface (Tiny5), since a paragraph needs a bold weight a single-weight pixel font cannot draw.
 - **A composer.** Enter sends, Shift+Enter writes a newline. It is drawn disabled, with the reason
   on it, whenever the session cannot receive text.
 - **Runs of tool calls, folded.** A stretch of consecutive activity lines collapses into one
   **Working…** disclosure under the bubble above it; click to unfold. Unfolding one never moves the
-  list. An `edit` or `read` line's own path is clickable and opens that file.
+  list. An `edit` or `read` line's own path is clickable and opens that file — in that dwarf's own
+  git worktree, when it is working in one rather than the project's main folder.
+- **Which worktree it's in**, beside the dwarf's name in the header, whenever a project's crew is
+  spread across more than one git worktree: the branch it has checked out, or the worktree's
+  folder name if its checkout is detached. Nothing is shown for a dwarf working in the project's
+  own folder, which is most of them — see [Git worktrees](#git-worktrees) below.
 - **Question and permission cards**, directly above the composer, when the session is blocked on a
   human. They are cleared only by the session's next snapshot, never by the panel.
 - **A history tab**, which expands the panel to full height and back.
@@ -345,6 +365,13 @@ What is in it:
   effort. No provider exposes a channel for raising effort mid-turn, and the panel shows the slot
   with its reason rather than hiding it. Effort on a held Claude session is changed from the mine's
   session strip instead.
+
+For a Codex session, a question card shows the same kind of question a held Claude session would
+ask — Codex's own `request_user_input` tool call — but it cannot be answered from here: Codex
+offers no answer channel to a session this panel only observes, so the card says to answer it in
+that session's own terminal instead. Codex's approval prompts, by contrast, never reach the panel
+at all, because Codex writes nothing to disk while one is open — measured, not merely unbuilt, in
+[`docs/codex-v2-format.md`](docs/codex-v2-format.md) §9.
 
 The panel resizes by dragging its top edge, or with the arrow keys on that handle.
 
@@ -402,6 +429,28 @@ around `tail -f`, and it parses JSONL with a small JavaScript formatter run on t
 the app already bundles (`process.execPath`, via `ELECTRON_RUN_AS_NODE`), so no system Node is
 required. If that formatter cannot run, the viewer falls back to showing the raw JSONL rather
 than nothing.
+
+### Git worktrees
+
+Running several agents on one codebase from several `git worktree` checkouts no longer produces
+several mines. Every worktree of a repository is detected — from the `.git` file a worktree
+checkout carries, with no `git` binary needed — and folded into the **main working tree's** mine,
+so the map shows one project rather than one per open worktree, and the material vault credits
+that one mine rather than splitting the total across several.
+
+Each dwarf still knows exactly where its own session runs: its [message panel](#the-message-panel)
+header names the branch beside its name (or the worktree's folder, if its checkout is detached),
+and an `Edited <path>` line opens that file in the worktree the dwarf is actually in rather than in
+the project's main folder. Nothing is shown for a dwarf working in the project's own folder, which
+is most of them.
+
+Adding a folder from the [Mines list](#what-the-panel-shows) that turns out to be a worktree does
+not declare it as a separate mine. Instead a dialog names the project it belongs to and asks
+whether to open that project's mine instead — opening the worktree itself is not offered, since the
+board would fold it in anyway.
+
+Two kinds of folder are deliberately **not** folded: a git submodule, and a bare repository's own
+checkout. Both are shown as their own project, exactly as before.
 
 ### Art pipeline
 
@@ -733,6 +782,12 @@ there replaces the configured list _including its architectures_, after which el
 falls back to the build host's own architecture — which is how two releases shipped arm64 only
 from an arm64 runner. Leaving the list off keeps `build.mac.target` in `package.json` the single
 place that decides which architectures ship.
+
+Every installer carries the Claude Agent SDK runtime for **its own** platform and architecture,
+whatever machine built it — so, for example, the x64 macOS installer built on an Apple Silicon
+Mac still holds the x64 runtime, which held Claude sessions need to start (see
+[Contributing](CONTRIBUTING.md#packaging-dependencies) for how that is declared and kept out of
+the other three installers).
 
 Windows and Linux builds are never code-signed, so SmartScreen and unsigned-`.deb`-aware package
 managers will warn — see [`docs/signing.md`](docs/signing.md) for exactly what that means and
