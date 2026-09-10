@@ -8,7 +8,11 @@ import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
-import { CONVERSATION_START_NOTE, NO_OLDER_PAGES_NOTE } from './lib/message/feedPages'
+import {
+  BEYOND_REACH_NOTE,
+  CONVERSATION_START_NOTE,
+  NO_OLDER_PAGES_NOTE
+} from './lib/message/feedPages'
 
 /*
  * The message panel's own window (#162).
@@ -1830,6 +1834,25 @@ describe('paging back through the conversation (#364)', () => {
     const note = wrapper.find('.panel-note').text()
     expect(note).toContain(NO_OLDER_PAGES_NOTE)
     expect(note).not.toContain(CONVERSATION_START_NOTE)
+  })
+
+  it('says the transcript outran the read when the page comes back beyond reach', async () => {
+    // The reader is not at the beginning and the panel must not say they are:
+    // the file goes on past the window walk's own ceiling, and the rest of it
+    // is only reachable in the session's own terminal.
+    const getDwarfFeedPage = vi
+      .fn()
+      .mockResolvedValue({ readable: true, messages: [], reachedStart: false })
+    const { wrapper } = await openPaged({ getDwarfFeedPage })
+
+    await scrollToTop(wrapper)
+
+    const note = wrapper.find('.panel-note').text()
+    expect(note).toContain(BEYOND_REACH_NOTE)
+    expect(note).not.toContain(CONVERSATION_START_NOTE)
+
+    await scrollToTop(wrapper)
+    expect(getDwarfFeedPage).toHaveBeenCalledTimes(1)
   })
 
   it('keeps every page the reader loaded when the poll pushes a fresh newest one', async () => {

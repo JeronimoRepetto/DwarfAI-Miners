@@ -30,6 +30,24 @@ export const CONVERSATION_START_NOTE = 'This is the start of the conversation.'
  * about a transcript nobody read (the distinction `DwarfFeedPage` draws).
  */
 export const NO_OLDER_PAGES_NOTE = 'The conversation before this cannot be read.'
+/**
+ * The page came back EMPTY and not the start — the one answer `readFeedPage`
+ * gives when its widest window filled and the cursor was not inside it.
+ *
+ * The walk stops at `FEED_WINDOW_CEILING_BYTES`, so this is a transcript that
+ * goes on past the furthest the read is willing to reach. Its own sentence, and
+ * for the sharpest of the three reasons: `reachedStart` would be a plain lie —
+ * there IS more conversation, and the reader is not at its beginning — while
+ * NO_OLDER_PAGES_NOTE would claim the transcript cannot be read at all, when in
+ * fact everything on screen came out of it. So it says what is true, and names
+ * the one place that still has the rest: the session's own terminal, which
+ * tails the file rather than reading a bounded tail of it.
+ *
+ * It stops the asking exactly as the start does. A second request would read
+ * the same eight mebibytes and answer the same nothing.
+ */
+export const BEYOND_REACH_NOTE =
+  "This is as far back as the panel can read; the rest is in the session's own terminal."
 
 /**
  * WHICH row the next page is asked for: the oldest thing SAID in what the panel
@@ -110,14 +128,22 @@ export function joinFeedPages(
  * What is happening now wins over what already happened: a read in flight is
  * reported even once the start has been reached, because the answer that
  * reached it is what the reader is waiting on.
+ *
+ * The start comes LAST of the three standing facts, which is the ordering that
+ * matters. It is the only one of them that claims the reader has seen the whole
+ * conversation, and both of the others exist precisely because that claim would
+ * be false — so a state that somehow held two of them cannot fall out as the
+ * reassuring one.
  */
 export function pagingNoteOf(state: {
   loading: boolean
   reachedStart: boolean
   unpageable: boolean
+  beyondReach: boolean
 }): string | null {
   if (state.loading) return READING_OLDER_NOTE
   if (state.unpageable) return NO_OLDER_PAGES_NOTE
+  if (state.beyondReach) return BEYOND_REACH_NOTE
   if (state.reachedStart) return CONVERSATION_START_NOTE
   return null
 }

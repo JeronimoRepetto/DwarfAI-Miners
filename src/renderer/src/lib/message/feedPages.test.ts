@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BEYOND_REACH_NOTE,
   CONVERSATION_START_NOTE,
   NO_OLDER_PAGES_NOTE,
   READING_OLDER_NOTE,
@@ -126,31 +127,47 @@ describe('joinFeedPages', () => {
 })
 
 describe('pagingNoteOf', () => {
+  const NOTHING_ASKED = {
+    loading: false,
+    reachedStart: false,
+    unpageable: false,
+    beyondReach: false
+  }
+
   it('says nothing at all while the reader has asked for nothing', () => {
-    expect(pagingNoteOf({ loading: false, reachedStart: false, unpageable: false })).toBeNull()
+    expect(pagingNoteOf(NOTHING_ASKED)).toBeNull()
   })
 
   it('says a read is under way while one is in flight', () => {
-    expect(pagingNoteOf({ loading: true, reachedStart: false, unpageable: false })).toBe(
-      READING_OLDER_NOTE
-    )
+    expect(pagingNoteOf({ ...NOTHING_ASKED, loading: true })).toBe(READING_OLDER_NOTE)
   })
 
   it('says the conversation has a beginning once the last page came back', () => {
-    expect(pagingNoteOf({ loading: false, reachedStart: true, unpageable: false })).toBe(
-      CONVERSATION_START_NOTE
-    )
+    expect(pagingNoteOf({ ...NOTHING_ASKED, reachedStart: true })).toBe(CONVERSATION_START_NOTE)
   })
 
   it('says a conversation cannot be paged at all, which is not the same as reaching its start', () => {
-    expect(pagingNoteOf({ loading: false, reachedStart: false, unpageable: true })).toBe(
-      NO_OLDER_PAGES_NOTE
-    )
+    expect(pagingNoteOf({ ...NOTHING_ASKED, unpageable: true })).toBe(NO_OLDER_PAGES_NOTE)
+  })
+
+  it('says the transcript outran the read when the page came back beyond reach', () => {
+    // The window walk stops at FEED_WINDOW_CEILING_BYTES. Past that the file
+    // goes on and the read cannot follow it, which is neither the start of the
+    // conversation nor a transcript that cannot be paged.
+    expect(pagingNoteOf({ ...NOTHING_ASKED, beyondReach: true })).toBe(BEYOND_REACH_NOTE)
   })
 
   it('says what is happening now over what already happened', () => {
-    expect(pagingNoteOf({ loading: true, reachedStart: true, unpageable: false })).toBe(
+    expect(pagingNoteOf({ ...NOTHING_ASKED, loading: true, reachedStart: true })).toBe(
       READING_OLDER_NOTE
+    )
+  })
+
+  it('keeps out of reach apart from the start, which it must never be read as', () => {
+    // Belt and braces: the composable never sets both, and if it ever did, the
+    // claim that must not slip out is "you have seen the beginning".
+    expect(pagingNoteOf({ ...NOTHING_ASKED, beyondReach: true, reachedStart: true })).toBe(
+      BEYOND_REACH_NOTE
     )
   })
 })

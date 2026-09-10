@@ -51,10 +51,24 @@ export interface DwarfPagingState {
    * claiming the transcript was read back to its first line.
    */
   unpageable: boolean
+  /**
+   * The read cannot go back any further, though the conversation does: the
+   * transcript outgrew `FEED_WINDOW_CEILING_BYTES` and the walk stopped at it.
+   * Stops the asking like `reachedStart`, and says something else entirely —
+   * see BEYOND_REACH_NOTE.
+   */
+  beyondReach: boolean
 }
 
 function emptyState(): DwarfPagingState {
-  return { dwarfId: null, pages: [], loading: false, reachedStart: false, unpageable: false }
+  return {
+    dwarfId: null,
+    pages: [],
+    loading: false,
+    reachedStart: false,
+    unpageable: false,
+    beyondReach: false
+  }
 }
 
 const state = reactive<DwarfPagingState>(emptyState())
@@ -88,14 +102,15 @@ export function useDwarfPaging() {
    * panel is currently drawing for `dwarfId`, older pages included, so the
    * cursor walks back one page per request.
    *
-   * Refused without a word in four cases, none of them an error: nothing said
-   * to page before, a read already in flight, the start already reached, and a
-   * conversation that cannot be paged. Refused too for a dwarf whose pages this
-   * store is not holding, because the answer would have nowhere to go.
+   * Refused without a word in five cases, none of them an error: nothing said
+   * to page before, a read already in flight, the start already reached, a
+   * conversation that cannot be paged, and one whose transcript outran the
+   * read's own ceiling. Refused too for a dwarf whose pages this store is not
+   * holding, because the answer would have nowhere to go.
    */
   async function older(dwarfId: string, shown: readonly FeedMessage[]): Promise<void> {
     if (state.dwarfId !== dwarfId) return
-    if (state.loading || state.reachedStart || state.unpageable) return
+    if (state.loading || state.reachedStart || state.unpageable || state.beyondReach) return
     const before = feedPageCursorOf(shown)
     if (before === null) return
 
@@ -122,6 +137,13 @@ export function useDwarfPaging() {
     // oldest row. What it carries is the flag, not the rows.
     if (page.messages.length > 0) state.pages = [[...page.messages], ...state.pages]
     state.reachedStart = page.reachedStart
+    // Empty AND not the start is the wall: `readFeedPage`'s widest window
+    // filled without holding the cursor, so the file goes on past
+    // FEED_WINDOW_CEILING_BYTES and no page can come from behind it. Read off
+    // the two fields together because neither says it alone — an empty page at
+    // the start is the ordinary end of the conversation, and a short page that
+    // is not the start is the ordinary middle of a walk.
+    if (page.messages.length === 0 && !page.reachedStart) state.beyondReach = true
   }
 
   /** The one line the panel says about the reading, or nothing. */

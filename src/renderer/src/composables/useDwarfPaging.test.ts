@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  BEYOND_REACH_NOTE,
   CONVERSATION_START_NOTE,
   NO_OLDER_PAGES_NOTE,
   READING_OLDER_NOTE,
@@ -221,6 +222,57 @@ describe('useDwarfPaging', () => {
     // line (the distinction DwarfFeedPage draws).
     await older('claude:s1', [said('halfway down', 't1')])
     expect(api).toHaveBeenCalledTimes(1)
+  })
+
+  it('says the transcript outran the read, and stops asking, when the page is beyond reach', async () => {
+    // Empty and NOT the start is the one answer `readFeedPage` gives when its
+    // widest window filled and the cursor was not in it: the file goes on past
+    // FEED_WINDOW_CEILING_BYTES and the walk stopped there. Asking again would
+    // read the same 8 MiB and answer the same nothing, so it stops — and it
+    // must never be reported as the beginning of the conversation.
+    const api = stubApi(() =>
+      Promise.resolve({ readable: true, messages: [], reachedStart: false })
+    )
+    const { hold, older, state, note } = useDwarfPaging()
+
+    hold('claude:s1')
+    await older('claude:s1', [said('halfway down', 't1')])
+
+    expect(note.value).toBe(BEYOND_REACH_NOTE)
+    expect(state.pages).toEqual([])
+    expect(state.reachedStart).toBe(false)
+
+    await older('claude:s1', [said('halfway down', 't1')])
+    expect(api).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps asking after a SHORT page, which is a page and not a wall', async () => {
+    // Non-empty with reachedStart false is the ordinary middle of a walk: rows
+    // came back and there is more behind them. Only an EMPTY one at the ceiling
+    // means the read cannot go further.
+    const api = stubApi(() => Promise.resolve(PAGE))
+    const { hold, older, note } = useDwarfPaging()
+
+    hold('claude:s1')
+    await older('claude:s1', [said('halfway down', 't1')])
+
+    expect(note.value).toBeNull()
+
+    await older('claude:s1', [said('the first thing', 't0'), said('halfway down', 't1')])
+    expect(api).toHaveBeenCalledTimes(2)
+  })
+
+  it('forgets a wall it hit when the panel moves on, so the next dwarf may page', async () => {
+    stubApi(() => Promise.resolve({ readable: true, messages: [], reachedStart: false }))
+    const { hold, older, note } = useDwarfPaging()
+
+    hold('claude:s1')
+    await older('claude:s1', [said('halfway down', 't1')])
+    expect(note.value).toBe(BEYOND_REACH_NOTE)
+
+    hold('claude:s2')
+
+    expect(note.value).toBeNull()
   })
 
   it('claims nothing when the bridge itself failed, and lets the reader ask again', async () => {
