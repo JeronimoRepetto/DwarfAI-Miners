@@ -304,11 +304,16 @@ const LAUNCH_END_REFUSED = 'That session could not be ended.'
  *
  * The mirror of NO_PASTE_TIER above and the same discipline: an optional port
  * method that is missing becomes a stated refusal rather than a silent no-op.
- * It is reachable in principle only — the POSIX ports implement no end tier,
- * and a 'terminal' target never reaches a kick there because
- * `supportsConsoleInput` is false on both and degrades it to the relay first
- * (see deliveryTargetOf). See TextDeliveryPort.endConsoleSession for why POSIX
- * has none.
+ *
+ * Both shipped ports implement one since #366 — Windows ends the process tree,
+ * macOS and Linux signal the verified pid — so this is the honest refusal for a
+ * port that still lacks the tier rather than a statement about a platform. It is
+ * reached rather than routed around on purpose: the kick's route keeps the
+ * console even where the machine cannot type into it, because ending a session
+ * needs no console input, and a relay quietly substituted for the act would be
+ * the two-acts-one-label defect #366 repaired. The relay cancel behind this
+ * still applies where the session has a name — weaker than what was asked for,
+ * and said so.
  */
 const NO_TERMINAL_END_TIER = "This build can't end a session running in a terminal."
 /**
@@ -1276,7 +1281,14 @@ export class AgentRuntime {
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
         const delivered = pollProfiler.measureSync('stamp', () =>
-          stampTextDelivery(withReceipts, (dwarfId) => this.deliveryTargetOf(dwarfId))
+          stampTextDelivery(
+            withReceipts,
+            (dwarfId) => this.deliveryTargetOf(dwarfId),
+            // The machine's half of the send capability (#366): a console this
+            // port cannot type into is not a send channel, and the kick half
+            // beside it is unaffected — it needs a pid, not a keyboard.
+            this.canTypeIntoConsole()
+          )
         )
         // What a session the panel HOLDS is asking, live (#94). This runs after
         // the provider has already stamped whatever its transcript tail
@@ -2147,31 +2159,23 @@ export class AgentRuntime {
    * provider that predates the capability surface (or does not implement it)
    * simply reports no channel.
    *
-   * A 'terminal' target is degraded on platforms whose delivery port cannot
-   * type into a console (macOS until its osascript path is verified, Linux
-   * always): to its relay address when the session carries one — the relay
-   * spawns a CLI, so it works on every platform — and to no channel at all
-   * otherwise. Providers answer from what the SESSION offers, which is a fact
-   * about the session, not about this machine; intersecting the two here is
-   * what makes the panel show a working relay Send (or a disabled button with
-   * a reason) instead of a Send that quietly types nowhere.
+   * What a target says is what the SESSION offers, and nothing about this
+   * machine — which is why the intersection with what this machine can DO is no
+   * longer taken here (#366). It used to be: a 'terminal' target was degraded to
+   * its relay address wherever `supportsConsoleInput` was false, and that
+   * degrade reached both acts, so Kick on macOS and Linux asked the agent to
+   * stop by relay where the same button ends the session on Windows. Console
+   * input and an end tier are different capabilities — a message needs the
+   * window server, an end needs only a pid — so the machine's half of the answer
+   * belongs beside the rest of the send/kick split, in resolve.ts
+   * (`degradedForSend`, which the send route reads and the kick route does not).
    *
-   * ONLY a 'terminal' target is degraded, and the reason matters: it is the one
-   * kind that claims a console this machine may be unable to type into. A
+   * The one thing that never was degraded, and the reason it matters: a
    * 'codex-queue' target claims no console at all — it spawns a CLI, like the
-   * relay — so intersecting it with console support would delete a working
-   * channel from macOS and Linux, the two platforms with the fewest to spare
-   * (#97).
-   *
-   * This is where a console this MACHINE cannot reach is removed, and nothing
-   * more. Which tier a given act prefers when the machine can reach it is a
-   * different question and not one target can answer, because send and kick
-   * answer it differently: resolve.ts owns that split (`sendRouteOf` versus
-   * `kickEndpointOf`), and putting the relay-first rule here would hand it to
-   * the kick as well (#308).
+   * relay — so intersecting it with console support would have deleted a working
+   * channel from the two platforms with the fewest to spare (#97).
    */
   private deliveryTargetOf(dwarfId: string): TextDeliveryTarget | null {
-    const consoleSupported = this.textDelivery.supportsConsoleInput !== false
     // A held session's crew first, because no provider knows these dwarfs
     // exist: the panel put them on the board off the session's own stream
     // (#157). Every one of them relays — a running subagent has no channel of
@@ -2217,11 +2221,6 @@ export class AgentRuntime {
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
       if (target === undefined || target === null) continue
-      if (target.kind === 'terminal' && !consoleSupported) {
-        return target.sessionName === undefined
-          ? null
-          : { kind: 'claude-relay', sessionName: target.sessionName }
-      }
       return target
     }
     // LAST, and deliberately: this is the channel of last resort (#217). It
@@ -2383,6 +2382,20 @@ export class AgentRuntime {
     const dwarf = this.mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === dwarfId)
     if (dwarf === undefined || dwarf.pid !== pid) return undefined
     return dwarf.pidStartedAt
+  }
+
+  /**
+   * Whether this machine's delivery port can write into a console at all — the
+   * one capability a send route is intersected with (#366).
+   *
+   * Absent means yes, which is the port's own reading of the flag. It answers
+   * for the MESSAGE only: ending a session needs no console input, so the kick
+   * route asks this nothing (see deliveryTargetOf, and `degradedForSend` in
+   * resolve.ts). The permission keystroke of #203 does ask, because a key is a
+   * key wherever it is aimed.
+   */
+  private canTypeIntoConsole(): boolean {
+    return this.textDelivery.supportsConsoleInput !== false
   }
 
   /**
@@ -2741,8 +2754,15 @@ export class AgentRuntime {
     // for want of a terminal — and the queue behind that relay is read between
     // tool calls, which is precisely where a session waiting on a dialog is
     // not (see this method's own note above).
+    //
+    // And the console-input capability explicitly, since #366 (where the kick's
+    // own route no longer carries it): a decision is a KEYSTROKE, so it needs a
+    // console this machine can type into, exactly as a message does. The kick
+    // beside it needs only a pid, which is why the route it shares stopped
+    // asking. Asked before the rescan below for the reason the id check is: a
+    // platform that cannot type is not going to be able to a moment later.
     const resolved = resolveKickDelivery(dwarf.id, (id) => this.deliveryTargetOf(id))
-    if (resolved === null || resolved.endpoint.kind !== 'terminal') {
+    if (resolved === null || resolved.endpoint.kind !== 'terminal' || !this.canTypeIntoConsole()) {
       return { answered: false, error: CANNOT_REACH_TERMINAL }
     }
     const keystroke = this.permissionKeystroke(request.decision)
@@ -2825,7 +2845,11 @@ export class AgentRuntime {
     const text = request.text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
     if (text === '') return { delivered: false, via: 'none', error: EMPTY_MESSAGE }
 
-    const resolved = resolveTextDelivery(request.dwarfId, (id) => this.deliveryTargetOf(id))
+    const resolved = resolveTextDelivery(
+      request.dwarfId,
+      (id) => this.deliveryTargetOf(id),
+      this.canTypeIntoConsole()
+    )
     if (resolved === null) {
       // Two different refusals, because they are two different facts (#217).
       // A session this panel launched HAS no inbox — it read one prompt and

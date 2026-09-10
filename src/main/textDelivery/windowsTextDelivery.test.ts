@@ -657,21 +657,28 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
    * AMENDED throughout this block for the #329 review: an end now names the
    * creation time it expects, and the port re-probes the pid before killing it.
    * The four cases below are unchanged in what they assert.
+   *
+   * AMENDED for #366: `ProcessEndPort` grew the two direct-pid signals the
+   * POSIX end tier needs, so this fake carries them. They are asserted never to
+   * be called — the Windows tier ends a TREE, and a direct signal here would be
+   * the launched tier's group mistake in reverse.
    */
   function ender(
     endProcessTree = vi.fn().mockResolvedValue(true),
     processStartTimeMs = vi.fn().mockResolvedValue(EXPECTED_START_MS),
     extra: Parameters<typeof delivery>[0] = {}
   ) {
+    const terminateProcess = vi.fn().mockResolvedValue(false)
+    const killProcess = vi.fn().mockResolvedValue(false)
     const port = delivery({
-      processEnd: { endProcessTree },
+      processEnd: { endProcessTree, terminateProcess, killProcess },
       processProbe: { isCodexProcessRunning: vi.fn(), processStartTimeMs },
       // #358: the graceful-first grace window polls the pid on an injected
       // delay, so a unit test resolves it instantly instead of waiting ~3s.
       sleep: async () => {},
       ...extra
     })
-    return { port, endProcessTree, processStartTimeMs }
+    return { port, endProcessTree, processStartTimeMs, terminateProcess, killProcess }
   }
 
   /*
@@ -880,5 +887,22 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     expect(outcome.error).toMatch(/could not be verified/i)
     expect(runPowerShell).not.toHaveBeenCalled()
     expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The mirror of the POSIX tier's own guard (#366): each platform's end tier
+   * uses the one act that is true of it. Windows kills the TREE, because
+   * `taskkill /T` walks the live parent/child rows and reaches the session's own
+   * tool processes; the direct-pid signals exist for POSIX, where a tree is not
+   * addressable and a group is the wrong one.
+   */
+  it('never reaches for the direct-pid signals POSIX ends with (#366)', async () => {
+    const { port, terminateProcess, killProcess, endProcessTree } = ender()
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+    expect(terminateProcess).not.toHaveBeenCalled()
+    expect(killProcess).not.toHaveBeenCalled()
   })
 })

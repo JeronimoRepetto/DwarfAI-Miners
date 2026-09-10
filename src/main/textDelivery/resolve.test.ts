@@ -658,3 +658,112 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
     })
   })
 })
+
+/**
+ * A machine that cannot type into a console — macOS and Linux (#366).
+ *
+ * The capability reaches the SEND route only, and that split is the whole issue:
+ * before it, a console this machine could not type into was removed from the
+ * target itself, so the kick lost the console too and Kick meant "ask the agent
+ * to stop by relay" on two platforms and "end the session" on the third.
+ */
+describe('a console this machine cannot type into (#366)', () => {
+  const NAMED = {
+    kind: 'terminal' as const,
+    pid: 42,
+    sessionName: 'sample-project-70'
+  }
+  const NAMELESS = { kind: 'terminal' as const, pid: 42 }
+
+  it('sends a named console session over its relay instead', () => {
+    expect(resolveTextDelivery('claude:s1', targetsFrom({ 'claude:s1': NAMED }), false)).toEqual({
+      channel: 'claude-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
+      prefix: ''
+    })
+  })
+
+  it('offers no send at all where the console has no relay address', () => {
+    expect(
+      resolveTextDelivery('claude:s1', targetsFrom({ 'claude:s1': NAMELESS }), false)
+    ).toBeNull()
+  })
+
+  /*
+   * A worker's chain keeps naming the HOP rather than the tier under it, before
+   * and after the degrade: what the panel describes there is the foreman it
+   * travels through.
+   */
+  it("keeps a worker's chain on 'foreman-relay' through the degrade", () => {
+    const resolved = resolveTextDelivery(
+      'claude:s1:w1',
+      targetsFrom({
+        'claude:s1:w1': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': NAMED
+      }),
+      false
+    )
+    expect(resolved).toMatchObject({
+      channel: 'foreman-relay',
+      endpoint: { kind: 'claude-relay', sessionName: 'sample-project-70' },
+      prefix: '[for agent Explorer] '
+    })
+  })
+
+  /*
+   * The kick keeps the console on the same target, and needs no capability
+   * passed to say so: ending a session is a signal to a pid.
+   */
+  it('still routes a kick to that console, named or not', () => {
+    for (const target of [NAMED, NAMELESS]) {
+      expect(resolveKickDelivery('claude:s1', targetsFrom({ 'claude:s1': target }))).toEqual({
+        channel: 'terminal',
+        endpoint: target,
+        prefix: ''
+      })
+    }
+  })
+
+  /*
+   * And the stamped matrix says both, on one dwarf: the composer offers the
+   * relay it will really use, and Kick says it ends the session, which it will.
+   * The panel and the runtime read the same two functions, so they cannot
+   * disagree about this dwarf.
+   */
+  it('stamps the relay for sending and the console for cancelling on one dwarf', () => {
+    const [stamped] = stampTextDelivery(
+      [
+        {
+          id: 'mine:c:\work',
+          path: 'C:\work',
+          name: 'work',
+          tier: 'bronze',
+          dwarfs: [
+            {
+              id: 'claude:s1',
+              provider: 'claude',
+              role: 'foreman',
+              name: 'boss',
+              status: 'working',
+              sessionId: 's1'
+            }
+          ],
+          tokensObserved: 0,
+          updatedAt: 1
+        }
+      ],
+      targetsFrom({ 'claude:s1': NAMED }),
+      false
+    )
+    expect(stamped?.dwarfs[0]?.textDelivery).toBe('claude-relay')
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'claude-relay',
+      cancel: 'terminal',
+      adjustEffort: null
+    })
+  })
+})

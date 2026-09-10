@@ -294,9 +294,16 @@ export interface TextDeliveryPort {
    *
    * Linux has no portable way to synthesize a keystroke into someone else's
    * terminal, and the macOS path is not integration-verified yet, so both
-   * report false. The runtime reads this before offering a 'terminal' channel
-   * to the panel: a button that cannot deliver is shown disabled with a reason
-   * rather than failing after the user has typed.
+   * report false. The runtime reads this before offering a 'terminal' SEND
+   * channel to the panel: a button that cannot deliver is shown disabled with a
+   * reason rather than failing after the user has typed.
+   *
+   * The send, and the permission keystroke of #203, and nothing else (#366). It
+   * used to gate the whole 'terminal' target, which took the KICK with it — and
+   * a kick needs no console input at all, only a pid, so the same button ended
+   * the session on Windows and asked the agent to stop by relay on macOS and
+   * Linux. Whether a session can be ENDED is what `endConsoleSession` below
+   * answers by its presence; this flag says nothing about it.
    */
   readonly supportsConsoleInput?: boolean
   /**
@@ -369,15 +376,33 @@ export interface TextDeliveryPort {
    * anything short of agreement, unknown included (#231). This is the one guard
    * in the app that fails closed.
    *
-   * Optional for the reason `pasteToConsole` is, and absent for a stronger
-   * one: only the Windows port implements it. The POSIX tree kill signals the
-   * process GROUP — correct for a process this panel STARTED as a group leader
-   * (#217), and wrong for a session somebody else launched, whose pid leads no
-   * group of ours. Rather than signal a group that may not be the session's,
-   * the POSIX port omits this and the runtime states the refusal; a `terminal`
-   * target does not reach a kick there today in any case, because
-   * `supportsConsoleInput` is false on both POSIX platforms and degrades it to
-   * the relay first. A per-OS end is a follow-up, noted in `platform-ports`.
+   * BOTH shipped ports implement it since #366, and the POSIX one is the
+   * simpler of the two. Windows had to imitate a clean exit with keystrokes;
+   * SIGTERM is catchable, so on macOS and Linux the signal itself gives the CLI
+   * its own exit path — no window, no keystroke, and none of the shared-tab
+   * ambiguity #329 had to design around. The signal is addressed to the pid
+   * DIRECTLY there: the POSIX tree kill signals the process GROUP, which is
+   * correct for a process this panel STARTED as a group leader (#217) and wrong
+   * for a session somebody else launched, whose pid leads no group of ours (see
+   * processEnd.ts for the two builders).
+   *
+   * Optional still, for the reason `pasteToConsole` is: a port without one is a
+   * port that cannot end a session, and the runtime states that refusal rather
+   * than pretending (see NO_TERMINAL_END_TIER). Console input is NOT what gates
+   * it — that was the conflation #366 undid. A message needs the window server
+   * and an end needs a pid, so a port may have either without the other, and
+   * `supportsConsoleInput` says nothing about this method.
+   *
+   * What is unmeasured on POSIX is the guard's INPUT, not the act:
+   * `expectedStartMs` comes from `Dwarf.pidStartedAt`, which the Claude provider
+   * sets only where the session registry's `procStart` — documented as a Windows
+   * FILETIME — agreed with a live probe. Nobody has yet measured what
+   * `~/.claude/sessions/<pid>.json` records on macOS or Linux, so if it carries
+   * no comparable value the verdict is 'unknown', the field is absent, and the
+   * runtime refuses the kick before this method is ever called. That is the
+   * correct failure — fail closed — and it means this tier stays unreachable
+   * there until the measurement is taken (see docs/console-hosting.md, and do
+   * not weaken the guard to reach it).
    */
   endConsoleSession?(request: EndSessionRequest): Promise<TextDeliveryOutcome>
   /**

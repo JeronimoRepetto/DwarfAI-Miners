@@ -146,12 +146,20 @@ function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): Forem
  * channel the send will actually use — 'terminal' for a direct send now that
  * the console is primary again. A worker's chain keeps 'foreman-relay', because
  * what the panel is describing there is still the hop and not the tier under it.
+ *
+ * It is also where a console this MACHINE cannot type into is removed (#366).
+ * That intersection used to happen a step earlier, on the target itself, which
+ * silently took the kick with it; console input and an end tier are different
+ * capabilities, so only the send answers to the first. See `degradedForSend`.
  */
-function sendRouteOf(hops: ForemanHops): Omit<ResolvedTextDelivery, 'prefix'> | null {
-  if (!canCarryText(hops.endpoint)) return null
-  const endpoint = hops.endpoint
+function sendRouteOf(
+  hops: ForemanHops,
+  consoleInput: boolean
+): Omit<ResolvedTextDelivery, 'prefix'> | null {
+  const endpoint = degradedForSend(hops.endpoint, consoleInput)
+  if (endpoint === null || !canCarryText(endpoint)) return null
   if (endpoint.kind !== 'terminal' || endpoint.sessionName === undefined) {
-    return { channel: hops.channel, endpoint }
+    return { channel: channelOf(hops, endpoint), endpoint }
   }
   // The name moves off the endpoint to the fallback slot, the mirror of what
   // #308 did with the pid: the endpoint is the plain console the paste writes
@@ -159,24 +167,78 @@ function sendRouteOf(hops: ForemanHops): Omit<ResolvedTextDelivery, 'prefix'> | 
   // advertises. `hops.channel` is already 'terminal' for a direct send and
   // 'foreman-relay' for a worker's chain, and neither changes here.
   return {
-    channel: hops.channel,
+    channel: channelOf(hops, endpoint),
     endpoint: { kind: 'terminal', pid: endpoint.pid },
     relayFallbackSessionName: endpoint.sessionName
   }
 }
 
 /**
+ * The channel a resolved chain reports for `endpoint` — the kind for a direct
+ * one, and the HOP for a worker's.
+ *
+ * `followForemanHops` computes exactly this off the target it walked to; it is
+ * recomputed here because a send may degrade that endpoint (below), and the
+ * capability the panel reads must name the channel the act will actually use.
+ */
+function channelOf(hops: ForemanHops, endpoint: TextDeliveryEndpoint): TextDeliveryChannel {
+  return hops.workerNames.length === 0 ? endpoint.kind : 'foreman-relay'
+}
+
+/**
+ * A 'terminal' endpoint this machine cannot write into, degraded to the relay
+ * address the same session also answers to — or null when it carries none.
+ *
+ * This is where a console this MACHINE cannot type into is removed, and it
+ * applies to a MESSAGE only (#366). It used to sit in the runtime's
+ * `deliveryTargetOf`, where it degraded the target itself and so took the kick
+ * with it: a POSIX terminal target never reached an end tier because
+ * `supportsConsoleInput` was false, and the button that ends a session on
+ * Windows asked the agent to stop by relay there instead. Two acts, one label.
+ *
+ * Console input and an end tier are different capabilities. A keystroke or a
+ * paste needs the window server — macOS's osascript path is unverified and
+ * Linux has no portable one — while ending a session needs only a pid, which
+ * every platform can signal. So the degrade belongs to the send route, next to
+ * the rest of the send/kick split this file owns, and `kickEndpointOf` keeps the
+ * console: a port without an end tier states that refusal itself
+ * (NO_TERMINAL_END_TIER), rather than having a relay quietly substituted for the
+ * act the person asked for.
+ *
+ * Only 'terminal' is ever degraded, and only here: a 'codex-queue' claims no
+ * console at all — it spawns a CLI, like the relay — so intersecting it with
+ * console support would delete a working channel from the two platforms with
+ * the fewest to spare (#97).
+ */
+function degradedForSend(
+  endpoint: TextDeliveryEndpoint,
+  consoleInput: boolean
+): TextDeliveryEndpoint | null {
+  if (endpoint.kind !== 'terminal' || consoleInput) return endpoint
+  return endpoint.sessionName === undefined
+    ? null
+    : { kind: 'claude-relay', sessionName: endpoint.sessionName }
+}
+
+/**
  * Follow `dwarfId` to a writable endpoint, or null when no channel exists.
  * A worker contributes an `[for agent <name>] ` prefix so the foreman reading
  * the message knows who it was meant for.
+ *
+ * `consoleInput` is whether this machine's delivery port can write into a
+ * console at all; false degrades a console endpoint to its relay address, or to
+ * no channel where it has none (see `degradedForSend`). It defaults to true —
+ * the reading `TextDeliveryPort.supportsConsoleInput` gives an absent flag, and
+ * what every test fake wants.
  */
 export function resolveTextDelivery(
   dwarfId: string,
-  targetOf: TextDeliveryLookup
+  targetOf: TextDeliveryLookup,
+  consoleInput = true
 ): ResolvedTextDelivery | null {
   const hops = followForemanHops(dwarfId, targetOf)
   if (hops === null) return null
-  const route = sendRouteOf(hops)
+  const route = sendRouteOf(hops, consoleInput)
   if (route === null) return null
   return {
     ...route,
@@ -243,6 +305,13 @@ function canInterrupt(endpoint: TextDeliveryEndpoint): boolean {
  * hosted process — no provider reads it, so no worker of its can be on the
  * board to relay through it. A guard here would be an unreachable branch
  * claiming a case exists.
+ *
+ * A 'terminal' endpoint is NOT degraded here, and that is #366: this act needs
+ * no console input, only a pid, so every platform can perform it. A port with
+ * no end tier says so itself (NO_TERMINAL_END_TIER) and the relay behind it
+ * still carries the cancel instruction where the session has a name — a stated
+ * refusal with a weaker second attempt, rather than a relay substituted for the
+ * act the person asked for without saying so.
  */
 function kickEndpointOf(hops: ForemanHops): KickEndpoint | null {
   if (!canCarryKick(hops.endpoint)) return null
@@ -294,7 +363,11 @@ export function resolveKickDelivery(
  * are facts about a session TYPE. A named observed Claude session used to be a
  * third, one-session asymmetry (#308: relay for a message, console for a kick),
  * but #319 pastes the message at its console too, so both halves are 'terminal'
- * again and it is symmetric once more. `sendChannel` still comes off
+ * again and it is symmetric once more — on Windows. On macOS and Linux that
+ * same dwarf is asymmetric again for a reason about the MACHINE rather than the
+ * session (#366): it cannot be typed into, so a message takes the relay, and it
+ * can be signalled, so the kick ends it. `consoleInput` is what carries that
+ * here, and it reaches the send half only. `sendChannel` still comes off
  * sendRouteOf rather than the shared walk, because the two asymmetric types
  * above still make send and kick disagree. `textDelivery` mirrors sendText
  * only, because it is the field the composer reads — stamping a channel that
@@ -306,14 +379,18 @@ export function resolveKickDelivery(
  * per dwarf, and it should stay once. adjustEffort is always null; no provider
  * exposes a channel for it yet.
  */
-export function stampTextDelivery(mines: Mine[], targetOf: TextDeliveryLookup): Mine[] {
+export function stampTextDelivery(
+  mines: Mine[],
+  targetOf: TextDeliveryLookup,
+  consoleInput = true
+): Mine[] {
   return mines.map((mine) => ({
     ...mine,
     dwarfs: mine.dwarfs.map((dwarf) => {
       if (dwarf.status === 'leaving') return dwarf
       const hops = followForemanHops(dwarf.id, targetOf)
       if (hops === null) return dwarf
-      const sendChannel = sendRouteOf(hops)?.channel ?? null
+      const sendChannel = sendRouteOf(hops, consoleInput)?.channel ?? null
       const kickChannel = kickEndpointOf(hops) === null ? null : hops.channel
       return {
         ...dwarf,

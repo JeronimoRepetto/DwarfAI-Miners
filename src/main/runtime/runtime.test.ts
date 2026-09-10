@@ -2097,10 +2097,87 @@ describe('AgentRuntime.kickDwarf', () => {
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  it('kicks over the relay where console input is unavailable and the session has a name', async () => {
-    // Same degrade as sendDwarfText: a named interactive session on a platform
-    // with no console input keeps a working Kick through its relay address.
+  /*
+   * AMENDED for #366 (was: 'kicks over the relay where console input is
+   * unavailable and the session has a name', asserting `via: 'claude-relay'`,
+   * the relay called with the cancel instruction, and `endConsoleSession` NEVER
+   * called — the send's degrade applied to the kick as well).
+   *
+   * That degrade was the defect. Console input and an end tier are different
+   * capabilities: a message needs the window server, ending a session needs only
+   * a pid. So a port that cannot type but CAN end now ends, which is what makes
+   * Kick mean the same thing on all three platforms. The relay stays the
+   * fallback behind a refused end, and the same port with no end tier at all is
+   * the case below.
+   */
+  it('ends the session where console input is unavailable but the port can end one (#366)', async () => {
     const port = { ...fakePort(), supportsConsoleInput: false }
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
+      port
+    )
+
+    await expect(runtime.kickDwarf({ dwarfId: FOREMAN_ID })).resolves.toEqual({
+      delivered: true,
+      via: 'terminal'
+    })
+    expect(port.endConsoleSession).toHaveBeenCalledWith({
+      pid: 42,
+      expectedStartMs: VERIFIED_START_MS
+    })
+    // No window is touched to do it, which is why the platform's inability to
+    // type into one never mattered here.
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The other half of #366's split, on the same dwarf: a MESSAGE still takes the
+   * relay there, because pasting needs the console this machine cannot reach.
+   * One dwarf, two channels, and the asymmetry is about the MACHINE rather than
+   * the session for the first time (see stampTextDelivery).
+   */
+  it('keeps a message on the relay for that same dwarf, and says so', async () => {
+    const port = { ...fakePort(), supportsConsoleInput: false }
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
+      port
+    )
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: false })
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith({
+      sessionName: 'sample-project-70',
+      text: 'hi'
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+
+    // And the panel is told exactly that, so the two buttons describe the two
+    // acts: the runtime and the capability matrix must not disagree about one
+    // dwarf (see stampTextDelivery).
+    const dwarf = runtime.getMines()[0]!.dwarfs.find((item) => item.id === FOREMAN_ID)
+    expect(dwarf?.textDelivery).toBe('claude-relay')
+    expect(dwarf?.capabilities).toMatchObject({
+      sendText: 'claude-relay',
+      cancel: 'terminal'
+    })
+  })
+
+  /*
+   * A port with no end tier at all keeps the older answer, and NO_TERMINAL_END_TIER
+   * is why: the kick reaches the console, the port states that it cannot end a
+   * session, and the relay behind it carries the cancel instruction. The verdict
+   * names the channel that actually delivered.
+   */
+  it('still kicks over the relay on a console-less port with no end tier either', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn(),
+      supportsConsoleInput: false
+    } satisfies TextDeliveryPort
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
       port
@@ -2115,7 +2192,6 @@ describe('AgentRuntime.kickDwarf', () => {
       text: 'The user asks you to STOP your current work now. Interrupt what you are doing, leave things in a safe state, and wait for further instructions.'
     })
     expect(port.sendInterrupt).not.toHaveBeenCalled()
-    expect(port.endConsoleSession).not.toHaveBeenCalled()
   })
 
   // AMENDED for #329: the tier that can throw on this path is the end.
@@ -2456,6 +2532,86 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
       via: 'dismiss'
     })
     expect(port.endConsoleSession).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * The same tier on a port shaped like the POSIX one (#366): it has an end tier
+   * and cannot type into a console. Every rule above holds unchanged there,
+   * which is the whole claim — the act is the same act, and the platform was
+   * never what the guard was about.
+   */
+  describe('on a port that cannot type into a console', () => {
+    /** The POSIX port's shape: an end tier, no paste tier, no console input. */
+    function posixPort(endConsoleSession = vi.fn().mockResolvedValue({ delivered: true })) {
+      return {
+        sendToConsole: vi.fn(),
+        relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+        sendInterrupt: vi.fn(),
+        endConsoleSession,
+        supportsConsoleInput: false
+      } satisfies TextDeliveryPort
+    }
+
+    it("ends the session's own verified pid, with no window involved", async () => {
+      const port = posixPort()
+      const { runtime } = await runtimeWith(port)
+
+      await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+        delivered: true,
+        via: 'terminal'
+      })
+      expect(port.endConsoleSession).toHaveBeenCalledWith({
+        pid: SESSION_PID,
+        expectedStartMs: VERIFIED_START_MS
+      })
+    })
+
+    /*
+     * The fail-closed guard is not relaxed to make the new tier reachable, and
+     * this is the case that says so out loud. `pidStartedAt` reaches the wire
+     * only where the provider's probe AGREED with the session registry's own
+     * record of when that process was created — and that record, `procStart`, is
+     * documented as a Windows FILETIME. Until somebody measures what the
+     * registry writes on macOS and Linux, the verdict there is 'unknown', the
+     * field is absent, and this kick refuses: exactly this case, and correctly.
+     * See docs/console-hosting.md.
+     */
+    it('ends nothing for an unverified pid, however reachable the tier now is', async () => {
+      const port = posixPort()
+      const { runtime } = await runtimeWith(port, { kind: 'terminal', pid: SESSION_PID }, false)
+
+      const result = await runtime.kickDwarf({ dwarfId: DWARF_ID })
+      expect(result).toMatchObject({ delivered: false, via: 'terminal' })
+      expect(result.error).toMatch(/could not be verified/i)
+      expect(port.endConsoleSession).not.toHaveBeenCalled()
+    })
+
+    it('retires the dwarf on a delivered end there too', async () => {
+      const { runtime } = await runtimeWith(posixPort())
+
+      await runtime.kickDwarf({ dwarfId: DWARF_ID })
+      await runtime.refresh()
+      const dwarfs = runtime.getMines().flatMap((mine) => mine.dwarfs)
+      expect(dwarfs.map((dwarf) => dwarf.status)).toEqual(['leaving'])
+    })
+
+    /*
+     * A refused end still falls back to the relay cancel where the session has a
+     * name — the weaker act, named as the channel that delivered it.
+     */
+    it('falls back to the relay cancel behind a refused end', async () => {
+      const port = posixPort(vi.fn().mockResolvedValue({ delivered: false, error: 'nope' }))
+      const { runtime } = await runtimeWith(port, {
+        kind: 'terminal',
+        pid: SESSION_PID,
+        sessionName: 'sample-project-70'
+      })
+
+      await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+        delivered: true,
+        via: 'claude-relay'
+      })
+    })
   })
 })
 
@@ -3008,7 +3164,13 @@ describe('AgentRuntime giving a previous run’s launch its exit back (#231)', (
           isCodexProcessRunning: vi.fn().mockResolvedValue(false),
           processStartTimeMs: vi.fn().mockResolvedValue(processStartTimeMs)
         },
-        processEnd: { endProcessTree },
+        // AMENDED for #366: ProcessEndPort grew the two direct-pid signals
+        // the POSIX end tier uses; no test here signals a real process either.
+        processEnd: {
+          endProcessTree,
+          terminateProcess: vi.fn().mockResolvedValue(false),
+          killProcess: vi.fn().mockResolvedValue(false)
+        },
         cliDetector: {
           detect: vi.fn().mockResolvedValue({ cli: 'codex', installed: false }),
           peek: vi.fn().mockReturnValue('unprobed')
@@ -4098,7 +4260,13 @@ describe('AgentRuntime simulated provider wiring (#42)', () => {
       },
       // Added by #217. A fake that never ends anything: no test here may end a
       // real process tree.
-      processEnd: { endProcessTree: vi.fn().mockResolvedValue(false) },
+      // AMENDED for #366: the two direct-pid signals joined the port, and this
+      // fake refuses them for the same reason it refuses the tree kill.
+      processEnd: {
+        endProcessTree: vi.fn().mockResolvedValue(false),
+        terminateProcess: vi.fn().mockResolvedValue(false),
+        killProcess: vi.fn().mockResolvedValue(false)
+      },
       cliDetector: {
         detect: vi.fn().mockResolvedValue({ cli: 'claude', installed: false }),
         peek: vi.fn().mockReturnValue('unprobed')
@@ -7030,7 +7198,12 @@ describe('AgentRuntime provider availability (#86)', () => {
         sendInterrupt: async () => ({ delivered: true })
       },
       // Added by #217; never ends a real tree, like every other port here.
-      processEnd: { endProcessTree: async () => false },
+      // AMENDED for #366: the direct-pid signals joined the port; refused here too.
+      processEnd: {
+        endProcessTree: async () => false,
+        terminateProcess: async () => false,
+        killProcess: async () => false
+      },
       processProbe: {
         isCodexProcessRunning: async () => false,
         processStartTimeMs: async () => null
@@ -7104,7 +7277,12 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
         relayToClaudeSession: async () => ({ delivered: true }),
         sendInterrupt: async () => ({ delivered: true })
       },
-      processEnd: { endProcessTree: async () => false },
+      // AMENDED for #366: the direct-pid signals joined the port; refused here too.
+      processEnd: {
+        endProcessTree: async () => false,
+        terminateProcess: async () => false,
+        killProcess: async () => false
+      },
       processProbe: {
         isCodexProcessRunning: async () => false,
         processStartTimeMs: async () => null
@@ -8698,6 +8876,32 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
 
     await expect(decide(runtime, 'allow')).resolves.toEqual({ answered: true })
     expect(port.sendToConsole).toHaveBeenCalledWith({ pid: 42, text: '1', pressEnter: false })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The same guard, asked of the MACHINE rather than of the dwarf (#366).
+   *
+   * A decision is a keystroke, so it needs a console this platform can type
+   * into. Until #366 that was answered for it: a 'terminal' target was degraded
+   * to the relay wherever console input was unavailable, so this route found no
+   * console and refused. The kick's route keeps the console now — ending a
+   * session needs no keyboard — so the capability is asked here explicitly, and
+   * the refusal is the same one for the same reason.
+   */
+  it('refuses without typing anything where the platform cannot type into a console', async () => {
+    const port = fakePort({ supportsConsoleInput: false })
+    const { runtime } = await runtimeWith({
+      target: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' },
+      port
+    })
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: NO_TERMINAL
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.sendInterrupt).not.toHaveBeenCalled()
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
