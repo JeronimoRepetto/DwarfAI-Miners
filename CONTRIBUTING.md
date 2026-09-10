@@ -108,7 +108,7 @@ executing platform commands.
 
 - **Search first**, then open an issue. A useful bug report names your platform, the app
   version, and reproduction steps; the support matrix in the README tells you whether your
-  platform row is verified or integration-pending, which is often the explanation.
+  platform row is verified or only expected, which is often the explanation.
 - **Keep PRs small and focused** — one concern per PR, linked to its issue. CI must pass,
   behavior changes need tests, and user-facing changes update the docs in the same PR.
 - **Security reports never go in public issues.** Use the private reporting flow in
@@ -116,10 +116,11 @@ executing platform commands.
 
 ## Platform validation — help wanted
 
-Windows is the only platform that has been run end to end. macOS and Linux **build and pass
-the unit suite**, but the README's
-[support matrix](README.md#platform-support) is honest that nobody has yet run them on real
-desktops. That run is the single most useful contribution a Mac or Linux user can make:
+Windows is the platform that has been run end to end. macOS and Linux have been run on real
+hardware, but with far less mileage, and the README's
+[support matrix](README.md#platform-support) still marks most of their rows as expected rather
+than verified. Walking those rows is the single most useful contribution a Mac or Linux user can
+make:
 
 1. `pnpm install && pnpm dev` (or a packaged build) on your machine, with real Claude Code
    or Codex sessions running.
@@ -130,7 +131,7 @@ desktops. That run is the single most useful contribution a Mac or Linux user ca
    X11 or Wayland matters), and what actually happened.
 
 "It all worked" is also a report worth filing — it is what moves a row from
-"integration-pending" to "verified".
+"expected" to "verified".
 
 ## Artwork
 
