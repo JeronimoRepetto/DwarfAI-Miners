@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
-import type { FeedMessage } from '../domain/types'
+import type { FeedMessage, FeedPageCursor } from '../domain/types'
 import {
   FEED_ACTIVITY_LIMIT,
   FEED_WINDOW_CEILING_BYTES,
   FEED_WINDOW_STEPS,
+  feedPageOf,
+  parseDwarfFeedPageRequest,
+  readFeedPage,
   readFeedWindow,
   readFeedWindowWithReachedStart,
   textCount,
@@ -383,5 +386,325 @@ describe('readFeedWindow past a window of tool calls (#359)', () => {
     expect(reads()).toEqual([64])
     expect(texts(messages)).toEqual([spoken(2).trim(), spoken(3).trim()])
     expect(activities(messages)).toEqual(['Ran ' + toolCall(4).trim()])
+  })
+})
+
+/*
+ * Issue #364: the panel showed the newest FEED_LIMIT texts and nothing older,
+ * so the beginning of a session was unreachable by scrolling. Raising the
+ * number was measured and rejected — at 50 a 19.8 MB transcript cost 3 steps,
+ * 10.25 MiB and 30 ms inside a poll loop budgeted at 15 ms median, and at 200
+ * the 8 MiB ceiling truncated the answer to 176 texts anyway. So the newest
+ * page keeps costing what it costs, and an older one is read only when
+ * somebody scrolls back to ask for it.
+ *
+ * The cursor is CONTENT, never an offset from the end: the poll pushes the
+ * watched dwarf's feed again on every reply (#196), so a count from the end
+ * names different rows one second later. The drift test at the bottom of this
+ * block is the whole reason the cursor has the shape it has.
+ */
+describe('readFeedPage (#364)', () => {
+  /** A 20-byte record of something said, and a 6-byte tool call. */
+  const spoken = (index: number): string => `${index}${'.'.repeat(18)}\n`
+  const toolCall = (index: number): string => `${index}...!\n`
+
+  /** One said/ran pair per index — 26 bytes each, so windows land predictably. */
+  const pairs = (count: number, from = 0): string =>
+    Array.from({ length: count }, (_, index) => spoken(from + index) + toolCall(from + index)).join(
+      ''
+    )
+
+  /**
+   * Stand-in for a real extractor, forwarding BOTH counts.
+   *
+   * The activity cap has to be forwarded since #364: a page read asks the
+   * extractor for the window WHOLE and then trims the page's own span itself,
+   * and an extractor that ignored the second count would quietly cap the
+   * window's activity at 200 and drop the OLDEST tool calls — which are
+   * precisely the rows an older page is made of.
+   */
+  function extractPaged(tailText: string, limit: number, activityLimit?: number): FeedMessage[] {
+    const feed = tailText
+      .split('\n')
+      .filter((line) => /^\d/.test(line))
+      .map((line) => line.trim())
+      .map((line) =>
+        line.endsWith('!')
+          ? {
+              role: 'assistant' as const,
+              text: `Ran ${line}`,
+              timestamp: '',
+              activity: { kind: 'run' as const, target: line }
+            }
+          : { role: 'user' as const, text: line, timestamp: '' }
+      )
+    return trimFeed(feed, limit, activityLimit)
+  }
+
+  /** The cursor a panel holding down to `index` would send. */
+  const before = (index: number): FeedPageCursor => ({
+    timestamp: '',
+    text: spoken(index).trim()
+  })
+
+  it('answers the texts immediately older than the cursor, with their tool calls', async () => {
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(8))
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(fs, PATH, 2, extractPaged, before(5), [512])
+    // The two texts below the cursor, and the calls between them — including
+    // the run after the last of them, which is that turn's own work.
+    expect(texts(page.messages)).toEqual([spoken(3).trim(), spoken(4).trim()])
+    expect(activities(page.messages)).toEqual([
+      'Ran ' + toolCall(3).trim(),
+      'Ran ' + toolCall(4).trim()
+    ])
+    // Five texts precede the cursor and the page spent two of them, so the
+    // panel may ask again.
+    expect(page.reachedStart).toBe(false)
+  })
+
+  it('escalates when the first window held fewer than the limit texts before the cursor', async () => {
+    // The 64-byte window reaches back only to the cursor's own neighbourhood:
+    // one text below it against the two asked for, and the window filled, so a
+    // wider step can still find more.
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(8))
+    const { fs, reads } = spying(fake)
+
+    const page = await readFeedPage(fs, PATH, 2, extractPaged, before(7), [64, 512])
+    expect(reads()).toEqual([64, 512])
+    expect(texts(page.messages)).toEqual([spoken(5).trim(), spoken(6).trim()])
+  })
+
+  it('answers the last page reached-start, and a page beyond it empty', async () => {
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(8))
+    const { fs } = spying(fake)
+
+    // Two texts below the cursor and no more: this is the last page.
+    const last = await readFeedPage(fs, PATH, 2, extractPaged, before(2), [512])
+    expect(texts(last.messages)).toEqual([spoken(0).trim(), spoken(1).trim()])
+    expect(last.reachedStart).toBe(true)
+
+    // And the page below the transcript's own first text is empty, still
+    // reached-start, so the panel says it once and stops asking.
+    const beyond = await readFeedPage(fs, PATH, 2, extractPaged, before(0), [512])
+    expect(beyond.messages).toEqual([])
+    expect(beyond.reachedStart).toBe(true)
+  })
+
+  it('widens for a cursor the narrow window cannot see, rather than calling it missing', async () => {
+    // A reader four pages back sends a cursor that is nowhere near the end of
+    // the file, and every window is a TAIL: not-found is the ordinary shape of
+    // a deep page, so it escalates exactly as a short count does.
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(8))
+    const { fs, reads } = spying(fake)
+
+    const page = await readFeedPage(fs, PATH, 2, extractPaged, before(1), [64, 512])
+    expect(reads()).toEqual([64, 512])
+    expect(texts(page.messages)).toEqual([spoken(0).trim()])
+    expect(page.reachedStart).toBe(true)
+  })
+
+  it('answers an empty last page for a cursor the whole transcript does not hold', async () => {
+    // The whole file is in hand and the row the cursor names is not in it — a
+    // stale cursor, or a transcript rewritten under the panel. Nothing is older
+    // than a row that is not there, so the honest answer is an empty page that
+    // stops the asking rather than a guess at where the reader was.
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(4))
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      2,
+      extractPaged,
+      { timestamp: '', text: 'never said' },
+      [512]
+    )
+    expect(page.messages).toEqual([])
+    expect(page.reachedStart).toBe(true)
+  })
+
+  it('answers a missing cursor without claiming the start, when the file outgrew the ceiling', async () => {
+    // Same missing row, but every step filled: there is more file behind the
+    // widest window, so the page is empty and the panel must NOT be told it has
+    // reached the beginning.
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(40))
+    const { fs, reads } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      2,
+      extractPaged,
+      { timestamp: '', text: 'never said' },
+      [64, 128]
+    )
+    expect(reads()).toEqual([64, 128])
+    expect(page.messages).toEqual([])
+    expect(page.reachedStart).toBe(false)
+  })
+
+  it('answers the same page for the same cursor after the session speaks again', async () => {
+    /*
+     * The drift the cursor's shape exists to prevent, and the reason it is not
+     * an offset. Four new pairs land at the END of the transcript — which is
+     * what every reply does, and what the poll pushes to the panel (#196). An
+     * offset counted from the end would slide four texts and answer rows the
+     * reader already has, or skip the ones between; content does not move.
+     */
+    const fake = new FakeFs()
+    fake.addFile(PATH, pairs(8))
+    const { fs } = spying(fake)
+
+    const first = await readFeedPage(fs, PATH, 2, extractPaged, before(5), [512])
+
+    const grown = new FakeFs()
+    grown.addFile(PATH, pairs(8) + pairs(4, 8))
+    const { fs: grownFs } = spying(grown)
+    const second = await readFeedPage(grownFs, PATH, 2, extractPaged, before(5), [512])
+
+    expect(second.messages).toEqual(first.messages)
+    expect(second.reachedStart).toBe(first.reachedStart)
+  })
+
+  it('takes the NEWEST of two identical rows, repeating a row rather than skipping one', async () => {
+    /*
+     * The collision the cursor's doc comment admits to: the same text with the
+     * same timestamp twice. Matching the newer one starts the page further
+     * forward than the reader's own oldest row, so it repeats conversation
+     * already on screen; matching the older one would silently drop everything
+     * between the two. A repeat is visible and a gap is not.
+     */
+    const fake = new FakeFs()
+    fake.addFile(PATH, spoken(0) + spoken(1) + spoken(2) + spoken(3) + spoken(4) + spoken(2))
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(fs, PATH, 2, extractPaged, before(2), [512])
+    expect(texts(page.messages)).toEqual([spoken(3).trim(), spoken(4).trim()])
+  })
+
+  it('asks the extractor for the window whole, so an older page keeps its own tool calls', async () => {
+    /*
+     * A page read cannot let the extractor trim: the extractors answer the
+     * NEWEST `limit` texts, which is the one part of the window a page does not
+     * want. This stand-in caps activity at two rows by default, so a read that
+     * failed to ask for the window whole would hand the page a span whose
+     * oldest tool calls had already been thrown away.
+     */
+    const capped = (tailText: string, limit: number, activityLimit = 2): FeedMessage[] =>
+      extractPaged(tailText, limit, activityLimit)
+    const fake = new FakeFs()
+    fake.addFile(
+      PATH,
+      spoken(0) +
+        toolCall(0) +
+        toolCall(1) +
+        toolCall(2) +
+        toolCall(3) +
+        spoken(1) +
+        spoken(2) +
+        spoken(3)
+    )
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(fs, PATH, 2, capped, before(2), [512])
+    expect(texts(page.messages)).toEqual([spoken(0).trim(), spoken(1).trim()])
+    expect(activities(page.messages)).toHaveLength(4)
+  })
+
+  it('lets the read fail the way the adapter fails, for a file that is gone', async () => {
+    const { fs } = spying(new FakeFs())
+    await expect(readFeedPage(fs, PATH, 2, extractPaged, before(1), [8])).rejects.toThrow()
+  })
+})
+
+describe('feedPageOf (#364)', () => {
+  it('starts a page at a TEXT, never at activity older than one', () => {
+    // The one place a page's rule differs from trimFeed's. trimFeed keeps a
+    // leading run because the newest feed has nothing above it to attach the
+    // run to; a page does — the run belongs to the page BELOW it, and carrying
+    // it here would hand the same rows out twice.
+    const rows = [ran(0), said(0), ran(1), said(1)]
+    expect(feedPageOf(rows, 3)).toEqual([said(0), ran(1), said(1)])
+    expect(trimFeed(rows, 3)).toEqual(rows)
+  })
+
+  it('answers nothing for a span with no text in it at all', () => {
+    // Unlike a feed, where a window of pure work still draws its run: these
+    // calls precede every text this page could anchor on, so they are the next
+    // page's, and answering them would repeat them there.
+    expect(feedPageOf([ran(0), ran(1)], 12)).toEqual([])
+    expect(feedPageOf([], 12)).toEqual([])
+    expect(feedPageOf([said(0)], 0)).toEqual([])
+  })
+
+  it('bounds a page’s activity on its own, the way every other feed is bounded', () => {
+    const rows = [said(0), ...Array.from({ length: 250 }, (_, index) => ran(index))]
+    expect(activities(feedPageOf(rows, 12))).toHaveLength(FEED_ACTIVITY_LIMIT)
+    expect(feedPageOf(rows, 12, 2).map((row) => row.text)).toEqual([
+      'said 0',
+      'Ran step 248',
+      'Ran step 249'
+    ])
+  })
+})
+
+describe('parseDwarfFeedPageRequest (#364)', () => {
+  const cursor = { timestamp: '2026-09-10T08:00:00.000Z', text: 'dig here' }
+
+  it('accepts a dwarf id and a cursor naming something said', () => {
+    expect(parseDwarfFeedPageRequest({ dwarfId: 'claude:s1', before: cursor })).toEqual({
+      dwarfId: 'claude:s1',
+      before: cursor
+    })
+  })
+
+  it('keeps an empty timestamp, which is a real value a transcript yields', () => {
+    // An extractor falls back to '' for a record that carried no timestamp, so
+    // a cursor naming such a row has to survive the boundary.
+    expect(
+      parseDwarfFeedPageRequest({ dwarfId: 'claude:s1', before: { timestamp: '', text: 'dig' } })
+    ).toEqual({ dwarfId: 'claude:s1', before: { timestamp: '', text: 'dig' } })
+  })
+
+  it.each([
+    ['no payload at all', undefined],
+    ['a payload that is not an object', 'claude:s1'],
+    ['a missing dwarf id', { before: cursor }],
+    ['an empty dwarf id', { dwarfId: '', before: cursor }],
+    ['a dwarf id that is not a string', { dwarfId: 42, before: cursor }],
+    ['no cursor', { dwarfId: 'claude:s1' }],
+    ['a cursor that is not an object', { dwarfId: 'claude:s1', before: 'dig here' }],
+    [
+      'a cursor whose text is empty, which names nothing said',
+      { dwarfId: 'claude:s1', before: { timestamp: '', text: '' } }
+    ],
+    [
+      'a cursor whose text is not a string',
+      { dwarfId: 'claude:s1', before: { timestamp: '', text: 7 } }
+    ],
+    [
+      'a cursor whose timestamp is not a string',
+      { dwarfId: 'claude:s1', before: { timestamp: 7, text: 'dig' } }
+    ]
+  ])('refuses %s', (_case, payload) => {
+    expect(parseDwarfFeedPageRequest(payload)).toBeNull()
+  })
+
+  it('carries nothing a caller hung off the request', () => {
+    expect(
+      parseDwarfFeedPageRequest({
+        dwarfId: 'claude:s1',
+        before: { ...cursor, role: 'user' },
+        limit: 500
+      })
+    ).toEqual({ dwarfId: 'claude:s1', before: cursor })
   })
 })

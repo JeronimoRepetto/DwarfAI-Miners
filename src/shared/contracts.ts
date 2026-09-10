@@ -1494,6 +1494,83 @@ export interface DwarfFeedResult {
 }
 
 /**
+ * WHERE the panel has already read back to, so the next page can start below it
+ * (#364) — the oldest text the panel is holding, named by its own content.
+ *
+ * Named by CONTENT rather than by a position, and that is the whole design.
+ * The obvious cursor is a count from the end of the transcript ("I hold the
+ * newest 24 texts, give me 25 through 36"), and it drifts: the poll pushes the
+ * watched dwarf's feed again every time the session speaks (#196), so between
+ * the click on the scrollbar and the answer the end of the file has moved, and
+ * the same count names different rows. A reader who had paged back four pages
+ * would get rows it already holds, or miss the ones in between, once per new
+ * reply. Content does not move when the transcript grows at the far end.
+ *
+ * `FeedMessage` carries no id — no provider writes one this app could trust
+ * across a re-read — so the pair is the identity: the timestamp the row's own
+ * record carried, and the row's `text` EXACTLY as it crossed this wire, which
+ * means already redacted (`domain/redactSecrets`). The page read redacts inside
+ * its own walk for that reason; a cursor matched against the raw transcript
+ * would never find a row whose secret had been struck out on the way here.
+ *
+ * A timestamp of `''` is a real value, not a missing one: an extractor falls
+ * back to it for a record that carried none, and a cursor naming such a row
+ * still has to work.
+ *
+ * Two rows can collide — the same text in the same millisecond, which is what a
+ * session sending "yes" twice inside one second looks like. The match then takes
+ * the NEWEST row that equals both, and the cost is one duplicated row: the page
+ * starts further forward than the reader's own oldest row, so it repeats
+ * conversation already on screen rather than skipping any. That is the direction
+ * to be wrong in — a repeat is visible, and a gap in a transcript is not.
+ */
+export interface FeedPageCursor {
+  timestamp: string
+  text: string
+}
+
+/**
+ * One request for the page of conversation immediately OLDER than a cursor
+ * (#364) — the panel having scrolled to the top of what it holds.
+ *
+ * Addressed by DWARF, like every other dwarf channel, and carrying no page
+ * size: main owns that number (`FEED_LIMIT` in `runtime/runtime.ts`), so the
+ * renderer cannot ask for a read main has not budgeted for.
+ */
+export interface DwarfFeedPageRequest {
+  dwarfId: string
+  before: FeedPageCursor
+}
+
+/**
+ * One page of older conversation, and whether it is the last one (#364).
+ *
+ * A sibling of `DwarfFeedResult` rather than a flag added to it: the newest
+ * page is read on every poll for the watched dwarf (#196) and has never needed
+ * to say how far back the read got, which is the same reasoning that kept
+ * `readFeedWindow` and `readFeedWindowWithReachedStart` apart in #227.
+ *
+ * `readable: false` means this dwarf's conversation cannot be paged at all —
+ * an id off the board, a provider that keeps no transcript — and is a different
+ * fact from a readable page that came back empty, exactly as it is on
+ * `DwarfFeedResult`.
+ *
+ * `reachedStart: true` means THIS PAGE IS THE LAST ONE: the read had the whole
+ * transcript in hand and nothing older than the page's own oldest row was left
+ * behind. The panel says so once and stops asking. `false` means there is more
+ * — either genuinely older conversation, or a file that outgrew
+ * `FEED_WINDOW_CEILING_BYTES` and was not read to its start. It is the #227
+ * fact composed with "and this page consumed the rest of it", never just "the
+ * read reached the start": a window that held the whole file can still have
+ * twenty texts before the page it answered.
+ */
+export interface DwarfFeedPage {
+  readable: boolean
+  messages: FeedMessage[]
+  reachedStart: boolean
+}
+
+/**
  * How many of one dwarf's messages the Mine History panel shows at most
  * (#192, `screens/history.md`: "up to that dwarf's latest 50 messages").
  *
@@ -2998,6 +3075,19 @@ export const IPC_CHANNELS = {
    * the words without either attempt.
    */
   getDwarfFeed: 'dwarf:feed',
+  /**
+   * The page of that same transcript immediately OLDER than a cursor (#364) —
+   * the panel having scrolled to the top of what it holds and asked for more.
+   *
+   * A channel of its own rather than an argument on `getDwarfFeed`, because the
+   * two reads cost different things and are asked for at different moments.
+   * `getDwarfFeed` is the newest page: it rides the poll for the watched dwarf
+   * (#196) and has to stay inside the loop's budget, which is why raising its
+   * count was the wrong fix. This one is asked for only when somebody actually
+   * scrolls back, walks as wide as it has to, and answers whether anything
+   * older is left (see DwarfFeedPage).
+   */
+  getDwarfFeedPage: 'dwarf:feed:page',
   /**
    * The renderer reporting which OBSERVED dwarf its message panel currently
    * has open, or that none is (#196) — never a held session's, which needs
