@@ -5,11 +5,13 @@ import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
+import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
+import { joinFeedPages } from './lib/message/feedPages'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
@@ -68,6 +70,19 @@ const {
   reconcile: reconcileEchoes,
   keepEchoesFor
 } = useDwarfMessaging()
+/**
+ * The pages of conversation older than the newest feed (#364) — held beside
+ * `selectedFeed` rather than inside it, for the reasons `useDwarfPaging`
+ * states. Everything about WHEN a page is asked for lives there; this window
+ * joins what it holds to the newest page for drawing, and says which dwarf the
+ * pages belong to.
+ */
+const {
+  state: paging,
+  note: pagingNote,
+  hold: holdOlderPages,
+  older: readOlderPage
+} = useDwarfPaging()
 const { state: kickingState, kick, observe: observeKicks } = useDwarfKicking()
 const {
   state: questionState,
@@ -148,10 +163,41 @@ const openDwarfId = computed(() => launchState.value.launchedDwarfId ?? askedDwa
  * The transcript read for the open dwarf, for a session this panel only
  * OBSERVES. `undefined` means the read has not come back — which the panel
  * says out loud rather than drawing as an empty conversation.
+ *
+ * The NEWEST page of it, and since #364 that is a distinction worth the word:
+ * this holds the latest FEED_LIMIT things said and is replaced whole by every
+ * re-read and every watched push, while the pages a reader scrolled back to are
+ * held separately (`useDwarfPaging`) and joined to it in `pagedMessages`.
  */
 const selectedFeed = ref<DwarfFeedResult | undefined>(undefined)
 /** Which read is the current one, so a slow answer cannot land on a later dwarf. */
 let feedToken = 0
+
+/**
+ * What the panel DRAWS: every older page the reader has fetched, oldest first,
+ * with the newest page at its foot (#364).
+ *
+ * Joined here and nowhere else. `selectedFeed` above stays the newest page and
+ * only the newest page — replaced whole by every re-read and by every watched
+ * push — so the pages a reader scrolled back to survive a session that keeps
+ * talking, and the shrink guard below keeps comparing one newest page against
+ * another rather than against a conversation that legitimately grew upward.
+ */
+const pagedMessages = computed<FeedMessage[]>(() =>
+  joinFeedPages(paging.pages, selectedFeed.value?.messages ?? [])
+)
+
+/**
+ * The same answer `selectedFeed` carries, with the drawn conversation in place
+ * of its own page. `undefined` still means the read has not come back, which
+ * the panel says out loud rather than drawing as an empty conversation — and
+ * with no read back there are no pages either, because a switch cleared them.
+ */
+const drawnFeed = computed<DwarfFeedResult | undefined>(() =>
+  selectedFeed.value === undefined
+    ? undefined
+    : { readable: selectedFeed.value.readable, messages: pagedMessages.value }
+)
 /**
  * Which dwarf `selectedFeed` currently answers for — so a re-read for that
  * SAME dwarf can leave the previous result on screen while it is in flight,
@@ -202,21 +248,41 @@ function adoptWatchedFeed(watchedFeed: WatchedFeedPush | undefined): void {
  * dwarf: fewer messages than the feed it replaces, or one that stopped being
  * readable. A feed that grows is the ordinary case and stays silent, and a
  * change of dwarf is a first read rather than a loss.
+ *
+ * ## The one thing this must not compare, since #364
+ *
+ * The subject of the comparison is the NEWEST PAGE — `selectedFeed` before and
+ * after, nothing else. It is emphatically NOT `pagedMessages`, the conversation
+ * the panel draws: once a reader has paged back, that list holds twelve rows
+ * per page fetched, and every ordinary push carrying the newest twelve would
+ * read as a catastrophic shrink. The warning would fire twice a second on a
+ * busy session and mean nothing, which is worse than not having it.
+ *
+ * Which is also why the pages are not touched here. This replaces one page of a
+ * conversation; the pages in front of it belong to the reader's own scroll and
+ * are thrown away only by a genuine switch (see `holdOlderPages`). Everything
+ * that reads the newest feed for its own purposes keeps reading exactly that:
+ * echo reconciliation (#309) measures the person's pending words against the
+ * live end of the transcript, and the reaction watch (#21) against the same,
+ * because a message sent a moment ago is answered at the end of a conversation
+ * and never four pages back.
  */
 function replaceSelectedFeed(dwarfId: string, next: DwarfFeedResult, via: 'push' | 'pull'): void {
   if (import.meta.env.DEV) {
-    const previous = selectedFeed.value
+    const previousPage = selectedFeed.value
     const lost =
-      previous !== undefined &&
+      previousPage !== undefined &&
       selectedFeedDwarfId === dwarfId &&
-      (next.messages.length < previous.messages.length || (previous.readable && !next.readable))
+      (next.messages.length < previousPage.messages.length ||
+        (previousPage.readable && !next.readable))
     if (lost) {
       console.warn(
-        `[panel] feed for ${dwarfId} shrank via ${via}: ${previous.messages.length} -> ${next.messages.length}, readable=${next.readable}`
+        `[panel] newest feed page for ${dwarfId} shrank via ${via}: ${previousPage.messages.length} -> ${next.messages.length}, readable=${next.readable}`
       )
     }
   }
   selectedFeedDwarfId = dwarfId
+  holdOlderPages(dwarfId)
   selectedFeed.value = next
 }
 
@@ -377,6 +443,10 @@ async function readSelectedFeed(dwarfId: string): Promise<void> {
   const token = ++feedToken
   const isFirstRead = selectedFeedDwarfId !== dwarfId
   selectedFeedDwarfId = dwarfId
+  // Before the await, not after it: on a first read the pages of whoever the
+  // panel was on last must go with their feed, or they would be drawn under
+  // the new dwarf's name for as long as this read takes (#364).
+  holdOlderPages(dwarfId)
   if (isFirstRead) selectedFeed.value = undefined
   try {
     const result = await window.api.getDwarfFeed(dwarfId)
@@ -397,10 +467,15 @@ async function readSelectedFeed(dwarfId: string): Promise<void> {
  * session (or off a dwarf entirely). Clears `selectedFeedDwarfId` too, so
  * that dwarf's next observed read (if it ever has one) is a first read again
  * rather than treated as a re-read of stale words.
+ *
+ * And the older pages with it (#364): a held session's words come from its own
+ * stream rather than from a transcript this panel pages, so there is nothing
+ * left for the pages to stand in front of.
  */
 function skipSelectedFeed(): void {
   feedToken++
   selectedFeedDwarfId = null
+  holdOlderPages(null)
   selectedFeed.value = undefined
 }
 
@@ -464,6 +539,30 @@ watch(
 )
 
 /**
+ * Fetch the page of conversation before the oldest row on screen (#364) — the
+ * reader having scrolled back to the top of what this panel holds.
+ *
+ * Never for a held session: it carries its own exchange first-hand, and there
+ * is no transcript read behind it to page (the same reason `skipSelectedFeed`
+ * exists). Everything else the request has to refuse — one read at a time, no
+ * read once the start is reached, nothing to page before — belongs to
+ * `useDwarfPaging`, so a repeated report from the panel costs nothing.
+ *
+ * The cursor comes off `pagedMessages` — the transcript rows themselves —
+ * rather than off the conversation `conversationOf` draws. Those two differ in
+ * exactly one case that matters here: with no feed read back the panel falls
+ * back to the `lastMessage` every poll carries, a bubble whose timestamp is the
+ * honest empty string because the poll says what was said and never when. It is
+ * not a row of any transcript, so it can never name a place in one.
+ */
+function pageBack(): void {
+  const dwarfId = openDwarfId.value
+  if (dwarfId === null) return
+  if (selectedDwarf.value?.conversation !== undefined) return
+  void readOlderPage(dwarfId, pagedMessages.value)
+}
+
+/**
  * The messages this panel is still holding on the person's behalf, and the
  * transcript they are measured against (#309).
  *
@@ -471,6 +570,13 @@ watch(
  * it is the very precedence `conversationOf` draws the panel from, so the rows
  * an echo is reconciled against are exactly the rows it would otherwise be
  * drawn beside.
+ *
+ * The NEWEST page, deliberately, and not the paged-back conversation (#364):
+ * an echo is words the person sent a moment ago, so the transcript that
+ * accounts for them is the live end of it. Measuring against pages of older
+ * conversation could only ever find the same words said earlier and drop a
+ * bubble whose own delivery nobody had watched — which is the failure #309
+ * exists to end, one turn removed.
  */
 const echoTranscript = computed<readonly FeedMessage[]>(() =>
   selectedDwarf.value === undefined ? [] : feedMessagesOf(selectedDwarf.value, selectedFeed.value)
@@ -916,7 +1022,8 @@ onBeforeUnmount(() => {
         v-else-if="selectedDwarf"
         :key="selectedDwarf.id"
         :dwarf="selectedDwarf"
-        :feed="selectedFeed"
+        :feed="drawnFeed"
+        :paging-note="pagingNote ?? undefined"
         :send-state="messagingState.byDwarfId[selectedDwarf.id]"
         :echoes="sentEchoes[selectedDwarf.id]"
         :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
@@ -929,6 +1036,7 @@ onBeforeUnmount(() => {
         @open-console="activate(selectedDwarf)"
         @open-path="openPath"
         @open-link="openLink"
+        @page-back="pageBack"
         @close="close"
       />
     </div>

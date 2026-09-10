@@ -9,7 +9,14 @@ import {
 } from '../../lib/message/panelHeight'
 import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
-import { NO_TRANSCRIPT_NOTE, NOTHING_SAID_NOTE, READING_NOTE } from '../../lib/message/conversation'
+import {
+  NO_TRANSCRIPT_NOTE,
+  NOTHING_SAID_NOTE,
+  OBSERVED_NOTE,
+  READING_NOTE
+} from '../../lib/message/conversation'
+import { CONVERSATION_START_NOTE, READING_OLDER_NOTE } from '../../lib/message/feedPages'
+import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
 import { MAX_DWARF_TEXT_CHARS, type DwarfPermissionRequest, type DwarfSendState } from '../../types'
@@ -1754,5 +1761,138 @@ describe('DwarfMessagePanel markdown (#347)', () => {
     const wrapper = withReply('see [the issue](https://example.test/347)')
     await wrapper.find('.bubble .markdown-link').trigger('click')
     expect(wrapper.emitted('open-link')).toEqual([['https://example.test/347']])
+  })
+})
+
+/**
+ * Paging back through the conversation (#364).
+ *
+ * The panel's part of it is two gestures and one sentence: it reports that the
+ * reader has reached the top of what it holds, it keeps the viewport still when
+ * a page lands above the fold, and it says whatever it was given to say about
+ * the reading. WHICH page is asked for and what comes back is
+ * MessagePanelWindow's, exactly as the feed itself already is.
+ */
+describe('DwarfMessagePanel paging (#364)', () => {
+  const OBSERVED = [
+    { role: 'assistant' as const, text: 'Halfway down the shaft.', timestamp: 't2' },
+    { role: 'assistant' as const, text: 'Seam exhausted.', timestamp: 't3' }
+  ]
+
+  const OLDER = [
+    { role: 'assistant' as const, text: 'Starting the shaft.', timestamp: 't0' },
+    { role: 'assistant' as const, text: 'Through the topsoil.', timestamp: 't1' }
+  ]
+
+  /**
+   * jsdom lays nothing out, so the list's own height has to grow with the rows
+   * Vue patches in — the same fake the #195 block uses, and for the same
+   * reason: a static value would report the SAME height before and after the
+   * patch, which is exactly the difference the prepend is measured by.
+   */
+  function growingScrollHeight(list: Element, perMessage = 40): void {
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () => list.querySelectorAll('.message').length * perMessage
+    })
+  }
+
+  function fixedClientHeight(list: Element, value: number): void {
+    Object.defineProperty(list, 'clientHeight', { value, configurable: true })
+  }
+
+  async function observedPanel() {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ conversation: undefined }),
+      feed: { readable: true, messages: OBSERVED }
+    })
+    const list = wrapper.find('.panel-conversation').element
+    growingScrollHeight(list)
+    fixedClientHeight(list, 30)
+    await wrapper.vm.$nextTick()
+    return { wrapper, list }
+  }
+
+  it('reports that the reader reached the top of what it holds', async () => {
+    const { wrapper, list } = await observedPanel()
+
+    list.scrollTop = 0
+    await wrapper.find('.panel-conversation').trigger('scroll')
+
+    expect(wrapper.emitted('page-back')).toHaveLength(1)
+  })
+
+  it('reports it from within the tolerance too, so a flick that stopped short still asks', async () => {
+    const { wrapper, list } = await observedPanel()
+
+    list.scrollTop = TOP_OF_LIST_TOLERANCE_PX
+    await wrapper.find('.panel-conversation').trigger('scroll')
+
+    expect(wrapper.emitted('page-back')).toHaveLength(1)
+  })
+
+  it('reports nothing on an ordinary scroll, so reading costs no reads', async () => {
+    const { wrapper, list } = await observedPanel()
+
+    list.scrollTop = 40
+    await wrapper.find('.panel-conversation').trigger('scroll')
+
+    expect(wrapper.emitted('page-back')).toBeUndefined()
+  })
+
+  it('keeps the row the reader was on exactly where it was when a page lands above it', async () => {
+    const { wrapper, list } = await observedPanel()
+    list.scrollTop = 5 // 80 - 30 - 5 = 45: scrolled up, well past the tolerance.
+
+    await wrapper.setProps({ feed: { readable: true, messages: [...OLDER, ...OBSERVED] } })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    // Two rows, 40 each, landed in front of everything on screen. Leaving
+    // scrollTop at 5 would slide the sentence being read 80px down the panel.
+    expect(list.scrollTop).toBe(85)
+  })
+
+  it('leaves the viewport alone when the page it was given was empty', async () => {
+    const { wrapper, list } = await observedPanel()
+    list.scrollTop = 5
+
+    await wrapper.setProps({ feed: { readable: true, messages: OBSERVED } })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(list.scrollTop).toBe(5)
+  })
+
+  it('says the line it was given in front of the note it already carries', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ conversation: undefined }),
+      feed: { readable: true, messages: OBSERVED },
+      pagingNote: CONVERSATION_START_NOTE
+    })
+
+    // The panel's one note row already says what the messages ARE; where the
+    // conversation begins is the same kind of statement about the same rows, so
+    // it is prefixed the way an ended session's is rather than replacing it.
+    expect(wrapper.find('.panel-note').text()).toBe(`${CONVERSATION_START_NOTE} ${OBSERVED_NOTE}`)
+  })
+
+  it('says only its own note when nothing has been asked for', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ conversation: undefined }),
+      feed: { readable: true, messages: OBSERVED }
+    })
+    expect(wrapper.find('.panel-note').text()).toBe(OBSERVED_NOTE)
+  })
+
+  it('carries the whole sentence into the list’s own label, for a reader who cannot see it', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ conversation: undefined }),
+      feed: { readable: true, messages: OBSERVED },
+      pagingNote: READING_OLDER_NOTE
+    })
+    expect(wrapper.find('.panel-conversation').attributes('aria-label')).toBe(
+      `${READING_OLDER_NOTE} ${OBSERVED_NOTE}`
+    )
   })
 })
