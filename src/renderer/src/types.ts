@@ -34,9 +34,9 @@ export type {
   DwarfMcpServerStatus,
   DwarfObserver,
   DwarfPermissionAnswerRequest,
-  DwarfPermissionChannel,
   DwarfPermissionDecision,
   DwarfPermissionRequest,
+  DwarfPromptChannel,
   DwarfProvider,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
@@ -105,6 +105,7 @@ export type {
  * import statement across (#77).
  */
 export {
+  ANSWER_ONLY_WHERE_IT_RUNS,
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,

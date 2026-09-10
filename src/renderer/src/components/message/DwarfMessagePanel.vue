@@ -751,6 +751,7 @@ function onKick(): void {
         :answer-state="answerState"
         @answer="emit('answer', $event)"
         @send-text="emit('send', $event)"
+        @open-console="emit('open-console')"
       />
       <textarea
         v-else

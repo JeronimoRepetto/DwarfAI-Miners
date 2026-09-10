@@ -33,9 +33,9 @@ export type {
   DwarfMcpServerStatus,
   DwarfObserver,
   DwarfPermissionAnswerRequest,
-  DwarfPermissionChannel,
   DwarfPermissionDecision,
   DwarfPermissionRequest,
+  DwarfPromptChannel,
   DwarfProvider,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
@@ -103,6 +103,7 @@ export type {
  * barrel is what makes a module reach across the process boundary itself.
  */
 export {
+  ANSWER_ONLY_WHERE_IT_RUNS,
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,

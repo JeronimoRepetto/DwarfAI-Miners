@@ -18,6 +18,7 @@ import { MineHistoryReader, type MineHistorySource } from '../history/mineHistor
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
 import {
+  ANSWER_ONLY_WHERE_IT_RUNS,
   DWARF_PROVIDERS,
   MAX_DWARF_TEXT_CHARS,
   type AgentLaunchRequest,
@@ -177,25 +178,6 @@ const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
-/**
- * A question this panel can only SHOW (#265).
- *
- * The answer channel is a held session's own stream, so a session this panel
- * merely OBSERVES has none — every Codex thread, and any Claude session this
- * panel did not start. Codex offers a message queue and no keyboard (#94,
- * #125, #203), and a queued message is not an answer to a blocked tool call,
- * so there is no second channel to fall back to and none is invented here.
- *
- * Phrased off OPEN_TURN_NO_INTERRUPT_HINT's wording, deliberately: that is the
- * sentence this app already uses for the other thing that can only happen
- * where the session runs, and two different sentences for one fact is how a
- * panel starts sounding like two apps. Answered HERE rather than left to the
- * held registry, whose refusal would be "that session is not one this panel is
- * holding" — true, and no help to somebody looking at the question.
- */
-const ANSWER_ONLY_WHERE_IT_RUNS =
-  'This question cannot be answered from here — only where the session runs, which for a ' +
-  'Codex thread is its own terminal. The panel is showing the ask, not holding it.'
 /**
  * A console the runtime resolved a paste to, on a port with no paste tier
  * (#319). It carries `neverStarted`, so the relay behind it takes the message:

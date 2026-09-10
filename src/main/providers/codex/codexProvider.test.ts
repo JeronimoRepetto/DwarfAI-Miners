@@ -1352,6 +1352,7 @@ describe('CodexProvider pendingQuestion', () => {
       toolUseId: 'call_9c052f81d6b44',
       header: 'Scope',
       question: "Should the rename cover the sample module's tests as well, or only its source?",
+      channel: 'terminal',
       multiSelect: false,
       askedAt: '2026-08-24T12:37:01.545Z',
       options: [
@@ -1369,6 +1370,13 @@ describe('CodexProvider pendingQuestion', () => {
 
   it('drops the question once a function_call_output names the same call_id', async () => {
     expect((await dwarfFor(answered()))?.pendingQuestion).toBeUndefined()
+  })
+
+  it('names the terminal channel — no Codex thread is one the panel holds (#354)', async () => {
+    // Codex offers a message queue and no answer channel, so a question read
+    // out of a rollout can only be answered where the session runs. The card
+    // draws it unanswerable off this field rather than refusing on a click.
+    expect((await dwarfFor(asking))?.pendingQuestion?.channel).toBe('terminal')
   })
 
   /**

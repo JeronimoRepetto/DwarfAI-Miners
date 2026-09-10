@@ -13,6 +13,7 @@ import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
 import {
+  ANSWER_ONLY_WHERE_IT_RUNS,
   MAX_DWARF_TEXT_CHARS,
   PANEL_OBSERVER,
   type Dwarf,
@@ -5721,6 +5722,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     const stale: DwarfQuestion = {
       toolUseId: 'toolu_stale',
       question: 'Which shape?',
+      channel: 'terminal',
       multiSelect: false,
       options: [{ label: 'Round' }]
     }
@@ -6139,6 +6141,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     const ask: DwarfQuestion = {
       toolUseId: 'call_observed',
       question: 'Which colour?',
+      channel: 'terminal',
       multiSelect: false,
       options: [{ label: 'Green' }]
     }
@@ -6158,6 +6161,10 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     expect(result.answered).toBe(false)
     expect(result.error).toContain('only where the session runs')
     expect(result.error).toContain('terminal')
+    // #354: the shared constant itself, not a sentence that merely reads like
+    // it — the question card draws this exact string beside its jump, and two
+    // copies of one sentence is how the two surfaces start disagreeing.
+    expect(result.error).toBe(ANSWER_ONLY_WHERE_IT_RUNS)
     // Never the registry's own wording, which describes this app rather than
     // the session the person is looking at.
     expect(result.error).not.toContain('not one this panel is holding')

@@ -366,6 +366,7 @@ describe('HeldSessionRegistry questions', () => {
         toolUseId: 'toolu_01',
         question: 'Which colour?',
         header: 'Colour',
+        channel: 'held',
         multiSelect: false,
         options: [{ label: 'Green', description: 'The calm one' }, { label: 'Red' }],
         askedAt: '2023-11-14T22:13:20.000Z'

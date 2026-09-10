@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import { PRESS_ENTER_TO_SEND } from '../../lib/question/questionAnswer'
-import type { DwarfQuestion } from '../../types'
+import { ANSWER_ONLY_WHERE_IT_RUNS, type DwarfQuestion } from '../../types'
 import DwarfQuestionCard from './DwarfQuestionCard.vue'
 
 function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
   return {
     toolUseId: 'toolu_01',
     question: 'Which database should the importer write to?',
+    // The default is the answerable case every test below this fixture was
+    // written against: a session the panel holds. #354 added the field.
+    channel: 'held',
     multiSelect: false,
     options: [
       { label: 'Postgres', description: 'The one the API already uses.' },
@@ -230,5 +234,95 @@ describe('DwarfQuestionCard', () => {
     for (const option of wrapper.findAll('.option-card')) {
       expect(option.classes()).toContain('is-base')
     }
+  })
+  /*
+   * A question the panel can only SHOW (#354). The card learns it from the
+   * ask's own `channel`, which main derives from the same evidence
+   * `answerDwarfQuestion` guards on — see DwarfPromptChannel.
+   */
+  describe('a question this panel cannot answer', () => {
+    function observed(overrides: Partial<DwarfQuestion> = {}) {
+      return card({ question: question({ channel: 'terminal', ...overrides }) })
+    }
+
+    it('keeps the header, the question and every option on screen', () => {
+      const wrapper = observed({ header: 'Storage' })
+      expect(wrapper.find('.question-header').text()).toBe('Storage')
+      expect(wrapper.find('.question-text').text()).toBe(
+        'Which database should the importer write to?'
+      )
+      expect(wrapper.findAll('.option-card')).toHaveLength(3)
+    })
+
+    it('makes no option selectable', async () => {
+      const wrapper = observed()
+      for (const option of wrapper.findAll('.option-card')) {
+        expect(option.attributes('disabled')).toBeDefined()
+        expect(option.attributes('aria-pressed')).toBe('false')
+      }
+      await wrapper.findAll('.option-card')[0]!.trigger('click')
+      for (const option of wrapper.findAll('.option-card')) {
+        expect(option.classes()).toContain('is-base')
+        expect(option.attributes('aria-pressed')).toBe('false')
+      }
+      expect(wrapper.emitted('answer')).toBeUndefined()
+      expect(wrapper.find('.enter-prompt').exists()).toBe(false)
+    })
+
+    it('says where the answer goes in the runtime’s own words, not a second copy', () => {
+      expect(observed().find('.answer-error').text()).toContain(ANSWER_ONLY_WHERE_IT_RUNS)
+    })
+
+    it('offers exactly one jump, drawn as the permission card draws it', () => {
+      const jumps = observed().findAll('.answer-jump')
+      expect(jumps).toHaveLength(1)
+      expect(jumps[0]!.text()).toBe(JUMP_TO_TERMINAL_NAME)
+      expect(jumps[0]!.attributes('title')).toBe(CONSOLE_HINT)
+    })
+
+    it('asks for the console when the jump is pressed', async () => {
+      const wrapper = observed()
+      await wrapper.find('.answer-jump').trigger('click')
+      expect(wrapper.emitted('open-console')).toHaveLength(1)
+    })
+
+    it('leaves the jump on the keyboard’s path while the options are off it', () => {
+      // A disabled button is skipped by the browser's own tab order, so the
+      // jump being an ordinary enabled button is the whole of what this needs.
+      const jump = observed().find('.answer-jump')
+      expect(jump.element.tagName).toBe('BUTTON')
+      expect(jump.attributes('type')).toBe('button')
+      expect(jump.attributes('disabled')).toBeUndefined()
+    })
+
+    it('sends nothing on Enter, and does not swallow the key', () => {
+      const wrapper = observed()
+      const event = pressEnter(wrapper.find('.question-card').element)
+      expect(wrapper.emitted('answer')).toBeUndefined()
+      expect(event.defaultPrevented).toBe(false)
+    })
+
+    it('still lets a free-form reply leave on the ordinary message path', async () => {
+      // Unanswerable is about the ANSWER channel. Telling the session
+      // something is a message, and that path is untouched here.
+      const wrapper = observed()
+      await wrapper.find('.freeform-input').setValue('write to Postgres')
+      pressEnter(wrapper.find('.freeform-input').element)
+      expect(wrapper.emitted('send-text')).toEqual([
+        [{ text: 'write to Postgres', pressEnter: true }]
+      ])
+    })
+
+    it('leaves a held session’s question answerable, with no jump beside it', async () => {
+      const wrapper = card()
+      for (const option of wrapper.findAll('.option-card')) {
+        expect(option.attributes('disabled')).toBeUndefined()
+      }
+      expect(wrapper.find('.answer-jump').exists()).toBe(false)
+      expect(wrapper.find('.answer-error').exists()).toBe(false)
+      await wrapper.findAll('.option-card')[1]!.trigger('click')
+      pressEnter(wrapper.find('.question-card').element)
+      expect(wrapper.emitted('answer')).toEqual([['SQLite']])
+    })
   })
 })

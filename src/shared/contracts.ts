@@ -731,6 +731,20 @@ export interface DwarfQuestion {
   question: string
   /** The agent's own short title for the ask, when it wrote one. */
   header?: string
+  /**
+   * Where this ask can be answered — the same reading DwarfPermissionRequest
+   * carries, and deliberately the same type (#354).
+   *
+   * Stamped by whichever writer put the ask on the wire, and the two writers
+   * are exhaustive and cannot overlap: the held registry stamps `'held'` on a
+   * foreman it holds, SUPERSEDING the transcript's version and clearing it
+   * where the registry has none (see stampHeldQuestions), and a provider that
+   * read the ask out of a transcript it does not own stamps `'terminal'`. So
+   * `channel === 'held'` is exactly the condition `runtime.answerDwarfQuestion`
+   * guards on rather than a renderer's guess at it, and the card cannot offer
+   * an answer main would refuse.
+   */
+  channel: DwarfPromptChannel
   /** Whether the agent said it would accept more than one option. */
   multiSelect: boolean
   options: DwarfQuestionOption[]
@@ -739,34 +753,66 @@ export interface DwarfQuestion {
 }
 
 /**
- * How a decision on a permission prompt physically travels back (#203).
+ * Where an answer to a prompt this panel is showing can be given (#203, #354).
  *
- * ONE closed field on DwarfPermissionRequest rather than a second wire type,
- * and the reason is that the two channels differ in exactly one thing the
- * panel has to know and nothing else. The card is identical — the same tool
- * name, the same redacted input, the same fixed Allow and Deny — because the
- * prompt is the same prompt; what differs is what happens after the click and
- * therefore what the panel may honestly claim afterwards. A second type would
- * have duplicated every field the card reads in order to carry that one bit,
- * and the renderer would have had to branch on which type it held before it
- * could draw anything.
+ * ONE closed field on the prompt rather than a second wire type, and the
+ * reason is that the two channels differ in exactly one thing the panel has to
+ * know and nothing else. The card is identical — the same words, the same
+ * options — because the prompt is the same prompt; what differs is what
+ * happens after the click and therefore what the panel may honestly claim
+ * afterwards. A second type would have duplicated every field the card reads
+ * in order to carry that one bit, and the renderer would have had to branch on
+ * which type it held before it could draw anything.
  *
- * - `'held'`: the panel owns this session's stream, so the decision releases
- *   the blocked call through the Agent SDK's `canUseTool` and either succeeds
- *   or does not, locally and at once (#246).
- * - `'terminal'`: the panel only WATCHES this session, so the decision is a
- *   keystroke typed into the console that is drawing the dialog. That can
- *   fail where the held path cannot — a window that will not focus — and even
- *   when it succeeds it proves only that the key was typed, never that the
- *   session acted on it. Both facts are the panel's to say out loud, which is
- *   why this field is on the wire rather than re-derived in the renderer from
- *   `provider` or `textDelivery`, neither of which answers the question.
+ * - `'held'`: the panel owns this session's stream, so the answer releases the
+ *   blocked call through the Agent SDK — `canUseTool` for a permission (#246),
+ *   the blocked `AskUserQuestion` for a question (#125) — and either succeeds
+ *   or does not, locally and at once.
+ * - `'terminal'`: the panel only WATCHES this session, so the answer belongs
+ *   to the console the session runs in rather than to this panel.
  *
- * Derived in main, where the evidence is. Closed rather than optional: every
- * prompt that reaches the panel arrived by one of these two routes, and a
- * missing value would be a third state nobody can act on.
+ * ONE type for BOTH prompts on purpose, because both cards have to make the
+ * same call and two readings of one fact is how they would come to disagree
+ * (#354). What each card then DOES with `'terminal'` is the one thing that
+ * differs, and the difference is evidence rather than taste:
+ *
+ * - A permission's two answers are Claude Code's own fixed keystrokes, and
+ *   they have been measured on this build, so the panel may type one into the
+ *   console. That can fail where the held path cannot — a window that will not
+ *   focus — and even when it succeeds it proves only that the key was typed,
+ *   never that the session acted on it.
+ * - A question's answer is arbitrary text the agent enumerated, which no
+ *   measured keystroke delivers, so the panel offers no answer at all: it
+ *   draws the ask, leaves the options inert, and points at the terminal with
+ *   ANSWER_ONLY_WHERE_IT_RUNS beside a jump.
+ *
+ * Derived in main, where the evidence is, and never re-derived in the renderer
+ * from `provider` or `textDelivery` — neither answers the question. Closed
+ * rather than optional: every prompt that reaches the panel arrived by one of
+ * these two routes, and a missing value would be a third state nobody can act
+ * on.
  */
-export type DwarfPermissionChannel = 'held' | 'terminal'
+export type DwarfPromptChannel = 'held' | 'terminal'
+
+/**
+ * What main returns, and what the panel prints, when a question came in on the
+ * terminal channel (#265, #354).
+ *
+ * ONE string, on the wire, because two surfaces say it: `answerDwarfQuestion`
+ * returns it to anything that asks anyway, and DwarfQuestionCard prints it in
+ * advance so nobody has to click to find out where the answer goes. A second
+ * copy in the renderer would be two sentences for one fact, which is how a
+ * panel starts sounding like two apps.
+ *
+ * Phrased off the renderer's OPEN_TURN_NO_INTERRUPT_HINT deliberately: that is
+ * the sentence this app already uses for the other thing that can only happen
+ * where the session runs. It lives HERE rather than beside that one because
+ * main is the process that has to return it, and nothing in main may import
+ * the renderer — the wire boundary is the only place both sides may read.
+ */
+export const ANSWER_ONLY_WHERE_IT_RUNS =
+  'This question cannot be answered from here — only where the session runs, which for a ' +
+  'Codex thread is its own terminal. The panel is showing the ask, not holding it.'
 
 /**
  * A tool call a session is blocked on until somebody approves it (#203).
@@ -816,7 +862,7 @@ export interface DwarfPermissionRequest {
   /** A compact, redacted rendering of the tool's input. */
   input: string
   /** Which way a decision on this prompt travels back. */
-  channel: DwarfPermissionChannel
+  channel: DwarfPromptChannel
   /** When this host received the prompt — the only honest clock there is. */
   askedAt: string
 }

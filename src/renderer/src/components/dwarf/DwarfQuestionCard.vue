@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import {
   PRESS_ENTER_TO_SEND,
   answerStatusLine,
@@ -10,13 +11,27 @@ import {
   selectOption,
   type QuestionSelection
 } from '../../lib/question/questionAnswer'
-import { MAX_DWARF_TEXT_CHARS, type DwarfAnswerState, type DwarfQuestion } from '../../types'
+import {
+  ANSWER_ONLY_WHERE_IT_RUNS,
+  MAX_DWARF_TEXT_CHARS,
+  type DwarfAnswerState,
+  type DwarfQuestion
+} from '../../types'
 
 /**
  * What an agent asked its user, and the answers it said it would take (#125).
  *
  * Thin, like every component here: which card is selected, whether Enter would
  * send and what an answer carries are all decided in lib/question.
+ *
+ * An ask on the terminal channel is drawn but not offered (#354): the header,
+ * the question and every option stay exactly where they are, the options go
+ * inert, and one jump to the session's own terminal appears under main's own
+ * sentence — the same control, in the same place, as the permission card's
+ * refused terminal decision. The card never derives that from the provider or
+ * from the dwarf's capabilities; it reads `question.channel`, which is the
+ * very condition main's `answerDwarfQuestion` guards on, so the two cannot
+ * come apart.
  *
  * Two things this component deliberately does NOT do. It never hides the
  * question — the card is drawn from the dwarf's own `pendingQuestion`, and only
@@ -38,6 +53,8 @@ const emit = defineEmits<{
   answer: [label: string]
   /** A free-form reply, which travels as a message rather than as an answer. */
   'send-text': [payload: { text: string; pressEnter: boolean }]
+  /** Focus the console the session runs in, where an unanswerable ask waits. */
+  'open-console': []
 }>()
 
 const selection = ref<QuestionSelection | null>(null)
@@ -45,14 +62,35 @@ const freeform = ref('')
 
 /** The verdict only where it belongs: a new ask never wears the last one's. */
 const verdict = computed(() => answerStateForAsk(props.answerState, props.question.toolUseId))
-const answerable = computed(() => isAnswerable(props.answerState, props.question.toolUseId))
-const canSend = computed(() =>
-  canSendAnswer(selection.value, props.question.toolUseId, props.answerState)
+/*
+ * An ask nothing here can answer, known before anybody clicks (#354). Off the
+ * wire rather than off the dwarf, because the wire is where main put the one
+ * reading its own guard uses — see DwarfPromptChannel.
+ */
+const unanswerable = computed(() => props.question.channel === 'terminal')
+const answerable = computed(
+  () => !unanswerable.value && isAnswerable(props.answerState, props.question.toolUseId)
+)
+const canSend = computed(
+  () =>
+    !unanswerable.value &&
+    canSendAnswer(selection.value, props.question.toolUseId, props.answerState)
 )
 const selectedLabel = computed(() =>
   selection.value?.toolUseId === props.question.toolUseId ? selection.value.label : null
 )
 const okLine = computed(() => answerStatusLine(verdict.value))
+/*
+ * One row for both refusals, because they are the same sentence in the same
+ * place: main's, verbatim. The difference is only when it is known — an
+ * unanswerable ask says it up front, a refused answer after the fact — and an
+ * unanswerable ask wins, since no verdict of its own can exist while nothing
+ * on it can be pressed.
+ */
+const refusalLine = computed(() => {
+  if (unanswerable.value) return ANSWER_ONLY_WHERE_IT_RUNS
+  return verdict.value?.phase === 'refused' ? verdict.value.error : null
+})
 
 function cardClass(label: string): string {
   return `is-${optionState(selection.value, props.question.toolUseId, label)}`
@@ -130,8 +168,23 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       @keydown="onFreeformKeydown"
     ></textarea>
 
-    <p v-if="verdict?.phase === 'refused'" class="answer-error" role="alert">
-      {{ verdict.error }}
+    <p v-if="refusalLine" class="answer-error" role="alert">
+      <span>{{ refusalLine }}</span>
+      <!--
+        The permission card's own jump, drawn the same way for the same act, so
+        one affordance does not read as two. A disabled option is off the
+        keyboard's path already; this button is the one thing on the card that
+        still does something.
+      -->
+      <button
+        v-if="unanswerable"
+        class="answer-jump"
+        type="button"
+        :title="CONSOLE_HINT"
+        @click="emit('open-console')"
+      >
+        {{ JUMP_TO_TERMINAL_NAME }}
+      </button>
     </p>
     <p v-else-if="okLine" class="answer-ok" role="status">{{ okLine }}</p>
   </div>
@@ -271,7 +324,26 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   line-height: 1.25;
 }
 .answer-error {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
   color: #8c2f14;
+}
+/* The permission card's jump, to the character: the same underlined text
+   button the MessagePanel's own approval line uses for the same act. */
+.answer-jump {
+  flex: none;
+  padding: 0;
+  border: 0;
+  color: var(--color-accent);
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.answer-jump:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 .answer-ok {
   color: #3d6b2f;

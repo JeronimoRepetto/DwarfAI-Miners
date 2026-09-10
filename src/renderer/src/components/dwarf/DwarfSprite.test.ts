@@ -385,6 +385,7 @@ describe('DwarfSprite', () => {
       pendingQuestion: {
         toolUseId: 'tool-1',
         question: 'Which branch?',
+        channel: 'held',
         multiSelect: false,
         options: [{ label: 'main' }]
       }

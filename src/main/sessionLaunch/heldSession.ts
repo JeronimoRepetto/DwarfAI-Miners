@@ -754,6 +754,10 @@ export function askToWireQuestion(ask: HeldAsk, askedAt: string): DwarfQuestion 
     toolUseId: ask.toolUseId,
     question: redactSecrets(first.question),
     ...(header === undefined ? {} : { header }),
+    // The panel HOLDS this session, so the answer goes back through the
+    // stream: see DwarfPromptChannel, and permissionToWire below, which says
+    // the same thing about the other prompt on the same session (#354).
+    channel: 'held',
     multiSelect: first.multiSelect,
     options: first.options.map((option) => ({
       label: redactSecrets(option.label),
