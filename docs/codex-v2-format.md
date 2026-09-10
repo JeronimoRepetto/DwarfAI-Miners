@@ -912,3 +912,87 @@ the append-at-emission proof, which is **verified once** (1 orphan in 7 198 call
 repeatedly. "An approval prompt writes nothing while it waits" is **verified for the resolution
 side and inferred for the wait itself** — no prompt was open to watch. Everything is Windows 11,
 one machine, builds `0.145.0-alpha.27` through `0.153.4`.
+
+## 10. What a Codex process is actually named, measured 2026-09-10, codex-cli 0.153.4
+
+Issue #374. The liveness probe answered "codex is running" for any process whose **name or command
+line** mentioned `codex`, and that is not a small over-reach: on this machine, at the moment of
+measurement, **every** process the old filter matched was something other than Codex. This section
+records the shapes the probe now matches, and the ones it must not.
+
+Machine: Windows 11, `codex-cli 0.153.4` installed with pnpm (`~/AppData/Local/pnpm/bin/codex`).
+Read-only throughout: `where.exe`, `Get-Command`, reads of the shims and of `@openai/codex`'s
+`bin/codex.js`, directory listings, and one `Get-CimInstance Win32_Process` enumeration. **No Codex
+session was started, resumed, prompted or signalled**, which is exactly why the positive shapes
+below are marked as they are.
+
+### (a) The two shapes a live session presents — one measured now, one from §8
+
+1. **`node.exe` running the CLI's entry-point script.** `codex` on PATH is a shim, and both of its
+   forms exec node against the same file:
+
+   ```
+   node.exe "<pnpm global>/node_modules/@openai/codex/bin/codex.js" %*
+   ```
+
+   `codex.CMD` (Windows) and the `sh` shim (Git Bash / WSL) differ only in quoting; the `.CMD` falls
+   back to a bare `node` when no `node.exe` sits beside it, so the process name is `node.exe` either
+   way. **Measured now** by reading both shims.
+
+2. **`codex.exe`, the native binary.** `bin/codex.js` picks a target triple from
+   `process.platform`/`arch`, resolves the matching optional dependency
+   (`@openai/codex-win32-x64` and five siblings), and **spawns**
+   `vendor/<triple>/bin/codex.exe` — `codex` without the extension on every non-Windows platform.
+   The triple names the _directory_; the file name carries no triple, so there is no
+   `codex-x86_64-pc-windows-msvc.exe` to match. **Measured now** by reading `findCodexExecutable()`
+   and by finding the binaries themselves (295–314 MB, one per installed version) under the pnpm
+   store at `…/@openai/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe`.
+
+   That the running TUI is a `codex.exe` whose parent is that `node.exe` is **§8(c)'s live
+   measurement (2026-09-09)**, not this slice's: it observed `codex.exe → node.exe → cmd.exe →
+WindowsTerminal.exe`, with the TUI's `CommandLine` being the bare executable path and no
+   arguments at all. Both shapes are therefore matched, and either alone is sufficient.
+
+**UNMEASURED, stated as such**: the desktop app's `app-server` backend (§8's P-app) was not live
+this time; §8 recorded it as a `codex.exe` too, a child of `ChatGPT.exe`. Bun and Deno global
+installs were not observed and their shim shapes are unknown — only `node`/`node.exe` are matched.
+
+### (b) Everything the old filter actually matched, live
+
+Six rows came back from `Name -match 'codex' -or CommandLine -match 'codex'`, and **not one was
+Codex**:
+
+| Row                  | Why it matched                                                                                    | Verdict now |
+| -------------------- | ------------------------------------------------------------------------------------------------- | ----------- |
+| `extension-host.exe` | its own path is `~/.codex/plugins/cache/openai-bundled/chrome/latest/extension-host/windows/x64/` | not running |
+| `cmd.exe`            | Chrome native messaging starts that host through `cmd.exe /d /s /c`, so the path appears twice    | not running |
+| `bash.exe` × 3       | a shell whose command text mentioned the path of this very investigation                          | not running |
+| `node.exe`           | the read-only measurement script itself                                                           | not running |
+
+The `extension-host.exe` row is the one from the report: started hours earlier, orphaned under
+`chrome.exe`, and on its own enough to hold a dead session at `working` for the full
+`CODEX_IDLE_RETENTION_S` hour.
+
+### (c) The traps a name test alone would still fall into
+
+- **`~/.codex/plugins/.plugin-appserver/codex.exe` exists on disk.** The plugin app-server keeps its
+  own copy of the binary, beside `codex-command-runner.exe`, `codex-code-mode-host.exe` and
+  `codex-windows-sandbox-setup.exe`. A name test would accept it; it serves plugins, not a session.
+  This is why the `.codex/plugins/` exclusion is checked **before** the name and not after it.
+- **`~/.codex/.sandbox-bin/` holds `codex.exe` plus seven `codex-command-runner-<version>.exe`.**
+  The runner executes one sandboxed command for a session and exits, with that session's own
+  `codex.exe` as its parent, so it is excluded by not being in the accepted-name list. The
+  `.sandbox-bin/codex.exe` is byte-for-byte the size of the 0.153.4 vendor binary and is accepted:
+  it is the agent, run from a second location.
+- **`@openai/codex` in a command line is not a codex process.** It also appears in an editor's
+  arguments and in `pnpm add -g @openai/codex`. The accepted marker is the entry-point script path
+  ending at `…/codex/bin/codex.js`, under either separator.
+
+### Confidence
+
+The shim contents, `findCodexExecutable`'s resolution, the vendor binary's name and location, the
+`.plugin-appserver` and `.sandbox-bin` inventories, and the six live rows are **verified** on this
+machine. That a running session presents both a `node.exe` parent and a `codex.exe` child is
+**verified in §8 on 2026-09-09** and was not re-observed here, because observing it means running
+Codex. The negative half of the fix — plugin host live, no session, probe answers false — was
+**verified end to end** against the real process list. The positive half rests on §8's measurement.
