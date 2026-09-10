@@ -128,6 +128,14 @@ What is in it:
   and folded, however long the agent has been working since it last spoke. It does not resize
   itself when a message arrives, and it does not scroll you to the bottom mid-sentence — the
   exception being a message you just sent, which it does follow.
+- **Everything said before that, on demand.** The panel opens on the newest twelve things said,
+  and scrolling to the top of them loads the twelve before those — again for as far back as the
+  session goes, twelve at a time. A page lands above what you were reading without moving it: the
+  line you were on stays under your eye rather than sliding down the panel. Nothing is fetched
+  until you actually scroll back, and pages you have loaded stay loaded while the session keeps
+  talking. When there is nothing older left, the line under the composer says so and the panel
+  stops looking; a session whose transcript cannot be read back at all says that instead, which is
+  a different thing from having reached the beginning.
 - **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
   inline code, fenced code and links draw as such instead of the raw `**`, `-` and backtick
   characters, with a heading drawn as a bold paragraph rather than at heading size — a bubble is

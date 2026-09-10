@@ -721,6 +721,83 @@ against a real hosted session, and the measurement goes in the issue. The third 
 it is a fact about which of two shapes resolution ended on rather than about what user32 then did —
 `resolveFocusTarget` and `focusSessionConsole` are unit-tested over a fake shell runner for both.
 
+### Counting the tabs — the phantom's owner, measured 2026-09-10 (#371)
+
+**The third fact above had a hole, and #371 is it.** Its rule was read as "a probed handle is the
+session's own console; only the ancestor walk reaches a host", and the second half of #190's
+measurement makes that false. The phantom the probe resolves under the default-terminal handoff is
+**owned by the Windows Terminal window**, so it _is_ a tab — and it is found by probe, before the
+name walk that would have said `terminal-host` ever runs. Every Windows Terminal session therefore
+reported `own-console`, the widened verification passed by design, and a message pasted into
+whichever tab was in front [#371, observed live 2026-09-10 on a dev build of main]. With one tab
+that worked by luck. So §4b's sentence above — "the focus step resolves one of two things … a
+console window the session is on, or, when the ancestor walk had to reach one, a named terminal
+host" — no longer draws the line where the code does; the line is now the owner relation plus a
+count, below.
+
+**What the desktop actually reports.** Read-only `EnumWindows` + `GetClassName` + `GetAncestor` +
+`GetWindowThreadProcessId` over this machine's live desktop, Windows 11 Pro 26200, 460 top-level
+windows, nothing focused and no key sent [V, #371, 2026-09-10]:
+
+| Handle    | Class                           | Process                         | `GA_ROOTOWNER` | `IsWindowVisible` |
+| --------- | ------------------------------- | ------------------------------- | -------------- | ----------------- |
+| `131698`  | `CASCADIA_HOSTING_WINDOW_CLASS` | `WindowsTerminal.exe` pid 28704 | itself         | true              |
+| `2033948` | `PseudoConsoleWindow`           | `cmd.exe` pid 25208             | `131698`       | **true**          |
+| `657048`  | `PseudoConsoleWindow`           | `cmd.exe` pid 21288             | `131698`       | **true**          |
+| `131398`  | `PseudoConsoleWindow`           | `cmd.exe` pid 6304              | `131698`       | **true**          |
+| 9 others  | `PseudoConsoleWindow`           | `powershell.exe`, various       | itself         | false             |
+
+Four things follow, and each is load-bearing:
+
+1. **The class name is `PseudoConsoleWindow`**, confirming #190's reading, and it is what makes the
+   tabs countable: one ConPTY console is one top-level phantom.
+2. **All three tab phantoms report visible `true`.** That is why #182's visibility guard never
+   filtered them and why the bug reached a keystroke at all.
+3. **`GA_ROOTOWNER` answers the handle itself when nothing owns the window** — the nine unowned rows
+   prove it — so "unowned" needs no extra flag and an ordinary console reads exactly as before.
+4. **The owner window is the host's `MainWindowHandle`**: `WindowsTerminal.exe` pid 28704 reports
+   `MainWindowHandle 131698`, the very CASCADIA handle. So refusing at the OWNER drives the existing
+   `buildFocusCommand` pid path unchanged, and click-to-focus still raises the same window it always
+   did.
+
+**The count, measured through the shipped builders.** `buildConsoleWindowProbeCommand(6304)` printed
+`131398 1 131698 28704` and `buildConsoleSiblingProbeCommand(131698)` printed
+`3 2033948,657048,131398` — stable across two runs minutes apart [V, #371, 2026-09-10]. Three
+phantoms, three `cmd.exe` pids, one owner: the count equals the number of ConPTY consoles that
+window is drawing.
+
+**Exactly one is the only safe `own-console`, and zero is not a count.** One phantom under an owner
+means the host has this console and no other, so the tab in front is necessarily ours. Anything else
+is a tab strip. A count of **zero** cannot be true — the probed console is itself one of the windows
+being counted — so it is a probe that answered wrong, and it refuses like every other unusable
+answer. An unreadable count, a non-zero exit, an owner whose process cannot be named: all
+`terminal-host`. The asymmetry is the same one the kick guard runs on (§4b): a keystroke into an
+unknown tab lands in a stranger's session and cannot be taken back, while refusing costs a relay
+turn.
+
+**What is NOT measured, and marked rather than inferred.** This desktop offered only the several-tab
+state — one Windows Terminal window with three tabs — and nothing was opened or closed to produce
+another, because these are the maintainer's live terminals. So:
+
+| State                                       | Status                                                                                                                                                                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host drawing several consoles → count `> 1` | **Verified** — 3 under owner `131698`                                                                                                                                                                            |
+| Host drawing one console → count `1`        | **Unmeasured** on a real single-tab Windows Terminal. The enumeration's count-of-one branch _is_ exercised by the nine unowned phantoms, each alone under its own handle, but that is not the same window shape. |
+| A **split pane** rather than a tab          | **Unmeasured.** A pane is its own ConPTY, so it should count as a sibling and refuse — which is the wanted answer either way, since a keystroke reaches the focused pane.                                        |
+| Classic `conhost` console under this rule   | **Unmeasured, and not reached**: the five live `ConsoleWindowClass` windows were all unowned and all invisible, so #182's guard answers first.                                                                   |
+
+**Nothing here touched the desktop.** The enumeration is `EnumWindows`, `GetClassName`,
+`GetAncestor` and `GetWindowThreadProcessId` only; the shipped counting command imports no more than
+the first three. `SetForegroundWindow`, `ShowWindow`, `AttachThreadInput` and every keystroke API are
+absent from it and a unit test pins their absence, because this command runs **on the path to a
+keystroke** and a probe that could steal the foreground would be the defect it exists to prevent.
+
+**On step 2 of #371** (`AttachConsole` + `WriteConsoleInput` instead of a foreground at all): nothing
+measured here argues against it, and one row argues for it. Each tab is a **separate `cmd.exe` with
+its own console**, which is exactly the addressing a pid-attached write needs — so the tab the panel
+cannot _raise_ is a console it can already _name_. That remains unmeasured as a write path and is
+not built here.
+
 ---
 
 ## 7. Open edges

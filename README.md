@@ -205,8 +205,10 @@ can reach a console (Windows today), a message goes on the clipboard, the consol
 the clipboard is put back afterwards. Where it cannot (macOS, Linux), a Claude session with a
 registry name takes the relay instead, which touches no window at all. The relay is also the
 fallback on Windows, and only for the one failure that proves nothing was written: a console that
-would not come forward. An interrupt (Kick) never moved — it is a keystroke by nature, and goes to
-the console wherever one exists.
+would not come forward. A Windows Terminal window with several tabs open is refused too and the
+message takes the relay, because nothing can select a tab by session — one tab works as before
+(#371). An interrupt (Kick) never moved — it is a keystroke by nature, and goes to the console
+wherever one exists.
 
 Notes on the three honest gaps:
 
