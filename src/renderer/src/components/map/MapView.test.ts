@@ -351,7 +351,7 @@ describe('MapView time-of-day artwork', () => {
 
   /*
     An interval left running after the view is gone is the classic leak in a
-    panel that switches between five screens all day: it is invisible, it never
+    panel that switches between its screens all day: it is invisible, it never
     fails a test that does not look for it, and it costs a wake-up a minute for
     every map the user ever opened.
   */

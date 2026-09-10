@@ -8,7 +8,7 @@
  */
 import type { DwarfRole, Material, MineTier } from '../types'
 import type { MapTimeVariant } from './map/mapTime'
-import type { ShellArea } from './shell/shellNav'
+import type { ShellArea, UnavailableArea } from './shell/shellNav'
 
 import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
 import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-long-idle-v2-Sheet.png'
@@ -54,6 +54,7 @@ import mapNight from '../assets/art/map/map-bg-nigth.jpg'
 import mapSunset from '../assets/art/map/map-bg-suneset.jpg'
 import labArt from '../assets/art/lab/lab.png'
 import marketArt from '../assets/art/market/market.png'
+import laboralUnionArt from '../assets/art/laboral-union/laboral-union.png'
 
 /*
  * The shell's own icons, imported from `docs/assets/icons` — the path the
@@ -65,6 +66,7 @@ import marketArt from '../assets/art/market/market.png'
 import iconLab from '../../../../docs/assets/icons/lab.svg?url'
 import iconMap from '../../../../docs/assets/icons/map.svg?url'
 import iconMarket from '../../../../docs/assets/icons/market.svg?url'
+import iconLaboralUnion from '../../../../docs/assets/icons/laboral-union.svg?url'
 import iconMine from '../../../../docs/assets/icons/mine.svg?url'
 import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
@@ -256,7 +258,8 @@ export const SHELL_ICON_SRC: Record<ShellArea, string> = {
   map: iconMap,
   mines: iconMine,
   lab: iconLab,
-  market: iconMarket
+  market: iconMarket,
+  'laboral-union': iconLaboralUnion
 }
 
 /** The design's own close glyph, used by the panel's round close control. */
@@ -390,11 +393,19 @@ export const USER_PORTRAIT_SRC = userFace
 /** The app mark, centred at the top of the rail and of the navigation column. */
 export const TRAY_ICON_SRC = trayIcon
 
-/** The base images behind the two panels the design ships as unavailable. */
+/**
+ * The base images behind the three panels the design ships as unavailable.
+ *
+ * The Laboral Union joined them with #335: the design source names the area and
+ * its painting, and specifies the same overlay Lab and Market already carry. One
+ * painting per feature, so a missing file fails the build rather than leaving a
+ * panel with a black rectangle where its art should be.
+ */
 export const UNAVAILABLE_ART_SRC = {
   lab: labArt,
-  market: marketArt
-} as const
+  market: marketArt,
+  'laboral-union': laboralUnionArt
+} as const satisfies Record<UnavailableArea, string>
 
 let preloaded = false
 

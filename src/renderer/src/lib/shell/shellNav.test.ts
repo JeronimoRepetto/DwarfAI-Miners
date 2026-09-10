@@ -1,17 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import { SHELL_AREAS, SHELL_NAV, arrowDirection, isShellArea } from './shellNav'
+import {
+  SHELL_AREAS,
+  SHELL_NAV,
+  UNAVAILABLE_AREAS,
+  arrowDirection,
+  isShellArea,
+  unavailableAreaOf
+} from './shellNav'
 
 describe('SHELL_NAV', () => {
+  /*
+   * AMENDED for #335. Both cases below expected the five areas the design source
+   * named at the time — `['settings', 'map', 'mines', 'lab', 'market']` and
+   * `['Settings', 'Map', 'Mines', 'Lab', 'Market']`. The source now names a
+   * sixth, the Laboral Union, and places it AFTER Market (page 49,
+   * `screens/laboral-union.md`; `components.md`'s button list). Neither case
+   * changed its subject or its name: the order is still the source's own, and
+   * every button is still required to carry a name.
+   */
   it('is the design order, top to bottom', () => {
-    // Settings, Map, Mines, Lab, Market — written down in the source and drawn
-    // in that order in every verified export. Not alphabetical, and not the
-    // order the app happened to build them in.
+    // Settings, Map, Mines, Lab, Market, Laboral Union — written down in the
+    // source and drawn in that order in every verified export. Not alphabetical,
+    // and not the order the app happened to build them in.
     expect(SHELL_NAV.map((item) => item.area)).toEqual([
       'settings',
       'map',
       'mines',
       'lab',
-      'market'
+      'market',
+      'laboral-union'
     ])
   })
 
@@ -21,7 +38,8 @@ describe('SHELL_NAV', () => {
       'Map',
       'Mines',
       'Lab',
-      'Market'
+      'Market',
+      'Laboral Union'
     ])
   })
 
@@ -40,6 +58,32 @@ describe('isShellArea', () => {
     for (const value of ['mine', 'Map', '', 'browse', null, 7]) {
       expect(isShellArea(value), `${String(value)}`).toBe(false)
     }
+  })
+})
+
+/*
+ * Which areas the design ships as unavailable (#335).
+ *
+ * The shell used to decide this inline, as `area === 'lab' ? 'lab' : 'market'`
+ * — a ternary that answers "market" for anything that is not the lab. With a
+ * third unavailable area that shape starts naming the wrong hall, so the list
+ * lives here and the answer is `undefined` for an area that has a screen.
+ */
+describe('unavailableAreaOf', () => {
+  it('names each of the three areas the design ships as unavailable', () => {
+    expect(unavailableAreaOf('lab')).toBe('lab')
+    expect(unavailableAreaOf('market')).toBe('market')
+    expect(unavailableAreaOf('laboral-union')).toBe('laboral-union')
+  })
+
+  it('answers for no area that has a screen of its own', () => {
+    for (const area of ['settings', 'map', 'mines'] as const) {
+      expect(unavailableAreaOf(area), area).toBeUndefined()
+    }
+  })
+
+  it('keeps its list inside the areas the navigation offers', () => {
+    for (const area of UNAVAILABLE_AREAS) expect(isShellArea(area)).toBe(true)
   })
 })
 

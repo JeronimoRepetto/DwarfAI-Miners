@@ -21,7 +21,7 @@ export function useView() {
     state.mineId = null
   }
 
-  /** Select one of the five shell areas. The open mine, if any, stays open. */
+  /** Select one of the six shell areas. The open mine, if any, stays open. */
   function showArea(area: ShellArea): void {
     state.area = area
   }

@@ -1,23 +1,33 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { UNAVAILABLE_ART_SRC } from '../../lib/art'
+import type { UnavailableArea } from '../../lib/shell/shellNav'
 
 /**
- * The Lab and the Market (#90). Both are fully specified in the design source
- * and both are specified as unavailable: a painting under a 50% black filter,
- * and one centred message over it.
+ * The Lab, the Market and the Laboral Union (#90, #335). All three are fully
+ * specified in the design source and all three are specified as unavailable: a
+ * painting under a 50% black filter, and one centred message over it.
  *
  * There is deliberately nothing to press. The source names no action, no retry,
  * no availability date and no error state, and inventing any of them would be
  * filling a gap the source marked rather than left.
+ *
+ * The Union is a third FEATURE of this one component rather than a panel of its
+ * own: the source names no difference beyond the painting and the sentence, and
+ * a second implementation of the same overlay is how the two drift apart.
  */
-const props = defineProps<{ feature: 'lab' | 'market' }>()
+const props = defineProps<{ feature: UnavailableArea }>()
 
-/** The design's copy, verbatim, including the apostrophe it is written with. */
+/**
+ * The design's copy, verbatim, including the apostrophe it is written with — and
+ * including its casing: the hall is written "the Laboral Union" where the other
+ * two are lowercase nouns, so it is copied rather than normalised to match them.
+ */
 const MESSAGES = {
   lab: "We're working to rebuild the lab.",
-  market: "We're working to rebuild the market."
-} as const
+  market: "We're working to rebuild the market.",
+  'laboral-union': "We're working to rebuild the Laboral Union."
+} as const satisfies Record<UnavailableArea, string>
 
 const headline = computed(() => MESSAGES[props.feature])
 const art = computed(() => UNAVAILABLE_ART_SRC[props.feature])
