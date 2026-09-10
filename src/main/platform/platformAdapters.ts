@@ -187,17 +187,26 @@ function createTextDelivery(
       // probe beside it is the re-verification before that kill (#231), and it
       // is the SAME port the Claude provider's pid-reuse guard reads, so the
       // two answers about one pid can never come from two different probes.
+      // Both reach the POSIX port below on identical terms (#366).
       processEnd,
       processProbe,
       ...(runShell === undefined ? {} : { runPowerShell: runShell }),
       ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard })
     })
   }
+  // Kick ends a session here too since #366, and the two ports it needs are the
+  // same instances the Windows branch reads — one process-end port per OS, one
+  // probe port per OS, composed once. Console input is the only capability that
+  // stays platform-shaped: a keystroke needs the window server, a signal to a
+  // pid needs nothing, so this port can END a session on a platform it cannot
+  // TYPE into. Those two were one question until #366 and are two now.
   return new PosixTextDelivery({
     ...shared,
     focus,
     platform,
-    consoleInput: createConsoleInput(platform, options)
+    consoleInput: createConsoleInput(platform, options),
+    processEnd,
+    processProbe
   })
 }
 

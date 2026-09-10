@@ -1,25 +1,44 @@
 import { homedir } from 'node:os'
 import type { Platform } from '../platform/platform'
+import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
+import {
+  createProcessProbe,
+  sameProcessStart,
+  type ProcessProbePort
+} from '../platform/processProbe'
 import type { ConsoleInputAdapter } from './osascriptInput'
 import type {
   CodexQueueRequest,
   ConsoleTextRequest,
+  EndSessionRequest,
   InterruptRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
   TextDeliveryPort
 } from './port'
 import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
+import {
+  GRACEFUL_EXIT_POLL_COUNT,
+  GRACEFUL_EXIT_POLL_INTERVAL_MS,
+  SESSION_NOT_ENDED,
+  SESSION_NOT_VERIFIED
+} from './endSession'
 import { deliverViaRelay, runRelayProcess, type RelayRunner } from './relayRunner'
+import { createStageTimer } from './timing'
 
 /**
  * macOS/Linux implementation of TextDeliveryPort.
  *
- * Two tiers, and only one of them is portable:
+ * Three tiers, and the one that needs a window server is still the odd one out:
  *
  * - The relay (`claude -p` handing the text to a named session) spawns a CLI,
  *   so it works identically on every platform and is the tier a headless
  *   session uses anywhere.
+ * - Ending a session needs no window either (#366): a signal is addressed to a
+ *   pid, and SIGTERM is catchable, so the CLI runs its own exit path and hands
+ *   the terminal back restored. That is why this tier exists here while console
+ *   input does not — the two were conflated as one "can this platform reach a
+ *   console" question until #366, and they are not the same question.
  * - Console input needs the window server. macOS can do it through System
  *   Events (osascript), Linux has no portable way at all, and even the macOS
  *   path needs Accessibility permission the app cannot check for. So the
@@ -60,6 +79,31 @@ export interface PosixTextDeliveryOptions {
   codexBinary?: () => Promise<string | undefined>
   /** Injected for tests; defaults to a real codex spawn. */
   runCodexQueue?: CodexQueueRunner
+  /**
+   * Signals one process — Kick's terminal tier (#366).
+   *
+   * The same per-OS port a launched session's exit uses (#217), injected the way
+   * `focus` and `consoleInput` are so a test never signals a real process;
+   * absent, this composes the one for its own platform. The tier uses the
+   * DIRECT-pid signals on it and never `endProcessTree`, whose negative pid
+   * addresses a process group only a launched session leads.
+   */
+  processEnd?: ProcessEndPort
+  /**
+   * Reads a pid's real creation time — the verification before the signal
+   * (#231). The same port the Claude provider's pid-reuse guard uses, composed
+   * once in platformAdapters; absent, this composes its platform's own.
+   */
+  processProbe?: ProcessProbePort
+  /** Injected for tests; defaults to Date.now. Only ever reads durations. */
+  now?: () => number
+  /**
+   * Waits `ms` and resolves — the delay between grace-window polls of a session
+   * that was asked to exit (#366). Injected the way `now` is so a unit test
+   * drives the poll to completion instantly instead of waiting out the real
+   * window; defaults to a real `setTimeout`.
+   */
+  sleep?: (ms: number) => Promise<void>
 }
 
 export class PosixTextDelivery implements TextDeliveryPort {
@@ -75,6 +119,10 @@ export class PosixTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
+  private readonly processEnd: ProcessEndPort
+  private readonly processProbe: ProcessProbePort
+  private readonly now: () => number
+  private readonly sleep: (ms: number) => Promise<void>
 
   constructor(options: PosixTextDeliveryOptions) {
     this.platform = options.platform
@@ -87,6 +135,14 @@ export class PosixTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
+    // The platform this port was CONSTRUCTED for, never asked of the machine:
+    // this class is the POSIX port for whichever POSIX platform composed it, and
+    // reading process.platform here would be a fourth call site for an answer
+    // the composition already made (see platform-ports).
+    this.processEnd = options.processEnd ?? createProcessEnd({ platform: options.platform })
+    this.processProbe = options.processProbe ?? createProcessProbe({ platform: options.platform })
+    this.now = options.now ?? Date.now
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.supportsConsoleInput = this.consoleInput !== null
   }
 
@@ -138,7 +194,7 @@ export class PosixTextDelivery implements TextDeliveryPort {
     })
   }
 
-  /** Kick's terminal path: focus, then a bare Escape instead of any text. */
+  /** The permission DENY of #203: focus, then a bare Escape instead of any text. */
   async sendInterrupt(request: InterruptRequest): Promise<TextDeliveryOutcome> {
     const input = this.consoleInput
     if (input === null) return { delivered: false, error: NO_CONSOLE_INPUT }
@@ -152,5 +208,116 @@ export class PosixTextDelivery implements TextDeliveryPort {
     } catch {
       return { delivered: false, error: UNREACHABLE }
     }
+  }
+
+  /**
+   * Kick's terminal tier on macOS and Linux (#366): ask the session's own
+   * process to exit, and force it if it will not.
+   *
+   * The same contract the Windows tier holds — verify the pid, ask, poll,
+   * escalate, report only what was observed — reached by a strictly simpler
+   * act, because SIGTERM is CATCHABLE. The signal itself is the clean ask: the
+   * CLI runs its own exit path and resets the terminal modes it turned on, so
+   * none of #358's Windows machinery is needed here. No window is focused, no
+   * keystroke is synthesized, and #329's shared-tab ambiguity — the reason the
+   * Windows clean exit may only type into a console this session is alone on —
+   * cannot arise, because a signal is addressed to a pid rather than to whatever
+   * holds the foreground.
+   *
+   * The pid is signalled DIRECTLY. `endProcessTree`'s negative pid is a process
+   * GROUP, which is right for a session this panel launched as a group leader
+   * (#217) and wrong for one somebody else started in their own terminal, whose
+   * pid leads no group of ours — see processEnd.ts. The tree above such a pid is
+   * the shell and every other tab in that window, and the terminal tab stays
+   * open at its shell prompt either way.
+   *
+   * The verification before the signal is #231's, fail-closed: a mismatch and an
+   * unreadable process list are the same refusal, and nothing is signalled on
+   * either. Note the deliberate asymmetry with the poll below — before the
+   * signal a null probe is "cannot verify, do not act", and after it a null probe
+   * is "gone" — stated at both sites because it is the same reading with
+   * opposite consequences.
+   *
+   * `delivered: true` is a fact this process observed: the pid stopped being
+   * this session, or the platform reported an uncatchable signal delivered to a
+   * pid verified a moment earlier. Every other answer is a failure with a
+   * reason, and the whole act is one `spawn` stage because it is the one act a
+   * person waits through.
+   */
+  async endConsoleSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
+    try {
+      const outcome = await timer.measure('spawn', async () => {
+        // Fail closed: nothing is signalled at a pid nothing can vouch for.
+        if (!(await this.stillThisProcess(request))) {
+          return { delivered: false, error: SESSION_NOT_VERIFIED }
+        }
+        // A signal the platform would not deliver is not an ended session, and
+        // it is not escalated either: both signals travel the same `kill`, so a
+        // TERM that never arrived says the escalation would not arrive too. The
+        // escalation is for a process that DECLINED the signal.
+        if (!(await this.processEnd.terminateProcess(request.pid))) {
+          return { delivered: false, error: SESSION_NOT_ENDED }
+        }
+        if (await this.pollForExit(request)) return { delivered: true }
+        return this.forceEndSession(request)
+      })
+      return { ...outcome, stages: timer.timings() }
+    } catch {
+      // A throwing probe is an unreadable process list by another name, and a
+      // throwing signal did not signal: neither may report a session ended.
+      return { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
+    }
+  }
+
+  /**
+   * Whether the process at `pid` is still the one the provider verified — the
+   * one reading both halves of this tier take, in opposite directions.
+   *
+   * False bundles "the pid is another process now" with "the process list could
+   * not be read", and that is the point: neither is evidence, and what a caller
+   * does with the absence of evidence depends entirely on whether it has already
+   * asked this session to exit. Before the signal, false must refuse; after it,
+   * false means the session went.
+   */
+  private async stillThisProcess(request: EndSessionRequest): Promise<boolean> {
+    const probedMs = await this.processProbe.processStartTimeMs(request.pid)
+    return probedMs !== null && sameProcessStart(probedMs, request.expectedStartMs)
+  }
+
+  /**
+   * Poll the pid until the session that was asked to exit is gone or the grace
+   * window runs out. True means gone: after asking a VERIFIED pid to exit, a pid
+   * that stops answering — or that answers as a different process — has done
+   * what we asked.
+   */
+  private async pollForExit(request: EndSessionRequest): Promise<boolean> {
+    for (let attempt = 0; attempt < GRACEFUL_EXIT_POLL_COUNT; attempt++) {
+      await this.sleep(GRACEFUL_EXIT_POLL_INTERVAL_MS)
+      if (!(await this.stillThisProcess(request))) return true
+    }
+    return false
+  }
+
+  /**
+   * The escalation for a session that outlasted its grace window: SIGKILL,
+   * which it cannot catch.
+   *
+   * The pid is re-probed immediately before it, the way the Windows kill is
+   * (#231) — the last look of the poll can be a whole interval old, and this is
+   * the irreversible act. A pid that stopped matching in that interval went of
+   * its own accord, late but gone, so it is reported as ended rather than
+   * refused: the exit we asked for took. Nothing uncatchable is sent to a pid
+   * nothing can vouch for any more.
+   *
+   * A delivered SIGKILL is an ended process — the kernel does not consult the
+   * program — so the verdict is the platform's own answer about the signal, not
+   * a second probe racing the reaping of the process it just destroyed.
+   */
+  private async forceEndSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
+    if (!(await this.stillThisProcess(request))) return { delivered: true }
+    return (await this.processEnd.killProcess(request.pid))
+      ? { delivered: true }
+      : { delivered: false, error: SESSION_NOT_ENDED }
   }
 }

@@ -211,6 +211,75 @@ describe('createPlatformAdapters — text delivery', () => {
     expect(seen[2]?.args[1]).toContain('keystroke "hi"')
   })
 
+  /**
+   * Kick's terminal tier reaches macOS and Linux (#366), and the composition is
+   * what carries it there: the port needs the process-END port to signal the pid
+   * and the PROBE port to verify it first, and both are the same instances every
+   * other caller reads — the pid-reuse guard above all, so two answers about one
+   * pid can never come from two different probes.
+   *
+   * Asserted through the injected runners rather than by inspecting the port:
+   * what matters is that the end tier really signals, and really refuses when
+   * the probe disagrees.
+   */
+  it('hands the POSIX port the process-end and probe ports its end tier needs', async () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      const probed: ProbeCommand[] = []
+      const probeRun = async (command: ProbeCommand) => {
+        probed.push(command)
+        return '' // nothing this platform's parser can read
+      }
+      const killed: EndProcessCommand[] = []
+      const endRun = async (command: EndProcessCommand) => {
+        killed.push(command)
+      }
+      const adapters = createPlatformAdapters(options(platform, { endRun, probeRun }))
+
+      expect(typeof adapters.textDelivery.endConsoleSession).toBe('function')
+      // Fail closed: the probe could not answer, so nothing is signalled — and
+      // the probe it asked is this platform's own, through the port composed
+      // here (#231).
+      await expect(
+        adapters.textDelivery.endConsoleSession!({
+          pid: 4242,
+          expectedStartMs: 1_788_001_972_136
+        })
+      ).resolves.toMatchObject({ delivered: false })
+      expect(probed.map((command) => command.command)).toEqual([
+        platform === 'darwin' ? 'ps' : 'cat'
+      ])
+      expect(killed).toEqual([])
+    }
+  })
+
+  /*
+   * And the other half of the same wiring: a pid the probe DOES vouch for is
+   * signalled directly — `kill -TERM <pid>`, never `-4242`, the process group
+   * only a launched session leads (#217, #366).
+   *
+   * The signal is made to fail so the assertion stays on the argv and the
+   * grace window is never entered: this test is about what the composition
+   * addresses, and the tier's own behaviour is pinned in posixTextDelivery's
+   * tests with an injected clock.
+   */
+  it('signals the verified pid itself, through the composed end port', async () => {
+    const killed: EndProcessCommand[] = []
+    const endRun = async (command: EndProcessCommand) => {
+      killed.push(command)
+      throw new Error('kill: no such process')
+    }
+    const probeRun = async () => 'Sat Aug 29 11:07:36 2026\n'
+    const adapters = createPlatformAdapters(options('darwin', { endRun, probeRun }))
+
+    await expect(
+      adapters.textDelivery.endConsoleSession!({
+        pid: 4242,
+        expectedStartMs: new Date(2026, 7, 29, 11, 7, 36).getTime()
+      })
+    ).resolves.toMatchObject({ delivered: false })
+    expect(killed).toEqual([{ command: 'kill', args: ['-TERM', '4242'] }])
+  })
+
   it('keeps the relay tier available on every platform', async () => {
     const runRelay = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
     for (const platform of ['win32', 'darwin', 'linux'] as const) {
