@@ -1817,9 +1817,15 @@ export const MAX_DWARF_TEXT_CHARS = 4000
  * would be noise the agent has to read past. It sits AHEAD of the
  * `[for agent <name>] ` tag a worker's chain adds, because the two say
  * different things: this one names the AUTHOR, that one names the RECIPIENT.
+ *
+ * It names no product on purpose. An agent handed the name of a tool it does
+ * not know goes looking for it — what it is, whether it is real — and spends
+ * a turn investigating a sentence whose only job was to say "this is your
+ * user". Two facts, nothing to look up: who typed it, and that the session in
+ * the envelope merely carried it.
  */
 export const RELAY_PROVENANCE_LINE =
-  "[Typed by the person in DwarfAI-Miners' message panel — this is your user's own message, relayed because your console could not be reached.]"
+  '[Your user typed this message; another session only relayed it verbatim.]'
 
 /**
  * `text` with a leading RELAY_PROVENANCE_LINE and the newline behind it taken
