@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildEndProcessTreeCommand, createProcessEnd, type EndProcessCommand } from './processEnd'
+import {
+  buildEndProcessTreeCommand,
+  buildKillProcessCommand,
+  buildTerminateProcessCommand,
+  createProcessEnd,
+  type EndProcessCommand
+} from './processEnd'
 
 describe('buildEndProcessTreeCommand', () => {
   /*
@@ -48,6 +54,77 @@ describe('buildEndProcessTreeCommand', () => {
   )
 })
 
+/**
+ * The DIRECT-pid signals, beside the group form above and never replacing it
+ * (#366).
+ *
+ * Kick's terminal tier ends a session somebody else started in their own
+ * terminal. That pid leads no group of ours — it is one process inside the
+ * terminal's own group — so the negative pid the launched tier signals would
+ * reach a group this panel never created, or none at all. The two builders
+ * therefore differ by one character and by everything: `-<pid>` is a group,
+ * `<pid>` is a process.
+ *
+ * Windows has its own end tier (`taskkill /T`, above) and no `kill`, so both
+ * answer null there rather than inventing an argv that is not true of the
+ * platform — the same null a pid no command may be built for gets.
+ */
+describe('buildTerminateProcessCommand / buildKillProcessCommand', () => {
+  it('signals the pid itself on Linux and macOS, never its group', () => {
+    expect(buildTerminateProcessCommand('linux', 4242)).toEqual({
+      command: 'kill',
+      args: ['-TERM', '4242']
+    })
+    expect(buildTerminateProcessCommand('darwin', 77)).toEqual({
+      command: 'kill',
+      args: ['-TERM', '77']
+    })
+  })
+
+  /*
+   * The escalation behind a SIGTERM the CLI never acted on. Same shape, same
+   * direct pid: a KILL to a group would be the group mistake twice over.
+   */
+  it('escalates to KILL on the same pid, on both POSIX platforms', () => {
+    expect(buildKillProcessCommand('linux', 4242)).toEqual({
+      command: 'kill',
+      args: ['-KILL', '4242']
+    })
+    expect(buildKillProcessCommand('darwin', 77)).toEqual({
+      command: 'kill',
+      args: ['-KILL', '77']
+    })
+  })
+
+  it('builds no direct signal on Windows, which ends a tree instead', () => {
+    expect(buildTerminateProcessCommand('win32', 4242)).toBeNull()
+    expect(buildKillProcessCommand('win32', 4242)).toBeNull()
+  })
+
+  /*
+   * The same guard the group form has, and for a reason that survives losing
+   * the minus sign: `kill -TERM 0` signals every process in the panel's OWN
+   * group, and a negative one that slipped through would signal a group.
+   */
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'builds no command at all for the unusable pid %s',
+    (pid) => {
+      expect(buildTerminateProcessCommand('linux', pid)).toBeNull()
+      expect(buildTerminateProcessCommand('darwin', pid)).toBeNull()
+      expect(buildKillProcessCommand('linux', pid)).toBeNull()
+      expect(buildKillProcessCommand('darwin', pid)).toBeNull()
+    }
+  )
+
+  /* The group form is what the launched tier still uses, and it is untouched. */
+  it('leaves the launched tier on the process group', () => {
+    expect(buildEndProcessTreeCommand('linux', 4242)).toEqual({
+      command: 'kill',
+      args: ['-TERM', '-4242']
+    })
+  })
+})
+
 describe('createProcessEnd', () => {
   function recording(outcome: 'ok' | 'fail' = 'ok') {
     const calls: EndProcessCommand[] = []
@@ -83,6 +160,44 @@ describe('createProcessEnd', () => {
     await expect(createProcessEnd({ platform: 'linux', run }).endProcessTree(0)).resolves.toBe(
       false
     )
+    expect(calls).toEqual([])
+  })
+
+  /* The direct signals of #366, on the same runner and the same discipline. */
+  it('signals one pid and reports the signal delivered', async () => {
+    const { run, calls } = recording()
+    const port = createProcessEnd({ platform: 'darwin', run })
+
+    await expect(port.terminateProcess(4242)).resolves.toBe(true)
+    await expect(port.killProcess(4242)).resolves.toBe(true)
+    expect(calls).toEqual([
+      { command: 'kill', args: ['-TERM', '4242'] },
+      { command: 'kill', args: ['-KILL', '4242'] }
+    ])
+  })
+
+  /*
+   * `kill` exits non-zero for a pid it cannot find or may not signal, and the
+   * runner turns that into a rejection. False is the honest verdict: nothing
+   * was signalled, so nothing may be reported as ended.
+   */
+  it('reports a failure rather than claiming a signal was delivered', async () => {
+    const { run } = recording('fail')
+    const port = createProcessEnd({ platform: 'linux', run })
+    await expect(port.terminateProcess(9)).resolves.toBe(false)
+    await expect(port.killProcess(9)).resolves.toBe(false)
+  })
+
+  /*
+   * Windows builds no direct signal at all, so the port answers false there
+   * without running anything — an absent per-OS act stated as a verdict rather
+   * than as a `kill` that does not exist.
+   */
+  it('signals nothing on Windows, where the end tier is the tree kill', async () => {
+    const { run, calls } = recording()
+    const port = createProcessEnd({ platform: 'win32', run })
+    await expect(port.terminateProcess(4242)).resolves.toBe(false)
+    await expect(port.killProcess(4242)).resolves.toBe(false)
     expect(calls).toEqual([])
   })
 })

@@ -2852,7 +2852,13 @@ describe('AgentRuntime giving a previous run’s launch its exit back (#231)', (
           isCodexProcessRunning: vi.fn().mockResolvedValue(false),
           processStartTimeMs: vi.fn().mockResolvedValue(processStartTimeMs)
         },
-        processEnd: { endProcessTree },
+        // AMENDED for #366: ProcessEndPort grew the two direct-pid signals
+        // the POSIX end tier uses; no test here signals a real process either.
+        processEnd: {
+          endProcessTree,
+          terminateProcess: vi.fn().mockResolvedValue(false),
+          killProcess: vi.fn().mockResolvedValue(false)
+        },
         cliDetector: {
           detect: vi.fn().mockResolvedValue({ cli: 'codex', installed: false }),
           peek: vi.fn().mockReturnValue('unprobed')
@@ -3942,7 +3948,13 @@ describe('AgentRuntime simulated provider wiring (#42)', () => {
       },
       // Added by #217. A fake that never ends anything: no test here may end a
       // real process tree.
-      processEnd: { endProcessTree: vi.fn().mockResolvedValue(false) },
+      // AMENDED for #366: the two direct-pid signals joined the port, and this
+      // fake refuses them for the same reason it refuses the tree kill.
+      processEnd: {
+        endProcessTree: vi.fn().mockResolvedValue(false),
+        terminateProcess: vi.fn().mockResolvedValue(false),
+        killProcess: vi.fn().mockResolvedValue(false)
+      },
       cliDetector: {
         detect: vi.fn().mockResolvedValue({ cli: 'claude', installed: false }),
         peek: vi.fn().mockReturnValue('unprobed')
@@ -6874,7 +6886,12 @@ describe('AgentRuntime provider availability (#86)', () => {
         sendInterrupt: async () => ({ delivered: true })
       },
       // Added by #217; never ends a real tree, like every other port here.
-      processEnd: { endProcessTree: async () => false },
+      // AMENDED for #366: the direct-pid signals joined the port; refused here too.
+      processEnd: {
+        endProcessTree: async () => false,
+        terminateProcess: async () => false,
+        killProcess: async () => false
+      },
       processProbe: {
         isCodexProcessRunning: async () => false,
         processStartTimeMs: async () => null
@@ -6948,7 +6965,12 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
         relayToClaudeSession: async () => ({ delivered: true }),
         sendInterrupt: async () => ({ delivered: true })
       },
-      processEnd: { endProcessTree: async () => false },
+      // AMENDED for #366: the direct-pid signals joined the port; refused here too.
+      processEnd: {
+        endProcessTree: async () => false,
+        terminateProcess: async () => false,
+        killProcess: async () => false
+      },
       processProbe: {
         isCodexProcessRunning: async () => false,
         processStartTimeMs: async () => null

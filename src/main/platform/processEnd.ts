@@ -35,6 +35,24 @@ export interface ProcessEndPort {
    * it as a failure rather than as a session ended.
    */
   endProcessTree(pid: number): Promise<boolean>
+  /**
+   * Ask the process at `pid` — that one process, never a group — to exit, and
+   * let it run its own teardown (#366).
+   *
+   * The observed-session half of this port, where `endProcessTree` above is the
+   * launched-session half. True means the platform reported the signal
+   * DELIVERED, which is all a catchable signal can ever say: what the program
+   * then does with it is the caller's next observation, never this answer.
+   * False covers every other reply, Windows included — see
+   * `buildTerminateProcessCommand`.
+   */
+  terminateProcess(pid: number): Promise<boolean>
+  /**
+   * The escalation behind `terminateProcess`: end the process at `pid` with a
+   * signal it cannot catch (#366). Same reporting rule, and the same false for
+   * a platform that builds no direct signal.
+   */
+  killProcess(pid: number): Promise<boolean>
 }
 
 /**
@@ -70,6 +88,55 @@ export function buildEndProcessTreeCommand(
   return { command: 'kill', args: ['-TERM', `-${pid}`] }
 }
 
+/**
+ * The signal command for ONE process, or null when this platform has no direct
+ * signal or `pid` is not a pid (#366).
+ *
+ * The negative pid `buildEndProcessTreeCommand` builds above is a process
+ * GROUP, and that is right for what it ends: a session this panel LAUNCHED is
+ * detached, so its process is a group leader and its children inherit that
+ * group. A session running in somebody's own terminal is the opposite case —
+ * its pid is one process inside the terminal's own group, and the panel started
+ * none of it — so a negative pid there signals a group this app never created,
+ * or reaches nothing at all. Hence two builders rather than one flag: the
+ * launched tier keeps the group, and the observed tier signals the pid.
+ *
+ * Null on Windows, which has no `kill` and its own end tier (`taskkill /T`).
+ * Reporting that as an argv would be a builder producing a command that is not
+ * true of the platform; the port answers false instead, exactly as it does for
+ * a pid no command may be built for.
+ *
+ * Null for anything but a real positive integer pid, for the reason the group
+ * form guards it: `kill -TERM 0` signals every process in the PANEL's own
+ * group, and a negative value slipping through would signal a group again.
+ */
+function buildSignalProcessCommand(
+  platform: Platform,
+  signal: 'TERM' | 'KILL',
+  pid: number
+): EndProcessCommand | null {
+  if (platform === 'win32') return null
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  return { command: 'kill', args: [`-${signal}`, String(pid)] }
+}
+
+/**
+ * `kill -TERM <pid>`: the catchable ask that lets a CLI run its own exit path —
+ * restoring the terminal it turned mouse reporting on in — which is why the
+ * POSIX end tier needs no keystroke and no focused window (#366, over #358).
+ */
+export function buildTerminateProcessCommand(
+  platform: Platform,
+  pid: number
+): EndProcessCommand | null {
+  return buildSignalProcessCommand(platform, 'TERM', pid)
+}
+
+/** `kill -KILL <pid>`: the uncatchable escalation for a process that ignored TERM. */
+export function buildKillProcessCommand(platform: Platform, pid: number): EndProcessCommand | null {
+  return buildSignalProcessCommand(platform, 'KILL', pid)
+}
+
 function runEndCommand(kill: EndProcessCommand): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(kill.command, kill.args, { timeout: 5_000, windowsHide: true }, (error) => {
@@ -95,18 +162,21 @@ export interface ProcessEndOptions {
 export function createProcessEnd(options: ProcessEndOptions = {}): ProcessEndPort {
   const platform = options.platform ?? currentPlatform()
   const run = options.run ?? runEndCommand
-  return {
-    async endProcessTree(pid: number): Promise<boolean> {
-      const kill = buildEndProcessTreeCommand(platform, pid)
-      if (kill === null) return false
-      try {
-        await run(kill)
-        return true
-      } catch {
-        // Missing binary, timeout, access denied, no such process — all
-        // reported as "it did not happen", never as an ended session.
-        return false
-      }
+  /** One built command, run and reported. Null in means false out, unrun. */
+  const deliver = async (kill: EndProcessCommand | null): Promise<boolean> => {
+    if (kill === null) return false
+    try {
+      await run(kill)
+      return true
+    } catch {
+      // Missing binary, timeout, access denied, no such process — all
+      // reported as "it did not happen", never as an ended session.
+      return false
     }
+  }
+  return {
+    endProcessTree: (pid: number) => deliver(buildEndProcessTreeCommand(platform, pid)),
+    terminateProcess: (pid: number) => deliver(buildTerminateProcessCommand(platform, pid)),
+    killProcess: (pid: number) => deliver(buildKillProcessCommand(platform, pid))
   }
 }
