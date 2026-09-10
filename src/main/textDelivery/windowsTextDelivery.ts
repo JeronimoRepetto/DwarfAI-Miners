@@ -31,7 +31,12 @@ import {
   type RelayResult,
   type RelayRunner
 } from './relayRunner'
-import { buildPasteCommand, buildSendInterruptCommand, buildSendKeysCommand } from './sendKeys'
+import {
+  buildGracefulExitCommand,
+  buildPasteCommand,
+  buildSendInterruptCommand,
+  buildSendKeysCommand
+} from './sendKeys'
 import { createStageTimer, type StageTimings } from './timing'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
@@ -115,6 +120,19 @@ const SESSION_NOT_ENDED = 'This session could not be ended.'
  */
 const SESSION_NOT_VERIFIED = "This session's process could not be verified, so nothing was ended."
 
+/**
+ * How long a cleanly-asked session is given to exit before it is forced, and how
+ * often the pid is looked at in that window (#358).
+ *
+ * About three seconds, ten looks ~300ms apart — measured against the Claude Code
+ * TUI's own Ctrl+C-twice exit: long enough for it to tear down and restore the
+ * terminal, short enough that a person waiting on a kick is not left wondering
+ * whether it worked. The whole window still counts as the one act the person
+ * waits through, so it is measured inside the same `spawn` stage as the kill.
+ */
+const GRACEFUL_EXIT_POLL_COUNT = 10
+const GRACEFUL_EXIT_POLL_INTERVAL_MS = 300
+
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
   relayModel: string
@@ -175,6 +193,13 @@ export interface WindowsTextDeliveryOptions {
   processProbe?: ProcessProbePort
   /** Injected for tests; defaults to Date.now. Only ever reads durations. */
   now?: () => number
+  /**
+   * Waits `ms` and resolves — the delay between grace-window polls of a
+   * cleanly-asked session (#358). Injected the way `now` is so a unit test drives
+   * the poll to completion instantly instead of waiting out the real window;
+   * defaults to a real `setTimeout`.
+   */
+  sleep?: (ms: number) => Promise<void>
 }
 
 function runPowerShellCommand(command: string): Promise<{ stdout: string; exitCode: number }> {
@@ -211,6 +236,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly processEnd: ProcessEndPort
   private readonly processProbe: ProcessProbePort
   private readonly now: () => number
+  private readonly sleep: (ms: number) => Promise<void>
   /** Null when the transport was replaced outright and there is nothing to keep alive. */
   private readonly consoleWorker: ConsoleWorker | null
 
@@ -230,6 +256,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.processEnd = options.processEnd ?? createProcessEnd({ platform: 'win32' })
     this.processProbe = options.processProbe ?? createProcessProbe({ platform: 'win32' })
     this.now = options.now ?? Date.now
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
 
     // An injected runner with no worker spawn is a test replacing the whole
     // transport; anything else keeps one shell alive and falls back to a
@@ -439,47 +466,116 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * Kick's terminal tier: end the session's process tree (#329).
+   * Kick's terminal tier: ask the session to exit cleanly, then force it if it
+   * will not (#358, over #329).
    *
-   * No focus step and no keystroke, which is the repair rather than an
-   * optimization — every window this path used to need was a window that could
-   * turn out to be another session's. `taskkill /T` walks DOWN from the pid it
-   * is given, so the session's own tool processes go with it and the shell, the
-   * terminal host and every other tab above it are untouched.
+   * #329 made this a pure tree kill — no window, no keystroke — because a pid
+   * cannot be the wrong session the way a foreground window can. But `taskkill
+   * /F` gives the Claude Code TUI no chance to run its exit path, so the DECSET
+   * modes it turned on (mouse tracking above all) are never reset and the shell
+   * that inherits the console prints an SGR mouse report on every pointer move
+   * afterwards. So the kick now asks the CLI to exit the way its own /exit would
+   * FIRST — Ctrl+C twice, which the maintainer measured the Claude TUI exits
+   * cleanly on — and only force-kills if the process survives a bounded grace.
    *
-   * The pid is re-verified here rather than trusted from the poll that produced
-   * it (#231): probe its real creation time, compare against the one the
-   * provider verified, and kill only on agreement. `sameProcessStart` is the
-   * same comparison and the same 2s tolerance the provider's own pid-reuse
-   * guard uses, so the two cannot drift apart. A mismatch and an unreadable
-   * process list both refuse — see SESSION_NOT_VERIFIED for why this guard,
-   * alone in this app, fails closed.
+   * The clean exit is attempted only where a keystroke is safe: the console must
+   * come forward AND be one this session is alone on (#329's `terminal-host`
+   * refusal stays — a key into a shared tab strip lands in the wrong session),
+   * and the pid must re-verify against `expectedStartMs` before a key is sent
+   * (#231's fail-closed guard, so a key never reaches a recycled pid). Anything
+   * short of that skips the keystroke and falls straight through to the kill.
    *
-   * `delivered: true` is a fact this process observed — the platform reported
-   * the tree gone — and not a message handed to somebody who may act on it,
-   * exactly as the launched tier's end reads (see endLaunchedSession). Every
-   * other answer is a failure with a reason, never a session reported ended.
+   * The forced fallback is unchanged: re-probe the pid at the moment of the act,
+   * `taskkill /T` only on agreement, and refuse on a mismatch or an unreadable
+   * process list alike — see SESSION_NOT_VERIFIED for why this guard, alone in
+   * this app, fails closed. The graceful attempt and the kill behind it are one
+   * `spawn` stage, because they are the one act a person waits through.
+   *
+   * `delivered: true` is a fact this process observed — the TUI's own exit took,
+   * or the platform reported the tree gone — never a message handed to somebody
+   * who may act on it. Every other answer is a failure with a reason.
    */
   async endConsoleSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
     const timer = createStageTimer(this.now)
     try {
-      // Both children under one stage: the probe exists only to license the
-      // kill, and what a person waits through is the pair.
-      const ended = await timer.measure('spawn', async () => {
-        const probedMs = await this.processProbe.processStartTimeMs(request.pid)
-        if (probedMs === null || !sameProcessStart(probedMs, request.expectedStartMs)) return null
-        return this.processEnd.endProcessTree(request.pid)
+      const outcome = await timer.measure('spawn', async () => {
+        // The clean path: the terminal was handed back by the TUI's own exit, so
+        // no force kill is reached at all (#358).
+        if (await this.attemptGracefulExit(request)) return { delivered: true }
+        return this.forceEndSession(request)
       })
-      if (ended === null) {
-        return { delivered: false, error: SESSION_NOT_VERIFIED, stages: timer.timings() }
-      }
-      return ended
-        ? { delivered: true, stages: timer.timings() }
-        : { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
+      return { ...outcome, stages: timer.timings() }
     } catch {
       // A throwing probe is an unreadable process list by another name, and a
       // throwing kill did not kill: neither may report a session ended.
       return { delivered: false, error: SESSION_NOT_ENDED, stages: timer.timings() }
     }
+  }
+
+  /**
+   * Ask the session's CLI to exit cleanly and wait a bounded grace for it to go
+   * (#358). True means it is gone and the terminal was restored; false means
+   * nothing was tried, or it did not go, and the forced kill behind this is what
+   * ends it.
+   *
+   * Every reason to skip returns false rather than throwing, so a failed clean
+   * exit is never anything but a fall-through to the guaranteed kill: a console
+   * that will not come forward, a shared terminal window (#329), a pid that no
+   * longer verifies (#231), a keystroke command that would not run, or a focus
+   * that threw.
+   */
+  private async attemptGracefulExit(request: EndSessionRequest): Promise<boolean> {
+    try {
+      const focus = await this.focus(request.pid)
+      // Only a console this session is provably alone on may receive a key; a
+      // shared tab strip's active tab is unknowable from here (#329).
+      if (!focus.focused || focus.reach === 'terminal-host') return false
+      // Never a keystroke to a pid the OS may have recycled onto another
+      // process — the same fail-closed guard the kill re-checks below (#231).
+      const probedMs = await this.processProbe.processStartTimeMs(request.pid)
+      if (probedMs === null || !sameProcessStart(probedMs, request.expectedStartMs)) return false
+      const result = await this.runPowerShell(buildGracefulExitCommand())
+      // The keystroke command failed to run, so the Ctrl+C never landed; there
+      // is nothing to wait for, and the forced kill takes over.
+      if (result.exitCode !== 0) return false
+      return this.pollForExit(request)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Poll the pid until the cleanly-asked session is gone or the grace window
+   * runs out (#358). Gone is `processStartTimeMs` reporting null, or a start
+   * time that no longer matches the one we verified — the pid we knew is no
+   * longer that process, so this session exited.
+   *
+   * Note the deliberate asymmetry with the keystroke guard above: null there is
+   * "cannot verify, do not type" and null here is "gone", because after asking a
+   * verified pid to exit, a pid that stops answering has done what we asked.
+   */
+  private async pollForExit(request: EndSessionRequest): Promise<boolean> {
+    for (let attempt = 0; attempt < GRACEFUL_EXIT_POLL_COUNT; attempt++) {
+      await this.sleep(GRACEFUL_EXIT_POLL_INTERVAL_MS)
+      const probedMs = await this.processProbe.processStartTimeMs(request.pid)
+      if (probedMs === null || !sameProcessStart(probedMs, request.expectedStartMs)) return true
+    }
+    return false
+  }
+
+  /**
+   * The forced kill, unchanged from #329/#231: re-probe the pid at the moment of
+   * the act, `taskkill /T` only on agreement, and refuse on a mismatch or an
+   * unreadable process list alike. This is the one guard in the app that fails
+   * closed. A throwing probe or kill propagates to `endConsoleSession`'s catch,
+   * which reports SESSION_NOT_ENDED rather than a session ended.
+   */
+  private async forceEndSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
+    const probedMs = await this.processProbe.processStartTimeMs(request.pid)
+    if (probedMs === null || !sameProcessStart(probedMs, request.expectedStartMs)) {
+      return { delivered: false, error: SESSION_NOT_VERIFIED }
+    }
+    const ended = await this.processEnd.endProcessTree(request.pid)
+    return ended ? { delivered: true } : { delivered: false, error: SESSION_NOT_ENDED }
   }
 }

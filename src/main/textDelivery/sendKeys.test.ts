@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildGracefulExitCommand,
   buildPasteCommand,
   buildSendInterruptCommand,
   buildSendKeysCommand,
@@ -155,5 +156,46 @@ describe('buildSendInterruptCommand', () => {
 
   it('takes no arguments: the interrupt is a fixed keystroke, never user text', () => {
     expect(buildSendInterruptCommand).toHaveLength(0)
+  })
+})
+
+/*
+ * The graceful-exit path (#358): Kick's terminal tier asks the CLI to exit the
+ * way its own /exit would before it force-kills anything, so the TUI runs its
+ * teardown and restores the terminal (the mouse-tracking modes taskkill /F left
+ * on). Measured live by the maintainer on 2026-09-10: the Claude Code TUI on
+ * Windows exits CLEANLY on Ctrl+C twice — one Ctrl+C then Ctrl+D does not — so
+ * this presses `^c` twice. Like {ESC} and ^v, `^c` IS the SendKeys keyname and
+ * carries no user text, so it never touches escapeSendKeys.
+ */
+describe('buildGracefulExitCommand', () => {
+  it('presses Ctrl+C twice — the two the Claude TUI needs to exit cleanly', () => {
+    const command = buildGracefulExitCommand()
+    expect(command).toContain('Add-Type -AssemblyName System.Windows.Forms')
+    expect(command.match(/SendWait\('\^c'\)/g)).toHaveLength(2)
+  })
+
+  it('settles the just-focused terminal before the first Ctrl+C, and waits between the two', () => {
+    // The same settle sleeps every builder here uses: 150ms so the freshly
+    // foregrounded terminal is ready for the first keystroke, 120ms between the
+    // two so the TUI registers them as two distinct Ctrl+C, not one.
+    expect(buildGracefulExitCommand().split('\n')).toEqual([
+      "$ErrorActionPreference = 'Stop'",
+      'Add-Type -AssemblyName System.Windows.Forms',
+      'Start-Sleep -Milliseconds 150',
+      "[System.Windows.Forms.SendKeys]::SendWait('^c')",
+      'Start-Sleep -Milliseconds 120',
+      "[System.Windows.Forms.SendKeys]::SendWait('^c')"
+    ])
+  })
+
+  it('never routes ^c through the message-escaping path, which would neutralize it', () => {
+    // escapeSendKeys would turn the keyname into the literal characters `{^}c`
+    // instead of the actual Ctrl+C keystroke — exactly as it would to {ESC}.
+    expect(buildGracefulExitCommand()).not.toContain(escapeSendKeys('^c'))
+  })
+
+  it('takes no arguments: the clean exit is a fixed keystroke pair, never user text', () => {
+    expect(buildGracefulExitCommand).toHaveLength(0)
   })
 })

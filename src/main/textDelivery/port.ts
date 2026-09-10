@@ -355,14 +355,19 @@ export interface TextDeliveryPort {
    * not the turn it is in (#329).
    *
    * Kick's terminal tier, and the third one that ends rather than interrupts
-   * (see KickEndpoint). It takes no window and sends no key: which tab of a
-   * shared terminal window is in front is unknowable from here, so the act that
-   * cannot miss is the only honest one left. The terminal tab stays open at its
-   * shell prompt.
+   * (see KickEndpoint). Since #358 an implementation SHOULD ask the session's
+   * CLI to exit cleanly first — so it restores the terminal it left reporting
+   * every mouse move as an escape sequence — and force-kill only if the process
+   * survives a bounded grace. That clean exit is a keystroke, so it is safe only
+   * on a console this session is provably alone on (never a shared terminal
+   * window, #329) and only for a pid re-verified as below; otherwise it is
+   * skipped and the forced kill, which needs no window and cannot miss, is all
+   * there is. Either way the terminal tab stays open at its shell prompt.
    *
    * An implementation MUST re-verify `pid` against `expectedStartMs` at the
-   * moment of the kill and refuse on anything short of agreement, unknown
-   * included (#231). This is the one guard in the app that fails closed.
+   * moment of the kill AND before any clean-exit keystroke, and refuse on
+   * anything short of agreement, unknown included (#231). This is the one guard
+   * in the app that fails closed.
    *
    * Optional for the reason `pasteToConsole` is, and absent for a stronger
    * one: only the Windows port implements it. The POSIX tree kill signals the

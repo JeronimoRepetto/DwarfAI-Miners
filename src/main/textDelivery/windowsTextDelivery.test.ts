@@ -636,12 +636,18 @@ describe('WindowsTextDelivery.queueToCodexThread', () => {
 })
 
 /**
- * Kick's terminal tier since #329: end the session, do not press a key at it.
+ * Kick's terminal tier: ask the session to exit cleanly, then force it if it
+ * will not (#358, over #329).
  *
- * No window, no keystroke and no focus step, which is the whole point — a pid
- * cannot be the wrong session the way a foreground window can. The tree kill is
- * the same per-OS port a launched session's exit uses (#217); only the pid it is
- * pointed at comes from somewhere else.
+ * #329 made this a pure tree kill — no window, no keystroke — because a pid
+ * cannot be the wrong session the way a foreground window can. But a taskkill /F
+ * gives the Claude TUI no chance to reset the terminal modes it turned on
+ * (mouse tracking above all), so the console prints endless SGR mouse reports
+ * afterwards. So #358 tries a clean exit FIRST — but only on a console this
+ * session is provably alone on (#329's shared-tab refusal stays), and only for a
+ * pid re-verified at the moment of the act (#231's fail-closed guard stays). The
+ * force kill is the same per-OS port a launched session's exit uses (#217) and
+ * is the fallback whenever the clean exit is unsafe or does not take.
  */
 describe('WindowsTextDelivery.endConsoleSession', () => {
   /** The creation time the provider verified and put on the wire. */
@@ -660,13 +666,24 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     const port = delivery({
       processEnd: { endProcessTree },
       processProbe: { isCodexProcessRunning: vi.fn(), processStartTimeMs },
+      // #358: the graceful-first grace window polls the pid on an injected
+      // delay, so a unit test resolves it instantly instead of waiting ~3s.
+      sleep: async () => {},
       ...extra
     })
     return { port, endProcessTree, processStartTimeMs }
   }
 
-  it("ends the session's own process tree without touching a window", async () => {
-    const focus = vi.fn()
+  /*
+   * AMENDED for #358 (was: "ends the session's own process tree without
+   * touching a window", asserting focus was never called). #358 tries a clean
+   * exit first, so it DOES focus the console now — but only to type into a
+   * window this session is alone on. When the console will not come forward
+   * there is nowhere safe to send the clean-exit keystroke, so no key is sent
+   * and the forced tree kill still ends the session, exactly as #329 did.
+   */
+  it('sends no clean-exit keystroke when the console will not come forward, and force-kills the tree (#358)', async () => {
+    const focus = vi.fn().mockResolvedValue(NOT_FOCUSED)
     const runPowerShell = vi.fn()
     const { port, endProcessTree } = ender(undefined, undefined, { focus, runPowerShell })
 
@@ -674,7 +691,6 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
       port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     ).resolves.toMatchObject({ delivered: true })
     expect(endProcessTree).toHaveBeenCalledWith(4242)
-    expect(focus).not.toHaveBeenCalled()
     expect(runPowerShell).not.toHaveBeenCalled()
   })
 
@@ -730,8 +746,12 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     await expect(
       port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     ).resolves.toMatchObject({ delivered: true })
-    expect(order).toEqual(['probe', 'kill'])
-    // One pid, asked about and then acted on — never two.
+    // AMENDED for #358: the graceful attempt and its grace-window poll probe the
+    // pid first, so the invariant is now that the FORCED path re-probes
+    // immediately before it kills — the last two acts are that verified probe
+    // and the kill it licenses.
+    expect(order.slice(-2)).toEqual(['probe', 'kill'])
+    // One pid throughout, asked about and then acted on — never a different one.
     expect(processStartTimeMs).toHaveBeenCalledWith(4242)
     expect(endProcessTree).toHaveBeenCalledWith(4242)
   })
@@ -773,6 +793,92 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     await expect(
       port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     ).resolves.toMatchObject({ delivered: false })
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The clean-exit-first path (#358). On a console this session is alone on, the
+   * kick presses Ctrl+C twice — the measured way the Claude TUI exits and
+   * restores the terminal — and polls the pid for a bounded grace. The moment
+   * the pid stops being this session, the terminal was handed back by the TUI's
+   * own exit, so the force kill is never reached.
+   */
+  it('asks the session to exit cleanly and, once it goes, never force-kills it', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    // Verified alive at the keystroke, still there on the first look, then gone.
+    const processStartTimeMs = vi
+      .fn()
+      .mockResolvedValueOnce(EXPECTED_START_MS)
+      .mockResolvedValueOnce(EXPECTED_START_MS)
+      .mockResolvedValue(null)
+    const { port } = ender(endProcessTree, processStartTimeMs, { runPowerShell })
+
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
+    // Ctrl+C twice was the whole act; the /F kill never ran.
+    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('^c')")
+    expect(endProcessTree).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The fallback stays exactly the forced kill it always was. A session that
+   * does not go within the grace window is force-killed, and the outcome is the
+   * same delivered:true #329 produced — the clean exit is an attempt, never a
+   * replacement for the guarantee.
+   */
+  it('force-kills the session when the clean exit does not take within the grace window', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    // Never goes: verified alive at the keystroke and on every poll after it.
+    const processStartTimeMs = vi.fn().mockResolvedValue(EXPECTED_START_MS)
+    const { port } = ender(endProcessTree, processStartTimeMs, { runPowerShell })
+
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('^c')")
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+  })
+
+  /*
+   * #329's shared-tab refusal survives #358 unchanged. A keystroke into a
+   * terminal-host window lands in whichever tab is active, so no clean-exit
+   * keystroke is sent there — the kick goes straight to the forced tree kill,
+   * which needs no window and cannot miss.
+   */
+  it('sends no clean-exit keystroke into a shared terminal window, and force-kills instead (#329)', async () => {
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const { port, endProcessTree } = ender(undefined, undefined, {
+      focus: vi.fn().mockResolvedValue(TERMINAL_HOST),
+      runPowerShell
+    })
+
+    await expect(
+      port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(runPowerShell).not.toHaveBeenCalled()
+    expect(endProcessTree).toHaveBeenCalledWith(4242)
+  })
+
+  /*
+   * The clean-exit keystroke obeys the same fail-closed pid guard the kill does
+   * (#231): a pid whose creation time no longer matches is not proven to be this
+   * session, so nothing is typed at it AND nothing is killed. The forced
+   * fallback re-probes the same mismatch and refuses with SESSION_NOT_VERIFIED,
+   * exactly as it did before #358.
+   */
+  it('sends no clean-exit keystroke when the pid no longer matches, and refuses as today', async () => {
+    const endProcessTree = vi.fn().mockResolvedValue(true)
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const processStartTimeMs = vi.fn().mockResolvedValue(EXPECTED_START_MS + 60_000)
+    const { port } = ender(endProcessTree, processStartTimeMs, { runPowerShell })
+
+    const outcome = await port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toMatch(/could not be verified/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
     expect(endProcessTree).not.toHaveBeenCalled()
   })
 })
