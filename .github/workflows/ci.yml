@@ -241,9 +241,13 @@ jobs:
   # not a real "no environment" and risks those legs failing or waiting on
   # an environment that was never meant to gate them. Splitting macOS into
   # its own job keeps the blast radius of those five secrets to exactly the
-  # one job that needs them, and the `release` environment's own `v*` tag
-  # deployment rule means this job additionally refuses to run for any ref
-  # that isn't a `v*` tag, on top of the `if:` below.
+  # one job that needs them, and the `release` environment's own `v*`
+  # deployment policy means this job additionally refuses to run for any ref
+  # that isn't a `v*` tag, on top of the `if:` below. That policy has to be
+  # of type TAG: the first tag build after the repository went public
+  # (v0.9.0, 2026-09-10) was refused in two seconds because the only policy
+  # was `v*` of type BRANCH, which no tag ever matches — environment
+  # protection is enforced only on public repositories, so it had never run.
   release-mac:
     name: Package macOS installers and publish release
     needs: checks
@@ -251,7 +255,15 @@ jobs:
     environment: release
     permissions:
       contents: write
-    runs-on: macos-latest
+    # Pinned, not `macos-latest`. On the macOS 26 image (Darwin 25.6.0, what
+    # `macos-latest` resolved to on 2026-09-10) electron-builder 26.15.3's
+    # own temporary keychain fails at `security set-key-partition-list` with
+    # "SecKeychainUnlock: The user name or passphrase you entered is not
+    # correct" — after the certificate import succeeded, so the secrets are
+    # not the cause; the same secrets signed and notarized v0.8.0 by hand the
+    # day before. macOS 15 is the image that flow is known to work on. Move
+    # the pin only after a tag build proves the newer image.
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Checkout

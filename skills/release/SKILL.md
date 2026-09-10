@@ -74,12 +74,21 @@ happen, or a build that fails late.
    and Linux still package and publish normally, so a release can go out missing only the Mac
    installers with nothing in the other two legs' logs pointing at it. Check `release-mac`
    specifically, not just whether the release has assets.
-9. **The `release` environment's tag rule can refuse the leg outright.** It carries a `v*`
-   deployment tag rule, so `release-mac` refuses to run for any ref that doesn't match `v*` —
-   independent of, and in addition to, the job's own `if: startsWith(github.ref, 'refs/tags/v')`.
-   See [`docs/signing.md`](../../docs/signing.md) for what the five secrets are and where they
-   live.
-10. **A per-platform optional dependency needs pruning by hand, twice.** `@anthropic-ai/claude-agent-sdk`
+9. **The `release` environment's deployment policy can refuse the leg outright — and it must be
+   of type TAG.** The environment carries a `v*` policy, so `release-mac` refuses to run for any
+   ref that doesn't match it, independent of the job's own `if: startsWith(github.ref,
+'refs/tags/v')`. Measured on the first tag after going public (v0.9.0, 2026-09-10): the only
+   policy was `v*` of type **branch**, which no tag matches, and the job failed in two seconds with
+   "Tag v0.9.0 is not allowed to deploy to release due to environment protection rules". A `v*`
+   policy of type **tag** was added beside it. Environment protection is enforced only on public
+   repositories, which is why this never showed while the repository was private. See
+   [`docs/signing.md`](../../docs/signing.md) for what the five secrets are and where they live.
+10. **The macOS leg is pinned to `macos-15`, on purpose.** On the macOS 26 image electron-builder
+    26.15.3's temporary keychain fails at `security set-key-partition-list` with "SecKeychainUnlock:
+    The user name or passphrase you entered is not correct" after the certificate import already
+    succeeded (v0.9.0, 2026-09-10) — the runner, not the secrets. Re-pin only after a tag build
+    proves the newer image.
+11. **A per-platform optional dependency needs pruning by hand, twice.** `@anthropic-ai/claude-agent-sdk`
     ships one ~200MB runtime package per platform+arch; pnpm only installs the host's own match, so the
     x64 macOS installer built on an arm64 runner shipped without an x64 runtime at all (found packaging
     v0.8.0 by hand, #349). Declaring the four this app builds (`darwin-arm64`, `darwin-x64`, `linux-x64`,
