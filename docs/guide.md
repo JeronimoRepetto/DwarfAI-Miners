@@ -46,9 +46,10 @@ bar.
 Once the provider integrations and core interaction model are complete, the **Laboratory** and
 **Market** will turn the colony's mined materials into game systems. The planned direction is to
 use the Lab to change dwarf skins and other cosmetic loadouts, and the Market to spend the raw
-materials the agents mine. Those systems are intentionally not shipped yet: both screens currently
-show an unavailable state, while the material ledger provides the foundation for the future
-economy.
+materials the agents mine. The **Laboral Union** is the third of them and the furthest off: what a
+union hall would report is the crew's own usage, kept as a ledger of its own, and neither the
+screen nor the data behind it exists yet. None of the three is shipped: each shows an unavailable
+state today, while the material ledger provides the foundation for the future economy.
 
 The goal is not to make agent work less trustworthy by hiding it behind game mechanics. The game
 layer should make real agent activity easier and more enjoyable to understand — an idle game built
@@ -136,7 +137,9 @@ What is in it:
   until you actually scroll back, and pages you have loaded stay loaded while the session keeps
   talking. When there is nothing older left, the line under the composer says so and the panel
   stops looking; a session whose transcript cannot be read back at all says that instead, which is
-  a different thing from having reached the beginning.
+  a different thing from having reached the beginning; and a transcript that goes on past the
+  furthest back the panel is willing to read says a third thing — that this is as far as it
+  reaches, and the rest is in the session's own terminal. All three stop the asking.
 - **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
   inline code, fenced code and links draw as such instead of the raw `**`, `-` and backtick
   characters, with a heading drawn as a bold paragraph rather than at heading size — a bubble is
@@ -166,9 +169,13 @@ What is in it:
 
 A question card is answered from the panel whether the session is one it holds or one it only
 watches. For a watched Claude Code session the answer is a keystroke in that session's own terminal,
-measured against the CLI's own picker: clicking an option answers a question that takes one answer,
-and where the agent said it would accept several the options become toggles and an **Answer**
-control sends them — nothing is typed until you press it. One shape stays unanswerable from here,
+measured against the CLI's own picker: clicking an option chooses it and the card then asks for
+**Enter**, which is what sends; where the agent said it would accept several answers the options
+become toggles instead and an **Answer** control releases them, so nothing is typed until you press
+it. That keystroke tier is Windows-only today. The console adapter behind macOS and Linux can type
+text and press Escape and nothing else, while a multi-select's confirmation needs an arrow key — so
+rather than answer one shape of ask and refuse the other, the card there says this build cannot type
+an answer into a console and sends you to the terminal. One shape stays unanswerable from here,
 and the card says so with a jump to the terminal beside it: a call that asked SEVERAL questions at
 once, because only its first reaches the panel and answering that one would move the picker on to a
 question the panel cannot see. A session that shares its terminal window with other tabs
@@ -206,34 +213,66 @@ no reaction seen" rather than claiming a reaction.
 
 Which channel carries it depends on the session, not on a preference:
 
-| The session…                              | Message goes by                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------- |
-| runs in a console the panel can reach     | **clipboard paste** into that console; the relay if it will not come forward |
-| is a named Claude session with no console | Claude Code's own cross-session messaging (`claude -p` relay)                |
-| is a Codex CLI session                    | Codex's own message queue, read between turns                                |
-| is one this panel is **holding** open     | straight onto the stream the panel already owns                              |
-| was launched with a single prompt         | nothing — it has no inbox, and the composer says so                          |
+| The session…                               | Message goes by                                                              |
+| ------------------------------------------ | ---------------------------------------------------------------------------- |
+| runs in a console the panel can reach      | **clipboard paste** into that console; the relay if it will not come forward |
+| shares its terminal window with other tabs | the relay — nothing is pasted, because no tab can be picked out by session   |
+| is a named Claude session with no console  | Claude Code's own cross-session messaging (`claude -p` relay)                |
+| is a Codex CLI session                     | Codex's own message queue, read between turns                                |
+| is one this panel is **holding** open      | straight onto the stream the panel already owns                              |
+| was launched with a single prompt          | nothing — it has no inbox, and the composer says so                          |
 
 The per-platform half of that is the [support matrix](../README.md#platform-support); the reasoning
 behind both reversals of the paste-versus-relay order is
 [`docs/console-hosting.md`](console-hosting.md). A message to a worker is delivered to its foreman,
 tagged for that worker by name.
 
-A message the **relay** carries is prefixed with one line saying you wrote it in the message panel
-and why it was relayed: Claude Code's cross-session messaging frames it for the receiving agent as
-another session's words rather than its user's, and that framing is the harness's rather than this
-app's to change — so the message states its own author, and the panel's hover says the same. A
+The second row is a Windows Terminal window with several tabs open in it, and the panel establishes
+that by counting the consoles the window it would raise is drawing: exactly one is this session's
+and is pasted into as before, more than one — or a count that could not be read — takes the relay.
+Nothing can raise a tab by session, so a paste there would land in whichever tab was last used,
+Enter included.
+
+A message the **relay** carries is prefixed with one line stating who wrote it: that your user
+typed this message, and that another session only relayed it verbatim. Claude Code's cross-session
+messaging frames whatever it carries for the receiving agent as another session's words rather than
+its user's, and that framing is the harness's rather than this app's to change — so the message
+states its own author. Two facts and no third: the line names no product, because an agent handed
+the name of a tool it does not know spends a turn finding out what it is. The panel's hover on the
+delivery mark says the same thing about the same message, and the line is taken back off when your
+words come round in the transcript, so the panel draws them once rather than twice. A
 pasted message carries no prefix, because it already arrives as the prompt you typed; writing into
 a session's own console by verified process id is what will make every message arrive that way, on
 every platform.
 
-**Kick** does one of three things, and says which:
+**Kick** does one of four things, and says which:
 
-- cuts the current turn short, where the session has an interrupt channel;
-- **ends the process**, for a session this panel launched itself;
+- cuts the current turn short, where the panel is holding the session's own stream and that
+  protocol documents a cancel;
+- **ends the process**, for a session this panel launched itself or is holding over a pipe;
+- **ends the session running in a terminal**, for one you started yourself in your own window;
 - **sends the dwarf off the rock**, where nothing can be interrupted at all — the board stops
   showing it, and nothing is asked of the session. It comes back the moment that session shows new
   activity, which the panel tells you, because otherwise the return reads as a bug.
+
+The third of those is the one that differs per platform, and it ends the session rather than the
+turn it is in. On Windows it first asks the CLI to exit the way its own `/exit` would — Ctrl+C
+twice, measured as the Claude Code TUI's clean exit — because a clean exit runs the teardown that
+resets the terminal modes the TUI turned on, and it force-kills only if the process outlives a
+three-second grace. On macOS and Linux it signals the process instead, SIGTERM and then SIGKILL
+after the same grace: SIGTERM is catchable, so the CLI runs that same teardown, and a signal needs
+no window, no keystroke and no guess about which tab is in front. Either way the terminal tab
+itself stays open at its shell prompt.
+
+Nothing is signalled at a process this app cannot prove is still that session: the pid is
+re-verified against the process creation time the session was last seen with, and a mismatch and a
+process list that cannot be read are the same refusal. That refusal is where a kick on macOS or Linux stops
+today. The reading the guard needs comes from the Claude session registry, and what that registry
+records on those platforms has never been measured — only the Windows value has — so the reading
+arrives absent, the kick is refused before anything is signalled, and the panel says so. Where the
+session also answers to a registry name, a relay cancel is attempted behind that refusal: an
+instruction the session may decline, weaker than the act you asked for, and the panel names the
+channel that actually delivered.
 
 ### Focusing a session's terminal
 
@@ -276,7 +315,12 @@ checkout. Both are shown as their own project, exactly as before.
 ## Providers in depth
 
 Codex liveness is heuristic: a recently modified rollout can remain visible until the
-configured liveness window expires after the CLI closes.
+configured liveness window expires after the CLI closes. A quiet rollout is held on the board for
+longer while a Codex process is running (`CODEX_IDLE_RETENTION_S`), and that reading judges a
+process by its executable — the `codex` binary itself, or the node interpreter running the CLI's
+own entry script — rather than by any process whose command line happens to mention codex. A
+plugin host or an editor holding a file under `~/.codex` is not a session, so a session that died
+mid-turn is not kept standing for an hour by one.
 
 **Antigravity is narrower than the other two, and every limit is an absence of evidence rather
 than an unbuilt feature.** Its CLI keeps a private on-disk format with no compatibility promise.
