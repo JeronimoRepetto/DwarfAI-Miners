@@ -159,3 +159,62 @@ export function buildGracefulExitCommand(): string {
     "[System.Windows.Forms.SendKeys]::SendWait('^c')"
   ].join('\n')
 }
+
+/** The nine rows Claude Code's question picker numbers, and the only keys this builder presses. */
+const ANSWER_DIGITS = /^[1-9]$/
+
+/**
+ * PowerShell that answers Claude Code's `AskUserQuestion` picker: each chosen
+ * option's digit, then — for a multi-select — `{RIGHT}` and `{ENTER}` (#362).
+ *
+ * Measured live by the maintainer on 2026-09-10, Claude Code 2.1.267, Windows
+ * Terminal, with ONE question per call:
+ *
+ * - **Single-select**: pressing the option's digit selects AND submits, with no
+ *   Enter and no confirmation screen — the same shape #203's permission digit
+ *   has. So a single-select answer is one digit and `submit` is false; an Enter
+ *   behind it would submit the input box of a session whose picker has closed.
+ * - **Multi-select**: each digit TOGGLES its option and the cursor does not
+ *   move, so the digits need no arrow counting. `End` does nothing and
+ *   `PageDown` jumps to the free-text "Other" row — never a route to submit,
+ *   which is why neither appears here. `{RIGHT}` shows the summary of what is
+ *   toggled and `{ENTER}` accepts it.
+ *
+ * Null rather than a throw, and for three reasons the one caller states to the
+ * person: nothing was chosen (a bare `{RIGHT}{ENTER}` would accept an empty
+ * answer), more rows than the picker numbers, or a "digit" that is not one of
+ * the nine. That last guard is what keeps arbitrary text out of a command whose
+ * keys deliberately never pass through escapeSendKeys.
+ *
+ * Deliberately built without escapeSendKeys, exactly as buildGracefulExitCommand
+ * and buildSendInterruptCommand are: `{RIGHT}` and `{ENTER}` here ARE the
+ * SendKeys keynames, and the escaping path meant for arbitrary user text would
+ * turn them into literal characters instead of the keystrokes. There is no user
+ * text on this path at all — a digit is the whole payload.
+ *
+ * The settle sleeps mirror every other builder's: 150ms so the just-focused
+ * terminal is ready for the first key, 120ms between keys so the TUI registers
+ * each as its own keystroke rather than folding two together.
+ *
+ * This builder presses what it is told, and nothing here knows which window is
+ * in front. Where these keys may be pressed at all is the port's question, and
+ * since #371 its focus check can tell a phantom console owned by a tab strip
+ * from a console a session is alone on — so a shared Windows Terminal window is
+ * refused rather than answered in whichever tab was active.
+ */
+export function buildQuestionAnswerCommand(
+  digits: readonly string[],
+  submit: boolean
+): string | null {
+  if (digits.length === 0 || digits.length > 9) return null
+  if (digits.some((digit) => !ANSWER_DIGITS.test(digit))) return null
+  const keys = submit ? [...digits, '{RIGHT}', '{ENTER}'] : [...digits]
+  const lines = ["$ErrorActionPreference = 'Stop'", 'Add-Type -AssemblyName System.Windows.Forms']
+  for (const [index, key] of keys.entries()) {
+    lines.push(
+      `Start-Sleep -Milliseconds ${index === 0 ? 150 : 120}`,
+      `[System.Windows.Forms.SendKeys]::SendWait('${key}')`
+    )
+  }
+  return lines.join('\n')
+}

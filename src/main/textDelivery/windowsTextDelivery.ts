@@ -10,6 +10,7 @@ import {
 import type {
   ClipboardPort,
   CodexQueueRequest,
+  ConsoleAnswerRequest,
   ConsoleTextRequest,
   EndSessionRequest,
   InterruptRequest,
@@ -40,6 +41,7 @@ import {
 import {
   buildGracefulExitCommand,
   buildPasteCommand,
+  buildQuestionAnswerCommand,
   buildSendInterruptCommand,
   buildSendKeysCommand
 } from './sendKeys'
@@ -101,6 +103,17 @@ const SHARED_TERMINAL_WINDOW =
 function sharedWindowRefusal(stages: StageTimings): TextDeliveryOutcome {
   return { delivered: false, error: SHARED_TERMINAL_WINDOW, neverStarted: true, stages }
 }
+
+/**
+ * An answer whose digits the builder would not accept (#362).
+ *
+ * Reachable only through a caller that resolved them itself rather than through
+ * questionKeys, which refuses the same three cases first — so this is the
+ * builder's guard stated rather than swallowed, not a sentence anybody is
+ * expected to read. Nothing is focused and nothing is pressed, which is what
+ * `neverStarted` says.
+ */
+const ANSWER_KEYS_UNBUILDABLE = 'That answer could not be turned into keystrokes.'
 
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
@@ -421,6 +434,62 @@ export class WindowsTextDelivery implements TextDeliveryPort {
         return {
           delivered: false,
           error: 'The interrupt keystroke could not be sent.',
+          stages: timer.timings()
+        }
+      }
+      return { delivered: true, stages: timer.timings() }
+    } catch {
+      return {
+        delivered: false,
+        error: 'The agent terminal could not be reached.',
+        stages: timer.timings()
+      }
+    }
+  }
+
+  /**
+   * Answer the AskUserQuestion picker this console is drawing: the chosen
+   * options' digits, then the confirmation a multi-select needs (#362).
+   *
+   * The same two preconditions every keystroke here has, in the same order: the
+   * window must come forward, and it must be one this session is alone on —
+   * #329's `terminal-host` refusal, which matters more on this route than on
+   * any other, because a digit in the wrong tab does not merely interrupt a
+   * stranger's turn, it CHOOSES an option in it. Both refusals press nothing.
+   *
+   * The digits arrive already resolved to option positions (see questionKeys.ts
+   * for the measurement, and buildQuestionAnswerCommand for the keys), so
+   * nothing agent-authored reaches the command and there is nothing here to
+   * escape. A builder that refuses — no digits, a tenth option, a digit that is
+   * not one — is reported rather than pressed as something else.
+   *
+   * One command for the whole sequence, on purpose: the toggles and their
+   * confirmation are one act, and splitting them over several spawns would put
+   * a window in which the foreground could change hands between a toggle and
+   * the Enter that accepts it.
+   */
+  async answerQuestionAtConsole(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
+    const command = buildQuestionAnswerCommand(request.digits, request.submit)
+    if (command === null) {
+      return { delivered: false, error: ANSWER_KEYS_UNBUILDABLE, neverStarted: true }
+    }
+    try {
+      const focus = await timer.measure('focus', () => this.focus(request.pid))
+      if (!focus.focused) {
+        return {
+          delivered: false,
+          error: 'The agent terminal could not be brought to the foreground.',
+          neverStarted: true,
+          stages: timer.timings()
+        }
+      }
+      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
+      const result = await timer.measure('spawn', () => this.runPowerShell(command))
+      if (result.exitCode !== 0) {
+        return {
+          delivered: false,
+          error: 'The answer keystrokes could not be sent to the terminal.',
           stages: timer.timings()
         }
       }

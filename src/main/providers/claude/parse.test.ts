@@ -1355,11 +1355,16 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
   const info = parseClaudeTranscriptTail(askUserQuestion)
 
   it('carries the ask that has no tool_result behind it in this tail', () => {
+    // AMENDED for #362 (was: the same object without `questionCount`). The
+    // expectation gains the field the wire now carries; nothing that was
+    // asserted here is weaker. The fixture's call asks ONE question, so the
+    // count is 1 — see the `questionCount` cases below for a call with more.
     expect(info.pendingQuestion).toEqual({
       toolUseId: 'toolu_01AskPlaceholderPending',
       question: 'Which materials should the vault chart?',
       header: 'Materials',
       multiSelect: true,
+      questionCount: 1,
       options: [
         { label: 'Copper', description: 'The starter material every mine yields.' },
         { label: 'Silver', description: 'The second tier, once a mine is measured.' },
@@ -1453,12 +1458,51 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
         }
       ]
     })
+    // AMENDED for #362 (was: the same object without `questionCount`). One
+    // field added to the expectation; the malformed-option assertion it exists
+    // for is untouched.
     expect(parseClaudeTranscriptTail(tail).pendingQuestion).toEqual({
       toolUseId: 'toolu_a',
       question: 'Which approach?',
       multiSelect: false,
+      questionCount: 1,
       options: [{ label: 'Accumulate' }]
     })
+  })
+
+  /*
+   * Issue #362. Only the FIRST question of a call travels, which this parser
+   * has always said in its comment and never on the wire. The count is what
+   * makes the drop actionable: an answer typed into the console walks the
+   * picker on to question 2, so the runtime refuses a call with more than one
+   * rather than leaving it half answered.
+   */
+  it('counts one question for a call that asked one', () => {
+    const tail = askLine('toolu_c1', askInput('Which approach?'))
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questionCount).toBe(1)
+  })
+
+  it('counts every question a call carried, not the one it kept', () => {
+    const tail = askLine('toolu_c3', {
+      questions: [
+        { question: 'Which colour?', options: [{ label: 'Red' }] },
+        { question: 'Which fruit?', options: [{ label: 'Fig' }] },
+        { question: 'Which shape?', options: [{ label: 'Round' }] }
+      ]
+    })
+    const asked = parseClaudeTranscriptTail(tail).pendingQuestion
+    expect(asked?.question).toBe('Which colour?')
+    expect(asked?.questionCount).toBe(3)
+  })
+
+  it('counts the questions the call carried, including ones it could not read', () => {
+    // A malformed second question is still a question the picker will walk to,
+    // so it counts. Counting only the readable ones would let the runtime type
+    // an answer into a call it cannot finish.
+    const tail = askLine('toolu_c4', {
+      questions: [{ question: 'Which colour?', options: [{ label: 'Red' }] }, { question: 7 }]
+    })
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questionCount).toBe(2)
   })
 
   it('ignores an ask whose tool_use block carries no id to resolve it by', () => {

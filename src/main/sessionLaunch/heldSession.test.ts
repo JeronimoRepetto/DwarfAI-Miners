@@ -143,14 +143,43 @@ describe('askToWireQuestion', () => {
       ]
     })!
 
+    // AMENDED for #362 (was: the same object without `questionCount`). The
+    // singular wire shape is unchanged and still asserted; what is added is the
+    // count of what the call carried — 2 here, which is exactly the fact this
+    // test's own title is about.
     expect(askToWireQuestion(ask, ASKED_AT)).toEqual({
       toolUseId: 'toolu_10',
       question: 'First?',
       channel: 'held',
       multiSelect: false,
+      questionCount: 2,
       options: [{ label: 'A' }, { label: 'B' }],
       askedAt: ASKED_AT
     })
+  })
+
+  /*
+   * Issue #362. The held writer drops every question after the first, exactly
+   * as the transcript parse does, and the count is what stops that omission
+   * being invisible: the terminal answer route refuses a call it can only half
+   * answer, and the card says so before anybody clicks.
+   */
+  it('counts one question for a call that asked one', () => {
+    const ask = parseAskUserQuestion('toolu_14', {
+      questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
+    })!
+    expect(askToWireQuestion(ask, ASKED_AT).questionCount).toBe(1)
+  })
+
+  it('counts every question of a call that asked several', () => {
+    const ask = parseAskUserQuestion('toolu_15', {
+      questions: [
+        { question: 'First?', multiSelect: false, options: [{ label: 'A' }] },
+        { question: 'Second?', multiSelect: true, options: [{ label: 'B' }] },
+        { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+      ]
+    })!
+    expect(askToWireQuestion(ask, ASKED_AT).questionCount).toBe(3)
   })
 
   it('redacts the question, the header, every label and every description', () => {
@@ -298,6 +327,7 @@ describe('stampHeldQuestions', () => {
     question: 'Which colour?',
     channel: 'held' as const,
     multiSelect: false,
+    questionCount: 1,
     options: [{ label: 'Green' }]
   }
 
@@ -1170,6 +1200,7 @@ describe('stampHeldQuestions permission (#203)', () => {
       question: 'Which colour?',
       channel: 'held' as const,
       multiSelect: false,
+      questionCount: 1,
       options: [{ label: 'Green' }]
     }
     const stamped = stampHeldQuestions(board(), () => ({ held: true, question, permission }))

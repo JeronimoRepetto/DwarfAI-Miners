@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfAnswerState, DwarfPermissionRequest, DwarfQuestion } from '../../types'
+import {
+  joinAnswerLabels,
+  type DwarfAnswerState,
+  type DwarfPermissionRequest,
+  type DwarfQuestion
+} from '../../types'
 import {
   PERMISSION_OPTIONS,
   answerRequest,
@@ -11,7 +16,11 @@ import {
   optionState,
   permissionRequest,
   permissionStatusLine,
-  selectOption
+  selectOption,
+  canSendToggles,
+  toggleOption,
+  toggleState,
+  toggledAnswer
 } from './questionAnswer'
 
 function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
@@ -20,6 +29,7 @@ function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
     question: 'Which database should the importer write to?',
     channel: 'held',
     multiSelect: false,
+    questionCount: 1,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }, { label: 'Neither' }],
     ...overrides
   }
@@ -163,8 +173,11 @@ describe('answerRequest', () => {
   })
 
   it('carries one label even where the agent said it would take several', () => {
-    // multiSelect changes nothing here: the channel takes a single label per
-    // question, because how a picker joins several is unmeasured.
+    // AMENDED for #362 (comment only; the expectation is unchanged). multiSelect
+    // still changes nothing HERE: the fixture is a held ask, and that channel
+    // takes a single label per question because how the agent's own picker
+    // joins several is unmeasured. The terminal channel's joined value is built
+    // by toggledAnswer and asserted in its own block below.
     const request = answerRequest('claude:s1', question({ multiSelect: true }), 'Neither')
     expect(Object.values(request.answers)).toEqual(['Neither'])
   })
@@ -296,5 +309,131 @@ describe('permissionStatusLine', () => {
     expect(permissionStatusLine({ phase: 'answered', toolUseId: 'toolu_09' }, 'terminal')).toBe(
       'Typed at the terminal — waiting for the session to act on it.'
     )
+  })
+})
+
+/*
+ * A multi-select ask on the TERMINAL channel (#362). Its options are toggles
+ * rather than one choice, because that is what the measured keystroke gesture
+ * is: one digit per chosen option, then a confirmation. Nothing is sent until
+ * the Answer control is pressed.
+ */
+describe('toggleOption', () => {
+  const ASK = 'toolu_01'
+
+  it('turns an option on', () => {
+    expect(toggleOption(null, ASK, 'Postgres')).toEqual({
+      toolUseId: ASK,
+      labels: ['Postgres']
+    })
+  })
+
+  it('adds a second option instead of replacing the first', () => {
+    const one = toggleOption(null, ASK, 'Postgres')
+    expect(toggleOption(one, ASK, 'SQLite').labels).toEqual(['Postgres', 'SQLite'])
+  })
+
+  it('turns an option off again when it is clicked twice', () => {
+    const one = toggleOption(null, ASK, 'Postgres')
+    const two = toggleOption(one, ASK, 'SQLite')
+    expect(toggleOption(two, ASK, 'Postgres').labels).toEqual(['SQLite'])
+  })
+
+  it('leaves nothing toggled when the last option is turned off', () => {
+    const one = toggleOption(null, ASK, 'Postgres')
+    expect(toggleOption(one, ASK, 'Postgres').labels).toEqual([])
+  })
+
+  it('starts fresh for a different ask, whatever was toggled for the last one', () => {
+    // The same rule selectOption holds: the panel always shows whatever ask is
+    // outstanding NOW, and a choice made against text nobody read must not
+    // carry into it.
+    const one = toggleOption(null, ASK, 'Postgres')
+    expect(toggleOption(one, 'toolu_02', 'SQLite')).toEqual({
+      toolUseId: 'toolu_02',
+      labels: ['SQLite']
+    })
+  })
+})
+
+describe('toggleState', () => {
+  it('draws a toggled option selected and every other one in its base state', () => {
+    // No dimming, unlike a single-select: the design's dimmed state means
+    // "passed over", and an option nobody has toggled yet has not been.
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    expect(toggleState(toggled, 'toolu_01', 'SQLite')).toBe('selected')
+    expect(toggleState(toggled, 'toolu_01', 'Postgres')).toBe('base')
+  })
+
+  it('draws nothing selected for another ask’s toggles', () => {
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    expect(toggleState(toggled, 'toolu_02', 'SQLite')).toBe('base')
+  })
+})
+
+describe('canSendToggles', () => {
+  it('sends nothing while nothing is toggled', () => {
+    expect(canSendToggles(null, 'toolu_01', undefined)).toBe(false)
+    const emptied = toggleOption(toggleOption(null, 'toolu_01', 'SQLite'), 'toolu_01', 'SQLite')
+    expect(canSendToggles(emptied, 'toolu_01', undefined)).toBe(false)
+  })
+
+  it('sends once something is toggled and the ask is still answerable', () => {
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    expect(canSendToggles(toggled, 'toolu_01', undefined)).toBe(true)
+  })
+
+  it('sends nothing while an answer is in flight or after one was released', () => {
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    expect(canSendToggles(toggled, 'toolu_01', { phase: 'answering', toolUseId: 'toolu_01' })).toBe(
+      false
+    )
+    expect(canSendToggles(toggled, 'toolu_01', { phase: 'answered', toolUseId: 'toolu_01' })).toBe(
+      false
+    )
+  })
+
+  it('sends again after a refusal, because nothing was handed over', () => {
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    const refused: DwarfAnswerState = { phase: 'refused', toolUseId: 'toolu_01', error: 'no' }
+    expect(canSendToggles(toggled, 'toolu_01', refused)).toBe(true)
+  })
+
+  it('sends nothing for toggles made against another ask', () => {
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    expect(canSendToggles(toggled, 'toolu_02', undefined)).toBe(false)
+  })
+})
+
+describe('toggledAnswer', () => {
+  const multi = () => question({ channel: 'terminal', multiSelect: true })
+
+  it('carries every toggled label in the order the agent offered them', () => {
+    // Click order is not the picker's order, and main presses digits by
+    // position — so the answer leaves in the ask's own order rather than in the
+    // order a person happened to reach for.
+    const toggled = toggleOption(toggleOption(null, 'toolu_01', 'Neither'), 'toolu_01', 'Postgres')
+    expect(toggledAnswer(toggled, multi())).toBe(joinAnswerLabels(['Postgres', 'Neither']))
+  })
+
+  it('carries one toggled label as that label alone', () => {
+    // The single-label value is byte for byte what the wire always carried, so
+    // a lone toggle is not a different shape of answer.
+    const toggled = toggleOption(null, 'toolu_01', 'SQLite')
+    expect(toggledAnswer(toggled, multi())).toBe('SQLite')
+  })
+
+  it('has nothing to send while nothing is toggled, or for another ask', () => {
+    expect(toggledAnswer(null, multi())).toBeNull()
+    const toggled = toggleOption(null, 'toolu_02', 'SQLite')
+    expect(toggledAnswer(toggled, multi())).toBeNull()
+  })
+
+  it('drops a label the ask does not offer rather than sending it', () => {
+    // Unreachable through the card's own buttons, and refused anyway: the
+    // answer channel takes back only the agent's own words, and main would
+    // refuse a label it cannot find an option for.
+    const toggled = toggleOption(null, 'toolu_01', 'Cassandra')
+    expect(toggledAnswer(toggled, multi())).toBeNull()
   })
 })

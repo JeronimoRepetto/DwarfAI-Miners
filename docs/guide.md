@@ -163,11 +163,24 @@ What is in it:
   with its reason rather than hiding it. Effort on a held Claude session is changed from the mine's
   session strip instead.
 
-For a Codex session, a question card shows the same kind of question a held Claude session would
-ask — Codex's own `request_user_input` tool call — but it cannot be answered from here: Codex
-offers no answer channel to a session this panel only observes, so the card says to answer it in
-that session's own terminal instead. Codex's approval prompts, by contrast, never reach the panel
-at all, because Codex writes nothing to disk while one is open — measured, not merely unbuilt, in
+A question card is answered from the panel whether the session is one it holds or one it only
+watches. For a watched Claude Code session the answer is a keystroke in that session's own terminal,
+measured against the CLI's own picker: clicking an option answers a question that takes one answer,
+and where the agent said it would accept several the options become toggles and an **Answer**
+control sends them — nothing is typed until you press it. One shape stays unanswerable from here,
+and the card says so with a jump to the terminal beside it: a call that asked SEVERAL questions at
+once, because only its first reaches the panel and answering that one would move the picker on to a
+question the panel cannot see. A session that shares its terminal window with other tabs
+is the one case where this is refused rather than typed — the panel cannot tell which tab is in
+front, and a digit in the wrong one would answer somebody else's question — so it says so and
+points you at the terminal.
+
+For a Codex session, a question card shows the same kind of question — Codex's own
+`request_user_input` tool call — and still cannot be answered from here: a Codex thread is reached
+through its message queue rather than through a console, and a queued message is not an answer to a
+blocked tool call, so the card says to answer it in that session's own terminal instead. Codex's
+approval prompts, by contrast, never reach the panel at all, because Codex writes nothing to disk
+while one is open — measured, not merely unbuilt, in
 [`docs/codex-v2-format.md`](codex-v2-format.md) §9.
 
 The panel resizes by dragging its top edge, or with the arrow keys on that handle.

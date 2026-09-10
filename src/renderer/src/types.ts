@@ -109,6 +109,9 @@ export type {
  */
 export {
   ANSWER_ONLY_WHERE_IT_RUNS,
+  ANSWER_LABEL_SEPARATOR,
+  joinAnswerLabels,
+  splitAnswerLabels,
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,

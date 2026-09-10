@@ -827,6 +827,7 @@ export class CodexProvider implements Provider {
         // its own terminal, never offered as answerable (#354).
         channel: 'terminal',
         multiSelect: asked.multiSelect,
+        questionCount: asked.questionCount,
         options: asked.options.map((option) => ({
           label: redactSecrets(option.label),
           ...(option.description === undefined

@@ -368,6 +368,10 @@ describe('HeldSessionRegistry questions', () => {
         header: 'Colour',
         channel: 'held',
         multiSelect: false,
+        // AMENDED for #362 (was: the same object without `questionCount`). One
+        // field added to the expectation; the fake port's ask carries one
+        // question, so the count is 1.
+        questionCount: 1,
         options: [{ label: 'Green', description: 'The calm one' }, { label: 'Red' }],
         askedAt: '2023-11-14T22:13:20.000Z'
       }

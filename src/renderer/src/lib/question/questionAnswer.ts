@@ -1,12 +1,13 @@
-import type {
-  DwarfAnswerState,
-  DwarfPermissionAnswerRequest,
-  DwarfPermissionDecision,
-  DwarfPermissionRequest,
-  DwarfPromptChannel,
-  DwarfQuestion,
-  DwarfQuestionAnswerRequest,
-  DwarfQuestionOption
+import {
+  joinAnswerLabels,
+  type DwarfAnswerState,
+  type DwarfPermissionAnswerRequest,
+  type DwarfPermissionDecision,
+  type DwarfPermissionRequest,
+  type DwarfPromptChannel,
+  type DwarfQuestion,
+  type DwarfQuestionAnswerRequest,
+  type DwarfQuestionOption
 } from '../../types'
 
 /**
@@ -20,6 +21,16 @@ import type {
 
 /** The line the panel shows once something is selected. Enter is what sends it. */
 export const PRESS_ENTER_TO_SEND = 'Press ENTER to send'
+
+/**
+ * The control a multi-select ask sends through (#362).
+ *
+ * A button rather than Enter, and that is the point rather than a style: what
+ * a toggle changes is a SET, so there is no moment at which the panel could
+ * read a keypress as "this is my answer now". Nothing is typed into somebody's
+ * console until this is pressed.
+ */
+export const SEND_ANSWER_NAME = 'Answer'
 
 /**
  * What the user has chosen, and which ask they chose it for.
@@ -106,9 +117,17 @@ export function canSendAnswer(
  * against the ask it actually made — in the redacted spelling the panel was
  * shown — so anything folded or trimmed here would stop matching.
  *
- * One label even for a multi-select ask. That is the channel's own rule, not a
- * simplification: how a picker joins several answers is unmeasured, and
- * inventing a separator would make the agent read an answer nobody gave.
+ * One label per question on the HELD channel, even for a multi-select ask, and
+ * that is the channel's own rule rather than a simplification: how the agent's
+ * own picker joins several answers is unmeasured, and inventing a separator
+ * would make it read an answer nobody gave (see resolveAnswers in main).
+ *
+ * On the terminal channel `label` may be several labels joined, because there
+ * the answer is a measured keystroke per option rather than a record handed to
+ * a tool — see toggledAnswer, which is what builds that value, and
+ * joinAnswerLabels in contracts, which is the encoding both sides read. This
+ * function is unchanged by it: what it takes is one answer VALUE, and it still
+ * repeats it verbatim.
  */
 export function answerRequest(
   dwarfId: string,
@@ -120,6 +139,96 @@ export function answerRequest(
     toolUseId: question.toolUseId,
     answers: { [question.question]: label }
   }
+}
+
+/**
+ * What is toggled on a multi-select ask, and which ask it was toggled for
+ * (#362).
+ *
+ * A SIBLING of QuestionSelection rather than a widening of it, because the two
+ * gestures are different gestures: a selection is one choice that replaces the
+ * last, and this is a set that grows and shrinks. Folding them together would
+ * have meant every reader of a selection asking "one or several?" before it
+ * could draw anything — and the permission card, which reuses the selection
+ * helpers as they are, would have had to ask it too.
+ *
+ * The ask's id travels with the labels for the reason it does there: the panel
+ * always shows whatever ask is outstanding NOW, and toggles made against text
+ * nobody read must not carry into the next one.
+ */
+export interface QuestionToggles {
+  toolUseId: string
+  labels: readonly string[]
+}
+
+function togglesFor(current: QuestionToggles | null, toolUseId: string): readonly string[] {
+  return current !== null && current.toolUseId === toolUseId ? current.labels : []
+}
+
+/**
+ * Apply a click on `label`: on if it was off, off if it was on.
+ *
+ * Clicking a toggled option again clears just that one, where the single-select
+ * `selectOption` clears the whole selection — the same affordance in both
+ * cases, doing the thing that undoes one click.
+ */
+export function toggleOption(
+  current: QuestionToggles | null,
+  toolUseId: string,
+  label: string
+): QuestionToggles {
+  const labels = togglesFor(current, toolUseId)
+  return {
+    toolUseId,
+    labels: labels.includes(label) ? labels.filter((entry) => entry !== label) : [...labels, label]
+  }
+}
+
+/**
+ * How one toggle is drawn. Only two of the three states are reachable: an
+ * option nobody has toggled is in its BASE state rather than dimmed, because
+ * the design's dimmed state says "passed over" and a toggle nobody has reached
+ * for yet has not been passed over — every other option is still available.
+ */
+export function toggleState(
+  current: QuestionToggles | null,
+  toolUseId: string,
+  label: string
+): OptionState {
+  return togglesFor(current, toolUseId).includes(label) ? 'selected' : 'base'
+}
+
+/** Whether the Answer control would send anything: something toggled, and still answerable. */
+export function canSendToggles(
+  current: QuestionToggles | null,
+  toolUseId: string,
+  state: DwarfAnswerState | undefined
+): boolean {
+  return togglesFor(current, toolUseId).length > 0 && isAnswerable(state, toolUseId)
+}
+
+/**
+ * The one answer value every toggled label rides in, or null when there is
+ * nothing to send.
+ *
+ * Ordered by the ask's OWN options rather than by the order they were clicked
+ * in: main presses a digit per option position, and the sequence has to be
+ * deterministic from the picker's initial state — where a person reached first
+ * is not part of that state.
+ *
+ * A label the ask does not offer is dropped rather than carried. Unreachable
+ * through the card's own buttons, and main would refuse it anyway: this channel
+ * takes back only the agent's own words.
+ */
+export function toggledAnswer(
+  current: QuestionToggles | null,
+  question: DwarfQuestion
+): string | null {
+  const toggled = togglesFor(current, question.toolUseId)
+  const labels = question.options
+    .map((option) => option.label)
+    .filter((label) => toggled.includes(label))
+  return labels.length === 0 ? null : joinAnswerLabels(labels)
 }
 
 /**

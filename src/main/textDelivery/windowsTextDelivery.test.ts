@@ -906,3 +906,102 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     expect(killProcess).not.toHaveBeenCalled()
   })
 })
+
+/*
+ * The question-answer tier (#362): the digits of the chosen options, then the
+ * confirmation a multi-select picker needs. Only Windows carries it — the POSIX
+ * console adapter has no arrow key to press (#367) — and the runtime turns its
+ * absence into a stated refusal there.
+ */
+describe('WindowsTextDelivery.answerQuestionAtConsole', () => {
+  it('brings the terminal forward before pressing the single-select digit', async () => {
+    const order: string[] = []
+    const focus = vi.fn().mockImplementation(async () => {
+      order.push('focus')
+      return OWN_CONSOLE
+    })
+    const runPowerShell = vi.fn().mockImplementation(async () => {
+      order.push('keys')
+      return { stdout: '', exitCode: 0 }
+    })
+    const port = delivery({ focus, runPowerShell })
+
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, digits: ['3'], submit: false })
+    ).resolves.toEqual({
+      delivered: true,
+      stages: { focusMs: expect.any(Number), spawnMs: expect.any(Number) }
+    })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(order).toEqual(['focus', 'keys'])
+    const command = String(runPowerShell.mock.calls[0]?.[0])
+    expect(command).toContain("SendWait('3')")
+    expect(command).not.toContain('{ENTER}')
+  })
+
+  it('presses the toggles and their confirmation in ONE command', async () => {
+    // One spawn on purpose: split over several, the foreground could change
+    // hands between a toggle and the Enter that accepts it.
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runPowerShell })
+
+    await port.answerQuestionAtConsole({ pid: 42, digits: ['2', '4'], submit: true })
+    expect(runPowerShell).toHaveBeenCalledTimes(1)
+    const command = String(runPowerShell.mock.calls[0]?.[0])
+    expect(command).toContain("SendWait('2')")
+    expect(command).toContain("SendWait('4')")
+    expect(command).toContain("SendWait('{RIGHT}')")
+    expect(command).toContain("SendWait('{ENTER}')")
+  })
+
+  it('presses nothing in a shared terminal window, where a digit picks for another tab', async () => {
+    // #329, and it matters more here than anywhere else: a stray Esc
+    // interrupts a stranger's turn, and a stray digit CHOOSES in it.
+    const runPowerShell = vi.fn()
+    const port = delivery({ focus: vi.fn().mockResolvedValue(TERMINAL_HOST), runPowerShell })
+
+    const result = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/shares its terminal window/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  it('presses nothing when the terminal could not be foregrounded', async () => {
+    const runPowerShell = vi.fn()
+    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), runPowerShell })
+
+    const result = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/foreground|terminal/i)
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  it('refuses digits the builder will not accept, without focusing anything', async () => {
+    const focus = vi.fn()
+    const runPowerShell = vi.fn()
+    const port = delivery({ focus, runPowerShell })
+
+    const result = await port.answerQuestionAtConsole({ pid: 42, digits: [], submit: true })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(focus).not.toHaveBeenCalled()
+    expect(runPowerShell).not.toHaveBeenCalled()
+  })
+
+  it('reports a failure when the keystroke command exits non-zero', async () => {
+    const port = delivery({
+      runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 })
+    })
+    const result = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
+    expect(result.delivered).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  it('turns a crashing shell into a failed verdict instead of a rejection', async () => {
+    const port = delivery({
+      runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
+    })
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
+    ).resolves.toMatchObject({ delivered: false })
+  })
+})

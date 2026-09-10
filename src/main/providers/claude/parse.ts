@@ -112,6 +112,12 @@ export interface ClaudePendingQuestion {
   question: string
   header?: string
   multiSelect: boolean
+  /**
+   * How many questions the CALL carried, whatever this parser kept of them
+   * (#362). Only the first travels; this is the fact that omission leaves
+   * behind, and the runtime refuses to type an answer to a call with more.
+   */
+  questionCount: number
   options: ClaudeQuestionOption[]
   /** The asking line's own timestamp, when it carried one. */
   askedAt?: string
@@ -613,7 +619,8 @@ function questionOptions(value: unknown): ClaudeQuestionOption[] | undefined {
  *
  * Only the first entry of `questions` is carried. The tool's input is an array
  * and this reads one question; a call that asked several would have the rest
- * dropped rather than misreported.
+ * dropped rather than misreported — and `questionCount` says how many there
+ * were, so the drop is a stated fact rather than an invisible one (#362).
  */
 function askedQuestion(block: Rec, askedAt: string | undefined): ClaudePendingQuestion | undefined {
   if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') return undefined
@@ -633,6 +640,9 @@ function askedQuestion(block: Rec, askedAt: string | undefined): ClaudePendingQu
     // Absent or non-boolean reads as single-select: the narrower promise is the
     // one a panel can honour without knowing what the tool would accept.
     multiSelect: first.multiSelect === true,
+    // The whole array's length, not the one entry kept: a caller that can only
+    // answer question 1 has to know question 2 exists (#362).
+    questionCount: questions.length,
     options,
     ...(askedAt === undefined ? {} : { askedAt })
   }

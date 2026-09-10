@@ -1081,6 +1081,7 @@ describe('DwarfMessagePanel question', () => {
     question: 'Which database should the importer write to?',
     channel: 'held' as const,
     multiSelect: false,
+    questionCount: 1,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }]
   }
 
@@ -1102,11 +1103,17 @@ describe('DwarfMessagePanel question', () => {
   it('forwards the jump on a question it cannot answer to the console path (#354)', async () => {
     // Same wire the permission card's jump already travels, so one gesture
     // reaches one handler: the window turns `open-console` into activate().
+    //
+    // AMENDED for #362 (was: a terminal-channel ask with one question). A
+    // one-question ask on that channel is answered by keystroke now and draws
+    // no jump, so the unanswerable case this asserts is a call that asked
+    // SEVERAL questions. What is asserted — one jump, on the console path, and
+    // no answer emitted — is unchanged.
     const wrapper = panel({
       dwarf: defaultDwarf({
         textDelivery: 'terminal',
         conversation: HELD,
-        pendingQuestion: { ...pendingQuestion, channel: 'terminal' as const }
+        pendingQuestion: { ...pendingQuestion, channel: 'terminal' as const, questionCount: 2 }
       })
     })
     await wrapper.find('.question-card .answer-jump').trigger('click')
@@ -1177,6 +1184,7 @@ describe('DwarfMessagePanel permission (#203)', () => {
     question: 'Which database should the importer write to?',
     channel: 'held' as const,
     multiSelect: false,
+    questionCount: 1,
     options: [{ label: 'Postgres' }, { label: 'SQLite' }]
   }
 

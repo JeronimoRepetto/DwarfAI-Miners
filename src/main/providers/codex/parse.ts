@@ -78,6 +78,13 @@ export interface CodexPendingQuestion {
    * this type stays assignable to the shared one.
    */
   multiSelect: boolean
+  /**
+   * How many questions the call carried, whatever this parser kept (#362).
+   * Mirrors ClaudePendingQuestion's own field for the reason the rest of this
+   * type does: both feed one DwarfQuestion, and the panel must not be able to
+   * tell which CLI asked.
+   */
+  questionCount: number
   options: CodexQuestionOption[]
   /** The asking record's own timestamp, when it carried one. */
   askedAt?: string
@@ -356,6 +363,7 @@ export function parseCodexPendingQuestion(tailText: string): CodexPendingQuestio
       question: first.question,
       ...(first.header === undefined ? {} : { header: first.header }),
       multiSelect: false,
+      questionCount: parsed.questions.length,
       options: first.options,
       ...(record.timestamp === '' ? {} : { askedAt: record.timestamp })
     })
