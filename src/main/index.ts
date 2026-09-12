@@ -127,6 +127,12 @@ import {
   parseMessagePanelHeight,
   parseMessagePanelState
 } from './shell/messagePanelState'
+/* --- System notifications (#316) — one block, appended --------------------- */
+import { APP_USER_MODEL_ID, needsAppUserModelId } from './notifications/appUserModelId'
+import { createElectronNotifications } from './notifications/electronNotifications'
+import { createNotificationPreferenceStore } from './notifications/notificationPreference'
+import { createNotifier, type Notifier } from './notifications/notifier'
+/* --- end of the #316 block ------------------------------------------------- */
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
@@ -189,6 +195,11 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfPermission)
   ipcMain.removeHandler(IPC_CHANNELS.launchHostedProcess)
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  ipcMain.removeHandler(IPC_CHANNELS.getNotificationsEnabled)
+  ipcMain.removeHandler(IPC_CHANNELS.setNotificationsEnabled)
+  ipcMain.removeAllListeners(IPC_CHANNELS.setOpenMine)
+  /* --- end of the #316 block ---------------------------------------------- */
 }
 
 /**
@@ -472,6 +483,17 @@ async function init(): Promise<void> {
   // exists on macOS; every other platform leaves this untouched.
   app.dock?.hide()
 
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  // Windows routes a toast by the application's identity, and a DEV build has
+  // no shortcut to have told it one — so every notification it raises is
+  // dropped by the Action Center, silently and with nothing in the log. Set
+  // before anything can raise one. The platform is asked once here rather than
+  // inside the notification path, which is the composition-point rule
+  // `platform-ports` asks for; the other two families route by the bundle and
+  // by the D-Bus name and need nothing from this process.
+  if (needsAppUserModelId(currentPlatform())) app.setAppUserModelId(APP_USER_MODEL_ID)
+  /* --- end of the #316 block ---------------------------------------------- */
+
   // Typed config, fails fast on invalid values before any window exists.
   //
   // Two transports feed one parser (see #38). dotenv reads a repo `.env`
@@ -558,6 +580,46 @@ async function init(): Promise<void> {
   mainWindow.on('hide', publishPanelVisibility)
   mainWindow.on('minimize', publishPanelVisibility)
   mainWindow.on('restore', publishPanelVisibility)
+
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  // The seventh userData preference, read the same way the audio settings are
+  // — after the window exists, because nothing about the first frame depends
+  // on it. Held in a variable as well as in the file so the poll can read the
+  // switch without awaiting a disk read on every board.
+  const notificationStore = createNotificationPreferenceStore({
+    filePath: join(app.getPath('userData'), 'notification-preference-v1.json')
+  })
+  let notificationsEnabled = await notificationStore.load()
+
+  /**
+   * Which mine INTERIOR the shell has open, as the renderer last reported it.
+   *
+   * Main cannot derive this: `panelLayout().mineOpen` is a boolean about the
+   * window's SHAPE and does not move when the person walks from one mine
+   * straight into another, which is precisely the case #316's rule turns on.
+   * So the renderer says, on its own one-way channel, and main believes it.
+   *
+   * Together with `panelVisible()` — which is main's own reading and the half
+   * a page cannot honestly answer for a hidden window — this is the whole of
+   * "focused".
+   */
+  let openMineId: string | null = null
+
+  const notifier: Notifier = createNotifier({
+    port: createElectronNotifications(),
+    enabled: () => notificationsEnabled,
+    focus: () => ({ panelVisible: panelVisible(), openMineId }),
+    // The click route, and main owns all of it: showPanel restores a hidden or
+    // minimised window and raises it, then the shell is TOLD which mine to
+    // open. No dwarf is selected — the person clicks the dwarf to read the ask,
+    // and a notification that opened a message panel for them would be
+    // choosing what they look at.
+    openMine: (mineId: string) => {
+      showPanel()
+      shellWebContents()?.send(IPC_CHANNELS.showMine, mineId)
+    }
+  })
+  /* --- end of the #316 block ---------------------------------------------- */
 
   // The panel-toggle shortcut is the third userData preference (see #17), read
   // here so the accelerator is in hand before anything is claimed from the OS.
@@ -659,6 +721,18 @@ async function init(): Promise<void> {
       for (const contents of appWebContents()) {
         contents.send(IPC_CHANNELS.minesUpdated, snapshot)
       }
+      /* --- System notifications (#316) — one block, appended --------------- */
+      // Folded here and nowhere else: this is already the one place a board is
+      // published, and the PublishGate above it means an unchanged poll never
+      // arrives — which is exactly the poll that could carry no new fact. So
+      // #316 costs one fold over a snapshot that was being sent anyway, with
+      // no timer, no queue and no second traversal of the runtime.
+      //
+      // AFTER the renderers, deliberately: the panel's own paint is what the
+      // person is most likely to be looking at, and an OS call must not stand
+      // in front of it.
+      notifier.update(mines)
+      /* --- end of the #316 block ------------------------------------------ */
     },
     // #263. Both windows, for the same reason `onMinesUpdated` reaches both:
     // the Add Panel that made the launch lives in whichever window opened it,
@@ -822,6 +896,39 @@ async function init(): Promise<void> {
     }
     return preferences
   })
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  /*
+   * Settings' Notifications switch, and the shell reporting which mine it has
+   * open.
+   *
+   * `set` answers with what is IN FORCE rather than with the request, the
+   * discipline every preference channel here holds — and the in-memory value is
+   * what the poll reads, so the switch takes effect on the very next board
+   * instead of on the next launch. A failed WRITE costs the next launch's
+   * memory of the choice and nothing about this run.
+   */
+  ipcMain.handle(IPC_CHANNELS.getNotificationsEnabled, () => notificationsEnabled)
+  ipcMain.handle(IPC_CHANNELS.setNotificationsEnabled, async (_event, payload: unknown) => {
+    // Boundary discipline as elsewhere: a malformed payload changes nothing and
+    // the caller still gets the real state back.
+    if (typeof payload !== 'boolean') return notificationsEnabled
+    notificationsEnabled = payload
+    try {
+      await notificationStore.save(payload)
+    } catch (error) {
+      // The switch itself already took effect; a persistence hiccup only means
+      // the next launch falls back to whatever the file still says.
+      console.warn('[notifications] Failed to persist the notifications switch:', error)
+    }
+    return notificationsEnabled
+  })
+  // One-way, like setWatchedDwarf. A non-string is null rather than '' because
+  // null is a real answer here — "no mine interior is open" — and the map or
+  // the browse with nothing open is exactly that state.
+  ipcMain.on(IPC_CHANNELS.setOpenMine, (_event, payload: unknown) => {
+    openMineId = typeof payload === 'string' && payload !== '' ? payload : null
+  })
+  /* --- end of the #316 block ---------------------------------------------- */
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle
   // from the display, so a screen that could not hold the whole composition has

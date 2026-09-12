@@ -45,35 +45,41 @@ function seeded(mines: Mine[], overrides: Partial<NotifyInput> = {}): NotifyMemo
 
 const QUIET = mine('m1', 'Forge', [dwarf({ id: 'd1', role: 'foreman', status: 'waiting' })])
 
-const ASKING = mine('m1', 'Forge', [
-  dwarf({
-    id: 'd1',
-    role: 'foreman',
-    status: 'waiting',
-    pendingQuestion: {
-      toolUseId: 'ask-1',
-      question: 'Which branch?',
-      channel: 'held',
-      multiSelect: false,
-      questionCount: 1,
-      options: []
-    }
-  })
-])
+/**
+ * The ask and the permission are named separately from the boards that carry
+ * them so a variant can be built from the DWARF rather than read back out of a
+ * mine's array — `dwarfs[0]` is `Dwarf | undefined` under this repo's
+ * noUncheckedIndexedAccess, and a non-null assertion here would be a cast
+ * standing in for a shape the file already knows.
+ */
+const ASK: NonNullable<Dwarf['pendingQuestion']> = {
+  toolUseId: 'ask-1',
+  question: 'Which branch?',
+  channel: 'held',
+  multiSelect: false,
+  questionCount: 1,
+  options: []
+}
+
+const PERMISSION: NonNullable<Dwarf['pendingPermission']> = {
+  toolUseId: 'tool-1',
+  toolName: 'Bash',
+  input: 'rm -rf build',
+  channel: 'held',
+  askedAt: '2026-09-12T10:00:00.000Z'
+}
+
+const ASKING_DWARF = dwarf({
+  id: 'd1',
+  role: 'foreman',
+  status: 'waiting',
+  pendingQuestion: ASK
+})
+
+const ASKING = mine('m1', 'Forge', [ASKING_DWARF])
 
 const PERMITTING = mine('m1', 'Forge', [
-  dwarf({
-    id: 'd1',
-    role: 'foreman',
-    status: 'waiting',
-    pendingPermission: {
-      toolUseId: 'tool-1',
-      toolName: 'Bash',
-      input: 'rm -rf build',
-      channel: 'held',
-      askedAt: '2026-09-12T10:00:00.000Z'
-    }
-  })
+  dwarf({ id: 'd1', role: 'foreman', status: 'waiting', pendingPermission: PERMISSION })
 ])
 
 describe('notification copy', () => {
@@ -161,9 +167,7 @@ describe('decideNotifications — a question or a permission appears', () => {
   it('says nothing about a dwarf that is already leaving', () => {
     // The grace window freezes the last real snapshot, ask and all, and there is
     // nobody left at the other end to answer it.
-    const gone = mine('m1', 'Forge', [
-      { ...ASKING.dwarfs[0], status: 'leaving' as const }
-    ])
+    const gone = mine('m1', 'Forge', [{ ...ASKING_DWARF, status: 'leaving' }])
     expect(decideNotifications(seeded([QUIET]), input([gone])).decision.show).toEqual([])
   })
 
@@ -185,7 +189,7 @@ describe('decideNotifications — a question or a permission appears', () => {
   it('treats a new toolUseId on the same dwarf as a new fact', () => {
     const memory = decideNotifications(seeded([QUIET]), input([ASKING])).memory
     const second = mine('m1', 'Forge', [
-      { ...ASKING.dwarfs[0], pendingQuestion: { ...ASKING.dwarfs[0].pendingQuestion!, toolUseId: 'ask-2' } }
+      { ...ASKING_DWARF, pendingQuestion: { ...ASK, toolUseId: 'ask-2' } }
     ])
     const { decision } = decideNotifications(memory, input([second]))
     expect(decision.show.map((one) => one.key)).toEqual(['question:d1:ask-2'])
@@ -196,9 +200,7 @@ describe('decideNotifications — a question or a permission appears', () => {
     // WAITING_ON_HUMAN_REASON's own precedence: where both are open the session
     // is blocked on the question, and two sentences about one dwarf read as two
     // dwarfs.
-    const both = mine('m1', 'Forge', [
-      { ...ASKING.dwarfs[0], pendingPermission: PERMITTING.dwarfs[0].pendingPermission }
-    ])
+    const both = mine('m1', 'Forge', [{ ...ASKING_DWARF, pendingPermission: PERMISSION }])
     expect(decideNotifications(seeded([QUIET]), input([both])).decision.show).toEqual([
       {
         key: 'question:d1:ask-1',

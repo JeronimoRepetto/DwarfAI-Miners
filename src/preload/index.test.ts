@@ -1077,3 +1077,68 @@ describe('preload open-link contract (#347)', () => {
     await expect(api.openExternalLink('javascript:alert(1)')).resolves.toEqual(refusal)
   })
 })
+
+/**
+ * System notifications (#316) — APPENDED, nothing above changed.
+ *
+ * Four members, and each one holds the boundary rule its neighbours already do:
+ * the switch collapses to a real boolean and answers with what main stored, the
+ * open-mine report is string-or-null like setWatchedDwarf because null is a
+ * real answer there, and the push drops a payload that names no mine rather
+ * than forwarding an empty id the renderer would try to open.
+ */
+describe('preload notifications contract (#316)', () => {
+  it('asks for the stored switch on notifications:enabled:get with no payload', async () => {
+    invoke.mockResolvedValueOnce(true)
+    await expect(api.getNotificationsEnabled()).resolves.toBe(true)
+    expect(invoke).toHaveBeenLastCalledWith('notifications:enabled:get')
+  })
+
+  it('collapses a non-boolean switch before it crosses', async () => {
+    invoke.mockResolvedValueOnce(false)
+    await (api.setNotificationsEnabled as unknown as (value: unknown) => Promise<unknown>)('yes')
+    expect(invoke).toHaveBeenLastCalledWith('notifications:enabled:set', false)
+  })
+
+  it("hands back what main STORED, never the request", async () => {
+    // A write that failed, or a payload main refused, must be drawable as the
+    // state in force rather than as the wish.
+    invoke.mockResolvedValueOnce(true)
+    await expect(api.setNotificationsEnabled(false)).resolves.toBe(true)
+  })
+
+  it('reports the open mine one-way on panel:openMine', () => {
+    api.setOpenMine('mine-42')
+    expect(send).toHaveBeenLastCalledWith('panel:openMine', 'mine-42')
+  })
+
+  it('reports "no mine open" as null rather than as an empty string', () => {
+    // string-or-null, like setWatchedDwarf: null is a real answer here, and the
+    // map with no interior open is exactly that state.
+    api.setOpenMine(null)
+    expect(send).toHaveBeenLastCalledWith('panel:openMine', null)
+    api.setOpenMine(7 as unknown as string)
+    expect(send).toHaveBeenLastCalledWith('panel:openMine', null)
+  })
+
+  it('subscribes to the open-this-mine push on panel:mine:show', () => {
+    const listener = vi.fn()
+    const stop = api.onShowMine(listener)
+    expect(on).toHaveBeenLastCalledWith('panel:mine:show', expect.any(Function))
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
+    wrapped(null, 'mine-42')
+    expect(listener).toHaveBeenCalledWith('mine-42')
+    stop()
+    expect(removeListener).toHaveBeenLastCalledWith('panel:mine:show', wrapped)
+  })
+
+  it('drops a push that names no mine instead of forwarding an id nothing can open', () => {
+    const listener = vi.fn()
+    api.onShowMine(listener)
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
+    wrapped(null, '')
+    wrapped(null, undefined)
+    wrapped(null, 42)
+    expect(listener).not.toHaveBeenCalled()
+  })
+})
