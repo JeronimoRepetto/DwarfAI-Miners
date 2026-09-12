@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
+import type { FsLike } from '../../adapters/fsLike'
 import { PERMISSION_INPUT_MAX_CHARS } from '../../domain/permissionSummary'
 import type { Dwarf, FeedPageCursor } from '../../domain/types'
 import { ClaudeProvider } from './claudeProvider'
@@ -3905,6 +3906,276 @@ describe('ClaudeProvider', () => {
       // this worker's own transcript, which is the same launch `parentAgentId`
       // writes down.
       expect(dwarfs[2]!.parentId).toBe(WORKER_ID)
+    })
+  })
+
+  /*
+   * The same worker2, with the one thing #267's discovery source cannot survive
+   * (#391). Measured live twice on 2026-09-12: Claude Code writes the nested
+   * `async_launched` record and then, inside 70 ms, ~160 KB of attachments to
+   * the SAME transcript, so the record sits ~172 KB from the end from the very
+   * first poll and never comes closer. The launching worker's tail is read at
+   * SUBAGENT_TAIL_BYTES = 64 KiB, so no poll ever sees it, and a worker's
+   * transcript carries no turn_duration line — no count, none of the root's
+   * count-driven recoveries. The sidecar is the record the window cannot hide.
+   */
+  describe("a worker's own subagent buried under same-tick attachments (#391)", () => {
+    const TRANSCRIPT = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}.jsonl`
+    const SUBAGENTS = `${ROOT1}\\projects\\${ENCODED}\\${SESSION_ID}\\subagents`
+    const MAIN_ID = `claude:${SESSION_ID}`
+    const WORKER_ID = `claude:${SESSION_ID}:${LIVE_AGENT}`
+    const NESTED_ID = `claude:${SESSION_ID}:${NESTED_AGENT}`
+    const NESTED_NAME = 'Placeholder nested agent task'
+
+    /**
+     * The attachment burst measured on the launching worker's own transcript,
+     * to the byte: `prompt_snapshot` 130,705, `agent_listing_delta` 19,803,
+     * `mcp_instructions_delta` 10,580, `auto_mode` 971 and
+     * `total_tokens_reminder` 616 — 162,675 bytes, all within 70 ms of the
+     * launch record. Nothing in here is read by the parser; the bytes ARE the
+     * fixture, because what they do is push the record out of the window.
+     */
+    function sameTickAttachments(): string {
+      const measured: readonly (readonly [string, number])[] = [
+        ['prompt_snapshot', 130_705],
+        ['agent_listing_delta', 19_803],
+        ['mcp_instructions_delta', 10_580],
+        ['auto_mode', 971],
+        ['total_tokens_reminder', 616]
+      ]
+      return measured
+        .map(([type, bytes]) => {
+          const envelope = JSON.stringify({ type: 'attachment', attachment: { type, content: '' } })
+          const filler = 'x'.repeat(Math.max(0, bytes - envelope.length - 1))
+          return (
+            JSON.stringify({ type: 'attachment', attachment: { type, content: filler } }) + '\n'
+          )
+        })
+        .join('')
+    }
+
+    /**
+     * The shape on disk when the panel is lying: one depth-1 worker the root's
+     * own tail declares, its nested launch record followed by the burst above,
+     * and the grandchild's own transcript and sidecar both landed and fresh.
+     */
+    function buriedNestedAgent(): void {
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${LIVE_AGENT}.jsonl`,
+        subagentTranscript + launch(NESTED_AGENT, NESTED_NAME) + sameTickAttachments(),
+        43_000
+      )
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.jsonl`, nestedSubagentTranscript, 44_000)
+      fake.addFile(`${SUBAGENTS}\\agent-${LIVE_AGENT}.meta.json`, subagentMeta, 43_000)
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`, nestedSubagentMeta, 44_000)
+    }
+
+    /** What the poll actually asked the disk for, so a cost claim is measured. */
+    function recording(inner: FakeFs): FsLike & { listings: string[]; heads: string[] } {
+      const listings: string[] = []
+      const heads: string[] = []
+      return {
+        listings,
+        heads,
+        readTextTail: (path, maxBytes) => inner.readTextTail(path, maxBytes),
+        readTextHead: (path, maxBytes) => {
+          heads.push(path)
+          return inner.readTextHead(path, maxBytes)
+        },
+        readJson: (path) => inner.readJson(path),
+        listDir: (path) => {
+          listings.push(path)
+          return inner.listDir(path)
+        },
+        stat: (path) => inner.stat(path),
+        exists: (path) => inner.exists(path)
+      }
+    }
+
+    it('proves the launch record really is outside the window it is read through', () => {
+      // Not a behaviour assertion: the guard on the fixture. If a later edit
+      // shrinks the burst below 64 KiB, every test below would pass through
+      // #267's tail path and prove nothing about the bug they exist for.
+      const worker = subagentTranscript + launch(NESTED_AGENT, NESTED_NAME) + sameTickAttachments()
+      const buried = Buffer.byteLength(worker, 'utf8') - worker.indexOf(NESTED_AGENT)
+      expect(buried).toBeGreaterThan(64 * 1024)
+    })
+
+    it('draws the worker2 whose launch record the attachments buried', async () => {
+      buriedNestedAgent()
+      const snapshot = (await makeProvider().scan())[0]!
+      expect(snapshot.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID, WORKER_ID, NESTED_ID])
+
+      const nested = snapshot.dwarfs[2]!
+      expect(nested).toMatchObject({
+        id: NESTED_ID,
+        // Rank is the sidecar's `spawnDepth` through the one rule the held path
+        // and the Mine History already read it with — unchanged by #391.
+        role: 'worker2',
+        parentId: WORKER_ID,
+        attendance: 'unattended',
+        // The sidecar names the task too, so the grandchild arrives with the
+        // name a human would address it by rather than the id fallback.
+        name: NESTED_NAME,
+        description: NESTED_NAME,
+        status: 'working',
+        sessionId: SESSION_ID
+      })
+      // Its own transcript, judged on its own mtime, exactly as #267 left it.
+      expect(nested.silentForMs).toBe(55_000)
+      expect(nested.transcriptUpdatedAt).toBe(44_000)
+    })
+
+    it('relays it up through the worker that launched it', async () => {
+      buriedNestedAgent()
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery(NESTED_ID)).toEqual({
+        kind: 'foreman-relay',
+        foremanDwarfId: WORKER_ID,
+        workerName: NESTED_NAME
+      })
+    })
+
+    it('feeds it from its own transcript, which discovery never had to read', async () => {
+      buriedNestedAgent()
+      const provider = makeProvider()
+      await provider.scan()
+      expect((await provider.feed(NESTED_ID, 20))!.map((message) => message.text)).toEqual([
+        'Placeholder nested user prompt.',
+        'Nested subagent latest reply placeholder.'
+      ])
+    })
+
+    it('retires it on its own ending in the root transcript, like any other agent', async () => {
+      // Constraint 4 of the issue: nothing about liveness changes. The
+      // grandchild's `<task-notification>` reaches the ROOT, so the terminal
+      // memory retires it whatever found it — and keeps it retired once the
+      // notification scrolls out while the sidecar stays on disk forever.
+      buriedNestedAgent()
+      const provider = makeProvider()
+      await provider.scan()
+
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + queuedNotification(NESTED_AGENT, 'completed'),
+        45_000
+      )
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+
+      fake.addFile(TRANSCRIPT, parentTranscript, 46_000)
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+    })
+
+    it('never adopts a sidecar whose named parent is nowhere on the board', async () => {
+      // The parent filter is the whole bound on a flat directory that keeps
+      // every agent a session ever ran: a sidecar naming an agent this walk
+      // never reached is not a grandchild of anybody drawn here.
+      buriedNestedAgent()
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`,
+        JSON.stringify({ description: NESTED_NAME, spawnDepth: 2, parentAgentId: FINISHED_AGENT }),
+        44_000
+      )
+      expect((await makeProvider().scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID
+      ])
+    })
+
+    it('leaves the launch record the primary source where the tail can see it', async () => {
+      // Constraint 3: the sidecar fills in what the window cannot see, and
+      // never supersedes it. Only the launch record carries `resolvedModel`,
+      // so the model on the wire is what says which source was believed.
+      fake.addFile(
+        `${SUBAGENTS}\\agent-${LIVE_AGENT}.jsonl`,
+        subagentTranscript + launch(NESTED_AGENT, NESTED_NAME),
+        43_000
+      )
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.jsonl`, nestedSubagentTranscript, 44_000)
+      fake.addFile(`${SUBAGENTS}\\agent-${LIVE_AGENT}.meta.json`, subagentMeta, 43_000)
+      fake.addFile(`${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`, nestedSubagentMeta, 44_000)
+      const nested = (await makeProvider().scan())[0]!.dwarfs[2]!
+      expect(nested.id).toBe(NESTED_ID)
+      expect(nested.model).toBe('claude-fable-5')
+    })
+
+    it('costs one listing and one read per sidecar, however many polls it survives', async () => {
+      buriedNestedAgent()
+      const fs = recording(fake)
+      const provider = new ClaudeProvider({
+        fs,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => 99_000
+      })
+      await provider.scan()
+      expect(fs.listings.filter((path) => path === SUBAGENTS)).toHaveLength(1)
+      // Two sidecars in the directory, each read once: the worker's, which
+      // names no parent, and the grandchild's, which names one.
+      expect(fs.heads).toEqual([
+        `${SUBAGENTS}\\agent-${LIVE_AGENT}.meta.json`,
+        `${SUBAGENTS}\\agent-${NESTED_AGENT}.meta.json`
+      ])
+
+      fs.listings.length = 0
+      fs.heads.length = 0
+      await provider.scan()
+      await provider.scan()
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([
+        MAIN_ID,
+        WORKER_ID,
+        NESTED_ID
+      ])
+      // The listing is per poll; the reads are not. A landed sidecar is never
+      // rewritten, so three more polls buy three listings and no reads at all.
+      expect(fs.listings.filter((path) => path === SUBAGENTS)).toHaveLength(3)
+      expect(fs.heads).toEqual([])
+    })
+
+    it('never lists the directory at all for a session with no agents out', async () => {
+      // A grandchild is only ever reached from a parent already on the board,
+      // so a session with an empty crew can have none — and the commonest
+      // session on the board pays nothing for this rule.
+      fake.addFile(TRANSCRIPT, noAgentTranscript, 42_000)
+      buriedNestedAgent()
+      const fs = recording(fake)
+      const provider = new ClaudeProvider({
+        fs,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => 99_000
+      })
+      expect((await provider.scan())[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual([MAIN_ID])
+      expect(fs.listings).not.toContain(SUBAGENTS)
+      expect(fs.heads).toEqual([])
+    })
+
+    it('reads no sidecar for an agent already known to have ended', async () => {
+      // The other half of the bound, and the one that matters on a session
+      // that has run for hours: an ended id is skipped before the read, so a
+      // directory of finished agents costs the listing and nothing else.
+      buriedNestedAgent()
+      fake.addFile(
+        TRANSCRIPT,
+        parentTranscript + queuedNotification(NESTED_AGENT, 'completed'),
+        45_000
+      )
+      const fs = recording(fake)
+      const provider = new ClaudeProvider({
+        fs,
+        roots: [ROOT1],
+        isPidAlive: (pid) => alivePids.has(pid),
+        now: () => 99_000
+      })
+      await provider.scan()
+      expect(fs.heads).toEqual([`${SUBAGENTS}\\agent-${LIVE_AGENT}.meta.json`])
     })
   })
 })

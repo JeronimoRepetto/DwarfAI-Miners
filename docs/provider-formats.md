@@ -220,10 +220,12 @@ Three findings from the same pass, over 321 `agent-*.meta.json` sidecars on one 
   they happened. `ClaudeProvider` read each worker's tail but took only `tokensObserved`,
   `lastAssistantText` and `pendingQuestion` from it — **its `inFlightAgents` were discarded, which
   is why an OBSERVED session's depth-2 agents were invisible until #267.** They are now the
-  discovery source: the same tail read, the same extractor and the same terminal-status rule, one
-  level down, so the launch costs no extra read per poll (see `claudeProvider.snapshotSession`'s
-  crew walk, and #267 for why the alternative — a `readdir` of `subagents/` plus a read per
-  `agent-*.meta.json` in it — was refused).
+  PRIMARY discovery source: the same tail read, the same extractor and the same terminal-status
+  rule, one level down (see `claudeProvider.snapshotSession`'s crew walk). #267 said the launch
+  therefore "costs no extra read per poll" and refused the alternative — a `readdir` of
+  `subagents/` plus a read per `agent-*.meta.json` in it — outright. **The first half is still
+  true and the refusal is not: that tail is read through a 64 KiB window the record is not
+  reachable in.** See the next note, which makes the refused listing the fallback behind it.
 
 **`pendingBackgroundAgentCount` counts the whole tree, not the direct children.** At one
 `turn_duration` line reporting `pending=3`, exactly three agents were live by launch/notification
@@ -233,6 +235,55 @@ judges, so a descendant is a standing, permanent contribution to the `unexplaine
 chases. #267 keeps it that way ON PURPOSE rather than netting the two off: the count is the root
 stating how many agents IT has, it says how many and never which, and a grandchild kept in a
 separate memory cannot be adopted or evicted by a number that never described it.
+
+#### A nested launch record is unreachable from the tail (2026-09-12, issue #391) **[V]**
+
+The record above is written; it is just never inside the window it is read through. A depth-2 agent
+ran for over a minute with its transcript and sidecar on disk and the board drew nothing, twice in a
+row on the same day. Measured on the launching worker's own `subagents/agent-<parent>.jsonl`:
+
+| Record                                                           | Bytes   | Written |
+| ---------------------------------------------------------------- | ------- | ------- |
+| `user` with `toolUseResult.status: "async_launched"`, child's id | 3,121   | T+0 ms  |
+| `attachment` / `prompt_snapshot`                                 | 130,705 | T+67 ms |
+| `attachment` / `agent_listing_delta`                             | 19,803  | T+68 ms |
+| `attachment` / `mcp_instructions_delta`                          | 10,580  | T+68 ms |
+| `attachment` / `auto_mode` + `total_tokens_reminder`             | 1,587   | T+69 ms |
+
+So ~162 KB lands in the same tick, the launch record sits 172,083 bytes from the end 25 seconds
+later (173,107 in the first run), and no later write ever brings it closer. `subagentTranscriptInfo`
+reads `SUBAGENT_TAIL_BYTES` = 64 KiB, which never reaches past `prompt_snapshot`. **A bigger
+constant is not the fix** — the parent transcript's first 175 KB are the same kind of attachments
+(`instructions` alone is 133 KB), and the size of what Claude Code writes in one tick is not this
+app's to bound. Nothing recovers it afterwards either: `recoverMissingLaunches` and
+`enforcePendingCeiling` both ride `pendingBackgroundAgentCount`, which only rides a `turn_duration`
+line, and **a worker's transcript has none**.
+
+Why 2026-09-07 saw these agents working is unmeasured — whether `prompt_snapshot` is newer than
+that pass, or the attachments were simply smaller. What is measured is that today the record is
+unreachable at every poll.
+
+**So the sidecar is the fallback, and the listing #267 refused is what finds it.** A sidecar lands
+at launch time in the same flat `subagents/` directory and names its launcher outright, and no write
+burst can push a whole file out of view the way it pushes one line out of a window. The launch
+record stays primary wherever it is visible — it is the only one carrying `resolvedModel`, and a
+sidecar can land a poll later than the record that describes it. Everything downstream is unchanged:
+`rankForSpawnDepth(spawnDepth)`, the ending in the root's transcript, the worker silence window, the
+parent having to be on the board.
+
+The cost #267 was refusing is bounded three ways, measured on this machine over a directory of 321
+agents (642 entries, the same shape `mineHistory.claudeSubagents` already lists for the history
+panel):
+
+- **One listing per poll: 0.28 ms median** (min 0.22, p90 0.36) — against the 1.66 ms the transcript
+  read and parse already cost at 256 KiB (`performance.md`).
+- **None at all for a session with no agents out**, which is most of them: a grandchild is reached
+  only from a parent already on the board, so an empty crew can have none.
+- **One read per agent id for the life of the process**, never one per poll — the sidecar is written
+  at launch and never rewritten (§1.4), so the cache the crew walk already reads rank from serves
+  both. Classifying all 321 cold costs 48.7 ms once; an id already in `terminalAgents` is skipped
+  before the read, and a grandchild's `<task-notification>` reaches the root, so a long-running
+  session has usually retired most of its directory long before this listing sees it.
 
 #### An ending is "stopped for now" — a resumed agent (2026-09-03, issue #179)
 
@@ -655,6 +706,8 @@ and `apply_patch` (93) counts.
   2. **Session alive**: rollout mtime recent **and** a `codex.exe` process exists (see §4). mtime alone can't distinguish "open but idle" from "closed" — Codex appends nothing while idle. **[V — see below]**
 - `process_manager\chat_processes.json` records Desktop-spawned commands with `osPid` but retains stale entries → not trustworthy for liveness **[V]**.
 - **No blocked-on-a-human record of any kind** (issue #60). Every rollout on this machine was enumerated on 2026-08-30 — 140 files, ~393 MB — and the complete `event_msg` payload vocabulary is `item_completed`, `token_count`, `agent_message`, `agent_reasoning`, `task_started`, `task_complete`, `user_message`, `patch_apply_end`, `mcp_tool_call_end`, `thread_settings_applied`, `web_search_end`, `sub_agent_activity`, `context_compacted`, `turn_aborted`, `image_generation_end`, `thread_rolled_back`. Not one record or payload type in that corpus matches approval, elicitation, permission, awaiting or user-input **[V]**. `turn_context.payload.approval_policy` is a policy setting, not a pending request. So Codex writes no waiting reason at all and stays exactly as conservative as before: a Codex session at an approval prompt is indistinguishable on disk from one sitting quietly, and inventing the difference is the failure #60 exists to prevent.
+
+- **Correction, 2026-09-12 (#264), to item 2 above.** "Rollout mtime recent **and** a `codex.exe` exists" has not been the rule since the SQLite registry landed, and the order matters: growth since the previous scan, then a `logs_2.sqlite` heartbeat for the thread, then the registry row's own stamps, and only then the mtime. The heartbeat is reached **through** the registry row, so the row query's retention floor was silently taking the heartbeat with it — a session logging a line a moment ago was refused as though nothing had been heard from it. See `codex-v2-format.md` §11 for the reading and for the two facts about `codex resume` that are still unmeasured.
 
 **2026-08-29 re-verification against a real, actively-running Codex session on this machine** (this project, PID 32864 `codex.exe` alive since 14:23, confirmed via `Get-CimInstance Win32_Process`):
 

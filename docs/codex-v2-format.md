@@ -996,3 +996,111 @@ machine. That a running session presents both a `node.exe` parent and a `codex.e
 **verified in §8 on 2026-09-09** and was not re-observed here, because observing it means running
 Codex. The negative half of the fix — plugin host live, no session, probe answers false — was
 **verified end to end** against the real process list. The positive half rests on §8's measurement.
+
+## 11. Why a relaunched session goes missing, read 2026-09-12 — a code reading, not a measurement
+
+Issue #264: "close a Codex session, launch another from the terminal, nothing appears." This section
+records what was walked, what reproduced, what did not, and the one thing still owed a live machine.
+**Nothing here was measured against a running Codex** — no session was started, resumed or
+signalled. Everything below is derived from the provider's own source and from §§4, 5, 8 and 10, and
+is labelled accordingly.
+
+### (a) The reported diagnosis was right, and is already fixed — so it is no longer the cause
+
+The 2026-09-07 diagnosis named the registry reader: `threads` was floored on `updated_at_ms`
+(nullable, arrives NULL) and `recency_at_ms` (`NOT NULL DEFAULT 0`, arrives 0) while `created_at_ms`
+sat unread beside them, so a row Codex had only just opened read as activity 0 and fell below every
+cutoff. That is real, and it landed on main on 2026-09-07: `created_at_ms` now joins the other two
+under one `MAX(COALESCE(…))`, and `CODEX_DEBUG=1` prints one line per refused candidate.
+
+Re-walked on 2026-09-12 in its strictest form — the relaunched row carrying nothing but
+`created_at_ms`, its rollout on disk with a frozen mtime, no heartbeat yet — **it no longer
+reproduces**. The regression test is
+`codexProviderRegistry.test.ts` → "rediscovers the relaunched session on its creation stamp alone",
+and it passes on the unmodified provider. A fresh terminal launch opens a NEW thread, and a new
+thread is exactly the case that fix covers.
+
+### (b) What does still drop a live session: the heartbeat is joined through a row the floor removes
+
+`logs_2.sqlite` is this provider's strongest liveness signal and the whole reason the heartbeat leg
+exists — §4 records rows appended continuously while a turn runs, which is precisely what §4's
+frozen Windows mtime cannot say. But a candidate rollout reaches its heartbeat only through the
+registry row that names it, and that row was filtered out by the retention floor **before** the
+heartbeat was consulted. So the freshest evidence on the machine was read into a map, keyed by a
+thread id nothing could then resolve, and discarded.
+
+The refusal, printed by the debug channel added for this issue, names it exactly:
+
+```
+[codex] skip retention-floor age 18936s registry none <rollout path>
+```
+
+`registry none` on a thread that **is** in `state_5.sqlite` is the fingerprint: the row existed and
+the floor took it, so the age reported is the frozen mtime rather than anything the session did.
+Fixed by reading the heartbeats first and exempting those thread ids from the row query's floor —
+per-thread evidence of writing now, not the global "some codex process is alive" the floor is
+deliberately in front of (#374). Pinned by
+"keeps a session whose only fresh signal is its own logs heartbeat" and by the reader-level tests in
+`state.test.ts`.
+
+### (c) New rollout or resumed thread — what the docs settle, and what they do not
+
+**Settled here, and it answers half the question.** §8(c) measured that `codex resume` "opens an old
+thread in a new process", and §8(b)'s limit 2 measured seven threads served by two or three
+different pids — "a thread resumed in a new process **keeps its id** and changes its server". So a
+resume is the same `threads.id`, and therefore the same dwarf id, not a new session.
+
+**Not settled, and this is the gap.** Whether that resumed thread keeps its original `rollout_path`
+or gets a fresh rollout file was never observed, and neither was whether Codex re-stamps
+`updated_at_ms` / `recency_at_ms` when it reopens a thread. Those two answers decide whether (b) is
+a corner or the ordinary path:
+
+- If resume re-stamps the row, a resumed session is fresh on its own terms and (b) only ever bit a
+  long quiet turn.
+- If it does not, every resumed thread arrives with stamps hours or days old, and the heartbeat is
+  the only thing that can speak for it — which is the case (b) fixes.
+
+A third stamp is worth knowing while measuring: `created_at_ms` cannot help a resume either way,
+because the thread was created when it was first opened.
+
+### (d) The live check this still owes
+
+Run while the invisible session is open, from a checkout of this repository. Nothing here writes to
+`CODEX_HOME`; copy the database before querying it, since Codex holds it in WAL mode.
+
+1. Does the provider see it at all?
+
+   ```
+   RUN_INTEGRATION=1 pnpm vitest run src/main/providers/codex/codexProvider.integration.test.ts
+   ```
+
+   An empty scan result with `isCodexProcessRunning(): true` means the failure is inside `scan()`.
+
+2. Which branch refused it, in the app itself:
+
+   ```
+   CODEX_DEBUG=1 pnpm dev
+   ```
+
+   One `[codex] skip <reason> age <n>s registry <row|none>` line per refused candidate. A
+   `registry none` verdict on a thread step 3 then finds in the registry is (b); `retention-floor`
+   with `registry row` is a genuinely quiet session; `no-process` is the probe of §10.
+
+3. What the registry actually holds for it — on a **copy**:
+
+   ```
+   cp ~/.codex/state_5.sqlite /tmp/state-copy.sqlite
+   sqlite3 /tmp/state-copy.sqlite \
+     "SELECT id, rollout_path, created_at_ms, updated_at_ms, recency_at_ms FROM threads
+      WHERE archived = 0
+      ORDER BY MAX(COALESCE(created_at_ms, 0), COALESCE(updated_at_ms, 0),
+                   COALESCE(recency_at_ms, 0)) DESC LIMIT 5;"
+   ```
+
+   Then answer (c) directly: start a session, note its `id` and `rollout_path`, quit, `codex resume`
+   it, and re-read the same row. Same id is expected (§8). **Same `rollout_path` or a new one, and
+   whether `updated_at_ms`/`recency_at_ms` moved, are the two facts nobody has yet.**
+
+4. Whether the rollout is even a candidate: a rollout lives in its **start-date** directory forever
+   (§5), and the walk covers `scanDays` (default 7). A thread resumed after eight days is outside the
+   walk, and only its registry row can find it.

@@ -672,5 +672,103 @@ describe('CodexProvider with the Codex SQLite registry', () => {
       seedRelaunchedRow(NOW - 30_000, false)
       expect(await provider.scan()).toEqual([])
     })
+
+    /**
+     * The strictest form of #264's own diagnosis, pinned so it cannot silently
+     * come back: creation is the ONLY signal left. The rollout is on disk with
+     * a frozen mtime (#1), the row carries `updated_at_ms` NULL and
+     * `recency_at_ms` 0, and no log row has been written yet — a first scan
+     * lands between the thread opening and its first turn producing anything.
+     * Every other test above leaves the rollout's own fresh mtime standing.
+     */
+    it('rediscovers the relaunched session on its creation stamp alone', async () => {
+      const clock = { now: NOW }
+      const provider = relaunchProvider(clock)
+      seedClosedSession()
+      await provider.scan()
+
+      clock.now = LATER
+      // Written moments ago, but its mtime reads hours old: exactly the freeze
+      // §4 measured on a rollout Codex still holds open.
+      fake.addFile(rolloutPathFor(RELAUNCHED_ID), busyRollout(RELAUNCHED_ID), FROZEN_MTIME)
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: RELAUNCHED_ID,
+          cwd: CWD,
+          rolloutPath: rolloutPathFor(RELAUNCHED_ID),
+          createdAtMs: LATER - 5_000
+        })
+      )
+      expect((await provider.scan()).map((s) => s.sessionId)).toEqual([RELAUNCHED_ID])
+    })
+  })
+
+  /**
+   * Issue #264, the surface the report's own diagnosis did not reach: a thread
+   * whose registry stamps have aged past the retention floor while Codex is
+   * writing log rows for it right now.
+   *
+   * `logs` is this provider's strongest liveness signal and the whole reason
+   * the heartbeat leg exists (see the module comment in state.ts): rows are
+   * appended continuously while a turn runs, which is precisely what a frozen
+   * Windows mtime cannot say. But the heartbeat is joined to a candidate
+   * through its registry row, and that row was being filtered out by the same
+   * retention floor the heartbeat exists to overrule — so the freshest evidence
+   * on the machine was read, kept in a map, and never consulted.
+   *
+   * Reached by `codex resume`, which §8 measured opening an old thread in a new
+   * process while keeping its id: whether Codex re-stamps `updated_at_ms` and
+   * `recency_at_ms` when it does is UNMEASURED, and this is what it costs when
+   * it does not.
+   */
+  describe('a thread whose registry stamps aged out while it is still logging (#264)', () => {
+    /** Older than livenessWindowS + idleRetentionS: below every registry cutoff. */
+    const STALE_MS = NOW - (WINDOW_S + RETENTION_S) * 1_000 - 60_000
+
+    function seedStaleRowWithHeartbeat(heartbeatAgoS: number): void {
+      fake.addFile(LIVE_ROLLOUT, busyRollout(LIVE_ID), FROZEN_MTIME)
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: LIVE_ID,
+          cwd: '\\\\?\\C:\\Users\\j\\Desktop\\Sample-Project',
+          rolloutPath: LIVE_ROLLOUT,
+          model: 'gpt-5.6-luna',
+          createdAtMs: STALE_MS,
+          updatedAtMs: STALE_MS,
+          recencyAtMs: STALE_MS
+        })
+      )
+      sqlite.exec(LOGS_DB, logInsert(LIVE_ID, (NOW - heartbeatAgoS * 1_000) / 1_000))
+    }
+
+    it('keeps a session whose only fresh signal is its own logs heartbeat', async () => {
+      seedStaleRowWithHeartbeat(30)
+      const snapshots = await makeProvider().scan()
+      expect(snapshots.map((s) => s.sessionId)).toEqual([LIVE_ID])
+    })
+
+    /**
+     * And the registry facts come with it. A session rescued as a bare rollout
+     * would be a nameless dwarf with no model and no queue address (#97) — the
+     * heartbeat names a THREAD, so the row it names has to arrive too.
+     */
+    it('describes that session from its registry row, not from its rollout alone', async () => {
+      seedStaleRowWithHeartbeat(30)
+      const [snapshot] = await makeProvider().scan()
+      expect(snapshot!.cwd).toBe('C:\\Users\\j\\Desktop\\Sample-Project')
+      expect(snapshot!.dwarfs[0]).toMatchObject({ model: 'gpt-5.6-luna' })
+    })
+
+    /**
+     * The other direction, and the reason this is not a way back for every dead
+     * rollout on the machine: the exemption is a log row inside the heartbeat
+     * window for that one thread, so a thread that stopped logging stays off.
+     */
+    it('leaves a stale thread off when its last log row is older than the heartbeat window', async () => {
+      seedStaleRowWithHeartbeat(WINDOW_S + 60)
+      expect(await makeProvider().scan()).toEqual([])
+    })
   })
 })
