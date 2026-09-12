@@ -7,7 +7,23 @@ import {
   panelKeyframes
 } from '../../lib/shell/panelMotion'
 
-const props = defineProps<{ axis?: 'horizontal' | 'vertical' }>()
+const props = defineProps<{
+  axis?: 'horizontal' | 'vertical'
+  /**
+   * The shell's own fold, for a column whose motion is not its own (#388).
+   *
+   * The three columns of the book stand on ONE amber ground, and it is the
+   * ground that moves now: a fade each would be three answers to the question
+   * of how wide the shell is, and the window's resize would still be painted as
+   * a jump under them. Given this, the column animates nothing — but it is
+   * still HELD, because unmounting it before main has shrunk the window repacks
+   * the row inside a rectangle that has not changed yet.
+   *
+   * Answering `null` means there is no motion to wait for (reduced motion, a
+   * hidden window), which is the instant path the rest of this file takes too.
+   */
+  hold?: (column: HTMLElement) => Promise<void> | null
+}>()
 const emit = defineEmits<{ leave: [completion: Promise<void>] }>()
 const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 const active = new Map<Element, () => void>()
@@ -20,10 +36,31 @@ function releaseAll(): void {
   for (const complete of [...active.values()]) complete()
 }
 
+/** Retain a column until the shell has finished folding around it (#388). */
+function held(element: Element, panel: HTMLElement, done: () => void, leaving: boolean): void {
+  const fold = leaving ? props.hold!(panel) : null
+  if (fold === null) {
+    done()
+    return
+  }
+  emit('leave', fold)
+  const complete = (): void => {
+    if (active.get(element) !== complete) return
+    active.delete(element)
+    done()
+  }
+  active.set(element, complete)
+  void fold.then(complete, complete)
+}
+
 function run(element: Element, done: () => void, leaving: boolean): void {
   finish(element)
   const panel = element as HTMLElement
   panel.inert = leaving
+  if (props.hold !== undefined) {
+    held(element, panel, done, leaving)
+    return
+  }
   // A hidden window cannot advance the document timeline, so an animation
   // started now would never report itself finished (#266). The panel is not on
   // screen either way, which makes reduced motion's instant path the honest

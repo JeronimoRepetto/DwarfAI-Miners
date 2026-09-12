@@ -16,6 +16,7 @@ import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
+import { useShellFold } from './composables/useShellFold'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
@@ -111,6 +112,46 @@ const {
   toggle: toggleLayout,
   setEdge
 } = usePanelLayout(waitForPanelLeaves)
+
+/**
+ * The shell's own ground, and the fold that is now the panel's whole motion
+ * (#388).
+ *
+ * The columns used to fade inside a window that then jumped to its new
+ * rectangle in one frame — the pixels main added or removed were painted at the
+ * moment they arrived or went, which is the flicker the issue reports. The
+ * ground folds toward the docked edge instead, and main only ever resizes into
+ * pixels that are already transparent: a shrink waits for the fold through the
+ * same `waitForPanelLeaves` path a fade used to, and a grow starts the ground
+ * clipped to the footprint it had. See composables/useShellFold.ts.
+ */
+const shellEl = ref<HTMLElement | null>(null)
+const { hold: holdColumn, settle: settleShellFold } = useShellFold({
+  shell: () => shellEl.value,
+  edge: () => layout.value.edge,
+  remaining: () => shellComposition(visibleLayout.value)
+})
+
+/*
+ * `flush: 'post'` so the shell's box is the one main just made, and the
+ * reservation is read off the disagreement itself: a layout wider than
+ * presentation asked for is the swap holding the union of both compositions,
+ * and unfolding into it would paint the pixels the fold is about to take back.
+ *
+ * All three sources, so that a request which ends without moving anything still
+ * settles: a bridge that died mid-shrink leaves `layout` exactly as it was, and
+ * a ground left folded under a window that never shrank reads as a panel that
+ * collapsed by itself.
+ */
+watch(
+  [layout, visibleLayout, layoutApplying],
+  () =>
+    settleShellFold(
+      layout.value.expanded !== visibleLayout.value.expanded ||
+        layout.value.mineOpen !== visibleLayout.value.mineOpen
+    ),
+  { flush: 'post' }
+)
 
 const panelLeaves = new Set<Promise<void>>()
 function trackPanelLeave(completion: Promise<void>): void {
@@ -718,6 +759,9 @@ watch(
  */
 
 onMounted(() => {
+  // The footprint the first opening unfolds from: whatever rectangle main
+  // created the window at, which is the rail unless a past run left it open.
+  settleShellFold(false)
   void load()
   // The map draws every remembered project, not only the live board (#197),
   // and the map is the DEFAULT area — a read gated on visiting Mines first
@@ -761,6 +805,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div
+    ref="shellEl"
     class="shell"
     :class="[`edge-${layout.edge}`, `is-${composition}`]"
     :style="{ '--interior-column-aspect': interiorColumnAspect }"
@@ -773,7 +818,15 @@ onBeforeUnmount(() => {
     -->
     <EdgeRail :edge="layout.edge" :composition="composition" @toggle="toggleSecondary" />
 
-    <PanelTransition @leave="trackPanelLeave">
+    <!--
+      The three columns of the book hand their motion to the ground they stand
+      on (#388): `hold` is the shell's own fold, and each column is only
+      RETAINED here until it ends — unmounting one before main has shrunk the
+      window would repack the row inside a rectangle that has not changed yet.
+      The area switch inside the page and the history dock below still animate
+      themselves: both already move within bounds nothing is resizing.
+    -->
+    <PanelTransition :hold="holdColumn" @leave="trackPanelLeave">
       <div v-if="visibleLayout.expanded" class="shell-secondary">
         <PanelTransition @leave="trackPanelLeave">
           <!--
@@ -881,7 +934,7 @@ onBeforeUnmount(() => {
         layout is deliberately untouched: the panel that comes back is the one
         that went away, mine and page and all.
       -->
-    <PanelTransition @leave="trackPanelLeave">
+    <PanelTransition :hold="holdColumn" @leave="trackPanelLeave">
       <ShellNav
         v-if="visibleLayout.expanded || visibleLayout.mineOpen"
         :area="viewState.area"
@@ -901,7 +954,7 @@ onBeforeUnmount(() => {
         `mineOpen` decides is whether this whole block is drawn, so the app mark
         can collapse the shell without the view forgetting its mine (#153).
       -->
-    <PanelTransition @leave="trackPanelLeave">
+    <PanelTransition :hold="holdColumn" @leave="trackPanelLeave">
       <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
         <PanelFrame>
           <!--
@@ -975,6 +1028,13 @@ onBeforeUnmount(() => {
  * edge to the screen edge it hangs on. A left-docked panel is the same DOM in
  * the other direction, which is what `row-reverse` buys — one order to reason
  * about, mirrored once.
+ *
+ * Its ground is also the surface the whole panel's motion is drawn on (#388):
+ * `clip-path` is set on this element, from useShellFold, and folds it toward
+ * the docked edge so main only ever resizes the window into pixels that are
+ * already transparent. Nothing here declares it — a clip left in the
+ * stylesheet would be a second opinion about how wide the shell is — but every
+ * rule below is inside it, the shadow and the radius included.
  */
 .shell {
   position: relative;

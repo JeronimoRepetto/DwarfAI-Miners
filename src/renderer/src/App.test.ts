@@ -284,17 +284,28 @@ describe('App panel motion (#164)', () => {
     return { wrapper, api }
   }
 
-  it('retains native width until BOTH the page and navigation have finished leaving', async () => {
+  /** What each running animation is on, by the class its element leads with. */
+  const animated = (): string[] => animations.map(({ element }) => element.classList[0] ?? '')
+
+  /*
+   * AMENDED for #388 (was: 'retains native width until BOTH the page and
+   * navigation have finished leaving', asserting one animation per leaving
+   * column). The columns no longer animate: the amber ground they stand on
+   * folds, once, so main's resize only ever takes away pixels that are already
+   * transparent. The subject is unchanged and is the whole point of the case —
+   * native width is retained until the motion has finished, and BOTH columns
+   * are still standing while it runs. The fold's own geometry is asserted in
+   * useShellFold.test.ts, which can give the shell a box jsdom never lays out.
+   */
+  it('retains native width until the shell has finished folding over page and navigation', async () => {
     const { wrapper, api } = await animatedApp()
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    expect(animations).toHaveLength(2)
+    expect(animated()).toEqual(['shell'])
     expect(wrapper.find('.shell-secondary').exists()).toBe(true)
+    expect(wrapper.find('.shell-nav').exists()).toBe(true)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     animations[0]!.finish()
-    await flushPromises()
-    expect(api.setPanelLayout).not.toHaveBeenCalled()
-    animations[1]!.finish()
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
     expect(wrapper.find('.shell-secondary').exists()).toBe(false)
@@ -361,7 +372,14 @@ describe('App panel motion (#164)', () => {
     wrapper.findComponent(MapView).vm.$emit('open', mine.id)
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
-    expect(animations.map(({ element }) => element.className)).toEqual(['shell-mine'])
+    /*
+     * AMENDED for #388 (was: `['shell-mine']`). An arriving column has no
+     * motion of its own any more — the shell unfolds around it, from the
+     * footprint it had before main grew the window — and jsdom lays nothing
+     * out, so there is no room here for that unfold to cross. It is asserted
+     * in useShellFold.test.ts, where the shell is given a box.
+     */
+    expect(animated()).toEqual([])
     await finishAnimations()
     const scene = wrapper.findComponent(MineScene).vm
     await wrapper.find(NAV_SETTINGS).trigger('click')
@@ -380,17 +398,20 @@ describe('App panel motion (#164)', () => {
     expect(animations).toHaveLength(0)
     scene.$emit('history')
     await flushPromises()
-    expect(animations.map(({ element }) => element.className)).toEqual(['message-dock'])
+    expect(animated()).toEqual(['message-dock'])
     await finishAnimations()
     scene.$emit('select', dwarf)
     await flushPromises()
-    expect(animations.map(({ element }) => element.className)).toEqual(['message-dock'])
+    expect(animated()).toEqual(['message-dock'])
     await finishAnimations()
     expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
     api.setPanelLayout.mockClear()
     scene.$emit('back')
     await flushPromises()
-    expect(animations.map(({ element }) => element.className)).toEqual(['shell-mine'])
+    // AMENDED for #388 (was: `['shell-mine']`). The mine column is still held
+    // standing while the motion runs — that is what the next line asserts — but
+    // the motion is the shell folding over it, not a fade of its own.
+    expect(animated()).toEqual(['shell'])
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     await finishAnimations()
