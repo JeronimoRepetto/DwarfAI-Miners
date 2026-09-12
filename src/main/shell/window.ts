@@ -170,6 +170,17 @@ export function buildMainWindowOptions(
      * is where the cave's column is sized.
      */
     resizable: false,
+    /*
+     * Windows keeps the WS_THICKFRAME style on a frameless window unless told
+     * otherwise, and with it the DWM's window-size animation — so every
+     * `setBounds` a layout change issues redrew the WHOLE shell in one flash,
+     * including the columns the fold (#388) had left exactly where they were
+     * (#394). Electron documents `false` as removing "window shadow and window
+     * animations" and edge-drag resizing: the window is not resizable, and the
+     * shell paints its own shadow, so nothing this app relies on goes with it.
+     * Windows-only by definition; the other platforms ignore it.
+     */
+    thickFrame: false,
     skipTaskbar: true,
     /*
      * Stated rather than left to Electron's default (#165). The third
@@ -637,6 +648,9 @@ export function buildMessagePanelWindowOptions(
     frame: false,
     transparent: true,
     resizable: false,
+    // For the reason the shell drops it (#394): every height report is a
+    // `setBounds`, and a thick frame animates each one across the whole panel.
+    thickFrame: false,
     skipTaskbar: true,
     parent: input.parent,
     // Stated for the same reason the shell states it (#165): a frameless
