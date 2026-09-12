@@ -42,6 +42,7 @@ import {
   type ClaudeTranscriptInfo
 } from './parse'
 import {
+  claudeSubagentDir,
   claudeSubagentSidecarPath,
   claudeSubagentTranscriptPath,
   readClaudeSubagentSidecar,
@@ -266,6 +267,19 @@ export interface ClaudeProviderOptions {
    */
   isPermissionPromptOpen?: (sessionId: string) => boolean
 }
+
+/**
+ * The entry of `subagents/` that names an agent's launcher, and so the second
+ * place a nested launch is written down (#391).
+ *
+ * `agent-<id>.jsonl` beside it is the transcript, which `mineHistory.ts` keys
+ * its own listing on; this one is the sidecar, and only the sidecar carries
+ * `parentAgentId`.
+ */
+const SIDECAR_NAME_RE = /^agent-(.+)\.meta\.json$/
+
+/** The sweep a session with no crew never runs (#391); shared, so it allocates nothing. */
+const NO_SIDECAR_CHILDREN: ReadonlyMap<string, ClaudeInFlightAgent[]> = new Map()
 
 function defaultIsPidAlive(pid: number): boolean {
   try {
@@ -1046,20 +1060,39 @@ export class ClaudeProvider implements Provider {
     // member's transcript is read exactly once and a child is only ever reached
     // from a parent already on the board.
     //
-    // Discovery is the launch record rather than the subagents/ directory, and
-    // the reason is the poll: this loop already reads each member's tail for
-    // status and tokens, and that same parse already returns the launches in it
-    // — the provider was computing them and throwing them away
-    // (docs/provider-formats.md, "Depth is real"). So one level down costs
-    // nothing per poll, while listing subagents/ and opening every
-    // agent-*.meta.json in it would cost a readdir plus one read per file that
-    // has EVER existed in the session, every 2 seconds, to learn what the tail
-    // already said. It is also the same extractor, the same terminal-status
-    // rule and the same launch memory the root's own crew is built with, one
-    // level deeper, so there is one description of what "in flight" means.
+    // Discovery is the launch record FIRST and the sidecar behind it, and the
+    // reason the record leads is the poll: this loop already reads each
+    // member's tail for status and tokens, and that same parse already returns
+    // the launches in it — the provider was computing them and throwing them
+    // away (docs/provider-formats.md, "Depth is real"). It is also the same
+    // extractor, the same terminal-status rule and the same launch memory the
+    // root's own crew is built with, one level deeper, so there is one
+    // description of what "in flight" means, and it is the only record that
+    // carries the resolved model.
+    //
+    // What #267 got wrong is that the record is not always REACHABLE. Claude
+    // Code appends ~160 KB of attachments to the launching worker's own
+    // transcript within 70 ms of writing it, so it sits ~172 KB from the end
+    // from the first poll onward and the 64 KiB window above never sees it
+    // (measured twice on 2026-09-12, #391) — and a worker's transcript carries
+    // no `turn_duration` line, so none of the root's count-driven recoveries
+    // can reach the agent either. The sidecar is the record no write burst can
+    // push out of view, so the refused alternative is now the fallback: one
+    // listing of the flat subagents/ directory, and one read of each sidecar in
+    // it that is not already known or already ended.
     const crew: CrewMember[] = inFlightAgents.map((agent) => ({ agent }))
     const reached = new Set(crew.map((member) => member.agent.agentId))
     const nested = this.nestedLaunchesFor(session.sessionId)
+    // Only when there is a crew to attach one to. A grandchild is reached from
+    // a parent already on the board and from nowhere else, so a session with no
+    // agents out can have none — and the commonest session on the board pays
+    // nothing at all for this rule, not even the listing.
+    const sidecarChildren =
+      crew.length === 0
+        ? NO_SIDECAR_CHILDREN
+        : await pollProfiler.measure('cl.agents', () =>
+            this.sidecarNestedLaunches(projectDir, session.sessionId)
+          )
     // Read once for the whole crew: two members of one crew judged against two
     // readings of the same session is the disagreement this file keeps having.
     const nothingRuns = this.provesNothingRuns(
@@ -1154,6 +1187,16 @@ export class ClaudeProvider implements Provider {
       // window for the very reason #28's scrolls out of the root's.
       for (const child of workerInfo.inFlightAgents) {
         if (this.hasEnded(child.agentId)) continue
+        nested.set(child.agentId, { agent: child, parentAgentId: agent.agentId })
+      }
+      // ...and the same launch as the sidecar wrote it down, for the record the
+      // window above cannot reach (#391). Second, never first: the entry the
+      // tail put there is the better identity — it alone carries
+      // `resolvedModel` — and a sidecar naming this member as launcher says
+      // nothing the record has not already said better.
+      for (const child of sidecarChildren.get(agent.agentId) ?? []) {
+        if (this.hasEnded(child.agentId)) continue
+        if (nested.has(child.agentId)) continue
         nested.set(child.agentId, { agent: child, parentAgentId: agent.agentId })
       }
       for (const [childId, launch] of nested) {
@@ -1487,6 +1530,65 @@ export class ClaudeProvider implements Provider {
     if (claudeWaitingReason(session, pendingQuestion) === WAITING_ON_HUMAN_REASON) return false
     if (session.status !== 'idle') return false
     return !this.writtenWithinWindow(parentMtimeMs, now, this.sessionSilenceMs(session))
+  }
+
+  /**
+   * Every nested launch this session's `subagents/` directory declares, indexed
+   * by the agent that made it (#391).
+   *
+   * The launching worker's own tail is the primary source and this is what
+   * stands behind it, for the launch record it cannot show: the sidecar lands
+   * at launch time in the same flat directory, names its launcher outright, and
+   * no amount of same-tick output can push a whole file out of view the way it
+   * pushes one line out of a window.
+   *
+   * The cost this pays is the one #267 refused, and it is paid down three ways.
+   * One listing per poll, and none at all for a session with no crew (see the
+   * caller). One read per agent id for the life of the process, because a
+   * sidecar is written at launch and never rewritten (§1.4) — the `sidecars`
+   * cache is the same one the walk below reads rank from, so the two paths
+   * cannot disagree about one agent and neither pays for the other's read. And
+   * nothing at all for an id already known to have ended, which is what keeps a
+   * session that has run for hours from re-classifying its whole history: a
+   * grandchild's `<task-notification>` reaches the ROOT, so `terminalAgents`
+   * has usually seen it long before this listing does.
+   *
+   * A file that is listed but unreadable stays uncached deliberately, exactly
+   * as the walk's own reader leaves an absent one: a sidecar caught mid-write
+   * would otherwise be classified as "names no launcher" for the life of the
+   * process, and the grandchild it describes would never be drawn at all.
+   *
+   * Nothing here decides whether an agent is RUNNING. It answers who launched
+   * whom; the caller judges the result by the same rules a tail-found launch is
+   * judged by, which is the whole reason this returns launches rather than
+   * dwarfs.
+   */
+  private async sidecarNestedLaunches(
+    projectDir: string,
+    sessionId: string
+  ): Promise<ReadonlyMap<string, ClaudeInFlightAgent[]>> {
+    const byParent = new Map<string, ClaudeInFlightAgent[]>()
+    for (const entry of await this.fs.listDir(claudeSubagentDir(projectDir, sessionId))) {
+      if (entry.isDirectory) continue
+      const agentId = SIDECAR_NAME_RE.exec(entry.name)?.[1]
+      if (agentId === undefined || this.hasEnded(agentId)) continue
+      if (!this.sidecars.has(agentId)) pollProfiler.count('cl.metas')
+      const sidecar = await this.subagentSidecar(projectDir, sessionId, agentId)
+      // Absent on a depth-1 sidecar, which is most of them: that agent's launch
+      // was declared by the ROOT's transcript and is nobody's grandchild.
+      if (sidecar.parentAgentId === undefined) continue
+      const children = byParent.get(sidecar.parentAgentId) ?? []
+      children.push({
+        agentId,
+        // The one field beyond the id that the sidecar can honestly fill.
+        // `resolvedModel` is not among them — the sidecar records the REQUESTED
+        // alias, never the id the launch record resolves — so it is left absent
+        // rather than filled with a different fact wearing the same name.
+        ...(sidecar.description === undefined ? {} : { description: sidecar.description })
+      })
+      byParent.set(sidecar.parentAgentId, children)
+    }
+    return byParent
   }
 
   /** This session's nested launch memory, created empty on first sight (#267). */
