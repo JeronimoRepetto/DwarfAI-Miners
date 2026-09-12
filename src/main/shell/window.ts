@@ -238,6 +238,16 @@ export interface UiScaleTarget {
 }
 
 /**
+ * How close two zoom factors have to be to be the same factor.
+ *
+ * Chromium stores zoom as a logarithmic LEVEL and answers with `1.2 ** level`,
+ * so a page reports the factor it was given back give or take the last bit. An
+ * exact comparison would therefore never match on any display but the design
+ * world's own, and nothing would ever be skipped.
+ */
+const ZOOM_FACTOR_EPSILON = 1e-9
+
+/**
  * Scale the whole shell onto this display and report the factor the page
  * ACTUALLY got.
  *
@@ -250,7 +260,15 @@ export interface UiScaleTarget {
  * something clipped.
  */
 export function applyUiScale(target: UiScaleTarget, area: ScreenRect): number {
-  target.setZoomFactor(uiScale(area))
+  const wanted = uiScale(area)
+  // Asked only when the answer would change (#388). `setPanelLayout` re-applies
+  // the scale on every layout change, because a layout change can carry the
+  // window onto another display — and most of them do not, so most of these
+  // are a write of the value the page already has, landing in the frame the
+  // shell's fold is animating in. The READ-BACK decides, which keeps the one
+  // case that matters: a page that lost its zoom to a navigation still gets it
+  // back (see the loadURL handler below).
+  if (Math.abs(target.getZoomFactor() - wanted) > ZOOM_FACTOR_EPSILON) target.setZoomFactor(wanted)
   return target.getZoomFactor()
 }
 
