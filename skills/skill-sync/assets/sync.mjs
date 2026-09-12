@@ -280,6 +280,7 @@ const MAIN_TREE_GLOSSES = {
   history: null,
   hooks: 'the opt-in Claude push channel',
   ledger: 'mined, persisted',
+  notifications: 'the OS notification centre, behind a port',
   platform: 'composed once in `platformAdapters.ts`',
   projects: null,
   providers: 'one per agent CLI plus the simulated one',
