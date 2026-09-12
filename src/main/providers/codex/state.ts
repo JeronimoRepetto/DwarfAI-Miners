@@ -178,14 +178,16 @@ export function parseCodexThreadSource(source: unknown): CodexThreadSource {
 const THREADS_ACTIVITY_MS =
   'MAX(COALESCE(created_at_ms, 0), COALESCE(updated_at_ms, 0), COALESCE(recency_at_ms, 0))'
 
-const THREADS_SQL =
+const THREADS_SELECT =
   'SELECT id, cwd, rollout_path, model, reasoning_effort, tokens_used, ' +
   'agent_nickname, source, ' +
   `${THREADS_ACTIVITY_MS} AS activity_ms ` +
   'FROM threads ' +
-  'WHERE archived = 0 ' +
-  `AND ${THREADS_ACTIVITY_MS} >= ? ` +
-  'ORDER BY activity_ms DESC'
+  'WHERE archived = 0 AND '
+
+const THREADS_ORDER = ' ORDER BY activity_ms DESC'
+
+const THREADS_SQL = `${THREADS_SELECT}${THREADS_ACTIVITY_MS} >= ?${THREADS_ORDER}`
 
 function toThread(row: SqliteRow): CodexThread | null {
   const threadId = asString(row.id)
@@ -223,10 +225,33 @@ function plainSourceTag(source: unknown): string | undefined {
   return text === undefined || text.startsWith('{') ? undefined : text
 }
 
-/** Non-archived threads whose newest activity timestamp is at or after `sinceMs`. */
-export function readCodexThreads(db: SqliteDb, sinceMs: number): CodexThread[] {
+/**
+ * Non-archived threads whose newest activity timestamp is at or after
+ * `sinceMs`, plus every thread named in `alsoIds` whatever its stamps say.
+ *
+ * The exemption exists because the heartbeat is joined THROUGH this row (#264).
+ * `logs` is the freshest evidence this provider has and the one signal a frozen
+ * Windows mtime cannot contradict — but the provider reaches a thread's
+ * heartbeat only via the registry row that names its rollout, so a row filtered
+ * out here took its own heartbeat with it, and a session logging a line a
+ * moment ago was refused at the retention floor as though nothing had been
+ * heard from it. The caller passes the threads that logged inside the heartbeat
+ * window, which is per-thread evidence of writing now — not the global "some
+ * codex process is alive" the floor is deliberately in front of.
+ */
+export function readCodexThreads(
+  db: SqliteDb,
+  sinceMs: number,
+  alsoIds: readonly string[] = []
+): CodexThread[] {
   const threads: CodexThread[] = []
-  for (const row of db.all(THREADS_SQL, [sinceMs])) {
+  // `IN ()` is not valid SQL, and a failing query costs every session its
+  // registry row — so the common path keeps the exact statement it always had.
+  const sql =
+    alsoIds.length === 0
+      ? THREADS_SQL
+      : `${THREADS_SELECT}(${THREADS_ACTIVITY_MS} >= ? OR id IN (${alsoIds.map(() => '?').join(', ')}))${THREADS_ORDER}`
+  for (const row of db.all(sql, [sinceMs, ...alsoIds])) {
     const thread = toThread(row)
     if (thread !== null) threads.push(thread)
   }
