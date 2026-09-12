@@ -72,7 +72,7 @@ src/
     ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
-    │                  shell/     the frame every screen sits in: the areas the rail opens onto
+    │                  shell/     the frame every screen sits in: the areas the rail opens onto, and how its ground folds into the rail
     │                  map/       the authored dig sites of the valley and the trails between them
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
