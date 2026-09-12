@@ -34,11 +34,12 @@ describe('needsAppUserModelId', () => {
 
 describe('APP_USER_MODEL_ID', () => {
   it("is exactly the installer's appId, or a dev build's notifications go nowhere", () => {
-    // Windows routes a toast by this identity. A packaged build inherits it
-    // from the shortcut the installer wrote, which is built from `build.appId`;
-    // a dev build has no shortcut and must state it. The two drifting apart
-    // would leave notifications silently unrouted in development only — the
-    // one configuration nobody tests a release against.
+    // Windows attributes a toast to this identity. A packaged build inherits
+    // it from the shortcut the installer wrote, which is built from
+    // `build.appId`; a dev build has no shortcut and states it here. The two
+    // drifting apart would put a development build's notifications under a
+    // second identity in the Action Center — where a person turns them off per
+    // app — while every assertion in this repo went on passing.
     const pkg: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
     const appId = (
       (pkg as { build?: Record<string, unknown> }).build as { appId?: unknown } | undefined

@@ -484,13 +484,14 @@ async function init(): Promise<void> {
   app.dock?.hide()
 
   /* --- System notifications (#316) — one block, appended ------------------- */
-  // Windows routes a toast by the application's identity, and a DEV build has
-  // no shortcut to have told it one — so every notification it raises is
-  // dropped by the Action Center, silently and with nothing in the log. Set
-  // before anything can raise one. The platform is asked once here rather than
-  // inside the notification path, which is the composition-point rule
-  // `platform-ports` asks for; the other two families route by the bundle and
-  // by the D-Bus name and need nothing from this process.
+  // Windows attributes a toast to an application identity, and a DEV build has
+  // no installer shortcut to have told it one. Set before anything can raise a
+  // notification, so the Action Center lists them under this app rather than
+  // under Electron's default — NOT because a toast fails without it, which was
+  // measured and did not reproduce (see appUserModelId.ts). The platform is
+  // asked once here rather than inside the notification path, which is the
+  // composition-point rule `platform-ports` asks for; the other two families
+  // route by the bundle and by the D-Bus name and need nothing from us.
   if (needsAppUserModelId(currentPlatform())) app.setAppUserModelId(APP_USER_MODEL_ID)
   /* --- end of the #316 block ---------------------------------------------- */
 

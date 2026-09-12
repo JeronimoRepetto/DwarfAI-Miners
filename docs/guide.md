@@ -404,11 +404,11 @@ and you decide what to look at.
 
 Per platform, and only Windows is verified end to end:
 
-| Platform    | What to expect                                                                                                                                                                                        |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Windows** | Works in both an installed build and a checkout. Notifications obey Focus Assist and the Action Center's own per-app switch, neither of which this app can see — so "nothing arrived" may be Windows. |
-| **macOS**   | The system asks for permission the first time one is raised. Until you allow it, nothing appears; allow it once and they arrive from then on. There is no way for the app to ask you in advance.      |
-| **Linux**   | Needs a notification daemon. Without one, nothing is shown and nothing is reported — the app cannot fix a facility the desktop does not have, and an error you cannot act on would be noise.          |
+| Platform    | What to expect                                                                                                                                                                                                                                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows** | Verified on Windows 11: works in both an installed build and a checkout. Notifications obey Focus Assist and the Action Center's own per-app switch, neither of which this app can see — so "nothing arrived" may be Windows, and that is where to look first. |
+| **macOS**   | The system asks for permission the first time one is raised. Until you allow it, nothing appears; allow it once and they arrive from then on. There is no way for the app to ask you in advance.                                                               |
+| **Linux**   | Needs a notification daemon. Without one, nothing is shown and nothing is reported — the app cannot fix a facility the desktop does not have, and an error you cannot act on would be noise.                                                                   |
 
 The switch in [Settings](#settings) turns all of it off. A notification already on screen when you
 turn them off is still withdrawn when its question is answered; nothing is left stranded.

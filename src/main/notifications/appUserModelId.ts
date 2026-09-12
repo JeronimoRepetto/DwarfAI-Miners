@@ -1,19 +1,28 @@
 import type { Platform } from '../platform/platform'
 
 /**
- * The identity Windows routes a notification by (#316).
+ * The identity Windows attributes this app's notifications to (#316).
  *
- * A dev build has no Start Menu shortcut, so nothing has told Windows who this
- * process is, and the Action Center drops every toast it raises — silently,
- * with no error to catch and nothing in the log. `app.setAppUserModelId` at
- * startup is the whole fix, and it is called from main/index.ts because that is
- * the one file that owns Electron's app object.
+ * ## What was measured, against what #316 assumed
  *
- * A PACKAGED build does not need it: the installer writes a shortcut carrying
- * this same identity, derived from `build.appId`. That is why the omission only
- * ever bites in development — the configuration a release is never tested in.
- * Both values are therefore the same string with no derivation between them,
- * which is what appUserModelId.test.ts exists to keep true.
+ * #316 states that Windows NEEDS this for a notification to show from a dev
+ * build. That was checked here rather than restated, and it did not reproduce:
+ * on Windows 11 with Electron 44, a non-packaged build reports
+ * `Notification.isSupported()` true and its toast fires `show` with the
+ * identity set and without it, repeatably. So this is not what makes a toast
+ * appear, and nobody should later "fix" a missing notification by reaching for
+ * it.
+ *
+ * It is still set, for the thing it does do: Electron documents it as the
+ * identity a toast is attributed to, and without it a dev build borrows
+ * Electron's own default rather than being this app in the Action Center — the
+ * one place a person turns notifications off per app. A PACKAGED build gets
+ * that identity from the shortcut the installer writes, derived from
+ * `build.appId`, which is why setting it here only ever matters in
+ * development.
+ *
+ * The two values are therefore the same string with no derivation between
+ * them, which is what appUserModelId.test.ts exists to keep true.
  */
 export const APP_USER_MODEL_ID = 'com.jeronimorepetto.dwarfaiminers'
 

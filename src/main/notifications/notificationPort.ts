@@ -12,10 +12,12 @@
  * from Electron's own contract and are recorded here rather than in a comment
  * somewhere a reader would have to find.
  *
- * - **Windows** — a notification from a DEV build needs an Application User
- *   Model ID, or the Action Center silently drops it. `app.setAppUserModelId`
- *   is called once at startup (see main/index.ts); a packaged build gets one
- *   from its shortcut, which is why the omission only bites in development.
+ * - **Windows** — VERIFIED here (Windows 11, Electron 44): supported, and a
+ *   toast shows from a non-packaged build. #316 assumed an Application User
+ *   Model ID was required for that and it is not — see appUserModelId.ts,
+ *   which records the measurement and what the identity is actually for. What
+ *   this app cannot see either way is Focus Assist and the Action Center's own
+ *   per-app switch, so a shown notification is not a seen one.
  * - **macOS** — nothing shows until the user has allowed the app once, and the
  *   system asks them on the first attempt. There is no API to ask beforehand
  *   and no answer to read afterwards, so a first notification that nobody sees
