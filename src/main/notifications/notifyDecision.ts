@@ -135,7 +135,10 @@ function standingAsk(dwarf: Dwarf): StandingAsk | null {
     return { kind: 'question', key: `question:${dwarf.id}:${dwarf.pendingQuestion.toolUseId}` }
   }
   if (dwarf.pendingPermission !== undefined) {
-    return { kind: 'permission', key: `permission:${dwarf.id}:${dwarf.pendingPermission.toolUseId}` }
+    return {
+      kind: 'permission',
+      key: `permission:${dwarf.id}:${dwarf.pendingPermission.toolUseId}`
+    }
   }
   // No structured record crossed, but the provider proved the session stopped
   // on a person. 'unknown' is deliberately absent from both branches: it is the

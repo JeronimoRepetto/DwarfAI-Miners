@@ -1,5 +1,9 @@
 import { Notification } from 'electron'
-import type { OpenNotification, ShownNotification, SystemNotificationPort } from './notificationPort'
+import type {
+  OpenNotification,
+  ShownNotification,
+  SystemNotificationPort
+} from './notificationPort'
 
 /**
  * The one implementation of SystemNotificationPort, over Electron's

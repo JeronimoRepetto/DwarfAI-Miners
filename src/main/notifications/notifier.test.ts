@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { Dwarf, Mine } from '../domain/types'
 import { defaultDwarf, defaultMine } from '../domain/types'
 import { createNotifier, type NotifierOptions } from './notifier'
-import type { OpenNotification, ShownNotification, SystemNotificationPort } from './notificationPort'
+import type {
+  OpenNotification,
+  ShownNotification,
+  SystemNotificationPort
+} from './notificationPort'
 
 /**
  * The glue between #316's pure decision and the OS (notifier.ts): what is

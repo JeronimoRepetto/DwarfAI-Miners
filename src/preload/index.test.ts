@@ -1100,7 +1100,7 @@ describe('preload notifications contract (#316)', () => {
     expect(invoke).toHaveBeenLastCalledWith('notifications:enabled:set', false)
   })
 
-  it("hands back what main STORED, never the request", async () => {
+  it('hands back what main STORED, never the request', async () => {
     // A write that failed, or a payload main refused, must be drawable as the
     // state in force rather than as the wish.
     invoke.mockResolvedValueOnce(true)
