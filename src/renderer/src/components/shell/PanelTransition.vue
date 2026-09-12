@@ -1,11 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount } from 'vue'
-import {
-  PANEL_MOTION_EASING,
-  PANEL_MOTION_MS,
-  PANEL_MOTION_WATCHDOG_MS,
-  panelKeyframes
-} from '../../lib/shell/panelMotion'
+import { createBoundedMotion } from '../../lib/shell/boundedMotion'
+import { panelKeyframes } from '../../lib/shell/panelMotion'
 
 const props = defineProps<{
   axis?: 'horizontal' | 'vertical'
@@ -25,15 +21,25 @@ const props = defineProps<{
   hold?: (column: HTMLElement) => Promise<void> | null
 }>()
 const emit = defineEmits<{ leave: [completion: Promise<void>] }>()
-const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+/**
+ * The bounded runner, shared with the shell's fold and the message panel's own
+ * window since #389 — the three of them had written #266's deadlines out three
+ * times. What this component adds to it is the RETENTION: Vue's `done` is what
+ * finally unmounts the column, so it may only be called once the motion the
+ * shrink waits on is over.
+ */
+const motion = createBoundedMotion()
+/** The columns this component is holding on its own account, not the runner's. */
 const active = new Map<Element, () => void>()
 
 function finish(element: Element): void {
   active.get(element)?.()
+  motion.release(element)
 }
 
 function releaseAll(): void {
   for (const complete of [...active.values()]) complete()
+  motion.releaseAll()
 }
 
 /** Retain a column until the shell has finished folding around it (#388). */
@@ -65,39 +71,19 @@ function run(element: Element, done: () => void, leaving: boolean): void {
   // started now would never report itself finished (#266). The panel is not on
   // screen either way, which makes reduced motion's instant path the honest
   // one: nothing to watch, and no leave for the layout queue to wait on.
-  if (media?.matches || document.hidden || !panel.animate) {
+  if (motion.still(panel)) {
     done()
     return
   }
-  let resolve!: () => void
-  if (leaving)
-    emit(
-      'leave',
-      new Promise<void>((complete) => {
-        resolve = complete
-      })
-    )
-  const animation = panel.animate(panelKeyframes(leaving, props.axis === 'vertical'), {
-    duration: PANEL_MOTION_MS,
-    easing: PANEL_MOTION_EASING,
-    fill: 'both'
-  })
-  let watchdog: ReturnType<typeof setTimeout> | undefined
+  const finished = motion.run(panel, panelKeyframes(leaving, props.axis === 'vertical'))
+  if (leaving) emit('leave', finished)
   const complete = (): void => {
     if (active.get(element) !== complete) return
     active.delete(element)
-    clearTimeout(watchdog)
-    animation.cancel()
     done()
-    resolve?.()
   }
   active.set(element, complete)
-  // `finished` is the accurate report and stays the first one taken. It is not
-  // a guarantee of one, though: a window occluded mid-animation lands the last
-  // frame on the compositor and never resolves it, so the watchdog is what
-  // makes a leave's completion bounded rather than merely likely (#266).
-  watchdog = setTimeout(complete, PANEL_MOTION_WATCHDOG_MS)
-  void animation.finished.then(complete, complete)
+  void finished.then(complete)
 }
 
 function enter(element: Element, done: () => void): void {
@@ -106,16 +92,19 @@ function enter(element: Element, done: () => void): void {
 function leave(element: Element, done: () => void): void {
   run(element, done, true)
 }
+/**
+ * The window going away mid-animation ends a retained column here rather than
+ * in 300ms (#266).
+ *
+ * The runner releases its own animations on both of these; what it cannot see
+ * is a column held by the shell's FOLD, which is somebody else's promise and
+ * has no animation of this component's behind it (#388). That is what these two
+ * are still for.
+ */
+const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 function reduceMotion(): void {
   if (media?.matches) releaseAll()
 }
-/**
- * The window going away mid-animation ends it here rather than in 300ms (#266).
- *
- * This is the ordinary route out of the bug, and the watchdog is its backstop:
- * Chromium reports occlusion as a visibility change, so the leave is released
- * the moment the timeline that was driving it stops.
- */
 function releaseHidden(): void {
   if (document.hidden) releaseAll()
 }
@@ -125,6 +114,7 @@ onBeforeUnmount(() => {
   media?.removeEventListener('change', reduceMotion)
   document.removeEventListener('visibilitychange', releaseHidden)
   releaseAll()
+  motion.dispose()
 })
 </script>
 
