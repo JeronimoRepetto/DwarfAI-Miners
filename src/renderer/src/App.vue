@@ -21,8 +21,10 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
+import { useNotificationSettings } from './composables/useNotificationSettings'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
+import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import type {
@@ -70,6 +72,21 @@ const {
  */
 const { report: dwarfDelivery, listen: listenDwarfDelivery } = useDwarfDelivery()
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
+
+/* --- System notifications (#316) — one block, appended --------------------- */
+/**
+ * Settings' notifications switch (#316).
+ *
+ * A reading and never an authority: main is the process that raises a
+ * notification, so it owns the switch and this only draws what it answered
+ * with — the rule `usePinnedWindow` holds for the pin.
+ */
+const {
+  enabled: notificationsEnabled,
+  sync: syncNotifications,
+  set: setNotificationsEnabled
+} = useNotificationSettings()
+/* --- end of the #316 block ------------------------------------------------- */
 
 /**
  * Everything the panel plays (#174, #173).
@@ -758,6 +775,43 @@ watch(
  * the delivery verdicts are published.
  */
 
+/* --- System notifications (#316) — one block, appended --------------------- */
+/**
+ * Which mine INTERIOR is really on screen, reported one-way to main.
+ *
+ * The rule itself is in `lib/shell/mineOnScreen.ts`, where the two facts it
+ * joins — the shell's own navigation and main's report that the column has
+ * width — are stated with the reason neither is enough on its own.
+ */
+const openMineOnScreen = computed(() => mineOnScreen(viewState.mineId, layout.value))
+watch(openMineOnScreen, (mineId) => window.api.setOpenMine(mineId), { immediate: true })
+
+/** Released with the window, like every other subscription here. */
+let unlistenShowMine: (() => void) | undefined
+
+/**
+ * A click on a system notification (#316). Main already showed and raised the
+ * window; this is the half only the renderer can do.
+ *
+ * NO dwarf is selected, exactly as the issue words it — the person clicks the
+ * dwarf to open the MessagePanel and read the ask. Closing whatever that window
+ * had open is not incidental: the mine may be the one already open, in which
+ * case nothing else would clear a selection made before the notification.
+ *
+ * The layout is asked for explicitly rather than left to the mine watch, which
+ * refuses to reopen the window from the bare rail (see its own comment). That
+ * refusal is right for a mine opened behind a collapsed shell and wrong here:
+ * this click IS the request to look at the mine.
+ */
+async function showMineFromNotification(mineId: string): Promise<void> {
+  error.value = null
+  if (messagePanel.value.surface !== 'none') void closeMessagePanel()
+  historyOpen.value = false
+  openMine(mineId)
+  await applyLayout({ expanded: layout.value.expanded, mineOpen: true })
+}
+/* --- end of the #316 block ------------------------------------------------- */
+
 onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
   // created the window at, which is the rail unless a past run left it open.
@@ -791,12 +845,22 @@ onMounted(() => {
   unlistenMessagePanel = listenMessagePanel()
   void syncMessagePanel()
   unlistenDwarfDelivery = listenDwarfDelivery()
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  // Adopts the stored switch, and listens for a click on a notification main
+  // raised. Subscribed rather than pulled, like the message panel above: a
+  // click can land at any moment and there is no state to poll for.
+  void syncNotifications()
+  unlistenShowMine = window.api.onShowMine((mineId) => void showMineFromNotification(mineId))
+  /* --- end of the #316 block ---------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
   unlistenMessagePanel?.()
   unlistenDwarfDelivery?.()
   unlistenAudio?.()
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  unlistenShowMine?.()
+  /* --- end of the #316 block ---------------------------------------------- */
   // Every sound released with the window: a clip left decoding would outlive
   // the surface that asked for it.
   disposeAudio()
@@ -898,6 +962,7 @@ onBeforeUnmount(() => {
               :resetting="metricsResetting"
               :reset-error="metricsResetError"
               :audio-settings="audioSettings"
+              :notifications-enabled="notificationsEnabled"
               @start-recording="startShortcutRecording"
               @stop-recording="stopShortcutRecording"
               @record="recordShortcut"
@@ -908,6 +973,7 @@ onBeforeUnmount(() => {
               @hide-panel="hidePanel"
               @reset-confirm="resetMetrics"
               @audio-change="setAudioSettings"
+              @notifications-change="setNotificationsEnabled"
             />
           </PanelFrame>
 

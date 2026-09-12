@@ -40,7 +40,10 @@ import type {
   PanelLayoutRequest,
   ProjectQuery,
   ProjectQueryResult,
-  ShortcutState
+  ShortcutState,
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  OpenMineId
+  /* --- end of the #316 block ---------------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -432,6 +435,28 @@ export interface DwarfAiMinersApi {
    * draws it with no session store to wait on.
    */
   launchHostedProcess: (request: HostedLaunchRequest) => Promise<HostedLaunchResult>
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  /** Whether the OS notification centre may be used at all — Settings' switch. */
+  getNotificationsEnabled: () => Promise<boolean>
+  /**
+   * Flip it. Resolves with what main STORED, never with the request: the same
+   * discipline the pin and the audio channels hold, so the switch can only be
+   * drawn in the state that is really in force.
+   */
+  setNotificationsEnabled: (enabled: boolean) => Promise<boolean>
+  /**
+   * Report which mine INTERIOR this window has open, or that none is (#316).
+   *
+   * One-way, like `setWatchedDwarf`: main folds it into its next poll's
+   * decision about what to notify, so there is no verdict to wait for.
+   */
+  setOpenMine: (mineId: OpenMineId) => void
+  /**
+   * Hear main asking for a mine to be opened (#316) — a click on a notification,
+   * whose window half main already did. Returns an unsubscribe function.
+   */
+  onShowMine: (listener: (mineId: string) => void) => () => void
+  /* --- end of the #316 block ---------------------------------------------- */
 }
 
 const api: DwarfAiMinersApi = {
@@ -709,7 +734,29 @@ const api: DwarfAiMinersApi = {
       dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
       toolUseId: typeof request?.toolUseId === 'string' ? request.toolUseId : '',
       decision: typeof request?.decision === 'string' ? request.decision : ''
-    })
+    }),
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  getNotificationsEnabled: () => ipcRenderer.invoke(IPC_CHANNELS.getNotificationsEnabled),
+  // `enabled === true` collapses any non-boolean BEFORE it crosses, exactly as
+  // setAlwaysOnTop does, so main's boundary check only ever sees a clean
+  // boolean and a malformed payload can only ever mean "off".
+  setNotificationsEnabled: (enabled) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setNotificationsEnabled, enabled === true),
+  // string-or-null, like setWatchedDwarf and for the same reason: null is
+  // itself a real answer here ("no mine interior is open") rather than a
+  // malformed one, so it must not collapse to ''.
+  setOpenMine: (mineId) =>
+    ipcRenderer.send(IPC_CHANNELS.setOpenMine, typeof mineId === 'string' ? mineId : null),
+  onShowMine: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, mineId: unknown) => {
+      // A push that names no mine is dropped here rather than forwarded as '':
+      // the renderer's own handler would then open a mine that does not exist.
+      if (typeof mineId === 'string' && mineId !== '') listener(mineId)
+    }
+    ipcRenderer.on(IPC_CHANNELS.showMine, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.showMine, wrapped)
+  }
+  /* --- end of the #316 block ---------------------------------------------- */
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import type { AudioPreferences, PanelEdge, ShortcutState } from '../../types'
 import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
+import NotificationSettings from './NotificationSettings.vue'
 import PositionSettings from './PositionSettings.vue'
 import ResetMetricsModal from './ResetMetricsModal.vue'
 import ShortcutSettings from './ShortcutSettings.vue'
@@ -26,7 +27,9 @@ import PanelTransition from '../shell/PanelTransition.vue'
  * The AUDIO section (#174) is a maintainer-specified extension of
  * `screens/settings.md`, which has none; it sits between Position and Data
  * Base, which is after everything the design draws and before the one
- * destructive action. #316's notifications switch lands in the same gap.
+ * destructive action. NOTIFICATIONS (#316) is the second such extension and
+ * lands in the same gap, immediately after Audio — the design source itself
+ * names it as joining there.
  *
  * The "Application" section (pin, hide panel, version) is an UNSPECIFIED
  * placement decision (#138): the design draws no home for any of the three,
@@ -53,6 +56,10 @@ defineProps<{
   resetError: string | null
   /** What Settings' Audio section has stored (#174, #173) — main's verdict. */
   audioSettings: AudioPreferences
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  /** Whether the OS notification centre may be used — main's verdict, not a wish. */
+  notificationsEnabled: boolean
+  /* --- end of the #316 block ---------------------------------------------- */
 }>()
 
 const emit = defineEmits<{
@@ -67,6 +74,10 @@ const emit = defineEmits<{
   'reset-confirm': []
   /** One field of the Audio settings should change (#174). */
   'audio-change': [patch: Partial<AudioPreferences>]
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  /** The notifications switch should take this value (#316). */
+  'notifications-change': [enabled: boolean]
+  /* --- end of the #316 block ---------------------------------------------- */
 }>()
 
 const resetModalOpen = ref(false)
@@ -94,6 +105,11 @@ const resetModalOpen = ref(false)
     <PositionSettings :edge="edge" :applying="edgeApplying" @select="emit('select-edge', $event)" />
 
     <AudioSettings :settings="audioSettings" @change="emit('audio-change', $event)" />
+
+    <NotificationSettings
+      :enabled="notificationsEnabled"
+      @change="emit('notifications-change', $event)"
+    />
 
     <DataBaseSection @open-reset="resetModalOpen = true" />
 

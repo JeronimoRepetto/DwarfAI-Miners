@@ -3132,6 +3132,35 @@ export interface ProjectQueryResult {
   reason?: string
 }
 
+/* --- System notifications (#316) — one block, appended --------------------- */
+
+/**
+ * Whether the OS notification centre may be used, before anybody has chosen.
+ *
+ * ON, which is #316's ruling and the only defensible default for this feature:
+ * a notification exists precisely for the moment nobody is looking at the
+ * panel, so shipping it off would mean the person has to already be watching in
+ * order to discover the thing that tells them they need not watch.
+ *
+ * Here rather than in the store beside it, for the reason DEFAULT_AUDIO_
+ * PREFERENCES is here: the renderer draws the switch before main has answered,
+ * so both processes need the same starting value and two copies of it could
+ * disagree.
+ */
+export const DEFAULT_NOTIFICATIONS_ENABLED = true
+
+/**
+ * The mine whose interior the shell has open, or none (#316).
+ *
+ * A wire type of its own rather than a bare `string | null`, because it is the
+ * subject of two channels pointing in opposite directions — the renderer
+ * reporting what it shows, and main asking for a mine to be opened — and naming
+ * it once is what keeps them talking about the same thing.
+ */
+export type OpenMineId = string | null
+
+/* --- end of the #316 block ------------------------------------------------- */
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -3478,5 +3507,42 @@ export const IPC_CHANNELS = {
    * the session over and lets go; held (`agent:launchHeld`) keeps a structured
    * stream into a CLI this app knows; hosted keeps a PIPE into one it does not.
    */
-  launchHostedProcess: 'agent:launchHosted'
+  launchHostedProcess: 'agent:launchHosted',
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  /**
+   * Settings' Notifications switch (#316).
+   *
+   * `set` answers with what main STORED, the discipline every preference
+   * channel here holds: the boundary collapses anything that is not a boolean,
+   * so the switch can only ever be drawn in a state that is really in force.
+   */
+  getNotificationsEnabled: 'notifications:enabled:get',
+  setNotificationsEnabled: 'notifications:enabled:set',
+  /**
+   * The renderer reporting which mine INTERIOR the shell currently has open, or
+   * that none is (#316) — one-way, exactly like `setWatchedDwarf` and for the
+   * same reason: main folds it into its next poll's decision rather than
+   * answering a verdict, so there is nothing here to wait for.
+   *
+   * Main needs it because #316's whole rule is "never notify about the mine on
+   * screen", and which mine that is has always been the renderer's own state.
+   * Deliberately NOT folded into `setPanelLayout`: that request carries the
+   * boolean `mineOpen`, which does not move when the person walks from one mine
+   * straight into another — so a mine id riding on it would be silently stale
+   * in exactly the case the acceptance walk exercises.
+   */
+  setOpenMine: 'panel:openMine',
+  /**
+   * Main asking the shell to open a mine (#316) — the second half of a click on
+   * a notification, whose first half (showing and raising the window) main did
+   * itself.
+   *
+   * One-way, the same shape as `messagePanelChanged`: main owns the act and the
+   * renderer follows the state it is told, so there is no verdict to answer
+   * with. It selects NO dwarf, deliberately — the person clicks the dwarf to
+   * read the ask, and a notification that opened a message panel on their
+   * behalf would be choosing what they look at.
+   */
+  showMine: 'panel:mine:show'
+  /* --- end of the #316 block ---------------------------------------------- */
 } as const

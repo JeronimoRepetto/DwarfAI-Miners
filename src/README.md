@@ -57,6 +57,7 @@ src/
 │   ├── history/     what a mine's transcripts on disk remember: every dwarf that spoke there, read on request
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill and its migration
+│   ├── notifications/ whether a mine owes the person a system notification, the port that raises one, and the switch that stops them
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
 │   ├── projects/    every project the app has been shown, persisted: name, dates, provenance
 │   ├── providers/   reading each agent CLI's own on-disk session state, registry.ts that composes it, and feedWindow.ts that bounds a feed read by messages rather than bytes
@@ -72,7 +73,7 @@ src/
     ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
-    │                  shell/     the frame every screen sits in: the areas the rail opens onto, and how its ground folds into the rail
+    │                  shell/     the frame every screen sits in: the areas the rail opens onto, how its ground folds into the rail, and which mine interior is really on screen
     │                  map/       the authored dig sites of the valley and the trails between them
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn

@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
 import type { ShortcutState } from '../../types'
-import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
+import { DEFAULT_AUDIO_PREFERENCES, DEFAULT_NOTIFICATIONS_ENABLED } from '../../types'
 import PanelTransition from '../shell/PanelTransition.vue'
 import SettingsPanel from './SettingsPanel.vue'
 
@@ -46,6 +46,9 @@ function render(props: Record<string, unknown> = {}) {
       resetting: false,
       resetError: null,
       audioSettings: { ...DEFAULT_AUDIO_PREFERENCES },
+      // AMENDED for #316: one required prop added, the notifications switch.
+      // No existing prop or assertion changed.
+      notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
       ...props
     }
   })
@@ -99,6 +102,31 @@ describe('SettingsPanel — sections in the design’s order', () => {
     )
     expect(sections.indexOf('audio-settings')).toBeLessThan(sections.indexOf('data-base-settings'))
   })
+
+  /*
+   * APPENDED for #316. The Notifications section is the second extension of
+   * `screens/settings.md` and lands in the same gap Audio opened — the source
+   * file itself already names it as joining that gap.
+   */
+  it('mounts the Notifications section in the state it was given', () => {
+    expect(
+      render({ notificationsEnabled: false })
+        .find('.notifications-enabled')
+        .attributes('aria-pressed')
+    ).toBe('false')
+  })
+
+  it('draws Notifications after Audio and before Data Base', () => {
+    const sections = render()
+      .findAll('section')
+      .map((section) => section.classes()[0])
+    expect(sections.indexOf('notification-settings')).toBeGreaterThan(
+      sections.indexOf('audio-settings')
+    )
+    expect(sections.indexOf('notification-settings')).toBeLessThan(
+      sections.indexOf('data-base-settings')
+    )
+  })
 })
 
 describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
@@ -130,6 +158,13 @@ describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
     const wrapper = render()
     await wrapper.find('.music-at-startup').trigger('click')
     expect(wrapper.emitted('audio-change')).toEqual([[{ musicAtStartup: false }]])
+  })
+
+  // APPENDED for #316.
+  it('forwards the notifications switch as notifications-change', async () => {
+    const wrapper = render({ notificationsEnabled: true })
+    await wrapper.find('.notifications-enabled').trigger('click')
+    expect(wrapper.emitted('notifications-change')).toEqual([[false]])
   })
 })
 
