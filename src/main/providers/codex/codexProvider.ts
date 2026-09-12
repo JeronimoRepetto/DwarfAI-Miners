@@ -527,22 +527,9 @@ export class CodexProvider implements Provider {
     let heartbeats = new Map<string, number>()
     let cliVersions = new Map<string, string>()
 
-    if (this.stateDbPath !== undefined) {
-      const db = await this.sqlite.openReadOnly(this.stateDbPath)
-      if (db !== null) {
-        try {
-          pollProfiler.measureSync('cx.q.threads', () => {
-            for (const thread of readCodexThreads(db, retainAfter)) {
-              threads.set(thread.threadId, thread)
-            }
-          })
-          edges = pollProfiler.measureSync('cx.q.edges', () => readCodexSpawnEdges(db))
-          cliVersions = pollProfiler.measureSync('cx.q.vers', () => readCodexCliVersions(db))
-        } finally {
-          db.close()
-        }
-      }
-    }
+    // Read BEFORE the threads, and the order is load-bearing (#264): a thread
+    // reaches its own heartbeat only through its registry row, so the rows the
+    // logs vouch for have to be known before the row query applies its floor.
     if (this.logsDbPath !== undefined) {
       const db = await this.sqlite.openReadOnly(this.logsDbPath)
       if (db !== null) {
@@ -554,6 +541,22 @@ export class CodexProvider implements Provider {
           pollProfiler.measureSync('cx.q.beats', () => {
             heartbeats = readCodexHeartbeats(db, nowMs - this.heartbeatWindowS * 1_000)
           })
+        } finally {
+          db.close()
+        }
+      }
+    }
+    if (this.stateDbPath !== undefined) {
+      const db = await this.sqlite.openReadOnly(this.stateDbPath)
+      if (db !== null) {
+        try {
+          pollProfiler.measureSync('cx.q.threads', () => {
+            for (const thread of readCodexThreads(db, retainAfter, [...heartbeats.keys()])) {
+              threads.set(thread.threadId, thread)
+            }
+          })
+          edges = pollProfiler.measureSync('cx.q.edges', () => readCodexSpawnEdges(db))
+          cliVersions = pollProfiler.measureSync('cx.q.vers', () => readCodexCliVersions(db))
         } finally {
           db.close()
         }

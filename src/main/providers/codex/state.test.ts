@@ -215,6 +215,38 @@ describe('readCodexThreads', () => {
     expect(await read(NOW - 60_000)).toEqual([])
   })
 
+  /**
+   * The heartbeat exemption (#264). A thread is reached through its row, so a
+   * row dropped here takes its own logs heartbeat with it — the freshest thing
+   * the provider knows, and the one a frozen Windows mtime cannot contradict.
+   */
+  it('keeps a thread below the cutoff when the caller names it as still logging', async () => {
+    sqlite.exec(
+      STATE_DB,
+      threadInsert({ id: 'logging', cwd: 'C:\\p', updatedAtMs: NOW - 10 * 24 * 3600_000 })
+    )
+    const db = await sqlite.openReadOnly(STATE_DB)
+    expect(readCodexThreads(db!, NOW - 60_000, ['logging']).map((t) => t.threadId)).toEqual([
+      'logging'
+    ])
+  })
+
+  it('still excludes an archived thread the caller names', async () => {
+    sqlite.exec(STATE_DB, threadInsert({ id: 'gone', cwd: 'C:\\p', updatedAtMs: NOW, archived: 1 }))
+    const db = await sqlite.openReadOnly(STATE_DB)
+    expect(readCodexThreads(db!, NOW - 60_000, ['gone'])).toEqual([])
+  })
+
+  it('names only the threads asked for, leaving every other stale row out', async () => {
+    const stale = NOW - 10 * 24 * 3600_000
+    sqlite.exec(STATE_DB, threadInsert({ id: 'logging', cwd: 'C:\\p', updatedAtMs: stale }))
+    sqlite.exec(STATE_DB, threadInsert({ id: 'quiet', cwd: 'C:\\p', updatedAtMs: stale }))
+    const db = await sqlite.openReadOnly(STATE_DB)
+    expect(readCodexThreads(db!, NOW - 60_000, ['logging']).map((t) => t.threadId)).toEqual([
+      'logging'
+    ])
+  })
+
   it('carries the sub-agent parent and nickname from the source blob', async () => {
     sqlite.exec(
       STATE_DB,
