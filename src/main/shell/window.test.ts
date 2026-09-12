@@ -78,7 +78,7 @@ describe('applyAlwaysOnTop', () => {
  * and the answer is what the page ACTUALLY got, because a zoom the renderer
  * refused would leave main computing a window for a surface that is not there.
  */
-function fakeZoomTarget(options: { honorsChanges?: boolean } = {}) {
+function fakeZoomTarget(options: { honorsChanges?: boolean; roundsTrip?: boolean } = {}) {
   let real = 1
   const calls: number[] = []
   const target: UiScaleTarget = {
@@ -86,9 +86,20 @@ function fakeZoomTarget(options: { honorsChanges?: boolean } = {}) {
       calls.push(factor)
       if (options.honorsChanges !== false) real = factor
     },
-    getZoomFactor: () => real
+    /*
+     * AMENDED for #388 (was: `() => real`). Chromium stores zoom as a
+     * logarithmic LEVEL and answers with `1.2 ** level`, so the factor a page
+     * reports is the one that was set give or take the last bit. `roundsTrip`
+     * is a page that does exactly that, which is what any real one does.
+     */
+    getZoomFactor: () =>
+      options.roundsTrip === true ? Math.pow(1.2, Math.log(real) / Math.log(1.2)) : real
   }
-  return { target, calls }
+  /** The zoom Electron drops on every navigation, without recording a call. */
+  const lose = (): void => {
+    real = 1
+  }
+  return { target, calls, lose }
 }
 
 describe('applyUiScale', () => {
@@ -117,6 +128,38 @@ describe('applyUiScale', () => {
   it('reports the REAL factor, never the wish, when the page refuses it', () => {
     const { target } = fakeZoomTarget({ honorsChanges: false })
     expect(applyUiScale(target, { x: 0, y: 0, width: 3840, height: 2160 })).toBe(1)
+  })
+
+  /*
+   * ADDED for #388. `setPanelLayout` re-applies the scale on every layout
+   * change, because a layout change can carry the window onto another display —
+   * and most of them do not. Whether an unchanged `setZoomFactor` costs the
+   * renderer a relayout is UNMEASURED here; not asking it in the frame the
+   * shell's fold is running in costs nothing either way.
+   */
+  it('leaves a page that already has the factor alone', () => {
+    const { target, calls } = fakeZoomTarget()
+    const area = { x: 0, y: 0, width: 3840, height: 2160 }
+    applyUiScale(target, area)
+    applyUiScale(target, area)
+    expect(calls).toEqual([2])
+  })
+
+  it('reads a factor the page rounded through its zoom level as the same factor', () => {
+    const { target, calls } = fakeZoomTarget({ roundsTrip: true })
+    const twoK = { x: 0, y: 0, width: 2560, height: 1392 }
+    applyUiScale(target, twoK)
+    applyUiScale(target, twoK)
+    expect(calls).toEqual([uiScale(twoK)])
+  })
+
+  it('gives the factor back to a page that lost it, which every navigation does', () => {
+    const { target, calls, lose } = fakeZoomTarget()
+    const area = { x: 0, y: 0, width: 3840, height: 2160 }
+    applyUiScale(target, area)
+    lose()
+    expect(applyUiScale(target, area)).toBe(2)
+    expect(calls).toEqual([2, 2])
   })
 })
 

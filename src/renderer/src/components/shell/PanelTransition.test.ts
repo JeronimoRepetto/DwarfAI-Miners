@@ -19,7 +19,17 @@ function occlude(hidden: boolean): void {
   Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
 }
 
-function harness(reduced = false, axis?: 'horizontal' | 'vertical') {
+/*
+ * AMENDED for #388 (was: `harness(reduced = false, axis?)`). The shell's
+ * columns no longer animate themselves — the ground folds under them — so the
+ * harness has to be able to hand this component the fold it waits on. Optional
+ * and last, so every case above it is untouched.
+ */
+function harness(
+  reduced = false,
+  axis?: 'horizontal' | 'vertical',
+  hold?: (column: HTMLElement) => Promise<void> | null
+) {
   const media = new EventTarget() as MediaQueryList
   Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
   vi.stubGlobal('matchMedia', () => media)
@@ -41,7 +51,7 @@ function harness(reduced = false, axis?: 'horizontal' | 'vertical') {
         h('section', [
           h(
             PanelTransition,
-            { axis, onLeave: (leave: Promise<void>) => leaves.push(leave) },
+            { axis, hold, onLeave: (leave: Promise<void>) => leaves.push(leave) },
             {
               default: () =>
                 shown.value
@@ -193,6 +203,60 @@ describe('PanelTransition', () => {
     expect(test.leaves).toHaveLength(0)
     expect(test.wrapper.find('div').exists()).toBe(false)
     test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #388. The shell's three columns hand their motion to the ground
+   * they stand on: one fold of the whole shell, rather than a fade each inside
+   * a window that then jumps. This component still holds the leaving column —
+   * unmounting it early would repack the row inside a window that has not
+   * shrunk yet — but it animates nothing of its own.
+   */
+  it('lets the shell’s own fold be the motion of a column that has none', async () => {
+    let fold!: () => void
+    const held = new Promise<void>((resolve) => {
+      fold = resolve
+    })
+    const test = harness(false, undefined, () => held)
+    test.shown.value = true
+    await nextTick()
+    expect(test.animate).not.toHaveBeenCalled()
+    test.shown.value = false
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(true)
+    expect((test.wrapper.find('div').element as HTMLElement).inert).toBe(true)
+    expect(test.animate).not.toHaveBeenCalled()
+    // The fold is what the shrink waits on, so it has to be reported as the
+    // leave exactly as an animation of this column's own would have been.
+    expect(test.leaves).toEqual([held])
+    fold()
+    await held
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  it('removes a held column at once when the shell reports no fold to wait for', async () => {
+    const test = harness(false, undefined, () => null)
+    test.shown.value = true
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    expect(test.animate).not.toHaveBeenCalled()
+    expect(test.leaves).toHaveLength(0)
+    expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  it('releases a held column on teardown, so an unfinished fold cannot strand it', async () => {
+    const test = harness(false, undefined, () => new Promise<void>(() => undefined))
+    test.shown.value = true
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(true)
+    test.wrapper.unmount()
+    expect(test.wrapper.find('div').exists()).toBe(false)
   })
 
   it('uses the same fixed timing for a vertical dock and releases its leave on teardown', async () => {
