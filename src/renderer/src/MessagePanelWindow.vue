@@ -12,6 +12,9 @@ import { useMines } from './composables/useMines'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
 import { joinFeedPages } from './lib/message/feedPages'
+import { messageSurfaceMotion } from './lib/message/surfaceMotion'
+import { createBoundedMotion } from './lib/shell/boundedMotion'
+import { panelKeyframes } from './lib/shell/panelMotion'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
@@ -20,6 +23,7 @@ import type {
   DwarfPermissionDecision,
   DwarfSendState,
   FeedMessage,
+  MessagePanelState,
   Mine,
   MinesSnapshot,
   WatchedFeedPush
@@ -137,14 +141,33 @@ const {
 
 const error = ref<string | null>(null)
 
+/**
+ * What this window is DRAWING, which lags the state main holds by exactly one
+ * leave (#389).
+ *
+ * The same divergence `usePanelLayout` keeps between `visibleLayout` and
+ * `layout`, and for the same reason: presentation may still need a surface on
+ * screen after the request that retired it. Here it is the window's own motion —
+ * main defers hiding the window until the surface has settled, so the surface
+ * has to still BE there to settle. Following `panel` directly would unmount the
+ * conversation in the frame the state changed and leave a transparent box
+ * fading after it, which is the close reading worse than no motion at all.
+ *
+ * Deliberately not a fourth `MessagePanelSurface` value: 'closing' would be a
+ * state the SHELL would have to draw a halo for, over in the other window, and
+ * a halo has nothing to say during a close (#389's own ruling). This is local,
+ * it never crosses the bridge, and nothing outside this window can see it.
+ */
+const drawn = ref<MessagePanelState>({ ...panel.value })
+
 /** The mine this window's surface belongs to, as the current snapshot reports it. */
 const currentMine = computed<Mine | undefined>(() =>
-  state.mines.find((mine) => mine.id === panel.value.mineId)
+  state.mines.find((mine) => mine.id === drawn.value.mineId)
 )
 
 /** The dwarf the shell asked this window to open on, or none. */
 const askedDwarfId = computed<string | null>(() =>
-  panel.value.surface === 'message' && panel.value.dwarfId !== '' ? panel.value.dwarfId : null
+  drawn.value.surface === 'message' && drawn.value.dwarfId !== '' ? drawn.value.dwarfId : null
 )
 
 /**
@@ -388,7 +411,7 @@ const launchOpen = computed(
  * pull — would silently discard a prompt somebody was half-way through typing.
  */
 watch(
-  () => [panel.value.surface, panel.value.mineId] as const,
+  () => [drawn.value.surface, drawn.value.mineId] as const,
   ([surface, mineId]) => {
     if (surface === 'launch') {
       if (launchMineId.value === mineId && launchPhase.value !== 'closed') return
@@ -789,9 +812,17 @@ async function openLink(href: string): Promise<void> {
   }
 }
 
-/** Close whatever this window has open, which the shell then hears about. */
+/**
+ * Close whatever this window has open, which the shell then hears about.
+ *
+ * The launch is NOT let go here any more (#389). It used to be, one line before
+ * the request, which unmounted the Add Panel in the frame the press landed —
+ * fine while the window vanished in that same frame, and a hole in the surface
+ * now that the window stays up until it has settled. The watch on the DRAWN
+ * state closes it instead, when the leave is over; the session itself is
+ * untouched either way, because closing the panel only lets go of the handover.
+ */
 function close(): void {
-  closeLaunchPanel()
   void closePanel()
 }
 
@@ -883,12 +914,166 @@ const surfaceRef = ref<HTMLElement | null>(null)
 let surfaceObserver: ResizeObserver | undefined
 
 function reportHeight(): void {
-  const height = surfaceRef.value?.offsetHeight ?? 0
+  const element = surfaceRef.value
+  const height = element?.offsetHeight ?? 0
   // Nothing measured yet is not a height: main refuses it, and a window of no
   // height would be a panel that looks as though it never opened.
   if (height <= 0) return
   window.api.setMessagePanelHeight(height)
+  // This report is also what REVEALS the window, so it is the moment the rise
+  // has been waiting for — see riseWhenRevealed. Started here rather than off
+  // the surface change, because a surface that opened before its board landed
+  // (#312) would otherwise animate inside a window nobody can see yet.
+  if (element !== null) riseWhenRevealed(element)
 }
+
+/**
+ * The window's own motion (#389): the surface rises when the window arrives and
+ * settles before it goes.
+ *
+ * ## Why it is the SURFACE that moves and never the window
+ *
+ * Compositor properties inside the page, and nothing native. `setOpacity` is
+ * not supported on Linux at all, and animating the window's bounds is the
+ * flicker the shell's fold exists to remove (#388) — a resize is painted in the
+ * frame it arrives in, whatever is drawn inside it. Neither `opacity` nor
+ * `transform` changes what `offsetHeight` measures, so the height report main
+ * sizes the window from is untouched by any of this.
+ *
+ * The 250ms and the easing are the shell's own, and the keyframes are the same
+ * builder its vertical dock uses: one panel motion in this app, not one per
+ * window.
+ */
+const motion = createBoundedMotion()
+/**
+ * Where an arriving surface waits and a leaving one stops, read off the shell's
+ * own pair rather than restated here — the 12px and the fade belong to
+ * `panelKeyframes` and are written once.
+ *
+ * The entering pair is `[hidden, shown]`, so the first frame is the one. Its
+ * default is unreachable (the builder always returns both) and is itself a
+ * hidden surface, which is the only thing this is ever allowed to be.
+ */
+const [SURFACE_HIDDEN = { opacity: 0, transform: 'none' }] = panelKeyframes(false, true)
+
+/**
+ * A surface waiting for the report that will reveal its window.
+ *
+ * Not a ref: nothing renders from it, and the two moments it joins are a state
+ * change and a measurement, neither of which is a render.
+ */
+let awaitingReveal = false
+
+/**
+ * Which leave is the current one, so a close overtaken by a reopen cannot
+ * report a settled surface for a window that is open again — the same token
+ * `readSelectedFeed` uses against a stale feed, for the same reason.
+ */
+let leaveToken = 0
+
+/**
+ * Hold the surface where it rises FROM, written inline so it survives the
+ * animation being cancelled.
+ */
+function holdHidden(element: HTMLElement): void {
+  element.style.opacity = String(SURFACE_HIDDEN.opacity)
+  element.style.transform = String(SURFACE_HIDDEN.transform)
+}
+
+/** Let the stylesheet have the surface back: drawn, in place, at full strength. */
+function releaseHidden(element: HTMLElement): void {
+  element.style.opacity = ''
+  element.style.transform = ''
+}
+
+/**
+ * A surface has opened on a window that is hidden. Put it at its hidden
+ * keyframe NOW — before anything is drawn into it — so the first frame the
+ * window is shown with is the one the rise starts from rather than the panel
+ * arriving and then animating.
+ */
+function armRise(): void {
+  awaitingReveal = true
+  const element = surfaceRef.value
+  if (element === null) return
+  motion.release(element)
+  holdHidden(element)
+}
+
+/** The report that reveals the window has gone; rise into it. */
+function riseWhenRevealed(element: HTMLElement): void {
+  if (!awaitingReveal) return
+  awaitingReveal = false
+  // Reduced motion asks for the state change without the motion, and a hidden
+  // window cannot advance the timeline at all (#266): both want the surface
+  // drawn, immediately.
+  if (motion.still(element)) {
+    releaseHidden(element)
+    return
+  }
+  void motion.run(element, panelKeyframes(false, true), () => releaseHidden(element))
+}
+
+/**
+ * The surface leaving, which main's hide is waiting on.
+ *
+ * Bounded the way `usePanelLayout.boundedLeave` bounds the shell's (#266): the
+ * runner releases this on its watchdog, on the window becoming hidden and on
+ * reduced motion, so a leave that never reports loses its say rather than the
+ * hide. Main bounds it a second time on its own side, because a renderer that
+ * reports nothing at all is the one case this side cannot cover.
+ */
+async function settleAndLeave(): Promise<void> {
+  const token = ++leaveToken
+  const element = surfaceRef.value
+  if (element === null) {
+    window.api.reportMessagePanelSettled()
+    return
+  }
+  if (!motion.still(element)) {
+    await motion.run(element, panelKeyframes(true, true), () => holdHidden(element))
+    // A reopen landed inside the leave and the window it was taking away is
+    // open again: reporting now would hide it.
+    if (leaveToken !== token) return
+  } else {
+    holdHidden(element)
+  }
+  drawn.value = { ...panel.value }
+  window.api.reportMessagePanelSettled()
+}
+
+/**
+ * Follow the state main holds, at the speed the window can actually move.
+ *
+ * The motion is decided from what is DRAWN rather than from the previous state,
+ * because a close still settling is a window still showing its surface — see
+ * `messageSurfaceMotion`, which is where the three answers are stated.
+ */
+watch(
+  () => panel.value,
+  (next) => {
+    const move = messageSurfaceMotion(drawn.value.surface, next.surface)
+    // Any new state ends whatever a leave was still going to say.
+    leaveToken++
+    if (move === 'leave') {
+      awaitingReveal = false
+      void settleAndLeave()
+      return
+    }
+    drawn.value = { ...next }
+    if (move === 'enter') {
+      armRise()
+      return
+    }
+    // A cut: the window is not moving, so neither is the surface. Anything a
+    // leave had started on it is undone here — a reopen inside that leave finds
+    // the window still up, and its surface part-way to gone.
+    const element = surfaceRef.value
+    if (element === null) return
+    motion.release(element)
+    releaseHidden(element)
+  }
+)
 
 /**
  * What the surface is DRAWING, as one comparable value: which panel, and for
@@ -901,7 +1086,7 @@ function reportHeight(): void {
  * here, and it fits in a string.
  */
 const surfaceContentKey = computed(
-  () => `${panel.value.surface}|${launchOpen.value}|${selectedDwarf.value?.id ?? ''}`
+  () => `${drawn.value.surface}|${launchOpen.value}|${selectedDwarf.value?.id ?? ''}`
 )
 
 /**
@@ -974,6 +1159,7 @@ onBeforeUnmount(() => {
   unlistenPanel?.()
   unlistenLaunchFailures?.()
   surfaceObserver?.disconnect()
+  motion.dispose()
 })
 </script>
 

@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { emptyMessagePanel } from './messagePanelState'
 import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
 import {
+  // ADDED for #389 — the deferred hide that lets a closing surface settle.
+  MESSAGE_PANEL_LEAVE_TIMEOUT_MS,
   MESSAGE_PANEL_REVEAL_TIMEOUT_MS,
+  messagePanelHideIsDue,
+  type MessagePanelHideTarget,
   applyAlwaysOnTop,
   buildMessagePanelWindowOptions,
   applyPanelBounds,
@@ -575,6 +579,58 @@ describe('revealing a panel window nothing measured', () => {
     // nothing and a panel arriving later.
     expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeGreaterThanOrEqual(500)
     expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeLessThanOrEqual(2000)
+  })
+})
+
+/**
+ * ADDED for #389. The window stays up while its surface settles.
+ *
+ * The mirror image of the block above, and asserted the same way and for the
+ * same reason: the wait itself happens inside Electron and cannot be reached
+ * from here, but every rule about whether the hide is owed can. A close used to
+ * take the window off screen in the frame the state changed, which left the
+ * renderer nothing to animate — so main defers, and the renderer's report is
+ * what ends the deferral early.
+ */
+describe('hiding a panel window once its surface has settled', () => {
+  function fakeHideTarget(state: { visible?: boolean; destroyed?: boolean } = {}) {
+    const target: MessagePanelHideTarget = {
+      isDestroyed: () => state.destroyed ?? false,
+      isVisible: () => state.visible ?? true
+    }
+    return target
+  }
+
+  it('hides a visible window whose closed surface reported itself settled', () => {
+    expect(messagePanelHideIsDue(fakeHideTarget(), 'none', true)).toBe(true)
+  })
+
+  it('ignores a report nothing was waiting for', () => {
+    // A leave overtaken by a reopen, or a renderer reporting twice: main
+    // cancels the wait when a surface opens, so an unarmed report is one whose
+    // close has already been answered — and hiding on it would close a panel
+    // by way of a message about an older one.
+    expect(messagePanelHideIsDue(fakeHideTarget(), 'none', false)).toBe(false)
+  })
+
+  it('never hides a window whose surface opened again while the old one settled', () => {
+    expect(messagePanelHideIsDue(fakeHideTarget(), 'message', true)).toBe(false)
+    expect(messagePanelHideIsDue(fakeHideTarget(), 'launch', true)).toBe(false)
+  })
+
+  it('has nothing to hide when the window is gone, or was never shown', () => {
+    expect(messagePanelHideIsDue(fakeHideTarget({ destroyed: true }), 'none', true)).toBe(false)
+    expect(messagePanelHideIsDue(fakeHideTarget({ visible: false }), 'none', true)).toBe(false)
+  })
+
+  it('waits out the renderer’s own bounded leave, and no longer', () => {
+    // The bound is the requirement, not the number. It has to outlast the
+    // renderer's watchdog — 250ms of motion plus a margin — so an honest leave
+    // always reports before main stops listening; and it has to stay short
+    // enough that a renderer which reports nothing at all still leaves the
+    // window gone rather than standing transparent over other programs.
+    expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeGreaterThan(300)
+    expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeLessThanOrEqual(600)
   })
 })
 

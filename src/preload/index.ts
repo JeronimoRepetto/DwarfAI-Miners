@@ -171,6 +171,16 @@ export interface DwarfAiMinersApi {
    */
   dockMessagePanel: () => void
   /**
+   * Report that the panel's surface has finished leaving (#389), so main can
+   * hide the window it has been holding open for exactly that.
+   *
+   * One-way and carrying nothing, for the reason the two above are: main knows
+   * which window sent it and what surface it holds, and there is no verdict to
+   * draw — main hides on this or on its own bound, and a closed panel is closed
+   * either way. A report arriving with no hide waiting on it is ignored.
+   */
+  reportMessagePanelSettled: () => void
+  /**
    * Publish the send and kick verdicts the panel window holds, so the mine in
    * the SHELL window can draw its markers (#162).
    *
@@ -506,6 +516,9 @@ const api: DwarfAiMinersApi = {
   dragMessagePanel: (phase) =>
     ipcRenderer.send(IPC_CHANNELS.dragMessagePanel, isMessagePanelDragPhase(phase) ? phase : ''),
   dockMessagePanel: () => ipcRenderer.send(IPC_CHANNELS.dockMessagePanel),
+  // Nothing crosses, so there is nothing to coerce or refuse: the message IS
+  // the report (#389).
+  reportMessagePanelSettled: () => ipcRenderer.send(IPC_CHANNELS.reportMessagePanelSettled),
   // Forwarded uncoerced, exactly as queryProjects' query is: a nested record
   // of verdicts cannot be collapsed to a safe default the way a stray string
   // can, so main validates it and refuses what it cannot read — one malformed
