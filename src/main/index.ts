@@ -109,6 +109,7 @@ import {
   hidePanel,
   markQuitting,
   messagePanelState,
+  messagePanelSurfaceSettled,
   messagePanelWebContents,
   mirrorMessagePanelPin,
   panelLayout,
@@ -157,6 +158,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.setMessagePanelHeight)
   ipcMain.removeAllListeners(IPC_CHANNELS.dragMessagePanel)
   ipcMain.removeAllListeners(IPC_CHANNELS.dockMessagePanel)
+  ipcMain.removeAllListeners(IPC_CHANNELS.reportMessagePanelSettled)
   ipcMain.removeAllListeners(IPC_CHANNELS.reportDwarfDelivery)
   ipcMain.removeHandler(IPC_CHANNELS.getPanelVisible)
   ipcMain.removeHandler(IPC_CHANNELS.getAudioPreferences)
@@ -918,6 +920,14 @@ async function init(): Promise<void> {
     void messagePanelPositionStore.save(dockMessagePanel()).catch((error: unknown) => {
       console.warn('[panel] Failed to forget the message panel position:', error)
     })
+  })
+  // The panel's surface has finished leaving (#389), so the window main held
+  // open for exactly that can go. Nothing crosses and nothing is validated:
+  // the message IS the report, and main re-checks its own state before acting
+  // on it — see messagePanelHideIsDue for what a report can still be refused
+  // for, a reopen inside the wait above all.
+  ipcMain.on(IPC_CHANNELS.reportMessagePanelSettled, () => {
+    messagePanelSurfaceSettled()
   })
   // The delivery verdicts the panel window is the only writer of, relayed to
   // the shell so the mine can draw its markers (#162, see DwarfDeliveryReport).

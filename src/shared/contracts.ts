@@ -3203,6 +3203,27 @@ export const IPC_CHANNELS = {
   dragMessagePanel: 'panel:message:drag',
   dockMessagePanel: 'panel:message:dock',
   /**
+   * The panel window saying its surface has finished leaving (#389).
+   *
+   * The mirror image of the height report above. That one reveals a window
+   * created hidden; this one releases a hide main is holding back, so the
+   * surface can settle — lower and fade, on the shell's own 250ms — while the
+   * window it is in is still on screen. Without it main hides the window in the
+   * frame the state changed and there is nothing left to animate.
+   *
+   * One-way, and carrying nothing. Main already knows which window sent it and
+   * what surface it holds, and the renderer has no verdict to draw: the window
+   * either hid on this report or on main's own bound, and a panel that has
+   * closed is closed either way.
+   *
+   * Deliberately NOT a fourth MessagePanelSurface. A 'closing' surface would
+   * cross to the SHELL as well, which draws the selected dwarf's halo from it
+   * and would have to decide what a halo means during a close — a one-way door
+   * for a state that has nothing to say. This says the one thing main is
+   * waiting to hear and adds nothing to what either window renders.
+   */
+  reportMessagePanelSettled: 'panel:message:settled',
+  /**
    * Whether the shell window is on screen at all (#174, #173).
    *
    * The renderer needs this because every sound has to stop while the app is

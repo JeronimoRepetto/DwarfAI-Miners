@@ -557,9 +557,29 @@ const MESSAGE_PANEL_SURFACE_QUERY = `${RENDERER_SURFACE_PARAM}=${MESSAGE_PANEL_S
  */
 export const MESSAGE_PANEL_REVEAL_TIMEOUT_MS = 1000
 
+/**
+ * How long main holds the window open after its surface closed, waiting to be
+ * told the surface has settled (#389).
+ *
+ * The mirror of the wait above. That one is the floor under a renderer that
+ * never MEASURES; this is the floor under one that never REPORTS — a page that
+ * crashed, or one whose leave was left un-run by something nobody has thought
+ * of. Neither is main's to diagnose, and both must end with the window gone.
+ *
+ * 350ms is the renderer's own `PANEL_LEAVE_BOUND_MS` (#266), stated here rather
+ * than imported: the deadlines behind a Web Animation are renderer facts, and a
+ * main process importing them from `renderer/src/lib` would be this file
+ * depending on how the shell animates. What has to hold is only the ORDER — the
+ * renderer bounds its leave with a watchdog at 300ms and reports, so on any
+ * honest close the report arrives first and this never fires.
+ */
+export const MESSAGE_PANEL_LEAVE_TIMEOUT_MS = 350
+
 let messagePanelWindow: BrowserWindow | null = null
 /** The wait above, while one is running. */
 let messagePanelRevealTimer: NodeJS.Timeout | null = null
+/** The deferred hide, while a closed surface is still settling (#389). */
+let messagePanelHideTimer: NodeJS.Timeout | null = null
 /** What the panel window is showing — see MessagePanelState; main owns it. */
 let messagePanel: MessagePanelState = emptyMessagePanel()
 /** The panel's own height in DESIGN pixels, as its renderer last measured it. */
@@ -848,6 +868,78 @@ function revealMessagePanelWithoutReport(): void {
   }
 }
 
+/**
+ * The same two questions `MessagePanelRevealTarget` asks, for the opposite
+ * decision — a window on its way out rather than one on its way in.
+ */
+export type MessagePanelHideTarget = MessagePanelRevealTarget
+
+/**
+ * Whether a settled surface should take its window with it (#389).
+ *
+ * Three refusals, and like the reveal's each is a state the wait genuinely ends
+ * in rather than an unlikely one: nothing deferred this hide, so the report is
+ * a leave nobody was waiting for — a stale one from a close that was overtaken,
+ * or a renderer reporting twice; the surface opened again while the old one was
+ * settling, and hiding now would close a panel somebody has just asked for; or
+ * the window is already gone, or was never shown.
+ *
+ * `waiting` is the whole of what makes this safe against a reopen. Main cancels
+ * the wait when a surface opens, so a report that arrives afterwards finds
+ * nothing armed and changes nothing.
+ */
+export function messagePanelHideIsDue(
+  target: MessagePanelHideTarget,
+  surface: MessagePanelSurface,
+  waiting: boolean
+): boolean {
+  if (!waiting) return false
+  if (surface !== 'none') return false
+  if (target.isDestroyed()) return false
+  return target.isVisible()
+}
+
+/** End the wait for a settle report — it arrived, or the surface opened again. */
+function cancelMessagePanelHide(): void {
+  if (messagePanelHideTimer === null) return
+  clearTimeout(messagePanelHideTimer)
+  messagePanelHideTimer = null
+}
+
+/** Hide the window now, if the rules above still say the hide is owed. */
+function hideMessagePanelIfDue(): void {
+  const waiting = messagePanelHideTimer !== null
+  cancelMessagePanelHide()
+  const panel = messagePanelWindow
+  if (panel === null) return
+  if (!messagePanelHideIsDue(panel, messagePanel.surface, waiting)) return
+  panel.hide()
+}
+
+/**
+ * The surface has closed: hold the window open while it settles, rather than
+ * taking it off screen in the frame the state changed (#389).
+ *
+ * A window that is not on screen has nothing to settle and nothing to wait for,
+ * which is every close of a panel whose renderer never reported a height, and
+ * every close arriving before the window was built.
+ */
+function deferMessagePanelHide(): void {
+  cancelMessagePanelHide()
+  const panel = messagePanelWindow
+  if (panel === null || panel.isDestroyed()) return
+  if (!panel.isVisible()) return
+  messagePanelHideTimer = setTimeout(hideMessagePanelIfDue, MESSAGE_PANEL_LEAVE_TIMEOUT_MS)
+}
+
+/**
+ * The panel renderer reporting that its surface has finished leaving (#389) —
+ * the whole of what the deferred hide above is waiting for.
+ */
+export function messagePanelSurfaceSettled(): void {
+  hideMessagePanelIfDue()
+}
+
 /** Stop following the cursor; the gesture is over, or its window has gone. */
 function endMessagePanelDrag(): void {
   if (messagePanelDrag === null) return
@@ -1064,11 +1156,15 @@ export function setMessagePanel(state: MessagePanelState): MessagePanelState {
     // where the person left it (#296), which is the whole point of remembering
     // it. Only the drag itself ends here, with the window it was moving.
     endMessagePanelDrag()
-    if (messagePanelWindow !== null && !messagePanelWindow.isDestroyed()) {
-      messagePanelWindow.hide()
-    }
+    // Held open while the surface settles (#389), which is the one thing the
+    // window has to still be on screen for. `messagePanelSurfaceSettled` is
+    // what ends the wait early, and it almost always does.
+    deferMessagePanelHide()
     return messagePanelState()
   }
+  // An open inside that wait finds the window still up, which is the whole
+  // point of it: nothing to reveal, and nothing left to hide.
+  cancelMessagePanelHide()
   if (mainWindow === null) return messagePanelState()
   if (messagePanelWindow === null || messagePanelWindow.isDestroyed()) {
     messagePanelWindow = createMessagePanelWindow(mainWindow)

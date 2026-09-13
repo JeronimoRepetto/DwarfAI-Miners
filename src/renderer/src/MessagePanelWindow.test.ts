@@ -13,6 +13,8 @@ import {
   CONVERSATION_START_NOTE,
   NO_OLDER_PAGES_NOTE
 } from './lib/message/feedPages'
+// ADDED for #389 — the deadline the window's own leave is bounded by.
+import { PANEL_MOTION_WATCHDOG_MS } from './lib/shell/panelMotion'
 
 /*
  * The message panel's own window (#162).
@@ -81,6 +83,10 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setMessagePanel: vi.fn().mockImplementation((state: unknown) => Promise.resolve(state)),
     onMessagePanel: vi.fn().mockReturnValue(() => undefined),
     setMessagePanelHeight: vi.fn(),
+    // ADDED for #389: the one report behind the deferred hide. Fire-and-forget
+    // like the height above — main either had a hide waiting on it or did not,
+    // and there is no verdict for this window to draw either way.
+    reportMessagePanelSettled: vi.fn(),
     reportDwarfDelivery: vi.fn(),
     // The launch surface (#86). Claude detected and launchable is the ordinary
     // machine; a launch answers "started", which claims no dwarf.
@@ -1972,5 +1978,303 @@ describe('paging back through the conversation (#364)', () => {
     await scrollToTop(wrapper)
 
     expect(api.getDwarfFeedPage).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * ADDED for #389. The window's own motion: the surface rises when the window
+ * arrives, and settles before it goes.
+ *
+ * The two halves are asymmetric on purpose, because the window's two moments
+ * are. Main creates or re-places it HIDDEN and the first height report is what
+ * reveals it (#312), so an entering surface has somewhere to wait: it holds its
+ * hidden keyframe from the moment the surface opens and rises in the same turn
+ * as the report that shows the window. A LEAVE has nothing equivalent — main
+ * would hide the window in the frame the state changed — so main defers the
+ * hide until this window says the surface has settled, which is what
+ * `reportMessagePanelSettled` is.
+ *
+ * What jsdom cannot prove is the part a compositor owns: that the first painted
+ * frame after `show()` is the hidden keyframe rather than the panel popping in
+ * and then animating. Nothing here lays out, paints, or runs a real animation.
+ * What these hold is the ORDER the renderer puts the two in, which is the whole
+ * of what the renderer controls.
+ */
+describe('rising into place and settling before the window goes', () => {
+  /**
+   * A surface as tall as what it contains, and 0 while it contains nothing —
+   * `fakeContentMeasurement`'s rule above, restated here because the enter
+   * hangs off the FIRST report and a constant height would fire one before
+   * either panel exists.
+   */
+  function fakeContentHeight(height: number) {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.querySelector('.message-panel, .add-panel') === null ? 0 : height
+      }
+    })
+    return { restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight') }
+  }
+
+  /**
+   * jsdom ships no Web Animations, so every run is recorded and finished by
+   * hand — the same fake PanelTransition.test.ts keeps, on the prototype because
+   * the element that animates is one Vue made.
+   */
+  function fakeAnimations(order: string[] = []) {
+    const runs: {
+      element: HTMLElement
+      keyframes: Keyframe[]
+      timing: KeyframeAnimationOptions
+      finish: () => void
+      cancel: ReturnType<typeof vi.fn>
+    }[] = []
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value(this: HTMLElement, keyframes: Keyframe[], timing: KeyframeAnimationOptions) {
+        order.push('animate')
+        let finish!: () => void
+        const finished = new Promise<void>((resolve) => {
+          finish = resolve
+        })
+        const cancel = vi.fn()
+        runs.push({ element: this, keyframes, timing, finish, cancel })
+        return { finished, cancel }
+      }
+    })
+    return { runs, order, restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'animate') }
+  }
+
+  /** Reduced motion, or the ordinary machine that has not asked for it. */
+  function prefersReducedMotion(reduced: boolean) {
+    const media = new EventTarget() as MediaQueryList
+    Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
+    vi.stubGlobal('matchMedia', () => media)
+    return media
+  }
+
+  const RISE: Keyframe[] = [
+    { opacity: 0, transform: 'translateY(12px)' },
+    { opacity: 1, transform: 'translate(0, 0)' }
+  ]
+  const SETTLE: Keyframe[] = [...RISE].reverse()
+  const TIMING = { duration: 250, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'both' }
+
+  /** The close both windows make, which is the only close there is. */
+  function closePanel(api: Record<string, ReturnType<typeof vi.fn>>): void {
+    const push = api.onMessagePanel!.mock.calls[0]![0] as (state: unknown) => void
+    push(CLOSED)
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('holds the surface at its hidden keyframe while the window is still hidden', async () => {
+    // The board that decides which dwarf to draw lands after the surface does
+    // (#312), so this is the real gap between "a surface opened" and "there is
+    // something to measure" — and the window is hidden for all of it.
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    let settleBoard!: (snapshot: unknown) => void
+    const board = new Promise<unknown>((resolve) => {
+      settleBoard = resolve
+    })
+    try {
+      const { wrapper, api } = await mountPanel(
+        { surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' },
+        { getMines: vi.fn().mockReturnValue(board) }
+      )
+      const surface = wrapper.find('.message-surface').element as HTMLElement
+      expect(surface.style.opacity).toBe('0')
+      expect(surface.style.transform).toBe('translateY(12px)')
+      expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
+      expect(animated.runs).toHaveLength(0)
+
+      settleBoard({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+      await flushPromises()
+
+      expect(animated.runs).toHaveLength(1)
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('rises on the surface itself, with the shell’s own timing, once the report has gone', async () => {
+    const measured = fakeContentHeight(426)
+    const order: string[] = []
+    const animated = fakeAnimations(order)
+    try {
+      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
+        setMessagePanelHeight: vi.fn(() => order.push('report'))
+      })
+      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
+      // The report is what reveals the window, so the rise may only be started
+      // after it: started first, the surface would spend part of its 250ms
+      // animating inside a window nobody can see yet.
+      expect(order).toEqual(['report', 'animate'])
+      expect(animated.runs[0]!.element).toBe(wrapper.find('.message-surface').element)
+      expect(animated.runs[0]!.keyframes).toEqual(RISE)
+      expect(animated.runs[0]!.timing).toEqual(TIMING)
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('leaves the surface drawn at full strength once the rise has finished', async () => {
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    try {
+      const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      const surface = wrapper.find('.message-surface').element as HTMLElement
+      animated.runs[0]!.finish()
+      await flushPromises()
+      // Cleared BEFORE the animation is let go: `fill: 'both'` is holding the
+      // last frame, and an inline hidden keyframe left behind it would be what
+      // the surface snapped back to.
+      expect(surface.style.opacity).toBe('')
+      expect(surface.style.transform).toBe('')
+      expect(animated.runs[0]!.cancel).toHaveBeenCalledOnce()
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('keeps the conversation on screen through the leave, and tells main only when it has settled', async () => {
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    try {
+      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      animated.runs[0]!.finish()
+      await flushPromises()
+
+      closePanel(api)
+      await flushPromises()
+
+      // The window is still up, so what it draws has to be the panel itself:
+      // an empty surface fading is the content vanishing and a transparent box
+      // settling after it.
+      expect(wrapper.find('.message-panel').exists()).toBe(true)
+      expect(animated.runs[1]!.keyframes).toEqual(SETTLE)
+      expect(animated.runs[1]!.timing).toEqual(TIMING)
+      expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
+
+      animated.runs[1]!.finish()
+      await flushPromises()
+
+      expect(wrapper.find('.message-panel').exists()).toBe(false)
+      expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('still tells main when the leave never reports finishing (#266)', async () => {
+    // Chromium freezes the document timeline for an occluded window, so the
+    // settle lands on the compositor and `finished` never resolves. Main bounds
+    // the hide on its own side too; this is the renderer not being the reason
+    // it has to.
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    try {
+      const { api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      animated.runs[0]!.finish()
+      await flushPromises()
+      vi.useFakeTimers()
+
+      closePanel(api)
+      await flushPromises()
+      expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+      await flushPromises()
+
+      expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('takes the instant path under reduced motion, in both directions', async () => {
+    prefersReducedMotion(true)
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    try {
+      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      const surface = wrapper.find('.message-surface').element as HTMLElement
+      expect(animated.runs).toHaveLength(0)
+      expect(surface.style.opacity).toBe('')
+
+      closePanel(api)
+      await flushPromises()
+
+      expect(animated.runs).toHaveLength(0)
+      expect(wrapper.find('.message-panel').exists()).toBe(false)
+      // Immediately, and that is the point of the report rather than a fixed
+      // deferral: a window left up for a third of a second with nothing drawn
+      // in it is a transparent rectangle taking clicks off whatever is behind.
+      expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('cuts between two dwarfs of one open window, rather than animating the swap', async () => {
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    try {
+      const { wrapper, api } = await openOn([OBSERVED_DWARF, HELD_DWARF], 'claude:s1')
+      animated.runs[0]!.finish()
+      await flushPromises()
+
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
+      await flushPromises()
+
+      expect(wrapper.find('.panel-agent').text()).toBe('Held')
+      expect(animated.runs).toHaveLength(1)
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  it('gives a reopen inside the leave the window that is still there', async () => {
+    // Main defers the hide, so a second click landing inside that wait finds
+    // the window still up. The leave loses its say — reporting it settled would
+    // hide a window that is open again — and the surface it had been taking
+    // away is drawn at full strength.
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    try {
+      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      animated.runs[0]!.finish()
+      await flushPromises()
+
+      closePanel(api)
+      await flushPromises()
+
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+      await flushPromises()
+      animated.runs[1]!.finish()
+      await flushPromises()
+
+      const surface = wrapper.find('.message-surface').element as HTMLElement
+      expect(wrapper.find('.message-panel').exists()).toBe(true)
+      expect(surface.style.opacity).toBe('')
+      expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
   })
 })
