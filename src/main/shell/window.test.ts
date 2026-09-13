@@ -188,6 +188,12 @@ describe('buildMainWindowOptions', () => {
     expect(options.show).toBe(false)
   })
 
+  it('drops the Windows thick frame, whose DWM animation is what flashed the whole shell on every resize (#394)', () => {
+    // Windows-only by definition; the two things it costs are already gone
+    // here — the window is not resizable and the shell paints its own shadow.
+    expect(buildMainWindowOptions(input).thickFrame).toBe(false)
+  })
+
   it('wires the preload and icon paths through untouched', () => {
     const options = buildMainWindowOptions(input)
     expect(options.webPreferences?.preload).toBe(input.preloadPath)
@@ -450,6 +456,10 @@ describe('buildMessagePanelWindowOptions', () => {
     expect(options.frame).toBe(false)
     expect(options.transparent).toBe(true)
     expect(options.focusable).toBe(true)
+  })
+
+  it('drops the Windows thick frame like the shell does, so a height report cannot flash it (#394)', () => {
+    expect(buildMessagePanelWindowOptions(input).thickFrame).toBe(false)
   })
 
   it('is a CHILD of the shell, so it cannot outlive it', () => {
