@@ -47,7 +47,8 @@ function harness(options: { reduced?: boolean; hidden?: boolean; animates?: bool
     })
   }
   // Created here rather than by the caller so the stubbed matchMedia is the one
-  // it reads: the runner asks for the query once, when it is made.
+  // it reads: the runner asks for the query when it is made and not again —
+  // AMENDED for #396, which moved that ask to sceneMotion's own two calls.
   const motion = createBoundedMotion()
   return { motion, element, animations, media }
 }
@@ -140,6 +141,23 @@ describe('createBoundedMotion', () => {
     const ordinary = harness({ hidden: false })
     expect(ordinary.motion.still(ordinary.element)).toBe(false)
     ordinary.motion.dispose()
+  })
+
+  /*
+   * ADDED for #396. `sceneMotion` has owned the app's one reduced-motion query
+   * since #71 — "the prefersReducedMotion query, not a fifth mechanism" — and
+   * asking it rather than calling `matchMedia` here brings its tolerance with
+   * it: answering the preference is what every platform manages, watching it
+   * change is not, and one that cannot watch used to take the whole panel down
+   * on a listener it does not have.
+   */
+  it('keeps the answer it started with where the platform cannot watch the preference change', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    const element = document.createElement('div')
+    Object.defineProperty(element, 'animate', { configurable: true, value: () => undefined })
+    const motion = createBoundedMotion()
+    expect(motion.still(element)).toBe(true)
+    expect(() => motion.dispose()).not.toThrow()
   })
 
   it('lets a second motion on one element end the first, rather than racing it', async () => {
