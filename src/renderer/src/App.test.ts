@@ -10,7 +10,7 @@ import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useView } from './composables/useView'
-import { DEFAULT_AUDIO_PREFERENCES } from './types'
+import { DEFAULT_AUDIO_PREFERENCES, DEFAULT_TYPOGRAPHY_PREFERENCES } from './types'
 
 const DEFAULT_SHORTCUT = {
   accelerator: 'Control+Alt+Shift+P',
@@ -230,6 +230,19 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setNotificationsEnabled: vi
       .fn()
       .mockImplementation((enabled: unknown) => Promise.resolve(enabled)),
+    /*
+     * AMENDED for #370 (was: absent). The shell adopts the stored faces on
+     * mount and subscribes to the change the PANEL window could have made, so
+     * all three members have to exist even in tests that never open Settings.
+     * `setTypographyPreferences` answers with the request, which is what main
+     * does when the document is one it can store. No existing assertion
+     * changed.
+     */
+    getTypographyPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
+    setTypographyPreferences: vi
+      .fn()
+      .mockImplementation((preferences: unknown) => Promise.resolve(preferences)),
+    onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2437,5 +2450,100 @@ describe('App system notifications (#316)', () => {
     await wrapper.find('.notifications-enabled').trigger('click')
     await flushPromises()
     expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('true')
+  })
+})
+
+/**
+ * Typography preferences (#370) — APPENDED, nothing above changed.
+ *
+ * The shell is one of TWO roots that paint with these faces, and the only one
+ * that holds Settings. What these pin is the round trip a user actually walks:
+ * the stored faces are adopted on mount, a segment asks main for a face, and
+ * what main answered with is what the section draws.
+ */
+describe('typography preferences (#370)', () => {
+  it('adopts the stored faces on mount and draws them in Settings', async () => {
+    const { wrapper } = await mountOpenApp({
+      getTypographyPreferences: vi
+        .fn()
+        .mockResolvedValue({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+    expect(wrapper.find('.messaging-font[data-font="arial"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+  })
+
+  it('paints the chosen faces onto the document root, where every component reads them', async () => {
+    // The whole mechanism: two custom properties, so no component below App
+    // learns that a preference exists.
+    await mountOpenApp({
+      getTypographyPreferences: vi
+        .fn()
+        .mockResolvedValue({ interfaceFont: 'arial', messagingFont: 'roboto' })
+    })
+    expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
+      'var(--font-family-arial)'
+    )
+    expect(document.documentElement.style.getPropertyValue('--font-conversation')).toBe(
+      'var(--font-family-roboto)'
+    )
+  })
+
+  it('asks main for a face on a press, and renders the verdict rather than the press', async () => {
+    const { wrapper, api } = await mountOpenApp({
+      setTypographyPreferences: vi
+        .fn()
+        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.messaging-font[data-font="roboto"]').trigger('click')
+    await flushPromises()
+    expect(api.setTypographyPreferences).toHaveBeenCalledWith({
+      interfaceFont: 'tiny5',
+      messagingFont: 'roboto'
+    })
+    // Main answered with the old pair, so that is what has to be drawn.
+    expect(
+      wrapper.find('.messaging-font[data-font="pixelify-sans"]').attributes('aria-pressed')
+    ).toBe('true')
+  })
+
+  it('leaves the interface face alone when only the messaging one is chosen', async () => {
+    const { wrapper, api } = await mountOpenApp({
+      getTypographyPreferences: vi
+        .fn()
+        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.messaging-font[data-font="arial"]').trigger('click')
+    await flushPromises()
+    expect(api.setTypographyPreferences).toHaveBeenCalledWith({
+      interfaceFont: 'tiny5',
+      messagingFont: 'arial'
+    })
+    expect(wrapper.find('.interface-font[data-font="tiny5"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+  })
+
+  it('follows a change the OTHER window made, without anybody pressing anything here', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: {
+      interfaceFont: string
+      messagingFont: string
+    }) => void
+    push({ interfaceFont: 'roboto', messagingFont: 'roboto' })
+    await flushPromises()
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+    expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
+      'var(--font-family-roboto)'
+    )
   })
 })

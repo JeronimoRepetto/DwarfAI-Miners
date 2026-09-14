@@ -22,6 +22,7 @@ import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
+import { useTypography } from './composables/useTypography'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
@@ -87,6 +88,23 @@ const {
   set: setNotificationsEnabled
 } = useNotificationSettings()
 /* --- end of the #316 block ------------------------------------------------- */
+
+/* --- Typography preferences (#370) — one block, appended ------------------- */
+/**
+ * Which faces the app is drawn in (#370).
+ *
+ * Owned here because Settings is here, and installed in the OTHER root as well
+ * — the composable repoints two custom properties on its own document, so each
+ * window paints itself and neither has to hear about the other's components.
+ */
+const {
+  preferences: typography,
+  applying: typographyApplying,
+  sync: syncTypography,
+  set: setTypography,
+  listen: listenTypography
+} = useTypography()
+/* --- end of the #370 block ------------------------------------------------- */
 
 /**
  * Everything the panel plays (#174, #173).
@@ -358,6 +376,9 @@ let unsubscribe: (() => void) | undefined
 let unlistenMessagePanel: (() => void) | undefined
 let unlistenDwarfDelivery: (() => void) | undefined
 let unlistenAudio: (() => void) | undefined
+/* --- Typography preferences (#370) — one block, appended ------------------- */
+let unlistenTypography: (() => void) | undefined
+/* --- end of the #370 block ------------------------------------------------- */
 
 /**
  * The dwarf the message panel is open on (#159, #162).
@@ -852,6 +873,13 @@ onMounted(() => {
   void syncNotifications()
   unlistenShowMine = window.api.onShowMine((mineId) => void showMineFromNotification(mineId))
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  // Adopts the stored faces, and listens because the OTHER window can change
+  // them: Settings is here, but the panel window is a second page painting the
+  // messaging face, and either may be the one that heard the change first.
+  void syncTypography()
+  unlistenTypography = listenTypography()
+  /* --- end of the #370 block ----------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -861,6 +889,9 @@ onBeforeUnmount(() => {
   /* --- System notifications (#316) — one block, appended ------------------- */
   unlistenShowMine?.()
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  unlistenTypography?.()
+  /* --- end of the #370 block ----------------------------------------------- */
   // Every sound released with the window: a clip left decoding would outlive
   // the surface that asked for it.
   disposeAudio()
@@ -963,6 +994,8 @@ onBeforeUnmount(() => {
               :reset-error="metricsResetError"
               :audio-settings="audioSettings"
               :notifications-enabled="notificationsEnabled"
+              :typography="typography"
+              :typography-applying="typographyApplying"
               @start-recording="startShortcutRecording"
               @stop-recording="stopShortcutRecording"
               @record="recordShortcut"
@@ -974,6 +1007,7 @@ onBeforeUnmount(() => {
               @reset-confirm="resetMetrics"
               @audio-change="setAudioSettings"
               @notifications-change="setNotificationsEnabled"
+              @typography-change="setTypography"
             />
           </PanelFrame>
 
