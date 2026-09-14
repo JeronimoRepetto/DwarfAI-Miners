@@ -1,9 +1,5 @@
 import { onBeforeUnmount } from 'vue'
-import {
-  PANEL_MOTION_EASING,
-  PANEL_MOTION_MS,
-  PANEL_MOTION_WATCHDOG_MS
-} from '../lib/shell/panelMotion'
+import { createBoundedMotion } from '../lib/shell/boundedMotion'
 import {
   foldedShellWidth,
   shellFoldClip,
@@ -45,6 +41,11 @@ import type { PanelEdge } from '../types'
  * resolves: the same watchdog bounds it, the same visibility change releases
  * it, and a window that is already hidden takes the instant path and is waited
  * on by nobody. `usePanelLayout` still bounds the wait beyond that.
+ *
+ * All of that is `lib/shell/boundedMotion` since #389, where the message
+ * panel's own window reads it too — three copies of one rule was two too many.
+ * What stays here is the only part that is the fold's own: the clip it settles
+ * on, written before the animation is let go.
  */
 export interface ShellFoldOptions {
   /** The element the amber ground is painted on. */
@@ -55,14 +56,8 @@ export interface ShellFoldOptions {
   remaining: () => ShellComposition
 }
 
-interface RunningFold {
-  release: () => void
-  /** #266's backstop, held by the fold it bounds so it dies with it. */
-  watchdog?: ReturnType<typeof setTimeout>
-}
-
 export function useShellFold(options: ShellFoldOptions) {
-  const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+  const motion = createBoundedMotion()
 
   /**
    * How much of the shell was painted when it last settled.
@@ -89,7 +84,6 @@ export function useShellFold(options: ShellFoldOptions) {
   let pinned = false
 
   let batch: { widths: number[]; resolve: () => void; promise: Promise<void> } | null = null
-  let running: RunningFold | null = null
 
   /**
    * A hidden window cannot advance the document timeline, so an animation
@@ -99,7 +93,7 @@ export function useShellFold(options: ShellFoldOptions) {
    * paint when there is no motion to hide the change inside.
    */
   function still(shell: HTMLElement): boolean {
-    return Boolean(media?.matches) || document.hidden || typeof shell.animate !== 'function'
+    return motion.still(shell)
   }
 
   function apply(shell: HTMLElement, state: ShellFoldState, radius: string): void {
@@ -119,29 +113,18 @@ export function useShellFold(options: ShellFoldOptions) {
     done: () => void,
     resolve: () => void
   ): void {
-    running?.release()
     const radius = radiusOf(shell)
-    const animation = shell.animate(shellFoldKeyframes(from, to, options.edge(), radius), {
-      duration: PANEL_MOTION_MS,
-      easing: PANEL_MOTION_EASING,
-      fill: 'both'
+    // Everything the end of a fold owes its callers happens in `settle` rather
+    // than off the promise, because it all has to land in the frame the fold
+    // ended in: the settled clip goes on BEFORE the animation is let go (which
+    // is what `settle` is for — cancelling drops `fill: 'both'` and the ground
+    // would snap back to the frame it started from), and the columns waiting on
+    // the fold are released in the same turn rather than a microtask later.
+    void motion.run(shell, shellFoldKeyframes(from, to, options.edge(), radius), () => {
+      apply(shell, to, radius)
+      done()
+      resolve()
     })
-    const fold: RunningFold = {
-      release: () => {
-        if (running !== fold) return
-        running = null
-        clearTimeout(fold.watchdog)
-        // The settled clip goes on BEFORE the animation is let go, or the
-        // ground snaps back to the frame it started from.
-        apply(shell, to, radius)
-        animation.cancel()
-        done()
-        resolve()
-      }
-    }
-    running = fold
-    fold.watchdog = setTimeout(fold.release, PANEL_MOTION_WATCHDOG_MS)
-    void animation.finished.then(fold.release, fold.release)
   }
 
   /** Measure the batch the leaving columns registered, and fold the ground. */
@@ -213,7 +196,7 @@ export function useShellFold(options: ShellFoldOptions) {
    */
   function settle(reserved: boolean): void {
     const shell = options.shell()
-    if (shell === null || running !== null) return
+    if (shell === null || motion.running(shell)) return
     if (reserved) {
       if (painted !== null && !still(shell)) apply(shell, painted, radiusOf(shell))
       return
@@ -255,21 +238,11 @@ export function useShellFold(options: ShellFoldOptions) {
     apply(shell, 'whole', radiusOf(shell))
   }
 
-  function release(): void {
-    running?.release()
-  }
-  function releaseHidden(): void {
-    if (document.hidden) release()
-  }
-  function reduceMotion(): void {
-    if (media?.matches) release()
-  }
-  media?.addEventListener('change', reduceMotion)
-  document.addEventListener('visibilitychange', releaseHidden)
+  // The fold's own teardown is the batch: a fold that never began still has
+  // columns waiting on the promise it would have resolved, and leaving them
+  // held would strand the row inside a window nobody is going to resize now.
   onBeforeUnmount(() => {
-    media?.removeEventListener('change', reduceMotion)
-    document.removeEventListener('visibilitychange', releaseHidden)
-    release()
+    motion.dispose()
     batch?.resolve()
   })
 
