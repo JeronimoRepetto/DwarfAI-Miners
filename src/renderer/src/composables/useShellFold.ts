@@ -100,9 +100,23 @@ export function useShellFold(options: ShellFoldOptions) {
     shell.style.clipPath = state === 'whole' ? '' : shellFoldClip(state, options.edge(), radius)
   }
 
+  /**
+   * The whole ground, said without a radius — which is the point.
+   *
+   * An empty `clip-path` is the shell's own shape, corners included, so the
+   * settles that end here need nothing measured to say so. Reading the radius
+   * for them cost a style resolution each, and the browser served one of those
+   * from an element whose `clip-path` had just been written (#396).
+   */
+  function unclip(shell: HTMLElement): void {
+    shell.style.clipPath = ''
+  }
+
   function radiusOf(shell: HTMLElement): string {
     // The ground's own corners, read rather than named: the strip a fold ends
-    // on then has the rail's shape instead of a second opinion about it.
+    // on then has the rail's shape instead of a second opinion about it. Every
+    // caller resolves the style once and passes the answer down, `begin`
+    // included — it takes the radius off the style it has already resolved.
     return getComputedStyle(shell).borderRadius || '0px'
   }
 
@@ -110,10 +124,10 @@ export function useShellFold(options: ShellFoldOptions) {
     shell: HTMLElement,
     from: ShellFoldState,
     to: ShellFoldState,
+    radius: string,
     done: () => void,
     resolve: () => void
   ): void {
-    const radius = radiusOf(shell)
     // Everything the end of a fold owes its callers happens in `settle` rather
     // than off the promise, because it all has to land in the frame the fold
     // ended in: the settled clip goes on BEFORE the animation is let go (which
@@ -137,6 +151,8 @@ export function useShellFold(options: ShellFoldOptions) {
       pending.resolve()
       return
     }
+    // One style resolution for everything this fold reads off the element: the
+    // gaps and padding it measures with, and the corners it is drawn with.
     const style = getComputedStyle(shell)
     const folded = foldedShellWidth({
       width: shell.getBoundingClientRect().width,
@@ -151,6 +167,7 @@ export function useShellFold(options: ShellFoldOptions) {
       shell,
       painted ?? 'whole',
       folded,
+      style.borderRadius || '0px',
       () => {
         painted = folded
         pinned = true
@@ -202,29 +219,25 @@ export function useShellFold(options: ShellFoldOptions) {
       return
     }
     const width = shell.getBoundingClientRect().width
-    if (pinned) {
-      // The window has caught up with the fold: the strip IS the window now,
-      // so the clip has nothing left to do and `painted` stands as it is.
-      pinned = false
-      box = width
-      apply(shell, 'whole', radiusOf(shell))
-      return
-    }
-    if (box === width) {
-      // Nothing moved — a request that was refused, or one that only changed
-      // the docked side. `painted` is left exactly as it was, which matters
-      // most where it disagrees with the box: the collapsed shell paints the
-      // design's 20px rail inside the platform's 32px window, and overwriting
-      // that here would lose the footprint the next opening unfolds from.
-      apply(shell, 'whole', radiusOf(shell))
-      return
-    }
-    if (box !== null && painted !== null && width > box && !still(shell)) {
-      apply(shell, painted, radiusOf(shell))
+    /*
+     * The one branch that folds, and so the one that has a radius to read.
+     *
+     * `pinned` excludes itself here rather than being tested first, which is
+     * the order the three tails below used to carry on their own: the ground
+     * is still holding a fold the window had not caught up with, so `painted`
+     * is that fold's strip rather than a footprint anything may unfold FROM —
+     * including where the window it caught up with is wider than the box the
+     * fold started from, which a swap can do. A box that did not move is
+     * refused by `width > box` already.
+     */
+    if (!pinned && box !== null && painted !== null && width > box && !still(shell)) {
+      const radius = radiusOf(shell)
+      apply(shell, painted, radius)
       run(
         shell,
         painted,
         'whole',
+        radius,
         () => {
           painted = width
           box = width
@@ -233,9 +246,22 @@ export function useShellFold(options: ShellFoldOptions) {
       )
       return
     }
-    painted = width
+    if (pinned) {
+      // The window has caught up with the fold: the strip IS the window now,
+      // so `painted` stands as it is and the clip has nothing left to do.
+      pinned = false
+    } else if (box === width) {
+      // Nothing moved — a request that was refused, or one that only changed
+      // the docked side. `painted` is left exactly as it was, which matters
+      // most where it disagrees with the box: the collapsed shell paints the
+      // design's 20px rail inside the platform's 32px window, and overwriting
+      // that here would lose the footprint the next opening unfolds from.
+    } else {
+      // The box changed with no fold to cross, so what is painted is the box.
+      painted = width
+    }
     box = width
-    apply(shell, 'whole', radiusOf(shell))
+    unclip(shell)
   }
 
   // The fold's own teardown is the batch: a fold that never began still has
