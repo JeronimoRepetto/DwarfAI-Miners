@@ -1,6 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+/* --- Typography preferences (#370) — one block, appended ------------------- */
+import { DEFAULT_TYPOGRAPHY_PREFERENCES, INTERFACE_FONTS } from '../types'
+/* --- end of the #370 block ------------------------------------------------- */
 
 /**
  * The design source's named values have exactly ONE home (#90).
@@ -95,6 +98,25 @@ describe('design-tokens.css against the design foundations', () => {
   function valueOf(name: string): string | null {
     const match = new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(css)
     return match === null ? null : match[1]!.trim()
+  }
+
+  /*
+   * AMENDED for #370: the same reading, one indirection later.
+   *
+   * The two font tokens are no longer literal stacks — they name one of the
+   * four `--font-family-*` tokens the Typography preference switches between,
+   * because a face has to be selectable at runtime and a stack spelled twice
+   * would be two answers. Every assertion below is unchanged; they read the
+   * stack the token resolves to rather than the token's own text.
+   */
+  function resolvedValueOf(name: string): string | null {
+    let value = valueOf(name)
+    for (let hop = 0; hop < 4 && value !== null; hop += 1) {
+      const reference = /^var\((--[a-z0-9-]+)\)$/i.exec(value)
+      if (reference === null) return value
+      value = valueOf(reference[1]!)
+    }
+    return value
   }
 
   it.each([
@@ -229,7 +251,7 @@ describe('design-tokens.css against the design foundations', () => {
   })
 
   it('names the pixel family the design calls Pixel UI, with a fallback stack', () => {
-    const family = valueOf('--font-pixel')
+    const family = resolvedValueOf('--font-pixel')
     expect(family).toContain('Tiny5')
     // "fallback stack is Unspecified" in the source, but shipping a single
     // family means a font that failed to load renders in whatever the platform
@@ -245,13 +267,51 @@ describe('design-tokens.css against the design foundations', () => {
    * the same reason.
    */
   it('names the conversation family the design added for what the crew says', () => {
-    const family = valueOf('--font-conversation')
+    const family = resolvedValueOf('--font-conversation')
     expect(family).toContain('Pixelify Sans')
     expect(family!.split(',').length).toBeGreaterThan(1)
   })
 
   it('carries the conversation body size the amendment fixes at 14px', () => {
     expect(valueOf('--text-conversation')).toBe('14px')
+  })
+
+  /*
+   * APPENDED for #370 (maintainer amendment 2026-09-10). Settings offers four
+   * interface faces and three messaging ones, and the composable that applies a
+   * choice does it by pointing --font-pixel or --font-conversation at one of
+   * these tokens. So every face the wire admits needs a stack declared HERE:
+   * a missing one resolves to nothing, and `font-family:` with nothing in it is
+   * a declaration the browser drops — the element would silently keep whatever
+   * it inherited, which is the failure mode hardest to see.
+   */
+  it.each([...INTERFACE_FONTS])('declares a stack for the %s face Settings offers', (font) => {
+    const family = valueOf(`--font-family-${font}`)
+    expect(family).toBeTruthy()
+    // The same fallback rule --font-pixel has held since #90: a face that
+    // failed to load must still leave a 12px label readable.
+    expect(family!.split(',').length).toBeGreaterThan(1)
+  })
+
+  it('leaves the two roles pointing at the faces the defaults name', () => {
+    // The stylesheet is what paints before main answers, so its own values are
+    // DEFAULT_TYPOGRAPHY_PREFERENCES spelled in CSS. A drift here would show
+    // the wrong face for one frame on every launch.
+    expect(valueOf('--font-pixel')).toBe(
+      `var(--font-family-${DEFAULT_TYPOGRAPHY_PREFERENCES.interfaceFont})`
+    )
+    expect(valueOf('--font-conversation')).toBe(
+      `var(--font-family-${DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont})`
+    )
+  })
+
+  it('spells Arial as the platform face with a sans-serif fallback, not as a bundled one', () => {
+    // The one face the app does not ship: the design's amendment says to use
+    // the platform's own, so the stack must not quote a family this repo would
+    // then be expected to carry.
+    const family = valueOf('--font-family-arial')!
+    expect(family).toContain('Arial')
+    expect(family).toContain('sans-serif')
   })
 })
 
@@ -296,7 +356,12 @@ describe('renderer components against the type scale tokens', () => {
   it.each([
     ['components/message/DwarfMessagePanel.vue', '.bubble'],
     ['components/dwarf/DwarfQuestionCard.vue', '.question-text'],
-    ['components/dwarf/DwarfPermissionCard.vue', '.permission-description']
+    ['components/dwarf/DwarfPermissionCard.vue', '.permission-description'],
+    // APPENDED for #370: the Add Panel joins the list. It is where the person
+    // composes the first thing they SAY to a session, and the issue's own
+    // wording is that it must resolve the same messaging family MessagePanel
+    // does — it was the one conversation surface still on the Pixel UI face.
+    ['components/launch/AddPanel.vue', '.add-panel']
   ])('sets %s, which carries %s, in the conversation family', (file) => {
     expect(readFileSync(join(RENDERER_SRC, file), 'utf8')).toContain('var(--font-conversation)')
   })
@@ -311,5 +376,21 @@ describe('renderer components against the type scale tokens', () => {
     const entry = readFileSync(join(RENDERER_SRC, 'main.ts'), 'utf8')
     expect(entry).toContain('@fontsource/tiny5')
     expect(entry).toContain('@fontsource-variable/pixelify-sans')
+    // APPENDED for #370: Roboto is the third bundled face, and the reason it is
+    // a stylesheet in `assets/fonts/` rather than a package is that it is the
+    // only one this repo carries the files for itself.
+    expect(entry).toContain('./assets/fonts/roboto/roboto.css')
+  })
+
+  /*
+   * APPENDED for #370. Arial is the one offered face nothing is bundled for —
+   * the design's amendment says to use the platform's own — so the check that
+   * every OTHER face is bundled has to know which one is exempt, and say so
+   * here rather than leave a reader counting imports.
+   */
+  it('bundles every offered face except Arial, which is the platform’s own', () => {
+    const entry = readFileSync(join(RENDERER_SRC, 'main.ts'), 'utf8')
+    expect(entry).not.toContain('arial')
+    expect(entry.toLowerCase()).toContain('roboto')
   })
 })

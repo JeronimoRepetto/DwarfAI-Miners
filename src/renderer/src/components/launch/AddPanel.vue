@@ -295,6 +295,17 @@ function onCommandKeydown(event: KeyboardEvent): void {
   border-radius: var(--radius-default);
   background: var(--color-panel);
   box-shadow: var(--elevation-5);
+  /*
+   * The MESSAGING face, not the Pixel UI one (#370). This panel is where the
+   * person composes the first thing they say to a session, and the issue's
+   * complaint was exactly that it did not follow the choice its own successor
+   * in this slot does — submitting replaces it with the MessagePanel, and a
+   * prompt that changed face on submit would read as two panels rather than
+   * one flow. Declared on the root so every part of it inherits: the chips and
+   * the composer are one surface, and half of it in another face is worse than
+   * either whole.
+   */
+  font-family: var(--font-conversation);
   font-size: var(--text-meta);
   text-align: left;
 }

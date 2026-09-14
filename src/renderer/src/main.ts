@@ -7,6 +7,11 @@ import '@fontsource/tiny5/400.css'
 // emphasis inside a bubble is a real 700 off this axis, and asking for a weight
 // the bundle does not carry is what synthetic bold looks like.
 import '@fontsource-variable/pixelify-sans'
+// The third face Settings offers (#370), self-hosted here rather than pulled in
+// as a package: a font is a static asset, and the two above are packages only
+// because they already existed as ones. Arial is the fourth and is bundled
+// nowhere — the design's amendment says to use the platform's own.
+import './assets/fonts/roboto/roboto.css'
 import App from './App.vue'
 import MessagePanelWindow from './MessagePanelWindow.vue'
 import './assets/base.css'
