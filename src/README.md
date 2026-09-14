@@ -69,7 +69,7 @@ src/
 └── renderer/src/
     ├── App.vue      the SHELL window's root; types.ts beside it is this process's type barrel
     ├── MessagePanelWindow.vue  the message panel's own window (#162) — the second root, one entry
-    ├── assets/      processed art and css
+    ├── assets/      processed art, css, and fonts/ — the one face this repo carries files for
     ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
@@ -83,6 +83,7 @@ src/
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
     │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
+    │                  typography/ the chosen faces: a stored identifier, the token that draws it, its name
     │                  art.ts · presentation.ts · placement.ts — see rule 3
     └── testing/     factories for tests
 ```
