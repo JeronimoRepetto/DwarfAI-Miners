@@ -179,18 +179,16 @@ adding a file. This is the index — one line per group, so you can tell what a 
   `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
   seams with their fakes), `appDatabase` (the one SQLite file), `config`, `domain` (pure rules and
   the type barrel), `history`, `hooks` (the opt-in Claude push channel), `ledger` (mined,
-  persisted), `platform` (composed once in `platformAdapters.ts`), `projects`, `providers` (one per
-  agent CLI plus the simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session
-  and holding one), `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
+  persisted), `notifications` (the OS notification centre, behind a port), `platform` (composed
+  once in `platformAdapters.ts`), `projects`, `providers` (one per agent CLI plus the simulated
+  one), `runtime` (the poll loop), `sessionLaunch` (starting a session and holding one), `shell`
+  (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
 
 <!-- END GENERATED: main-tree -->
 
 - **`renderer/src/`** — TWO roots, one entry: `App.vue` is the shell and `MessagePanelWindow.vue` the
   message panel's own window beside it (`lib/shell/surface.ts` picks). `components/` is thin and
   decides nothing, `lib/` framework-agnostic; `composables/` is Vue-bound state, `types.ts` the barrel.
-
-**Where the next file goes:** name a directory for the subject it is about, never for the kind of
-module it holds — `utils/`, `helpers/`, `types/` are refused on sight.
 
 ## Verified versus assumed
 

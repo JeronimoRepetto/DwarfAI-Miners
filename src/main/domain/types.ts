@@ -97,7 +97,10 @@ export type {
   ShortcutState,
   TextDeliveryChannel,
   WaitingReason,
-  WatchedFeedPush
+  WatchedFeedPush,
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  OpenMineId
+  /* --- end of the #316 block ---------------------------------------------- */
 } from '../../shared/contracts'
 
 /**
@@ -145,7 +148,10 @@ export {
   isMineTier,
   isPanelObserved,
   parseAudioPreferences,
-  stripRelayProvenance
+  stripRelayProvenance,
+  /* --- System notifications (#316) — one block, appended ------------------- */
+  DEFAULT_NOTIFICATIONS_ENABLED
+  /* --- end of the #316 block ---------------------------------------------- */
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

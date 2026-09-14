@@ -13,6 +13,7 @@ install it, and what it runs on.
   - [Git worktrees](#git-worktrees)
 - [Providers in depth](#providers-in-depth)
 - [Sound](#sound)
+- [Notifications](#notifications)
 - [Settings](#settings)
 - [Startup and tray behavior](#startup-and-tray-behavior)
 - [Instant updates (Claude hooks)](#instant-updates-claude-hooks)
@@ -62,14 +63,14 @@ its outer edge sits the app mark — pressing it takes the window away, exactly 
 shortcut does — and under that a column of **six areas**, plus a note button at the bottom for the
 music:
 
-| Area              | What it is                                                                        |
-| ----------------- | --------------------------------------------------------------------------------- |
-| **Settings**      | The shortcut, the panel's side, sound, the metrics wipe, and the running version. |
-| **Map**           | The default view: every project with a live session, at a glance.                 |
-| **Mines**         | The searchable list of projects, with tier filters and a sort by last activity.   |
-| **Lab**           | Planned. Shows an unavailable state today.                                        |
-| **Market**        | Planned. Shows an unavailable state today.                                        |
-| **Laboral Union** | Planned. Shows an unavailable state today.                                        |
+| Area              | What it is                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| **Settings**      | The shortcut, the panel's side, sound, notifications, the metrics wipe, and the running version. |
+| **Map**           | The default view: every project with a live session, at a glance.                                |
+| **Mines**         | The searchable list of projects, with tier filters and a sort by last activity.                  |
+| **Lab**           | Planned. Shows an unavailable state today.                                                       |
+| **Market**        | Planned. Shows an unavailable state today.                                                       |
+| **Laboral Union** | Planned. Shows an unavailable state today.                                                       |
 
 An **opened mine** is not one of them. It sits beside whichever area is selected, which is why you
 can browse the Mines list and watch a crew at the same time.
@@ -378,9 +379,43 @@ The three volumes and the startup switch live in [Settings](#settings). Audio as
 maintainer's own and are covered by [`ARTWORK-LICENSE.md`](../ARTWORK-LICENSE.md), not by the code's
 MIT license.
 
+## Notifications
+
+The panel's job is telling you the truth about your sessions at a glance, and you cannot glance at a
+window that is not on screen. So the operating system's own notification centre carries three facts
+out of the panel, and nothing else:
+
+- **A question is waiting in _mine_** — an agent asked you something and is blocked until you answer.
+- **_mine_ is waiting for your approval** — an agent is asking permission to run a tool.
+- **_mine_ finished its turn** — the mine's foreman stopped working.
+
+Two rules decide whether one is sent, and both are about what you can already see:
+
+- **Never for the mine on screen.** That means the panel visible _and_ that mine's interior open. The
+  map, the browse, or a mine held open behind the collapsed rail all count as looking at no mine, so
+  every mine can still reach you.
+- **Never twice for the same thing.** A question that stays open for twenty minutes notifies once,
+  not once per poll. When the fact goes away — you answered at the terminal — the notification is
+  withdrawn, on the platforms that allow it.
+
+**Clicking one shows the panel and opens that mine, with no dwarf selected.** Click the dwarf to open
+its message panel and read what it asked. That is deliberate: the notification takes you to the mine,
+and you decide what to look at.
+
+Per platform, and only Windows is verified end to end:
+
+| Platform    | What to expect                                                                                                                                                                                                                                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows** | Verified on Windows 11: works in both an installed build and a checkout. Notifications obey Focus Assist and the Action Center's own per-app switch, neither of which this app can see — so "nothing arrived" may be Windows, and that is where to look first. |
+| **macOS**   | The system asks for permission the first time one is raised. Until you allow it, nothing appears; allow it once and they arrive from then on. There is no way for the app to ask you in advance.                                                               |
+| **Linux**   | Needs a notification daemon. Without one, nothing is shown and nothing is reported — the app cannot fix a facility the desktop does not have, and an error you cannot act on would be noise.                                                                   |
+
+The switch in [Settings](#settings) turns all of it off. A notification already on screen when you
+turn them off is still withdrawn when its question is answered; nothing is left stranded.
+
 ## Settings
 
-Reached from the top button of the navigation column. Four sections and a small group of
+Reached from the top button of the navigation column. Five sections and a small group of
 application controls:
 
 | Section            | What it holds                                                                                                                                                                                                                                                            |
@@ -388,6 +423,7 @@ application controls:
 | **Panel shortcut** | Record a new global toggle combination, or reset it to **Ctrl+Alt+Shift+P**. If another application already owns the one you record, registration fails, the previous shortcut is re-claimed, and this section says so rather than showing a shortcut that does nothing. |
 | **Position**       | Which screen edge the docked shell opens on — left or right. Right by default.                                                                                                                                                                                           |
 | **Audio**          | **Music at startup** (on by default), plus a volume slider each for **Music**, **Ambience** and **Effects**. They start at 10%, 100% and 70%. See [Sound](#sound).                                                                                                       |
+| **Notifications**  | **System notifications** (on by default) — one switch, for the whole feature. See [Notifications](#notifications).                                                                                                                                                       |
 | **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
 | _Application_      | **Always on top**, **Hide panel**, and the running version.                                                                                                                                                                                                              |
 

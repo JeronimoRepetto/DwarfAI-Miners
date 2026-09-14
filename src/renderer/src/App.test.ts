@@ -214,6 +214,22 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .mockImplementation((preferences: unknown) => Promise.resolve(preferences)),
     getPanelVisible: vi.fn().mockResolvedValue(false),
     onPanelVisibility: vi.fn().mockReturnValue(() => undefined),
+    /*
+     * AMENDED for #316 (was: absent). The shell reports which mine INTERIOR it
+     * has on screen so main can hold its "never notify about the mine the
+     * person is looking at" rule, and it listens for a click on a notification
+     * main raised — so all four members have to exist even in tests that never
+     * open Settings. `setOpenMine` is a plain spy, like `refreshDwarfTelemetry`:
+     * it is `ipcRenderer.send` with no verdict to await. `onShowMine` returns
+     * an unsubscribe, exactly like `onMinesUpdated`. The switch answers ON,
+     * which is what main's own default is. No existing assertion changed.
+     */
+    setOpenMine: vi.fn(),
+    onShowMine: vi.fn().mockReturnValue(() => undefined),
+    getNotificationsEnabled: vi.fn().mockResolvedValue(true),
+    setNotificationsEnabled: vi
+      .fn()
+      .mockImplementation((enabled: unknown) => Promise.resolve(enabled)),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2300,5 +2316,126 @@ describe('App audio (#174, #173)', () => {
 
     expect(opened.some((src) => src.includes('dwarf-foreman-voice'))).toBe(true)
     expect(opened.some((src) => src.includes('dwarf-worker-voice'))).toBe(false)
+  })
+})
+
+/**
+ * System notifications (#316) — APPENDED, nothing above changed.
+ *
+ * Two halves meet in this file and neither works without the other: the shell
+ * telling main which mine INTERIOR is on screen, so main can hold its "never
+ * notify about the mine the person is looking at" rule, and the shell following
+ * a click on a notification main already raised the window for.
+ */
+describe('App system notifications (#316)', () => {
+  const MINE = defaultMine({ id: 'p1', name: 'panel', dwarfs: [defaultDwarf()] })
+
+  async function notifiedApp(overrides: Record<string, unknown> = {}) {
+    return mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      ...overrides
+    })
+  }
+
+  /**
+   * Every report this window has made about the mine on screen.
+   *
+   * The SET rather than the last entry, deliberately: `useView` is a
+   * module-scope singleton and this file leaves its mounted apps alive, so a
+   * previous test's shell still reacts to the view changing and still reaches
+   * whatever `window.api` is installed now. Asserting what was and was not
+   * reported is true of this window either way; asserting which call came last
+   * would be asserting the order two windows happened to run in.
+   */
+  function reports(api: Record<string, ReturnType<typeof vi.fn>>): unknown[] {
+    return api.setOpenMine!.mock.calls.map((call) => call[0])
+  }
+
+  it('reports no mine on screen while nothing is open', async () => {
+    const { api } = await notifiedApp()
+    expect(reports(api)).toEqual([null])
+  })
+
+  it('reports the mine once its interior is drawn', async () => {
+    const { wrapper, api } = await notifiedApp()
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    expect(reports(api)).toContain(MINE.id)
+  })
+
+  it('reports none again once the mine is closed', async () => {
+    const { wrapper, api } = await notifiedApp()
+    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    await flushPromises()
+    api.setOpenMine.mockClear()
+    wrapper.findComponent(MineScene).vm.$emit('back')
+    await flushPromises()
+    expect(reports(api)).toContain(null)
+    expect(reports(api)).not.toContain(MINE.id)
+  })
+
+  /*
+   * MOVED, not lost: "reports nothing for a mine held open behind a collapsed
+   * shell" lives in lib/shell/mineOnScreen.test.ts now. It cannot be asserted
+   * here honestly — every app this file has ever mounted is still alive and
+   * still reacts to the view singleton, so a rail-collapsed window's report
+   * lands in the same spy as a hundred expanded ones' and no assertion can tell
+   * them apart. The rule it was about is a pure function with its own test, and
+   * the computed above is its only caller.
+   */
+
+  it('opens the mine main asked for, and gives its column the width to be drawn in', async () => {
+    const { wrapper, api } = await notifiedApp()
+    const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
+    open(MINE.id)
+    await flushPromises()
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith(expect.objectContaining({ mineOpen: true }))
+  })
+
+  it('selects NO dwarf, closing a message panel that was open on one', async () => {
+    // #316 words this exactly: the person clicks the dwarf to read the ask. A
+    // notification that opened the panel for them would choose what they look
+    // at — and the mine may be the one already open, where nothing else would
+    // clear a selection made before the notification arrived.
+    const { api } = await notifiedApp({
+      getMessagePanel: vi
+        .fn()
+        .mockResolvedValue({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+    })
+    api.setMessagePanel.mockClear()
+    const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
+    open(MINE.id)
+    await flushPromises()
+    expect(api.setMessagePanel).toHaveBeenCalledWith(expect.objectContaining({ surface: 'none' }))
+  })
+
+  it('adopts the stored switch on mount and draws it in Settings', async () => {
+    const { wrapper } = await mountOpenApp({
+      getNotificationsEnabled: vi.fn().mockResolvedValue(false)
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('asks main for the opposite state on a press, and renders the verdict', async () => {
+    const setNotificationsEnabled = vi.fn().mockResolvedValue(false)
+    const { wrapper, api } = await mountOpenApp({ setNotificationsEnabled })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.notifications-enabled').trigger('click')
+    await flushPromises()
+    expect(api.setNotificationsEnabled).toHaveBeenCalledWith(false)
+    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('renders what main STORED, never the press, when a change does not take', async () => {
+    // The pin's own rule: a write main refused must not be drawn as in force.
+    const { wrapper } = await mountOpenApp({
+      setNotificationsEnabled: vi.fn().mockResolvedValue(true)
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.notifications-enabled').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('true')
   })
 })

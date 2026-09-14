@@ -57,6 +57,7 @@ src/
 │   ├── history/     what a mine's transcripts on disk remember: every dwarf that spoke there, read on request
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill and its migration
+│   ├── notifications/ whether a mine owes the person a system notification, the port that raises one, and the switch that stops them
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
 │   ├── projects/    every project the app has been shown, persisted: name, dates, provenance
 │   ├── providers/   reading each agent CLI's own on-disk session state, registry.ts that composes it, and feedWindow.ts that bounds a feed read by messages rather than bytes
