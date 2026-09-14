@@ -14,6 +14,7 @@ install it, and what it runs on.
 - [Providers in depth](#providers-in-depth)
 - [Sound](#sound)
 - [Notifications](#notifications)
+- [Typography](#typography)
 - [Settings](#settings)
 - [Startup and tray behavior](#startup-and-tray-behavior)
 - [Instant updates (Claude hooks)](#instant-updates-claude-hooks)
@@ -63,14 +64,14 @@ its outer edge sits the app mark — pressing it takes the window away, exactly 
 shortcut does — and under that a column of **six areas**, plus a note button at the bottom for the
 music:
 
-| Area              | What it is                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------------ |
-| **Settings**      | The shortcut, the panel's side, sound, notifications, the metrics wipe, and the running version. |
-| **Map**           | The default view: every project with a live session, at a glance.                                |
-| **Mines**         | The searchable list of projects, with tier filters and a sort by last activity.                  |
-| **Lab**           | Planned. Shows an unavailable state today.                                                       |
-| **Market**        | Planned. Shows an unavailable state today.                                                       |
-| **Laboral Union** | Planned. Shows an unavailable state today.                                                       |
+| Area              | What it is                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Settings**      | The shortcut, the panel's side, its fonts, sound, notifications, the metrics wipe, and the running version. |
+| **Map**           | The default view: every project with a live session, at a glance.                                           |
+| **Mines**         | The searchable list of projects, with tier filters and a sort by last activity.                             |
+| **Lab**           | Planned. Shows an unavailable state today.                                                                  |
+| **Market**        | Planned. Shows an unavailable state today.                                                                  |
+| **Laboral Union** | Planned. Shows an unavailable state today.                                                                  |
 
 An **opened mine** is not one of them. It sits beside whichever area is selected, which is why you
 can browse the Mines list and watch a crew at the same time.
@@ -147,8 +148,9 @@ What is in it:
   not a page. Tables, strikethrough, horizontal rules and images are outside that vocabulary and
   are shown as the plain characters that were written, on purpose, rather than an invented
   drawing; raw HTML is never interpreted. A link opens in your system browser and never inside the
-  panel. Conversation text is set in a different typeface (Pixelify Sans) from the rest of the
-  interface (Tiny5), since a paragraph needs a bold weight a single-weight pixel font cannot draw.
+  panel. Conversation text is set in a different typeface (Pixelify Sans by default) from the rest
+  of the interface (Tiny5 by default), since a paragraph needs a bold weight a single-weight pixel
+  font cannot draw. Both are yours to change — see [Typography](#typography).
 - **A composer.** Enter sends, Shift+Enter writes a newline. It is drawn disabled, with the reason
   on it, whenever the session cannot receive text.
 - **Runs of tool calls, folded.** A stretch of consecutive activity lines collapses into one
@@ -413,15 +415,38 @@ Per platform, and only Windows is verified end to end:
 The switch in [Settings](#settings) turns all of it off. A notification already on screen when you
 turn them off is still withdrawn when its question is answered; nothing is left stranded.
 
+## Typography
+
+Two independent choices, both in [Settings](#settings), because the two jobs are not the same one:
+
+- **Interface** — every label, control, headline and metadata line. **Tiny5**, **Pixelify Sans**,
+  **Roboto** or **Arial**; Tiny5 by default, which is the pixel face the panel was designed around.
+- **Messaging** — what a dwarf or you says: the bubbles, the echoes, an agent's question and
+  permission prose, and the launch panel where a prompt is written. **Pixelify Sans**, **Roboto** or
+  **Arial**; Pixelify Sans by default.
+
+**Tiny5 is not offered for messaging.** It has one weight, and an agent's reply is paragraphs with
+bold, lists and code — a face that cannot draw bold cannot carry one. That is the same reasoning
+that gave conversation text its own typeface in the first place.
+
+Choosing one family in both makes the whole app that family. Both apply the moment you press them,
+in the shell and in the message panel's own window alike, and both survive a restart.
+
+Tiny5, Pixelify Sans and Roboto are shipped inside the app — nothing is fetched from a font service,
+and the panel renders identically with no network. All three are under the SIL Open Font License.
+Arial is your operating system's own copy, with a sans-serif fallback on a machine that has none, so
+it may look slightly different from one platform to the next.
+
 ## Settings
 
-Reached from the top button of the navigation column. Five sections and a small group of
+Reached from the top button of the navigation column. Six sections and a small group of
 application controls:
 
 | Section            | What it holds                                                                                                                                                                                                                                                            |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Panel shortcut** | Record a new global toggle combination, or reset it to **Ctrl+Alt+Shift+P**. If another application already owns the one you record, registration fails, the previous shortcut is re-claimed, and this section says so rather than showing a shortcut that does nothing. |
 | **Position**       | Which screen edge the docked shell opens on — left or right. Right by default.                                                                                                                                                                                           |
+| **Typography**     | **Interface** and **Messaging** fonts, chosen independently — Tiny5, Pixelify Sans, Roboto or Arial for the interface, and the same list without Tiny5 for messages. See [Typography](#typography).                                                                      |
 | **Audio**          | **Music at startup** (on by default), plus a volume slider each for **Music**, **Ambience** and **Effects**. They start at 10%, 100% and 70%. See [Sound](#sound).                                                                                                       |
 | **Notifications**  | **System notifications** (on by default) — one switch, for the whole feature. See [Notifications](#notifications).                                                                                                                                                       |
 | **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
