@@ -98,8 +98,13 @@ export type {
   WaitingReason,
   WatchedFeedPush,
   /* --- System notifications (#316) — one block, appended ------------------- */
-  OpenMineId
+  OpenMineId,
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  InterfaceFont,
+  MessagingFont,
+  TypographyPreferences
+  /* --- end of the #370 block ----------------------------------------------- */
 } from '../../shared/contracts'
 
 /**
@@ -145,8 +150,16 @@ export {
   parseAudioPreferences,
   stripRelayProvenance,
   /* --- System notifications (#316) — one block, appended ------------------- */
-  DEFAULT_NOTIFICATIONS_ENABLED
+  DEFAULT_NOTIFICATIONS_ENABLED,
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
+  INTERFACE_FONTS,
+  MESSAGING_FONTS,
+  isInterfaceFont,
+  isMessagingFont,
+  parseTypographyPreferences
+  /* --- end of the #370 block ----------------------------------------------- */
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */

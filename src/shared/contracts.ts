@@ -3161,6 +3161,120 @@ export type OpenMineId = string | null
 
 /* --- end of the #316 block ------------------------------------------------- */
 
+/* --- Typography preferences (#370) — one block, appended ------------------- */
+
+/**
+ * The faces Settings offers for the INTERFACE (#370, maintainer amendment
+ * 2026-09-10) — everything outside messaging: labels, controls, metadata,
+ * headlines, the activity lines.
+ *
+ * Identifiers rather than family names, and that is deliberate: what crosses
+ * the wire and lands in a userData document has to survive a font's own name
+ * being spelled differently by whoever hosts it (the variable cuts are
+ * `Pixelify Sans Variable` and `Roboto Variable`, not `Pixelify Sans` and
+ * `Roboto`). The renderer maps an identifier to a stack once, in
+ * `lib/typography/fontFamilies.ts`, against tokens declared in
+ * design-tokens.css.
+ *
+ * Ordered as the design's amendment lists them, because Settings draws the
+ * segments in this order and a second ordering somewhere else would be a
+ * second answer.
+ */
+export const INTERFACE_FONTS = ['tiny5', 'pixelify-sans', 'roboto', 'arial'] as const
+
+export type InterfaceFont = (typeof INTERFACE_FONTS)[number]
+
+/**
+ * The faces Settings offers for MESSAGING — what a dwarf or the person SAYS,
+ * plus the Add Panel, which composes exactly that.
+ *
+ * The same list MINUS Tiny5, and the omission is the load-bearing part. Tiny5
+ * has one display weight, and #347's ruling is that a single-weight pixel face
+ * cannot draw bold or carry a paragraph; #370 keeps that constraint rather
+ * than reopening it. So messaging is a NARROWER vocabulary than the interface,
+ * not a second one — everything here is also an interface face.
+ */
+export const MESSAGING_FONTS = ['pixelify-sans', 'roboto', 'arial'] as const
+
+export type MessagingFont = (typeof MESSAGING_FONTS)[number]
+
+/** Whether a value is a face this build can draw the interface in. */
+export function isInterfaceFont(value: unknown): value is InterfaceFont {
+  return INTERFACE_FONTS.includes(value as InterfaceFont)
+}
+
+/**
+ * Whether a value is a face this build may set a MESSAGE in.
+ *
+ * `'tiny5'` answers false here and true above, which is the whole exclusion in
+ * one line. It is checked at the boundary rather than only in Settings because
+ * the userData document is a file a person can edit, and the parser below is
+ * the one thing every process reads it through.
+ */
+export function isMessagingFont(value: unknown): value is MessagingFont {
+  return MESSAGING_FONTS.includes(value as MessagingFont)
+}
+
+/**
+ * What the person chose in Settings' Typography section (#370).
+ *
+ * Two INDEPENDENT choices rather than one theme, which is the acceptance
+ * criterion itself: the pixel identity is worth keeping on the chrome while an
+ * agent's reply — paragraphs, bold, lists — reads better in a text face, and a
+ * single control could not say that. Picking the same family in both is how
+ * the whole app becomes one face.
+ */
+export interface TypographyPreferences {
+  /** Everything outside messaging. */
+  interfaceFont: InterfaceFont
+  /** The bubbles, the echoes, the question and permission prose, and the Add Panel. */
+  messagingFont: MessagingFont
+}
+
+/**
+ * What Settings' Typography section reads before anybody has chosen.
+ *
+ * Exactly the look #347 settled — Tiny5 for the chrome, Pixelify Sans for what
+ * the crew says — so shipping this feature changes nothing for a person who
+ * never opens the section. Here rather than in the store beside it, for the
+ * reason DEFAULT_AUDIO_PREFERENCES is here: the renderer paints before main has
+ * answered, and two copies of the starting value could disagree.
+ */
+export const DEFAULT_TYPOGRAPHY_PREFERENCES: TypographyPreferences = {
+  interfaceFont: 'tiny5',
+  messagingFont: 'pixelify-sans'
+}
+
+/**
+ * Stored or wire document -> preferences, degrading field by field.
+ *
+ * The same asymmetry `parseAudioPreferences` carries, and for the same reasons
+ * (see the `config-layering` skill): a document that is not an object at all is
+ * corruption and reads as the defaults, while a readable document with one
+ * unusable field keeps the other. A person who moved the interface to Roboto
+ * must not lose that because the messaging field arrived as a face this build
+ * cannot draw.
+ *
+ * Used by main (what it stores), by the preload (what may cross) and by the
+ * renderer (what it paints with), which is why it is declared here.
+ */
+export function parseTypographyPreferences(document: unknown): TypographyPreferences {
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    return { ...DEFAULT_TYPOGRAPHY_PREFERENCES }
+  }
+  const record = document as Record<string, unknown>
+  return {
+    interfaceFont: isInterfaceFont(record.interfaceFont)
+      ? record.interfaceFont
+      : DEFAULT_TYPOGRAPHY_PREFERENCES.interfaceFont,
+    messagingFont: isMessagingFont(record.messagingFont)
+      ? record.messagingFont
+      : DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+  }
+}
+
+/* --- end of the #370 block ------------------------------------------------- */
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -3564,6 +3678,27 @@ export const IPC_CHANNELS = {
    * read the ask, and a notification that opened a message panel on their
    * behalf would be choosing what they look at.
    */
-  showMine: 'panel:mine:show'
+  showMine: 'panel:mine:show',
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  /**
+   * Settings' Typography section (#370).
+   *
+   * `set` answers with what main STORED, the discipline every preference
+   * channel here holds: the shared parser refuses a face this build cannot
+   * draw — Tiny5 for messaging above all — so a segment can only ever be drawn
+   * selected for a choice that is really in force.
+   *
+   * `typographyPreferencesChanged` is the third channel, and the reason it
+   * exists is that this preference is the only one BOTH windows paint with.
+   * Settings lives in the shell; the messaging face is what the message-panel
+   * window draws its bubbles and its Add Panel in. Without a push, changing the
+   * face would leave the other window on the old one until it was reloaded —
+   * so main broadcasts what it stored, the same shape `messagePanelChanged`
+   * has, and each window follows the fact rather than polling for it.
+   */
+  getTypographyPreferences: 'typography:preferences:get',
+  setTypographyPreferences: 'typography:preferences:set',
+  typographyPreferencesChanged: 'typography:preferences:changed'
+  /* --- end of the #370 block ----------------------------------------------- */
 } as const
