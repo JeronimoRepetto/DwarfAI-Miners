@@ -57,7 +57,10 @@ import {
   isHeldPermissionMode,
   isMessagePanelDragPhase,
   isMineTier,
-  parseAudioPreferences
+  parseAudioPreferences,
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  parseTypographyPreferences
+  /* --- end of the #370 block ----------------------------------------------- */
 } from '../shared/contracts'
 import {
   enable as enableAutostart,
@@ -99,6 +102,7 @@ import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
 import { createShortcutPreferenceStore } from './shell/shortcutPreference'
+import { createTypographyPreferenceStore } from './shell/typographyPreference'
 import { createToggleShortcut, type ToggleShortcutController } from './shell/shortcuts'
 import { createTray } from './shell/tray'
 import {
@@ -169,6 +173,10 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getPanelVisible)
   ipcMain.removeHandler(IPC_CHANNELS.getAudioPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setAudioPreferences)
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  ipcMain.removeHandler(IPC_CHANNELS.getTypographyPreferences)
+  ipcMain.removeHandler(IPC_CHANNELS.setTypographyPreferences)
+  /* --- end of the #370 block ----------------------------------------------- */
   ipcMain.removeHandler(IPC_CHANNELS.getToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.setToggleShortcut)
   ipcMain.removeHandler(IPC_CHANNELS.getMines)
@@ -564,6 +572,17 @@ async function init(): Promise<void> {
     filePath: join(app.getPath('userData'), 'audio-preferences-v1.json')
   })
 
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  // The eighth userData preference, read like the audio settings: after the
+  // window exists, because the renderer paints the documented defaults on its
+  // first frame and corrects itself on mount. Not held in a variable beside the
+  // file, unlike the notifications switch — nothing in main READS a face, so
+  // there is no poll to keep off the disk.
+  const typographyStore = createTypographyPreferenceStore({
+    filePath: join(app.getPath('userData'), 'typography-preferences-v1.json')
+  })
+  /* --- end of the #370 block ----------------------------------------------- */
+
   /*
    * Whether the shell is really on screen (#174, #173).
    *
@@ -899,6 +918,38 @@ async function init(): Promise<void> {
     }
     return preferences
   })
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  /*
+   * Settings' Typography section (#370).
+   *
+   * `set` answers with what was STORED, the discipline every preference channel
+   * here holds: the shared parser refuses a face this build cannot draw — Tiny5
+   * for messaging above all — so a segment can only ever be drawn selected for
+   * a choice that is really in force.
+   *
+   * And then it BROADCASTS, which no other preference does. Settings is in the
+   * shell; the messaging face is what the panel window draws its bubbles and
+   * its Add Panel in, so a change made in one window has to reach the other in
+   * the same frame rather than at its next reload. Sent to every window
+   * including the sender: the renderer adopts main's verdict from one path, so
+   * a window that also awaits the reply simply applies the same document twice.
+   */
+  ipcMain.handle(IPC_CHANNELS.getTypographyPreferences, () => typographyStore.load())
+  ipcMain.handle(IPC_CHANNELS.setTypographyPreferences, async (_event, payload: unknown) => {
+    const preferences = parseTypographyPreferences(payload)
+    try {
+      await typographyStore.save(preferences)
+    } catch (error) {
+      // The faces already changed on screen; a persistence hiccup only means
+      // the next launch falls back to the stored document.
+      console.warn('[typography] Failed to persist the typography preferences:', error)
+    }
+    for (const contents of appWebContents()) {
+      contents.send(IPC_CHANNELS.typographyPreferencesChanged, preferences)
+    }
+    return preferences
+  })
+  /* --- end of the #370 block ----------------------------------------------- */
   /* --- System notifications (#316) — one block, appended ------------------- */
   /*
    * Settings' Notifications switch, and the shell reporting which mine it has

@@ -15,6 +15,8 @@ import {
 } from './lib/message/feedPages'
 // ADDED for #389 — the deadline the window's own leave is bounded by.
 import { PANEL_MOTION_WATCHDOG_MS } from './lib/shell/panelMotion'
+// ADDED for #370 — the faces this window paints with before main answers.
+import { DEFAULT_TYPOGRAPHY_PREFERENCES } from './types'
 
 /*
  * The message panel's own window (#162).
@@ -101,6 +103,16 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // above: opened is the quiet default, and the refusal path is asserted by
     // the tests that override it.
     openExternalLink: vi.fn().mockResolvedValue({ opened: true }),
+    /*
+     * AMENDED for #370 (was: absent). This window paints the messaging face, so
+     * it adopts the stored faces on mount and subscribes to the change the
+     * SHELL makes — both members have to exist even in tests that never open
+     * Settings, and `onTypographyPreferences` in particular is subscribed
+     * unconditionally like `onLaunchFailed` above. The defaults answer with what
+     * the stylesheet already carries. No existing assertion changed.
+     */
+    getTypographyPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
+    onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2276,5 +2288,52 @@ describe('rising into place and settling before the window goes', () => {
       animated.restore()
       measured.restore()
     }
+  })
+})
+
+/**
+ * Typography preferences (#370) — APPENDED, nothing above changed.
+ *
+ * The SECOND root, and the reason the preference needs a push at all. Settings
+ * is in the shell; the bubbles and the Add Panel are here, and this window has
+ * its own document — so a face chosen over there has to reach this page rather
+ * than wait for a reload it may never get.
+ */
+describe('typography preferences (#370)', () => {
+  it('adopts the stored faces on mount, painting its own document root', async () => {
+    await mountPanel(CLOSED, {
+      getTypographyPreferences: vi
+        .fn()
+        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'roboto' })
+    })
+    expect(document.documentElement.style.getPropertyValue('--font-conversation')).toBe(
+      'var(--font-family-roboto)'
+    )
+  })
+
+  it('follows a change made in the shell, which is the only window with Settings', async () => {
+    const { api } = await mountPanel(CLOSED)
+    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: {
+      interfaceFont: string
+      messagingFont: string
+    }) => void
+    push({ interfaceFont: 'arial', messagingFont: 'arial' })
+    await flushPromises()
+    expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
+      'var(--font-family-arial)'
+    )
+    expect(document.documentElement.style.getPropertyValue('--font-conversation')).toBe(
+      'var(--font-family-arial)'
+    )
+  })
+
+  it('draws the Add Panel in the messaging face, the same one the bubbles use', async () => {
+    // #370's own complaint: the launch panel was the one conversation surface
+    // still on the Pixel UI face. Asserted through the class the stylesheet
+    // hangs `var(--font-conversation)` on, because a `<style scoped>` block has
+    // no import a test could read (see designTokens.test.ts, which pins the
+    // declaration itself).
+    const { wrapper } = await mountPanel({ surface: 'launch', mineId: MINE.id, dwarfId: '' })
+    expect(wrapper.find('.add-panel').exists()).toBe(true)
   })
 })

@@ -12,7 +12,15 @@ import {
   isDwarfProvider,
   isMcpConnectionStatus,
   isMessagePanelDragPhase,
-  parseAudioPreferences
+  parseAudioPreferences,
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
+  INTERFACE_FONTS,
+  MESSAGING_FONTS,
+  isInterfaceFont,
+  isMessagingFont,
+  parseTypographyPreferences
+  /* --- end of the #370 block ----------------------------------------------- */
 } from './contracts'
 
 /*
@@ -366,6 +374,106 @@ describe('DEFAULT_AUDIO_PREFERENCES', () => {
       musicVolume: 0.1,
       ambienceVolume: 1,
       voiceVolume: 0.7
+    })
+  })
+})
+
+/*
+ * Typography preferences (#370) — APPENDED, nothing above changed.
+ *
+ * Two independent choices behind one document, and the asymmetry
+ * `config-layering` names applies to it exactly as it does to the audio
+ * document above: a bad DOCUMENT reads as the defaults, and a bad VALUE inside
+ * a readable one degrades FIELD BY FIELD.
+ *
+ * The one rule that is not shared with any other preference: Tiny5 is a legal
+ * interface face and an illegal messaging one. The design's reasoning (#347,
+ * carried forward by #370) is that Tiny5 has a single display weight, and a
+ * message paragraph needs real bold — so the exclusion is enforced at the
+ * BOUNDARY rather than only hidden in the Settings UI, because a document
+ * hand-edited under userData reaches the renderer through this parser too.
+ */
+describe('INTERFACE_FONTS and MESSAGING_FONTS', () => {
+  it('offers the four interface faces the design names, in its own order', () => {
+    expect(INTERFACE_FONTS).toEqual(['tiny5', 'pixelify-sans', 'roboto', 'arial'])
+  })
+
+  it('offers the same faces for messaging minus Tiny5, which cannot carry a paragraph', () => {
+    expect(MESSAGING_FONTS).toEqual(['pixelify-sans', 'roboto', 'arial'])
+    expect(MESSAGING_FONTS).not.toContain('tiny5')
+  })
+
+  it('names no messaging face the interface cannot also use', () => {
+    // One vocabulary with one exclusion, never two lists that could drift: a
+    // face offered for messages and not for the interface would be a third
+    // rule nobody wrote down.
+    for (const font of MESSAGING_FONTS) expect(INTERFACE_FONTS).toContain(font)
+  })
+})
+
+describe('isInterfaceFont and isMessagingFont', () => {
+  it.each([...INTERFACE_FONTS])('reads %s as an interface face', (font) => {
+    expect(isInterfaceFont(font)).toBe(true)
+  })
+
+  it('refuses Tiny5 as a messaging face, and everything else it does not know', () => {
+    expect(isMessagingFont('tiny5')).toBe(false)
+    expect(isInterfaceFont('tiny5')).toBe(true)
+  })
+
+  it.each([undefined, null, '', 'Tiny5', 'comic sans', 42, {}, []])(
+    'reads %j as neither, because a face this build cannot draw is not a choice',
+    (value) => {
+      expect(isInterfaceFont(value)).toBe(false)
+      expect(isMessagingFont(value)).toBe(false)
+    }
+  )
+})
+
+describe('parseTypographyPreferences', () => {
+  it('reads a document it wrote itself', () => {
+    expect(parseTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'arial' })).toEqual(
+      { interfaceFont: 'roboto', messagingFont: 'arial' }
+    )
+  })
+
+  it('keeps the two choices independent, which is the whole point of the feature', () => {
+    expect(parseTypographyPreferences({ interfaceFont: 'tiny5', messagingFont: 'roboto' })).toEqual(
+      { interfaceFont: 'tiny5', messagingFont: 'roboto' }
+    )
+  })
+
+  it('refuses Tiny5 for messaging at the boundary, not only in the Settings UI', () => {
+    // A document hand-edited under userData reaches the renderer through this
+    // parser, so hiding the option in Settings would not be the enforcement.
+    expect(parseTypographyPreferences({ interfaceFont: 'arial', messagingFont: 'tiny5' })).toEqual({
+      interfaceFont: 'arial',
+      messagingFont: DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+    })
+  })
+
+  it('falls back field by field, so one unreadable face cannot take the other with it', () => {
+    expect(
+      parseTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'papyrus' })
+    ).toEqual({
+      interfaceFont: 'roboto',
+      messagingFont: DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+    })
+  })
+
+  it.each([null, undefined, [], 'roboto', 42])(
+    'reads %j — a document that is not an object — as the defaults',
+    (document) => {
+      expect(parseTypographyPreferences(document)).toEqual(DEFAULT_TYPOGRAPHY_PREFERENCES)
+    }
+  )
+})
+
+describe('DEFAULT_TYPOGRAPHY_PREFERENCES', () => {
+  it('preserves the look #347 settled, so nobody has to choose to keep it', () => {
+    expect(DEFAULT_TYPOGRAPHY_PREFERENCES).toEqual({
+      interfaceFont: 'tiny5',
+      messagingFont: 'pixelify-sans'
     })
   })
 })

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { AudioPreferences, PanelEdge, ShortcutState } from '../../types'
+import type { AudioPreferences, PanelEdge, ShortcutState, TypographyPreferences } from '../../types'
 import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
 import NotificationSettings from './NotificationSettings.vue'
 import PositionSettings from './PositionSettings.vue'
 import ResetMetricsModal from './ResetMetricsModal.vue'
 import ShortcutSettings from './ShortcutSettings.vue'
+import TypographySettings from './TypographySettings.vue'
 import PanelTransition from '../shell/PanelTransition.vue'
 
 /**
@@ -29,7 +30,8 @@ import PanelTransition from '../shell/PanelTransition.vue'
  * Base, which is after everything the design draws and before the one
  * destructive action. NOTIFICATIONS (#316) is the second such extension and
  * lands in the same gap, immediately after Audio — the design source itself
- * names it as joining there.
+ * names it as joining there. TYPOGRAPHY (#370) is the third, and the only one
+ * whose place the source states outright: after Position and before Audio.
  *
  * The "Application" section (pin, hide panel, version) is an UNSPECIFIED
  * placement decision (#138): the design draws no home for any of the three,
@@ -60,6 +62,12 @@ defineProps<{
   /** Whether the OS notification centre may be used — main's verdict, not a wish. */
   notificationsEnabled: boolean
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  /** Which faces the interface and messaging are drawn in — main's verdict. */
+  typography: TypographyPreferences
+  /** True while a face change is in flight; locks the segments. */
+  typographyApplying: boolean
+  /* --- end of the #370 block ----------------------------------------------- */
 }>()
 
 const emit = defineEmits<{
@@ -78,6 +86,10 @@ const emit = defineEmits<{
   /** The notifications switch should take this value (#316). */
   'notifications-change': [enabled: boolean]
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  /** One typography role should take a face (#370) — a patch, never the pair. */
+  'typography-change': [patch: Partial<TypographyPreferences>]
+  /* --- end of the #370 block ----------------------------------------------- */
 }>()
 
 const resetModalOpen = ref(false)
@@ -103,6 +115,12 @@ const resetModalOpen = ref(false)
     />
 
     <PositionSettings :edge="edge" :applying="edgeApplying" @select="emit('select-edge', $event)" />
+
+    <TypographySettings
+      :preferences="typography"
+      :applying="typographyApplying"
+      @change="emit('typography-change', $event)"
+    />
 
     <AudioSettings :settings="audioSettings" @change="emit('audio-change', $event)" />
 

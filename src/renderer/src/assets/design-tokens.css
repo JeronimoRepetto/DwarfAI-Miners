@@ -18,19 +18,40 @@
    * fallback stack Unspecified; the stack is ours, because a font that failed
    * to load must still leave a 10px label readable rather than handing the
    * choice to whatever the platform picked first.
+   *
+   * AMENDED for #370 (maintainer amendment 2026-09-10): the four stacks below
+   * are the vocabulary Settings' Typography section chooses from, and the two
+   * ROLES underneath them — the Pixel UI face and the conversation face — now
+   * name one of these rather than spelling a stack of their own. A face has to
+   * be switchable at runtime, and useTypography does that by repointing the two
+   * roles on the document root; one stack per family, declared once here, is
+   * what keeps a correction from becoming a hunt.
+   *
+   * The `Variable` suffixes are the hosted families' real names, not ours: the
+   * variable cuts register as `Pixelify Sans Variable` and `Roboto Variable`,
+   * and asking for the unsuffixed name loads nothing. Arial is the one face
+   * this repo ships no files for — the design says to use the platform's own.
    */
-  --font-pixel: 'Tiny5', 'Segoe UI', system-ui, sans-serif;
+  --font-family-tiny5: 'Tiny5', 'Segoe UI', system-ui, sans-serif;
+  --font-family-pixelify-sans: 'Pixelify Sans Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-family-roboto: 'Roboto Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-family-arial: Arial, Helvetica, 'Segoe UI', system-ui, sans-serif;
+
+  /* The Pixel UI role: everything outside messaging. */
+  --font-pixel: var(--font-family-tiny5);
   /*
    * The face for what a dwarf or the person SAYS (#347, maintainer amendment
-   * 2026-09-09): the bubbles, the echoes, and the question and permission
-   * cards' prose. Tiny5 above stays the Pixel UI face for everything else.
+   * 2026-09-09): the bubbles, the echoes, the question and permission cards'
+   * prose, and — since #370 — the Add Panel, where the person composes the
+   * first of it. Tiny5 above stays the Pixel UI face for everything else.
    *
    * A second family rather than a second weight, because Tiny5 has exactly one
    * and an agent's reply is now paragraphs with bold, lists and code. The
    * variable cut carries 400..700, so emphasis is a real weight rather than a
-   * synthesised one. Same fallback shape as --font-pixel, for the same reason.
+   * synthesised one. That constraint is why Tiny5 is not among the messaging
+   * choices #370 offers.
    */
-  --font-conversation: 'Pixelify Sans Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-conversation: var(--font-family-pixelify-sans);
   /*
    * Code, wherever this app shows any: a permission prompt's own redacted
    * input, and the inline and fenced code inside a bubble (#347). Not a design

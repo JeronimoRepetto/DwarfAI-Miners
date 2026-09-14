@@ -3,7 +3,13 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
 import type { ShortcutState } from '../../types'
-import { DEFAULT_AUDIO_PREFERENCES, DEFAULT_NOTIFICATIONS_ENABLED } from '../../types'
+import {
+  DEFAULT_AUDIO_PREFERENCES,
+  DEFAULT_NOTIFICATIONS_ENABLED,
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  DEFAULT_TYPOGRAPHY_PREFERENCES
+  /* --- end of the #370 block ----------------------------------------------- */
+} from '../../types'
 import PanelTransition from '../shell/PanelTransition.vue'
 import SettingsPanel from './SettingsPanel.vue'
 
@@ -49,6 +55,10 @@ function render(props: Record<string, unknown> = {}) {
       // AMENDED for #316: one required prop added, the notifications switch.
       // No existing prop or assertion changed.
       notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
+      // AMENDED for #370: two more, the stored faces and whether a change is in
+      // flight. No existing prop or assertion changed.
+      typography: { ...DEFAULT_TYPOGRAPHY_PREFERENCES },
+      typographyApplying: false,
       ...props
     }
   })
@@ -127,6 +137,38 @@ describe('SettingsPanel — sections in the design’s order', () => {
       sections.indexOf('data-base-settings')
     )
   })
+
+  /*
+   * APPENDED for #370. Unlike Audio and Notifications, this extension has a
+   * home the design source states outright — "after Position and before Audio"
+   * — so its place is transcribed rather than decided.
+   */
+  it('mounts the Typography section with the faces it was given', () => {
+    const wrapper = render({
+      typography: { interfaceFont: 'roboto', messagingFont: 'arial' }
+    })
+    expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+    expect(wrapper.find('.messaging-font[data-font="arial"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+  })
+
+  it('draws Typography after Position and before Audio', () => {
+    const sections = render()
+      .findAll('section')
+      .map((section) => section.classes()[0])
+    expect(sections.indexOf('typography-settings')).toBeGreaterThan(
+      sections.indexOf('position-settings')
+    )
+    expect(sections.indexOf('typography-settings')).toBeLessThan(sections.indexOf('audio-settings'))
+  })
+
+  it('locks the Typography segments while a change is in flight', () => {
+    const wrapper = render({ typographyApplying: true })
+    expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('disabled')).toBeDefined()
+  })
 })
 
 describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
@@ -165,6 +207,13 @@ describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
     const wrapper = render({ notificationsEnabled: true })
     await wrapper.find('.notifications-enabled').trigger('click')
     expect(wrapper.emitted('notifications-change')).toEqual([[false]])
+  })
+
+  // APPENDED for #370.
+  it('forwards a Typography choice as typography-change, carrying only the role that moved', async () => {
+    const wrapper = render()
+    await wrapper.find('.messaging-font[data-font="roboto"]').trigger('click')
+    expect(wrapper.emitted('typography-change')).toEqual([[{ messagingFont: 'roboto' }]])
   })
 })
 

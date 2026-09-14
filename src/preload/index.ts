@@ -42,15 +42,21 @@ import type {
   ProjectQueryResult,
   ShortcutState,
   /* --- System notifications (#316) — one block, appended ------------------- */
-  OpenMineId
+  OpenMineId,
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  TypographyPreferences
+  /* --- end of the #370 block ----------------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
   isDwarfProvider,
   parseAudioPreferences,
   isMessagePanelDragPhase,
-  isMessagePanelSurface
+  isMessagePanelSurface,
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  parseTypographyPreferences
+  /* --- end of the #370 block ----------------------------------------------- */
 } from '../shared/contracts'
 
 /**
@@ -467,6 +473,24 @@ export interface DwarfAiMinersApi {
    */
   onShowMine: (listener: (mineId: string) => void) => () => void
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  /** Which faces Settings has stored — the interface's and messaging's. */
+  getTypographyPreferences: () => Promise<TypographyPreferences>
+  /**
+   * Change either or both. Resolves with what main STORED — a face this build
+   * cannot draw, Tiny5 for messaging above all, replaced by its default — so a
+   * segment is only ever drawn selected for a choice really in force.
+   */
+  setTypographyPreferences: (preferences: TypographyPreferences) => Promise<TypographyPreferences>
+  /**
+   * Hear the faces change (#370). Returns an unsubscribe function.
+   *
+   * The only preference with a push, because it is the only one BOTH windows
+   * paint with: Settings lives in the shell, and the messaging face is what the
+   * message-panel window draws its bubbles and its Add Panel in.
+   */
+  onTypographyPreferences: (listener: (preferences: TypographyPreferences) => void) => () => void
+  /* --- end of the #370 block ----------------------------------------------- */
 }
 
 const api: DwarfAiMinersApi = {
@@ -768,8 +792,30 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on(IPC_CHANNELS.showMine, wrapped)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.showMine, wrapped)
-  }
+  },
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  getTypographyPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.getTypographyPreferences),
+  // Rebuilt through the SHARED parser rather than field by field, the same
+  // reasoning setAudioPreferences carries: there is one parser for this
+  // document and all three processes read it, so what crosses is two checked
+  // faces and nothing the caller happened to attach.
+  setTypographyPreferences: (preferences) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.setTypographyPreferences,
+      parseTypographyPreferences(preferences)
+    ),
+  onTypographyPreferences: (listener) => {
+    // A malformed push resolves to the DEFAULTS rather than being dropped,
+    // unlike onShowMine: the page is always painted in some face, so there is
+    // no "no answer" state to leave it in, and a stale face after a change is
+    // exactly what this channel exists to prevent.
+    const wrapped = (_event: Electron.IpcRendererEvent, preferences: unknown) =>
+      listener(parseTypographyPreferences(preferences))
+    ipcRenderer.on(IPC_CHANNELS.typographyPreferencesChanged, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.typographyPreferencesChanged, wrapped)
+  }
+  /* --- end of the #370 block ----------------------------------------------- */
 }
 
 contextBridge.exposeInMainWorld('api', api)

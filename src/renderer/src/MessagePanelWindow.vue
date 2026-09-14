@@ -9,6 +9,7 @@ import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
+import { useTypography } from './composables/useTypography'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
 import { joinFeedPages } from './lib/message/feedPages'
@@ -1137,8 +1138,26 @@ let unsubscribe: (() => void) | undefined
 let unlistenPanel: (() => void) | undefined
 /** Main's launch-failure push (#263), subscribed alongside every other main-side listener. */
 let unlistenLaunchFailures: (() => void) | undefined
+/* --- Typography preferences (#370) — one block, appended ------------------- */
+/**
+ * The faces this window paints with (#370).
+ *
+ * Installed here as well as in the shell because this is a second PAGE: the
+ * custom properties the bubbles and the Add Panel read live on this document,
+ * and Settings — which changes them — is in the other window. Read-only from
+ * here; `sync()` adopts what is stored on mount and `listen()` hears a change
+ * the shell made, so a face chosen in Settings lands in the same frame rather
+ * than at the next reload.
+ */
+const { sync: syncTypography, listen: listenTypography } = useTypography()
+let unlistenTypography: (() => void) | undefined
+/* --- end of the #370 block ------------------------------------------------- */
 
 onMounted(() => {
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  void syncTypography()
+  unlistenTypography = listenTypography()
+  /* --- end of the #370 block ----------------------------------------------- */
   // Listening BEFORE the pull, deliberately: a state set between the two would
   // otherwise be the one change nobody heard.
   unlistenPanel = listenPanel()
@@ -1158,6 +1177,9 @@ onBeforeUnmount(() => {
   unsubscribe?.()
   unlistenPanel?.()
   unlistenLaunchFailures?.()
+  /* --- Typography preferences (#370) — one block, appended ----------------- */
+  unlistenTypography?.()
+  /* --- end of the #370 block ----------------------------------------------- */
   surfaceObserver?.disconnect()
   motion.dispose()
 })
