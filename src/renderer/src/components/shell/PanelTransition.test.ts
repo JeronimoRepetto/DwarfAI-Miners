@@ -25,14 +25,20 @@ function occlude(hidden: boolean): void {
  * harness has to be able to hand this component the fold it waits on. Optional
  * and last, so every case above it is untouched.
  */
+/*
+ * AMENDED again for #396 with `watchable`, optional and last for the same
+ * reason: a platform that can report the preference but not its changing is a
+ * query with no `addEventListener` on it, and every case above is untouched.
+ */
 function harness(
   reduced = false,
   axis?: 'horizontal' | 'vertical',
-  hold?: (column: HTMLElement) => Promise<void> | null
+  hold?: (column: HTMLElement) => Promise<void> | null,
+  watchable = true
 ) {
   const media = new EventTarget() as MediaQueryList
   Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
-  vi.stubGlobal('matchMedia', () => media)
+  vi.stubGlobal('matchMedia', () => (watchable ? media : { matches: reduced }))
   const animations: { finish: () => void; cancel: ReturnType<typeof vi.fn> }[] = []
   const animate = vi.fn(() => {
     let finish!: () => void
@@ -257,6 +263,24 @@ describe('PanelTransition', () => {
     expect(test.wrapper.find('div').exists()).toBe(true)
     test.wrapper.unmount()
     expect(test.wrapper.find('div').exists()).toBe(false)
+  })
+
+  /*
+   * ADDED for #396. The listener this component keeps of its own is the one
+   * that ends a column held by the shell's FOLD, which has no animation of the
+   * runner's behind it — but it went through a `matchMedia` written out here
+   * for the third time. `sceneMotion` owns the app's one query (#71), and a
+   * platform that answers it without being able to watch it keeps the answer
+   * instead of taking the panel down on the listener.
+   */
+  it('mounts where the reduced-motion query cannot be watched, keeping the answer it gave', async () => {
+    const test = harness(false, undefined, undefined, false)
+    test.shown.value = true
+    await nextTick()
+    expect(test.animate).toHaveBeenCalledOnce()
+    test.animations[0]!.finish()
+    await nextTick()
+    test.wrapper.unmount()
   })
 
   it('uses the same fixed timing for a vertical dock and releases its leave on teardown', async () => {

@@ -447,6 +447,39 @@ describe('App panel motion (#164)', () => {
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: false })
     expect(wrapper.find('.mine-scene').exists()).toBe(false)
   })
+
+  /*
+   * ADDED for #396. The post-flush watcher listed `layoutApplying` among its
+   * sources, so the first settle of every request ran on the flag flipping
+   * true — a whole IPC round trip before `layout` could answer, with nothing
+   * moved and nothing to settle.
+   *
+   * Counted through the ground's clip because that is what a settle writes,
+   * and here it writes it exactly once each: jsdom lays out no box, so the
+   * shell never measures itself as grown and no settle takes the unfolding
+   * branch that writes twice.
+   */
+  it('settles the shell’s ground once for a request, never before the request has moved anything', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    const shell = wrapper.get('.shell').element as HTMLElement
+    const clips: string[] = []
+    let clipPath = shell.style.clipPath
+    Object.defineProperty(shell.style, 'clipPath', {
+      configurable: true,
+      get: () => clipPath,
+      set: (value: string) => {
+        clipPath = value
+        clips.push(value)
+      }
+    })
+    wrapper.findComponent(MapView).vm.$emit('open', mine.id)
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
+    expect(clips).toEqual([''])
+  })
 })
 
 /*

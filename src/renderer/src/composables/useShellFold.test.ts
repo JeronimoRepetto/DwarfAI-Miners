@@ -84,6 +84,27 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
 /** The microtask the batched fold is measured on, plus the promise plumbing. */
 const settled = (): Promise<void> => Promise.resolve().then(() => undefined)
 
+/**
+ * How many times this shell's own computed style is resolved.
+ *
+ * The count is the subject and not an implementation detail (#396): resolving
+ * a style is what forces the browser to recalculate one, and the read that
+ * used to land immediately after `clip-path` was written forced it on an
+ * element whose box had just been invalidated. Filtered to the shell so that
+ * anything else in the environment reading a style cannot be mistaken for the
+ * fold reading its radius.
+ */
+function styleReads(shell: HTMLElement) {
+  const spy = vi.spyOn(window, 'getComputedStyle')
+  return {
+    get count(): number {
+      return spy.mock.calls.filter(([element]) => element === shell).length
+    },
+    forget: (): void => void spy.mockClear(),
+    restore: (): void => void spy.mockRestore()
+  }
+}
+
 describe('useShellFold', () => {
   it('folds the shell down to what the leaving column leaves behind', async () => {
     const test = harness()
@@ -309,6 +330,70 @@ describe('useShellFold', () => {
       { clipPath: 'inset(0px 0px 0px calc(100% - 645px) round 12px)' },
       { clipPath: 'inset(0px 0px 0px calc(100% - 438px) round 12px)' }
     ])
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #396. The radius is the ground's own `border-radius`, read off
+   * the element so the strip a fold ends on has the rail's shape — and reading
+   * it resolves a style. A fold resolved two: one to measure the row it is
+   * folding, and a second inside the run for the radius, in the same microtask
+   * and against the same unchanged element.
+   */
+  /*
+   * ADDED for #396, pinning behaviour the three collapsed tails used to carry
+   * by their ORDER alone: the pinned case was tested before the growing one, so
+   * a fold whose window then caught up with it WIDER than the box the fold
+   * started from never unfolded. It still must not. `painted` is a footprint
+   * the change has already superseded, and sweeping the ground open from it
+   * would animate across pixels the fold never covered.
+   */
+  it('does not unfold from a fold’s footprint when the window catches up wider than it was', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'mine'
+    test.fold.settle(false)
+    void test.fold.hold(test.column(555))
+    await settled()
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 82px) round 12px)')
+    sized(test.shell, 1001)
+    test.fold.settle(false)
+    expect(test.animations).toHaveLength(1)
+    expect(test.shell.style.clipPath).toBe('')
+    test.wrapper.unmount()
+  })
+
+  it('resolves the shell’s style once for a whole fold, not once per step of it', async () => {
+    const test = harness()
+    test.state.remaining = 'mine'
+    const reads = styleReads(test.shell)
+    void test.fold.hold(test.column(555))
+    await settled()
+    expect(test.animations).toHaveLength(1)
+    expect(reads.count).toBe(1)
+    reads.restore()
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #396. The unfold's second read was the expensive one: it came
+   * after `apply` had written the starting clip, so the style it asked for
+   * could not be served from what the browser already had.
+   */
+  it('resolves the shell’s style once for an unfold, and not at all for a settle that stays whole', async () => {
+    const test = harness({ width: 32 })
+    const reads = styleReads(test.shell)
+    test.fold.settle(false)
+    test.fold.settle(false)
+    expect(test.animations).toHaveLength(0)
+    expect(reads.count).toBe(0)
+    reads.forget()
+    test.state.shell = sized(test.shell, 645)
+    test.fold.settle(false)
+    expect(test.animations).toHaveLength(1)
+    expect(reads.count).toBe(1)
+    reads.restore()
     test.wrapper.unmount()
   })
 

@@ -173,13 +173,19 @@ const { hold: holdColumn, settle: settleShellFold } = useShellFold({
  * presentation asked for is the swap holding the union of both compositions,
  * and unfolding into it would paint the pixels the fold is about to take back.
  *
- * All three sources, so that a request which ends without moving anything still
- * settles: a bridge that died mid-shrink leaves `layout` exactly as it was, and
- * a ground left folded under a window that never shrank reads as a panel that
- * collapsed by itself.
+ * TWO sources, where there were three: `layoutApplying` was the third, and the
+ * request it was there for — a bridge that died mid-shrink, leaving the ground
+ * folded under a window that never shrank — reaches these two anyway. Nothing
+ * clips the ground until a column starts leaving, and a column starts leaving
+ * because `send` assigned `visibleLayout` a FRESH object; every way out of that
+ * assigns it again, the success path to what main reported and the failure to
+ * `sync()`, which sets `visibleLayout` from `layout` whether or not the re-read
+ * answered. What the flag added on top was one settle on `applying` flipping
+ * true — a whole IPC round trip before anything had moved, so a no-op by
+ * construction, and two of them on a swap (#396).
  */
 watch(
-  [layout, visibleLayout, layoutApplying],
+  [layout, visibleLayout],
   () =>
     settleShellFold(
       layout.value.expanded !== visibleLayout.value.expanded ||
