@@ -1142,3 +1142,79 @@ describe('preload notifications contract (#316)', () => {
     expect(listener).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * Typography preferences (#370) — APPENDED, nothing above changed.
+ *
+ * Three members. The two request/response ones hold the boundary rule their
+ * neighbours do — the document is rebuilt through the SHARED parser on the way
+ * across, and what comes back is main's verdict untouched — and the third is a
+ * subscription, because this is the one preference BOTH windows paint with.
+ */
+describe('preload typography contract (#370)', () => {
+  it('asks for the stored faces on typography:preferences:get with no payload', async () => {
+    const stored = { interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' }
+    invoke.mockResolvedValueOnce(stored)
+    await expect(api.getTypographyPreferences()).resolves.toEqual(stored)
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:get')
+  })
+
+  it('rebuilds the document through the shared parser before it crosses', async () => {
+    invoke.mockResolvedValueOnce({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
+      interfaceFont: 'roboto',
+      messagingFont: 'arial',
+      theme: 'neon'
+    })
+    // Two checked values and nothing the caller happened to attach.
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
+      interfaceFont: 'roboto',
+      messagingFont: 'arial'
+    })
+  })
+
+  it('refuses Tiny5 for messaging at the bridge, before main ever sees it', async () => {
+    invoke.mockResolvedValueOnce({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+    await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
+      interfaceFont: 'tiny5',
+      messagingFont: 'tiny5'
+    })
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
+      interfaceFont: 'tiny5',
+      messagingFont: 'pixelify-sans'
+    })
+  })
+
+  it('hands back what main STORED, never the request', async () => {
+    const stored = { interfaceFont: 'arial', messagingFont: 'arial' }
+    invoke.mockResolvedValueOnce(stored)
+    await expect(
+      api.setTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'roboto' })
+    ).resolves.toEqual(stored)
+  })
+
+  it('subscribes to the change push on typography:preferences:changed', () => {
+    const listener = vi.fn()
+    const stop = api.onTypographyPreferences(listener)
+    expect(on).toHaveBeenLastCalledWith('typography:preferences:changed', expect.any(Function))
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
+    wrapped(null, { interfaceFont: 'roboto', messagingFont: 'arial' })
+    expect(listener).toHaveBeenCalledWith({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    stop()
+    expect(removeListener).toHaveBeenLastCalledWith('typography:preferences:changed', wrapped)
+  })
+
+  it('reads a malformed push as the defaults rather than dropping it', () => {
+    // Unlike onShowMine, there is no "no answer" state to fall back to: the
+    // page is always painted in SOME face, so an unreadable push has to resolve
+    // to the documented one rather than leave the window on a stale choice.
+    const listener = vi.fn()
+    api.onTypographyPreferences(listener)
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
+    wrapped(null, 'roboto')
+    expect(listener).toHaveBeenCalledWith({
+      interfaceFont: 'tiny5',
+      messagingFont: 'pixelify-sans'
+    })
+  })
+})
