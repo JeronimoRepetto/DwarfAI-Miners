@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount } from 'vue'
 import { createBoundedMotion } from '../../lib/shell/boundedMotion'
+import { watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { panelKeyframes } from '../../lib/shell/panelMotion'
 
 const props = defineProps<{
@@ -100,18 +101,20 @@ function leave(element: Element, done: () => void): void {
  * is a column held by the shell's FOLD, which is somebody else's promise and
  * has no animation of this component's behind it (#388). That is what these two
  * are still for.
+ *
+ * The preference comes from `sceneMotion`, which is where the app asks that one
+ * query (#71): a query written out here as well would be a third mechanism for
+ * one answer, and it is the third that keeps disagreeing with the other two.
  */
-const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
-function reduceMotion(): void {
-  if (media?.matches) releaseAll()
-}
 function releaseHidden(): void {
   if (document.hidden) releaseAll()
 }
-media?.addEventListener('change', reduceMotion)
+const unwatchReduced = watchReducedMotion((reduced) => {
+  if (reduced) releaseAll()
+})
 document.addEventListener('visibilitychange', releaseHidden)
 onBeforeUnmount(() => {
-  media?.removeEventListener('change', reduceMotion)
+  unwatchReduced()
   document.removeEventListener('visibilitychange', releaseHidden)
   releaseAll()
   motion.dispose()

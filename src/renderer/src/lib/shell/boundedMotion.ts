@@ -1,3 +1,4 @@
+import { prefersReducedMotion, watchReducedMotion } from '../scene/sceneMotion'
 import { PANEL_MOTION_EASING, PANEL_MOTION_MS, PANEL_MOTION_WATCHDOG_MS } from './panelMotion'
 
 /**
@@ -69,15 +70,17 @@ export interface BoundedMotion {
 }
 
 export function createBoundedMotion(): BoundedMotion {
-  const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
   const active = new Map<Element, () => void>()
+  /**
+   * The viewer's answer as it stands, from `sceneMotion` rather than a
+   * `matchMedia` of this module's own: the app asks that one query in one
+   * place (#71), and a platform that can report the preference without
+   * watching it change keeps the answer it gave here instead of failing.
+   */
+  let reduced = prefersReducedMotion()
 
   function still(element: Element): boolean {
-    return (
-      Boolean(media?.matches) ||
-      document.hidden ||
-      typeof (element as HTMLElement).animate !== 'function'
-    )
+    return reduced || document.hidden || typeof (element as HTMLElement).animate !== 'function'
   }
 
   function running(element: Element): boolean {
@@ -128,14 +131,14 @@ export function createBoundedMotion(): BoundedMotion {
   function releaseHidden(): void {
     if (document.hidden) releaseAll()
   }
-  function reduceMotion(): void {
-    if (media?.matches) releaseAll()
-  }
-  media?.addEventListener('change', reduceMotion)
+  const unwatchReduced = watchReducedMotion((asked) => {
+    reduced = asked
+    if (reduced) releaseAll()
+  })
   document.addEventListener('visibilitychange', releaseHidden)
 
   function dispose(): void {
-    media?.removeEventListener('change', reduceMotion)
+    unwatchReduced()
     document.removeEventListener('visibilitychange', releaseHidden)
     releaseAll()
   }
