@@ -36,10 +36,8 @@ import {
   refuseAttachment,
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- Message length (#431) — one block, appended ------------------------- */
-  HELD_MESSAGE_MAX_CHARS,
   MAX_DWARF_TEXT_CHARS,
   WINDOWS_COMMAND_LINE_LIMIT,
-  heldRetainedText,
   maxTextCharsFor,
   messageTooLongReason,
   parseDwarfText,
@@ -889,17 +887,14 @@ describe('messageTooLongReason', () => {
   })
 })
 
-describe('heldRetainedText', () => {
-  it('leaves a message inside the retention bound untouched', () => {
-    expect(heldRetainedText('hello')).toBe('hello')
-  })
-
-  it('cuts a longer one at exactly the bound, with no marker', () => {
-    const cut = heldRetainedText('x'.repeat(HELD_MESSAGE_MAX_CHARS + 500))
-    expect(cut).toHaveLength(HELD_MESSAGE_MAX_CHARS)
-    expect(cut.endsWith('…')).toBe(false)
-  })
-})
+/*
+ * `heldRetainedText` and its `describe` block went with #436: the per-row cut
+ * it applied existed only because a held conversation rode every poll's
+ * snapshot, and #436 took the exchange off the wire entirely (see
+ * `HELD_CONVERSATION_LIMIT` in contracts.ts). `heldSession.test.ts`'s
+ * `retainHeldMessage` cases pin what replaced it — a held row retained whole,
+ * however long.
+ */
 /* --- end of the #431 block ------------------------------------------------- */
 
 describe('parseDwarfText', () => {

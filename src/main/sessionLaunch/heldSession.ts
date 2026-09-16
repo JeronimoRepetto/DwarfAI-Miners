@@ -4,7 +4,7 @@ import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
 // shared/heldSessionText.ts for why this cannot stay a local constant.
 import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
-import { HELD_CONVERSATION_LIMIT, heldRetainedText, isMcpConnectionStatus } from '../domain/types'
+import { HELD_CONVERSATION_LIMIT, isMcpConnectionStatus } from '../domain/types'
 import type {
   Dwarf,
   DwarfContextUsage,
@@ -707,18 +707,22 @@ export function isReplayedUserMessage(message: unknown): boolean {
  * store also retains ride between them. A row slice counted them as messages,
  * so a held session that had run twelve tools since it last spoke pushed every
  * word out of its own conversation.
+ *
+ * No per-row cut any more (#436 removed `HELD_MESSAGE_MAX_CHARS` and
+ * `heldRetainedText`, the wire's own rule for it): a held row rode every poll's
+ * snapshot until #436, and the cut existed to keep that push bounded. Now that
+ * `Runtime.dwarfFeed` answers this store's rows on demand, `FEED_LIMIT` at a
+ * time, the only bound left is HELD_CONVERSATION_LIMIT itself — how many rows
+ * this store keeps, never how long one may be. The echo reconciliation this
+ * cut used to require its own branch for (`isHeldTruncationOf`, in the
+ * renderer's echo.ts) is gone with it: a held row is exactly the words the
+ * session said, so a plain equality check is enough again.
  */
 export function retainHeldMessage(
   kept: readonly FeedMessage[],
   message: FeedMessage
 ): FeedMessage[] {
-  // The cut goes through the wire's own `heldRetainedText` rather than a
-  // `.slice` written here (#431): the renderer's echo reconciliation has to
-  // apply the SAME rule to the words it is holding before it can recognise the
-  // row this store keeps, and two spellings of one cut is how one of them
-  // drifts — the failure `stripRelayProvenance` exists to prevent, one store
-  // further along.
-  const text = heldRetainedText(redactSecrets(message.text.trim()))
+  const text = redactSecrets(message.text.trim())
   if (text === '') return [...kept]
   return trimFeed([...kept, { ...message, text }], HELD_CONVERSATION_LIMIT)
 }

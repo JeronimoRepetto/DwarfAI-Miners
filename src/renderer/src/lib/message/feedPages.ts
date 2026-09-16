@@ -1,4 +1,4 @@
-import { HELD_MESSAGE_MAX_CHARS, type FeedMessage, type FeedPageCursor } from '../../types'
+import type { FeedMessage, FeedPageCursor } from '../../types'
 
 /**
  * Older pages of one dwarf's conversation, and the seam where they meet the
@@ -70,7 +70,7 @@ export function feedPageCursorOf(messages: readonly FeedMessage[]): FeedPageCurs
  * Whether one row of a HELD session's own exchange can name a place in that
  * session's transcript (#430).
  *
- * Three conditions, and each of them is a difference measured between the two
+ * Two conditions, and each of them is a difference measured between the two
  * spellings of one turn rather than a precaution:
  *
  * - **Something SAID**, exactly as `feedPageCursorOf` requires above: a page is
@@ -86,13 +86,13 @@ export function feedPageCursorOf(messages: readonly FeedMessage[]): FeedPageCurs
  *   `heldMessageEntries`, and `docs/console-hosting.md` §6 for what a typed
  *   send looks like instead). Anchoring on the agent's turn costs at most a
  *   repeat of the person's row above it — visible, where a gap would not be.
- * - **Not truncated on the way in.** `retainHeldMessage` caps a held row at
- *   HELD_MESSAGE_MAX_CHARS and the transcript keeps the reply whole, so a long
- *   reply's two spellings are not the same string and no normalization makes
- *   them one. A row at the cap is skipped rather than guessed at: a cursor the
- *   transcript does not contain would come back as an empty page claiming the
- *   conversation had reached its start, which is the one answer worse than
- *   asking for nothing.
+ *
+ * AMENDED for #436 (was three conditions: a row at or past
+ * `HELD_MESSAGE_MAX_CHARS` was skipped, because `retainHeldMessage` cut a held
+ * row there while the transcript kept the reply whole, so the two spellings
+ * could never be the same string). Nothing is cut on the way in any more, so a
+ * held reply is exactly the words the transcript will carry whatever its
+ * length, and it can anchor a page regardless of how long it ran.
  *
  * The whitespace between the two is absorbed by `normalizeConsoleText` where
  * the match itself happens, in `main/providers/feedWindow.ts`'s `cursorIndex`;
@@ -100,8 +100,7 @@ export function feedPageCursorOf(messages: readonly FeedMessage[]): FeedPageCurs
  */
 function canAnchorAPage(message: FeedMessage): boolean {
   if (message.activity !== undefined) return false
-  if (message.role !== 'assistant') return false
-  return message.text.length < HELD_MESSAGE_MAX_CHARS
+  return message.role === 'assistant'
 }
 
 /**

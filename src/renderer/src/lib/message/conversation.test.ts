@@ -192,6 +192,35 @@ describe('conversationOf', () => {
 })
 
 /**
+ * The acceptance case #436 exists for (from the issue itself): "Launch a
+ * Claude session from the Add Panel and ask it for a 5,000-character answer:
+ * the panel shows all of it." Pinned here at ten times that length and on
+ * both kinds of session, since the held path used to cut at
+ * HELD_MESSAGE_MAX_CHARS (2,000) and the observed path never did.
+ */
+describe('conversationOf: a long reply arrives whole', () => {
+  const LONG = 'x'.repeat(200_000)
+
+  it("draws a held session's 200,000-character reply whole, with no cut at all", () => {
+    const shown = conversationOf(
+      defaultDwarf(),
+      heldFeed([{ role: 'assistant', text: LONG, timestamp: 't0' }])
+    )
+    expect(shown.messages[0]!.text).toHaveLength(200_000)
+    expect(shown.messages[0]!.text).toBe(LONG)
+  })
+
+  it("draws an observed session's 200,000-character reply whole, same as always", () => {
+    const shown = conversationOf(defaultDwarf(), {
+      readable: true,
+      messages: [{ role: 'assistant', text: LONG, timestamp: 't0' }]
+    })
+    expect(shown.messages[0]!.text).toHaveLength(200_000)
+    expect(shown.messages[0]!.text).toBe(LONG)
+  })
+})
+
+/**
  * WHOSE words a row is (#175). The wire names the issuer of a `user` turn no
  * human typed; what that does to the row is decided here, not in the panel.
  */

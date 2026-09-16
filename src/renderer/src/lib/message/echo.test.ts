@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
-import {
-  HELD_MESSAGE_MAX_CHARS,
-  RELAY_PROVENANCE_LINE,
-  heldRetainedText,
-  type DwarfAttachment,
-  type FeedMessage
-} from '../../types'
+import { RELAY_PROVENANCE_LINE, type DwarfAttachment, type FeedMessage } from '../../types'
 import { groupActivity } from './activityGroup'
 import type { PanelMessage } from './conversation'
 import {
@@ -549,78 +543,33 @@ describe('boundEchoes', () => {
   })
 })
 
-/* --- Long messages and truncated rows (#431) — one block, appended --------- */
+/* --- Long messages (#431) — one block, appended ---------------------------- */
 
 /*
  * Issue #431 raised the message ceiling from a 4,000-character keystroke budget
- * to what a channel can really carry, which put two things in front of the
- * reconciliation that had never been there: a row far longer than any message
- * this panel used to allow, and — on a held session — a row the store CUT.
+ * to what a channel can really carry, which put a row far longer than any
+ * message this panel used to allow in front of the reconciliation for the
+ * first time.
  *
  * The observed feed publishes a user turn whole: nothing in the Claude
  * transcript parse truncates one, and `trimFeed` bounds how MANY rows a feed
- * carries, never how long one is. The held store is the one that cuts, at
- * HELD_MESSAGE_MAX_CHARS and with no marker (`retainHeldMessage`), because that
- * conversation rides every poll's snapshot.
+ * carries, never how long one is. A held row used to differ — the store cut it
+ * at HELD_MESSAGE_MAX_CHARS with no marker, because that conversation rode
+ * every poll's snapshot — which is what the truncation-matching cases this
+ * block once carried were for. #436 removed that cut along with the field it
+ * protected (`Dwarf.conversation` left the wire), so a held row is compared by
+ * plain equality now, exactly like an observed one, and this is the one case
+ * left to pin.
  */
-describe('reconcileEchoes: a message longer than the old cap (#431)', () => {
+describe('reconcileEchoes: a message longer than the old cap', () => {
   const LONG = 'dig '.repeat(2_600).trim()
 
-  it('retires an echo whose observed row carries all ten thousand characters', () => {
-    // The observed feed truncates nothing, so this is a plain equality — and
-    // the case the panel used to be unable to produce at all.
+  it('retires an echo whose row carries all ten thousand characters, whole', () => {
+    // Neither feed truncates a user row today — the case the panel used to be
+    // unable to produce at all.
     expect(LONG.length).toBeGreaterThan(10_000)
     const kept = reconcileEchoes([echo({ text: LONG })], [turn({ text: LONG })])
     expect(kept).toEqual([])
-  })
-
-  it('retires an echo whose HELD row is exactly the truncation of its words', () => {
-    // The row the held store kept, built the way `retainHeldMessage` builds it.
-    const row = turn({ text: heldRetainedText(LONG) })
-    expect(row.text).toHaveLength(HELD_MESSAGE_MAX_CHARS)
-    expect(reconcileEchoes([echo({ text: LONG })], [row])).toEqual([])
-  })
-
-  it('keeps an echo whose row merely STARTS with the same words', () => {
-    // The whole reason this is a truncation check and not a prefix one: a row
-    // that begins with the person's sentence and goes on is a different row,
-    // and crediting it would throw away the only copy of their words.
-    const prefix = turn({ text: heldRetainedText(LONG).slice(0, 500) })
-    expect(reconcileEchoes([echo({ text: LONG })], [prefix])).toEqual([echo({ text: LONG })])
-  })
-
-  it('keeps an echo whose row is a cut of a DIFFERENT long message', () => {
-    const other = 'hew '.repeat(2_500).trim()
-    const row = turn({ text: heldRetainedText(other) })
-    expect(reconcileEchoes([echo({ text: LONG })], [row])).toEqual([echo({ text: LONG })])
-  })
-
-  it('never reads a short row as a truncation, since nothing could have cut it', () => {
-    // A message inside the bound is retained whole, so a row shorter than the
-    // bound is evidence about its own words and nothing else.
-    const short = 'dig deeper'
-    expect(reconcileEchoes([echo({ text: short })], [turn({ text: 'dig' })])).toEqual([
-      echo({ text: short })
-    ])
-  })
-
-  it('leaves a long echo with attachments alone rather than guessing at its cut row', () => {
-    // A held row puts the attached files' own lines AHEAD of the words and cuts
-    // the whole string, so what survives the cut is not the truncation of the
-    // echo's words — it is the truncation of something this panel did not build.
-    // Refusing to match is the safe direction: the echo stays and expires.
-    const shot: DwarfAttachment = {
-      path: 'C:\\shots\\seam.png',
-      name: 'seam.png',
-      kind: 'image',
-      bytes: 10
-    }
-    const one = echo({
-      text: LONG,
-      state: { phase: 'delivered', via: 'held-session', awaitingReaction: true }
-    })
-    const row = turn({ text: heldRetainedText(`${HELD_IMAGE_PLACEHOLDER}\n${LONG}`) })
-    expect(reconcileEchoes([one], [row], { e1: [shot] })).toEqual([one])
   })
 })
 /* --- end of the #431 block ------------------------------------------------- */

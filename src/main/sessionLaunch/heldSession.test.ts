@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
+import { FEED_ACTIVITY_LIMIT } from '../providers/feedWindow'
 import {
   HELD_CONVERSATION_LIMIT,
-  HELD_MESSAGE_MAX_CHARS,
   defaultDwarf,
   defaultMine,
   type DwarfPermissionRequest,
@@ -1092,13 +1092,18 @@ describe('retainHeldMessage', () => {
     expect(kept.at(-1)!.text).toBe(`line ${HELD_CONVERSATION_LIMIT + 4}`)
   })
 
-  it('caps one message at HELD_MESSAGE_MAX_CHARS', () => {
-    const kept = retainHeldMessage([], {
-      role: 'assistant',
-      text: 'x'.repeat(HELD_MESSAGE_MAX_CHARS + 500),
-      timestamp: at
-    })
-    expect(kept[0]!.text).toHaveLength(HELD_MESSAGE_MAX_CHARS)
+  /*
+   * AMENDED for #436. This was "caps one message at HELD_MESSAGE_MAX_CHARS",
+   * pinning the per-row cut `heldRetainedText` applied — deleted along with the
+   * constant, since a held row no longer rides the snapshot and nothing needs
+   * shortening on the way in. The acceptance case for what replaced it is
+   * below: a reply far longer than the old cap comes back whole.
+   */
+  it('retains a 200,000-character reply whole, with no cut at all', () => {
+    const long = 'x'.repeat(200_000)
+    const kept = retainHeldMessage([], { role: 'assistant', text: long, timestamp: at })
+    expect(kept[0]!.text).toHaveLength(200_000)
+    expect(kept[0]!.text).toBe(long)
   })
 
   it('redacts on the way IN, so nothing retained can ship a secret later', () => {
@@ -1116,15 +1121,27 @@ describe('retainHeldMessage', () => {
     expect(retainHeldMessage(kept, { role: 'assistant', text: '   ', timestamp: at })).toEqual(kept)
   })
 
+  /*
+   * AMENDED for #436 (was: expecting all `HELD_CONVERSATION_LIMIT + 3` tool
+   * calls to survive). That held while HELD_CONVERSATION_LIMIT was twelve —
+   * far under `FEED_ACTIVITY_LIMIT` (200), the SEPARATE cap `trimFeed` applies
+   * to activity rows regardless of the SAID limit. #436 raised
+   * HELD_CONVERSATION_LIMIT to 200 too, so the two now collide at the same
+   * number, and asking for `HELD_CONVERSATION_LIMIT + 3` (203) tool calls
+   * trims to the activity cap's 200 rather than keeping all 203. The point
+   * this pins is unchanged: things SAID are anchored regardless of how many
+   * tool calls follow, and the tool-call count is bounded on its own axis.
+   */
   it('spends the limit on things said, keeping both replies behind a long tool run (#359)', () => {
-    // The observed feed's defect in the held store (#359): twelve tool calls
-    // after the last reply used to push every word out, so a held session that
-    // had been working for a while showed a folded run and nothing said.
+    // The observed feed's defect in the held store (#359): tool calls after
+    // the last reply used to push every word out, so a held session that had
+    // been working for a while showed a folded run and nothing said.
     let kept: FeedMessage[] = []
     for (const text of ['dig here', 'Digging.']) {
       kept = retainHeldMessage(kept, { role: 'assistant', text, timestamp: at })
     }
-    for (let index = 0; index < HELD_CONVERSATION_LIMIT + 3; index++) {
+    const toolCallsFired = HELD_CONVERSATION_LIMIT + 3
+    for (let index = 0; index < toolCallsFired; index++) {
       kept = retainHeldMessage(kept, {
         role: 'assistant',
         text: `Ran pnpm test --shard ${index}`,
@@ -1137,7 +1154,7 @@ describe('retainHeldMessage', () => {
       'Digging.'
     ])
     expect(kept.filter((message) => message.activity !== undefined)).toHaveLength(
-      HELD_CONVERSATION_LIMIT + 3
+      Math.min(toolCallsFired, FEED_ACTIVITY_LIMIT)
     )
   })
 

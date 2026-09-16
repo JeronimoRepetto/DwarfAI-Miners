@@ -2083,62 +2083,34 @@ export function stripRelayProvenance(text: string): string {
 }
 
 /**
- * How many of a held session's own messages this app keeps in MAIN's memory,
- * and how much of any one of them.
+ * How many of a held session's own messages this app keeps in MAIN's memory
+ * (#436) — the registry's own memory now, and nothing else.
  *
- * Both were ceilings on something that rode EVERY poll's snapshot, which was
- * the whole reason they existed: a session that ran all afternoon must not grow
- * the push, and one that pasted a file into its reply must not either. Twelve
- * matched the transcript feed's own limit, so a held session and an observed
- * one showed a comparable amount of history rather than two arbitrary depths.
+ * It used to be a ceiling on something that rode EVERY poll's snapshot: twelve,
+ * matching the transcript feed's own limit, because a session that ran all
+ * afternoon must not grow the push. #436 took the exchange off the snapshot —
+ * `Runtime.dwarfFeed` answers it on demand, `FEED_LIMIT` rows at a time,
+ * exactly as an observed session's tail is answered — so that reason is gone,
+ * and so is the per-row cut that rode beside it (`HELD_MESSAGE_MAX_CHARS`,
+ * `heldRetainedText`): a held row is no longer shortened on the way in, and a
+ * dozen was never a generous number, only an affordable one.
  *
- * #436 took the exchange off the snapshot — `Runtime.dwarfFeed` now answers it
- * on demand, `FEED_LIMIT` rows at a time, exactly as an observed session's tail
- * is answered — so neither number defends the transport any more. What is left
- * is the registry's own memory, and the per-row cut below is the next commit's
- * to remove.
+ * 200 now, because the only cost left is one session's own memory and it dies
+ * with the session: a typical retained row is a few hundred bytes, so 200 of
+ * them is on the order of 400 KB for one held session — and even the worst
+ * case, 200 messages at MAX_DWARF_TEXT_CHARS (250,000) each, is only about
+ * 40 MB, bounded and gone the moment the session ends. Still a bound rather
+ * than "keep everything": a session that ran for days must not grow without
+ * end either, and 200 is far past what a reader ever pages back into before
+ * the transcript on disk takes over.
  *
- * Twelve things SAID, in both places (#359). A retained conversation also
- * carries one row per tool call (#240), and counting those against this number
- * emptied the panel of words for a session that had been working a while; the
- * shared rule that trims both feeds is `trimFeed` in
- * `main/providers/feedWindow.ts`, and it bounds the activity rows separately.
- *
- * The cap is short of MAX_DWARF_TEXT_CHARS on purpose: that one bounds what a
- * user may SEND, once, and this one bounds what a dozen retained messages cost
- * on every push forever. #431 widened the gap rather than closing it — a wire
- * ceiling derived from the command line is nearly eight times this — and left
- * this number alone for exactly the reason above: raising it would cost every
- * poll of every held session, forever, to spare one bubble a cut. What changed
- * is that the CUT is now accounted for instead of ignored; see
- * `heldRetainedText`.
+ * Also bounds the tool-call rows a held session retains (#240, #359): a
+ * retained conversation carries one row per tool call between replies, and
+ * `trimFeed` in `main/providers/feedWindow.ts` is the shared rule that trims
+ * both feeds and bounds the activity rows separately, so a long run of tool
+ * calls cannot push every word this session said out of its own record.
  */
-export const HELD_CONVERSATION_LIMIT = 12
-export const HELD_MESSAGE_MAX_CHARS = 2000
-
-/**
- * One retained message's words, cut to what a held session's conversation keeps
- * (#431) — the rule `retainHeldMessage` applies, named here so the renderer can
- * apply the SAME one.
- *
- * It exists because of what the cut costs downstream. The panel draws the
- * person's own message immediately, as an echo, and retires it when the
- * session's own record accounts for it (#309) — and for a held session that
- * record is this store's row. A message longer than the bound therefore
- * produces a row the echo could never equal, so the bubble was drawn twice and
- * its ✓ could never become ✓✓ (#419, #424, #428 are the same failure met three
- * other ways). `accountsFor` in the renderer now truncates the echo through
- * this function and compares, which is an EXACT match against a known rule
- * rather than a prefix heuristic that would credit any row starting with the
- * right words.
- *
- * A plain cut with NO marker, deliberately: the store has never written one,
- * and adding an ellipsis here to make the truncation visible would change what
- * a dozen sessions' conversations look like for the sake of one comparison.
- */
-export function heldRetainedText(text: string): string {
-  return text.slice(0, HELD_MESSAGE_MAX_CHARS)
-}
+export const HELD_CONVERSATION_LIMIT = 200
 
 /**
  * KB boundaries at which a mine's SOURCE-CODE BYTE WEIGHT crosses into the

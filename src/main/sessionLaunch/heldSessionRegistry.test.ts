@@ -1650,13 +1650,18 @@ describe('HeldSessionRegistry conversation', () => {
       prompt: 'dig here'
     })
     port.reportSessionId(0, 'sess-1')
-    for (let index = 0; index < 100; index++) port.reportMessage(0, 'assistant', `line ${index}`)
+    // AMENDED for #436 (was a hardcoded 100, comfortably past the old bound of
+    // twelve): HELD_CONVERSATION_LIMIT is 200 now, so the loop has to outrun
+    // whatever that number is rather than a number that used to be enough.
+    const messagesSent = HELD_CONVERSATION_LIMIT + 5
+    for (let index = 0; index < messagesSent; index++)
+      port.reportMessage(0, 'assistant', `line ${index}`)
 
     const state = registry.conversationState('sess-1')
     expect(state.held ? state.conversation : []).toHaveLength(HELD_CONVERSATION_LIMIT)
     // The prompt has aged out along with everything else: the bound is on the
     // whole list, not on "the prompt plus the last N".
-    expect(state.held ? state.conversation.at(-1)!.text : '').toBe('line 99')
+    expect(state.held ? state.conversation.at(-1)!.text : '').toBe(`line ${messagesSent - 1}`)
   })
 
   it('retains nothing for a session this panel does not hold', async () => {

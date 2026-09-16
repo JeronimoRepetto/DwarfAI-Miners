@@ -36,8 +36,7 @@ const PERMISSION_SUMMARY_FIELDS = ['command', 'file_path', 'pattern', 'path', 'u
 
 /**
  * The cap on a permission prompt's input summary. A pasted file, or a command
- * with a long inline payload, must never become the whole card — the same
- * reasoning HELD_MESSAGE_MAX_CHARS applies to a held message.
+ * with a long inline payload, must never become the whole card.
  */
 export const PERMISSION_INPUT_MAX_CHARS = 240
 
