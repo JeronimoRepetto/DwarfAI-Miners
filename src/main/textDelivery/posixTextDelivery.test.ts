@@ -156,11 +156,18 @@ describe('PosixTextDelivery.relayToClaudeSession', () => {
     expect(runRelay.mock.calls[0]?.[0].command).toBe('/home/j/.local/bin/claude')
   })
 
-  it('names the timeout when the relay ran out of time', async () => {
+  // AMENDED for #439 (was: 'names the timeout when the relay ran out of
+  // time', asserting only `delivered: false` and an error matching
+  // /timed out/i). A courier killed by its own timeout may already have
+  // delivered the message, so this is no longer an ordinary failure — see
+  // relayRunner.test.ts, which pins the full reasoning on `deliverViaRelay`
+  // itself.
+  it('calls a killed relay unconfirmed rather than failed', async () => {
     const port = delivery({ runRelay: vi.fn().mockResolvedValue({ exitCode: 1, timedOut: true }) })
     const result = await port.relayToClaudeSession({ sessionName: 'x', text: 'hi' })
     expect(result.delivered).toBe(false)
-    expect(result.error).toMatch(/timed out/i)
+    expect(result.unconfirmed).toBe(true)
+    expect(result.error).toBe('The relay did not confirm in time; the message may have arrived.')
   })
 
   it('turns a failed spawn into a failed verdict instead of a rejection', async () => {

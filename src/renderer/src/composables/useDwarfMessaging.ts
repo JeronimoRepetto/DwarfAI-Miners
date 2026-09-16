@@ -234,17 +234,27 @@ async function deliver(
     result = { delivered: false, via: 'none', error: 'The panel lost contact with the app.' }
   }
 
+  // A relay courier killed by its own timeout (#439) is neither a proven
+  // delivery nor a proven failure — see DwarfTextResult.unconfirmed — and it
+  // must not draw as the latter: a ✕ with `Send again` risks handing the same
+  // words to the session twice. So it takes the 'delivered' phase, exactly
+  // like a confirmed one, carrying the flag that tells the marker and the
+  // status line to say so rather than to claim a hand-over this app never saw
+  // confirmed.
+  const unconfirmed = !result.delivered && result.unconfirmed === true
   const next: DwarfSendState = {
-    phase: result.delivered ? 'delivered' : 'failed',
+    phase: result.delivered || unconfirmed ? 'delivered' : 'failed',
     via: result.via
   }
   if (result.error !== undefined) next.error = result.error
-  if (result.delivered) next.awaitingReaction = true
+  if (result.delivered || unconfirmed) next.awaitingReaction = true
+  if (unconfirmed) next.unconfirmed = true
   state.byDwarfId[dwarfId] = next
   markEcho(dwarfId, echoId, next)
 
-  // A failure has nothing to wait for; a delivery does.
-  if (result.delivered) startWatch(dwarfId, echoId)
+  // A failure has nothing to wait for; a delivery does — and an unconfirmed
+  // relay decays exactly like one, per DwarfSendState.unconfirmed.
+  if (result.delivered || unconfirmed) startWatch(dwarfId, echoId)
   else scheduleClear(dwarfId)
 
   return result.delivered

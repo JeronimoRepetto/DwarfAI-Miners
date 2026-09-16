@@ -2441,6 +2441,16 @@ export interface DwarfTextResult {
   via: TextDeliveryChannel | 'none'
   /** Human-readable reason shown in the panel when delivered is false. */
   error?: string
+  /**
+   * True when the relay's own courier was killed by its timeout rather than
+   * answering with a verdict at all (#439) — see TextDeliveryOutcome.unconfirmed
+   * in main/textDelivery/port.ts for the full reasoning. `delivered: false`
+   * alongside this means neither "confirmed delivered" nor "confirmed failed":
+   * the courier may already have handed the message over before it was killed,
+   * so the panel draws it like a delivery it is still watching for a reaction
+   * to (see DwarfSendState.unconfirmed), never a ✕ with `Send again`.
+   */
+  unconfirmed?: boolean
 }
 
 /** One request to cancel a dwarf's current work. No user text is ever involved. */
@@ -2500,6 +2510,18 @@ export interface DwarfSendState {
    * proof the session acted. False once that bounded window closed unobserved.
    */
   awaitingReaction?: boolean
+  /**
+   * True on a 'delivered' state that got there because a relay courier was
+   * killed by its own timeout, not because anything confirmed the hand-over
+   * (#439) — carried straight from DwarfTextResult.unconfirmed. Read only
+   * alongside `phase === 'delivered'`, and never on 'failed': the whole point
+   * is that this is NOT the same claim as a failure, so it decays exactly like
+   * an ordinary delivered message (the reaction watch may still promote it to
+   * 'reacted') while the marker keeps showing its own honest sentence instead
+   * of the plain "watching" or "no reaction seen" copy — see
+   * renderer/lib/delivery/deliveryVerdict.ts.
+   */
+  unconfirmed?: boolean
 }
 
 /**

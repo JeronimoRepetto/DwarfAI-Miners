@@ -2094,6 +2094,62 @@ describe('AgentRuntime.sendDwarfText', () => {
   })
 
   /*
+   * #439. A courier killed by its own timeout may already have called
+   * SendMessage before it was asked to exit, so the runtime must not report
+   * the same plain failure a genuine refusal gets — see
+   * TextDeliveryOutcome.unconfirmed and DwarfTextResult.unconfirmed.
+   */
+  it('calls a killed relay unconfirmed rather than failed, so nothing resends it', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({
+        delivered: false,
+        unconfirmed: true,
+        error: 'The relay did not confirm in time; the message may have arrived.'
+      }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' } },
+      port
+    )
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'a very long message', pressEnter: true })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'claude-relay',
+      unconfirmed: true,
+      error: 'The relay did not confirm in time; the message may have arrived.'
+    })
+  })
+
+  // A relay that exits non-zero quickly is a genuine failure and stays one:
+  // no `unconfirmed` flag, so the panel draws its ordinary ✕.
+  it('still reports a fast non-zero relay exit as a plain failure', async () => {
+    const port = {
+      sendToConsole: vi.fn(),
+      relayToClaudeSession: vi.fn().mockResolvedValue({
+        delivered: false,
+        error: 'The relay could not deliver the message (exit 2).'
+      }),
+      sendInterrupt: vi.fn()
+    } satisfies TextDeliveryPort
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' } },
+      port
+    )
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'hi', pressEnter: true })
+    ).resolves.toEqual({
+      delivered: false,
+      via: 'claude-relay',
+      error: 'The relay could not deliver the message (exit 2).'
+    })
+  })
+
+  /*
    * #378. The relay hands the text to Claude Code's own SendMessage, which
    * wraps it in a `<cross-session-message>` envelope and tells the receiving
    * agent the words came from another Claude session rather than from its user

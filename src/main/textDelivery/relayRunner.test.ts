@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  RELAY_MS_PER_CHAR,
   deliverViaRelay,
+  relayTimeoutMsFor,
   runRelayProcess,
   type RelayExecFile,
   type RelayRunner
@@ -49,6 +51,49 @@ const invocation = {
   cwd: 'C:\\Users\\j',
   timeoutMs: 60_000
 }
+
+/*
+ * Issue #439. A courier turn's own duration grows with the instruction, and a
+ * fixed timeout eventually kills a turn whose only remaining work was to
+ * exit. These four points pin the curve `relayTimeoutMsFor` draws: the two
+ * measured turns (200 and 40,000 characters), MAX_CODEX_QUEUE_TEXT_CHARS
+ * (15,359, contracts.ts — a familiar number in this codebase, though this
+ * route has no such ceiling of its own), and MAX_DWARF_TEXT_CHARS (250,000,
+ * the wire's own sanity ceiling — the longest message this function is ever
+ * asked to time).
+ */
+describe('relayTimeoutMsFor', () => {
+  const BASE_MS = 60_000 // SENDTEXT_TIMEOUT_S's default, in milliseconds.
+
+  it('names the per-character rate this app actually budgets', () => {
+    // Comfortably above the measured (155,000 - 6,400) / (40,000 - 200) ≈
+    // 3.73 ms/char, deliberately not pinned to it.
+    expect(RELAY_MS_PER_CHAR).toBe(5)
+  })
+
+  it('adds the base to a 200-character message (the short measurement)', () => {
+    expect(relayTimeoutMsFor(BASE_MS, 200)).toBe(61_000)
+  })
+
+  it('scales for 15,359 characters (MAX_CODEX_QUEUE_TEXT_CHARS)', () => {
+    expect(relayTimeoutMsFor(BASE_MS, 15_359)).toBe(136_795)
+  })
+
+  it('gives the 40,000-character measurement a comfortable margin over the 155s it took', () => {
+    const timeoutMs = relayTimeoutMsFor(BASE_MS, 40_000)
+    expect(timeoutMs).toBe(260_000)
+    expect(timeoutMs).toBeGreaterThan(155_000)
+  })
+
+  it('shows the budget the wire sanity ceiling implies, at 250,000 characters', () => {
+    // Documented in docs/guide.md: about 21.8 minutes at the default base.
+    expect(relayTimeoutMsFor(BASE_MS, 250_000)).toBe(1_310_000)
+  })
+
+  it('is the base alone for an empty message', () => {
+    expect(relayTimeoutMsFor(BASE_MS, 0)).toBe(BASE_MS)
+  })
+})
 
 describe('runRelayProcess', () => {
   it('puts nothing of the instruction in argv', async () => {
@@ -178,12 +223,31 @@ describe('deliverViaRelay', () => {
     expect(call?.args.join(' ').length).toBeLessThan(200)
   })
 
-  it('names the timeout rather than claiming nothing was handed over', async () => {
+  // AMENDED for #439 (was: 'names the timeout rather than claiming nothing was
+  // handed over', asserting only `delivered: false` and an error matching
+  // /timed out/i). A courier killed by ITS OWN timeout may already have
+  // called SendMessage before the kill landed — the delivery happens partway
+  // through the turn, before the courier's own reply — so this is no longer
+  // reported as an ordinary failure. `unconfirmed` says so, and the panel
+  // reads it to draw a ✓ with its own sentence rather than a ✕ with `Send
+  // again` (see the renderer's deliveryVerdict.ts and useDwarfMessaging.ts).
+  it('calls a killed relay unconfirmed, never a proven failure', async () => {
     const run = vi.fn<RelayRunner>().mockResolvedValue({ exitCode: 1, timedOut: true })
     const outcome = await deliverViaRelay(options(run))
     expect(outcome.delivered).toBe(false)
-    expect(outcome.error).toMatch(/timed out/i)
+    expect(outcome.unconfirmed).toBe(true)
+    expect(outcome.error).toBe('The relay did not confirm in time; the message may have arrived.')
     expect(outcome.neverStarted).toBeUndefined()
+  })
+
+  it("scales the child's own timeout with the message, rather than passing the base through", async () => {
+    const run = vi.fn<RelayRunner>().mockResolvedValue({ exitCode: 0, timedOut: false })
+    const text = 'x'.repeat(15_359)
+    await deliverViaRelay({ ...options(run), text })
+
+    // options(run).timeoutMs is the 60,000ms BASE; relayTimeoutMsFor adds
+    // RELAY_MS_PER_CHAR for every one of the 15,359 characters on top of it.
+    expect(run.mock.calls[0]?.[0].timeoutMs).toBe(relayTimeoutMsFor(60_000, 15_359))
   })
 
   it('leaves a non-zero exit unmarked, because the tool call may already have landed', async () => {
