@@ -64,7 +64,8 @@ import {
   /* --- Message attachments (#408) — one block, appended -------------------- */
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
-  parseDwarfAttachments
+  parseDwarfAttachments,
+  parseDwarfText
   /* --- end of the #408 block ----------------------------------------------- */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
@@ -231,7 +232,13 @@ function removeIpcHandlers(): void {
 function parseTextRequest(payload: unknown): DwarfTextRequest | null {
   if (typeof payload !== 'object' || payload === null) return null
   const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string' || typeof record.text !== 'string') return null
+  if (typeof record.dwarfId !== 'string') return null
+  // The one field that can refuse a well-formed request on its CONTENT (#431):
+  // a message past the wire ceiling is one no channel could carry, so the
+  // whole request goes down rather than arriving cut. See parseDwarfText for
+  // why the handler's generic sentence is the honest one here.
+  const text = parseDwarfText(record.text)
+  if (text === null) return null
   // All-or-nothing, and the one field here that can refuse the whole request
   // (#408): a list trimmed to what fits would deliver some of somebody's files
   // and report success. The limits it reads are the wire's own, so this cannot
@@ -240,7 +247,7 @@ function parseTextRequest(payload: unknown): DwarfTextRequest | null {
   if (attachments === null) return null
   return {
     dwarfId: record.dwarfId,
-    text: record.text,
+    text,
     pressEnter: record.pressEnter === true,
     ...(attachments.length === 0 ? {} : { attachments })
   }

@@ -18,9 +18,16 @@ describe('prepareLaunchPrompt', () => {
     expect(prepareLaunchPrompt('   \n\t ')).toBe('')
   })
 
-  it('caps the prompt at the same limit a delivered message gets', () => {
+  // AMENDED for #431 (was: 'caps the prompt at the same limit a delivered
+  // message gets', asserting a prompt of MAX_DWARF_TEXT_CHARS + 500 came back
+  // at exactly the ceiling). That ceiling is the command line a MESSAGE's
+  // channel is spawned with, and this prompt travels on the child's own stdin —
+  // the module header says so and is the evidence — so there was never a bound
+  // here to enforce, only the keystroke budget of #10 borrowed from somewhere
+  // else. What replaces it asserts the opposite: nothing is cut.
+  it('hands a very long prompt over whole, having no command line to fit inside', () => {
     const long = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 500)
-    expect(prepareLaunchPrompt(long)).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    expect(prepareLaunchPrompt(long)).toBe(long)
   })
 
   it('leaves the words alone: the prompt is the user text, not an instruction wrapped around it', () => {

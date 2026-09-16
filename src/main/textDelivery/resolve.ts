@@ -1,4 +1,4 @@
-import { channelCarriesAttachments } from '../domain/types'
+import { channelCarriesAttachments, maxTextCharsFor } from '../domain/types'
 import type { Mine, TextDeliveryChannel } from '../domain/types'
 import type { KickEndpoint, SendEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './port'
 
@@ -394,7 +394,8 @@ export function stampTextDelivery(
       if (dwarf.status === 'leaving') return dwarf
       const hops = followForemanHops(dwarf.id, targetOf)
       if (hops === null) return dwarf
-      const sendChannel = sendRouteOf(hops, consoleInput)?.channel ?? null
+      const sendRoute = sendRouteOf(hops, consoleInput)
+      const sendChannel = sendRoute?.channel ?? null
       const kickChannel = kickEndpointOf(hops) === null ? null : hops.channel
       return {
         ...dwarf,
@@ -405,7 +406,12 @@ export function stampTextDelivery(
           adjustEffort: null,
           // The provider is read for the held tier alone (#408): one channel
           // over several protocols, and only the Agent SDK's takes an image.
-          attach: channelCarriesAttachments(sendChannel, dwarf.provider) ? sendChannel : null
+          attach: channelCarriesAttachments(sendChannel, dwarf.provider) ? sendChannel : null,
+          // Off the ENDPOINT rather than off `sendChannel` (#431): a worker's
+          // chain reports 'foreman-relay' while writing into its foreman's own
+          // console, and the console's ceiling is the tighter of the two. The
+          // channel name cannot tell those apart; the endpoint can.
+          maxTextChars: maxTextCharsFor(sendRoute?.endpoint.kind ?? null)
         }
       }
     })

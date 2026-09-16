@@ -1,5 +1,5 @@
 import type { LaunchTuning } from '../domain/launchTuning'
-import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
+import type { DwarfProvider } from '../domain/types'
 
 /**
  * Starting a NEW agent session, as opposed to writing into one that already
@@ -35,18 +35,32 @@ import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
  * relay has no such choice (it needs its courier instruction), and it is the
  * reason this module does NOT fence anything: the relay wraps a payload
  * addressed to a third party, whereas here the user's text IS the prompt.
- * Fencing it would put words in the user's mouth. It is only trimmed and
- * capped, for the reason sendDwarfText caps its own payload.
+ * Fencing it would put words in the user's mouth. It is only trimmed — and
+ * since #431 only trimmed, the cap having gone with the bound that never
+ * applied to a prompt on stdin.
  */
 
 /**
- * The prompt as it will reach the child: trimmed, and capped at the same limit
- * a delivered message gets. Applied at both boundaries on purpose — the
- * runtime uses it to refuse an empty prompt with an explanation, and the
- * launcher uses it because it is the thing that actually hands over the bytes.
+ * The prompt as it will reach the child: trimmed, and nothing else. Applied at
+ * both boundaries on purpose — the runtime uses it to refuse an empty prompt
+ * with an explanation, and the launcher uses it because it is the thing that
+ * actually hands over the bytes.
+ *
+ * AMENDED for #431 (was: `.trim().slice(0, MAX_DWARF_TEXT_CHARS)`, "capped at
+ * the same limit a delivered message gets, for the reason sendDwarfText caps
+ * its own payload"). Both halves of that reasoning were wrong by then. The
+ * limit it borrowed was the keystroke budget of #10, which nothing types any
+ * more; and the reason a MESSAGE answers to a ceiling at all is the command
+ * line its channel is spawned with — which this prompt has no part of. The
+ * section above says so at length and is the evidence: the prompt travels on
+ * the child's STDIN, not in argv, precisely so that nothing a user types is
+ * visible in this machine's process list. A prompt with no command line to fit
+ * inside has no length to answer for, so there was nothing here to refuse — and
+ * a cut applied for a bound that does not exist is the silent truncation #431
+ * removed everywhere else.
  */
 export function prepareLaunchPrompt(text: string): string {
-  return text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+  return text.trim()
 }
 
 /**

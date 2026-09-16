@@ -18,7 +18,9 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
+  MAX_CONSOLE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
+  messageTooLongReason,
   NO_ANSWER_KEYSTROKE_TIER,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
@@ -1279,6 +1281,89 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.pasteToConsole).not.toHaveBeenCalled()
   })
 
+  /* --- Message length (#431) — one block, appended ------------------------- */
+
+  /*
+   * Issue #431. `sendDwarfText` used to `.slice(0, MAX_DWARF_TEXT_CHARS)` the
+   * text and then report the remainder DELIVERED — the second of the two silent
+   * cuts the issue is about. It refuses now, with a sentence naming the length,
+   * the limit and what would have carried it, and nothing reaches the port.
+   */
+  it('refuses a message longer than its console can carry, and sends nothing', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    const result = await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
+    expect(result).toEqual({
+      delivered: false,
+      via: 'terminal',
+      error: messageTooLongReason(text.length, MAX_CONSOLE_TEXT_CHARS, 'terminal')
+    })
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('carries a message that is exactly the console ceiling, whole', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS)
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    // The whole of it, which is the fix: the old cap handed the port 4,000
+    // characters of this and called the rest delivered.
+    expect(port.pasteToConsole).toHaveBeenCalledWith({ pid: 42, text, pressEnter: true })
+  })
+
+  it('lets a relayed session take the wider wire ceiling its own channel allows', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+    })
+
+    const text = 'y'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
+    ).resolves.toMatchObject({ delivered: true, via: 'claude-relay' })
+    expect(port.relayToClaudeSession).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining(text) })
+    )
+  })
+
+  it('refuses past the wire ceiling on that same relay, naming its own channel', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+    })
+
+    const text = 'y'.repeat(MAX_DWARF_TEXT_CHARS + 1)
+    const result = await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
+    expect(result).toEqual({
+      delivered: false,
+      via: 'claude-relay',
+      error: messageTooLongReason(text.length, MAX_DWARF_TEXT_CHARS, 'claude-relay')
+    })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('measures the message the person typed, not the prefix a worker chain adds', async () => {
+    // The `[for agent <name>] ` tag is this app's own words, and the overhead
+    // the ceiling was derived from already reserves room for it (#431).
+    const { runtime, port } = await runtimeWith({
+      [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+    })
+
+    const text = 'z'.repeat(MAX_DWARF_TEXT_CHARS)
+    await expect(
+      runtime.sendDwarfText({ dwarfId: WORKER_ID, text, pressEnter: true })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(port.relayToClaudeSession).toHaveBeenCalled()
+  })
+  /* --- end of the #431 block ----------------------------------------------- */
+
   it('leaves the text-only console request exactly as it was, with no empty field', async () => {
     // The shape #371 ships is what a message without files still sends; an
     // `attachments: []` appearing here would be a new field on every message.
@@ -1390,15 +1475,24 @@ describe('AgentRuntime.sendDwarfText', () => {
 
   // AMENDED for #319: the trimmed text reaches `pasteToConsole` now, the tier a
   // message takes, not `sendToConsole`.
-  it('trims the message to the 4000-character limit', async () => {
+  //
+  // AMENDED AGAIN for #431 (was: 'trims the message to the 4000-character
+  // limit', asserting `pasteToConsole` was handed 4,000 characters of a 5,000
+  // character message). That cut was the keystroke budget of #10 applied a
+  // second time, and it reported the remainder DELIVERED. A message this long
+  // now travels whole — 5,000 is inside the console's own ceiling — and one
+  // past that ceiling is refused rather than shortened, which the block above
+  // pins. What survives unchanged is the TRIM, which is about whitespace and
+  // not about length.
+  it('sends a five-thousand-character message whole, having no budget left to cut it by', async () => {
     const port = fakePort()
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
     await runtime.sendDwarfText({
       dwarfId: FOREMAN_ID,
-      text: 'x'.repeat(5_000),
+      text: `  ${'x'.repeat(5_000)}  `,
       pressEnter: false
     })
-    expect(port.pasteToConsole.mock.calls[0]?.[0].text).toHaveLength(4_000)
+    expect(port.pasteToConsole.mock.calls[0]?.[0].text).toHaveLength(5_000)
   })
 
   // AMENDED for #319: the failing tier is the console PASTE now (`pasteToConsole`),
@@ -3023,7 +3117,9 @@ describe('AgentRuntime over the Codex message queue', () => {
       sendText: 'codex-queue',
       cancel: null,
       adjustEffort: null,
-      attach: null
+      attach: null,
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 
@@ -3315,7 +3411,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       sendText: null,
       cancel: 'launched-process',
       adjustEffort: null,
-      attach: null
+      attach: null,
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 
@@ -4844,16 +4942,17 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     expect(launchSession).not.toHaveBeenCalled()
   })
 
-  it('caps the prompt at the delivered-message limit', async () => {
+  // AMENDED for #431 (was: 'caps the prompt at the delivered-message limit').
+  // A launch prompt goes down the child’s stdin and never into argv, so the
+  // command-line ceiling a MESSAGE answers to was never its bound — see
+  // prepareLaunchPrompt, which lost the same slice.
+  it('hands the launcher the whole prompt, however long', async () => {
     const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
     const { runtime, mineId } = await runtimeWith(launchSession)
 
-    await runtime.launchAgent({
-      mineId,
-      provider: 'claude',
-      prompt: 'y'.repeat(MAX_DWARF_TEXT_CHARS + 200)
-    })
-    expect(launchSession.mock.calls[0]![0].prompt).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    const prompt = 'y'.repeat(MAX_DWARF_TEXT_CHARS + 200)
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt })
+    expect(launchSession.mock.calls[0]![0].prompt).toBe(prompt)
   })
 
   it('passes the launcher verdict straight through when it refuses', async () => {

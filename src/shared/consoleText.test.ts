@@ -86,3 +86,49 @@ describe('boundedChunks', () => {
     expect(chunks.join('')).toBe(text)
   })
 })
+
+/* --- A very long message's chunk plan (#431) — one block, appended --------- */
+
+/*
+ * Issue #431 asked what happens to a 30,000-code-point message on the console
+ * tier. The PLAN is fine and this pins it: the splitting rule has no ceiling of
+ * its own, so the answer is simply "sixty calls", and the time that costs is
+ * linear in the builder's own pause.
+ *
+ * What is NOT fine is downstream, and it is the reason the console gets a
+ * tighter ceiling than the wire: every chunk becomes six lines of PowerShell
+ * carrying its text as base64 of UTF-16, and the whole script is spawned in a
+ * COMMAND LINE. Measured live 2026-09-16 (docs/console-hosting.md §6), a 29,323
+ * code-point message built a 109,152-character command line and the spawn was
+ * refused with ENAMETOOLONG. See MAX_CONSOLE_TEXT_CHARS in shared/contracts.ts
+ * — that is the number the panel refuses on, and this file's rule is what it
+ * was derived against.
+ */
+describe('boundedChunks: a thirty-thousand-point message', () => {
+  const NUMBERED = Array.from(
+    { length: 750 },
+    (_, index) => `L${String(index + 1).padStart(4, '0')} línea de prueba con emoji 🙂 y ñandú.`
+  ).join(' ')
+
+  it('splits it into exactly the calls its length asks for, and no cap of its own', () => {
+    const points = Array.from(NUMBERED).length
+    expect(points).toBeGreaterThan(30_000)
+    const chunks = boundedChunks(NUMBERED)
+    expect(chunks).toHaveLength(Math.ceil(points / MAX_CONSOLE_CHUNK_CODE_POINTS))
+  })
+
+  it('loses nothing across sixty-odd boundaries, emoji included', () => {
+    expect(boundedChunks(NUMBERED).join('')).toBe(NUMBERED)
+  })
+
+  it('never splits a surrogate pair, however many chunks it takes', () => {
+    for (const chunk of boundedChunks(NUMBERED)) {
+      expect(Array.from(chunk).length).toBeLessThanOrEqual(MAX_CONSOLE_CHUNK_CODE_POINTS)
+      // A lone surrogate would survive neither of these: Array.from walks code
+      // points, so a split pair would show up as two unpaired code units.
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(chunk)).toBe(false)
+      expect(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(chunk)).toBe(false)
+    }
+  })
+})
+/* --- end of the #431 block ------------------------------------------------- */

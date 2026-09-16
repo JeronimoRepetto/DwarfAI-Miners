@@ -140,12 +140,19 @@ describe('launchClaudeSession', () => {
     expect(invocation.env.PATH).toBe('/home/j/.local/bin:/usr/bin')
   })
 
-  it('trims and caps the prompt before it reaches the child', async () => {
-    const { run, result } = launch({ prompt: `  ${'x'.repeat(MAX_DWARF_TEXT_CHARS + 100)}  ` })
+  // AMENDED for #431 (was: 'trims and caps the prompt before it reaches the
+  // child', asserting the child's stdin came out at exactly
+  // MAX_DWARF_TEXT_CHARS). The cap went with the bound it was borrowed from —
+  // a launch prompt travels on stdin, never in argv, so no command line ever
+  // bounded it. The TRIM is what this was really about, and is what it still
+  // asserts.
+  it('trims the prompt before it reaches the child, and cuts nothing off it', async () => {
+    const long = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 100)
+    const { run, result } = launch({ prompt: `  ${long}  ` })
     await result
 
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
-    expect(invocation.stdin).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    expect(invocation.stdin).toBe(long)
   })
 
   it('refuses an empty prompt without probing the disk or spawning anything', async () => {

@@ -157,6 +157,18 @@ function onFreeformKeydown(event: KeyboardEvent): void {
     <p v-if="selectedLabel !== null" class="enter-prompt" role="status">
       {{ PRESS_ENTER_TO_SEND }}
     </p>
+    <!--
+      The one maxlength #431 left standing, stated here rather than inherited.
+      This box is not a message: it is a line of the person’s own words
+      answering a prompt the agent itself raised, and it travels the ANSWER
+      path — released through the SDK on a held session, typed as the
+      picker’s own keys on a terminal one. The card is handed the prompt and
+      not the dwarf, so it cannot read the per-route ceiling the composer
+      does; the wire ceiling is the widest bound certainly true of both
+      routes, and a cut at fifteen thousand characters of a one-line answer is
+      a case nobody meets. Give the card a dwarf and this becomes the
+      composer’s treatment.
+    -->
     <textarea
       v-else
       v-model="freeform"

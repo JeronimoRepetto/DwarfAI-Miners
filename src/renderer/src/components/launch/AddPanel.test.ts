@@ -15,7 +15,7 @@ import {
   type ModelPicker
 } from '../../lib/launch/modelTuning'
 import { providerChips } from '../../lib/launch/providerChips'
-import { MAX_DWARF_TEXT_CHARS, type AgentProviderOption } from '../../types'
+import type { AgentProviderOption } from '../../types'
 import AddPanel from './AddPanel.vue'
 
 const HIDDEN_MODEL_PICKER: ModelPicker = { visible: false, models: [], disabled: true, note: null }
@@ -100,8 +100,15 @@ describe('the composer gate', () => {
     expect(composer.attributes('placeholder')).toBe(COMPOSER_ENABLED_PLACEHOLDER)
   })
 
-  it('caps the prompt at the same length a delivered message is capped at', () => {
-    expect(panel().get('.launch-input').attributes('maxlength')).toBe(String(MAX_DWARF_TEXT_CHARS))
+  // AMENDED for #431 (was: 'caps the prompt at the same length a delivered
+  // message is capped at', asserting a maxlength of MAX_DWARF_TEXT_CHARS). That
+  // ceiling is the command line a MESSAGE's channel is spawned with; a launch
+  // prompt goes down the child's stdin or straight onto a held stream and has
+  // no command line to fit inside, so the attribute was cutting a paste for a
+  // bound that does not exist. It asserts the absence now, which is the
+  // behaviour — see prepareLaunchPrompt, which lost the matching slice.
+  it('lets the box hold whatever was pasted: a launch prompt has no ceiling', () => {
+    expect(panel().get('.launch-input').attributes('maxlength')).toBeUndefined()
   })
 })
 

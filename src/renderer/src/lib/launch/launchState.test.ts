@@ -165,11 +165,18 @@ describe('changing choice', () => {
 describe('submitting, and what comes back', () => {
   const ready = () => typePrompt(withClaude(), '  dig here  ')
 
-  it('trims and caps the prompt exactly as main prepares it', () => {
+  // AMENDED for #431 (was: 'trims and caps the prompt exactly as main prepares
+  // it', whose second assertion cut a long prompt at MAX_DWARF_TEXT_CHARS).
+  // That ceiling is the command line a MESSAGE's channel is spawned with, and a
+  // launch prompt travels on the child's stdin or straight onto a held stream —
+  // so main's own prepareLaunchPrompt and prepareHeldPrompt dropped the slice
+  // the same day, and a copy here that still cut would have stopped identifying
+  // the dwarf this launch started. The TRIM, which is what "exactly as main
+  // prepares it" is really about, is unchanged and still asserted.
+  it('trims the prompt exactly as main prepares it, and cuts nothing off it', () => {
     expect(launchPrompt(ready())).toBe('dig here')
-    expect(
-      launchPrompt(typePrompt(withClaude(), 'x'.repeat(MAX_DWARF_TEXT_CHARS + 50)))
-    ).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    const long = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 50)
+    expect(launchPrompt(typePrompt(withClaude(), long))).toBe(long)
   })
 
   it('moves to submitted/spawning while the launch is in flight', () => {
