@@ -304,10 +304,13 @@ observed session is reached through the relay for the same reason its messages a
 somehow reaches a channel like that fails whole, with a reason — the words are never delivered
 without the files.
 
-**The limits**, defined once and the same on both sides: at most **5 files** per message, **3 MB**
-for any one file, and **12 MB** for all of them together. A file that breaks one of them is refused
-with a sentence naming which limit it hit, and the files that did fit stay attached. Folders are
-refused.
+**The limits**, defined once and the same on both sides: at most **5 files** per message. The two
+byte limits bind on an **image** alone — only its bytes ever reach the API, so a plain file costs
+this message nothing beyond the count. An image may be at most **7.5 MB** (three quarters of the
+[Anthropic API's own 10 MB per-image maximum](https://platform.claude.com/docs/en/build-with-claude/vision#request-limits),
+the margin base64 encoding costs), and the message's images together may be at most **30 MB**. A
+file that breaks one of these limits is refused with a sentence naming which one it hit, and the
+files that did fit stay attached. Folders are refused.
 
 A sent message keeps its chips under its own bubble, so you can see what was submitted; if it fails,
 `Send again` resends the words and the files together.

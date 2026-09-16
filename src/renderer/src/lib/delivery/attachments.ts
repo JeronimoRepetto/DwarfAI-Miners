@@ -38,9 +38,9 @@ export function refusalSentence(refusal: DwarfAttachmentRefusal, name: string): 
     case 'too-many':
       return `A message carries at most ${MAX_DWARF_ATTACHMENTS} files, so "${name}" was left off.`
     case 'file-too-large':
-      return `"${name}" is larger than the ${mb(MAX_DWARF_ATTACHMENT_BYTES)} MB a single file can be.`
+      return `"${name}" is larger than the ${mb(MAX_DWARF_ATTACHMENT_BYTES)} MB a single image can be.`
     case 'total-too-large':
-      return `"${name}" would take this message past the ${mb(MAX_DWARF_ATTACHMENTS_TOTAL_BYTES)} MB it can carry in total.`
+      return `"${name}" would take this message past the ${mb(MAX_DWARF_ATTACHMENTS_TOTAL_BYTES)} MB of images it can carry in total.`
   }
 }
 
