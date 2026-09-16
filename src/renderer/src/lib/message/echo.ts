@@ -1,6 +1,6 @@
 import { REACTION_WINDOW_MS } from '../delivery/reaction'
 import { normalizeConsoleText } from '../../../../shared/consoleText'
-import { ATTACHED_FILE_PREFIX } from '../../../../shared/heldSessionText'
+import { ATTACHED_FILE_PREFIX, HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
 import {
   stripRelayProvenance,
   type DwarfAttachment,
@@ -167,23 +167,27 @@ type AttachmentToken = { kind: 'literal'; value: string } | { kind: 'pattern'; r
  * `heldContentFor` in attachmentDelivery.ts actually builds): a non-image is
  * named on its own line, `Attached file: <path>` — the exact prefix that
  * module writes, shared rather than retyped (see shared/heldSessionText.ts)
- * — and an IMAGE is a content block with no text representation at all, so
- * it contributes no token to strip. Every other channel, and an echo with no
- * `via` recorded at all (minted before this field existed, or never reaching
- * a channel that was ever measured taking any shape but the console's),
- * falls back to the console shape #419 established.
+ * — and an image is the fixed word `[Image]` (#424, second pass), since the
+ * held stream carries no per-image counter the way a console's own
+ * `[Image #N]` does. Both are LITERAL tokens here, never a pattern: unlike
+ * the console's marker, `[Image]` never varies, so an exact substring match
+ * is enough. Every other channel, and an echo with no `via` recorded at all
+ * (minted before this field existed, or never reaching a channel that was
+ * ever measured taking any shape but the console's), falls back to the
+ * console shape #419 established.
  */
 function expectedTokensFor(
   via: string | undefined,
   attachments: readonly DwarfAttachment[]
 ): AttachmentToken[] {
   if (via === 'held-session') {
-    return attachments
-      .filter((attachment) => attachment.kind !== 'image')
-      .map((attachment) => ({
-        kind: 'literal',
-        value: `${ATTACHED_FILE_PREFIX}${attachment.path}`
-      }))
+    return attachments.map((attachment) => ({
+      kind: 'literal',
+      value:
+        attachment.kind === 'image'
+          ? HELD_IMAGE_PLACEHOLDER
+          : `${ATTACHED_FILE_PREFIX}${attachment.path}`
+    }))
   }
   return attachments.map((attachment) =>
     attachment.kind === 'image'

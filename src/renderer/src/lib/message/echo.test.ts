@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
 import { RELAY_PROVENANCE_LINE, type DwarfAttachment, type FeedMessage } from '../../types'
 import { groupActivity } from './activityGroup'
 import type { PanelMessage } from './conversation'
@@ -436,23 +437,57 @@ describe('reconcileEchoes', () => {
       expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
     })
 
-    it('accounts for a held echo sent with only an image, since the image leaves no token to match', () => {
-      // heldMessageEntries drops an image block entirely (pinned in
-      // heldSession.test.ts) — the row this echo has to match is exactly the
-      // words, with nothing standing in for the image at all.
+    /*
+     * AMENDED (#424, second pass): this used to assert the opposite — that an
+     * image's own token was ABSENT from the row, because `heldMessageEntries`
+     * dropped the block entirely and published no row at all for a wordless
+     * send. Now that it publishes `[Image]` (see heldSession.test.ts), the
+     * row this echo has to match carries it, and this pins the accounting the
+     * fix actually restores — an images-only echo's own row, which used to
+     * not exist.
+     */
+    it('accounts for a held echo sent with only an image, against the row heldMessageEntries now publishes for it', () => {
       const attachments: DwarfAttachment[] = [attachment({ kind: 'image' })]
       const sent = heldEcho({ text: 'dig deeper' })
-      const row = turn({ text: 'dig deeper' })
+      const row = turn({ text: `${HELD_IMAGE_PLACEHOLDER}\ndig deeper` })
       expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
     })
 
-    it('accounts for a held echo sent with an image and a file together — the image silent, the file named', () => {
+    it('accounts for a held echo sent with an image and a file together — the placeholder ahead of the file', () => {
       const attachments: DwarfAttachment[] = [
         attachment({ path: 'C:\\mine\\shot.png', kind: 'image' }),
         attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
       ]
       const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({
+        text: `${HELD_IMAGE_PLACEHOLDER}\nAttached file: C:\\mine\\notes.pdf\ndig deeper`
+      })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('refuses a held row missing the image placeholder, even though every other token is present', () => {
+      // The exact row the FIRST pass of #424 would have accepted (image
+      // silently dropped) — now correctly refused, since the echo was sent
+      // with an image and this row carries no token for it at all.
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\shot.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = heldEcho({ text: 'dig deeper' })
       const row = turn({ text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
+
+    it('accounts for two images beside a file and words, one placeholder per image, none of them numbered', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\a.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\b.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({
+        text: `${HELD_IMAGE_PLACEHOLDER}\n${HELD_IMAGE_PLACEHOLDER}\nAttached file: C:\\mine\\notes.pdf\ndig deeper`
+      })
       expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
     })
 

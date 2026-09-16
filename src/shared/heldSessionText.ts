@@ -13,3 +13,17 @@
  * of them drifts from the other.
  */
 export const ATTACHED_FILE_PREFIX = 'Attached file: '
+
+/**
+ * What `heldMessageEntries` (main, `sessionLaunch/heldSession.ts`) writes into
+ * a held turn's own row in place of an image content block, and the one
+ * literal the renderer's echo reconciliation removes to prove that row
+ * accounts for the image (#424).
+ *
+ * A plain word rather than a pattern: the held stream carries no per-image
+ * counter the way a console's own `[Image #N]` placeholder does (measured —
+ * `heldContentFor` sends an image as bytes with no accompanying text at all,
+ * and Claude Code's own counter is a console-only artifact), so there is
+ * nothing here to number.
+ */
+export const HELD_IMAGE_PLACEHOLDER = '[Image]'
