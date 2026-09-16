@@ -2629,14 +2629,21 @@ export class AgentRuntime {
     timer.absorb(relay.stages)
     console.log(
       `[runtime] Relay fallback (${options.attempt}) for ${options.dwarfId}: ` +
-        `${relay.delivered ? 'delivered' : 'failed'}${stageSuffix(timer.timings())}`
+        // #439: same honesty as the primary path's own log line — a killed
+        // relay is not logged as "failed" when it may have landed.
+        `${relay.delivered ? 'delivered' : relay.unconfirmed === true ? 'unconfirmed' : 'failed'}` +
+        stageSuffix(timer.timings())
     )
     return relay.delivered
       ? { delivered: true, via: 'claude-relay' }
       : {
           delivered: false,
           via: options.channel,
-          error: combineFallbackErrors(options.terminalError, relay.error)
+          error: combineFallbackErrors(options.terminalError, relay.error),
+          // #439: the relay leg of the fallback can itself be killed by its own
+          // timeout, which is no more a proven failure here than it is on the
+          // primary path — see sendDwarfText's own return below.
+          ...(relay.unconfirmed === true ? { unconfirmed: true } : {})
         }
   }
 
@@ -3301,7 +3308,11 @@ export class AgentRuntime {
       timer.absorb(outcome.stages)
       console.log(
         `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
-          `${outcome.delivered ? 'delivered' : 'failed'} (${payload.length} chars)` +
+          // #439: a killed relay is not logged as "failed" — it may have
+          // landed — so the verb this line uses matches what the verdict
+          // actually claims.
+          `${outcome.delivered ? 'delivered' : outcome.unconfirmed === true ? 'unconfirmed' : 'failed'} ` +
+          `(${payload.length} chars)` +
           failureReasonSuffix(outcome) +
           stageSuffix(timer.timings())
       )
@@ -3338,7 +3349,16 @@ export class AgentRuntime {
           terminalError: outcome.error
         })
       }
-      return { delivered: false, via: resolved.channel, error: outcome.error }
+      return {
+        delivered: false,
+        via: resolved.channel,
+        error: outcome.error,
+        // #439: a direct relay endpoint ('claude-relay' or a resolved
+        // 'foreman-relay' hop) killed by its own timeout is not a proven
+        // failure — see TextDeliveryOutcome.unconfirmed — so the verdict says
+        // so rather than leaving the panel to draw a ✕ with `Send again`.
+        ...(outcome.unconfirmed === true ? { unconfirmed: true } : {})
+      }
     } catch (error) {
       console.warn(`[runtime] Delivery to ${request.dwarfId} threw`, error)
       return {

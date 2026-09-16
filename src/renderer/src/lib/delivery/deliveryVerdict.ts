@@ -43,6 +43,18 @@ const SEND_REACTED_TITLE = 'The session reacted to the message.'
 const SEND_FAILED_TITLE = 'The message could not be delivered.'
 const KICK_FAILED_TITLE = 'The kick could not be delivered.'
 /**
+ * A relay courier killed by its own timeout, never confirmed either way
+ * (#439) — the one sentence for `DwarfSendState.unconfirmed`, used both as the
+ * marker's hover title and as the composer's status line.
+ *
+ * One sentence rather than the HANDED_TITLE/UNOBSERVED_TITLE pair, on purpose:
+ * this state already admits it does not know whether the session reacted, so
+ * "watching" and "no reaction seen" would both overreach it. It says the one
+ * true thing — the relay did not confirm, and the words may already have
+ * landed — for as long as the state stays 'delivered', watching or not.
+ */
+const RELAY_UNCONFIRMED_TITLE = 'The relay did not confirm in time; the message may have arrived.'
+/**
  * A kick that ENDED the session rather than asking it to stop (#217).
  *
  * Its own words because it is its own act: everywhere else `delivered` means
@@ -193,6 +205,14 @@ export function sendMarker(state: DwarfSendState | undefined): DeliveryMarker | 
   if (state === undefined) return null
   if (state.phase === 'sending') return { cls: 'is-sending', glyph: '…', title: 'Sending...' }
   if (state.phase === 'delivered') {
+    // A courier killed by its own timeout (#439) is never confirmed, so it
+    // gets its own honest sentence instead of either the relayed or the plain
+    // delivered copy — ahead of both, because 'unconfirmed' is a fact about
+    // WHY this is 'delivered' at all rather than about which channel carried
+    // it.
+    if (state.unconfirmed === true) {
+      return { cls: 'is-delivered', glyph: '✓', title: RELAY_UNCONFIRMED_TITLE }
+    }
     // The relay's own sentence, and only on the delivered phase: a ✓✓ is the
     // session SEEN acting, which settles the question the framing raised.
     return messageWasRelayed(state.via)
@@ -243,6 +263,10 @@ function statusLine(
 
 export function sendStatusLine(state: DwarfSendState | undefined): string | null {
   if (state === undefined) return null
+  // "Handed over" is exactly what this state does not know (#439): the relay
+  // never confirmed, so the status line gets the marker's own honest sentence
+  // instead of the template every other verdict shares.
+  if (state.phase === 'delivered' && state.unconfirmed === true) return RELAY_UNCONFIRMED_TITLE
   return statusLine(state.phase, state.via, state.awaitingReaction, 'Handed over')
 }
 

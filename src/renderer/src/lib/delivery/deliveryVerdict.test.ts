@@ -385,6 +385,66 @@ describe('a message the relay carried', () => {
   })
 })
 
+/*
+ * A relay courier killed by its own timeout (#439). It may already have
+ * called SendMessage before the kill landed, so it is neither a proven
+ * delivery nor a proven failure — see DwarfSendState.unconfirmed — and it must
+ * draw as the honest ✓, never as the ✕ that would offer `Send again` and risk
+ * sending the words a second time.
+ */
+describe('a relay that never confirmed in time', () => {
+  it('marks it the same ✓ a delivery gets, with its own honest sentence', () => {
+    const state: DwarfSendState = {
+      phase: 'delivered',
+      via: 'claude-relay',
+      awaitingReaction: true,
+      unconfirmed: true
+    }
+    const marker = sendMarker(state)
+    expect(marker?.glyph).toBe('✓')
+    expect(marker?.cls).toBe('is-delivered')
+    expect(marker?.title).toBe('The relay did not confirm in time; the message may have arrived.')
+  })
+
+  it('keeps that same sentence once the reaction window has closed unobserved', () => {
+    // Deliberately ONE sentence throughout, not the HANDED/UNOBSERVED pair:
+    // this state already admits it does not know whether the session
+    // reacted, so "watching" and "no reaction seen" would both overreach it.
+    const marker = sendMarker({
+      phase: 'delivered',
+      via: 'claude-relay',
+      awaitingReaction: false,
+      unconfirmed: true
+    })
+    expect(marker?.title).toBe('The relay did not confirm in time; the message may have arrived.')
+  })
+
+  it('takes this sentence ahead of the relayed-note framing, even though the channel is claude-relay', () => {
+    const marker = sendMarker({ phase: 'delivered', via: 'claude-relay', unconfirmed: true })
+    expect(marker?.title).not.toMatch(/relayed note/i)
+  })
+
+  it('never claims a reaction', () => {
+    const marker = sendMarker({ phase: 'delivered', via: 'claude-relay', unconfirmed: true })
+    expect(marker?.title).not.toMatch(/reacted/i)
+  })
+
+  it('reports the same honest sentence as the status line, not "handed over"', () => {
+    const line = sendStatusLine({ phase: 'delivered', via: 'claude-relay', unconfirmed: true })
+    expect(line).toBe('The relay did not confirm in time; the message may have arrived.')
+    expect(line).not.toMatch(/handed over/i)
+  })
+
+  it('promotes to a plain reacted marker once the session is actually seen acting', () => {
+    // Proof of a reaction settles the question this state could not answer —
+    // see useDwarfMessaging.ts's observe(), which drops `unconfirmed` on
+    // exactly this transition.
+    const marker = sendMarker({ phase: 'reacted', via: 'claude-relay' })
+    expect(marker?.glyph).toBe('✓✓')
+    expect(marker?.title).not.toMatch(/did not confirm/i)
+  })
+})
+
 /**
  * The retry a failed message offers on its own bubble (#309).
  *

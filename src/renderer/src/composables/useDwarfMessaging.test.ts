@@ -70,6 +70,37 @@ describe('useDwarfMessaging', () => {
     })
   })
 
+  /*
+   * #439. A relay courier killed by its own timeout may already have called
+   * SendMessage before the kill landed, so `unconfirmed: true` must NOT draw
+   * as an ordinary failure — a ✕ with `Send again` risks handing the same
+   * words to the session twice. It takes the 'delivered' phase instead,
+   * carrying the flag through so the marker can draw its own honest sentence
+   * (see deliveryVerdict.test.ts), and it starts the same reaction watch a
+   * confirmed delivery does — awaitingReaction: true, not left unset the way
+   * a genuine failure is.
+   */
+  it('treats an unconfirmed relay as delivered, not failed, and watches for a reaction', async () => {
+    stubApi(() =>
+      Promise.resolve({
+        delivered: false,
+        via: 'claude-relay',
+        unconfirmed: true,
+        error: 'The relay did not confirm in time; the message may have arrived.'
+      })
+    )
+    const { send, stateFor } = useDwarfMessaging()
+
+    await send('claude:s1', 'a very long message', true)
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'delivered',
+      via: 'claude-relay',
+      error: 'The relay did not confirm in time; the message may have arrived.',
+      awaitingReaction: true,
+      unconfirmed: true
+    })
+  })
+
   it('turns a broken IPC call into a failed state rather than an unhandled rejection', async () => {
     stubApi(() => Promise.reject(new Error('bridge is gone')))
     const { send, stateFor } = useDwarfMessaging()
@@ -269,6 +300,51 @@ describe('useDwarfMessaging reaction tracking', () => {
 
     vi.advanceTimersByTime(RESULT_VISIBLE_MS)
     expect(stateFor('claude:s1')).toBeUndefined()
+  })
+
+  /*
+   * #439. An unconfirmed relay decays exactly like an ordinary delivered
+   * message this store never saw reacted to — the whole point of carrying it
+   * through the SAME reaction watch rather than a separate mechanism.
+   */
+  it('decays an unconfirmed relay the same way, keeping the flag through the decay', async () => {
+    stubApi(() =>
+      Promise.resolve({
+        delivered: false,
+        via: 'claude-relay',
+        unconfirmed: true,
+        error: 'The relay did not confirm in time; the message may have arrived.'
+      })
+    )
+    const { send, observe, stateFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'working', lastMessage: 'a' })])
+    await send('claude:s1', 'a very long message', true)
+
+    vi.advanceTimersByTime(REACTION_WINDOW_MS)
+    expect(stateFor('claude:s1')).toMatchObject({
+      phase: 'delivered',
+      awaitingReaction: false,
+      unconfirmed: true
+    })
+  })
+
+  it('still promotes an unconfirmed relay to reacted once the session is seen acting', async () => {
+    stubApi(() =>
+      Promise.resolve({
+        delivered: false,
+        via: 'claude-relay',
+        unconfirmed: true,
+        error: 'The relay did not confirm in time; the message may have arrived.'
+      })
+    )
+    const { send, observe, stateFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'working', lastMessage: 'a' })])
+    await send('claude:s1', 'a very long message', true)
+
+    // Proof the words DID arrive, settling exactly what 'unconfirmed' could not.
+    observe([dwarf({ status: 'working', lastMessage: 'on it' })])
+    expect(stateFor('claude:s1')).toMatchObject({ phase: 'reacted', via: 'claude-relay' })
+    expect(stateFor('claude:s1')?.unconfirmed).toBeUndefined()
   })
 
   it('never promotes after the window has closed', async () => {

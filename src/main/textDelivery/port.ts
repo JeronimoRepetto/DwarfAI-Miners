@@ -290,6 +290,30 @@ export interface TextDeliveryOutcome {
    */
   neverStarted?: boolean
   /**
+   * Whether this attempt was killed by its OWN timeout rather than answering
+   * with a verdict at all (#439) — today only the relay tier sets it, on the
+   * exact courier turn `deliverViaRelay` budgets with `relayTimeoutMsFor`.
+   *
+   * A killed courier may already have called `SendMessage` before the kill
+   * landed — the delivery happens partway through the turn, before the
+   * courier's own reply — so this is a THIRD reading, distinct from both
+   * `delivered: true` (the courier reported success) and an ordinary failure
+   * (the courier ran and reported one, or never started at all). It is not
+   * `neverStarted`: nothing here proves the channel was never reached, so a
+   * caller must not license a second tier to send the same text on the
+   * strength of this alone. And it is not folded into `delivered`, because
+   * this outcome does not know that either — it only knows the courier did
+   * not answer before its own clock ran out.
+   *
+   * The panel reads it to draw the honest marker: the same ✓ a delivered
+   * message gets, with a sentence saying the relay did not confirm in time and
+   * the words may already have arrived, never a ✕ and never a `Send again`
+   * that risks sending them twice (see the renderer's deliveryVerdict.ts).
+   * Optional and false-by-absence, exactly as `neverStarted` is: a tier that
+   * cannot land in this state simply never sets it.
+   */
+  unconfirmed?: boolean
+  /**
    * How long this tier's own stages took, when it measured them (issue #21).
    * Durations only — there is no way for a payload to travel in here. The
    * runtime folds these into the one log line it writes per attempt, and adds

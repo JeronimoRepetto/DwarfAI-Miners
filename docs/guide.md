@@ -282,11 +282,24 @@ an argument to `claude -p`; that goes on standard input now too. Both are measur
 chosen — [`docs/console-hosting.md`](console-hosting.md) §6 carries the runs, including a
 40,000-character message that reached a session by relay whole, in one piece.
 
-**Time is what a long message costs now.** About four seconds for 30,000 characters into a
-console. A relay is slower, because a relay is a whole model turn: about six seconds for a short
-message and about two and a half minutes for 40,000 characters, which is past the one-minute
-delivery timeout — so a very long message to a session reachable only by relay may be reported as
-timed out, and `SENDTEXT_TIMEOUT_S` is the setting that governs it.
+**Time is what a long message costs now, and the relay's own timeout grows to match it (#439).**
+About four seconds for 30,000 characters into a console. A relay is slower, because a relay is a
+whole model turn: about six seconds for a short message and about two and a half minutes for
+40,000 characters. `SENDTEXT_TIMEOUT_S` is the BASE of that turn's budget — 60 seconds by default —
+and every character the message carries adds another 5ms on top of it, so a 40,000-character
+message gets roughly 260 seconds rather than the base minute alone; even the 250,000-character
+sanity ceiling above stays inside about 22 minutes. The rate comes from the two measurements
+themselves: 6.4s at 200 characters and 155s at 40,000 is about 3.7ms of turn time per character, and
+the app budgets 5ms — comfortably above the measured rate rather than pinned to it, so a slower
+run still finishes inside its window.
+
+If the courier is still killed by that budget, the panel does not call the message failed.
+`SendMessage` happens partway through the turn, before the courier's own reply, so a courier killed
+by its own clock may already have delivered the words. The marker shows the same `✓` a confirmed
+delivery gets, with its own sentence saying the relay did not confirm in time and the message may
+have arrived, and offers no `Send again` — pressing one would risk sending the words a second time.
+A relay that exits quickly with a real error — a missing binary, a session name Claude Code refuses
+— still shows `✕` with that reason.
 
 **Past it, the panel refuses and keeps your text.** The sentence in the alert row names how long
 the message is, how long this session can take, and what would have carried it; Enter does
@@ -651,34 +664,34 @@ first.
 Use these names as `.env` keys in a development checkout, and as JSON keys in the config file
 above for an installed app.
 
-| Variable                          | Default                     | Meaning                                                                                               |
-| --------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `POLL_INTERVAL_MS`                | `2000`                      | Provider scan interval in milliseconds.                                                               |
-| `LIVENESS_WINDOW_S`               | `90`                        | Reserved general activity window.                                                                     |
-| `CODEX_LIVENESS_WINDOW_S`         | `300`                       | Maximum rollout mtime age considered live.                                                            |
-| `CODEX_HEARTBEAT_WINDOW_S`        | `300`                       | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                            |
-| `CODEX_SCAN_DAYS`                 | `7`                         | How many day-directories (today back N-1 days) to scan for rollouts.                                  |
-| `CODEX_IDLE_RETENTION_S`          | `3600`                      | Extra time a quiet-but-open rollout stays visible while a codex process is running.                   |
-| `CODEX_SESSIONS_ROOT`             | `~/.codex/sessions`         | The Codex rollout directory to scan. A leading `~` is expanded.                                       |
-| `CODEX_STATE_DB`                  | `~/.codex/state_5.sqlite`   | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                      |
-| `CODEX_LOGS_DB`                   | `~/.codex/logs_2.sqlite`    | Codex's structured log stream, used read-only as a liveness heartbeat.                                |
-| `ANTIGRAVITY_STORE_ROOT`          | `~/.gemini/antigravity-cli` | The Antigravity CLI (`agy`) store to observe. A leading `~` is expanded.                              |
-| `ANTIGRAVITY_BUSY_WINDOW_S`       | `120`                       | How recent a still-`RUNNING` transcript step must be to count as an open turn.                        |
-| `ANTIGRAVITY_LOCK_GRACE_S`        | `30`                        | How long a conversation survives its presence lock no longer being listed.                            |
-| `ANTIGRAVITY_STALE_LOCK_WINDOW_S` | `86400`                     | How silent a locked conversation may be before its lock is read as stale.                             |
-| `DWARF_LEAVE_GRACE_S`             | `20`                        | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                         |
-| `TIER_CACHE_TTL_S`                | `600`                       | Mine-tier cache lifetime.                                                                             |
-| `TIER_COPPER_KB`                  | `100`                       | Source-code byte-weight threshold for copper, in KB.                                                  |
-| `TIER_SILVER_KB`                  | `500`                       | Source-code byte-weight threshold for silver, in KB.                                                  |
-| `TIER_GOLD_KB`                    | `2048`                      | Source-code byte-weight threshold for gold, in KB.                                                    |
-| `TIER_URANIUM_KB`                 | `8192`                      | Source-code byte-weight threshold for uranium, in KB.                                                 |
-| `CLAUDE_CONFIG_DIRS`              | `~/.claude`                 | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`. |
-| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs. The relay only forwards a string, so the cheapest wins.    |
-| `SENDTEXT_TIMEOUT_S`              | `60`                        | How long a message delivery may take before it is reported as timed out.                              |
-| `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                     |
-| `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.     |
-| `CODEX_CLI_PATH`                  | _(detect)_                  | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.      |
-| `ANTIGRAVITY_CLI_PATH`            | _(detect)_                  | Explicit path to the `agy` binary. Blank detects it in the known install locations, then PATH.        |
+| Variable                          | Default                     | Meaning                                                                                                      |
+| --------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `POLL_INTERVAL_MS`                | `2000`                      | Provider scan interval in milliseconds.                                                                      |
+| `LIVENESS_WINDOW_S`               | `90`                        | Reserved general activity window.                                                                            |
+| `CODEX_LIVENESS_WINDOW_S`         | `300`                       | Maximum rollout mtime age considered live.                                                                   |
+| `CODEX_HEARTBEAT_WINDOW_S`        | `300`                       | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                                   |
+| `CODEX_SCAN_DAYS`                 | `7`                         | How many day-directories (today back N-1 days) to scan for rollouts.                                         |
+| `CODEX_IDLE_RETENTION_S`          | `3600`                      | Extra time a quiet-but-open rollout stays visible while a codex process is running.                          |
+| `CODEX_SESSIONS_ROOT`             | `~/.codex/sessions`         | The Codex rollout directory to scan. A leading `~` is expanded.                                              |
+| `CODEX_STATE_DB`                  | `~/.codex/state_5.sqlite`   | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                             |
+| `CODEX_LOGS_DB`                   | `~/.codex/logs_2.sqlite`    | Codex's structured log stream, used read-only as a liveness heartbeat.                                       |
+| `ANTIGRAVITY_STORE_ROOT`          | `~/.gemini/antigravity-cli` | The Antigravity CLI (`agy`) store to observe. A leading `~` is expanded.                                     |
+| `ANTIGRAVITY_BUSY_WINDOW_S`       | `120`                       | How recent a still-`RUNNING` transcript step must be to count as an open turn.                               |
+| `ANTIGRAVITY_LOCK_GRACE_S`        | `30`                        | How long a conversation survives its presence lock no longer being listed.                                   |
+| `ANTIGRAVITY_STALE_LOCK_WINDOW_S` | `86400`                     | How silent a locked conversation may be before its lock is read as stale.                                    |
+| `DWARF_LEAVE_GRACE_S`             | `20`                        | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                                |
+| `TIER_CACHE_TTL_S`                | `600`                       | Mine-tier cache lifetime.                                                                                    |
+| `TIER_COPPER_KB`                  | `100`                       | Source-code byte-weight threshold for copper, in KB.                                                         |
+| `TIER_SILVER_KB`                  | `500`                       | Source-code byte-weight threshold for silver, in KB.                                                         |
+| `TIER_GOLD_KB`                    | `2048`                      | Source-code byte-weight threshold for gold, in KB.                                                           |
+| `TIER_URANIUM_KB`                 | `8192`                      | Source-code byte-weight threshold for uranium, in KB.                                                        |
+| `CLAUDE_CONFIG_DIRS`              | `~/.claude`                 | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`.        |
+| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs. The relay only forwards a string, so the cheapest wins.           |
+| `SENDTEXT_TIMEOUT_S`              | `60`                        | Base seconds for a relay delivery's timeout; the actual budget adds 5ms per character in the message (#439). |
+| `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                            |
+| `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.            |
+| `CODEX_CLI_PATH`                  | _(detect)_                  | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.             |
+| `ANTIGRAVITY_CLI_PATH`            | _(detect)_                  | Explicit path to the `agy` binary. Blank detects it in the known install locations, then PATH.               |
 
 Tier thresholds must be strictly increasing.
 

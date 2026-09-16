@@ -4,6 +4,7 @@ import { FakeFs } from '../adapters/fakeFs'
 import type { ShellRunner } from '../platform/focus'
 import { workerSentinel, type ConsoleWorkerProcess } from './consoleWorker'
 import { buildConsoleInputWriteCommand } from './consoleInputWrite'
+import { relayTimeoutMsFor } from './relayRunner'
 import {
   WindowsTextDelivery,
   createConsoleWriteRunner,
@@ -310,7 +311,11 @@ describe('WindowsTextDelivery.relayToClaudeSession', () => {
     expect(invocation.instruction).toContain('sample-project-70')
     expect(invocation.instruction).toContain('run the tests')
     expect(invocation.args.join(' ')).not.toContain('run the tests')
-    expect(invocation.timeoutMs).toBe(60_000)
+    // AMENDED for #439 (was: `expect(invocation.timeoutMs).toBe(60_000)`). The
+    // port still hands `relayTimeoutMs` in as the BASE unchanged; the scaling
+    // now happens one level down, in `deliverViaRelay` (see relayRunner.ts and
+    // relayRunner.test.ts, which pins the arithmetic on its own).
+    expect(invocation.timeoutMs).toBe(relayTimeoutMsFor(60_000, 'run the tests'.length))
     expect(invocation.env.PATH).toBe('C:\\Users\\j\\.local\\bin;C:\\Windows')
   })
 
@@ -323,13 +328,20 @@ describe('WindowsTextDelivery.relayToClaudeSession', () => {
     expect(result.error).toBeTruthy()
   })
 
-  it('names the timeout when the relay ran out of time', async () => {
+  // AMENDED for #439 (was: 'names the timeout when the relay ran out of
+  // time', asserting only `delivered: false` and an error matching
+  // /timed out/i). A courier killed by its own timeout may already have
+  // delivered the message, so this is no longer an ordinary failure — see
+  // relayRunner.test.ts, which pins the full reasoning on `deliverViaRelay`
+  // itself.
+  it('calls a killed relay unconfirmed rather than failed', async () => {
     const port = delivery({
       runRelay: vi.fn().mockResolvedValue({ exitCode: 1, timedOut: true })
     })
     const result = await port.relayToClaudeSession({ sessionName: 'x', text: 'hi' })
     expect(result.delivered).toBe(false)
-    expect(result.error).toMatch(/timed out/i)
+    expect(result.unconfirmed).toBe(true)
+    expect(result.error).toBe('The relay did not confirm in time; the message may have arrived.')
   })
 
   it('turns a failed spawn into a failed verdict instead of a rejection', async () => {

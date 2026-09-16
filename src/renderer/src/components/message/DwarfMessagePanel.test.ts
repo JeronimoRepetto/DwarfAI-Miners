@@ -1833,6 +1833,27 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     }
   })
 
+  /*
+   * #439. A relay courier killed by its own timeout is drawn as 'delivered'
+   * with `unconfirmed: true` (see useDwarfMessaging.ts) rather than 'failed',
+   * precisely so this gate excludes it: offering `Send again` here would risk
+   * handing the same words to the session a second time.
+   */
+  it('offers no Send again on an unconfirmed relay, and draws the honest tick instead', () => {
+    const state: DwarfSendState = {
+      phase: 'delivered',
+      via: 'claude-relay',
+      unconfirmed: true,
+      error: 'The relay did not confirm in time; the message may have arrived.'
+    }
+    const wrapper = panel({ echoes: [echo({ state })] })
+    const row = lastMessageRow(wrapper)
+    expect(row.find('.bubble-marker').text()).toBe('✓')
+    expect(row.find('.bubble-marker').attributes('title')).toBe(sendMarker(state)!.title)
+    expect(row.find('.bubble-marker').attributes('title')).toContain('did not confirm in time')
+    expect(wrapper.find('.bubble-retry').exists()).toBe(false)
+  })
+
   it("emits the failed message's own id, so a retry cannot land on another bubble", async () => {
     const wrapper = panel({
       echoes: [
