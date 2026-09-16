@@ -291,6 +291,17 @@ silently" directly.
   boundaries via `Stop`) is small next to doubling hook-invocation frequency —
   revisit only if Phase 0 benchmarking (below) shows the relay is cheap enough
   to not matter.
+
+  **Still skipped, and the "fires on every tool call" objection now has an
+  answer.** A `matcher` scopes the event to one tool, so a `PreToolUse` carrying
+  `matcher: "AskUserQuestion"` fires once per ask rather than once per tool call
+  — measured working on Claude Code 2.1.273, payload and timings in
+  `docs/question-capture-evaluation.md` §9 (#298). The frequency argument above
+  therefore no longer decides it; what does is that the same content reaches the
+  transcript poll about one interval later on that build, so a sixth installed
+  event has to justify itself on push-versus-poll alone. Nothing is installed
+  yet.
+
 - **Codex** → `~/.codex/hooks.json` (same nested shape) + patch
   `~/.codex/config.toml` to add `[features]\nhooks = true` if absent, exactly
   like `enable_codex_hooks()`. Must also surface, once, the same caveat

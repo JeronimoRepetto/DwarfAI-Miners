@@ -14,8 +14,9 @@
 > renderer: `pendingQuestion` and `DwarfQuestion` had zero references anywhere under `src/renderer`
 > (verified by grep, 2026-09-03). For every other session type this document is honest that capture
 > and/or answering cannot be built today, and says exactly why, rather than papering over it — the
-> same conclusion #60 reached about question-text detection in general. **Those other rows have not
-> changed**, and they are the part still worth reading.
+> same conclusion #60 reached about question-text detection in general. **One of those other rows has
+> since changed** — the observed-session row, re-measured on 2026-09-16 against a newer Claude Code
+> (§9) — and the rest are the part still worth reading.
 >
 > Read against the tree at `8d3991f`. A great deal moved since the issue was filed: `DwarfQuestion`,
 > the transcript-tail capture, the redaction pass, the `notification_type` hook field, and the entire
@@ -84,7 +85,9 @@ principle, but it is not "add a sixth string to `CLAUDE_HOOK_EVENTS`" — it nee
 can block on a human answer and hand a verdict back over the hook's own stdout, which is exactly the
 shape `docs/hook-detection-evaluation.md:99-104` describes agentpet building for its one whitelisted
 `PreToolUse` case (`post_await`, a 12 s blocking round trip) and this app has never built. `UserPromptSubmit`
-and `PreToolUse` remain not installed, unchanged from the prior evaluation's reasoning.
+and `PreToolUse` remain not installed, unchanged from the prior evaluation's reasoning — though
+§9 has since measured what a matcher-scoped `PreToolUse` would carry if one were, and the answer
+is "everything the card needs," which turns that from a reasoning question into a design one.
 
 ---
 
@@ -93,7 +96,7 @@ and `PreToolUse` remain not installed, unchanged from the prior evaluation's rea
 | Session type                                                                       | Capture a question, live?                                                                                                                                                                                       | Source                                                                                                                                                                                                                                                                                                            | Answer it?                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Channel                                                                                                                                                                                                                                                                                                                              |
 | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Held Claude session** (panel-launched via the Agent SDK) — foreman only          | **Yes**, the moment it is asked                                                                                                                                                                                 | `canUseTool` (`src/main/sessionLaunch/sdkHeldSession.ts:152-165`) → `HeldSessionRegistry.receiveAsk` (`src/main/sessionLaunch/heldSessionRegistry.ts:292-309`) → stamped onto the dwarf by `stampHeldQuestions` (`src/main/sessionLaunch/heldSession.ts:321-338`, wired at `src/main/runtime/runtime.ts:486-489`) | **Yes — end to end, already**, up to the IPC boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `agent:answerQuestion` (`src/shared/contracts.ts:982`) → `runtime.answerDwarfQuestion` (`src/main/runtime/runtime.ts:879-890`) → `HeldSessionRegistry.answer` (`heldSessionRegistry.ts:217-234`) → releases the blocked `canUseTool` promise. The renderer was the only missing piece and has since shipped — see the status banner. |
-| **External interactive Claude session** (observed, a human at a console) — foreman | **In code, yes; in practice, effectively never while still open**                                                                                                                                               | `parseClaudeTranscriptTail` reading an `AskUserQuestion` `tool_use` block (`src/main/providers/claude/parse.ts:543-610`)                                                                                                                                                                                          | **No structural path.** `dwarf:sendText` can physically put text into that console — since #371 by writing into that console's own input buffer by process id, with no window raised and no keystroke synthesized (`src/main/textDelivery/consoleInputWrite.ts`; `windowsTextDelivery.ts`, `pasteToConsole`, whose name outlived the clipboard paste of #319) — but nothing here knows what shape of input the picker expects or maps a `DwarfQuestionOption.label` to a keystroke, and that is the half that has not changed. See §3. | `terminal` — mechanically present, semantically blind                                                                                                                                                                                                                                                                                |
+| **External interactive Claude session** (observed, a human at a console) — foreman | **Yes, since Claude Code 2.1.273 — re-measured 2026-09-16 (§9).** Read as "effectively never while still open" until then, on an older build where the block reached disk only at resolve                       | `parseClaudeTranscriptTail` reading an `AskUserQuestion` `tool_use` block (`src/main/providers/claude/parse.ts:543-610`); a `PreToolUse` hook with matcher `AskUserQuestion` carries the same content as a push about one poll interval sooner (§9)                                                               | **No structural path.** `dwarf:sendText` can physically put text into that console — since #371 by writing into that console's own input buffer by process id, with no window raised and no keystroke synthesized (`src/main/textDelivery/consoleInputWrite.ts`; `windowsTextDelivery.ts`, `pasteToConsole`, whose name outlived the clipboard paste of #319) — but nothing here knows what shape of input the picker expects or maps a `DwarfQuestionOption.label` to a keystroke, and that is the half that has not changed. See §3. | `terminal` — mechanically present, semantically blind                                                                                                                                                                                                                                                                                |
 | **Headless `claude -p`** (detached launch, non-held)                               | **No.** `AskUserQuestion` never fires without a client capable of answering it — the model asks in prose instead and the turn simply ends (`docs/console-hosting.md:211-214`)                                   | none                                                                                                                                                                                                                                                                                                              | **No** — there is no blocked tool call to release; the turn that "asked" has already finished                                                                                                                                                                                                                                                                                                                                                                                                                                          | `claude-relay` exists for `sendText`, but it starts a **new** turn — it cannot resolve an ask that already dissolved                                                                                                                                                                                                                 |
 | **Claude subagent/worker** (of any foreman)                                        | Same mechanism, same caveat, on the subagent's own transcript (`src/main/providers/claude/claudeProvider.ts:705`)                                                                                               | subagent transcript tail                                                                                                                                                                                                                                                                                          | **No dedicated path.** A worker owns no channel; only `foreman-relay` reaches it, as free text prefixed `[for agent X]`, and it cannot target a `toolUseId`                                                                                                                                                                                                                                                                                                                                                                            | `foreman-relay`                                                                                                                                                                                                                                                                                                                      |
 | **Codex interactive TUI thread**                                                   | **No.** Codex's rollout vocabulary carries no approval/input-request record at all, and `logs_2.sqlite` is a plain trace log — verified against real data (`src/main/providers/codex/codexProvider.ts:533-539`) | none                                                                                                                                                                                                                                                                                                              | **No** structural answer; free text can be queued into the next turn                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `codex-queue` (`codex queue --thread`) — proven live (`docs/console-hosting.md:160`), but it delivers prose into the conversation, never a resolution to a specific ask                                                                                                                                                              |
@@ -107,6 +110,14 @@ matrix could easily read more optimistic than reality. §3 is why it does not.
 ---
 
 ## 3. Why an observed session's `pendingQuestion` is honest but nearly unusable live
+
+> **Superseded in its central claim, 2026-09-16 — read §9 before acting on anything below.** On
+> Claude Code 2.1.273 the `AskUserQuestion` `tool_use` block IS on disk, unresolved, for the whole
+> time the menu stands open; it was watched there for 27 seconds and answered afterwards. The
+> "nothing on disk while the menu is open" finding this section is built on was measured on an older
+> build and has expired. Everything here about redaction, about `askedAt` versus observation time,
+> and about `claudeWaitingReason` narrowing `'unknown'` still holds — it is only the never-open-in-
+> time conclusion that does not.
 
 `ClaudeTranscriptInfo.pendingQuestion` is fully implemented and tested (`parse.ts:543-610`,
 `parse.test.ts`): it reads every `AskUserQuestion` `tool_use` block in the tail, tracks which
@@ -366,3 +377,221 @@ In dependency order — each blocked on the one before it, and on nothing else i
    tool, and the console tier itself is only verified on Windows — macOS and Linux report
    `supportsConsoleInput: false` or unverified, so those platforms get the refusal and the jump
    rather than the keys (see `platform-ports`).
+
+---
+
+## 9. The `PreToolUse` hook route, measured — and the transcript claim it overturned (2026-09-16, #298)
+
+**Both halves of #298's first step came back positive, and a third finding nobody asked for came
+back with them: §3's central claim is no longer true of Claude Code as it ships.** Measured [V] on
+**Claude Code 2.1.273, Windows Terminal**, against a throwaway git project and a session started
+from a terminal — an observed session in every sense that matters here, since nothing in this app
+launched or held it.
+
+### The hook configuration that was installed
+
+Project-scoped `.claude/settings.json` in the scratch project only. Nothing under the user's own
+Claude directory was touched, and no approval or "review hooks" prompt ever appeared — a project
+settings file's hooks were simply live for that session:
+
+```jsonc
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [{ "type": "command", "command": "<logger> PreToolUse" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [{ "type": "command", "command": "<logger> PostToolUse" }]
+      }
+    ]
+  }
+}
+```
+
+The logger appended the ISO timestamp, the event name and the whole of stdin to a file and exited 0
+— the fire-and-forget discipline `docs/hook-detection-evaluation.md` demands of anything on a tool's
+critical path.
+
+### 1. `PreToolUse` fires, with the questions, before the menu
+
+It fired on every ask, four for four. The payload carries everything the card needs and the
+correlation key a registry needs. Field names verbatim; the question prose is the measurement's own
+invented question rather than a real session's, so it is left readable, and the paths are
+placeholdered per `privacy-guard`:
+
+```jsonc
+{
+  "session_id": "<uuid>",
+  "transcript_path": "C:\\Users\\j\\.claude\\projects\\<encoded-cwd>\\<uuid>.jsonl",
+  "cwd": "C:\\Users\\j\\<scratch project>",
+  "scratchpad_dir": "C:\\Users\\j\\<...>\\<uuid>\\scratchpad",
+  "prompt_id": "<uuid>",
+  "permission_mode": "bypassPermissions",
+  "effort": { "level": "high" },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Which colour do you prefer?",
+        "header": "Colour",
+        "options": [
+          { "label": "Red", "description": "Warm, bold, high-energy." },
+          { "label": "Blue", "description": "Cool, calm, steady." }
+        ],
+        "multiSelect": false
+      }
+    ]
+  },
+  "tool_use_id": "toolu_<id>"
+}
+```
+
+Every field #298 asked after is present: `questions[]` with `question`, `header`,
+`options[label, description]` and `multiSelect`; `tool_use_id`; `session_id`; `cwd`;
+`transcript_path`. `questions` is an ARRAY, so §4c's refusal of a multi-question call applies to
+this route unchanged.
+
+### 2. `PostToolUse` fires on the answer, and says what was answered
+
+```jsonc
+{
+  // …the same envelope, plus:
+  "hook_event_name": "PostToolUse",
+  "tool_input": {
+    "questions": [/* identical to the PreToolUse copy */],
+    "answers": { "Which colour do you prefer?": "Red" },
+    "annotations": {}
+  },
+  "tool_response": {/* the same object again: questions, answers, annotations */},
+  "tool_use_id": "toolu_<id>", // identical to the PreToolUse one
+  "duration_ms": 0
+}
+```
+
+`answers` is keyed by the question TEXT, not by index or header — worth knowing before anything
+tries to correlate an answer back to an option. `duration_ms` was 0 and 1 ms across the two runs, so
+it measures the resolve and never how long the human took.
+
+### 3. The delay: the hook wins, by less than it sounds
+
+One run instrumented with a read-only console-buffer watcher polling every 40 ms:
+
+| Moment                                                | Stamp          |
+| ----------------------------------------------------- | -------------- |
+| the `PreToolUse` logger's own line                    | `…:24:33.667Z` |
+| the picker's `Enter to select` footer first on screen | `…:24:33.734Z` |
+
+**67 ms**, ±40 ms of poll. The logger stamps AFTER a PowerShell process has started, so the hook was
+invoked perhaps 200 ms earlier still — but the honest reading is that the hook and the menu are
+near-simultaneous, and the hook's value is that it is a PUSH rather than that it is early. Against a
+2 s poll it is worth roughly one poll interval, no more.
+
+### 4. The claim this overturns: an observed ask IS on disk while the menu is open
+
+**§3 above, row one of the channel matrix in `docs/console-hosting.md`, and `heldSession.ts`'s
+header all say that an observed session writes its `AskUserQuestion` block only when the menu
+RESOLVES, backdated, so there is nothing on disk to read while it stands. On 2.1.273 that is
+false.** The same run, read straight off the transcript with the picker demonstrably open:
+
+| Moment                                                       | Stamp          | Transcript state                                       |
+| ------------------------------------------------------------ | -------------- | ------------------------------------------------------ |
+| the assistant record carrying the `tool_use`                 | `…:26:15.863Z` | written, with the full `questions[]` input             |
+| first read, picker footer confirmed on screen                | `…:26:25.880Z` | `tool_use` present, **no `tool_result`**, mtime frozen |
+| second read, 17 s later                                      | `…:26:42.671Z` | unchanged — still open, still unresolved               |
+| the answer, which `PostToolUse` then reported as `"Granite"` | `…:26:43.126Z` | —                                                      |
+| the `tool_result` for that exact `tool_use_id`               | `…:26:43.151Z` | appears only now                                       |
+
+So for the 27 seconds the menu stood open, the tail held exactly the shape
+`parseClaudeTranscriptTail` already looks for: an `AskUserQuestion` `tool_use` with no `tool_result`
+resolving it. `pendingQuestion` was not merely honest — it was **open, live and correct**, which is
+precisely what §3 says it can never be. The block was not backdated either: its timestamp is the
+moment it was written, and the picker was still answerable 27 s later.
+
+**The 2026-09-02 measurement is not withdrawn; it is dated.** It was taken on an older build, twice,
+carefully, and nothing suggests it was wrong then. What changed is the CLI. That is the lesson worth
+carrying: a measurement of somebody else's binary has a version on it, and this document's strongest
+structural claim quietly expired between builds because nothing re-ran it.
+
+### 5. What this does to the plan
+
+#298's premise was that the hook is _the only route that can carry the question before the menu
+resolves_. On 2.1.273 it is **not the only route** — the transcript poll this app already runs
+carries it too, about a poll interval later, with no new hook event, no matcher and no registry.
+
+That does not make the hook worthless: it is a push, it hands over `tool_use_id` without parsing
+anything, and it cannot be missed by a tail window that has scrolled. But it does mean the cheap fix
+and the expensive one now buy nearly the same thing — and the next subsection is why the cheap one
+turns out to be no fix at all.
+
+### 5b. The feature is already built, and this measurement is the whole of what was missing
+
+**Run the app's own parser over the exact bytes that were on disk while the picker stood open, and a
+complete `pendingQuestion` comes out.** The transcript held 28 lines then and 41 after the answer, so
+its first 28 lines are byte-for-byte that state; `parseClaudeTranscriptTail` was given them
+unmodified, out of this repository at `82e8938`:
+
+```jsonc
+{
+  "toolUseId": "toolu_<id>",
+  "question": "Which stone do you prefer?",
+  "header": "Stone",
+  "multiSelect": false,
+  "questionCount": 1,
+  "options": [
+    { "label": "Granite", "description": "…" },
+    { "label": "Slate", "description": "…" }
+  ],
+  "askedAt": "…:26:15.863Z"
+}
+```
+
+Given all 41 lines it returns `{}` — the ask closes on its own `tool_result`, with no registry, no
+expiry window and nothing to clear. Every field the card needs is there, including the option
+descriptions.
+
+**And nothing downstream is gating it.** `pendingQuestionField` (`claudeProvider.ts`) already stamps
+that value on an observed foreman, redacted at the provider boundary, with `channel: 'terminal'`.
+`stampHeldQuestions` only supersedes it for a session the panel HOLDS, so an observed one keeps it.
+`DwarfMessagePanel.vue` renders `DwarfQuestionCard` on `v-else-if="dwarf.pendingQuestion"` — the
+existence of the field and nothing else, with no held check and no capability check. And the card
+already knows what a terminal-channel ask is: `ANSWER_ONLY_WHERE_IT_RUNS`, the console jump on any
+refusal about a console, the several-question refusal, and the keystroke answering #362 measured.
+
+So #298's deliverable — an observed session's open question, with its options, shown while it is
+open, saying it must be answered at the terminal, with the jump — **was built for #354 and #362 and
+has been sitting behind one upstream behaviour the whole time.** What the maintainer saw on v0.7.0
+was not a missing feature; it was a Claude Code that wrote the block only on resolve. That changed
+in the CLI, not here.
+
+**The recommendation is therefore to write no code for this issue.** Not the hook, and not §8 item 2
+either. What is worth doing instead is a regression test pinning the parser against a transcript
+fixture in exactly this shape — an `AskUserQuestion` `tool_use` with no `tool_result` behind it —
+so that the day this silently reverts upstream, a test says so instead of a person hitting it live.
+
+### 6. Traps hit on the way, each worth one line
+
+- **Backslashes in a hook `command` are eaten.** The first run's command was a Windows path with `\`
+  separators; Claude Code reported `PreToolUse:AskUserQuestion hook error — Failed with non-blocking
+status code` and the path in that error had every separator stripped. Forward slashes fixed it.
+  The hooks had been firing all along — the failure was the command's, not the event's, and it is
+  exactly the shape that would make a real measurement read as a negative result.
+- **A failing hook is non-blocking and visible.** The error prints inline in the TUI under the tool
+  call and the tool proceeds regardless. Good for the agent, and a reminder that a silent installer
+  bug surfaces in the person's terminal rather than in this app.
+- **A session launched from inside another agent inherits its markers.** The first two runs were
+  started from an agent's own shell and inherited `CLAUDE_CODE_CHILD_SESSION`, which turns
+  **transcript saving off** — the TUI says so in its status line. Hooks fired identically either
+  way, but §4's transcript finding had to be re-run with those variables stripped before it meant
+  anything. Anything launching a Claude session from within a Claude session should know this.
+- **`permission_mode` was `bypassPermissions`** on the measuring machine, so a default-mode session
+  is not separately measured. `AskUserQuestion` is not permission-gated, so this is a caveat rather
+  than a suspicion.
+- **Whether a mid-session edit to `settings.json` takes effect was NOT measured.** Every
+  configuration change was tested by starting a new session, so this document says nothing about
+  hot-reload in either direction.
