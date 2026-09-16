@@ -391,6 +391,104 @@ describe('reconcileEchoes', () => {
       expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
     })
   })
+
+  /*
+   * #424. A session launched from the panel is held over the Agent SDK, and
+   * its own user turn looks nothing like the console's: `heldContentFor`
+   * (attachmentDelivery.ts) sends an image as a content block with no text at
+   * all, and names anything else on its own line — `Attached file: <path>` —
+   * joined to the words with newlines (measured in heldSession.test.ts's
+   * `heldMessageEntries` cases). The rule above was written for the console's
+   * shape only, so a held row never carried a `[Image #N]` marker or a bare
+   * path for it to find, and the echo was never accounted for.
+   *
+   * `via: 'held-session'` on the echo's own `state` (DwarfSendState) is what
+   * selects this shape instead of the console's — the same field the sprite
+   * marker already reads, so no new plumbing carries it here.
+   */
+  describe('held-session attachments (#424)', () => {
+    function attachment(overrides: Partial<DwarfAttachment> = {}): DwarfAttachment {
+      return {
+        path: 'C:\\mine\\seam.png',
+        name: 'seam.png',
+        kind: 'image',
+        bytes: 10,
+        ...overrides
+      }
+    }
+
+    function heldEcho(overrides: Partial<MessageEcho> = {}): MessageEcho {
+      return echo({
+        state: { phase: 'delivered', via: 'held-session', awaitingReaction: true },
+        ...overrides
+      })
+    }
+
+    it('accounts for a held echo whose row names its files with "Attached file:" lines, no marker at all', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' }),
+        attachment({ path: 'C:\\mine\\config.txt', name: 'config.txt', kind: 'file' })
+      ]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({
+        text: 'Attached file: C:\\mine\\notes.pdf\nAttached file: C:\\mine\\config.txt\ndig deeper'
+      })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for a held echo sent with only an image, since the image leaves no token to match', () => {
+      // heldMessageEntries drops an image block entirely (pinned in
+      // heldSession.test.ts) — the row this echo has to match is exactly the
+      // words, with nothing standing in for the image at all.
+      const attachments: DwarfAttachment[] = [attachment({ kind: 'image' })]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({ text: 'dig deeper' })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for a held echo sent with an image and a file together — the image silent, the file named', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\shot.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({ text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for a plain held echo with no attachments at all, same as any other channel', () => {
+      const sent = heldEcho()
+      expect(reconcileEchoes([sent], [turn()])).toEqual([])
+    })
+
+    it('refuses a console-shaped row for a held echo — the bare path carries no "Attached file:" line', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = heldEcho({ text: 'dig deeper' })
+      // Exactly the console's own shape (#419): the bare path, no separator.
+      const row = turn({ text: 'C:\\mine\\notes.pdfdig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
+
+    it('refuses a held-shaped row for a console echo, even though the bare path still matches inside it', () => {
+      // The literal path IS found inside "Attached file: <path>" — the prefix
+      // is not part of the console's own token — so the lookup alone would
+      // wrongly accept this row. What actually refuses it is the leftover
+      // "Attached file: " text the strip leaves behind: the remainder no
+      // longer equals the echo's own words once normalized, so the second
+      // half of `accountsFor`'s check is what is doing the real work here.
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = echo({
+        text: 'dig deeper',
+        state: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+      })
+      const row = turn({ text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
+  })
 })
 
 describe('boundEchoes', () => {

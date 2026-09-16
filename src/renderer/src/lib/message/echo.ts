@@ -1,5 +1,6 @@
 import { REACTION_WINDOW_MS } from '../delivery/reaction'
 import { normalizeConsoleText } from '../../../../shared/consoleText'
+import { ATTACHED_FILE_PREFIX } from '../../../../shared/heldSessionText'
 import {
   stripRelayProvenance,
   type DwarfAttachment,
@@ -143,43 +144,88 @@ export function mergeEchoes<Row extends PanelMessage>(
 const IMAGE_MARKER_RE = /\[Image #\d+\]/
 
 /**
- * `text` with one literal token per entry of `attachments` removed, each
- * taken off once from wherever it landed — undefined the moment one is
- * missing.
+ * One expected attachment token, generalized over the two shapes a row can
+ * carry it in (#424) — a LITERAL string taken off by an exact substring
+ * match (a file's token on either channel, and a held image's — which is
+ * none at all, so it contributes no entry here), or a PATTERN taken off by
+ * regex (a console image's `[Image #N]`, the one case a literal string can
+ * never express since the digits are Claude Code's own counter).
  *
- * A file's token is its exact path, matched as a plain substring anywhere in
- * the row; an image's is one `[Image #<digits>]` occurrence, matched
- * anywhere by the one shape-anchored pattern above because the digits are
- * Claude Code's own counter and never predictable. Position is deliberately
- * not part of the match — #419 was reopened exactly because the first fix
- * stripped tokens in send order, and the placeholder's own position moves
- * with how long its image took to read, independent of the other pastes.
- * Neither token is a search over the WORDS that remain once every token is
- * off — those are compared by plain equality in `accountsFor`, never by
- * pattern, and normalized again there since a token taken off the middle of
- * the row can leave a whitespace gap the words never had.
+ * One mechanism for both channels: `expectedTokensFor` is the only place that
+ * decides WHICH shape a given attachment becomes; `stripAttachmentTokens`
+ * below never again asks what channel it is removing a token for.
+ */
+type AttachmentToken = { kind: 'literal'; value: string } | { kind: 'pattern'; re: RegExp }
+
+/**
+ * The tokens `text` must carry, one per entry of `attachments`, for the
+ * channel named by `via` — `echo.state.via`, the same field the sprite
+ * marker already reads (#309).
  *
- * File paths come off before image markers, on purpose: a path is removed by
- * an exact substring match regardless of what it contains, so a path that
- * happens to itself contain something shaped like `[Image #5]` is gone as
- * one whole unit before the marker search ever runs over the row. Searching
- * for markers first would risk matching that fragment inside a path still
- * sitting in the text and cutting it in half.
+ * `'held-session'` is the one channel measured to look different
+ * (`heldMessageEntries`, pinned in heldSession.test.ts, off what
+ * `heldContentFor` in attachmentDelivery.ts actually builds): a non-image is
+ * named on its own line, `Attached file: <path>` — the exact prefix that
+ * module writes, shared rather than retyped (see shared/heldSessionText.ts)
+ * — and an IMAGE is a content block with no text representation at all, so
+ * it contributes no token to strip. Every other channel, and an echo with no
+ * `via` recorded at all (minted before this field existed, or never reaching
+ * a channel that was ever measured taking any shape but the console's),
+ * falls back to the console shape #419 established.
+ */
+function expectedTokensFor(
+  via: string | undefined,
+  attachments: readonly DwarfAttachment[]
+): AttachmentToken[] {
+  if (via === 'held-session') {
+    return attachments
+      .filter((attachment) => attachment.kind !== 'image')
+      .map((attachment) => ({
+        kind: 'literal',
+        value: `${ATTACHED_FILE_PREFIX}${attachment.path}`
+      }))
+  }
+  return attachments.map((attachment) =>
+    attachment.kind === 'image'
+      ? { kind: 'pattern', re: IMAGE_MARKER_RE }
+      : { kind: 'literal', value: attachment.path }
+  )
+}
+
+/**
+ * `text` with one `token` removed, each taken off once from wherever it
+ * landed — undefined the moment one is missing.
+ *
+ * Position is deliberately not part of the match — #419 was reopened exactly
+ * because the first fix stripped tokens in send order, and a console image's
+ * placeholder position moves with how long its read took, independent of the
+ * other pastes. Neither kind of token is a search over the WORDS that remain
+ * once every token is off — those are compared by plain equality in
+ * `accountsFor`, never by pattern, and normalized again there since a token
+ * taken off the middle of the row can leave a whitespace gap the words never
+ * had.
+ *
+ * LITERAL tokens come off before PATTERN ones, on purpose: a literal is
+ * removed by an exact substring match regardless of what it contains, so one
+ * that happens to itself contain something shaped like `[Image #5]` is gone
+ * as one whole unit before the pattern search ever runs over the row.
+ * Searching for a pattern first would risk matching that fragment inside a
+ * literal still sitting in the text and cutting it in half.
  */
 function stripAttachmentTokens(
   text: string,
-  attachments: readonly DwarfAttachment[]
+  tokens: readonly AttachmentToken[]
 ): string | undefined {
   let rest = text
-  for (const attachment of attachments) {
-    if (attachment.kind === 'image') continue
-    const at = rest.indexOf(attachment.path)
+  for (const token of tokens) {
+    if (token.kind !== 'literal') continue
+    const at = rest.indexOf(token.value)
     if (at === -1) return undefined
-    rest = rest.slice(0, at) + rest.slice(at + attachment.path.length)
+    rest = rest.slice(0, at) + rest.slice(at + token.value.length)
   }
-  for (const attachment of attachments) {
-    if (attachment.kind !== 'image') continue
-    const marker = IMAGE_MARKER_RE.exec(rest)
+  for (const token of tokens) {
+    if (token.kind !== 'pattern') continue
+    const marker = token.re.exec(rest)
     if (marker === null) return undefined
     rest = rest.slice(0, marker.index) + rest.slice(marker.index + marker[0].length)
   }
@@ -232,6 +278,14 @@ function stripAttachmentTokens(
  * attachments-only echo (no words at all) matches a row that is exactly those
  * tokens. See docs/console-hosting.md §6 for the transcript shape this was
  * measured against.
+ *
+ * Which tokens a row is expected to carry now depends on how THIS message was
+ * sent (#424) — `echo.state.via` picks the shape (`expectedTokensFor`), since
+ * a session held over the Agent SDK writes its own user turn nothing like a
+ * console does. Reading `via` off the echo rather than off `message` is
+ * deliberate: the transcript row is what is being judged, not what is doing
+ * the judging, and a channel is a fact about how the person's own words were
+ * sent, never about the row they are being compared to.
  */
 function accountsFor(
   echo: MessageEcho,
@@ -241,7 +295,7 @@ function accountsFor(
   if (message.role !== 'user' || message.issuer !== undefined) return false
   const stripped = stripAttachmentTokens(
     normalizeConsoleText(stripRelayProvenance(message.text)),
-    attachments
+    expectedTokensFor(echo.state.via, attachments)
   )
   // Normalized again: a token can now come out of the middle of the row
   // (or off the end) rather than only the front, and closing the gap that

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfAttachment } from '../domain/types'
+// Moved to shared for #424 — the renderer's echo reconciliation needs the
+// exact same literal (see shared/heldSessionText.ts).
+import { ATTACHED_FILE_PREFIX } from '../../shared/heldSessionText'
 import {
-  ATTACHED_FILE_PREFIX,
   BRACKETED_PASTE_END,
   BRACKETED_PASTE_START,
   consoleChunksFor,

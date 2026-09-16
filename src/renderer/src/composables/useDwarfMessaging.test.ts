@@ -565,6 +565,44 @@ describe('useDwarfMessaging echoes', () => {
     expect(attachmentsFor('claude:s1', echoId)).toEqual(attachments)
   })
 
+  /*
+   * #424. A session held over the Agent SDK writes a user turn nothing like
+   * the console's, and `echo.ts`'s `expectedTokensFor` picks the right shape
+   * off the echo's own `state.via` — the same field `deliver` already writes
+   * from the delivery result (see `useDwarfMessaging.ts`'s `next.via`). These
+   * two prove that field actually reaches `reconcileEchoes` through this
+   * composable's own `reconcile`, not just inside echo.ts's unit tests.
+   */
+  it('drops a held-delivered message once its own "Attached file:" row accounts for it', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'held-session' }))
+    const { send, reconcile, echoesFor } = useDwarfMessaging()
+    const attachments: DwarfAttachment[] = [
+      { path: 'C:\\work\\notes.pdf', name: 'notes.pdf', kind: 'file', bytes: 20 }
+    ]
+    await send('claude:s1', 'dig deeper', true, attachments)
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    reconcile('claude:s1', [turn('Attached file: C:\\work\\notes.pdf\ndig deeper', sentAt)])
+
+    expect(echoesFor('claude:s1')).toEqual([])
+  })
+
+  it('keeps a held-delivered message against the console-shaped row a different channel would have written', async () => {
+    stubApi(() => Promise.resolve({ delivered: true, via: 'held-session' }))
+    const { send, reconcile, echoesFor } = useDwarfMessaging()
+    const attachments: DwarfAttachment[] = [
+      { path: 'C:\\work\\notes.pdf', name: 'notes.pdf', kind: 'file', bytes: 20 }
+    ]
+    await send('claude:s1', 'dig deeper', true, attachments)
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    // The console's own shape (#419) — a bare path, never this channel's own
+    // "Attached file:" line — must not account for a held delivery.
+    reconcile('claude:s1', [turn('C:\\work\\notes.pdfdig deeper', sentAt)])
+
+    expect(echoesFor('claude:s1')).toHaveLength(1)
+  })
+
   it('never brings a dropped message back when the transcript tail forgets it', async () => {
     // The tail is bounded, so the row that accounted for a message rolls off
     // it. The drop is a fact and a later poll does not take it back.

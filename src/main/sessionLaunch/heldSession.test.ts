@@ -939,6 +939,67 @@ describe('heldMessageEntries', () => {
     expect(heldMessageEntries(undefined)).toEqual([])
     expect(heldMessageEntries(42)).toEqual([])
   })
+
+  /*
+   * #424. Pinning what a held session's own USER turn becomes, since that is
+   * the row the panel's echo reconciliation has to account for and it looks
+   * nothing like the console's — the whole reason that reconciliation was
+   * matching the wrong shape. Every content array below is exactly what
+   * `heldContentFor` (attachmentDelivery.ts) builds for the attachment mix
+   * named in each test, not a synthetic shape.
+   */
+  describe('a user turn with attachments (#424)', () => {
+    it('reads an image block and a file line as one entry: the image gone, the file named', () => {
+      // heldContentFor's shape for one image plus one file plus words: the
+      // image travels as its own block and carries no text at all, so the
+      // loop below never sees it as anything to publish — only the single
+      // text block, naming the file, reaches an entry.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'text', text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' }
+        ])
+      ).toEqual([{ text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' }])
+    })
+
+    it('publishes nothing at all for an images-only message — no text block exists to read', () => {
+      // heldContentFor's shape when every attachment is an image and there
+      // are no words: `words === ''`, so it returns the image blocks alone,
+      // with no text block appended. Nothing here ever gets buffered or
+      // flushed, so the loop that watches this turn never sees a row for it.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } }
+        ])
+      ).toEqual([])
+    })
+
+    it('names every file on its own line ahead of the words, for a files-only message', () => {
+      expect(
+        heldMessageEntries([
+          {
+            type: 'text',
+            text: 'Attached file: C:\\mine\\notes.pdf\nAttached file: C:\\mine\\config.txt\ndig deeper'
+          }
+        ])
+      ).toEqual([
+        {
+          text: 'Attached file: C:\\mine\\notes.pdf\nAttached file: C:\\mine\\config.txt\ndig deeper'
+        }
+      ])
+    })
+
+    it('reads an image alongside words as just the words — the image leaves no trace', () => {
+      // heldContentFor's shape for an image attachment plus words and no
+      // file: `named` stayed empty, so `words` is the text alone.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'text', text: 'dig deeper' }
+        ])
+      ).toEqual([{ text: 'dig deeper' }])
+    })
+  })
 })
 
 describe('retainHeldMessage', () => {

@@ -20,6 +20,9 @@
  */
 import { toConsoleLine } from './sendKeys'
 import type { DwarfAttachment } from '../domain/types'
+// Shared with the renderer's echo reconciliation (#424) — see
+// shared/heldSessionText.ts for why this cannot stay a local constant.
+import { ATTACHED_FILE_PREFIX } from '../../shared/heldSessionText'
 
 /**
  * The VT markers a terminal wraps a dropped path in.
@@ -34,9 +37,6 @@ export const BRACKETED_PASTE_END = '[201~'
 
 /** The chunk that submits — a carriage return, in a call of its own (#404). */
 const ENTER_CHUNK = '\r'
-
-/** How a held session is told about a file it will not receive the bytes of. */
-export const ATTACHED_FILE_PREFIX = 'Attached file: '
 
 /**
  * The chunk list for one console message, for `buildConsoleInputSequenceCommand`.
