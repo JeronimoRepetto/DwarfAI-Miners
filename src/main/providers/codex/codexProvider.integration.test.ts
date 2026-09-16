@@ -61,12 +61,21 @@ describe.skipIf(process.env.RUN_INTEGRATION !== '1')('CodexProvider real-machine
       expect(snapshot.sessionId.length).toBeGreaterThan(0)
       expect(['busy', 'idle']).toContain(snapshot.status)
       expect(Array.isArray(snapshot.dwarfs)).toBe(true)
-      // busy <=> exactly one dwarf (the main session thread); idle <=> none.
-      expect(snapshot.dwarfs).toHaveLength(snapshot.status === 'busy' ? 1 : 0)
+      // A discovered session always carries exactly one dwarf — its own thread —
+      // and the session's status decides that dwarf's, never its existence.
+      //
+      // This read "idle <=> no dwarfs" until 2026-09-16, when the walk #264 owed
+      // ran it against a live machine and it failed on the first idle session it
+      // met. Existence was frozen to the SESSION by #202 precisely so a root
+      // stops flickering between turns, and `codexProvider.test.ts` pins the
+      // three-state walk (working -> waiting -> working) that says so. The
+      // assertion had simply outlived the provider, and it failed on exactly the
+      // run #264's diagnosis tells a reporter to make.
+      expect(snapshot.dwarfs).toHaveLength(1)
       expect(snapshot.updatedAt).toBeLessThanOrEqual(Date.now())
       for (const dwarf of snapshot.dwarfs) {
         expect(dwarf.id).toBe(`codex:${snapshot.sessionId}`)
-        expect(dwarf.status).toBe('working')
+        expect(dwarf.status).toBe(snapshot.status === 'busy' ? 'working' : 'waiting')
       }
     }
   })
