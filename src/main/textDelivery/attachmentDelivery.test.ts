@@ -79,6 +79,39 @@ describe('consoleChunksFor', () => {
     const chunks = consoleChunksFor('two\nlines', [], false)
     expect(chunks).toEqual(['two lines'])
   })
+
+  /*
+   * Issue #425: a single `WriteConsoleInput` call carrying a long message
+   * loses its own beginning, so the words are bounded here — where the chunk
+   * list is built — the same way a text-only message is, before Enter and
+   * after every attachment's own paste chunk.
+   */
+  it('splits long words into bounded chunks, after the pastes and before Enter', () => {
+    const shot = image()
+    const words = 'a'.repeat(1_500)
+    const chunks = consoleChunksFor(words, [shot], true) as string[]
+    expect(chunks[0]).toBe(paste(shot))
+    const enter = chunks.at(-1)
+    const wordChunks = chunks.slice(1, -1)
+    expect(enter).toBe('\r')
+    expect(wordChunks.length).toBeGreaterThan(1)
+    for (const chunk of wordChunks) expect(chunk.length).toBeLessThanOrEqual(500)
+    expect(wordChunks.join('')).toBe(words)
+  })
+
+  it('refuses rather than splits a pasted path that exceeds the bound', () => {
+    // A path chunk carries the bracketed-paste markers as well as the path,
+    // and paths are short by nature — splitting one would hand the receiving
+    // CLI half a path inside paste markers, which attaches nothing. #425 asks
+    // for a refusal here instead of a guess at where a path could safely break.
+    const longPath: DwarfAttachment = {
+      path: 'C:\\work\\' + 'x'.repeat(600) + '.png',
+      name: 'x'.repeat(600) + '.png',
+      kind: 'image',
+      bytes: 900
+    }
+    expect(consoleChunksFor('', [longPath], true)).toBeNull()
+  })
 })
 
 const reader = (bytes: Record<string, { base64: string; mediaType: string }>): AttachmentReader => {

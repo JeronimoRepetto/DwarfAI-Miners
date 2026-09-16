@@ -18,6 +18,7 @@
  * send down, because a ✓ beside half of somebody's files is the exact
  * dishonesty this feature exists to avoid.
  */
+import { MAX_CONSOLE_CHUNK_CODE_POINTS, boundedChunks } from '../../shared/consoleText'
 import { toConsoleLine } from './sendKeys'
 import type { DwarfAttachment } from '../domain/types'
 
@@ -49,18 +50,33 @@ export const ATTACHED_FILE_PREFIX = 'Attached file: '
  *
  * Never emits an empty chunk, which the builder refuses outright: a message may
  * be only files, and trimmed-to-nothing words are not a chunk.
+ *
+ * **The words are bounded, and a path chunk never is (#425).** One
+ * `WriteConsoleInput` call carrying a long message loses its own beginning —
+ * measured 2026-09-16, `docs/console-hosting.md` §6 — so the words pass
+ * through `boundedChunks` (shared/consoleText.ts) the same way a text-only
+ * message does in `buildConsoleInputWriteCommand`. A pasted PATH stays whole
+ * on purpose: paths are short by nature, and a path split across two calls
+ * would hand the receiving CLI half a path inside bracketed-paste markers,
+ * which attaches nothing. So a path chunk that somehow exceeds the bound is
+ * refused — this returns `null`, the same refusal shape the builders already
+ * use — rather than guessed at where it could safely break.
  */
 export function consoleChunksFor(
   text: string,
   attachments: readonly DwarfAttachment[],
   pressEnter: boolean
-): string[] {
+): string[] | null {
+  const pastes: string[] = []
+  for (const attachment of attachments) {
+    const chunk = `${BRACKETED_PASTE_START}${attachment.path}${BRACKETED_PASTE_END}`
+    if (Array.from(chunk).length > MAX_CONSOLE_CHUNK_CODE_POINTS) return null
+    pastes.push(chunk)
+  }
   const words = toConsoleLine(text)
   return [
-    ...attachments.map(
-      (attachment) => `${BRACKETED_PASTE_START}${attachment.path}${BRACKETED_PASTE_END}`
-    ),
-    ...(words === '' ? [] : [words]),
+    ...pastes,
+    ...(words === '' ? [] : boundedChunks(words)),
     ...(pressEnter ? [ENTER_CHUNK] : [])
   ]
 }
