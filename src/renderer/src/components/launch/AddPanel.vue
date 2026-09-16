@@ -10,7 +10,7 @@ import {
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { HELD_PERMISSION_MODES, MAX_DWARF_TEXT_CHARS, type HeldPermissionMode } from '../../types'
+import { HELD_PERMISSION_MODES, type HeldPermissionMode } from '../../types'
 
 /**
  * The design's Add Panel (#86): the surface the mine's Add action opens, where
@@ -183,11 +183,18 @@ function onCommandKeydown(event: KeyboardEvent): void {
     </div>
 
     <template v-else>
+      <!--
+        No maxlength since #431. This prompt never travels through a command
+        line: a detached launch writes it to the child's stdin and a held one
+        passes it to the SDK inside this process, so the ceiling a MESSAGE
+        answers to was never its bound (see prepareLaunchPrompt). There is
+        therefore no limit to state and nothing for the panel to refuse —
+        only the silent cut that used to be here.
+      -->
       <textarea
         class="launch-input is-selectable"
         rows="2"
         :value="prompt"
-        :maxlength="MAX_DWARF_TEXT_CHARS"
         :disabled="!enabled"
         :placeholder="placeholder"
         :class="{ 'is-instruction': !enabled }"

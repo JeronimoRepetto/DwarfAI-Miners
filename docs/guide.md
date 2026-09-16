@@ -258,6 +258,33 @@ written into a console carries no prefix, because it already arrives as the prom
 which is the point of writing by process id, and why the prefix is now only for the platforms where
 the relay is still the channel.
 
+**How long a message may be** is a fact about the channel above it, not a preference, and the
+panel says so before you press Enter. A message leaves this app inside a **command line** on
+three of those routes — the relay's courier instruction, Codex's `--message`, and the whole
+PowerShell script a console write is spawned with — and Windows will not start a process with a
+command line longer than **32,767 characters**. So:
+
+| The route                                           | A message may be      |
+| --------------------------------------------------- | --------------------- |
+| written into a session's own console                | **6,541** characters  |
+| everything else (relay, Codex queue, a held stream) | **15,359** characters |
+
+The console's number is lower because its script carries your words base64-encoded, which costs
+about 3.6 characters of command line for every character you typed; the wider one is the
+command-line limit less the relay's own instruction, halved because Windows' quoting rule can
+double a payload of quotation marks. Both are measured rather than chosen —
+[`docs/console-hosting.md`](console-hosting.md) §6 carries the runs.
+
+**Past it, the panel refuses and keeps your text.** The sentence in the alert row names how long
+the message is, how long this session can take, and what would have carried it; Enter does
+nothing until you have trimmed it, and the words stay in the box so you can. Nothing is sent and
+nothing is cut. This used to be the other way round: the box silently stopped accepting
+characters at 4,000 — a limit left over from when a message was typed into a terminal key by key
+— and a long paste lost its ending without a word.
+
+A **launch prompt** in the Add panel answers to none of this and is not capped at all: it travels
+on the new session's own standard input, or straight onto a stream this panel holds, so there is
+no command line for it to fit inside.
 **Kick** does one of four things, and says which:
 
 - cuts the current turn short, where the panel is holding the session's own stream and that

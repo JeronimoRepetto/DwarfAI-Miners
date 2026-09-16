@@ -1,9 +1,4 @@
-import {
-  MAX_DWARF_TEXT_CHARS,
-  type DwarfProvider,
-  type HeldPermissionMode,
-  type LaunchFailedPush
-} from '../../types'
+import { type DwarfProvider, type HeldPermissionMode, type LaunchFailedPush } from '../../types'
 
 /**
  * The Add Panel's gates, as `screens/launch.md` states them (#86).
@@ -217,16 +212,23 @@ export function typePrompt(state: LaunchState, text: string): LaunchState {
 }
 
 /**
- * The prompt as it will reach the session: trimmed and capped exactly as
+ * The prompt as it will reach the session: trimmed exactly as
  * `prepareHeldPrompt` and `prepareLaunchPrompt` do it in main.
  *
  * Reproduced rather than approximated, because this string has a second job.
  * The held registry seeds the new session's conversation with it, so it is also
  * how the panel recognises which arriving dwarf is the one it just started —
  * see the adoption rule in useAgentLaunch. A near-copy would identify nobody.
+ *
+ * AMENDED for #431 (was: `.trim().slice(0, MAX_DWARF_TEXT_CHARS)`, "trimmed
+ * and capped"). Both of main’s own helpers lost that slice the same day, and
+ * the sentence above is exactly why this one had to go with them: a launch
+ * prompt travels on the child's stdin or straight onto a held stream, so no
+ * command line ever bounded it, and a copy that still cut would have stopped
+ * identifying the very dwarf it started.
  */
 export function launchPrompt(state: LaunchState): string {
-  return state.prompt.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+  return state.prompt.trim()
 }
 
 /** The custom command as it would be run: trimmed, for the same reason. */

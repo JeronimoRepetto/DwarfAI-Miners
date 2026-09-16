@@ -4,6 +4,10 @@ import {
   buildConsoleInputWriteCommand,
   consoleWriteFailureFor
 } from './consoleInputWrite'
+/* --- The script's own command line (#431) — one block, appended ------------ */
+import { boundedChunks } from '../../shared/consoleText'
+import { MAX_CONSOLE_TEXT_CHARS, WINDOWS_COMMAND_LINE_LIMIT } from '../domain/types'
+/* --- end of the #431 block ------------------------------------------------- */
 
 /**
  * The builder's own `CHUNK_SPLIT_DELAY_MS` is not exported — pinned here as the
@@ -428,3 +432,63 @@ describe('consoleWriteFailureFor', () => {
     expect(consoleWriteFailureFor(255).error).toBeTruthy()
   })
 })
+
+/* --- The script's own command line (#431) — one block, appended ------------ */
+
+/*
+ * Issue #431's finding, and the reason the console tier carries a lower ceiling
+ * than the wire: this script is not run from a file. `windowsTextDelivery.ts`
+ * spawns it as `powershell.exe -NoProfile -NonInteractive -Command <script>`,
+ * so the whole thing — the person's words inside it, base64 of UTF-16, plus six
+ * lines of scaffolding per chunk — has to fit in one Windows command line.
+ *
+ * #425's own probes never found this because they ran the script from a FILE
+ * (`powershell -File`), which has no such bound. Measured live 2026-09-16
+ * against a real session (docs/console-hosting.md §6): 29,323 code points built
+ * a 109,152-character command line and `spawn` threw ENAMETOOLONG in 2 ms
+ * without reaching a console; 8,214 code points arrived whole.
+ *
+ * These are the guard on the derivation, not a second copy of it: if the script
+ * grows, the first of them fails and MAX_CONSOLE_TEXT_CHARS has to come down.
+ */
+describe('the command line a console write is spawned with (#431)', () => {
+  /** What Node puts on the command line for the shipped argv, script aside. */
+  const ARGV_FIXED = '"powershell.exe" -NoProfile -NonInteractive -Command '.length
+
+  /** The script as one quoted argv element: its own quotes are escaped. */
+  function commandLineLength(script: string): number {
+    return ARGV_FIXED + script.length + (script.match(/"/g) ?? []).length + 2
+  }
+
+  it('fits a message at the console ceiling, with the Enter that submits it', () => {
+    const script = buildConsoleInputWriteCommand(4242, 'x'.repeat(MAX_CONSOLE_TEXT_CHARS), true)
+    expect(script).not.toBeNull()
+    expect(commandLineLength(script!)).toBeLessThan(WINDOWS_COMMAND_LINE_LIMIT)
+  })
+
+  it('leaves room for five attached paths at the same ceiling', () => {
+    // The ceiling reserves this rather than shrinking as chips appear, so the
+    // reservation has to be real — see CONSOLE_SCRIPT_ATTACHMENT_CHARS.
+    const paths = Array.from(
+      { length: 5 },
+      (_, index) => `\u001b[200~C:\\${'d'.repeat(250)}\\image-${index}.png\u001b[201~`
+    )
+    const script = buildConsoleInputSequenceCommand(4242, [
+      ...paths,
+      ...boundedChunks('x'.repeat(MAX_CONSOLE_TEXT_CHARS)),
+      '\r'
+    ])
+    expect(script).not.toBeNull()
+    expect(commandLineLength(script!)).toBeLessThan(WINDOWS_COMMAND_LINE_LIMIT)
+  })
+
+  it('would overflow that command line well before thirty thousand characters', () => {
+    // The measurement this ceiling exists for: the builder happily produces the
+    // script, and it is the SPAWN that refuses it — with no exit code, so no
+    // tier retries and the panel has to refuse first.
+    const script = buildConsoleInputWriteCommand(4242, 'x'.repeat(30_000), true)
+    expect(script).not.toBeNull()
+    expect(commandLineLength(script!)).toBeGreaterThan(WINDOWS_COMMAND_LINE_LIMIT * 3)
+  })
+})
+/* --- end of the #431 block ------------------------------------------------- */

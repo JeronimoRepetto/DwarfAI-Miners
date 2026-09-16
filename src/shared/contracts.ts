@@ -1378,6 +1378,27 @@ export interface DwarfCapabilities {
    * it down. Nothing in the UI infers that; it reads this.
    */
   attach: TextDeliveryChannel | null
+  /**
+   * The longest message this dwarf's send route can actually carry (#431).
+   *
+   * A NUMBER where every other member is a channel, because this one answers a
+   * different question about the same route: not whether a message can go, but
+   * how much of one. It is here rather than derived in the renderer from
+   * `sendText` for the reason the rest of the matrix is here — the panel must
+   * refuse exactly what main refuses — and because `sendText` is not enough to
+   * derive it: a worker's chain reports `'foreman-relay'` while writing into
+   * its foreman's own console, which is the tighter of the two ceilings. Only
+   * `resolve.ts` holds the endpoint that decides (see `maxTextCharsFor`).
+   *
+   * ABSENT MEANS "work it out from the channel this dwarf reports" —
+   * `maxTextCharsFor(dwarf.textDelivery)`, which is what the composer does. The
+   * two agree on every route but one: a worker's chain over its foreman's
+   * console, where the channel says `'foreman-relay'` and only the stamped
+   * number knows the console's tighter ceiling. Main stamps this on every poll,
+   * so absence is a matrix written before this member existed (or by hand in a
+   * test), and the fallback is the closest honest reading of one.
+   */
+  maxTextChars?: number
 }
 
 export interface Mine {
@@ -1803,11 +1824,232 @@ export interface DwarfActivation {
 }
 
 /**
- * Longest message accepted for delivery. Long enough for a real instruction,
- * short enough that keystroke injection stays a few seconds rather than a
- * minute of the user's keyboard being taken over.
+ * The longest command line Windows will start a process with: 32,767
+ * characters, the documented bound on `CreateProcessW`'s `lpCommandLine`
+ * (https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw,
+ * checked 2026-09-16).
+ *
+ * Measured on this machine the same day rather than taken on trust: the longest
+ * argv element `execFile` accepted was 32,712 characters — 32,766 of command
+ * line plus the terminating NUL — and one character past it threw
+ * `ENAMETOOLONG` before any process was created. Two things the documentation
+ * does not say came out of the same run and both are load-bearing below: Node's
+ * Windows quoting turns every `"` in an argv element into `\"`, so a payload of
+ * quotation marks HALVES what fits (16,355 accepted), while a payload of
+ * backslashes does not (32,712, the same as plain letters).
+ *
+ * On the wire because it is what bounds a MESSAGE (#431). Three of this app's
+ * delivery tiers hand the person's words to a spawned process — the relay's
+ * courier instruction, the Codex queue's `--message`, and the console write's
+ * whole PowerShell script — so this number, not a typing budget, is what a
+ * message has to fit inside.
  */
-export const MAX_DWARF_TEXT_CHARS = 4000
+export const WINDOWS_COMMAND_LINE_LIMIT = 32_767
+
+/**
+ * What the relay tier's argv costs around one message, before the message
+ * itself — the largest fixed overhead any spawn-carried channel has, so the
+ * ceiling below is derived from the WORST of them and holds for all.
+ *
+ * Itemised, all measured against the shipped builders on 2026-09-16:
+ *
+ * - the Claude binary's own quoted path — bounded by Windows' MAX_PATH: 262
+ * - `-p --model <model> --tools ListAgents,SendMessage --safe-mode`, with the
+ *   separators and quotes a command line adds: 128
+ * - `buildRelayInstruction`'s own fixed prose and its two delimiters: 590
+ * - the target session's name, which rides inside that instruction: 256
+ * - `RELAY_PROVENANCE_LINE` and the newline behind it: 74
+ * - up to four `[for agent <name>] ` tags, one per foreman hop: 512
+ *
+ * 1,822, rounded up to the next power of two so a sentence added to the relay's
+ * instruction does not silently eat the margin.
+ */
+const ARGV_MESSAGE_OVERHEAD_CHARS = 2_048
+
+/**
+ * What quoting can multiply a message by on its way into a command line.
+ *
+ * Two, and it is the measured worst case rather than a guess: a payload of
+ * nothing but `"` halves what fits (16,355 characters accepted where 32,712
+ * plain ones were). Ordinary prose costs nothing at all, so this is a margin
+ * most messages never spend — and it is taken anyway, because a bound that only
+ * holds for well-behaved text is a bound that fails on somebody's pasted JSON.
+ */
+const ARGV_QUOTING_FACTOR = 2
+
+/**
+ * The longest message this app will carry on ANY channel (#431).
+ *
+ * ## What it used to be, and why that reason is gone
+ *
+ * 4,000, with the comment "long enough for a real instruction, short enough
+ * that keystroke injection stays a few seconds rather than a minute of the
+ * user's keyboard being taken over". That was true when a message was TYPED
+ * into the foreground console key by key (#10). Since #371 it is written into
+ * the session's own console input buffer by verified pid with no keyboard
+ * involved, and since #425 in bounded chunks with a 50 ms pause between them.
+ * The premise died two releases ago; the number stayed, and it was applied
+ * SILENTLY TWICE — a `maxlength` on the composer and a `.slice()` in
+ * `sendDwarfText` that still reported the cut message delivered.
+ *
+ * ## What it is now
+ *
+ * The command line, which is a real bound and not a budget. Derived rather than
+ * written down, so the arithmetic cannot drift away from the number: Windows'
+ * own limit, less the largest argv a message travels inside, halved for the
+ * worst case quoting can do to it. 15,359 as of this writing.
+ *
+ * ## Why it is the LOOSEST bound and not the tightest
+ *
+ * Because one channel is tighter and says so itself. `MAX_CONSOLE_TEXT_CHARS`
+ * below is the console write's own ceiling, and `maxTextCharsFor` is the one
+ * place that picks between them — the panel reads the answer off
+ * `DwarfCapabilities.maxTextChars` rather than assuming either. This one stays
+ * the wire's ceiling: it is what the IPC boundary refuses past, because the
+ * boundary does not know which channel the message will take, and it is what a
+ * dwarf with no channel at all reports.
+ */
+export const MAX_DWARF_TEXT_CHARS = Math.floor(
+  (WINDOWS_COMMAND_LINE_LIMIT - ARGV_MESSAGE_OVERHEAD_CHARS) / ARGV_QUOTING_FACTOR
+)
+
+/**
+ * The P/Invoke preamble of the console write's PowerShell script, plus the
+ * Enter chunk and a worker chain's prefix: everything in that script that does
+ * not grow with the message.
+ *
+ * The preamble alone measured 2,557 characters of command line on 2026-09-16
+ * (`buildConsoleInputWriteCommand` with an empty message). The rest of this
+ * allowance is the prefix a `foreman-relay` chain prepends, which travels
+ * through the same script and costs 3.6 characters of it per character.
+ */
+const CONSOLE_SCRIPT_FIXED_CHARS = 4_096
+
+/**
+ * What five attached paths cost that same script: one bracketed-paste chunk
+ * each, at Windows' own MAX_PATH, base64 of UTF-16 plus its per-chunk
+ * scaffolding — about 1,024 characters of command line apiece.
+ *
+ * Reserved unconditionally rather than subtracted per message, because the
+ * ceiling has to be ONE number the composer can state before the person has
+ * decided how many files they are attaching. A limit that shrank as chips
+ * appeared would refuse text that was fine a moment earlier.
+ */
+const CONSOLE_SCRIPT_ATTACHMENT_CHARS = 5_120
+
+/**
+ * How many characters of command line one character of message costs on the
+ * console tier: 3.6, measured 3.567 on 2026-09-16.
+ *
+ * Two additions, neither of which is quoting: the text is carried as base64 of
+ * its UTF-16 code units (`base64Utf16`), which is 8/3 of a character, and every
+ * `MAX_CONSOLE_CHUNK_CODE_POINTS`-sized chunk carries its own six lines of
+ * PowerShell (#425). Base64's alphabet holds no quote, so unlike the argv tiers
+ * above this slope is the same for every payload.
+ */
+const CONSOLE_SCRIPT_CHARS_PER_MESSAGE_CHAR = 3.6
+
+/**
+ * The longest message a console write can carry (#431) — the tightest real
+ * bound this app has, and the one the issue that found it assumed did not
+ * exist.
+ *
+ * The console tier does not type and has no length of its own to answer for;
+ * what it answers for is the spawn. `windowsTextDelivery.ts` runs each write as
+ * `powershell.exe -NoProfile -NonInteractive -Command <script>`, with the whole
+ * script — the person's words inside it, base64 of UTF-16 — in the child's
+ * COMMAND LINE. So the console is bounded by `WINDOWS_COMMAND_LINE_LIMIT` like
+ * the relay is, only far more tightly, because the script costs 3.6 characters
+ * per character of message where an argv element costs one or two.
+ *
+ * Measured live 2026-09-16 against a throwaway Claude Code session, through the
+ * shipped builder and the shipped spawn (`docs/console-hosting.md` §6):
+ * 29,323 code points built a 109,152-character command line and `spawn` refused
+ * it with `ENAMETOOLONG` in 2 ms; 8,214 code points (32,518) arrived whole;
+ * 8,409 (33,054) was refused again. A refusal there is also SILENT in the
+ * useful sense — the throw carries no exit code, so `runConsoleWriteScript`
+ * reports "the agent terminal could not be reached" and sets no `neverStarted`,
+ * which means no second tier retries it. The panel has to refuse first, which
+ * is what this number is for.
+ *
+ * #425's measurements never found this because its probe ran the script from a
+ * FILE (`powershell -File`), and the shipped path does not.
+ */
+export const MAX_CONSOLE_TEXT_CHARS = Math.floor(
+  (WINDOWS_COMMAND_LINE_LIMIT - CONSOLE_SCRIPT_FIXED_CHARS - CONSOLE_SCRIPT_ATTACHMENT_CHARS) /
+    CONSOLE_SCRIPT_CHARS_PER_MESSAGE_CHAR
+)
+
+/**
+ * The ceiling for one resolved send route — the ONE place the two numbers above
+ * are chosen between (#431).
+ *
+ * Keyed on the ENDPOINT a send resolves to rather than on the channel it
+ * reports, and the difference is real: a worker's chain reports
+ * `'foreman-relay'` while writing into its foreman's own console, so reading
+ * the channel name would hand it the loose ceiling and let the panel accept a
+ * message the spawn cannot start. `resolve.ts` passes the endpoint; only
+ * `'terminal'` is tighter, and everything else — the two relays over a named
+ * session, the queue, a held stream, a hosted process's stdin — answers to the
+ * wire ceiling.
+ *
+ * No channel at all answers the wire ceiling too, never the tightest: nothing
+ * is sent without one, so the number only ever reaches a composer that is
+ * already disabled, and naming the console's limit there would describe a send
+ * this dwarf could never have made.
+ */
+export function maxTextCharsFor(channel: TextDeliveryChannel | null | undefined): number {
+  return channel === 'terminal' ? MAX_CONSOLE_TEXT_CHARS : MAX_DWARF_TEXT_CHARS
+}
+
+/**
+ * What would have carried this message, in one noun — the half of the refusal
+ * below that names the channel rather than the number (#431).
+ *
+ * On the wire rather than in the renderer's `CHANNEL_HINT`, for the reason
+ * `ANSWER_ONLY_WHERE_IT_RUNS` is here: main returns this sentence from
+ * `sendDwarfText` and the composer prints it before anything is sent, so one
+ * spelling has to be readable from both processes. Deliberately shorter than
+ * `CHANNEL_HINT`'s sentences, which describe what a channel DOES; this only has
+ * to finish the clause "…can carry N characters".
+ */
+const CHANNEL_CARRIER: Record<TextDeliveryChannel, string> = {
+  terminal: "this session's own console",
+  'claude-relay': "Claude Code's own messaging",
+  'foreman-relay': "the relay to this worker's foreman",
+  'codex-queue': "this Codex session's queue",
+  'held-session': 'the stream this panel is holding open',
+  // Never a send channel (#217); present because the map is total.
+  'launched-process': 'this session',
+  'hosted-stdin': "this process's own stdin"
+}
+
+/**
+ * Why a message was not sent, when the only thing wrong with it is its length
+ * (#431).
+ *
+ * One sentence, on the wire, because three surfaces say it and they must not
+ * say it differently: the composer prints it in the alert ink while the person
+ * is still holding the text, `Runtime.sendDwarfText` returns it for a request
+ * that reached main anyway, and the IPC boundary refuses past the wire ceiling.
+ * It names the LENGTH and the LIMIT both — the attachment refusals' own rule,
+ * which is that a sentence sending somebody to guess which of several ceilings
+ * they hit usually sends them to the wrong one.
+ *
+ * It says "nothing was sent" out loud because that is the whole change #431
+ * makes: the old cap cut the message and reported the remainder delivered.
+ */
+export function messageTooLongReason(
+  length: number,
+  limit: number,
+  channel: TextDeliveryChannel | null | undefined
+): string {
+  const carrier = channel == null ? 'this channel' : CHANNEL_CARRIER[channel]
+  return (
+    `That message is ${length} characters and ${carrier} can carry ${limit}, ` +
+    'so nothing was sent. Trim it and send again.'
+  )
+}
 
 /**
  * The one line a RELAY-carried message states about itself (#378).
@@ -1881,10 +2123,39 @@ export function stripRelayProvenance(text: string): string {
  *
  * The cap is short of MAX_DWARF_TEXT_CHARS on purpose: that one bounds what a
  * user may SEND, once, and this one bounds what a dozen retained messages cost
- * on every push forever.
+ * on every push forever. #431 widened the gap rather than closing it — a wire
+ * ceiling derived from the command line is nearly eight times this — and left
+ * this number alone for exactly the reason above: raising it would cost every
+ * poll of every held session, forever, to spare one bubble a cut. What changed
+ * is that the CUT is now accounted for instead of ignored; see
+ * `heldRetainedText`.
  */
 export const HELD_CONVERSATION_LIMIT = 12
 export const HELD_MESSAGE_MAX_CHARS = 2000
+
+/**
+ * One retained message's words, cut to what a held session's conversation keeps
+ * (#431) — the rule `retainHeldMessage` applies, named here so the renderer can
+ * apply the SAME one.
+ *
+ * It exists because of what the cut costs downstream. The panel draws the
+ * person's own message immediately, as an echo, and retires it when the
+ * session's own record accounts for it (#309) — and for a held session that
+ * record is this store's row. A message longer than the bound therefore
+ * produces a row the echo could never equal, so the bubble was drawn twice and
+ * its ✓ could never become ✓✓ (#419, #424, #428 are the same failure met three
+ * other ways). `accountsFor` in the renderer now truncates the echo through
+ * this function and compares, which is an EXACT match against a known rule
+ * rather than a prefix heuristic that would credit any row starting with the
+ * right words.
+ *
+ * A plain cut with NO marker, deliberately: the store has never written one,
+ * and adding an ellipsis here to make the truncation visible would change what
+ * a dozen sessions' conversations look like for the sake of one comparison.
+ */
+export function heldRetainedText(text: string): string {
+  return text.slice(0, HELD_MESSAGE_MAX_CHARS)
+}
 
 /**
  * KB boundaries at which a mine's SOURCE-CODE BYTE WEIGHT crosses into the
@@ -2108,6 +2379,32 @@ export function parseDwarfAttachments(value: unknown): readonly DwarfAttachment[
     accepted.push(candidate)
   }
   return accepted
+}
+
+/**
+ * Read a `text` field off an IPC payload, or refuse the whole request (#431).
+ *
+ * The sibling of `parseDwarfAttachments` above, in the same place and for the
+ * same reason: `main/index.ts` has to refuse the message the composer would
+ * have refused, and the limit it reads has to be the wire's own so the two
+ * cannot come to disagree about which message was too long.
+ *
+ * It checks the WIRE ceiling and never a channel's, because the boundary does
+ * not know which channel this dwarf will resolve to — that is the runtime's
+ * question, and `sendDwarfText` asks it with `maxTextCharsFor`. So what this
+ * refuses is a message NO channel could have carried, and the handler's generic
+ * "could not be delivered" is the honest answer for it: the length sentence
+ * names a channel, and there is no channel in hand here. A message the panel
+ * itself sent never reaches this refusal — the composer says so, in the
+ * channel's own terms, while the person is still holding the text.
+ *
+ * Refused rather than cut, which is the whole of #431: a payload trimmed to
+ * what fits would hand a session a message with its ending removed and report
+ * it delivered.
+ */
+export function parseDwarfText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  return value.length > MAX_DWARF_TEXT_CHARS ? null : value
 }
 
 /**
