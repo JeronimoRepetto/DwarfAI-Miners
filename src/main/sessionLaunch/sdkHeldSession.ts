@@ -7,6 +7,7 @@ import {
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
+import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 import type { HeldSessionSubagentSignal } from './heldCrew'
 import {
   heldMessageEntries,
@@ -173,10 +174,13 @@ function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
  * A user message the streaming input can carry. `parent_tool_use_id` is null
  * because these come from the panel, not from inside a tool call.
  */
-function userMessage(text: string): SDKUserMessage {
+function userMessage(content: HeldMessageContent): SDKUserMessage {
   return {
     type: 'user',
-    message: { role: 'user', content: text },
+    // A plain string for a message with nothing attached, exactly as before
+    // #408, and the SDK's own block array when there is — a one-element array
+    // would be a new shape on the wire for every message that never needed one.
+    message: { role: 'user', content: content as SDKUserMessage['message']['content'] },
     parent_tool_use_id: null
   }
 }
@@ -194,8 +198,12 @@ class InputStream {
   private closed = false
 
   push(text: string): boolean {
+    return this.pushContent(text)
+  }
+
+  pushContent(content: HeldMessageContent): boolean {
     if (this.closed) return false
-    this.queued.push(userMessage(text))
+    this.queued.push(userMessage(content))
     this.wake?.()
     return true
   }
@@ -387,6 +395,16 @@ export function createSdkHeldSession(): HeldSessionPort {
         end('the panel closed the session')
       },
       send: (text: string) => input.push(text),
+      /*
+       * The attachment route (#408), and the reason the panel needs no console
+       * for a held session at all: the SDK's user message takes the same
+       * content-block array the API does, so an image travels as its own bytes
+       * rather than as a path somebody has to open.
+       *
+       * Present here and absent on the Antigravity handle, which is the port
+       * rule this file's header states: a capability is declared by existing.
+       */
+      sendContent: (content) => input.pushContent(content),
       /*
        * A real interrupt, not a close (#210).
        *

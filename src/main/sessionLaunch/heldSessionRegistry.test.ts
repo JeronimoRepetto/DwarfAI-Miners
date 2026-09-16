@@ -78,6 +78,16 @@ class FakePort {
   /** Set false to make the stream refuse a send, as one already closing would (#245). */
   sendTakes = true
   /*
+   * Attachments (#408). `sendContent` is an OPTIONAL handle member on exactly
+   * the terms `interrupt` is: the Agent SDK's stream documents an image content
+   * block and Antigravity's NDJSON does not, so a handle without one is a real
+   * shape with its own test rather than a gap. No existing assertion changed.
+   */
+  /** Set false to leave `sendContent` off the handle, as a text-only protocol has it. */
+  offersSendContent = true
+  /** Every content payload the stream accepted, in order. */
+  readonly contentSent: unknown[] = []
+  /*
    * AMENDED for #96 (was: a handle carrying only close/send/interrupt). The
    * context reading is the one piece of telemetry no stream message carries,
    * so the port grew a PULL — `contextUsage()` — and the fake has to satisfy
@@ -121,6 +131,15 @@ class FakePort {
         this.sent.push(text)
         return true
       },
+      ...(this.offersSendContent
+        ? {
+            sendContent: (content: unknown) => {
+              if (!this.sendTakes) return false
+              this.contentSent.push(content)
+              return true
+            }
+          }
+        : {}),
       ...(this.offersInterrupt
         ? {
             interrupt: async () => {
@@ -1095,6 +1114,51 @@ describe('HeldSessionRegistry activity (#245)', () => {
     port.reportTelemetry(0, { turn: 'ended' })
     registry.sendText('sess-1', 'keep going')
     expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'working' })
+  })
+
+  /*
+   * Attachments onto a held stream (#408). The blocks reach the handle
+   * untouched, and a handle with no `sendContent` refuses rather than being
+   * flattened to its text — a message whose images the session never saw must
+   * not come back with a ✓.
+   */
+  it('puts content blocks onto the stream, and counts them as a turn beginning', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { turn: 'ended' })
+
+    const blocks = [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+      { type: 'text', text: 'look' }
+    ]
+    expect(registry.sendContent('sess-1', blocks as never)).toBe(true)
+    expect(port.contentSent).toEqual([blocks])
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'working' })
+  })
+
+  it('refuses content for a handle whose protocol documents no blocks', async () => {
+    const port = new FakePort()
+    port.offersSendContent = false
+    const registry = registryOver(port)
+    // The handle, not the provider name, is what says so — a capability is
+    // declared by existing, which is this seam's rule for every optional member.
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    port.reportTelemetry(0, { turn: 'ended' })
+
+    expect(registry.sendContent('sess-1', [{ type: 'text', text: 'look' }])).toBe(false)
+    // And nothing was flattened onto the text route behind our backs.
+    expect(port.sent).not.toContain('look')
+    expect(port.contentSent).toEqual([])
+    expect(registry.activityState('sess-1')).toEqual({ held: true, status: 'waiting' })
+  })
+
+  it('refuses content for a session it does not hold', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    expect(registry.sendContent('sess-ghost', [{ type: 'text', text: 'look' }])).toBe(false)
   })
 
   it('never starts a turn for a send the stream refused', async () => {

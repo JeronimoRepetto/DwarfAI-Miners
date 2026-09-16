@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   AgentLaunchRequest,
   AgentLaunchResult,
@@ -7,6 +7,7 @@ import type {
   AppBuild,
   AudioPreferences,
   DwarfActivation,
+  DwarfAttachmentPick,
   DwarfFeedPage,
   DwarfFeedPageRequest,
   DwarfFeedResult,
@@ -308,6 +309,19 @@ export interface DwarfAiMinersApi {
    */
   openExternalLink: (url: string) => Promise<ExternalLinkResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
+  /**
+   * The path behind a dropped `File`, or '' when it has none (#408).
+   *
+   * Synchronous and the only synchronous member here, because it is not an IPC
+   * call at all: `webUtils.getPathForFile` answers from the drop event itself.
+   * The renderer is given the string and never the File, so a drop cannot
+   * become a way to read a file the person did not attach.
+   */
+  pathForDroppedFile: (file: File) => string
+  /** Open the system file picker for the composer, answering the chosen paths. */
+  chooseDwarfAttachments: () => Promise<string[]>
+  /** What each path is: an attachment with a preview, or the reason it is not one. */
+  describeDwarfAttachments: (paths: readonly string[]) => Promise<DwarfAttachmentPick[]>
   /** Cancel the dwarf's current work; the panel stays open for the verdict. */
   kickDwarf: (request: DwarfKickRequest) => Promise<DwarfKickResult>
   /**
@@ -659,6 +673,28 @@ const api: DwarfAiMinersApi = {
   openExternalLink: (url) =>
     ipcRenderer.invoke(IPC_CHANNELS.openExternalLink, typeof url === 'string' ? url : ''),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
+  // The one place a dropped File becomes a path (#408). `webUtils` lives in
+  // preload because the renderer has no business with either half: a File it
+  // could read at will, and a path it could load at will. It gets neither —
+  // only the string main is about to be asked about. A File that carries no
+  // path at all (a synthesized one, a drag from a web page) answers '' and is
+  // dropped by the caller, never guessed at.
+  pathForDroppedFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file as File)
+    } catch {
+      return ''
+    }
+  },
+  chooseDwarfAttachments: () => ipcRenderer.invoke(IPC_CHANNELS.chooseDwarfAttachments),
+  // Forwarded as a rebuilt list of strings, the discipline launchAgent uses:
+  // anything that is not a path crosses as '' and main refuses the whole call,
+  // rather than describing some other file than the one the person dropped.
+  describeDwarfAttachments: (paths) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.describeDwarfAttachments,
+      (Array.isArray(paths) ? paths : []).map((path) => (typeof path === 'string' ? path : ''))
+    ),
   kickDwarf: (request) => ipcRenderer.invoke(IPC_CHANNELS.kickDwarf, request),
   // Same discipline as setToggleShortcut, applied field by field: a launch
   // starts a real process, so what crosses is rebuilt here as two strings

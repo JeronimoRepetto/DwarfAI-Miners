@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
+  ATTACH_ICON_SRC,
   BOOST_ICON_SRC,
   CLOSE_ICON_SRC,
   KICK_ICON_SRC,
@@ -15,6 +16,9 @@ import {
   buildActionBar,
   refusalLine
 } from '../../lib/delivery/actionBar'
+/* --- Message attachments (#408) — one block, appended -------------------- */
+import { ATTACH_LOST_CONTACT, acceptAttachments, attachHint } from '../../lib/delivery/attachments'
+/* --- end of the #408 block ----------------------------------------------- */
 import {
   SEND_AGAIN_LABEL,
   SEND_AGAIN_TITLE,
@@ -51,6 +55,8 @@ import {
   MAX_DWARF_TEXT_CHARS,
   type Dwarf,
   type DwarfAnswerState,
+  type DwarfAttachment,
+  type DwarfAttachmentPick,
   type DwarfFeedResult,
   type DwarfKickState,
   type DwarfPermissionDecision,
@@ -116,6 +122,15 @@ const props = defineProps<{
    * draws them.
    */
   echoes?: readonly MessageEcho[]
+  /**
+   * The files each of those messages was sent with, by echo id (#408).
+   *
+   * A second prop rather than a field on `MessageEcho` because that shape
+   * belongs to `lib/message/echo`, whose subject is matching the panel's own
+   * bubbles against the transcript — a job attachments play no part in. The
+   * delivery store holds both, and drops both together.
+   */
+  echoAttachments?: Readonly<Record<string, readonly DwarfAttachment[]>>
   kickState?: DwarfKickState
   /**
    * The verdict of the last answer or decision given for this dwarf, whatever
@@ -126,7 +141,12 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [payload: { text: string; pressEnter: boolean }]
+  /**
+   * `attachments` is present only when there are some (#408), so a text-only
+   * message emits the exact payload it always did — an empty array on every
+   * message would be a new field for every caller to reason about.
+   */
+  send: [payload: { text: string; pressEnter: boolean; attachments?: readonly DwarfAttachment[] }]
   kick: []
   close: []
   /** One of the agent's own option labels, once Enter confirmed it. */
@@ -284,6 +304,103 @@ onMounted(() => {
 })
 
 /*
+ * Attachments in the composer (#408).
+ *
+ * Everything here is per MOUNT, which is per dwarf: the panel is keyed by dwarf
+ * id, so moving to another dwarf takes the pending files with it rather than
+ * carrying somebody else's drop into a new conversation. That is also what
+ * releases the previews — they are data URLs main rendered, held nowhere but in
+ * these two refs, so a closed panel is a released one with nothing to revoke.
+ */
+const pending = ref<readonly DwarfAttachment[]>([])
+/** The preview for each pending path, when main could draw one. */
+const thumbnails = ref<Record<string, string>>({})
+/** Whether a drag is over the composer, for the design's active border. */
+const dragging = ref(false)
+/** The one sentence a refused file left behind, cleared by the next attempt. */
+const attachRefusal = ref<string | null>(null)
+
+/** Whether this dwarf's channel can carry a file at all — a capability, not a guess. */
+const canAttach = computed(() => canReceive.value && props.dwarf.capabilities?.attach != null)
+const attachTitle = computed(() => attachHint(props.dwarf))
+
+function attachmentsOfEcho(echoId: string): readonly DwarfAttachment[] {
+  return props.echoAttachments?.[echoId] ?? []
+}
+
+/**
+ * Take what main said about a set of paths, and say what was refused.
+ *
+ * The one place a file becomes pending, so the drop and the picker cannot grow
+ * separate rules — which is the issue's "same validation path" in the form the
+ * renderer can actually hold it in.
+ */
+function absorb(picks: readonly DwarfAttachmentPick[]): void {
+  const result = acceptAttachments(pending.value, picks)
+  pending.value = result.attachments
+  attachRefusal.value = result.refusal
+  for (const pick of picks) {
+    if (pick.thumbnail !== undefined) thumbnails.value[pick.path] = pick.thumbnail
+  }
+}
+
+/** Ask main what these paths are, and absorb the answer. Empty input asks nothing. */
+async function describeAndAbsorb(paths: readonly string[]): Promise<void> {
+  if (paths.length === 0) return
+  try {
+    absorb(await window.api.describeDwarfAttachments(paths))
+  } catch {
+    // The bridge is the only thing that can fail here, and a file that vanished
+    // without a word is exactly what this row exists to prevent.
+    attachRefusal.value = ATTACH_LOST_CONTACT
+  }
+}
+
+function onDragOver(): void {
+  dragging.value = true
+}
+
+async function onDrop(event: DragEvent): Promise<void> {
+  dragging.value = false
+  // Refused here rather than after asking main, so a channel that cannot carry
+  // a file never reads one: the sentence is the control's own, so a drop and a
+  // disabled button say the same thing.
+  if (!canAttach.value) {
+    attachRefusal.value = attachTitle.value
+    return
+  }
+  const files = [...(event.dataTransfer?.files ?? [])]
+  // `webUtils` in preload is the only thing that can turn a dropped File into a
+  // path; a File carrying none — a drag out of a web page — answers '' and is
+  // dropped rather than guessed at.
+  const paths = files
+    .map((file) => window.api.pathForDroppedFile(file))
+    .filter((path) => path !== '')
+  await describeAndAbsorb(paths)
+}
+
+async function onAttachClick(): Promise<void> {
+  if (!canAttach.value) return
+  const chosen = await window.api.chooseDwarfAttachments()
+  await describeAndAbsorb(chosen)
+  // The OS dialog took the keyboard; the person's next act is typing (#409).
+  await focusComposer()
+}
+
+function removeAttachment(path: string): void {
+  pending.value = pending.value.filter((item) => item.path !== path)
+  delete thumbnails.value[path]
+  attachRefusal.value = null
+}
+
+/** Forget every pending file and the previews they held. */
+function clearAttachments(): void {
+  pending.value = []
+  thumbnails.value = {}
+  attachRefusal.value = null
+}
+
+/*
  * A permission or question card is the one thing that takes the composer's
  * OWN slot away (#203), and main's next snapshot is what gives it back —
  * never this component, on its own initiative (see the module comment). That
@@ -389,7 +506,10 @@ const alertLine = computed(() => {
   if (props.kickState?.phase === 'failed') {
     return props.kickState.error ?? 'The kick could not be delivered.'
   }
-  return null
+  // A file the composer just refused speaks in the same ink and the same row
+  // (#408), and yields to a delivery failure above it for the reason that row
+  // already orders itself: the message that failed is the newer fact.
+  return attachRefusal.value
 })
 
 /*
@@ -567,11 +687,21 @@ function resizeByKey(event: KeyboardEvent): void {
 
 function submit(): void {
   const text = message.value.trim()
-  if (text === '' || isSending.value || !canReceive.value) return
+  const attachments = pending.value
+  // Words, files, or both — only nothing at all is refused (#408), which is the
+  // same test `sendDwarfText` applies on the other side of the wire.
+  if ((text === '' && attachments.length === 0) || isSending.value || !canReceive.value) return
   // Always with the session's own Enter: `screens/mine.md` says Enter sends,
   // and the panel it draws has no second control to say otherwise.
-  emit('send', { text, pressEnter: true })
+  emit('send', {
+    text,
+    pressEnter: true,
+    // Absent rather than empty, so a text-only message emits exactly the
+    // payload it always did and no caller grows a field to read.
+    ...(attachments.length === 0 ? {} : { attachments })
+  })
   message.value = ''
+  clearAttachments()
 }
 
 /** Enter sends, Shift+Enter writes a newline — the convention every composer here uses. */
@@ -797,6 +927,26 @@ function onKick(): void {
             keeps its bubble and offers the one control that sends the words
             again, and only where the session can still be written to at all.
           -->
+          <!--
+            What the message was sent WITH, under its words (#408): the same
+            chips, without their remove control — a message already handed over
+            is not something an edit can be taken out of. So the person can see
+            what was submitted, and `Send again` resends exactly it.
+          -->
+          <ul
+            v-if="entry.message.echo && attachmentsOfEcho(entry.message.echo.id).length > 0"
+            class="bubble-attachments"
+          >
+            <li
+              v-for="item in attachmentsOfEcho(entry.message.echo.id)"
+              :key="item.path"
+              class="composer-chip bubble-attachment"
+              :title="item.name"
+            >
+              <span class="chip-glyph" aria-hidden="true"></span>
+              <span class="chip-name">{{ item.name }}</span>
+            </li>
+          </ul>
           <span v-if="entry.message.echo" class="bubble-verdict">
             <span
               v-if="entry.message.marker"
@@ -849,7 +999,25 @@ function onKick(): void {
       </button>
     </p>
 
-    <div class="panel-composer">
+    <!--
+      Dropping files anywhere on the composer attaches them (#408).
+
+      `preventDefault` on BOTH dragover and drop is the whole of the navigation
+      guard, and it is not a nicety: a file dropped on a page the browser may
+      navigate REPLACES that page with the file, and this window has no way
+      back. A regression test pins it by name.
+
+      The listeners sit on the composer rather than the section so that a drag
+      over the transcript does not light the border of an input the person is
+      not aiming at — the design lights the composer, and nothing else moves.
+    -->
+    <div
+      class="panel-composer"
+      :class="{ 'is-dragging': dragging }"
+      @dragover.prevent="onDragOver"
+      @dragleave="dragging = false"
+      @drop.prevent="onDrop"
+    >
       <!--
         A permission prompt REPLACES the composer first, ahead of an ordinary
         ask, because it is the tool call this held session is blocked INSIDE
@@ -885,20 +1053,75 @@ function onKick(): void {
         @send-text="emit('send', $event)"
         @open-console="emit('open-console')"
       />
-      <textarea
-        v-else
-        ref="composerRef"
-        v-model="message"
-        class="panel-input is-selectable"
-        rows="2"
-        :maxlength="MAX_DWARF_TEXT_CHARS"
-        :disabled="!canReceive"
-        :title="action('chat')?.hint"
-        placeholder="Write here..."
-        :aria-label="`Message ${dwarf.name}`"
-        @keydown="onInputKeydown"
-      ></textarea>
+      <!--
+        The design's own composition: the chips sit ABOVE the input and INSIDE
+        its white surface, so a pending file reads as part of the message rather
+        than as a row floating beside it. That is why the surface moved out to
+        this wrapper — the textarea keeps the typing and the field keeps the
+        look, and the ask cards above are untouched by either.
+      -->
+      <div v-else class="panel-field">
+        <ul v-if="pending.length > 0" class="composer-chips">
+          <li v-for="item in pending" :key="item.path" class="composer-chip" :title="item.name">
+            <!--
+              A preview main rendered, never a path this renderer loaded. The
+              panel is given a bounded data URL precisely so that a chip can
+              never become a reason to read something off the disk.
+            -->
+            <img
+              v-if="thumbnails[item.path]"
+              class="chip-thumb"
+              :src="thumbnails[item.path]"
+              alt=""
+              draggable="false"
+            />
+            <span v-else class="chip-glyph" aria-hidden="true"></span>
+            <span class="chip-name">{{ item.name }}</span>
+            <button
+              class="chip-remove"
+              type="button"
+              :aria-label="`Remove ${item.name}`"
+              @click="removeAttachment(item.path)"
+            >
+              ×
+            </button>
+          </li>
+        </ul>
+        <textarea
+          ref="composerRef"
+          v-model="message"
+          class="panel-input is-selectable"
+          rows="2"
+          :maxlength="MAX_DWARF_TEXT_CHARS"
+          :disabled="!canReceive"
+          :title="action('chat')?.hint"
+          placeholder="Write here..."
+          :aria-label="`Message ${dwarf.name}`"
+          @keydown="onInputKeydown"
+        ></textarea>
+      </div>
       <div class="panel-controls">
+        <!--
+          The design puts attach at the LEADING edge of the control row, which
+          in this vertical stack is above Kick. Disabled rather than hidden
+          wherever the channel cannot carry a file, with the reason in its
+          title — the action bar's own rule, and the one the whole capability
+          exists to serve: the panel never accepts a file it would drop.
+        -->
+        <button
+          class="control-attach"
+          type="button"
+          :disabled="!canAttach"
+          aria-label="Attach a file"
+          :title="attachTitle"
+          @click="onAttachClick"
+        >
+          <span
+            class="control-glyph"
+            :style="{ '--control-icon': maskImageValue(ATTACH_ICON_SRC) }"
+            aria-hidden="true"
+          ></span>
+        </button>
         <button
           class="control-kick"
           type="button"
@@ -1394,19 +1617,97 @@ function onKick(): void {
 /*
  * The design's input: 865px, white, 12px radius, accent border, start-aligned
  * dark text. It is capped rather than fixed for the same reason the panel is.
+ *
+ * The SURFACE is the field (#408) and the textarea sits inside it, because the
+ * amendment puts pending chips above the input and inside its white ground.
+ * The textarea keeps the typing; the field keeps the look.
  */
-.panel-input {
+.panel-field {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 4px;
   max-width: var(--size-message-input-width);
   padding: 8px 10px;
   border: var(--border-active);
   border-radius: var(--radius-default);
-  color: var(--color-panel);
   background: var(--color-white);
+}
+/* The design's active ink at full opacity while a drag is over the composer. */
+.panel-composer.is-dragging .panel-field {
+  border-color: var(--color-accent);
+}
+.panel-input {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: var(--color-panel);
+  background: transparent;
   font: inherit;
   font-size: var(--text-meta);
   resize: none;
   text-align: left;
+}
+/*
+ * Pending attachments (#408): a wrapping row of chips above the input, each a
+ * 40px thumbnail or a file glyph, the name truncated to 160px, and a remove
+ * control at the trailing edge. The full name is the chip's own hover text.
+ */
+.composer-chips,
+.bubble-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bubble-attachments {
+  margin-top: 4px;
+}
+.composer-chip {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  max-width: 220px;
+  padding: 2px 4px;
+  border: 1px solid var(--color-control);
+  border-radius: var(--radius-default);
+  color: var(--color-panel);
+  font-size: var(--text-meta);
+}
+.bubble-attachment {
+  border-color: var(--color-cream);
+  color: var(--color-cream);
+}
+.chip-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-default);
+  object-fit: cover;
+}
+/* The file glyph: a plain square at the thumbnail's own scale, no new asset. */
+.chip-glyph {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border: 1px solid currentcolor;
+  border-radius: 2px;
+}
+.chip-name {
+  overflow: hidden;
+  max-width: 160px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-remove {
+  padding: 0 2px;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  line-height: 1;
 }
 /* A stated rule of its own: the input's text must stay selectable. */
 .panel-input.is-selectable {
@@ -1429,6 +1730,7 @@ function onKick(): void {
   flex-direction: column;
   gap: 4px;
 }
+.control-attach,
 .control-kick,
 .control-boost {
   display: flex;
@@ -1448,19 +1750,23 @@ function onKick(): void {
   background: var(--color-cream);
   mask: var(--control-icon) center / contain no-repeat;
 }
+.control-attach:hover:not(:disabled) .control-glyph,
 .control-kick:hover:not(:disabled) .control-glyph,
 .control-boost:hover:not(:disabled) .control-glyph {
   background: var(--color-accent);
 }
 /* An armed kick turns hostile-red until it is confirmed. */
+.control-attach:disabled,
 .control-kick:disabled,
 .control-boost:disabled {
   cursor: not-allowed;
 }
+.control-attach:disabled .control-glyph,
 .control-kick:disabled .control-glyph,
 .control-boost:disabled .control-glyph {
   opacity: 0.4;
 }
+.control-attach:focus-visible,
 .control-kick:focus-visible,
 .control-boost:focus-visible {
   outline: 2px solid var(--color-accent);

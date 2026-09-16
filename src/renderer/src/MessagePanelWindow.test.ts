@@ -317,7 +317,12 @@ describe('the message panel window', () => {
       [
         {
           ...OBSERVED_DWARF,
-          capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+          capabilities: {
+            sendText: 'terminal',
+            cancel: 'terminal',
+            adjustEffort: null,
+            attach: 'terminal'
+          }
         }
       ],
       'claude:s1',
@@ -521,7 +526,12 @@ describe('publishing the delivery verdicts', () => {
       [
         {
           ...OBSERVED_DWARF,
-          capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+          capabilities: {
+            sendText: 'terminal',
+            cancel: 'terminal',
+            adjustEffort: null,
+            attach: 'terminal'
+          }
         }
       ],
       'claude:s1',
@@ -571,7 +581,12 @@ describe('publishing the delivery verdicts', () => {
       [
         {
           ...OBSERVED_DWARF,
-          capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+          capabilities: {
+            sendText: 'terminal',
+            cancel: 'terminal',
+            adjustEffort: null,
+            attach: 'terminal'
+          }
         }
       ],
       'claude:s1',

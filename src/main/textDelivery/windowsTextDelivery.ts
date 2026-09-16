@@ -42,6 +42,7 @@ import {
   buildConsoleInputWriteCommand,
   consoleWriteFailureFor
 } from './consoleInputWrite'
+import { consoleChunksFor } from './attachmentDelivery'
 import { questionAnswerChunks } from './questionKeys'
 import { buildGracefulExitCommand, buildSendInterruptCommand } from './sendKeys'
 import { createStageTimer, type StageTimings } from './timing'
@@ -331,7 +332,19 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * `consoleWriteFailureFor`.
    */
   private async writeToConsoleByPid(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
-    const command = buildConsoleInputWriteCommand(request.pid, request.text, request.pressEnter)
+    // With files, the message is a longer chunk list rather than a different
+    // mechanism (#408): each path inside bracketed-paste markers, the words
+    // after them, Enter last and alone. The two-chunk wrapper below is still
+    // what a text-only message takes, so nothing that worked before this change
+    // takes a new path to reach the same script.
+    const attachments = request.attachments ?? []
+    const command =
+      attachments.length === 0
+        ? buildConsoleInputWriteCommand(request.pid, request.text, request.pressEnter)
+        : buildConsoleInputSequenceCommand(
+            request.pid,
+            consoleChunksFor(request.text, attachments, request.pressEnter)
+          )
     if (command === null) {
       return { delivered: false, error: CONSOLE_WRITE_UNBUILDABLE, neverStarted: true }
     }

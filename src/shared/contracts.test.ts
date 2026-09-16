@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
+import type { DwarfAttachment, DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
   HELDABLE_PROVIDERS,
   MCP_CONNECTION_STATUSES,
+  PANEL_OBSERVER,
   TIER_WEIGHT_THRESHOLDS_KB,
   dwarfSilenceWindowKey,
   dwarfSilenceWindowMs,
@@ -19,8 +20,21 @@ import {
   MESSAGING_FONTS,
   isInterfaceFont,
   isMessagingFont,
-  parseTypographyPreferences
+  parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Message attachments (#408) — one block, appended -------------------- */
+  ATTACHMENT_CHANNELS,
+  ATTACHMENT_HELD_PROVIDERS,
+  DWARF_IMAGE_EXTENSIONS,
+  MAX_DWARF_ATTACHMENTS,
+  MAX_DWARF_ATTACHMENT_BYTES,
+  MAX_DWARF_ATTACHMENTS_TOTAL_BYTES,
+  attachmentKindFor,
+  channelCarriesAttachments,
+  isDwarfAttachment,
+  parseDwarfAttachments,
+  refuseAttachment
+  /* --- end of the #408 block ----------------------------------------------- */
 } from './contracts'
 
 /*
@@ -475,5 +489,219 @@ describe('DEFAULT_TYPOGRAPHY_PREFERENCES', () => {
       interfaceFont: 'tiny5',
       messagingFont: 'pixelify-sans'
     })
+  })
+})
+
+/*
+ * Message attachments (#408). The design's rule is that the limits are defined
+ * ONCE at the wire boundary and surfaced in the UI, so these pin the numbers
+ * and the rule that reads them — the composer and main/index.ts's boundary
+ * parser both call the same function, and a second copy of the arithmetic is
+ * exactly what this block exists to prevent.
+ */
+let mintedAttachments = 0
+const attachment = (over: Partial<DwarfAttachment> = {}): DwarfAttachment => {
+  const n = ++mintedAttachments
+  return {
+    path: `C:\\p\\shot-${n}.png`,
+    name: `shot-${n}.png`,
+    kind: 'image',
+    bytes: 1024,
+    ...over
+  }
+}
+
+describe('attachmentKindFor', () => {
+  it.each(DWARF_IMAGE_EXTENSIONS)('reads %s as an image, because only an image attaches', (ext) => {
+    expect(attachmentKindFor(`shot${ext}`)).toBe('image')
+  })
+
+  it.each(['.PNG', '.JpG', '.WEBP'])('reads %s too — a name is not case', (ext) => {
+    expect(attachmentKindFor(`shot${ext}`)).toBe('image')
+  })
+
+  it.each(['notes.txt', 'report.pdf', 'archive.tar.gz', 'Makefile', 'trap.png.txt'])(
+    'reads %s as a plain file',
+    (name) => {
+      // Measured 2026-09-16 (#408): a non-image path inside a bracketed paste
+      // arrives as TEXT, so calling one of these an image would promise bytes
+      // the session never receives.
+      expect(attachmentKindFor(name)).toBe('file')
+    }
+  )
+})
+
+describe('refuseAttachment', () => {
+  it('accepts the first ordinary file', () => {
+    expect(refuseAttachment(attachment(), [])).toBeNull()
+  })
+
+  it('refuses the one past the count limit, and not the one at it', () => {
+    const accepted = Array.from({ length: MAX_DWARF_ATTACHMENTS - 1 }, () => attachment())
+    expect(refuseAttachment(attachment(), accepted)).toBeNull()
+    expect(refuseAttachment(attachment(), [...accepted, attachment()])).toBe('too-many')
+  })
+
+  it('refuses a file over the per-file limit, and not one exactly at it', () => {
+    expect(refuseAttachment(attachment({ bytes: MAX_DWARF_ATTACHMENT_BYTES }), [])).toBeNull()
+    expect(refuseAttachment(attachment({ bytes: MAX_DWARF_ATTACHMENT_BYTES + 1 }), [])).toBe(
+      'file-too-large'
+    )
+  })
+
+  it('refuses the file that would take the pending message over the total', () => {
+    const accepted = [attachment({ bytes: MAX_DWARF_ATTACHMENTS_TOTAL_BYTES - 10 })]
+    expect(refuseAttachment(attachment({ bytes: 10 }), accepted)).toBeNull()
+    expect(refuseAttachment(attachment({ bytes: 11 }), accepted)).toBe('total-too-large')
+  })
+
+  it('names the count before the size, so the sentence matches the reason it stopped', () => {
+    const accepted = Array.from({ length: MAX_DWARF_ATTACHMENTS }, () => attachment())
+    expect(refuseAttachment(attachment({ bytes: MAX_DWARF_ATTACHMENT_BYTES + 1 }), accepted)).toBe(
+      'too-many'
+    )
+  })
+
+  it('refuses the same path twice: a chip the person already has is not a second file', () => {
+    const already = attachment()
+    expect(refuseAttachment({ ...already }, [already])).toBe('already-attached')
+  })
+})
+
+describe('isDwarfAttachment', () => {
+  it('admits the shape the wire declares', () => {
+    expect(isDwarfAttachment(attachment())).toBe(true)
+  })
+
+  it.each([
+    ['a missing path', { name: 'a.png', kind: 'image', bytes: 1 }],
+    ['an empty path', attachment({ path: '' })],
+    ['a missing name', { path: 'C:\\p\\a.png', kind: 'image', bytes: 1 }],
+    ['an unknown kind', { ...attachment(), kind: 'folder' }],
+    ['a negative size', attachment({ bytes: -1 })],
+    ['a fractional size', attachment({ bytes: 1.5 })],
+    ['a size that is not a number', { ...attachment(), bytes: '10' }],
+    ['null', null],
+    ['an array', []],
+    ['a bare string', 'C:\\p\\a.png']
+  ])('refuses %s', (_why, value) => {
+    expect(isDwarfAttachment(value)).toBe(false)
+  })
+})
+
+/*
+ * The IPC boundary's own half (#408). main/index.ts's parseTextRequest calls
+ * this, so the rule that a malformed or over-limit payload is REFUSED WHOLE —
+ * never trimmed to what fits — is pinned here rather than inside a handler no
+ * test can reach.
+ */
+describe('parseDwarfAttachments', () => {
+  it('reads an absent field as no attachments, so every pre-#408 caller still parses', () => {
+    expect(parseDwarfAttachments(undefined)).toEqual([])
+  })
+
+  it('keeps an accepted list in the order the composer held it', () => {
+    const list = [attachment(), attachment({ kind: 'file', name: 'notes.txt' })]
+    expect(parseDwarfAttachments(list)).toEqual(list)
+  })
+
+  it.each([
+    ['a bare object', { path: 'C:\\p\\a.png' }],
+    ['a string', 'C:\\p\\a.png'],
+    ['null', null]
+  ])('refuses %s, which is not a list at all', (_why, value) => {
+    expect(parseDwarfAttachments(value)).toBeNull()
+  })
+
+  it('refuses the whole list when ONE member is malformed, never the rest of it', () => {
+    // Delivering three of four files while reporting success is the exact
+    // dishonesty #408 exists to prevent.
+    expect(
+      parseDwarfAttachments([attachment(), { path: 'C:\\p\\b.png', name: 'b.png' }])
+    ).toBeNull()
+  })
+
+  it('refuses a list past the count limit rather than trimming it to fit', () => {
+    const list = Array.from({ length: MAX_DWARF_ATTACHMENTS + 1 }, () => attachment())
+    expect(parseDwarfAttachments(list)).toBeNull()
+  })
+
+  it('refuses a member over the per-file limit', () => {
+    expect(
+      parseDwarfAttachments([attachment({ bytes: MAX_DWARF_ATTACHMENT_BYTES + 1 })])
+    ).toBeNull()
+  })
+
+  it('refuses a list whose members are each fine and together are not', () => {
+    // Both ceilings genuinely bind, which is why there are two: the count
+    // allows this many files and the per-file limit allows each of these sizes,
+    // and the total still says no.
+    const each = MAX_DWARF_ATTACHMENT_BYTES
+    const needed = Math.floor(MAX_DWARF_ATTACHMENTS_TOTAL_BYTES / each) + 1
+    expect(needed).toBeLessThanOrEqual(MAX_DWARF_ATTACHMENTS)
+    const list = Array.from({ length: needed }, () => attachment({ bytes: each }))
+    expect(parseDwarfAttachments(list.slice(0, needed - 1))).not.toBeNull()
+    expect(parseDwarfAttachments(list)).toBeNull()
+  })
+
+  it('refuses the same path listed twice, on the same rule the composer uses', () => {
+    const twice = attachment()
+    expect(parseDwarfAttachments([twice, { ...twice }])).toBeNull()
+  })
+})
+
+describe('channelCarriesAttachments', () => {
+  it('names only the two channels measured to carry a file', () => {
+    // Measured 2026-09-16 (#408): a bracketed paste by pid attaches an image to
+    // an observed Claude session, and the Agent SDK takes image content blocks.
+    expect(ATTACHMENT_CHANNELS).toEqual(['terminal', 'held-session'])
+  })
+
+  it("says a console can, whoever's session it is: the CLI reads the paste, not us", () => {
+    expect(channelCarriesAttachments('terminal', 'claude')).toBe(true)
+    expect(channelCarriesAttachments('terminal')).toBe(true)
+  })
+
+  it.each([
+    'claude-relay',
+    'foreman-relay',
+    'codex-queue',
+    'hosted-stdin',
+    'launched-process'
+  ] as const)('says %s cannot, rather than accepting a file it would drop', (channel) => {
+    expect(channelCarriesAttachments(channel, 'claude')).toBe(false)
+  })
+
+  it('says no channel at all cannot', () => {
+    expect(channelCarriesAttachments(null, 'claude')).toBe(false)
+  })
+
+  /*
+   * A held session is the one channel where the PROTOCOL, not the channel,
+   * decides. `held-session` covers every provider this app can hold, and only
+   * the Agent SDK's stream has a measured image block; Antigravity's NDJSON
+   * does not, so offering the control there would promise bytes its session
+   * will never see.
+   */
+  it('says a held Claude session can, because the SDK takes image blocks', () => {
+    expect(channelCarriesAttachments('held-session', 'claude')).toBe(true)
+  })
+
+  it('says a held Antigravity session cannot, because nothing has measured one', () => {
+    expect(channelCarriesAttachments('held-session', 'antigravity')).toBe(false)
+  })
+
+  it('says a held session of NO stated provider cannot, rather than guessing', () => {
+    // Absence is not a yes, the same direction every other unproven capability
+    // in this file falls in.
+    expect(channelCarriesAttachments('held-session')).toBe(false)
+  })
+
+  it('says a dwarf this panel holds over stdio cannot, being in no list at all', () => {
+    expect(channelCarriesAttachments('held-session', PANEL_OBSERVER)).toBe(false)
+  })
+
+  it('names the providers whose held stream was measured, and nothing else', () => {
+    expect(ATTACHMENT_HELD_PROVIDERS).toEqual(['claude'])
   })
 })

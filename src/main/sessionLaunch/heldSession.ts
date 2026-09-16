@@ -1,3 +1,4 @@
+import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 import { permissionInputLine, toolActivityLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
 import {
@@ -166,6 +167,18 @@ export interface HeldSessionHandle {
    * take it — a session already closing, above all.
    */
   send(text: string): boolean
+  /**
+   * Queue a user message carrying CONTENT BLOCKS — images, above all — onto the
+   * held stream, or ABSENT when this session's protocol documents none (#408).
+   *
+   * Optional for exactly the reason `interrupt` is, and the same port rule: the
+   * Agent SDK documents an image content block and Antigravity's NDJSON input
+   * side carries user text events and nothing else, so its handle leaves this
+   * off rather than accepting blocks it would flatten or drop. The panel reads
+   * that absence through `ATTACHMENT_HELD_PROVIDERS` and offers no attach
+   * control there, so a message with files never reaches a handle without it.
+   */
+  sendContent?(content: HeldMessageContent): boolean
   /**
    * Cut the running turn short, leaving the session open for the next one
    * (#210) — or ABSENT when this session's protocol documents no cancellation
