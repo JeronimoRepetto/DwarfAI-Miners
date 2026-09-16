@@ -145,14 +145,17 @@ What is in it:
   furthest back the panel is willing to read says a third thing — that this is as far as it
   reaches, and the rest is in the session's own terminal. All three stop the asking.
 - **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
-  inline code, fenced code and links draw as such instead of the raw `**`, `-` and backtick
-  characters, with a heading drawn as a bold paragraph rather than at heading size — a bubble is
-  not a page. Tables, strikethrough, horizontal rules and images are outside that vocabulary and
-  are shown as the plain characters that were written, on purpose, rather than an invented
-  drawing; raw HTML is never interpreted. A link opens in your system browser and never inside the
-  panel. Conversation text is set in a different typeface (Pixelify Sans by default) from the rest
-  of the interface (Tiny5 by default), since a paragraph needs a bold weight a single-weight pixel
-  font cannot draw. Both are yours to change — see [Typography](#typography).
+  inline code, fenced code, links, tables, strikethrough and horizontal rules draw as such instead
+  of the raw `**`, `-`, backtick, `|` and `~~` characters, with a heading drawn as a bold paragraph
+  rather than at heading size — a bubble is not a page. A table wider than the bubble scrolls
+  sideways inside it, exactly as a fenced code block does, rather than widening the conversation
+  column. An image is the one exception: its address is untrusted and is never fetched, so it
+  draws as its alt text (or the address, when there is none) in the same treatment as a link.
+  Raw HTML is never interpreted. A link — and an image's alt text — opens in your system browser
+  and never inside the panel. Conversation text is set in a different typeface (Pixelify Sans by
+  default) from the rest of the interface (Tiny5 by default), since a paragraph needs a bold weight
+  a single-weight pixel font cannot draw. Both are yours to change — see
+  [Typography](#typography).
 - **A composer.** Enter sends, Shift+Enter writes a newline. It is drawn disabled, with the reason
   on it, whenever the session cannot receive text.
 - **Runs of tool calls, folded.** A stretch of consecutive activity lines collapses into one

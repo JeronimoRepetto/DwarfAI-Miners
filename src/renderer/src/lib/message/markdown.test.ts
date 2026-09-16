@@ -226,19 +226,147 @@ describe('raw HTML, which is text and only text', () => {
 })
 
 /*
- * The design names a closed list of constructs. Everything outside it stays as
- * the agent wrote it — visible, and never quietly dropped. A rule the panel can
- * state, rather than a growing set of half-drawn syntaxes.
+ * Until #412 this block asserted the opposite of everything below: that a
+ * table, strikethrough and a horizontal rule were left as the raw characters
+ * the agent wrote, because the design did not yet name them (`a | b\n--- |
+ * ---\n1 | 2`, `~~struck~~` and `***` were its three fixtures). The
+ * 2026-09-16 amendment to `components.md` widens the bubble's vocabulary to
+ * the whole of GFM it can draw honestly, so that assertion is now false —
+ * this is the note test-safety asks for in its place. Images stay the one
+ * exception and are covered under "images, the one exception" below.
  */
-describe('syntax the design does not name', () => {
-  it.each([
-    ['a | b\n--- | ---\n1 | 2', 'a table'],
-    ['~~struck~~', 'strikethrough'],
-    ['***', 'a horizontal rule']
-  ])('leaves %s (%s) as the characters that were written', (source) => {
-    const drawn = markdownBlocks(source)
-      .map((block) => (block.kind === 'paragraph' ? textOf(block.children) : ''))
-      .join('\n')
-    expect(drawn).toContain(source.split('\n')[0])
+describe('the constructs #412 adds', () => {
+  it("reads a three-column table, the delimiter row deciding each column's alignment", () => {
+    expect(markdownBlocks('Name | Middle | Score\n:-- | :-: | --:\nAda | X | 1')).toEqual([
+      {
+        kind: 'table',
+        align: ['left', 'center', 'right'],
+        header: [
+          { children: [{ kind: 'text', text: 'Name' }] },
+          { children: [{ kind: 'text', text: 'Middle' }] },
+          { children: [{ kind: 'text', text: 'Score' }] }
+        ],
+        rows: [
+          [
+            { children: [{ kind: 'text', text: 'Ada' }] },
+            { children: [{ kind: 'text', text: 'X' }] },
+            { children: [{ kind: 'text', text: '1' }] }
+          ]
+        ]
+      }
+    ])
+  })
+
+  it('leaves an unaligned column as null rather than a guessed side', () => {
+    const blocks = markdownBlocks('a | b\n--- | ---\n1 | 2')
+    expect(blocks[0]).toMatchObject({ kind: 'table', align: [null, null] })
+  })
+
+  /*
+   * A table needs its delimiter row — without one, `a | b` on its own line is
+   * just a paragraph containing a pipe character, and GFM agrees.
+   */
+  it('stays a paragraph without a delimiter row', () => {
+    const blocks = markdownBlocks('a | b\nc | d')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]!.kind).toBe('paragraph')
+  })
+
+  /*
+   * The list item needs a line before the table: markdown-it's table rule
+   * runs before its list rule, so a bullet's very FIRST line — `- a | b` —
+   * would itself be read as a table's header row rather than as a bullet, if
+   * the next line still looked like a delimiter row. A leading line of its
+   * own establishes the list first, exactly as a loose list item's second
+   * paragraph would.
+   */
+  it('reads a table inside a list item', () => {
+    const blocks = markdownBlocks('- see below:\n\n  Name | Score\n  --- | ---\n  Ada | 1')
+    expect(blocks[0]).toMatchObject({
+      kind: 'list',
+      items: [{ blocks: [{ kind: 'paragraph' }, { kind: 'table' }] }]
+    })
+  })
+
+  it('reads a table inside a block quote', () => {
+    const blocks = markdownBlocks('> a | b\n> --- | ---\n> 1 | 2')
+    expect(blocks[0]).toMatchObject({ kind: 'quote', blocks: [{ kind: 'table' }] })
+  })
+
+  it('keeps inline code inside a cell as code, not text', () => {
+    const blocks = markdownBlocks('a | b\n--- | ---\n`x` | 2')
+    expect(blocks[0]).toMatchObject({
+      kind: 'table',
+      rows: [
+        [{ children: [{ kind: 'code', text: 'x' }] }, { children: [{ kind: 'text', text: '2' }] }]
+      ]
+    })
+  })
+
+  it('reads ~~struck~~ as strikethrough', () => {
+    expect(inlineOf(markdownBlocks('~~gone~~'))).toEqual([
+      { kind: 'strikethrough', children: [{ kind: 'text', text: 'gone' }] }
+    ])
+  })
+
+  it('reads --- between paragraphs as a rule', () => {
+    expect(markdownBlocks('first\n\n---\n\nsecond')).toEqual([
+      { kind: 'paragraph', children: [{ kind: 'text', text: 'first' }] },
+      { kind: 'rule' },
+      { kind: 'paragraph', children: [{ kind: 'text', text: 'second' }] }
+    ])
+  })
+})
+
+/*
+ * Images are the one construct #412 does NOT draw as GFM would: never an
+ * `img`, always the link shape the design states as the reason (#412, #279).
+ */
+describe('images, the one exception (#412)', () => {
+  it('draws an image as a link whose words are the alt text', () => {
+    expect(inlineOf(markdownBlocks('![the diagram](https://example.com/a.png)'))).toEqual([
+      {
+        kind: 'link',
+        href: 'https://example.com/a.png',
+        children: [{ kind: 'text', text: 'the diagram' }]
+      }
+    ])
+  })
+
+  it('falls back to the address itself when there is no alt text', () => {
+    expect(inlineOf(markdownBlocks('![](https://example.com/a.png)'))).toEqual([
+      {
+        kind: 'link',
+        href: 'https://example.com/a.png',
+        children: [{ kind: 'text', text: 'https://example.com/a.png' }]
+      }
+    ])
+  })
+
+  /*
+   * `ftp:` is a scheme markdown-it's OWN link-destination parser lets
+   * through structurally (unlike javascript:/data:/file:, below), so this is
+   * the case that actually exercises OUR OWN `externalLinkOf` admission — a
+   * refused address does not take the alt text with it, same rule
+   * `link_open` already follows.
+   */
+  it('draws a refused address as its own alt text, with no link node', () => {
+    expect(inlineOf(markdownBlocks('![alt](ftp://example.test/a.png)'))).toEqual([
+      { kind: 'text', text: 'alt' }
+    ])
+  })
+
+  /*
+   * javascript:, vbscript:, file: and data: (bar allowed image mimetypes)
+   * are refused a step earlier still: markdown-it's own link-destination
+   * parser never produces an `image` token for them at all, so the whole
+   * construct falls back to raw text rather than just the alt surviving.
+   * Loose on purpose, matching how the pre-existing "links" tests above
+   * already treat this same family of scheme.
+   */
+  it('leaves a javascript: address as text with no link node, same as a link would', () => {
+    const inline = inlineOf(markdownBlocks('![alt](javascript:x)'))
+    expect(inline.some((node) => node.kind === 'link')).toBe(false)
+    expect(textOf(inline)).toContain('alt')
   })
 })

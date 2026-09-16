@@ -1,6 +1,11 @@
 <script lang="ts">
 import { computed, defineComponent, h, type VNode } from 'vue'
-import { markdownBlocks, type MarkdownBlock, type MarkdownInline } from '../../lib/message/markdown'
+import {
+  markdownBlocks,
+  type MarkdownAlign,
+  type MarkdownBlock,
+  type MarkdownInline
+} from '../../lib/message/markdown'
 
 /*
  * What one message SAYS, drawn (#347).
@@ -53,6 +58,8 @@ export default defineComponent({
           return h('em', node.children.map(inlineNode))
         case 'strong':
           return h('strong', node.children.map(inlineNode))
+        case 'strikethrough':
+          return h('s', { class: 'markdown-strike' }, node.children.map(inlineNode))
         case 'link':
           return h(
             'button',
@@ -68,6 +75,13 @@ export default defineComponent({
             node.children.map(inlineNode)
           )
       }
+    }
+
+    // Only when the delimiter row actually set one (#412) — an unset column
+    // gets no `style` at all rather than an empty one, so the cell falls back
+    // to the stylesheet's own left alignment instead of an inline no-op.
+    function tableCellProps(align: MarkdownAlign): { style?: { textAlign: MarkdownAlign } } {
+      return align === null ? {} : { style: { textAlign: align } }
     }
 
     function blockNode(block: MarkdownBlock): VNode {
@@ -94,6 +108,46 @@ export default defineComponent({
               block.text
             )
           ])
+        case 'table': {
+          const headerRow = h(
+            'tr',
+            {},
+            block.header.map((cell, column) =>
+              h('th', tableCellProps(block.align[column] ?? null), cell.children.map(inlineNode))
+            )
+          )
+          // A table with a header and no rows still parsed — omitted rather
+          // than drawn empty, since markdown-it never emits `tbody_open`
+          // either when there is nothing to put in it.
+          const tbody =
+            block.rows.length === 0
+              ? null
+              : h(
+                  'tbody',
+                  {},
+                  block.rows.map((row) =>
+                    h(
+                      'tr',
+                      {},
+                      row.map((cell, column) =>
+                        h(
+                          'td',
+                          tableCellProps(block.align[column] ?? null),
+                          cell.children.map(inlineNode)
+                        )
+                      )
+                    )
+                  )
+                )
+          // The scroll wrapper is what keeps a wide table from widening the
+          // conversation column — the same failure `.markdown-block-code`
+          // already guards against, and the same fix (#307, #412).
+          return h('div', { class: 'markdown-table-scroll' }, [
+            h('table', { class: 'markdown-table' }, [h('thead', {}, [headerRow]), tbody])
+          ])
+        }
+        case 'rule':
+          return h('hr', { class: 'markdown-rule' })
       }
     }
 
@@ -201,5 +255,41 @@ export default defineComponent({
 .markdown-link:focus-visible {
   outline: 2px solid var(--color-panel);
   outline-offset: 1px;
+}
+/*
+ * A GFM table (#412). The wrapper scrolls sideways exactly like
+ * `.markdown-block-code` does, rather than widening the bubble — the same
+ * failure #307 already fixed for a long code line. Cell rules are the
+ * bubble's own border ink (`--color-accent`, `#d19831`) and nothing new;
+ * `text-align: left` is the base so an unaligned column reads the same as
+ * plain text, and a column the delimiter row DID align overrides it with its
+ * own inline style.
+ */
+.markdown-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.markdown-table {
+  border-collapse: collapse;
+}
+.markdown-table th,
+.markdown-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--color-accent);
+  text-align: left;
+}
+.markdown-table th {
+  font-weight: bold;
+}
+/*
+ * The same 2px panel-ink line the block quote's own border already draws
+ * (#412) — no new colour. The paragraph gap above and below comes for free
+ * from `.markdown`'s own flex `gap`, so nothing is added here for spacing.
+ */
+.markdown-rule {
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-top: 2px solid var(--color-panel);
 }
 </style>
