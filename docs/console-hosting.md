@@ -484,6 +484,11 @@ carries a registry `sessionName` is one session with two answers, and `resolveTe
 | `hosted-stdin`                     | the pipe this panel holds                               | ends the process (#194)                        | no                |
 | `launched-process`                 | refused — no inbox (#217)                               | ends the process                               | no                |
 
+**Attachments (#408) narrow this further.** Only `terminal` and `held-session` ever carry a file —
+the second only for a Claude session, per `ATTACHMENT_CHANNELS`/`ATTACHMENT_HELD_PROVIDERS` in
+`shared/contracts.ts` — and every other row's MESSAGE column is words only, whatever channel it
+names.
+
 The message column assumes a platform that can write into a console, which is Windows alone: where
 `supportsConsoleInput` is false the first two rows' MESSAGE degrades to the relay (or to no channel,
 without a name) and the kick does not — see #366 below, and `degradedForSend` in `resolve.ts`.
@@ -1377,9 +1382,9 @@ tied to a position. A row missing a token, or carrying one nothing sent, still r
   verify, so #113 left it to whoever cuts the next release rather than changing it blind [#113].
 - **A multi-question ask is answerable only for its first question**, and a multi-select answer sends
   exactly one label — how a picker joins several is unmeasured, and inventing a separator is how an
-  agent comes to read an answer nobody gave [#113]. **And the buttons do not exist yet:** the wire
-  field is filled live and the IPC channel takes the click, but nothing renders either — #90/#105,
-  with the approval surface at #96.
+  agent comes to read an answer nobody gave [#113]. **The buttons shipped:** `DwarfQuestionCard.vue`
+  and `DwarfPermissionCard.vue` render both prompts and answer them, closing #90/#105, with the
+  approval surface at #96.
 
 **No test file is touched by this document**, and none should be: it records decisions already pinned
 by tests in #110, #112 and #113.

@@ -40,10 +40,10 @@ dwarfs. A mine represents one project; workers and foremen represent the agents 
 operating in that project.
 
 **Status:** functional MVP. Session detection for Claude Code, Codex and Antigravity; live IPC
-updates; mine tiers; animated dwarfs; a floating message panel you can send into, kick from and
-read history in; terminal focus with a transcript fallback; background music, mine ambience and
-dwarf voices; autostart; and packaging are all implemented. Windows is the platform verified end
-to end; macOS and Linux have been run on real hardware with lighter coverage — the
+updates; mine tiers; animated dwarfs; a floating message panel you can send into, attach files to,
+kick from and read history in; terminal focus with a transcript fallback; background music, mine
+ambience and dwarf voices; autostart; and packaging are all implemented. Windows is the platform
+verified end to end; macOS and Linux have been run on real hardware with lighter coverage — the
 [support matrix](#platform-support) says which is which.
 
 ## Feature tour
@@ -89,13 +89,19 @@ processed.
 - **Two illustrated views** — a world map that follows the time of day, with one tier-coloured
   marker per project, and a mine interior where the crew swings pickaxes, naps, or walks out.
 - **A message panel that floats** — click a dwarf and its conversation opens in a window of its
-  own, which you can drag anywhere on the desktop and which stays where you left it.
+  own, which you can drag anywhere on the desktop and which stays where you left it. The composer
+  already has the cursor, so there is no extra click before you can type (#409).
 - **Send, with an honest verdict** — your message is drawn in the panel the instant you press
   Enter, and its own bubble carries the delivery mark: ✓ handed over, ✓✓ the session was seen
   acting, ✕ with the reason and a **Send again** beside it.
-- **Markdown in bubbles** — an agent's bold text, lists, quotes, inline and fenced code draw as
-  such instead of raw asterisks and backticks, and a link in a bubble opens in your system
-  browser.
+- **Attach files to a message** — drop them on the composer or press the paperclip. An image
+  travels as the image itself; anything else, as its path for the session to open with its own
+  tools. Windows console sessions and sessions this panel holds only, capped at 5 files and 30 MB
+  of images per message (#408, #417).
+- **Markdown, in agent and person bubbles alike** — bold text, lists, quotes, tables, strikethrough,
+  horizontal rules, inline and fenced code draw as such instead of raw asterisks, backticks and
+  pipes; an image draws as its alt text, and a link — or that alt text — opens in your system
+  browser (#412).
 - **Read back through the conversation** — scroll to the top of a dwarf's panel and the twelve
   things said before those load in place, twelve at a time, as far back as its transcript goes.
 - **Answer an agent's question** — click the option it offered, or toggle several and press
@@ -188,20 +194,22 @@ mileage than Windows, so the table keeps the distinction between verified and ex
 <details>
 <summary><strong>Full support matrix</strong> (Windows verified; macOS/Linux run, lighter coverage)</summary>
 
-| Capability                               | Windows                               | macOS                                                           | Linux                                                           |
-| ---------------------------------------- | ------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
-| Overall                                  | **Verified**                          | Run, lighter coverage                                           | Run, lighter coverage                                           |
-| Session detection (Claude Code / Codex)  | Verified                              | Expected to work (home-relative paths)                          | Expected to work                                                |
-| Antigravity session detection            | Verified                              | Expected to work (home-relative paths)                          | Expected to work                                                |
-| Codex liveness probe                     | PowerShell `Win32_Process`            | `pgrep -fl codex`                                               | `pgrep -fa codex`                                               |
-| Click-to-focus a terminal                | user32 via PowerShell                 | `ps` + System Events (`osascript`)                              | **Unsupported** — falls back to viewer                          |
-| Live transcript viewer                   | Windows Terminal / PowerShell         | Terminal.app via `osascript`                                    | `x-terminal-emulator` → … → `xterm`                             |
-| Write a message into a session's console | **Verified — the default**            | **Disabled** (relay instead)                                    | **Unsupported** (relay instead)                                 |
-| Relay a message to a named session       | Supported — the fallback              | Supported — the default                                         | Supported — the default                                         |
-| Queue a message to a Codex CLI session   | **Verified**                          | Expected to work (spawns `codex`)                               | Expected to work (spawns `codex`)                               |
-| Kick a session running in a terminal     | **Verified** — clean exit, then force | Implemented (SIGTERM, then SIGKILL); unreachable until measured | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
-| Start at login                           | HKCU Run key                          | `~/Library/LaunchAgents` plist                                  | `~/.config/autostart` desktop entry                             |
-| Packaging                                | NSIS + portable                       | dmg + zip (arm64 & x64)                                         | AppImage + deb                                                  |
+| Capability                                     | Windows                                                   | macOS                                                           | Linux                                                           |
+| ---------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
+| Overall                                        | **Verified**                                              | Run, lighter coverage                                           | Run, lighter coverage                                           |
+| Session detection (Claude Code / Codex)        | Verified                                                  | Expected to work (home-relative paths)                          | Expected to work                                                |
+| Antigravity session detection                  | Verified                                                  | Expected to work (home-relative paths)                          | Expected to work                                                |
+| Codex liveness probe                           | PowerShell `Win32_Process`                                | `pgrep -fl codex`                                               | `pgrep -fa codex`                                               |
+| Click-to-focus a terminal                      | user32 via PowerShell                                     | `ps` + System Events (`osascript`)                              | **Unsupported** — falls back to viewer                          |
+| Live transcript viewer                         | Windows Terminal / PowerShell                             | Terminal.app via `osascript`                                    | `x-terminal-emulator` → … → `xterm`                             |
+| Write a message into a session's console       | **Verified — the default**                                | **Disabled** (relay instead)                                    | **Unsupported** (relay instead)                                 |
+| Relay a message to a named session             | Supported — the fallback                                  | Supported — the default                                         | Supported — the default                                         |
+| Queue a message to a Codex CLI session         | **Verified** — a native, npm or pnpm install alike (#413) | Expected to work (spawns `codex`)                               | Expected to work (spawns `codex`)                               |
+| Answer a permission or question at the console | **Verified**                                              | **Unsupported** — the card sends you to the terminal instead    | **Unsupported** — the card sends you to the terminal instead    |
+| Attach files to a message                      | **Verified** — console or held Claude session             | Held Claude session only — no console attach control            | Held Claude session only — no console attach control            |
+| Kick a session running in a terminal           | **Verified** — clean exit, then force                     | Implemented (SIGTERM, then SIGKILL); unreachable until measured | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
+| Start at login                                 | HKCU Run key                                              | `~/Library/LaunchAgents` plist                                  | `~/.config/autostart` desktop entry                             |
+| Packaging                                      | NSIS + portable                                           | dmg + zip (arm64 & x64)                                         | AppImage + deb                                                  |
 
 The two message rows are one decision seen from two sides, and it reversed twice —
 [`docs/console-hosting.md` §4b](docs/console-hosting.md) records every reversal. Where the panel can
@@ -243,11 +251,11 @@ Three questions get three separate answers, because they are three different bar
 **read** a provider's sessions, can it **launch** one, and can it **hold** one open so its words
 arrive live.
 
-| Provider    | Read | Launch | Hold   | Notes                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------- | ---- | ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude Code | yes  | yes    | yes    | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported. The one provider with a complete held-session surface: interrupt, context reading, and answers to its own question and permission prompts.                                                                                             |
-| Codex       | yes  | yes    | no     | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` gives verified worker/foreman relationships. A launch is detached — `codex exec` in the mine's folder, discovered afterwards by the poll. Messages go to Codex's own queue.                |
-| Antigravity | yes  | yes    | partly | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. A held `agy` session can be spoken to; see [Providers in depth](docs/guide.md#providers-in-depth) for what its protocol does not offer. |
+| Provider    | Read | Launch | Hold   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------- | ---- | ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code | yes  | yes    | yes    | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported. The one provider with a complete held-session surface: interrupt, context reading, and answers to its own question and permission prompts.                                                                                                                                                                                                                                                         |
+| Codex       | yes  | yes    | no     | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` gives verified worker/foreman relationships. A launch is detached — `codex exec` in the mine's folder, discovered afterwards by the poll. Messages go to Codex's own queue, reached through the same npm/pnpm `.cmd`-shim resolution the launcher already had, so an npm or pnpm install works and `CODEX_CLI_PATH` is no longer needed for it (#413). |
+| Antigravity | yes  | yes    | partly | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. A held `agy` session can be spoken to; see [Providers in depth](docs/guide.md#providers-in-depth) for what its protocol does not offer.                                                                                                                                                             |
 
 Each provider's limits, effort levels and how foremen and workers are told apart are in the
 [user guide](docs/guide.md#providers-in-depth).

@@ -57,7 +57,8 @@ checked rather than trusted.
   composer or through the picker — lets the app measure it (its size, and whether it is a folder),
   and, for an image inside the size limit, decode it once to draw the 40px chip you see. Nothing is
   copied anywhere: the path you chose is the path handed to the session, and for a session this app
-  holds open the image's bytes are read at send time and go to that session and nowhere else. No
+  holds open the image's bytes are read at send time and go to that session and nowhere else — see
+  [What it transmits](#what-it-transmits) for the turn that carries them off this machine. No
   directory is walked, no sibling file is looked at, and a file you removed from the composer before
   pressing Enter is never read again (`src/main/textDelivery/attachmentFiles.ts`, #408).
 
@@ -190,6 +191,12 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
   (`src/main/textDelivery/relay.ts`, `relayRunner.ts`). That turn runs under your Claude account,
   and its network behavior is Claude Code's — the text you typed travels to Anthropic the same way
   anything you type into Claude Code does, and DwarfAI-Miners itself opens no connection.
+- **An attached image, on a held session, leaves inside that same turn.** A session this app holds
+  runs on the Agent SDK, driving the `claude` binary you already installed and logged into, exactly
+  as the relay's turn does. Since #408 an attachment's image bytes ride along as one more content
+  block in that turn rather than a second connection of their own — they leave the machine at the
+  moment you press Enter, in the same turn your typed words were already taking
+  (`src/main/textDelivery/attachmentDelivery.ts`, `src/main/sessionLaunch/sdkHeldSession.ts`).
 - **External links open in your browser.** A link that asks for a _new window_ is refused and
   its URL handed to the system browser instead (`setWindowOpenHandler` in
   `src/main/shell/window.ts`). That is the whole of it: there is no `will-navigate` handler,

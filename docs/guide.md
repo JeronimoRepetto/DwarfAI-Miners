@@ -9,6 +9,7 @@ install it, and what it runs on.
 - [What the panel shows](#what-the-panel-shows)
   - [The message panel](#the-message-panel)
   - [Sending a message to a session](#sending-a-message-to-a-session)
+  - [Attaching images and files](#attaching-images-and-files)
   - [Focusing a session's terminal](#focusing-a-sessions-terminal)
   - [Git worktrees](#git-worktrees)
 - [Providers in depth](#providers-in-depth)
@@ -156,8 +157,9 @@ What is in it:
   default) from the rest of the interface (Tiny5 by default), since a paragraph needs a bold weight
   a single-weight pixel font cannot draw. Both are yours to change — see
   [Typography](#typography).
-- **A composer.** Enter sends, Shift+Enter writes a newline. It is drawn disabled, with the reason
-  on it, whenever the session cannot receive text.
+- **A composer.** Enter sends, Shift+Enter writes a newline, and the paperclip beside it attaches
+  files — see [Attaching images and files](#attaching-images-and-files). It is drawn disabled, with
+  the reason on it, whenever the session cannot receive text.
 - **Runs of tool calls, folded.** A stretch of consecutive activity lines collapses into one
   **Working…** disclosure under the bubble above it; click to unfold. Unfolding one never moves the
   list. An `edit` or `read` line's own path is clickable and opens that file — in that dwarf's own
