@@ -54,6 +54,19 @@ describe('refusalSentence', () => {
     expect(sentence).not.toBe(refusalSentence('file-too-large', 'huge.png'))
   })
 
+  /*
+   * Issue #417: both byte limits bind on an image alone now — a plain file's
+   * size costs nothing, so these two sentences only ever fire for one, and
+   * must say so rather than naming "a file" the way a size limit no longer
+   * applies to.
+   */
+  it.each(['file-too-large', 'total-too-large'] as const)(
+    'says "image", not a bare "file", in the %s sentence',
+    (refusal) => {
+      expect(refusalSentence(refusal, 'huge.png')).toContain('image')
+    }
+  )
+
   it.each([
     ['directory', 'src'],
     ['unreadable', 'gone.png'],

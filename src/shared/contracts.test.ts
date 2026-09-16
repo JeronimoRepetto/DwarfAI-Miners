@@ -566,6 +566,47 @@ describe('refuseAttachment', () => {
     const already = attachment()
     expect(refuseAttachment({ ...already }, [already])).toBe('already-attached')
   })
+
+  /*
+   * Issue #417. Only an IMAGE's bytes ever reach the API — a `file` attachment
+   * travels as a path main hands to the agent's own file-reading tool, so its
+   * size costs this message nothing. The two byte limits above must therefore
+   * bind on `kind: 'image'` alone; a `file` is bounded by the count limit only.
+   */
+  it('never refuses a plain file for its size, however large — only its path travels', () => {
+    const huge = attachment({
+      kind: 'file',
+      name: 'huge.bin',
+      bytes: MAX_DWARF_ATTACHMENT_BYTES * 10
+    })
+    expect(refuseAttachment(huge, [])).toBeNull()
+  })
+
+  it("does not let a file's bytes count against the images' shared total", () => {
+    const hugeFile = attachment({
+      kind: 'file',
+      name: 'huge.bin',
+      bytes: MAX_DWARF_ATTACHMENTS_TOTAL_BYTES
+    })
+    const image = attachment({ bytes: MAX_DWARF_ATTACHMENT_BYTES })
+    expect(refuseAttachment(image, [hugeFile])).toBeNull()
+  })
+
+  /*
+   * The per-image ceiling is three quarters of the Anthropic API's own
+   * documented per-image maximum for a base64-encoded image content block —
+   * base64 costs a third more than the raw bytes it encodes, so the file this
+   * app reads off disk must stay inside 3/4 of that encoded ceiling for the
+   * block built from it to fit. See MAX_DWARF_ATTACHMENT_BYTES's own comment
+   * for the docs citation.
+   */
+  it('sets the per-image byte limit to three quarters of the documented 10 MB API maximum', () => {
+    expect(MAX_DWARF_ATTACHMENT_BYTES).toBe((10 * 1024 * 1024 * 3) / 4)
+  })
+
+  it('sets the images-together total to four times the per-image limit, one fewer than the count', () => {
+    expect(MAX_DWARF_ATTACHMENTS_TOTAL_BYTES).toBe(MAX_DWARF_ATTACHMENT_BYTES * 4)
+  })
 })
 
 describe('isDwarfAttachment', () => {
@@ -647,6 +688,13 @@ describe('parseDwarfAttachments', () => {
   it('refuses the same path listed twice, on the same rule the composer uses', () => {
     const twice = attachment()
     expect(parseDwarfAttachments([twice, { ...twice }])).toBeNull()
+  })
+
+  it('accepts a plain file whose bytes would break both image limits, because only its path travels (#417)', () => {
+    const list = [
+      attachment({ kind: 'file', name: 'huge.bin', bytes: MAX_DWARF_ATTACHMENTS_TOTAL_BYTES * 2 })
+    ]
+    expect(parseDwarfAttachments(list)).toEqual(list)
   })
 })
 

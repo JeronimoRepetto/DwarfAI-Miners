@@ -1954,24 +1954,50 @@ export interface DwarfAttachment {
 export const DWARF_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'] as const
 
 /**
- * How many files one message may carry, how large any one of them may be, and
- * how large they may be together.
+ * How many files one message may carry — the only limit a plain FILE ever
+ * answers to (#417): only its path travels, so its size costs this message
+ * nothing. The two byte ceilings below bind on an IMAGE alone.
  *
- * Declared here because the design asks for them ONCE at the wire boundary and
+ * Declared here because the design asks for it ONCE at the wire boundary and
  * surfaced in the UI: the composer says which limit refused a file and
- * `main/index.ts` refuses a payload that broke one, and a second copy of either
+ * `main/index.ts` refuses a payload that broke one, and a second copy of the
  * number is how the two would come to disagree.
- *
- * The per-file ceiling is set so a base64 image block stays inside the API's
- * own per-image limit — base64 costs a third more than the bytes it encodes —
- * and the total is four of those rather than five, so a message that is all
- * large images is stopped by the total rather than by the count. Both bind, on
- * purpose: one bounds what the panel hands over at once, the other what a
- * single file may cost.
  */
 export const MAX_DWARF_ATTACHMENTS = 5
-export const MAX_DWARF_ATTACHMENT_BYTES = 3 * 1024 * 1024
-export const MAX_DWARF_ATTACHMENTS_TOTAL_BYTES = 12 * 1024 * 1024
+
+/**
+ * The Anthropic API's own documented per-image maximum for a base64-encoded
+ * `image` content block, sent directly to the Claude API rather than through
+ * Bedrock or Google Cloud (5 MB there) or claude.ai (10 MB, uncounted the same
+ * way): 10 MB, encoded.
+ * https://platform.claude.com/docs/en/build-with-claude/vision#request-limits
+ * (checked 2026-09-16). The held route builds exactly this kind of block from
+ * an attached image; the console route hands a path to Claude Code instead,
+ * which reads the file itself and answers to no byte limit of this app's.
+ */
+const ANTHROPIC_API_IMAGE_BASE64_LIMIT_BYTES = 10 * 1024 * 1024
+
+/**
+ * The largest an IMAGE attachment may be on disk (#417) — never a plain file,
+ * which travels as a path and costs this message nothing (issue #417's own
+ * finding: the 3 MB this constant used to hold, and the 12 MB total below it,
+ * were a margin the implementing agent picked, never measured against
+ * anything, and both bound files that could never have broken either one).
+ *
+ * Base64 costs a third more than the bytes it encodes (4 encoded bytes per 3
+ * raw ones), so the file this app reads off disk has to stay inside three
+ * quarters of the API's own encoded ceiling for the block built from it to
+ * fit: 7.5 MB.
+ */
+export const MAX_DWARF_ATTACHMENT_BYTES = (ANTHROPIC_API_IMAGE_BASE64_LIMIT_BYTES * 3) / 4
+
+/**
+ * How large the message's images may be TOGETHER (#417) — four times the
+ * per-image limit, one fewer than the count limit, so a message that is all
+ * large images is stopped by the total rather than by the count. A plain
+ * file's bytes never join this sum: see MAX_DWARF_ATTACHMENTS's own comment.
+ */
+export const MAX_DWARF_ATTACHMENTS_TOTAL_BYTES = MAX_DWARF_ATTACHMENT_BYTES * 4
 
 /**
  * Why one file was refused. A closed set rather than a sentence, because the
@@ -2006,6 +2032,11 @@ export function attachmentKindFor(name: string): DwarfAttachmentKind {
  * this file's bytes. Reporting the count before the size keeps the sentence
  * true — naming a size limit to somebody who would have been stopped by the
  * count sends them to compress a file that was never the problem.
+ *
+ * The two byte ceilings bind on an IMAGE alone (#417): a plain file travels as
+ * a path and costs this message nothing, so past the count and the
+ * already-attached checks it is refused by neither, and its bytes never join
+ * the running total an image is measured against.
  */
 export function refuseAttachment(
   candidate: DwarfAttachment,
@@ -2013,9 +2044,12 @@ export function refuseAttachment(
 ): DwarfAttachmentRefusal | null {
   if (accepted.some((item) => item.path === candidate.path)) return 'already-attached'
   if (accepted.length >= MAX_DWARF_ATTACHMENTS) return 'too-many'
+  if (candidate.kind !== 'image') return null
   if (candidate.bytes > MAX_DWARF_ATTACHMENT_BYTES) return 'file-too-large'
-  const total = accepted.reduce((sum, item) => sum + item.bytes, candidate.bytes)
-  if (total > MAX_DWARF_ATTACHMENTS_TOTAL_BYTES) return 'total-too-large'
+  const imageBytes = accepted
+    .filter((item) => item.kind === 'image')
+    .reduce((sum, item) => sum + item.bytes, candidate.bytes)
+  if (imageBytes > MAX_DWARF_ATTACHMENTS_TOTAL_BYTES) return 'total-too-large'
   return null
 }
 
