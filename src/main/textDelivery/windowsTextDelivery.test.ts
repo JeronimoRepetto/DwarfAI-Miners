@@ -94,7 +94,11 @@ describe('WindowsTextDelivery.sendToConsole', () => {
     expect(focus).not.toHaveBeenCalled()
     const script = runConsoleWrite.mock.calls[0]?.[0] as string
     expect(script).toContain('AttachConsole(4242)')
-    expect(script).toContain('$units.Add([char]13)')
+    // AMENDED for #404: Enter now travels in its own WriteConsoleInputW call,
+    // built from $enterUnits rather than appended to the text's own list — a
+    // live Claude Code TUI reads a chunk carrying both as a paste, where a
+    // carriage return is line content rather than a submit.
+    expect(script).toContain('$enterUnits.Add([char]13)')
     // The text rides as base64, so nothing a shell re-parses ever holds it.
     expect(script).not.toContain('run the tests')
   })
@@ -104,7 +108,8 @@ describe('WindowsTextDelivery.sendToConsole', () => {
     const port = delivery({ runConsoleWrite })
 
     await port.sendToConsole({ pid: 4242, text: '1', pressEnter: false })
-    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$units.Add([char]13)')
+    // AMENDED for #404: see above.
+    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$enterUnits.Add([char]13)')
   })
 
   it('fails closed on a pid the builder will not accept, and runs nothing', async () => {
@@ -221,7 +226,8 @@ describe('WindowsTextDelivery.pasteToConsole', () => {
     const port = delivery({ runConsoleWrite })
 
     await port.pasteToConsole({ pid: 4242, text: 'hi', pressEnter: false })
-    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$units.Add([char]13)')
+    // AMENDED for #404: see the sendToConsole describe above.
+    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$enterUnits.Add([char]13)')
   })
 
   it('reports the fallback-triggering outcome when the attach was refused', async () => {

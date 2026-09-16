@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { buildConsoleInputWriteCommand, consoleWriteFailureFor } from './consoleInputWrite'
 
+/**
+ * The builder's own `ENTER_SPLIT_DELAY_MS` is not exported — pinned here as the
+ * value the 2026-09-16 measurement table settled on (0, 50 and 150 ms all
+ * submitted; 50 is the one shipped), so a change to it fails a named test
+ * rather than surprising whoever reads the script (#404).
+ */
+const EXPECTED_ENTER_SPLIT_DELAY_MS = 50
+
 /** Read back the one base64 payload the script carries, as the text it decodes to. */
 function payloadOf(script: string): string {
   const blob = /FromBase64String\('([A-Za-z0-9+/=]*)'\)/.exec(script)?.[1]
@@ -22,10 +30,14 @@ describe('buildConsoleInputWriteCommand', () => {
   })
 
   it('allows a bare Enter, which is a submit with no text', () => {
-    const script = buildConsoleInputWriteCommand(4242, '', true)
+    const script = buildConsoleInputWriteCommand(4242, '', true) as string
     expect(script).not.toBeNull()
-    expect(payloadOf(script as string)).toBe('')
-    expect(script).toContain('$units.Add([char]13)')
+    expect(payloadOf(script)).toBe('')
+    expect(script).toContain('$enterUnits.Add([char]13)')
+    // A bare Enter has no text call to come after, so it is the ONE call this
+    // builder ever makes with no sleep in front of it (#404).
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(1)
+    expect(script).not.toContain('Start-Sleep')
   })
 
   it('attaches to the pid it was given', () => {
@@ -74,11 +86,46 @@ describe('buildConsoleInputWriteCommand', () => {
   it('appends Enter as its own record pair only when asked', () => {
     const withEnter = buildConsoleInputWriteCommand(4242, 'go', true) as string
     const without = buildConsoleInputWriteCommand(4242, 'go', false) as string
-    expect(withEnter).toContain('$units.Add([char]13)')
-    expect(without).not.toContain('$units.Add([char]13)')
+    expect(withEnter).toContain('$enterUnits.Add([char]13)')
+    expect(without).not.toContain('$enterUnits.Add([char]13)')
     // Enter rides outside the payload, so a message can never submit itself.
     expect(payloadOf(withEnter)).toBe('go')
     expect(payloadOf(without)).toBe('go')
+  })
+
+  it('never puts the Enter record in the text buffer it builds from', () => {
+    // #404: the payload's own list must never carry char 13, because that list
+    // is what the FIRST call writes — the one a live TUI cannot read as a
+    // submit no matter what it contains.
+    const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
+    expect(script).not.toContain('$textUnits.Add(')
+    expect(payloadOf(script)).not.toContain('\r')
+  })
+
+  it('writes the text and the Enter as two separate WriteConsoleInputW calls, text first, sleep between', () => {
+    // #404: one call reads as a paste to a live Claude Code TUI and a
+    // carriage return inside it is line content, not a submit — only a
+    // SECOND, separate call is read as a keystroke.
+    const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
+    const textCallIndex = script.indexOf('WriteConsoleInputW($conin, $textBuffer')
+    const sleepIndex = script.indexOf(`Start-Sleep -Milliseconds ${EXPECTED_ENTER_SPLIT_DELAY_MS}`)
+    const enterCallIndex = script.indexOf('WriteConsoleInputW($conin, $enterBuffer')
+    expect(textCallIndex).toBeGreaterThan(-1)
+    expect(sleepIndex).toBeGreaterThan(textCallIndex)
+    expect(enterCallIndex).toBeGreaterThan(sleepIndex)
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(2)
+  })
+
+  it('makes one WriteConsoleInputW call and sleeps none when pressEnter is false', () => {
+    const script = buildConsoleInputWriteCommand(4242, 'go', false) as string
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(1)
+    expect(script).not.toContain('Start-Sleep')
+    expect(script).not.toContain('$enterUnits')
+  })
+
+  it('names the delay a constant carrying the measured margin, not a bare number', () => {
+    const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
+    expect(script).toContain(`Start-Sleep -Milliseconds ${EXPECTED_ENTER_SPLIT_DELAY_MS}`)
   })
 
   it('gives the Enter record VK_RETURN and every text record none', () => {
@@ -92,10 +139,16 @@ describe('buildConsoleInputWriteCommand', () => {
     expect(script).toContain('$offset += 20')
   })
 
-  it('counts records rather than bytes in nLength', () => {
+  it('counts records rather than bytes in nLength, for both calls', () => {
     const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
-    expect(script).toContain('$expected = [uint32]($units.Count * 2)')
-    expect(script).toContain('WriteConsoleInputW($conin, $buffer, $expected, [ref]$written)')
+    expect(script).toContain('$expected += [uint32]($textUnits.Count * 2)')
+    expect(script).toContain('$expected += [uint32]($enterUnits.Count * 2)')
+    expect(script).toContain(
+      'WriteConsoleInputW($conin, $textBuffer, [uint32]($textUnits.Count * 2), [ref]$textWritten)'
+    )
+    expect(script).toContain(
+      'WriteConsoleInputW($conin, $enterBuffer, [uint32]($enterUnits.Count * 2), [ref]$enterWritten)'
+    )
   })
 
   it('spells GENERIC_READ|GENERIC_WRITE in decimal, which PowerShell 5.1 needs', () => {
