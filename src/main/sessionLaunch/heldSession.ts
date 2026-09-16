@@ -661,6 +661,34 @@ export function heldMessageEntries(content: unknown): HeldMessageEntry[] {
 }
 
 /**
+ * Whether a message the held stream carried is the SDK REPLAYING a turn,
+ * rather than one live off the model or the panel's own send (#428).
+ *
+ * `@anthropic-ai/claude-agent-sdk` 0.3.258 — the version this app ships,
+ * measured 2026-09-16 — never actually does this: its `sdk.mjs` carries no
+ * `--replay-user-messages` flag, and `isReplay` is a field of
+ * `SDKUserMessageReplay`, a shape built for a bridge this app's `query()`
+ * never receives. So this guards against a FUTURE SDK version that starts
+ * replaying input on the connection, not a case ever observed on this one —
+ * see `HeldSessionRegistry`'s `queue`, which is why the panel already knows
+ * every message it sent without waiting for the stream to echo it back. If a
+ * later SDK ever does replay a turn, the loop must not publish that same row
+ * a second time.
+ *
+ * `unknown` in and read defensively, for the reason `heldMessageText` takes
+ * `unknown`: `isReplay` exists only on `SDKUserMessageReplay`, one of several
+ * members of the SDK's own `SDKMessage` union that all narrow to `type:
+ * 'user'` — `SDKUserMessage` itself has no such field at all — so reading it
+ * off the narrowed type in `sdkHeldSession.ts` without a cast does not
+ * type-check. Taking it here, unparsed, keeps the decision unit-tested
+ * without importing the SDK, the same seam every other function in this file
+ * keeps.
+ */
+export function isReplayedUserMessage(message: unknown): boolean {
+  return isRecord(message) && message.type === 'user' && message.isReplay === true
+}
+
+/**
  * Append one message to the exchange this host has watched go by, bounded at
  * both ends (#159). Pure, so the retention rule is unit-tested rather than
  * eyeballed inside the registry.

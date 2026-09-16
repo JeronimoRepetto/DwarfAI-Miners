@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
+import { ATTACHED_FILE_PREFIX, HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
 import { HELD_CONVERSATION_LIMIT } from '../domain/types'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import {
@@ -1621,6 +1622,96 @@ describe('HeldSessionRegistry conversation', () => {
 
     const state = registry.conversationState('sess-1')
     expect(state.held ? state.conversation : []).toHaveLength(1)
+  })
+
+  /*
+   * Issue #428. The Agent SDK never replays a sent turn back on this
+   * connection (measured against 0.3.258, 2026-09-16 — see `queue`'s own
+   * comment in heldSessionRegistry.ts), so `recordMessage`/the stream never
+   * sees the person's own follow-up messages at all — only the seeded launch
+   * prompt ever became a row before this fix. These pin that `sendText` and
+   * `sendContent` now record the send themselves, first-hand, the moment the
+   * stream actually takes it.
+   */
+  describe('recording the panel’s own sent messages (#428)', () => {
+    it('appends a user row for a sent text message, stamped with this host’s clock', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig here'
+      })
+      port.reportSessionId(0, 'sess-1')
+
+      expect(registry.sendText('sess-1', 'keep going')).toBe(true)
+
+      const state = registry.conversationState('sess-1')
+      expect(state.held ? state.conversation : []).toEqual([
+        { role: 'user', text: 'dig here', timestamp: AT },
+        { role: 'user', text: 'keep going', timestamp: AT }
+      ])
+    })
+
+    it('appends a sent image-and-file message in exactly heldMessageEntries’ own shape', async () => {
+      // The row heldMessageEntries would build for this same content off the
+      // stream: two placeholders, then the attached-file line and the words,
+      // all one entry — see heldSession.test.ts's own pin on that shape.
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig here'
+      })
+      port.reportSessionId(0, 'sess-1')
+
+      const image = {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'QUJD' }
+      }
+      expect(
+        registry.sendContent('sess-1', [
+          image,
+          image,
+          { type: 'text', text: `${ATTACHED_FILE_PREFIX}C:\\mine\\notes.pdf\ndig deeper` }
+        ] as never)
+      ).toBe(true)
+
+      const state = registry.conversationState('sess-1')
+      expect(state.held ? state.conversation.at(-1) : undefined).toEqual({
+        role: 'user',
+        text: [
+          HELD_IMAGE_PLACEHOLDER,
+          HELD_IMAGE_PLACEHOLDER,
+          `${ATTACHED_FILE_PREFIX}C:\\mine\\notes.pdf`,
+          'dig deeper'
+        ].join('\n'),
+        timestamp: AT
+      })
+    })
+
+    it('records nothing for a send the stream refuses, same as a message with no words', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig here'
+      })
+      port.reportSessionId(0, 'sess-1')
+      port.sendTakes = false
+
+      expect(registry.sendText('sess-1', 'keep going')).toBe(false)
+
+      const state = registry.conversationState('sess-1')
+      expect(state.held ? state.conversation : []).toEqual([
+        { role: 'user', text: 'dig here', timestamp: AT }
+      ])
+    })
   })
 })
 

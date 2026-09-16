@@ -17,6 +17,7 @@ import {
   askToWireQuestion,
   HELD_CONTEXT_USAGE_TIMEOUT_MS,
   HELD_TUNING_TIMEOUT_MS,
+  heldMessageEntries,
   heldTelemetryToWire,
   parseAskUserQuestion,
   permissionToWire,
@@ -425,10 +426,14 @@ export class HeldSessionRegistry {
         // CLI's first reported message.
         telemetry: { turn: 'started' },
         crew,
-        // The launch prompt is the record's first message, and the only one
-        // seeded rather than watched: it is what this app sent, so it is known
-        // first-hand and exactly once. Everything after it arrives through
-        // recordMessage, off the stream.
+        // The launch prompt is the record's first message, seeded rather than
+        // watched: it is what this app sent, so it is known first-hand. Every
+        // word the SESSION says still arrives through recordMessage, off the
+        // stream — but since #428, every later message THIS PANEL sends is
+        // ALSO known first-hand and recorded the same first-hand way, through
+        // `queue` below, rather than waited for on a stream that never echoes
+        // it back. See `queue`'s own comment for the measurement that makes
+        // that necessary.
         conversation: retainHeldMessage([], this.message('user', prompt))
       })
       // Length only, never the prompt — the rule every delivery log here holds.
@@ -847,7 +852,7 @@ export class HeldSessionRegistry {
    * reaching for a second channel: there is no honest one here.
    */
   sendText(sessionId: string, text: string): boolean {
-    return this.queue(sessionId, (handle) => handle.send(text))
+    return this.queue(sessionId, text, (handle) => handle.send(text))
   }
 
   /**
@@ -861,19 +866,55 @@ export class HeldSessionRegistry {
    * whose images the session never saw.
    */
   sendContent(sessionId: string, content: HeldMessageContent): boolean {
-    return this.queue(sessionId, (handle) => handle.sendContent?.(content) ?? false)
+    return this.queue(sessionId, content, (handle) => handle.sendContent?.(content) ?? false)
   }
 
-  private queue(sessionId: string, push: (handle: HeldSessionHandle) => boolean): boolean {
+  /**
+   * Route a push onto the stream and, since #428, record it into the
+   * session's own conversation the moment the stream actually takes it.
+   *
+   * `@anthropic-ai/claude-agent-sdk` 0.3.258 — the version this app ships,
+   * measured 2026-09-16 — never replays a sent message back on this
+   * connection: its `sdk.mjs` carries no `--replay-user-messages` flag, and
+   * the `isReplay` field belongs to a bridge shape (`SDKUserMessageReplay`)
+   * this app's `query()` never receives (see `isReplayedUserMessage` in
+   * heldSession.ts, and the guard sdkHeldSession.ts's loop now carries in
+   * case a future SDK version starts). So nothing on the stream will ever
+   * tell this registry what the panel itself just sent, which is exactly the
+   * reasoning `launch` above already states for why it seeds the FIRST
+   * prompt itself — applied here to every message after it.
+   *
+   * `heldMessageEntries(content)` is the same narrowing the message loop
+   * applies to a message the STREAM carries, so a row this app sent reads in
+   * exactly the shape a row the stream echoed back would have — the shape
+   * #424's echo reconciliation already expects. A person's own content is
+   * only ever text and images (see HeldMessageContent), so this call
+   * publishes at most one entry, but every entry is appended defensively
+   * rather than assuming that.
+   *
+   * Recorded only when the stream actually took it: a refused send (a
+   * session already closing, above all) is not a turn the person had, and
+   * retaining one would show a row for words the session never received.
+   */
+  private queue(
+    sessionId: string,
+    content: HeldMessageContent,
+    push: (handle: HeldSessionHandle) => boolean
+  ): boolean {
     const record = this.recordFor(sessionId)
     if (record === undefined) return false
     const sent = push(record.handle)
-    // A message actually queued onto the stream is a new turn starting
-    // (issue #245) — the same fact the launch prompt states at record
-    // creation, restated here because a session can go idle between turns and
-    // then be spoken to again. Not merged when the stream refused it: a
-    // refused send is not a turn beginning.
-    if (sent) record.telemetry = { ...record.telemetry, turn: 'started' }
+    if (sent) {
+      // A message actually queued onto the stream is a new turn starting
+      // (issue #245) — the same fact the launch prompt states at record
+      // creation, restated here because a session can go idle between turns
+      // and then be spoken to again. Not merged when the stream refused it: a
+      // refused send is not a turn beginning.
+      record.telemetry = { ...record.telemetry, turn: 'started' }
+      for (const entry of heldMessageEntries(content)) {
+        this.appendMessage(record, 'user', entry.text, entry.activity)
+      }
+    }
     return sent
   }
 
@@ -991,6 +1032,23 @@ export class HeldSessionRegistry {
   ): void {
     const record = this.held.get(key)
     if (record === undefined) return
+    this.appendMessage(record, role, text, activity)
+  }
+
+  /**
+   * Append one message to a record's own conversation, stamped with this
+   * host's clock (#428) — the one spot both a message the STREAM carried
+   * (`recordMessage` above, keyed by ordinal because the stream reports no
+   * record directly) and a message the PANEL itself sent (`queue`, which
+   * already holds the record) go through, so both write `retainHeldMessage`'s
+   * one rule the same way.
+   */
+  private appendMessage(
+    record: HeldRecord,
+    role: FeedMessage['role'],
+    text: string,
+    activity?: FeedActivity
+  ): void {
     record.conversation = retainHeldMessage(record.conversation, this.message(role, text, activity))
   }
 

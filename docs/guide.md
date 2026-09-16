@@ -145,6 +145,9 @@ What is in it:
   a different thing from having reached the beginning; and a transcript that goes on past the
   furthest back the panel is willing to read says a third thing — that this is as far as it
   reaches, and the rest is in the session's own terminal. All three stop the asking.
+  A session you **started from the Add Panel** pages back the same way and by the same twelve, out
+  of the transcript it writes like any other session — the panel holds the last twelve things said
+  first-hand, and scrolling past them reads the rest off disk.
 - **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
   inline code, fenced code, links, tables, strikethrough and horizontal rules draw as such instead
   of the raw `**`, `-`, backtick, `|` and `~~` characters, with a heading drawn as a bold paragraph

@@ -16,6 +16,7 @@ import {
   heldMessageEntries,
   heldMessageText,
   heldTelemetryToWire,
+  isReplayedUserMessage,
   parseAskUserQuestion,
   permissionToWire,
   resolveAnswers,
@@ -1030,6 +1031,40 @@ describe('heldMessageEntries', () => {
         ])
       ).toEqual([{ text: `${HELD_IMAGE_PLACEHOLDER}\ndig deeper` }])
     })
+  })
+})
+
+/*
+ * Issue #428. `@anthropic-ai/claude-agent-sdk` 0.3.258 never replays a sent
+ * turn back on the connection this app holds (measured 2026-09-16 — see this
+ * function's own comment), so nothing here has ever been observed carrying
+ * `isReplay: true`. This pins the guard against a FUTURE SDK version that
+ * does, extracted here so sdkHeldSession.ts's loop — which has no unit test
+ * of its own — stays a shape check with no parsing in it.
+ */
+describe('isReplayedUserMessage', () => {
+  it('reads a user message carrying isReplay: true as a replay', () => {
+    expect(isReplayedUserMessage({ type: 'user', isReplay: true, message: {} })).toBe(true)
+  })
+
+  it('reads an ordinary user message, with no such field, as not a replay', () => {
+    expect(isReplayedUserMessage({ type: 'user', message: { content: 'dig here' } })).toBe(false)
+  })
+
+  it('reads a user message whose isReplay is not literally true as not a replay', () => {
+    expect(isReplayedUserMessage({ type: 'user', isReplay: false, message: {} })).toBe(false)
+  })
+
+  it('never reads an assistant message as a replay, whatever it carries', () => {
+    expect(isReplayedUserMessage({ type: 'assistant', isReplay: true, message: {} })).toBe(false)
+  })
+
+  it('answers false for a shape it does not recognise', () => {
+    expect(isReplayedUserMessage(undefined)).toBe(false)
+    expect(isReplayedUserMessage(null)).toBe(false)
+    expect(isReplayedUserMessage(42)).toBe(false)
+    expect(isReplayedUserMessage('user')).toBe(false)
+    expect(isReplayedUserMessage([])).toBe(false)
   })
 })
 

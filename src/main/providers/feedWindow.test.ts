@@ -708,3 +708,169 @@ describe('parseDwarfFeedPageRequest (#364)', () => {
     ).toEqual({ dwarfId: 'claude:s1', before: cursor })
   })
 })
+
+/*
+ * ADDED for #430. A page can now be asked for from the rows of a HELD session's
+ * own exchange — this app's first-hand copy of the same turns the transcript
+ * records — and those rows do not carry the transcript's spelling of two
+ * things: `retainHeldMessage` trims the text, and the timestamp is this host's
+ * clock at the moment the stream carried the message rather than the CLI's own.
+ *
+ * Nothing above changed: an observed session's cursor still resolves to the
+ * very row it came off, which the third case here pins.
+ */
+describe('readFeedPage with a cursor a held conversation produced (#430)', () => {
+  /** `<timestamp>|<text>` per line, `!` marking a tool call.
+   * Its own extractor rather than `extractPaged` above, which stamps every row
+   * with the same empty timestamp and so cannot say anything about which of two
+   * rows a cursor picked. */
+  function extractStamped(tailText: string, limit: number, activityLimit?: number): FeedMessage[] {
+    const rows = tailText
+      .split('\n')
+      .filter((line) => line.includes('|'))
+      .map((line) => {
+        const [timestamp = '', body = ''] = [
+          line.slice(0, line.indexOf('|')),
+          line.slice(line.indexOf('|') + 1)
+        ]
+        return body.startsWith('!')
+          ? {
+              role: 'assistant' as const,
+              text: body.slice(1),
+              timestamp,
+              activity: { kind: 'run' as const, target: body.slice(1) }
+            }
+          : { role: 'assistant' as const, text: body, timestamp }
+      })
+    return trimFeed(rows, limit, activityLimit)
+  }
+
+  const line = (timestamp: string, text: string): string => `${timestamp}|${text}\n`
+
+  it('finds the turn by its words when the cursor carries this host’s clock instead', async () => {
+    // The whole reason a held conversation was unpageable: the two timestamps
+    // are two readings of one event and never agree, so requiring both found
+    // nothing and the panel was told the transcript did not contain the row.
+    const fake = new FakeFs()
+    fake.addFile(
+      PATH,
+      line('cli-1', 'arrived at the seam') +
+        line('cli-2', 'down the shaft') +
+        line('cli-3', 'seam exhausted')
+    )
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      2,
+      extractStamped,
+      { timestamp: '2026-09-16T10:00:00.000Z', text: 'down the shaft' },
+      [512]
+    )
+
+    expect(texts(page.messages)).toEqual(['arrived at the seam'])
+    expect(page.reachedStart).toBe(true)
+  })
+
+  it('reads the two spellings of one turn as the same words, whitespace apart', async () => {
+    // `retainHeldMessage` trims a held row on the way in and the extractors
+    // keep whatever whitespace the record carried, which is the one difference
+    // measured between them for an agent's turn. `normalizeConsoleText` — the
+    // rule a console write and the echo reconciliation already read a message
+    // by — absorbs it, and absorbs nothing else.
+    const fake = new FakeFs()
+    fake.addFile(PATH, line('cli-1', 'arrived at the seam') + line('cli-2', '  down the   shaft  '))
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      2,
+      extractStamped,
+      { timestamp: 'h-2', text: 'down the shaft' },
+      [512]
+    )
+
+    expect(texts(page.messages)).toEqual(['arrived at the seam'])
+  })
+
+  it('still resolves an observed cursor to its own row, timestamp and all', async () => {
+    // The timestamp is a TIE-BREAKER, not half a key: where a row matches both
+    // it wins over a newer row that only says the same words. Losing that would
+    // skip everything between the two, which is the gap the whole cursor design
+    // exists to avoid.
+    const fake = new FakeFs()
+    fake.addFile(
+      PATH,
+      line('cli-0', 'arrived at the seam') +
+        line('cli-1', 'down the shaft') +
+        line('cli-2', 'through the topsoil') +
+        line('cli-3', 'down the shaft')
+    )
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      2,
+      extractStamped,
+      { timestamp: 'cli-1', text: 'down the shaft' },
+      [512]
+    )
+
+    expect(texts(page.messages)).toEqual(['arrived at the seam'])
+  })
+
+  it('takes the NEWEST row saying the same words when no timestamp matches', async () => {
+    // With no exact match to prefer, the newest wins for the reason the
+    // cursor's own doc comment gives: the page then repeats a row already on
+    // screen instead of dropping the rows between the two.
+    const fake = new FakeFs()
+    fake.addFile(
+      PATH,
+      line('cli-0', 'arrived at the seam') +
+        line('cli-1', 'down the shaft') +
+        line('cli-2', 'through the topsoil') +
+        line('cli-3', 'down the shaft')
+    )
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      3,
+      extractStamped,
+      { timestamp: 'h-9', text: 'down the shaft' },
+      [512]
+    )
+
+    expect(texts(page.messages)).toEqual([
+      'arrived at the seam',
+      'down the shaft',
+      'through the topsoil'
+    ])
+  })
+
+  it('never anchors on a tool-call line whose text happens to match', async () => {
+    const fake = new FakeFs()
+    fake.addFile(
+      PATH,
+      line('cli-0', 'arrived at the seam') +
+        line('cli-1', '!down the shaft') +
+        line('cli-2', 'down the shaft')
+    )
+    const { fs } = spying(fake)
+
+    const page = await readFeedPage(
+      fs,
+      PATH,
+      2,
+      extractStamped,
+      { timestamp: 'h-9', text: 'down the shaft' },
+      [512]
+    )
+
+    expect(texts(page.messages)).toEqual(['arrived at the seam'])
+  })
+})
