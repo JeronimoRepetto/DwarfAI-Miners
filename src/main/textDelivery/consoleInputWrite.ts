@@ -29,8 +29,21 @@
  * sightings from the first write, and the error codes for every way it fails,
  * in `docs/console-hosting.md` §6.
  *
- * Two facts from that measurement are load-bearing here and are not obvious
- * from the API names:
+ * That same day carried a second, separate measurement that changed the shape
+ * of the write itself (#404). The two writes above both carried `pressEnter`
+ * false; recorded once with the text and Enter in ONE `WriteConsoleInput` call,
+ * a live Claude Code TUI held the message in its composer unsubmitted forever
+ * — Ink treats a multi-character chunk as a paste, and a carriage return inside
+ * a paste is line content, not a submit gesture. The raw-mode Node receivers
+ * this file was measured against earlier had no such rule, which is why an
+ * earlier record could say "the Enter arrived once" without anyone seeing the
+ * difference it makes to a real TUI. Splitting the Enter into its own
+ * `WriteConsoleInput` call — same child process, same attach — submitted every
+ * time regardless of the pause between the two calls (0, 50 and 150 ms all
+ * worked). Full table in `docs/console-hosting.md` §6.
+ *
+ * Three facts from these measurements are load-bearing here and are not
+ * obvious from the API names:
  *
  * 1. **`FreeConsole` first is a precondition, not a flourish.** A process may
  *    be attached to at most one console; called from a process that already has
@@ -47,6 +60,11 @@
  *    `GetStdHandle(STD_INPUT_HANDLE)` hands back a stale handle and
  *    `WriteConsoleInput` fails on it with ERROR_INVALID_HANDLE — 0 events
  *    written, no error the caller would notice as a delivery failure.
+ * 3. **The Enter must be its own `WriteConsoleInput` call, never appended to
+ *    the text's.** The SECOND call is what makes Enter read as a submit rather
+ *    than pasted content; `ENTER_SPLIT_DELAY_MS` below carries only the
+ *    measured margin against the two calls being coalesced into one read while
+ *    the receiving process is busy (#404).
  */
 
 import { toConsoleLine } from './sendKeys'
@@ -91,6 +109,21 @@ function base64Utf16(text: string): string {
 }
 
 /**
+ * How long the script sleeps between the text's `WriteConsoleInputW` call and
+ * the Enter's, in milliseconds.
+ *
+ * The pause is a margin, not the mechanism: what makes Enter submit rather
+ * than paste is that it travels in a SECOND call, and every delay measured
+ * against a live Claude Code TUI on 2026-09-16 submitted — 0 ms, 50 ms and
+ * 150 ms all worked, one child process and one attach throughout (#404). 50 is
+ * kept because it sits near the low end of what was measured, as insurance
+ * against the two calls being coalesced into one read while the receiving
+ * process is busy rather than something the TUI is waiting out. Table in
+ * `docs/console-hosting.md` §6.
+ */
+const ENTER_SPLIT_DELAY_MS = 50
+
+/**
  * PowerShell that writes `text` into the console input buffer of `pid`,
  * optionally followed by Enter. Null when there is nothing it could honestly
  * do: a pid that cannot name a process, or a call that would write no records.
@@ -100,20 +133,27 @@ function base64Utf16(text: string): string {
  * around a junk pid would attach to whatever process happens to hold that
  * number, and a write into a stranger's console cannot be taken back.
  *
- * Enter rides OUTSIDE the payload, exactly as it does in `buildSendKeysCommand`
- * — a message can never submit itself. It is also the only record that carries
- * a virtual key: the text records set `wVirtualKeyCode` 0 and let
- * `UnicodeChar` speak, which is what a TTY reader in raw mode reads.
+ * Enter travels in its OWN `WriteConsoleInputW` call, never inside the text's
+ * — #404's finding. The two calls run in the same child process and the same
+ * attach, `ENTER_SPLIT_DELAY_MS` apart, because a live Claude Code TUI reads a
+ * multi-character chunk as a paste and a carriage return inside one as line
+ * content rather than a submit; only a call of its own reads as a keystroke. A
+ * bare Enter (`text` empty) is the one case with a single call, since there is
+ * no text write to put it after. Enter is also the only record that carries a
+ * virtual key: the text records set `wVirtualKeyCode` 0 and let `UnicodeChar`
+ * speak, which is what a TTY reader in raw mode reads.
  *
  * `toConsoleLine` flattens first, for the reason it exists: a console has no
  * way to accept a literal newline without submitting the line, so a pasted
  * paragraph would otherwise send its first line and type the rest into a fresh
- * prompt. After flattening, the only CR in the buffer is the appended Enter.
+ * prompt. After flattening, the only CR in either buffer is Enter's own.
  *
- * The exit codes distinguish the three failures the measurement produced, so a
+ * The exit codes distinguish the failures the measurement produced, so a
  * caller can say which one happened rather than reporting a bare non-zero:
- * 2 the attach was refused, 3 `CONIN$` would not open, 4 the write was short or
- * failed. The console is detached again on every one of them.
+ * 2 the attach was refused, 3 `CONIN$` would not open, 4 a write was short or
+ * failed — including the shape #404 added, where the text's call landed whole
+ * and the Enter call behind it did not, leaving an unsubmitted message in the
+ * buffer. The console is detached again on every one of them.
  */
 export function buildConsoleInputWriteCommand(
   pid: number,
@@ -133,26 +173,29 @@ export function buildConsoleInputWriteCommand(
     '[DllImport("kernel32.dll", SetLastError = true)] public static extern bool WriteConsoleInputW(IntPtr hConsoleInput, byte[] lpBuffer, uint nLength, out uint lpNumberOfEventsWritten);',
     '[DllImport("kernel32.dll", SetLastError = true)] public static extern bool CloseHandle(IntPtr hObject);',
     "'@",
-    '$units = New-Object System.Collections.Generic.List[char]',
-    `$units.AddRange([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${base64Utf16(
-      payload
-    )}')).ToCharArray())`
-  ]
-  if (pressEnter) lines.push('$units.Add([char]13)')
-  lines.push(
-    `$buffer = New-Object byte[] ($units.Count * ${INPUT_RECORD_BYTES * 2})`,
-    '$offset = 0',
-    'foreach ($unit in $units) {',
-    '  $virtualKey = if ($unit -eq [char]13) { 13 } else { 0 }',
-    '  foreach ($down in 1, 0) {',
-    '    [BitConverter]::GetBytes([uint16]1).CopyTo($buffer, $offset)',
-    '    [BitConverter]::GetBytes([int32]$down).CopyTo($buffer, $offset + 4)',
-    '    [BitConverter]::GetBytes([uint16]1).CopyTo($buffer, $offset + 8)',
-    '    [BitConverter]::GetBytes([uint16]$virtualKey).CopyTo($buffer, $offset + 10)',
-    '    [BitConverter]::GetBytes([uint16][int]$unit).CopyTo($buffer, $offset + 14)',
-    `    $offset += ${INPUT_RECORD_BYTES}`,
+    // One record-building routine, called once per buffer (text, and — when
+    // asked — Enter as its own, separate buffer): the two must never share a
+    // call, so they must not share the list they are built from either (#404).
+    'function New-InputBuffer([System.Collections.Generic.List[char]]$units) {',
+    `  $buffer = New-Object byte[] ($units.Count * ${INPUT_RECORD_BYTES * 2})`,
+    '  $offset = 0',
+    '  foreach ($unit in $units) {',
+    '    $virtualKey = if ($unit -eq [char]13) { 13 } else { 0 }',
+    '    foreach ($down in 1, 0) {',
+    '      [BitConverter]::GetBytes([uint16]1).CopyTo($buffer, $offset)',
+    '      [BitConverter]::GetBytes([int32]$down).CopyTo($buffer, $offset + 4)',
+    '      [BitConverter]::GetBytes([uint16]1).CopyTo($buffer, $offset + 8)',
+    '      [BitConverter]::GetBytes([uint16]$virtualKey).CopyTo($buffer, $offset + 10)',
+    '      [BitConverter]::GetBytes([uint16][int]$unit).CopyTo($buffer, $offset + 14)',
+    `      $offset += ${INPUT_RECORD_BYTES}`,
+    '    }',
     '  }',
+    '  return $buffer',
     '}',
+    '$textUnits = New-Object System.Collections.Generic.List[char]',
+    `$textUnits.AddRange([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${base64Utf16(
+      payload
+    )}')).ToCharArray())`,
     '[void][Win32.ConsoleInput]::FreeConsole()',
     `if (-not [Win32.ConsoleInput]::AttachConsole(${pid})) { exit 2 }`,
     `$conin = [Win32.ConsoleInput]::CreateFileW('CONIN$', ${GENERIC_READ_WRITE}, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)`,
@@ -160,9 +203,42 @@ export function buildConsoleInputWriteCommand(
     '  [void][Win32.ConsoleInput]::FreeConsole()',
     '  exit 3',
     '}',
+    '$ok = $true',
     '$written = [uint32]0',
-    '$expected = [uint32]($units.Count * 2)',
-    '$ok = [Win32.ConsoleInput]::WriteConsoleInputW($conin, $buffer, $expected, [ref]$written)',
+    '$expected = [uint32]0'
+  ]
+
+  // The text's own call, when there is any text at all — a bare Enter has
+  // none, and must not spend a call writing zero records.
+  if (payload !== '') {
+    lines.push(
+      '$textBuffer = New-InputBuffer $textUnits',
+      '$textWritten = [uint32]0',
+      '$expected += [uint32]($textUnits.Count * 2)',
+      '$ok = $ok -and [Win32.ConsoleInput]::WriteConsoleInputW($conin, $textBuffer, [uint32]($textUnits.Count * 2), [ref]$textWritten)',
+      '$written += $textWritten'
+    )
+  }
+
+  // Enter's call, SECOND and separate from the text's — the shape #404
+  // measured: a chunk with the text and Enter together reads to a live TUI as
+  // a paste, where a carriage return is line content rather than a submit. The
+  // sleep only guards the two calls against being coalesced into one read; it
+  // is skipped for a bare Enter, which has no first call to be coalesced with.
+  if (pressEnter) {
+    if (payload !== '') lines.push(`Start-Sleep -Milliseconds ${ENTER_SPLIT_DELAY_MS}`)
+    lines.push(
+      '$enterUnits = New-Object System.Collections.Generic.List[char]',
+      '$enterUnits.Add([char]13)',
+      '$enterBuffer = New-InputBuffer $enterUnits',
+      '$enterWritten = [uint32]0',
+      '$expected += [uint32]($enterUnits.Count * 2)',
+      '$ok = $ok -and [Win32.ConsoleInput]::WriteConsoleInputW($conin, $enterBuffer, [uint32]($enterUnits.Count * 2), [ref]$enterWritten)',
+      '$written += $enterWritten'
+    )
+  }
+
+  lines.push(
     '[void][Win32.ConsoleInput]::CloseHandle($conin)',
     '[void][Win32.ConsoleInput]::FreeConsole()',
     'if (-not $ok -or $written -ne $expected) { exit 4 }',
@@ -192,8 +268,11 @@ export interface ConsoleWriteFailure {
  * Three codes because the measurement produced three distinct failures, and a
  * bare non-zero would have collapsed them: attaching to a pid whose session has
  * ended is an ordinary thing to hit, a `CONIN$` that will not open is not, and a
- * short write is the one that may have put HALF a message into somebody's
- * session. The runtime log says which.
+ * short or failed write is the one that may have put HALF a message into
+ * somebody's session — now including the shape #404 added, where the text's
+ * own call landed whole and the Enter call behind it did not, leaving the
+ * message sitting in the console's buffer unsubmitted. The runtime log says
+ * which.
  *
  * Anything else — PowerShell failing on its own terms, a child killed by the
  * timeout — takes the cautious answer rather than a new claim: the buffer may

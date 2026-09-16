@@ -851,6 +851,12 @@ GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, OPEN_EXISTING)` �
 logged `bytes=14 … text="hello console\r"` — every character and the Enter, once each, in order. The
 key-up records are inert to a TTY reader, as expected: 28 records produced 14 bytes, not 28.
 
+**That "once each, in order" settled delivery to the read buffer, not submission — and #404 is the
+gap it left.** A raw-mode `stdin` reader has no concept of a paste versus a keystroke; it just reads
+bytes, so a CR arriving inside the same chunk as the text reads identically to one arriving after it.
+A real TUI's composer does not: see §6's `#404` entry below for the receiver that could tell the
+difference, and did.
+
 **The two ways to get the handle are NOT equivalent, and the wrong one fails silently-ish.**
 `GetStdHandle(STD_INPUT_HANDLE)` after the attach returns the caller's **stale inherited** handle:
 `WriteConsoleInput` on it returned `false` with `GetLastError 6` (`ERROR_INVALID_HANDLE`), 0 events
@@ -1005,6 +1011,45 @@ sent-zero and the virtual-key-alone case as untested. The interrupt's Escape and
 Ctrl+C are the same shape. So a Windows Terminal user with several tabs can now be MESSAGED and can
 answer a PERMISSION dialog, and still cannot answer a question picker from the panel — which is a
 follow-up with a measurement in front of it, not a gap somebody forgot.
+
+### The Enter must be a second write — measured 2026-09-16 (#404)
+
+**Shipping #371 step 2 surfaced a defect the measurement above could not have caught, because nothing
+in it was a real TUI reading Enter as a submit versus as content.** Right after #403 merged, a message
+sent to a live Claude Code session on Windows landed in its composer and stayed there: the panel
+reported `delivered: true`, and the person still had to press Enter themselves. The builder put the
+text's key records and the Enter record in ONE `WriteConsoleInput` call, and Claude Code's Ink
+composer treats a multi-character chunk arriving in one read as a **paste** — inside a paste, a
+carriage return is line content, not a submit gesture. The raw-mode Node receivers this file measured
+against earlier had no such rule (see the corrected note on Case 1, above), which is why an earlier
+record could say "the Enter arrived once" without anyone seeing the difference it makes to a real
+TUI.
+
+**Measured against a live Claude Code TUI, one probe per row, each a distinct text so receipt could
+be checked in the session's own transcript** [V, #404, 2026-09-16]:
+
+| Shape                                                                                      | Result                                  |
+| ------------------------------------------------------------------------------------------ | --------------------------------------- |
+| text + Enter in one `WriteConsoleInput` call (the builder as #403 shipped it)              | text in the composer, **not submitted** |
+| text in one call, Enter in a second call from a **separate child process** (~200 ms later) | **submitted**, received verbatim        |
+| one child process, two `WriteConsoleInput` calls, `Start-Sleep` **0 ms** between           | **submitted**                           |
+| same, **50 ms**                                                                            | **submitted**                           |
+| same, **150 ms**                                                                           | **submitted**                           |
+
+**The second call is what submits; the delay is a margin, not the mechanism.** Every pause tried —
+including none at all — submitted, so what matters is that Enter is read in a call of its own. A
+small pause is kept anyway, as insurance against the two calls being coalesced into one read while the
+receiving process is busy rather than something the TUI is waiting out; `ENTER_SPLIT_DELAY_MS` in
+`consoleInputWrite.ts` is set to 50, near the low end of what was measured to work.
+
+**The fix.** `buildConsoleInputWriteCommand` now writes the text's records in one `WriteConsoleInputW`
+call and, when `pressEnter` is true, the Enter record in a second — same child process, same attach,
+`ENTER_SPLIT_DELAY_MS` apart. A bare Enter (no text) is still exactly one call, since there is no text
+write for it to follow. Exit code 4 keeps meaning "a write was short or failed," now including the
+shape this bug was: the text's call landing whole and the Enter call behind it failing, which still
+leaves an unsubmitted message sitting in the console's buffer. Exit codes 2 and 3 are unchanged. The
+question picker's keys (#402) will need the same two-call shape; it is not wired through this builder
+yet.
 
 ---
 
