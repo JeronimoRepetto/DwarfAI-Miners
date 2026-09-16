@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
 import {
   HELD_CONVERSATION_LIMIT,
   HELD_MESSAGE_MAX_CHARS,
@@ -938,6 +939,97 @@ describe('heldMessageEntries', () => {
   it('answers with nothing for a shape it does not recognise', () => {
     expect(heldMessageEntries(undefined)).toEqual([])
     expect(heldMessageEntries(42)).toEqual([])
+  })
+
+  /*
+   * #424. Pinning what a held session's own USER turn becomes, since that is
+   * the row the panel's echo reconciliation has to account for and it looks
+   * nothing like the console's — the whole reason that reconciliation was
+   * matching the wrong shape. Every content array below is exactly what
+   * `heldContentFor` (attachmentDelivery.ts) builds for the attachment mix
+   * named in each test, not a synthetic shape.
+   */
+  describe('a user turn with attachments (#424)', () => {
+    /*
+     * AMENDED (#424, second pass): the three cases below originally expected
+     * an image block to vanish without a trace — that was the bug. An
+     * images-only turn published no entry at all, and an image beside a file
+     * or words dropped silently, so the reconciliation the panel builds off
+     * these entries could never match a held echo that carried one. Each is
+     * updated in place to the placeholder shape below, not removed: the
+     * underlying facts being pinned (what heldContentFor sends, and what this
+     * function does with it) are the same, only what it now correctly
+     * publishes for an image block has changed.
+     */
+    it('reads an image block and a file line as one entry, the placeholder ahead of the file', () => {
+      // heldContentFor's shape for one image plus one file plus words: the
+      // image travels as its own content block with no text of its own, and
+      // the file plus words as the one text block after it. Both now join
+      // the SAME entry — an image is buffered like text, never flushed on
+      // its own — because a user turn has only ever published one row.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'text', text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' }
+        ])
+      ).toEqual([
+        { text: `${HELD_IMAGE_PLACEHOLDER}\nAttached file: C:\\mine\\notes.pdf\ndig deeper` }
+      ])
+    })
+
+    it('publishes one row naming the image for an images-only message, where it used to publish none', () => {
+      // heldContentFor's shape when every attachment is an image and there
+      // are no words: `words === ''`, so it returns the image blocks alone,
+      // with no text block appended. Before this fix nothing here ever got
+      // buffered or flushed, so the turn never reached a row at all and its
+      // echo stayed drawn forever — the gap #424's second pass closes.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } }
+        ])
+      ).toEqual([{ text: HELD_IMAGE_PLACEHOLDER }])
+    })
+
+    it('joins two images into the one row a turn with no words at all still publishes', () => {
+      // Two placeholders, not two rows: a `user` turn has only ever
+      // published at most one entry (see this function's own doc comment),
+      // and the panel's reconciliation matches one row against one echo's
+      // WHOLE set of attachment tokens — splitting would leave a two-image
+      // send unmatched exactly as a wordless one-image send used to be.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'RUZH' } }
+        ])
+      ).toEqual([{ text: `${HELD_IMAGE_PLACEHOLDER}\n${HELD_IMAGE_PLACEHOLDER}` }])
+    })
+
+    it('names every file on its own line ahead of the words, for a files-only message', () => {
+      expect(
+        heldMessageEntries([
+          {
+            type: 'text',
+            text: 'Attached file: C:\\mine\\notes.pdf\nAttached file: C:\\mine\\config.txt\ndig deeper'
+          }
+        ])
+      ).toEqual([
+        {
+          text: 'Attached file: C:\\mine\\notes.pdf\nAttached file: C:\\mine\\config.txt\ndig deeper'
+        }
+      ])
+    })
+
+    it('reads an image alongside words as the placeholder ahead of them, in the same row', () => {
+      // heldContentFor's shape for an image attachment plus words and no
+      // file: `named` stayed empty, so `words` is the text alone, sent as
+      // one content block after the image block.
+      expect(
+        heldMessageEntries([
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+          { type: 'text', text: 'dig deeper' }
+        ])
+      ).toEqual([{ text: `${HELD_IMAGE_PLACEHOLDER}\ndig deeper` }])
+    })
   })
 })
 

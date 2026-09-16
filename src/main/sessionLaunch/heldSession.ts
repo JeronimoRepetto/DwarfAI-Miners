@@ -1,6 +1,9 @@
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 import { permissionInputLine, toolActivityLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
+// Shared with the renderer's echo reconciliation (#424) — see
+// shared/heldSessionText.ts for why this cannot stay a local constant.
+import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
 import {
   HELD_CONVERSATION_LIMIT,
   HELD_MESSAGE_MAX_CHARS,
@@ -590,8 +593,36 @@ export interface HeldMessageEntry {
  * still calls it that way; this is what the message loop needs instead, since
  * one message can now publish more than one row.
  *
- * A `tool_result` block matches neither branch below and simply ends whatever
- * text run precedes it, same as an unmapped `tool_use` does — a result is
+ * An `image` block now contributes `[Image]` to the same buffered run as any
+ * text either side of it (#424), a plain placeholder since the held stream
+ * carries no counter the way a console's own `[Image #N]` does (see
+ * `lib/message/echo.ts`'s `expectedTokensFor`). Without this an images-only
+ * turn published NOTHING at all: `heldContentFor` (attachmentDelivery.ts)
+ * sends an image with no text block beside it, so nothing here ever got
+ * buffered or flushed, no row ever reached the panel, and the person's own
+ * sent message stayed drawn as the last one forever — the held-session half
+ * of #424 the first pass missed.
+ *
+ * BUFFERED alongside text rather than flushed as its own entry, unlike a
+ * `tool_use` — deliberately, even though it means several images (or an image
+ * beside words) read as one multi-line entry rather than one row apiece. A
+ * `user` turn has only ever published AT MOST ONE entry before this change
+ * (its content is text and, now, images — never a `tool_use` a person did not
+ * call), and the panel's echo reconciliation counts on that: it matches ONE
+ * transcript row against ONE sent message's full set of attachment tokens
+ * (`reconcileEchoes`), never several rows together. Splitting an image into
+ * its own entry would publish two separate rows for one send whenever it
+ * carried BOTH an image and words (or a file) — reintroducing the exact
+ * symptom this fixes for every mixed and multi-image send, fixing only the
+ * narrowest, wordless, single-image case.
+ *
+ * Only called for `user`/`assistant` messages (see sdkHeldSession.ts), and
+ * only a `user` turn can carry one: an assistant's own generated content is
+ * text, thinking and tool calls, never an image the Messages API would ever
+ * hand back, so no role check gates this — there is nothing for it to gate.
+ *
+ * A `tool_result` block matches none of the branches below and simply ends
+ * whatever text run precedes it, same as an unmapped block does — a result is
  * never something a person said or an agent wrote.
  */
 export function heldMessageEntries(content: unknown): HeldMessageEntry[] {
@@ -608,6 +639,10 @@ export function heldMessageEntries(content: unknown): HeldMessageEntry[] {
     if (!isRecord(block)) continue
     if (block.type === 'text' && typeof block.text === 'string') {
       buffered.push(block.text)
+      continue
+    }
+    if (block.type === 'image') {
+      buffered.push(HELD_IMAGE_PLACEHOLDER)
       continue
     }
     if (block.type !== 'tool_use') continue

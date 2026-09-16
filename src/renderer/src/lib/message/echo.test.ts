@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
 import { RELAY_PROVENANCE_LINE, type DwarfAttachment, type FeedMessage } from '../../types'
 import { groupActivity } from './activityGroup'
 import type { PanelMessage } from './conversation'
@@ -389,6 +390,138 @@ describe('reconcileEchoes', () => {
       const sent = echo({ text: 'dig deeper' })
       const row = turn({ text: 'C:\\mine\\shot[Image #5].png[Image #9]dig deeper' })
       expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+  })
+
+  /*
+   * #424. A session launched from the panel is held over the Agent SDK, and
+   * its own user turn looks nothing like the console's: `heldContentFor`
+   * (attachmentDelivery.ts) sends an image as a content block with no text at
+   * all, and names anything else on its own line — `Attached file: <path>` —
+   * joined to the words with newlines (measured in heldSession.test.ts's
+   * `heldMessageEntries` cases). The rule above was written for the console's
+   * shape only, so a held row never carried a `[Image #N]` marker or a bare
+   * path for it to find, and the echo was never accounted for.
+   *
+   * `via: 'held-session'` on the echo's own `state` (DwarfSendState) is what
+   * selects this shape instead of the console's — the same field the sprite
+   * marker already reads, so no new plumbing carries it here.
+   */
+  describe('held-session attachments (#424)', () => {
+    function attachment(overrides: Partial<DwarfAttachment> = {}): DwarfAttachment {
+      return {
+        path: 'C:\\mine\\seam.png',
+        name: 'seam.png',
+        kind: 'image',
+        bytes: 10,
+        ...overrides
+      }
+    }
+
+    function heldEcho(overrides: Partial<MessageEcho> = {}): MessageEcho {
+      return echo({
+        state: { phase: 'delivered', via: 'held-session', awaitingReaction: true },
+        ...overrides
+      })
+    }
+
+    it('accounts for a held echo whose row names its files with "Attached file:" lines, no marker at all', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' }),
+        attachment({ path: 'C:\\mine\\config.txt', name: 'config.txt', kind: 'file' })
+      ]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({
+        text: 'Attached file: C:\\mine\\notes.pdf\nAttached file: C:\\mine\\config.txt\ndig deeper'
+      })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    /*
+     * AMENDED (#424, second pass): this used to assert the opposite — that an
+     * image's own token was ABSENT from the row, because `heldMessageEntries`
+     * dropped the block entirely and published no row at all for a wordless
+     * send. Now that it publishes `[Image]` (see heldSession.test.ts), the
+     * row this echo has to match carries it, and this pins the accounting the
+     * fix actually restores — an images-only echo's own row, which used to
+     * not exist.
+     */
+    it('accounts for a held echo sent with only an image, against the row heldMessageEntries now publishes for it', () => {
+      const attachments: DwarfAttachment[] = [attachment({ kind: 'image' })]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({ text: `${HELD_IMAGE_PLACEHOLDER}\ndig deeper` })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for a held echo sent with an image and a file together — the placeholder ahead of the file', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\shot.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({
+        text: `${HELD_IMAGE_PLACEHOLDER}\nAttached file: C:\\mine\\notes.pdf\ndig deeper`
+      })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('refuses a held row missing the image placeholder, even though every other token is present', () => {
+      // The exact row the FIRST pass of #424 would have accepted (image
+      // silently dropped) — now correctly refused, since the echo was sent
+      // with an image and this row carries no token for it at all.
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\shot.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = heldEcho({ text: 'dig deeper' })
+      const row = turn({ text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
+
+    it('accounts for two images beside a file and words, one placeholder per image, none of them numbered', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\a.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\b.png', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const sent = heldEcho({ text: 'dig deeper' })
+      const row = turn({
+        text: `${HELD_IMAGE_PLACEHOLDER}\n${HELD_IMAGE_PLACEHOLDER}\nAttached file: C:\\mine\\notes.pdf\ndig deeper`
+      })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for a plain held echo with no attachments at all, same as any other channel', () => {
+      const sent = heldEcho()
+      expect(reconcileEchoes([sent], [turn()])).toEqual([])
+    })
+
+    it('refuses a console-shaped row for a held echo — the bare path carries no "Attached file:" line', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = heldEcho({ text: 'dig deeper' })
+      // Exactly the console's own shape (#419): the bare path, no separator.
+      const row = turn({ text: 'C:\\mine\\notes.pdfdig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
+
+    it('refuses a held-shaped row for a console echo, even though the bare path still matches inside it', () => {
+      // The literal path IS found inside "Attached file: <path>" — the prefix
+      // is not part of the console's own token — so the lookup alone would
+      // wrongly accept this row. What actually refuses it is the leftover
+      // "Attached file: " text the strip leaves behind: the remainder no
+      // longer equals the echo's own words once normalized, so the second
+      // half of `accountsFor`'s check is what is doing the real work here.
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = echo({
+        text: 'dig deeper',
+        state: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
+      })
+      const row = turn({ text: 'Attached file: C:\\mine\\notes.pdf\ndig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
     })
   })
 })
