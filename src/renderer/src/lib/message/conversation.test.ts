@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
-import type { DwarfFeedResult, DwarfStatus } from '../../types'
+import type { DwarfFeedResult, DwarfStatus, FeedMessage } from '../../types'
 import {
   ENDED_NOTE,
   NOTHING_SAID_NOTE,
@@ -20,9 +20,20 @@ const HELD = [
   { role: 'assistant' as const, text: 'Found the seam.', timestamp: '2026-09-03T09:00:01.000Z' }
 ]
 
+/**
+ * The feed `Runtime.dwarfFeed` answers for a session this panel HOLDS (#436).
+ *
+ * Every case below that used to say `defaultDwarf({ conversation: HELD })` says
+ * this instead: the rows arrive on the one feed channel now, and `source` is
+ * how they say which claim they carry.
+ */
+function heldFeed(messages: readonly FeedMessage[] = HELD): DwarfFeedResult {
+  return { readable: true, messages: [...messages], source: 'held' }
+}
+
 describe('conversationOf', () => {
   it("draws a held session's own exchange, and says it is first-hand", () => {
-    const shown = conversationOf(defaultDwarf({ conversation: HELD }))
+    const shown = conversationOf(defaultDwarf(), heldFeed())
     expect(shown.source).toBe('held')
     expect(shown.note).toBe(HELD_NOTE)
     expect(shown.messages.map((message) => [message.from, message.text])).toEqual([
@@ -31,16 +42,25 @@ describe('conversationOf', () => {
     ])
   })
 
-  it('prefers the held exchange over a transcript read of the same session', () => {
-    // Both can be present for a held session: the poll finds its transcript on
-    // disk like any other. The first-hand one wins, because the tail is the
-    // same words arriving second-hand and one turn behind.
-    const shown = conversationOf(defaultDwarf({ conversation: HELD }), {
+  /*
+   * AMENDED for #436. This was "prefers the held exchange over a transcript
+   * read of the same session", and both were on the table here: the exchange
+   * rode the snapshot and the tail came back on the feed. There is one channel
+   * now, so the precedence is main's (`Runtime.dwarfFeed`, where the case that
+   * replaced this one lives) and the question left here is the one this module
+   * still answers — does the panel say which claim the rows it was handed carry.
+   */
+  it('reads the claim off the rows themselves, never off the dwarf', () => {
+    const observed = conversationOf(defaultDwarf(), {
       readable: true,
       messages: [{ role: 'assistant', text: 'stale', timestamp: 'then' }]
     })
-    expect(shown.source).toBe('held')
-    expect(shown.messages).toHaveLength(2)
+    expect(observed.source).toBe('observed')
+    expect(observed.note).toBe(OBSERVED_NOTE)
+
+    const held = conversationOf(defaultDwarf(), heldFeed())
+    expect(held.source).toBe('held')
+    expect(held.note).toBe(HELD_NOTE)
   })
 
   it("draws an observed session's transcript tail, and says what it is", () => {
@@ -103,7 +123,7 @@ describe('conversationOf', () => {
     expect(observed.source).toBe('observed')
     expect(observed.note).toBe(`${ENDED_NOTE} ${OBSERVED_NOTE}`)
 
-    const held = conversationOf(defaultDwarf({ status: 'leaving', conversation: HELD }))
+    const held = conversationOf(defaultDwarf({ status: 'leaving' }), heldFeed())
     expect(held.source).toBe('held')
     expect(held.note).toBe(`${ENDED_NOTE} ${HELD_NOTE}`)
   })
@@ -117,17 +137,16 @@ describe('conversationOf', () => {
 
   it('gives every message a key that is stable and its own', () => {
     const shown = conversationOf(
-      defaultDwarf({
-        conversation: [
-          { role: 'assistant', text: 'one', timestamp: 'same' },
-          { role: 'assistant', text: 'two', timestamp: 'same' }
-        ]
-      })
+      defaultDwarf(),
+      heldFeed([
+        { role: 'assistant', text: 'one', timestamp: 'same' },
+        { role: 'assistant', text: 'two', timestamp: 'same' }
+      ])
     )
     const keys = shown.messages.map((message) => message.key)
     expect(new Set(keys).size).toBe(2)
-    expect(conversationOf(defaultDwarf({ conversation: HELD })).messages[0]!.key).toBe(
-      conversationOf(defaultDwarf({ conversation: HELD })).messages[0]!.key
+    expect(conversationOf(defaultDwarf(), heldFeed()).messages[0]!.key).toBe(
+      conversationOf(defaultDwarf(), heldFeed()).messages[0]!.key
     )
   })
 
@@ -199,7 +218,7 @@ describe('conversationOf attribution', () => {
   })
 
   it("leaves an unissued user turn as the human's, which is what absent means", () => {
-    const shown = conversationOf(defaultDwarf({ conversation: HELD }))
+    const shown = conversationOf(defaultDwarf(), heldFeed())
     expect(shown.messages.map((message) => message.from)).toEqual(['user', 'agent'])
     expect(shown.messages[0]!.issuer).toBeUndefined()
   })
@@ -223,7 +242,7 @@ describe('authorOf', () => {
 
 describe('latestText', () => {
   it('answers with the last message, which is what the panel sizes itself from', () => {
-    expect(latestText(conversationOf(defaultDwarf({ conversation: HELD })))).toBe('Found the seam.')
+    expect(latestText(conversationOf(defaultDwarf(), heldFeed()))).toBe('Found the seam.')
   })
 
   it('answers with nothing when nothing was said', () => {
@@ -282,15 +301,19 @@ describe('conversationEnded', () => {
  */
 describe('feedMessagesOf', () => {
   it("answers with a held session's own exchange", () => {
-    expect(feedMessagesOf(defaultDwarf({ conversation: HELD }))).toEqual(HELD)
+    expect(feedMessagesOf(defaultDwarf(), heldFeed())).toEqual(HELD)
   })
 
-  it('prefers the held exchange over a transcript read of the same session', () => {
-    const shown = feedMessagesOf(defaultDwarf({ conversation: HELD }), {
-      readable: true,
-      messages: [{ role: 'assistant', text: 'stale', timestamp: 'then' }]
-    })
-    expect(shown).toEqual(HELD)
+  /*
+   * AMENDED for #436, exactly as its sibling above was: the precedence between
+   * a held exchange and a transcript read of the same session moved to
+   * `Runtime.dwarfFeed`, which is the only place it can live now that the panel
+   * has one source of rows. What is left to pin here is that the rows come back
+   * untouched whichever claim they carry.
+   */
+  it('answers with the rows it was handed, whichever claim they carry', () => {
+    expect(feedMessagesOf(defaultDwarf(), heldFeed())).toEqual(HELD)
+    expect(feedMessagesOf(defaultDwarf(), { readable: true, messages: HELD })).toEqual(HELD)
   })
 
   it("answers with an observed session's transcript tail", () => {
@@ -315,7 +338,7 @@ describe('feedMessagesOf', () => {
     // precedence would eventually disagree, and this is the one that says they
     // are the same reading.
     const cases: [Parameters<typeof feedMessagesOf>[0], DwarfFeedResult | undefined][] = [
-      [defaultDwarf({ conversation: HELD }), undefined],
+      [defaultDwarf(), heldFeed()],
       [defaultDwarf(), { readable: true, messages: HELD }],
       [defaultDwarf({ lastMessage: 'Halfway down' }), undefined],
       [defaultDwarf(), { readable: true, messages: [] }]

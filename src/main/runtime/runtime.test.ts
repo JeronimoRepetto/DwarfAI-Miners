@@ -6806,16 +6806,20 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     runtime.stop()
   })
 
-  it("stamps the exchange a held session's own stream carried on its foreman (#159)", async () => {
+  /*
+   * AMENDED for #436. This was "stamps the exchange a held session's own stream
+   * carried on its foreman (#159)" and asserted `Dwarf.conversation` off
+   * `getMines()`. The claim it pins is unchanged — this app has these words
+   * first-hand and the panel gets them — but the channel is now `dwarfFeed`,
+   * and the snapshot carries none of them.
+   */
+  it("serves the exchange a held session's own stream carried, off the snapshot (#159, #436)", async () => {
     const port = heldPort()
     const runtime = heldRuntime({
       heldSessions: heldRegistry(port.port),
       providers: [foremanProvider()]
     })
     await runtime.refresh()
-    // A session nobody is holding carries no conversation at all — the panel
-    // reads an observed session's words off its transcript instead.
-    expect(runtime.getMines()[0]!.dwarfs[0]!.conversation).toBeUndefined()
 
     await runtime.launchHeldSession({
       provider: 'claude',
@@ -6826,7 +6830,12 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     port.reportMessage(0, 'assistant', 'Found the seam.')
     await runtime.refresh()
 
-    expect(runtime.getMines()[0]!.dwarfs[0]!.conversation).toEqual([
+    const feed = await runtime.dwarfFeed('claude:sess-1')
+    expect(feed.readable).toBe(true)
+    // The marker the panel draws HELD_NOTE from: these are the words this app
+    // watched go by, not a tail somebody else wrote.
+    expect(feed.source).toBe('held')
+    expect(feed.messages).toEqual([
       { role: 'user', text: 'dig here', timestamp: new Date(1_700_000_000_000).toISOString() },
       {
         role: 'assistant',
@@ -6834,6 +6843,40 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
         timestamp: new Date(1_700_000_000_000).toISOString()
       }
     ])
+    // And the snapshot carries only the launch receipt — never a word the
+    // session said (#436).
+    const dwarf = runtime.getMines()[0]!.dwarfs[0]!
+    expect(dwarf.openingPrompt?.text).toBe('dig here')
+    expect(JSON.stringify(dwarf)).not.toContain('Found the seam')
+    runtime.stop()
+  })
+
+  /*
+   * The precedence #436 moved out of the renderer. `conversationOf` used to
+   * prefer `Dwarf.conversation` over any transcript read of the same session,
+   * because the held rows are first-hand and one turn fresher. With the field
+   * gone, main is the only place that reading can live, so this pins it there.
+   */
+  it('prefers a held session’s own rows over the transcript tail for the same session (#436)', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    // A session nobody is holding reads its own transcript, as it always did.
+    const observed = await runtime.dwarfFeed('claude:sess-1')
+    expect(observed.source).toBeUndefined()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH),
+      prompt: 'dig here'
+    })
+    port.reportSessionId(0, 'sess-1')
+    await runtime.refresh()
+
+    expect((await runtime.dwarfFeed('claude:sess-1')).source).toBe('held')
     runtime.stop()
   })
 
@@ -6927,11 +6970,12 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
 
     // Exactly the receipt the renderer's `launchedDwarfIn` reads: one dwarf,
-    // its conversation opening with the user's own prompt, in the mine the
-    // launch was made from.
+    // carrying the user's own prompt, in the mine the launch was made from.
+    // AMENDED for #436 — `conversation?.[0]` became `openingPrompt`, the one
+    // row of a held exchange that still rides the snapshot.
     expect(dwarfsOf()).toHaveLength(1)
     expect(dwarfsOf()[0]).toMatchObject({ id: 'claude:sess-1', sessionId: 'sess-1' })
-    expect(dwarfsOf()[0]!.conversation?.[0]).toEqual({
+    expect(dwarfsOf()[0]!.openingPrompt).toEqual({
       role: 'user',
       text: 'dig the east gallery',
       timestamp: new Date(1_700_000_000_000).toISOString()
@@ -8818,7 +8862,8 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
     expect(dwarf?.name).toBe('my-agent')
     expect(dwarf?.role).toBe('foreman')
     expect(dwarf?.status).toBe('working')
-    expect(dwarf?.conversation?.[0]?.text).toBe('dig the east gallery')
+    // AMENDED for #436 — `conversation?.[0]` became `openingPrompt`.
+    expect(dwarf?.openingPrompt?.text).toBe('dig the east gallery')
   })
 
   /*
@@ -8876,6 +8921,12 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
     expect(hostedDwarfOf(runtime)?.name).toBe('my-agent')
   })
 
+  /*
+   * AMENDED for #436. This read the exchange off `Dwarf.conversation`; a hosted
+   * process's words now come back through `dwarfFeed` like a held session's and
+   * an observed session's, marked `source: 'held'` because this panel really
+   * did watch these bytes go past — it is the process's stdio.
+   */
   it('reports the exchange it watched go by on the process’s own pipes', async () => {
     const { runtime, port } = await runtimeWithHost()
     await runtime.launchHostedProcess({
@@ -8887,10 +8938,12 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
     port.emit('starting up')
     await runtime.refresh()
 
-    expect(hostedDwarfOf(runtime)?.conversation?.map((message) => message.text)).toEqual([
-      'dig',
-      'starting up'
-    ])
+    const feed = await runtime.dwarfFeed(hostedDwarfOf(runtime)!.id)
+    expect(feed.source).toBe('held')
+    expect(feed.messages.map((message) => message.text)).toEqual(['dig', 'starting up'])
+    // And none of it on the snapshot: a console that prints all afternoon costs
+    // the push the one row it was launched with.
+    expect(JSON.stringify(hostedDwarfOf(runtime))).not.toContain('starting up')
   })
 
   it('leaves the dwarfs a provider observed in that mine exactly as they were', async () => {

@@ -69,7 +69,9 @@ function heldDwarf(id: string, first: string): Dwarf {
     id,
     name: id,
     sessionId: id,
-    conversation: [{ role: 'user', text: first, timestamp: '2026-01-01T00:00:00Z' }]
+    // AMENDED for #436 — the launch receipt is `openingPrompt` now, one row
+    // rather than the front of an exchange that rode every snapshot.
+    openingPrompt: { role: 'user', text: first, timestamp: '2026-01-01T00:00:00Z' }
   })
 }
 

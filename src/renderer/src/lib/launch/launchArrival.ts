@@ -16,15 +16,21 @@ import type { Dwarf, Mine } from '../../types'
  * ## Two receipts, and a launch carries exactly one
  *
  * A HELD launch leaves its evidence on the board directly:
- * `HeldSessionRegistry.launch` seeds the new session's conversation with the
- * exact prompt it sent, so a held exchange opening with that prompt is this
- * launch and no other session's. That the evidence is a HELD conversation is
- * half the strength of it — only a session this panel started and holds
- * carries one at all, so an observed session can never be mistaken for a
- * launch however well its words match. A hosted process (#194) is recognised
- * the same way, because main seeds its conversation identically.
+ * `HeldSessionRegistry.launch` seeds the new session's exchange with the exact
+ * prompt it sent and publishes that one row as `Dwarf.openingPrompt`, so a
+ * dwarf carrying that prompt is this launch and no other session's. That the
+ * evidence is a HELD prompt is half the strength of it — only a session this
+ * panel started and holds carries one at all, so an observed session can never
+ * be mistaken for a launch however well its words match. A hosted process
+ * (#194) is recognised the same way, because main seeds its prompt identically.
  *
- * A DETACHED launch leaves no conversation, and until #191 that left the panel
+ * AMENDED for #436: this used to read `conversation[0]`, the first row of the
+ * whole retained exchange, which rode every snapshot. The exchange is served on
+ * demand now and the receipt is a field of its own — which also fixed a way
+ * this could fail that nobody had met yet, since the retained list drops its
+ * oldest row at the bound and `conversation[0]` was therefore never permanent.
+ *
+ * A DETACHED launch leaves no prompt on the board, and until #191 that left the panel
  * with nothing: it stopped at "the session started" and never handed over,
  * while its dwarf appeared, replied and walked out. Its evidence is the
  * session's own transcript, whose first human turn is the prompt that was sent
@@ -48,15 +54,15 @@ export function launchedDwarfIn(
   launchId: string | null = null
 ): Dwarf | undefined {
   if (mine === undefined) return undefined
-  // A prompt of nothing was never sent, so no held exchange on the board is
+  // A prompt of nothing was never sent, so no opening prompt on the board is
   // its receipt. It says nothing about a detached launch, whose receipt main
   // issued and which is not made of the prompt at all.
   if (launchId === null && prompt === '') return undefined
   const carriesTheReceipt =
     launchId === null
       ? (dwarf: Dwarf): boolean => {
-          const first = dwarf.conversation?.[0]
-          return first !== undefined && first.role === 'user' && first.text === prompt
+          const opening = dwarf.openingPrompt
+          return opening !== undefined && opening.role === 'user' && opening.text === prompt
         }
       : (dwarf: Dwarf): boolean => dwarf.launchId === launchId
   return (

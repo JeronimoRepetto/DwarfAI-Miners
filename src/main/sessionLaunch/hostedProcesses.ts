@@ -1,5 +1,5 @@
 import type { FeedMessage } from '../domain/types'
-import { prepareHeldPrompt, retainHeldMessage } from './heldSession'
+import { prepareHeldPrompt, retainedSomething, retainHeldMessage } from './heldSession'
 import { parseHostedCommand } from './hostedCommand'
 
 /**
@@ -128,6 +128,22 @@ export interface HostedProcessState {
   running: boolean
   /** The exchange this panel watched go by on its pipes, oldest first. */
   conversation: FeedMessage[]
+  /**
+   * How many messages this record has RETAINED, ever (#436) — the feed signal
+   * for a hosted dwarf the panel is watching.
+   *
+   * A hosted process writes no transcript, so `transcriptUpdatedAt` and
+   * `lastMessage` never move for its dwarf and nothing else on the board could
+   * tell the poll it had printed a line. See `HeldConversationState`, which
+   * carries the same counter for the same reason.
+   */
+  revision: number
+  /**
+   * The prompt this app put on the process's stdin — the launch receipt the
+   * board carries (#191, #436). Held apart from `conversation[0]`, which
+   * expires once the retention bound is reached.
+   */
+  openingPrompt?: FeedMessage
 }
 
 /**
@@ -155,6 +171,8 @@ interface HostedRecord {
   handle: HostedProcessHandle
   gone: boolean
   conversation: FeedMessage[]
+  revision: number
+  openingPrompt?: FeedMessage
 }
 
 export interface HostedProcessRegistryOptions {
@@ -225,6 +243,13 @@ export class HostedProcessRegistry {
         onOutput: (text) => this.recordOutput(hostedId, text),
         onEnd: (reason) => this.finish(hostedId, reason)
       })
+      // The prompt is the record's first message, and the only one seeded
+      // rather than watched: it is what this app sent, so it is known
+      // first-hand and exactly once. It is also the receipt the panel adopts
+      // this launch by — see launchedDwarfIn, which recognises a launch by the
+      // opening prompt and nothing else. Kept in its own field since #436, so
+      // a long-running process cannot talk its own receipt out of the store.
+      const seeded = retainHeldMessage([], this.message('user', prompt))
       this.held.set(hostedId, {
         hostedId,
         mineId: request.mineId,
@@ -232,12 +257,9 @@ export class HostedProcessRegistry {
         program: parsed.program,
         handle,
         gone: false,
-        // The prompt is the record's first message, and the only one seeded
-        // rather than watched: it is what this app sent, so it is known
-        // first-hand and exactly once. It is also the receipt the panel adopts
-        // this launch by — see launchedDwarfIn, which recognises a launch by
-        // the first message of its conversation and nothing else.
-        conversation: retainHeldMessage([], this.message('user', prompt))
+        conversation: seeded,
+        revision: seeded.length,
+        ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] })
       })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[hosted] ${parsed.program} started in ${request.mineId} (${prompt.length} chars)`)
@@ -263,7 +285,9 @@ export class HostedProcessRegistry {
       minePath: record.minePath,
       program: record.program,
       running: !record.gone,
-      conversation: record.conversation
+      conversation: record.conversation,
+      revision: record.revision,
+      ...(record.openingPrompt === undefined ? {} : { openingPrompt: record.openingPrompt })
     }))
   }
 
@@ -286,7 +310,7 @@ export class HostedProcessRegistry {
     if (!record.handle.send(text)) return false
     // Kept only once the stream took it, so the panel never shows a message
     // as sent that the pipe refused.
-    record.conversation = retainHeldMessage(record.conversation, this.message('user', text))
+    this.append(record, 'user', text)
     return true
   }
 
@@ -352,7 +376,22 @@ export class HostedProcessRegistry {
     // session's own words go through: redaction happens on the way IN, so a
     // secret never lives in this process's memory waiting for a future caller
     // to remember to strip it.
-    record.conversation = retainHeldMessage(record.conversation, this.message('assistant', text))
+    this.append(record, 'assistant', text)
+  }
+
+  /**
+   * Append one message and move the revision only when something was actually
+   * retained (#436) — `HeldSessionRegistry.appendMessage`'s rule, spelled the
+   * same way here because both stores feed the same signal.
+   *
+   * It matters more here than there: a hosted process prints blank lines, and a
+   * revision that moved for each of them would make the poll re-read a feed
+   * nothing had changed, twice a second, for as long as the process ran.
+   */
+  private append(record: HostedRecord, role: FeedMessage['role'], text: string): void {
+    const before = record.conversation
+    record.conversation = retainHeldMessage(before, this.message(role, text))
+    if (retainedSomething(before, record.conversation)) record.revision++
   }
 
   private finish(hostedId: string, reason: string): void {

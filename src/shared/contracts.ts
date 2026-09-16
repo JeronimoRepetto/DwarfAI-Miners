@@ -1247,31 +1247,29 @@ export interface Dwarf {
    */
   sessionTuning?: DwarfSessionTuning
   /**
-   * The exchange this panel itself watched go by on a stream it is HOLDING
-   * (#159, #194) — the prompt it sent to start the session, and every message
-   * the stream has carried since, oldest first.
+   * ONE row: the prompt this app itself sent to start a session it is HOLDING
+   * (#159, #194), as the registry seeded it first-hand.
    *
-   * Sessions this panel HOLDS only, for the reason `mcpServers` is: nothing
-   * else this app runs hands it a conversation live. An observed session's
-   * words are read from its transcript on demand instead (see
-   * DwarfFeedResult), and the two are deliberately different fields because
-   * they are different claims — this one is first-hand, that one is a bounded
-   * tail somebody else wrote.
+   * A launch RECEIPT and nothing else, which is the whole of why a single row
+   * still rides every poll (#436). The Add Panel recognises the dwarf of the
+   * session it just launched by this prompt and by no other evidence — the
+   * launch verdict deliberately carries no dwarf id (#86), and main opens no
+   * `launchId` receipt for a held launch because it never needed one. See
+   * `launchedDwarfIn` in the renderer, which is the only reader.
    *
-   * Two things hold a stream, and both write here. A held Claude session's
-   * conversation is its own structured messages off the Agent SDK stream; a
-   * hosted process's is the plain text captured off its stdout and stderr
-   * (#194). Same claim in both cases — this panel saw these bytes go past —
-   * and it is deliberately the ONE field a hosted dwarf shares with a held one,
-   * because it is the only fact hosting actually establishes.
+   * It used to be the whole exchange, and that is what #436 ended: the words a
+   * held session says are now served on demand like an observed session's, off
+   * `getDwarfFeed` (see DwarfFeedResult.source), so nothing a session SAYS
+   * rides the snapshot any more and nothing has to be cut to keep the push
+   * small. What is left here is one row that cannot grow — the prompt was
+   * bounded before it was ever sent.
    *
-   * Bounded at both ends, and the bound is the point: at most
-   * HELD_CONVERSATION_LIMIT messages, each at most HELD_MESSAGE_MAX_CHARS
-   * long, because this rides every poll's snapshot. Absent means one of two
-   * things and deliberately does not distinguish them: this is not a held
-   * session, or it is one that has yet to say anything.
+   * Two things hold a stream and both seed this identically: a held Claude
+   * session off the Agent SDK, and a hosted process off its own stdin (#194).
+   * Absent means one of two things and deliberately does not distinguish them:
+   * this is not a held session, or it is one launched with no prompt at all.
    */
-  conversation?: FeedMessage[]
+  openingPrompt?: FeedMessage
   /**
    * The receipt of a launch the Add Panel made itself, once main has PROVED
    * this dwarf is that launch's session (#191).
@@ -1281,8 +1279,8 @@ export interface Dwarf {
    * id — the session's id is not known at that moment, and claiming one there
    * would be the second observation path #86 refuses. A HELD launch leaves its
    * receipt on the board already, because the registry seeds the new session's
-   * conversation with the exact prompt that was sent, so `conversation[0]` IS
-   * the evidence. A DETACHED launch leaves no conversation, and for a long
+   * exchange with the exact prompt that was sent, so `openingPrompt` IS
+   * the evidence. A DETACHED launch seeds nothing, and for a long
    * time that left the panel with nothing to recognise: it stopped at "the
    * session started" and never handed over.
    *
@@ -1605,6 +1603,20 @@ export interface FeedMessage {
 export interface DwarfFeedResult {
   readable: boolean
   messages: FeedMessage[]
+  /**
+   * `'held'` when these rows are FIRST-HAND: the exchange this app itself
+   * watched go by on a stream it holds, answered out of main's own memory
+   * rather than read off anybody's transcript (#436).
+   *
+   * Absent is the ordinary reading and means observed — a bounded tail somebody
+   * else wrote — so every result built before this field existed still says
+   * exactly what it always said. The panel draws the two claims differently
+   * (`HELD_NOTE` against `OBSERVED_NOTE`), which is the whole reason the source
+   * travels with the rows instead of being re-derived from the dwarf: once the
+   * words stopped riding the snapshot, nothing on the dwarf could tell them
+   * apart any more.
+   */
+  source?: 'held'
 }
 
 /**
@@ -2071,14 +2083,20 @@ export function stripRelayProvenance(text: string): string {
 }
 
 /**
- * How many of a held session's own messages this app keeps (see
- * `Dwarf.conversation`), and how much of any one of them.
+ * How many of a held session's own messages this app keeps in MAIN's memory,
+ * and how much of any one of them.
  *
- * Both are ceilings on something that rides EVERY poll's snapshot, which is
- * the whole reason they exist: a session that runs all afternoon must not grow
+ * Both were ceilings on something that rode EVERY poll's snapshot, which was
+ * the whole reason they existed: a session that ran all afternoon must not grow
  * the push, and one that pasted a file into its reply must not either. Twelve
- * matches the transcript feed's own limit, so a held session and an observed
- * one show a comparable amount of history rather than two arbitrary depths.
+ * matched the transcript feed's own limit, so a held session and an observed
+ * one showed a comparable amount of history rather than two arbitrary depths.
+ *
+ * #436 took the exchange off the snapshot — `Runtime.dwarfFeed` now answers it
+ * on demand, `FEED_LIMIT` rows at a time, exactly as an observed session's tail
+ * is answered — so neither number defends the transport any more. What is left
+ * is the registry's own memory, and the per-row cut below is the next commit's
+ * to remove.
  *
  * Twelve things SAID, in both places (#359). A retained conversation also
  * carries one row per tool call (#240), and counting those against this number
@@ -3966,10 +3984,10 @@ export const IPC_CHANNELS = {
    */
   getDwarfFeedPage: 'dwarf:feed:page',
   /**
-   * The renderer reporting which OBSERVED dwarf its message panel currently
-   * has open, or that none is (#196) — never a held session's, which needs
-   * no push because it already carries its own conversation on every
-   * snapshot (see Dwarf.conversation). One-way, like `retireDwarf`: main
+   * The renderer reporting which dwarf its message panel currently has open,
+   * or that none is (#196). A held session's counts since #436: its words no
+   * longer ride the snapshot either, so it needs the same push every other
+   * watched dwarf does. One-way, like `retireDwarf`: main
    * folds the watch into its next poll's pass rather than answering a
    * verdict, so there is nothing here to wait for.
    */

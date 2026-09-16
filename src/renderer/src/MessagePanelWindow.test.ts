@@ -181,13 +181,31 @@ const OBSERVED_DWARF = {
   lastMessage: 'Halfway down the shaft'
 }
 
+/*
+ * AMENDED throughout this file for #436. A held session's exchange used to ride
+ * the snapshot on `Dwarf.conversation`, so a held dwarf was one that carried
+ * that field. It comes back through `getDwarfFeed` now, marked `source: 'held'`,
+ * so a held dwarf here is an ordinary dwarf whose feed says so — which is also
+ * the shape main actually publishes.
+ */
 const HELD_DWARF = {
   ...OBSERVED_DWARF,
   id: 'claude:s2',
   sessionId: 's2',
-  name: 'Held',
-  conversation: [{ role: 'user', text: 'dig here', timestamp: 'then' }]
+  name: 'Held'
 }
+
+/** What `Runtime.dwarfFeed` answers for a session this panel holds (#436). */
+function heldFeed(messages: unknown[]): unknown {
+  return { readable: true, messages, source: 'held' }
+}
+
+/** The bridge stub for a held dwarf's feed, ready to hand to `openOn`. */
+function heldFeedStub(messages: unknown[]): Record<string, unknown> {
+  return { getDwarfFeed: vi.fn().mockResolvedValue(heldFeed(messages)) }
+}
+
+const HELD_EXCHANGE = [{ role: 'user', text: 'dig here', timestamp: 'then' }]
 
 beforeEach(() => {
   // Every store here is a module-scope singleton, and the delivery ones hold a
@@ -275,10 +293,18 @@ describe('the message panel window', () => {
     expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
   })
 
-  it('never reads a transcript for a session it is holding: it has the words first-hand', async () => {
-    const { wrapper, api } = await openOn([HELD_DWARF], 'claude:s2')
+  /*
+   * AMENDED for #436 (was: 'never reads a transcript for a session it is
+   * holding: it has the words first-hand', asserting `getDwarfFeed` was never
+   * called). It is called now, and the answer is still first-hand: main serves
+   * a held session's own rows on that channel in front of any transcript read
+   * of it, so the panel gets the better evidence by asking rather than by
+   * having been handed it on every poll.
+   */
+  it('asks main for a held session’s exchange, and is told it is first-hand', async () => {
+    const { wrapper, api } = await openOn([HELD_DWARF], 'claude:s2', heldFeedStub(HELD_EXCHANGE))
 
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+    expect(api.getDwarfFeed).toHaveBeenCalledWith('claude:s2')
     expect(wrapper.find('.bubble').text()).toBe('dig here')
     expect(wrapper.find('.panel-note').text()).toContain('holding this session')
   })
@@ -406,17 +432,17 @@ describe('the message panel window', () => {
  * line `activate`'s own console-not-opened case already uses.
  */
 describe('opening an activity line’s path', () => {
-  const WITH_EDIT_ACTIVITY = {
-    ...HELD_DWARF,
-    conversation: [
-      {
-        role: 'assistant' as const,
-        text: 'Edited src/main/index.ts',
-        timestamp: 't0',
-        activity: { kind: 'edit' as const, target: 'src/main/index.ts' }
-      }
-    ]
-  }
+  const WITH_EDIT_ACTIVITY = HELD_DWARF
+  // AMENDED for #436: the rows reached the panel on the dwarf, and reach it
+  // through the feed now. The line pressed below is the same line.
+  const EDIT_FEED = heldFeedStub([
+    {
+      role: 'assistant' as const,
+      text: 'Edited src/main/index.ts',
+      timestamp: 't0',
+      activity: { kind: 'edit' as const, target: 'src/main/index.ts' }
+    }
+  ])
 
   /**
    * #294 folded the run this line belongs to into one collapsed disclosure row,
@@ -430,7 +456,7 @@ describe('opening an activity line’s path', () => {
   }
 
   it('asks main with the current mine id and the exact target, not the display text', async () => {
-    const { wrapper, api } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id)
+    const { wrapper, api } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id, EDIT_FEED)
 
     await openLine(wrapper)
     await flushPromises()
@@ -447,6 +473,7 @@ describe('opening an activity line’s path', () => {
 
   it("says out loud main's fixed refusal when the path could not be opened", async () => {
     const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id, {
+      ...EDIT_FEED,
       openMinePath: vi.fn().mockResolvedValue({
         opened: false,
         reason: "That path is outside this mine's folder."
@@ -460,7 +487,7 @@ describe('opening an activity line’s path', () => {
   })
 
   it('says nothing when the file opened successfully', async () => {
-    const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id)
+    const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id, EDIT_FEED)
 
     await openLine(wrapper)
     await flushPromises()
@@ -920,11 +947,15 @@ describe('feed refresh (#183)', () => {
     textDelivery: 'terminal'
   }
 
+  // AMENDED for #436: a held dwarf carried its own `conversation` field, which
+  // is why the two cases below used to assert this panel never touched
+  // `getDwarfFeed` for one. That field is gone — what says a dwarf is held now
+  // is its FEED, not itself — so this is an ordinary dwarf again and the two
+  // cases it feeds are named for what actually happens today.
   const HELD_REFRESH_DWARF = {
     ...REFRESH_DWARF,
     id: 'claude:s2',
-    sessionId: 's2',
-    conversation: [{ role: 'user', text: 'dig here', timestamp: 'then' }]
+    sessionId: 's2'
   }
 
   async function openRefreshDwarf(overrides: Record<string, unknown> = {}) {
@@ -967,15 +998,27 @@ describe('feed refresh (#183)', () => {
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
   })
 
-  it('never reads a transcript for a session it is holding, even from its own send', async () => {
-    // Held sessions carry their exchange first-hand on `conversation`; a
-    // delivered send must not open a second, second-hand channel for it.
-    const { wrapper, api } = await openOn([HELD_REFRESH_DWARF], 'claude:s2')
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+  /*
+   * AMENDED for #436. This was "never reads a transcript for a session it is
+   * holding, even from its own send", pinning that a held dwarf's
+   * `conversation` field made a read unnecessary. A held session's words are
+   * served by `getDwarfFeed` now, marked `source: 'held'`, exactly like an
+   * observed one — and a delivered send is read back sooner for a held
+   * session than for an observed one (#428): main records the panel's own
+   * message on the exchange the moment the stream takes it, so the row is
+   * there to be fetched before the agent has said anything at all.
+   */
+  it("reads a held session's feed like any other, including after its own send", async () => {
+    const { wrapper, api } = await openOn(
+      [HELD_REFRESH_DWARF],
+      'claude:s2',
+      heldFeedStub(HELD_EXCHANGE)
+    )
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
 
     await sendFromPanel(wrapper, 'dig deeper')
 
-    expect(api.getDwarfFeed).not.toHaveBeenCalled()
+    expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
   })
 
   it('drops a delivered send’s refresh once the panel is no longer open on that dwarf', async () => {
@@ -1251,9 +1294,18 @@ describe('feed refresh (#183)', () => {
     expect(api.setWatchedDwarf).toHaveBeenLastCalledWith('claude:s1')
   })
 
-  it('watches nothing for a held session, which already carries its own words', async () => {
+  /*
+   * AMENDED for #436 (was: "watches nothing for a held session, which already
+   * carries its own words" — asserting `null`, on the reading that a held
+   * dwarf's `conversation` field made this push unnecessary). That field is
+   * gone: a held session's words are served on demand now, and this push is
+   * the ONLY thing that keeps such a session live, since a hosted process
+   * writes no transcript and none of the signals the other watch keys on ever
+   * move for it.
+   */
+  it('watches a held session exactly like an observed one', async () => {
     const { api } = await openOn([HELD_REFRESH_DWARF], 'claude:s2')
-    expect(api.setWatchedDwarf).toHaveBeenLastCalledWith(null)
+    expect(api.setWatchedDwarf).toHaveBeenLastCalledWith('claude:s2')
   })
 })
 
@@ -1274,7 +1326,14 @@ describe('the add panel', () => {
     lastMessage: 'Halfway down the shaft'
   }
 
-  /** The dwarf a launch of `prompt` leaves behind: held, and seeded with it. */
+  /**
+   * The dwarf a launch of `prompt` leaves behind: held, and seeded with it.
+   *
+   * AMENDED for #436 (was: `conversation: [{ role: 'user', text: prompt, ... }]`
+   * — the whole retained exchange, of which the launch receipt was the first
+   * row). The receipt is `openingPrompt` now, one row rather than the front of
+   * an exchange that rode every snapshot; `launchedDwarfIn` reads that field.
+   */
   function launchedDwarf(prompt: string) {
     return {
       id: 'claude:s9',
@@ -1283,7 +1342,7 @@ describe('the add panel', () => {
       name: 'Newcomer',
       status: 'working',
       sessionId: 's9',
-      conversation: [{ role: 'user', text: prompt, timestamp: 'then' }]
+      openingPrompt: { role: 'user', text: prompt, timestamp: 'then' }
     }
   }
 
@@ -1445,15 +1504,16 @@ describe('the add panel', () => {
   })
 
   /*
-   * The reconciliation. The held registry seeds the new session's conversation
-   * with the prompt this panel sent, so the MessagePanel already draws it —
-   * prepending a second copy here would show the user's own first words twice,
-   * and the copy that survives is main's record rather than this panel's
-   * optimism about it.
+   * The reconciliation. The held registry seeds the new session's exchange
+   * with the prompt this panel sent, and `Runtime.dwarfFeed` answers it on
+   * demand (#436) — so the MessagePanel draws it once it has asked, and
+   * prepending a second copy here would show the user's own first words
+   * twice, from a source that is not main's record of them.
    */
   it('shows the first message exactly once after the transition', async () => {
     const { wrapper, api } = await openAddPanel({
-      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
+      getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
+      ...heldFeedStub([{ role: 'user', text: 'dig the east gallery', timestamp: 'then' }])
     })
     await submitPrompt(wrapper, 'dig the east gallery')
 
@@ -1717,19 +1777,19 @@ describe('the sent message, drawn at once (#309)', () => {
  * and a renderer's word is never a permission.
  */
 describe('opening a link inside a bubble', () => {
-  const WITH_LINK = {
-    ...HELD_DWARF,
-    conversation: [
-      {
-        role: 'assistant' as const,
-        text: 'see [the issue](https://example.test/347)',
-        timestamp: 't0'
-      }
-    ]
-  }
+  const WITH_LINK = HELD_DWARF
+  // AMENDED for #436: same rows, now through the feed rather than the dwarf.
+  const LINK_FEED = heldFeedStub([
+    {
+      role: 'assistant' as const,
+      text: 'see [the issue](https://example.test/347)',
+      timestamp: 't0'
+    }
+  ])
 
   it('asks main with the exact address, not the words that carried it', async () => {
     const { wrapper, api } = await openOn([WITH_LINK], HELD_DWARF.id, {
+      ...LINK_FEED,
       openExternalLink: vi.fn().mockResolvedValue({ opened: true })
     })
 
@@ -1741,6 +1801,7 @@ describe('opening a link inside a bubble', () => {
 
   it("says out loud main's fixed refusal when the link could not be opened", async () => {
     const { wrapper } = await openOn([WITH_LINK], HELD_DWARF.id, {
+      ...LINK_FEED,
       openExternalLink: vi
         .fn()
         .mockResolvedValue({ opened: false, reason: 'That link could not be opened.' })
@@ -1754,6 +1815,7 @@ describe('opening a link inside a bubble', () => {
 
   it('says nothing when the browser took it', async () => {
     const { wrapper } = await openOn([WITH_LINK], HELD_DWARF.id, {
+      ...LINK_FEED,
       openExternalLink: vi.fn().mockResolvedValue({ opened: true })
     })
 
@@ -2035,6 +2097,15 @@ describe('paging back through a held conversation (#430)', () => {
     { role: 'assistant' as const, text: 'Seam found', timestamp: 'h2' }
   ]
 
+  /*
+   * AMENDED for #436: this dwarf carried its own `conversation` field, which
+   * is what named it "held" throughout this block. That field is gone — a
+   * held session's rows come from `getDwarfFeed` now, marked `source: 'held'`
+   * — so `openHeld` below stubs that feed by default, and the test that used
+   * to update `conversation` on a push instead pushes a fresh WATCHED FEED,
+   * which is how main actually keeps a held session live post-#436 (it writes
+   * no transcript signal for the ordinary re-read watch to key on).
+   */
   const HELD_PAGED_DWARF = {
     id: 'claude:s4',
     provider: 'claude',
@@ -2043,8 +2114,7 @@ describe('paging back through a held conversation (#430)', () => {
     status: 'working',
     sessionId: 's4',
     lastMessage: '',
-    textDelivery: 'held',
-    conversation: HELD
+    textDelivery: 'held'
   }
 
   const OLDER = [
@@ -2053,7 +2123,7 @@ describe('paging back through a held conversation (#430)', () => {
   ]
 
   async function openHeld(overrides: Record<string, unknown> = {}) {
-    return openOn([HELD_PAGED_DWARF], 'claude:s4', overrides)
+    return openOn([HELD_PAGED_DWARF], 'claude:s4', { ...heldFeedStub(HELD), ...overrides })
   }
 
   async function scrollToTop(wrapper: VueWrapper) {
@@ -2126,23 +2196,19 @@ describe('paging back through a held conversation (#430)', () => {
     await scrollToTop(wrapper)
     expect(textsOf(wrapper)).toHaveLength(5)
 
-    // A held conversation rides EVERY snapshot and is replaced whole by it, so
-    // this is the push the issue names as the hard part for a launched session:
-    // the pages in front of it belong to the reader's own scroll.
+    // A held session's newest words arrive on the WATCHED FEED push now
+    // (#436): main reads `Runtime.dwarfFeed` on its own pass because this
+    // panel reported it as the watched dwarf, and replaces `selectedFeed`
+    // whole with it — this is the push the issue names as the hard part for a
+    // launched session, and the pages in front of it belong to the reader's
+    // own scroll rather than to whatever the push carried.
     pushSnapshot(api, {
-      mines: [
-        {
-          ...MINE,
-          dwarfs: [
-            {
-              ...HELD_PAGED_DWARF,
-              lastMessage: 'Packing up',
-              conversation: [...HELD, { role: 'assistant', text: 'Packing up', timestamp: 'h3' }]
-            }
-          ]
-        }
-      ],
-      tokensObserved: 0
+      mines: [{ ...MINE, dwarfs: [{ ...HELD_PAGED_DWARF, lastMessage: 'Packing up' }] }],
+      tokensObserved: 0,
+      watchedFeed: {
+        dwarfId: 'claude:s4',
+        feed: heldFeed([...HELD, { role: 'assistant', text: 'Packing up', timestamp: 'h3' }])
+      }
     })
     await flushPromises()
 

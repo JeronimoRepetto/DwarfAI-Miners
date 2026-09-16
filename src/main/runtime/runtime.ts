@@ -53,6 +53,7 @@ import {
   type DwarfTextResult,
   type DwarfTuningRequest,
   type DwarfTuningResult,
+  type FeedMessage,
   type HeldSessionLaunchRequest,
   type HeldSessionLaunchResult,
   type HostedLaunchRequest,
@@ -100,8 +101,9 @@ import {
 import { Poller } from './poller'
 import { PublishGate } from './publishGate'
 import {
-  stampHeldConversation,
+  isSubagentDwarf,
   stampHeldCrew,
+  stampHeldOpeningPrompt,
   stampHeldQuestions,
   stampHeldRank,
   stampHeldStatus,
@@ -129,6 +131,7 @@ import {
   type SessionLauncher
 } from '../sessionLaunch/launchRunner'
 import type { Provider } from '../providers/provider'
+import { trimFeed } from '../providers/feedWindow'
 import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
 import { readCodexThreads } from '../providers/codex/state'
 import {
@@ -166,8 +169,10 @@ import { truncate } from '../../shared/truncate'
  * below. Twelve is the right first page precisely because it is cheap — this
  * read runs inside the poll for the watched dwarf (#196), and raising the
  * number was measured at 30 ms and 10.25 MiB against a loop budgeted at 15 ms
- * median. `HELD_CONVERSATION_LIMIT` is a different twelve for a different
- * reason: it rides every poll's snapshot.
+ * median. `HELD_CONVERSATION_LIMIT` is not this number and hasn't been since
+ * #436: it bounds how much of a held session's own memory the registry keeps,
+ * never what one page of the panel shows — `heldFeedOf`/`dwarfFeed` below trim
+ * a held session's rows to this same `FEED_LIMIT` before they ever reach here.
  */
 const FEED_LIMIT = 12
 
@@ -203,6 +208,16 @@ function unpageableFeed(): DwarfFeedPage {
  */
 function feedSignalOf(dwarf: Dwarf): string {
   return `${dwarf.transcriptUpdatedAt ?? ''}|${dwarf.lastMessage ?? ''}`
+}
+
+/**
+ * The rows of a session this panel holds, and how far its store has got — what
+ * `heldFeedOf` answers, named so `dwarfFeed` and the watch signal read one
+ * shape (#436).
+ */
+interface HeldFeedRows {
+  messages: FeedMessage[]
+  revision: number
 }
 
 /** No history this app could read for the mine — never "nobody has spoken here" (#192). */
@@ -922,11 +937,11 @@ export class AgentRuntime {
    */
   private heldCrewTargets: ReadonlyMap<string, TextDeliveryTarget> = new Map()
   /**
-   * The observed dwarf the panel currently has open, or null (#196) — set by
+   * The dwarf the panel currently has open, or null (#196) — set by
    * watchDwarfFeed, which the IPC boundary calls whenever the renderer's
-   * selection changes. Never a held session's: those carry their own
-   * conversation and watchedDwarfNeedingRead skips them regardless of this
-   * field.
+   * selection changes. A held session's counts since #436: its words are
+   * served on demand too, so it needs the same push every other watched dwarf
+   * does.
    */
   private watchedDwarfId: string | null = null
   /** Which dwarf watchedFeedSignal below was last read for, or null before any read. */
@@ -1413,12 +1428,18 @@ export class AgentRuntime {
         const withTuning = stampHeldTuning(withTelemetry, (sessionId) =>
           this.heldSessions.tuningState(sessionId)
         )
-        // The words that session's own stream carried (#159), which is the
-        // only conversation this app has first-hand. Same supersession rule
-        // once more, and the same reason it can only ever ADD: a session the
-        // panel does not hold has no conversation here at all, and the panel
-        // reads its transcript on its own channel instead (see dwarfFeed).
-        const withConversation = stampHeldConversation(withTuning, (sessionId) =>
+        // The prompt that started a session this panel launched (#191) — the
+        // one row of its exchange still on the snapshot, and a launch receipt
+        // rather than conversation. Same supersession rule once more, and the
+        // same reason it can only ever ADD: a session the panel does not hold
+        // has nothing here at all.
+        //
+        // AMENDED for #436 (was: `stampHeldConversation`, the whole retained
+        // exchange). The words a held session SAYS are served on demand now —
+        // see `dwarfFeed`, which answers the registry's own rows for a session
+        // this panel holds exactly as it answers a transcript tail for one it
+        // merely observes.
+        const withOpeningPrompt = stampHeldOpeningPrompt(withTuning, (sessionId) =>
           this.heldSessions.conversationState(sessionId)
         )
         // What a held session is actually DOING, live (#245). Superseding the
@@ -1429,7 +1450,7 @@ export class AgentRuntime {
         // Before stampHeldRank, for the same reason as the three stamps
         // above: it finds the session's own dwarf by the rank its provider
         // gave it.
-        const withStatus = stampHeldStatus(withConversation, (sessionId) =>
+        const withStatus = stampHeldStatus(withOpeningPrompt, (sessionId) =>
           this.heldSessions.activityState(sessionId)
         )
         // What a held session's dwarf actually IS, last of all (#157). Role is
@@ -2226,11 +2247,17 @@ export class AgentRuntime {
    * every other pass (see the call site in the poller's onUpdate).
    *
    * Bounded to exactly the one watched dwarf, and true only once its own
-   * feedSignalOf() differs from the one last carried — an idle watch must
-   * cost nothing beyond the scan every other poll already does. A held
-   * session's dwarf is skipped outright: `stampHeldConversation` has already
-   * given it its own first-hand `conversation` by this point in the pass, so
-   * nothing here would tell the panel anything it does not already have.
+   * signal differs from the one last carried — an idle watch must cost nothing
+   * beyond the scan every other poll already does.
+   *
+   * AMENDED for #436 (was: a held session's dwarf was skipped outright, because
+   * `stampHeldConversation` had already given it its own first-hand exchange by
+   * this point in the pass). Its words come from `dwarfFeed` now, like anybody
+   * else's, so it needs this push like anybody else — and it needs a signal of
+   * its own beside `feedSignalOf`, because a hosted process writes no
+   * transcript at all: `transcriptUpdatedAt` and `lastMessage` never move for
+   * it, so without the store's own revision a held console would go silent the
+   * moment the panel opened on it.
    *
    * Updates the remembered signal eagerly, on the same call that decides to
    * read: a caller that asks twice in one pass must not read twice.
@@ -2238,9 +2265,10 @@ export class AgentRuntime {
   private watchedDwarfNeedingRead(mines: Mine[]): Dwarf | undefined {
     const watchedId = this.watchedDwarfId
     if (watchedId === null) return undefined
-    const dwarf = mines.flatMap((mine) => mine.dwarfs).find((item) => item.id === watchedId)
-    if (dwarf === undefined || dwarf.conversation !== undefined) return undefined
-    const signal = feedSignalOf(dwarf)
+    const board = mines.flatMap((mine) => mine.dwarfs)
+    const dwarf = board.find((item) => item.id === watchedId)
+    if (dwarf === undefined) return undefined
+    const signal = `${feedSignalOf(dwarf)}|${this.heldFeedOf(dwarf, board)?.revision ?? ''}`
     if (dwarf.id === this.watchedFeedFor && signal === this.watchedFeedSignal) return undefined
     this.watchedFeedFor = dwarf.id
     this.watchedFeedSignal = signal
@@ -3727,12 +3755,61 @@ export class AgentRuntime {
   }
 
   /**
-   * The last few messages of one dwarf's own transcript (#159).
+   * The rows of a session this panel HOLDS, and how far its store has got
+   * (#436) — the registry's own memory, answered without touching a disk.
    *
-   * The same bounded tail `activateDwarf` falls back to, reached without the
-   * two attempts in front of it: the message panel wants an observed session's
-   * words whether or not its window could be focused, and a read that first
-   * tried to raise a terminal would be an activation wearing a different name.
+   * Two stores hold a stream and both answer here, because the panel draws one
+   * surface for both: a held Claude session off the Agent SDK, and a hosted
+   * process off its own pipes. A hosted dwarf is looked up by its id, which IS
+   * the hosted id (see `hostedDwarf`), and a held one by session.
+   *
+   * The session's own dwarf only, never a subagent sharing its id, and that
+   * rule is load-bearing: a Claude worker carries its foreman's `sessionId`, so
+   * a lookup on the id alone would serve every subagent in a session its
+   * coordinator's exchange. It is the rule every held stamp holds — but it
+   * cannot be spelled `role === 'foreman'` here, because this reads the
+   * PUBLISHED board and `stampHeldRank` has by then rewritten that rank from
+   * what the stream did: a held session with no crew out is a worker. So the
+   * question is asked of the id, through `isSubagentDwarf`, which is what the
+   * stamps' rank is standing in for in the first place.
+   *
+   * `heldSessionIdOf` and `deliveryTargetOf` need no such rule: those answer
+   * about the SESSION, which a worker really is part of.
+   */
+  private heldFeedOf(dwarf: Dwarf, board: readonly Dwarf[]): HeldFeedRows | undefined {
+    const hosted = this.hosted.states().find((state) => state.hostedId === dwarf.id)
+    if (hosted !== undefined) {
+      return { messages: hosted.conversation, revision: hosted.revision }
+    }
+    if (isSubagentDwarf(dwarf, board)) return undefined
+    const state = this.heldSessions.conversationState(dwarf.sessionId)
+    return state.held ? { messages: state.conversation, revision: state.revision } : undefined
+  }
+
+  /**
+   * The last few messages of one dwarf's conversation (#159) — first-hand for a
+   * session this panel HOLDS, and the transcript's own bounded tail for one it
+   * merely observes.
+   *
+   * The held answer comes first because it is the better evidence, which is the
+   * precedence `conversationOf` used to apply in the renderer against a field
+   * on the snapshot (#436): these are the words this app watched go by, one
+   * turn fresher than the transcript the session will write them to. It is
+   * marked `source: 'held'` so the panel can still say which claim it is
+   * drawing, and trimmed to the same `FEED_LIMIT` an observed read answers, so
+   * the panel opens on one page either way and pages back through the
+   * transcript (#430) from there.
+   *
+   * A held session that has said nothing falls through to the observed read
+   * rather than answering an empty held feed — exactly what the stamp it
+   * replaces did by leaving the field off, and the difference the panel draws
+   * between "nothing said yet" and "no transcript at all" depends on it.
+   *
+   * The observed half is the same bounded tail `activateDwarf` falls back to,
+   * reached without the two attempts in front of it: the message panel wants an
+   * observed session's words whether or not its window could be focused, and a
+   * read that first tried to raise a terminal would be an activation wearing a
+   * different name.
    *
    * Every failure answers `readable: false` rather than throwing, and that is
    * a different statement from an empty list: it means this session keeps
@@ -3743,6 +3820,10 @@ export class AgentRuntime {
     const board = this.mines.flatMap((mine) => mine.dwarfs)
     const dwarf = board.find((item) => item.id === dwarfId)
     if (dwarf === undefined) return unreadableFeed()
+    const held = this.heldFeedOf(dwarf, board)
+    if (held !== undefined && held.messages.length > 0) {
+      return { readable: true, messages: trimFeed(held.messages, FEED_LIMIT), source: 'held' }
+    }
     const provider = this.providers.find((item) => item.kind === dwarf.provider)
     if (provider === undefined) return unreadableFeed()
     try {

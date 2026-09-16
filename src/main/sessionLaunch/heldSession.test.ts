@@ -20,9 +20,10 @@ import {
   parseAskUserQuestion,
   permissionToWire,
   resolveAnswers,
+  retainedSomething,
   retainHeldMessage,
-  stampHeldConversation,
   stampHeldCrew,
+  stampHeldOpeningPrompt,
   stampHeldQuestions,
   stampHeldRank,
   stampHeldStatus,
@@ -1162,7 +1163,16 @@ describe('retainHeldMessage', () => {
   })
 })
 
-describe('stampHeldConversation', () => {
+/*
+ * AMENDED for #436. This describe was `stampHeldConversation` and its four
+ * cases asserted the whole retained exchange landing on `Dwarf.conversation`.
+ * The exchange left the wire — `Runtime.dwarfFeed` answers it now — and what is
+ * stamped is the one row the Add Panel's handover reads. The four RULES are
+ * unchanged and are still what these four cases pin: foreman only, never a
+ * worker, nothing at all for a session this panel does not hold, and absence
+ * rather than an empty value when there is nothing to stamp.
+ */
+describe('stampHeldOpeningPrompt', () => {
   function board(): Mine[] {
     return [
       {
@@ -1181,26 +1191,91 @@ describe('stampHeldConversation', () => {
     { role: 'assistant' as const, text: 'Digging.', timestamp: '2026-09-03T09:00:01.000Z' }
   ]
 
-  it("stamps the held session's own exchange onto its foreman", () => {
-    const stamped = stampHeldConversation(board(), () => ({ held: true, conversation }))
-    expect(stamped[0]!.dwarfs[0]!.conversation).toEqual(conversation)
+  const heldState = {
+    held: true as const,
+    conversation,
+    revision: conversation.length,
+    openingPrompt: conversation[0]!
+  }
+
+  it("stamps the held session's own opening prompt onto its foreman", () => {
+    const stamped = stampHeldOpeningPrompt(board(), () => heldState)
+    expect(stamped[0]!.dwarfs[0]!.openingPrompt).toEqual(conversation[0])
   })
 
   it("never stamps a worker, which shares its foreman's session id", () => {
-    const stamped = stampHeldConversation(board(), () => ({ held: true, conversation }))
-    expect(stamped[0]!.dwarfs[1]!.conversation).toBeUndefined()
+    const stamped = stampHeldOpeningPrompt(board(), () => heldState)
+    expect(stamped[0]!.dwarfs[1]!.openingPrompt).toBeUndefined()
   })
 
-  it('leaves a session this panel does not hold without a conversation at all', () => {
-    const stamped = stampHeldConversation(board(), () => ({ held: false }))
-    expect('conversation' in stamped[0]!.dwarfs[0]!).toBe(false)
+  it('leaves a session this panel does not hold without a receipt at all', () => {
+    const stamped = stampHeldOpeningPrompt(board(), () => ({ held: false }))
+    expect('openingPrompt' in stamped[0]!.dwarfs[0]!).toBe(false)
   })
 
-  it('stamps no empty conversation while a held session has said nothing yet', () => {
-    // Absence is the wire's "nothing to show"; an empty array would be the
-    // panel being told there IS a conversation and it is empty.
-    const stamped = stampHeldConversation(board(), () => ({ held: true, conversation: [] }))
-    expect('conversation' in stamped[0]!.dwarfs[0]!).toBe(false)
+  it('stamps nothing for a held session launched with no prompt', () => {
+    // Absence is the wire's "nothing to show"; a blank row would be the panel
+    // being handed a receipt to match against that nobody ever sent.
+    const stamped = stampHeldOpeningPrompt(board(), () => ({
+      held: true,
+      conversation: [],
+      revision: 0
+    }))
+    expect('openingPrompt' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  /*
+   * The reason the receipt is its own field rather than `conversation[0]`
+   * (#436): the retained list drops its oldest row at the bound, so a session
+   * that says enough talks its own launch receipt out of the store — and the
+   * handover would start failing on exactly the sessions that work hardest.
+   */
+  it('keeps stamping the prompt after the retained exchange has dropped it', () => {
+    const stamped = stampHeldOpeningPrompt(board(), () => ({
+      held: true,
+      conversation: [
+        { role: 'assistant', text: 'much later', timestamp: '2026-09-03T11:00:00.000Z' }
+      ],
+      revision: 900,
+      openingPrompt: conversation[0]!
+    }))
+    expect(stamped[0]!.dwarfs[0]!.openingPrompt).toEqual(conversation[0])
+  })
+})
+
+/*
+ * The retention signal (#436). Both stores drive a revision counter off this,
+ * and the counter is what tells the poll a held session has said something —
+ * so a wrong answer here is either a panel that stops updating or one that
+ * re-reads twice a second for nothing.
+ */
+describe('retainedSomething', () => {
+  const at = '2026-09-03T09:00:00.000Z'
+
+  it('says yes when the list grew', () => {
+    const before: FeedMessage[] = []
+    const after = retainHeldMessage(before, { role: 'assistant', text: 'ok', timestamp: at })
+    expect(retainedSomething(before, after)).toBe(true)
+  })
+
+  it('says no for a message trimmed away to nothing', () => {
+    const before: FeedMessage[] = [{ role: 'user', text: 'dig here', timestamp: at }]
+    const after = retainHeldMessage(before, { role: 'assistant', text: '   ', timestamp: at })
+    expect(retainedSomething(before, after)).toBe(false)
+  })
+
+  it('says yes at the bound, where the list can no longer grow', () => {
+    let before: FeedMessage[] = []
+    for (let index = 0; index < HELD_CONVERSATION_LIMIT; index++) {
+      before = retainHeldMessage(before, {
+        role: 'assistant',
+        text: `line ${index}`,
+        timestamp: at
+      })
+    }
+    const after = retainHeldMessage(before, { role: 'assistant', text: 'one more', timestamp: at })
+    expect(after).toHaveLength(before.length)
+    expect(retainedSomething(before, after)).toBe(true)
   })
 })
 

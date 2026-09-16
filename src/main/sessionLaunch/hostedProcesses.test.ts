@@ -464,8 +464,22 @@ describe('what a hosted process says about itself', () => {
 
     const state = h.registry.states().find((entry) => entry.hostedId === id)!
 
+    // AMENDED for #436: `revision` and `openingPrompt` joined the shape. Both
+    // are still first-hand facts about a process this panel is holding —
+    // "how much this store has kept" and "what we put on its stdin" — so the
+    // claim this case makes is unchanged: nothing here was derived from a
+    // transcript, because there is none.
     expect(Object.keys(state).sort()).toEqual(
-      ['conversation', 'hostedId', 'mineId', 'minePath', 'program', 'running'].sort()
+      [
+        'conversation',
+        'hostedId',
+        'mineId',
+        'minePath',
+        'openingPrompt',
+        'program',
+        'revision',
+        'running'
+      ].sort()
     )
   })
 

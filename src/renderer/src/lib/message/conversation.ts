@@ -13,17 +13,22 @@ import type { Dwarf, DwarfFeedResult, FeedActivity, FeedMessage, MessageIssuer }
  *
  * Two sources, and the difference between them is a difference in evidence:
  *
- * - **held** — `Dwarf.conversation`: the words this app itself watched go by
- *   on a stream it is holding. First-hand, and complete for as far back as the
- *   retention bound reaches.
- * - **observed** — the provider's own bounded transcript tail (`DwarfFeedResult`,
- *   read on demand), or failing that the `lastMessage` every poll already
- *   carries. Second-hand and one write behind: a session writes its transcript
- *   when it feels like it, so this is the latest ACTIVITY rather than a live
- *   exchange, and the panel says so.
+ * - **held** — the words this app itself watched go by on a stream it is
+ *   holding. First-hand, and complete for as far back as the retention bound
+ *   reaches.
+ * - **observed** — the provider's own bounded transcript tail, or failing that
+ *   the `lastMessage` every poll already carries. Second-hand and one write
+ *   behind: a session writes its transcript when it feels like it, so this is
+ *   the latest ACTIVITY rather than a live exchange, and the panel says so.
  *
- * A held session usually has both — the poll finds its transcript on disk like
- * any other — and the first-hand reading wins.
+ * ONE channel carries both since #436 (`DwarfFeedResult`, read on demand), and
+ * which claim came back is `DwarfFeedResult.source`. It used to be two: a held
+ * session's words rode every snapshot on `Dwarf.conversation` and this module
+ * held the precedence between them — a held session usually has both, the poll
+ * finding its transcript on disk like any other, and the first-hand reading
+ * won. That precedence did not go away; it moved to `Runtime.dwarfFeed`, which
+ * is the only place it can live now that the panel has one source of rows.
+ * What the panel does with it is unchanged, and so are the two notes.
  */
 
 export type ConversationSource = 'held' | 'observed' | 'none'
@@ -107,7 +112,7 @@ function fromLastMessage(lastMessage: string | undefined): FeedMessage[] {
  * answer rather than an empty one.
  */
 export function conversationOf(
-  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage' | 'status'>,
+  dwarf: Pick<Dwarf, 'lastMessage' | 'status'>,
   feed?: DwarfFeedResult
 ): PanelConversation {
   const shown = liveConversationOf(dwarf, feed)
@@ -131,22 +136,26 @@ export function conversationEnded(dwarf: Pick<Dwarf, 'status'>): boolean {
 
 /**
  * WHICH wire messages the panel draws for this dwarf, and what claim they
- * carry — the precedence itself, read once.
+ * carry — read once.
  *
- * A held session's own exchange wins over a transcript read of the same
- * session, because the tail is those same words second-hand and one turn
- * behind; failing both, the `lastMessage` every poll carries is a single
- * bubble rather than nothing.
+ * The feed is the rows, whichever kind of session this is, and it says which
+ * claim it is making. Failing it, the `lastMessage` every poll carries is a
+ * single bubble rather than nothing — and that one is always observed, because
+ * it is the provider's reading of a transcript and never a stream this app
+ * held.
+ *
+ * AMENDED for #436. This used to prefer `dwarf.conversation` over the feed,
+ * and that precedence is still applied — in `Runtime.dwarfFeed`, which serves a
+ * held session's own rows in front of any transcript read of the same session.
+ * Keeping a second copy of the rule here would mean two readings of "first-hand
+ * beats second-hand" that could disagree, over a field that no longer exists.
  */
 function sourcedMessagesOf(
-  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
+  dwarf: Pick<Dwarf, 'lastMessage'>,
   feed?: DwarfFeedResult
 ): { source: ConversationSource; messages: readonly FeedMessage[] } {
-  if (dwarf.conversation !== undefined && dwarf.conversation.length > 0) {
-    return { source: 'held', messages: dwarf.conversation }
-  }
   if (feed !== undefined && feed.messages.length > 0) {
-    return { source: 'observed', messages: feed.messages }
+    return { source: feed.source === 'held' ? 'held' : 'observed', messages: feed.messages }
   }
   const last = fromLastMessage(dwarf.lastMessage)
   return last.length > 0 ? { source: 'observed', messages: last } : { source: 'none', messages: [] }
@@ -163,7 +172,7 @@ function sourcedMessagesOf(
  * exactly the rows it would otherwise stand beside.
  */
 export function feedMessagesOf(
-  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
+  dwarf: Pick<Dwarf, 'lastMessage'>,
   feed?: DwarfFeedResult
 ): readonly FeedMessage[] {
   return sourcedMessagesOf(dwarf, feed).messages
@@ -171,7 +180,7 @@ export function feedMessagesOf(
 
 /** What the panel draws while the session is still there to be drawn. */
 function liveConversationOf(
-  dwarf: Pick<Dwarf, 'conversation' | 'lastMessage'>,
+  dwarf: Pick<Dwarf, 'lastMessage'>,
   feed?: DwarfFeedResult
 ): PanelConversation {
   const { source, messages } = sourcedMessagesOf(dwarf, feed)

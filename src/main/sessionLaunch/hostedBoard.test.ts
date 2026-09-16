@@ -56,6 +56,12 @@ function hosted(overrides: Partial<HostedProcessState> = {}): HostedProcessState
     conversation: [
       { role: 'user', text: 'dig the east gallery', timestamp: '2026-09-04T00:00:00.000Z' }
     ],
+    revision: 1,
+    openingPrompt: {
+      role: 'user',
+      text: 'dig the east gallery',
+      timestamp: '2026-09-04T00:00:00.000Z'
+    },
     ...overrides
   }
 }
@@ -102,16 +108,38 @@ describe('putting a hosted process on the board', () => {
 
   /*
    * The receipt the panel adopts its own launch by (`launchedDwarfIn`): the
-   * first message of the conversation is the prompt it sent. Nothing else on
-   * the board carries one unless this panel is holding its stream, which is
-   * what makes the match safe.
+   * prompt it sent. Nothing else on the board carries one unless this panel is
+   * holding its stream, which is what makes the match safe.
+   *
+   * AMENDED for #436 (was: "carries the exchange this panel watched", asserting
+   * the whole `conversation`). The exchange left the wire and is served by
+   * `Runtime.dwarfFeed`; the receipt is the one row that stayed, and it is the
+   * only part of the exchange this test was ever really about.
    */
-  it('carries the exchange this panel watched, so the launch can be recognised', () => {
+  it('carries the prompt this panel sent, so the launch can be recognised', () => {
     const state = hosted()
 
     const stamped = stamp([mine()], [state])
 
-    expect(stamped[0]?.dwarfs[0]?.conversation).toEqual(state.conversation)
+    expect(stamped[0]?.dwarfs[0]?.openingPrompt).toEqual(state.openingPrompt)
+  })
+
+  /*
+   * And the words themselves are gone from the board (#436): a process that has
+   * printed all afternoon costs the snapshot exactly one row, the prompt, which
+   * cannot grow.
+   */
+  it('carries none of the words the process printed', () => {
+    const state = hosted({
+      conversation: [
+        { role: 'user', text: 'dig the east gallery', timestamp: '2026-09-04T00:00:00.000Z' },
+        { role: 'assistant', text: 'x'.repeat(50_000), timestamp: '2026-09-04T00:00:01.000Z' }
+      ]
+    })
+
+    const stamped = stamp([mine()], [state])
+
+    expect(JSON.stringify(stamped[0]?.dwarfs[0])).not.toContain('xxx')
   })
 
   /*
