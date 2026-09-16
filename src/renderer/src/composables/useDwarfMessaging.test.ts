@@ -518,6 +518,53 @@ describe('useDwarfMessaging echoes', () => {
     expect(echoesFor('claude:s1')).toHaveLength(1)
   })
 
+  /*
+   * #419. `echoAttachments` already held these files by echo id (#408); the
+   * gap was that `reconcile` never read them, so a row that carried a
+   * message's attachment tokens ahead of its words could never account for
+   * the echo that sent them.
+   */
+  it('drops a message with attachments once the transcript row carries their tokens and words', async () => {
+    const { send, reconcile, echoesFor, attachmentsFor } = useDwarfMessaging()
+    const attachments: DwarfAttachment[] = [
+      { path: 'C:\\work\\a.png', name: 'a.png', kind: 'image', bytes: 10 },
+      { path: 'C:\\work\\b.txt', name: 'b.txt', kind: 'file', bytes: 20 }
+    ]
+    await send('claude:s1', 'dig deeper', true, attachments)
+    const echoId = echoesFor('claude:s1')[0]!.id
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    reconcile('claude:s1', [
+      {
+        role: 'user',
+        text: '[Image #6]C:\\work\\b.txtdig deeper',
+        timestamp: new Date(sentAt + 1_000).toISOString()
+      }
+    ])
+
+    expect(echoesFor('claude:s1')).toEqual([])
+    expect(attachmentsFor('claude:s1', echoId)).toEqual([])
+  })
+
+  it('keeps a message with attachments the transcript row does not carry the tokens for', async () => {
+    const { send, reconcile, echoesFor, attachmentsFor } = useDwarfMessaging()
+    const attachments: DwarfAttachment[] = [
+      { path: 'C:\\work\\a.png', name: 'a.png', kind: 'image', bytes: 10 }
+    ]
+    await send('claude:s1', 'dig deeper', true, attachments)
+    const echoId = echoesFor('claude:s1')[0]!.id
+    const sentAt = echoesFor('claude:s1')[0]!.sentAt
+
+    // No attachment token at all — the plain-send shape, which must not
+    // account for a message that was sent with a file.
+    reconcile('claude:s1', [
+      { role: 'user', text: 'dig deeper', timestamp: new Date(sentAt + 1_000).toISOString() }
+    ])
+
+    expect(echoesFor('claude:s1')).toHaveLength(1)
+    expect(attachmentsFor('claude:s1', echoId)).toEqual(attachments)
+  })
+
   it('never brings a dropped message back when the transcript tail forgets it', async () => {
     // The tail is bounded, so the row that accounted for a message rolls off
     // it. The drop is a fact and a later poll does not take it back.
