@@ -659,17 +659,21 @@ one API call and no keystrokes at all, so the ~16 s figure has not described the
 two mechanisms now. Listed as columns so the gap is visible rather
 than filled with plausible ones:
 
-| Quantity                                                     | Value                | How it will be taken                                            |
-| ------------------------------------------------------------ | -------------------- | --------------------------------------------------------------- |
-| Wall-clock latency of one relay turn                         | **not yet measured** | the `relay=` stage already in every `[runtime] Message to` line |
-| Token cost of one relay turn                                 | **not yet measured** | the relay session's own usage, at `SENDTEXT_RELAY_MODEL`        |
-| When a queued message is read — target mid-turn              | **not yet measured** | send during a long tool call, watch the transcript              |
-| When a queued message is read — target at its prompt         | **not yet measured** | send to an idle session, watch the transcript                   |
-| Whether `REACTION_WINDOW_MS` (60 s) covers the read boundary | **not yet measured** | follows from the two rows above                                 |
+| Quantity                                                     | Value                | How it will be taken                                           |
+| ------------------------------------------------------------ | -------------------- | -------------------------------------------------------------- |
+| Wall-clock latency of one relay turn                         | **6.4 s / 155 s**    | taken directly on 2026-09-16 — §6's #437 section has both runs |
+| Token cost of one relay turn                                 | **not yet measured** | the relay session's own usage, at `SENDTEXT_RELAY_MODEL`       |
+| When a queued message is read — target mid-turn              | **not yet measured** | send during a long tool call, watch the transcript             |
+| When a queued message is read — target at its prompt         | **not yet measured** | send to an idle session, watch the transcript                  |
+| Whether `REACTION_WINDOW_MS` (60 s) covers the read boundary | **not yet measured** | follows from the two rows above                                |
 
-#21's earlier estimate of 5–20 s for a relay turn is an **estimate**, taken from the issue text and
-not from this app's own stage timings; it is why the first row says not measured rather than
-repeating it as a finding.
+#21's earlier estimate of 5–20 s for a relay turn was an **estimate**, taken from the issue text
+and not from this app's own stage timings, which is why the first row said "not measured" for as
+long as it did. #437 had to take it for real to move the relay's prompt onto stdin, and the answer
+is that the estimate held for a SHORT message (6.4 s) and does not describe a long one at all
+(155 s for 40,000 characters, on `haiku`): the courier emits the whole message as tool-call
+arguments, so the turn grows with the payload. The token cost of that turn is still unmeasured —
+knowing the wall clock is not knowing the bill.
 
 ---
 
@@ -1515,10 +1519,86 @@ builder's 50 ms pause between them. Time is now the only thing that grows with a
 tier.
 
 So `MAX_CONSOLE_TEXT_CHARS` and the 3.6-characters-per-character slope behind it are **gone**:
-`maxTextCharsFor('terminal')` is `MAX_DWARF_TEXT_CHARS` (15,359, from the relay's own argv), which
-is the one ceiling left on every channel, and the composer's sentence for a console route names it.
-The spawn-failure guard stays, because a missing `powershell.exe` or a refused spawn is still a
-child that never started — it just can no longer be an over-long script.
+`maxTextCharsFor('terminal')` is `MAX_DWARF_TEXT_CHARS`, which was 15,359 — the relay's own argv —
+for one release and is a sanity bound now, for the reason the next section measures. The composer's
+sentence for a console route names whichever number that is. The spawn-failure guard stays, because
+a missing `powershell.exe` or a refused spawn is still a child that never started — it just can no
+longer be an over-long script.
+
+### The relay's prompt on stdin removes the last argv ceiling — measured 2026-09-16 (#437)
+
+**The relay was the channel that made a command line the bound on a MESSAGE.** `buildRelayArgs`
+put the whole courier instruction — the person's own words fenced inside it — after `-p` as a
+positional prompt, so `MAX_DWARF_TEXT_CHARS` was derived from Windows' 32,767 less that argv,
+halved for quoting: 15,359, and it bound every channel because it was the worst of them.
+
+`claude --help` on **2.1.273** documents the positional prompt as optional and `-p/--print` as
+"Print response and exit (**useful for pipes**)", so a `claude -p` with no prompt reads one from
+stdin — the same property the detached launcher has used since #86. `relayRunner.ts` writes the
+instruction to the child's stdin as UTF-8 and closes it; argv is now `-p --model <model> --tools
+ListAgents,SendMessage --safe-mode` and nothing else, **96 characters** with the binary path
+included, whatever the message says.
+
+**Measured on a session this measurement launched and ended by itself** — `claude` in a throwaway
+project under `%TEMP%`, this agent's own `CLAUDE*` environment markers stripped so the child did
+not inherit `CLAUDE_CODE_CHILD_SESSION` and turn transcript saving off (the first attempt did, and
+produced no evidence at all), and the session ended by writing `/exit` and Enter by pid rather than
+killed. The relay was spawned exactly as `relayRunner.ts` spawns it, with an instruction built by
+the shipped `buildRelayInstruction` and `RELAY_PROVENANCE_LINE` ahead of the message, as
+`sendDwarfText` prepends it. Claude Code 2.1.273, Windows 11, `--model haiku` on both ends,
+2026-09-16 [#437]:
+
+| Message (chars) | Instruction on stdin | Relay argv | Result                                          |
+| --------------- | -------------------- | ---------- | ----------------------------------------------- |
+| 200             | 885                  | 96         | exit 0, `DELIVERED`, **6,384 ms**               |
+| **40,000**      | **40,685**           | **96**     | exit 0, `DELIVERED`, **155,093 ms** (2 min 35s) |
+
+**The 40,000-character message arrived whole, as ONE `SendMessage`.** Read back from the target
+session's own transcript: exactly one row carries it, its text contains the 40,000 characters
+byte-for-byte, all **1,000 numbered line markers are present and in order**, the harness's
+`<cross-session-message>` envelope is around it and `RELAY_PROVENANCE_LINE` is the first thing
+inside it. Nothing was split, summarised or truncated, and no second tool call was made.
+
+**What the relay costs now is time, and that is a real edge.** 6.4 s for a short message against
+155 s for 40,000 characters — the courier has to emit the whole message as tool-call arguments, so
+the turn grows with the payload. `SENDTEXT_TIMEOUT_S` defaults to **60**, so a message of that
+size on a relay route is reported timed out by this app even though the words are on their way;
+the delivery is not lost, but the verdict is honest about not having seen it finish. A user who
+sends texts that long to a relayed session raises that setting. Nothing about it is a length bound:
+it is the one knob left, and it is already in the configuration surface.
+
+So the derivation is gone. `ARGV_MESSAGE_OVERHEAD_CHARS` and `ARGV_QUOTING_FACTOR` are deleted;
+`MAX_DWARF_TEXT_CHARS` is **250,000**, a sanity bound about memory and the IPC payload with its
+reasoning at its definition; and `WINDOWS_COMMAND_LINE_LIMIT` survives for the one channel that
+still needs it.
+
+### The Codex queue keeps a real command-line bound — checked 2026-09-16 (#437)
+
+`codex queue --help`, **codex-cli 0.153.4**, read on this machine: the usage line is
+`codex queue [OPTIONS] --thread <THREAD> --message <TEXT>`, and the options are `--thread`,
+`--message`, `--enable`, `--disable`, `--remote`, `--remote-auth-token-env`, `-i/--image`,
+`-m/--model`, `--oss`, `--local-provider`, `-p/--profile`, `-s/--sandbox`, `--approve-for-me`, two
+`--dangerously-*` flags, `-C/--cd`, `--add-dir`, `--strict-config` and `-c/--config`. **There is no
+stdin form**: no `-`, no `--message-file`, nothing that reads a pipe. The message is an argv
+element or it does not go.
+
+So `MAX_CODEX_QUEUE_TEXT_CHARS` is derived where nothing else is any more, and the arithmetic is
+itemised at its definition in `shared/contracts.ts`:
+
+| Term                                                              |      Chars |
+| ----------------------------------------------------------------- | ---------: |
+| the codex (or node) binary's own quoted path, bounded by MAX_PATH |        262 |
+| the JS entry a `.cmd`/`.bat` shim resolves to, quoted (#413)      |        262 |
+| `queue --thread <uuid> --message`, separators and a 36-char UUID  |         63 |
+| up to four `[for agent <name>] ` tags, riding inside the message  |        512 |
+| the terminating NUL                                               |          1 |
+| **fixed argv**                                                    |  **1,100** |
+| rounded up to the next power of two, the margin #431 also took    |  **2,048** |
+| **(32,767 − 2,048) / 2**, halved for worst-case quoting           | **15,359** |
+
+15,359 is the same number #431 derived for the whole app, and that is a coincidence of two
+comparable overheads rather than a shared derivation — the relay's is gone. The composer for a
+Codex dwarf names this number, and every other dwarf's names the sanity bound.
 
 ---
 

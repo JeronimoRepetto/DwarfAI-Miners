@@ -18,6 +18,7 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
+  MAX_CODEX_QUEUE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
   messageTooLongReason,
   NO_ANSWER_KEYSTROKE_TIER,
@@ -1374,6 +1375,73 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.relayToClaudeSession).toHaveBeenCalled()
   })
   /* --- end of the #431 block ----------------------------------------------- */
+
+  /* --- The relay's prompt on stdin (#437) — one block, appended ------------- */
+
+  /*
+   * Issue #437. 40,000 characters is the length the live measurement used
+   * (docs/console-hosting.md §6): it reached the target session through a real
+   * relay turn as ONE whole SendMessage, which is what licensed the wire
+   * ceiling to stop being an argv derivation. These pin that the runtime lets
+   * that same message through on the routes that carry it, and refuses it only
+   * where a command line really is in the way.
+   */
+  const FORTY_THOUSAND = 'x'.repeat(40_000)
+
+  it('carries 40,000 characters into a console, which the old ceiling refused', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: FORTY_THOUSAND, pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: FORTY_THOUSAND,
+      pressEnter: true
+    })
+  })
+
+  it('carries 40,000 characters over the relay, whose prompt travels on stdin', async () => {
+    const port = fakePort()
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' } },
+      port
+    )
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: FORTY_THOUSAND, pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'claude-relay' })
+    // Whole, and with the provenance line ahead of it — the shape the live
+    // measurement read back out of the target's own transcript.
+    const relayed = port.relayToClaudeSession.mock.calls[0]?.[0].text as string
+    expect(relayed).toBe(`${RELAY_PROVENANCE_LINE}\n${FORTY_THOUSAND}`)
+  })
+
+  it('refuses 40,000 characters on the Codex queue, in the queue own words', async () => {
+    const port = {
+      ...fakePort(),
+      queueToCodexThread: vi.fn().mockResolvedValue({ delivered: true })
+    }
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'codex-queue', threadId: 'thread-1' } },
+      port
+    )
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: FORTY_THOUSAND,
+      pressEnter: true
+    })
+    expect(result).toEqual({
+      delivered: false,
+      via: 'codex-queue',
+      error: messageTooLongReason(40_000, MAX_CODEX_QUEUE_TEXT_CHARS, 'codex-queue')
+    })
+    expect(port.queueToCodexThread).not.toHaveBeenCalled()
+  })
+  /* --- end of the #437 block ----------------------------------------------- */
 
   it('leaves the text-only console request exactly as it was, with no empty field', async () => {
     // The shape #371 ships is what a message without files still sends; an
@@ -3130,7 +3198,10 @@ describe('AgentRuntime over the Codex message queue', () => {
       adjustEffort: null,
       attach: null,
       // AMENDED for #431: the matrix gained a per-route ceiling.
-      maxTextChars: MAX_DWARF_TEXT_CHARS
+      // AMENDED again for #437 (was MAX_DWARF_TEXT_CHARS): `codex queue
+      // --message <TEXT>` names no stdin form, so the queue keeps the
+      // command-line bound every other route left behind.
+      maxTextChars: MAX_CODEX_QUEUE_TEXT_CHARS
     })
   })
 

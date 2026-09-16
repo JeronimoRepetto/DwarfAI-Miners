@@ -341,9 +341,10 @@ const attachTitle = computed(() => attachHint(props.dwarf))
  *
  * The number comes off the CAPABILITY rather than from the wire ceiling,
  * because main is what decides how much a route carries and the panel must
- * refuse exactly what main refuses. The routes agreed on one number as of #433
- * — the console write's tighter ceiling was the command line its script was
- * spawned in, and that script rides stdin now — and they need not agree again.
+ * refuse exactly what main refuses. The routes agreed on one number for one
+ * release (#433) and disagree again since #437: a Codex dwarf is told the
+ * queue's command-line bound and everybody else the wire's sanity ceiling, so
+ * the sentence below names the ROUTE's number rather than the app's.
  * `maxTextCharsFor` is the fallback for a matrix that carries no such member
  * (see DwarfCapabilities.maxTextChars), never a second opinion about a dwarf
  * main has already answered for.

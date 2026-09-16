@@ -42,8 +42,11 @@ import {
   heldRetainedText,
   maxTextCharsFor,
   messageTooLongReason,
-  parseDwarfText
+  parseDwarfText,
   /* --- end of the #431 block ----------------------------------------------- */
+  /* --- The relay's prompt on stdin (#437) — one block, appended ------------- */
+  MAX_CODEX_QUEUE_TEXT_CHARS
+  /* --- end of the #437 block ----------------------------------------------- */
 } from './contracts'
 
 /*
@@ -777,11 +780,32 @@ describe('the message ceilings', () => {
     expect(WINDOWS_COMMAND_LINE_LIMIT).toBe(32_767)
   })
 
-  it('derives the wire ceiling from that bound, halved for worst-case quoting', () => {
-    // (32_767 − 2_048 of relay argv and instruction) / 2, because Node's own
-    // Windows quoting turns every `"` into `\"` — measured on this machine:
-    // 32,712 plain characters accepted in one argv element, 16,355 quotes.
-    expect(MAX_DWARF_TEXT_CHARS).toBe(15_359)
+  /*
+   * AMENDED for #437 (was: 'derives the wire ceiling from that bound, halved
+   * for worst-case quoting', asserting MAX_DWARF_TEXT_CHARS === 15,359 from
+   * `(32_767 − 2_048 of relay argv and instruction) / 2`).
+   *
+   * The relay was the channel that made a command line the wire's bound, and it
+   * does not carry the courier instruction in argv any more: the instruction is
+   * written to the `claude -p` child's stdin, where length costs time and
+   * nothing else. Measured live on 2026-09-16 (docs/console-hosting.md §6) — a
+   * 40,000-character message reached the target session as ONE SendMessage,
+   * whole and with the provenance line. So the wire ceiling stopped being an
+   * argv derivation at all, and the test in its place says what it is instead.
+   */
+  it('makes the wire ceiling a sanity bound about memory, not a command line', () => {
+    expect(MAX_DWARF_TEXT_CHARS).toBe(250_000)
+    // Not derived from the command line any more: it is comfortably past it.
+    expect(MAX_DWARF_TEXT_CHARS).toBeGreaterThan(WINDOWS_COMMAND_LINE_LIMIT)
+  })
+
+  it('keeps the argv derivation for the one channel that still has an argv', () => {
+    // `codex queue --thread <uuid> --message <TEXT>` takes the message as argv
+    // and nothing else: `codex queue --help` on 0.153.4, checked 2026-09-16,
+    // names no stdin form. (32_767 − 2_048 of fixed argv) / 2 for worst-case
+    // quoting — the same halving #431 measured, on the queue's own overhead.
+    expect(MAX_CODEX_QUEUE_TEXT_CHARS).toBe(15_359)
+    expect(MAX_CODEX_QUEUE_TEXT_CHARS).toBeLessThan(WINDOWS_COMMAND_LINE_LIMIT)
   })
 
   /*
@@ -814,17 +838,30 @@ describe('maxTextCharsFor', () => {
     expect(maxTextCharsFor('terminal')).toBe(MAX_DWARF_TEXT_CHARS)
   })
 
-  it('gives every other endpoint the wire ceiling', () => {
+  /*
+   * AMENDED for #437 (was: 'gives every other endpoint the wire ceiling', with
+   * 'codex-queue' in the same list as the rest).
+   *
+   * The queue left the list because it is now the only endpoint with a bound of
+   * its own: its message is an argv element, and Codex names no stdin form for
+   * it. Every other endpoint — the relay included, since its instruction moved
+   * to stdin — is bounded by the wire's sanity ceiling and by nothing nearer.
+   */
+  it('gives every endpoint but the Codex queue the wire ceiling', () => {
     for (const channel of [
       'claude-relay',
       'foreman-relay',
-      'codex-queue',
       'held-session',
       'hosted-stdin',
       'launched-process'
     ] as const) {
       expect(maxTextCharsFor(channel)).toBe(MAX_DWARF_TEXT_CHARS)
     }
+  })
+
+  it("gives the Codex queue its own command-line bound, which is nobody else's", () => {
+    expect(maxTextCharsFor('codex-queue')).toBe(MAX_CODEX_QUEUE_TEXT_CHARS)
+    expect(maxTextCharsFor('codex-queue')).toBeLessThan(MAX_DWARF_TEXT_CHARS)
   })
 
   it('answers the wire ceiling for no channel at all, rather than the tightest', () => {
@@ -885,3 +922,44 @@ describe('parseDwarfText', () => {
     expect(parseDwarfText(value)).toBeNull()
   })
 })
+
+/* --- The relay's prompt on stdin (#437) — one block, appended -------------- */
+
+/*
+ * Issue #437. The boundary's own bound used to be the command line, and
+ * 40,000 characters was over it; the relay hands its instruction to `claude -p`
+ * on stdin now, so the only thing left to refuse at the wire is a payload big
+ * enough to be a mistake. The measurement that licensed this is in
+ * docs/console-hosting.md §6.
+ */
+describe('a 40,000-character message', () => {
+  const long = 'x'.repeat(40_000)
+
+  it('passes the IPC boundary, which used to refuse it', () => {
+    expect(parseDwarfText(long)).toHaveLength(40_000)
+  })
+
+  it('fits every route but the Codex queue', () => {
+    for (const channel of [
+      'terminal',
+      'claude-relay',
+      'foreman-relay',
+      'held-session',
+      'hosted-stdin'
+    ] as const) {
+      expect(long.length).toBeLessThanOrEqual(maxTextCharsFor(channel))
+    }
+  })
+
+  it('is past what the Codex queue can put in a command line', () => {
+    expect(long.length).toBeGreaterThan(maxTextCharsFor('codex-queue'))
+  })
+
+  it("is refused by the queue's sentence, which names the queue and its number", () => {
+    const reason = messageTooLongReason(long.length, maxTextCharsFor('codex-queue'), 'codex-queue')
+    expect(reason).toContain('40000')
+    expect(reason).toContain(String(MAX_CODEX_QUEUE_TEXT_CHARS))
+    expect(reason).toContain('queue')
+  })
+})
+/* --- end of the #437 block ------------------------------------------------- */

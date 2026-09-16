@@ -135,10 +135,16 @@ describe('PosixTextDelivery.relayToClaudeSession', () => {
       port.relayToClaudeSession({ sessionName: 'sample-project-70', text: 'run the tests' })
     ).resolves.toEqual({ delivered: true })
 
+    // AMENDED for #437 (the last assertion was
+    // `expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('sample-project-70')`).
+    // The courier instruction travels on the child's stdin now, so `-p` carries
+    // no positional prompt on any platform; the spawn shape is pinned in
+    // relayRunner.test.ts.
     const invocation = runRelay.mock.calls[0]?.[0]
     expect(invocation.command).toBe('/Users/j/.local/bin/claude')
     expect(invocation.env.PATH).toBe('/Users/j/.local/bin:/usr/bin')
-    expect(invocation.args[invocation.args.indexOf('-p') + 1]).toContain('sample-project-70')
+    expect(invocation.instruction).toContain('sample-project-70')
+    expect(invocation.args.join(' ')).not.toContain('sample-project-70')
   })
 
   it('keeps working on Linux, where it is the only tier there is', async () => {

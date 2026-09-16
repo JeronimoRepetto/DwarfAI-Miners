@@ -3154,10 +3154,15 @@ export class AgentRuntime {
      * race or a caller that is not the panel; either way the whole message
      * fails with a reason rather than arriving with its ending cut off.
      *
+     * Two numbers since #437, and this is where the difference is felt: the
+     * Codex queue's message is an argv element with a real command-line bound,
+     * and every other route carries its text on a stream — the relay's courier
+     * instruction included, which moved onto `claude -p`'s stdin.
+     *
      * The user's own `text` is what is measured, never `payload`: the prefix a
      * worker chain adds and the relay's provenance line are this app's words,
-     * and the overhead these ceilings were derived from already reserves room
-     * for both (see MAX_DWARF_TEXT_CHARS).
+     * and the queue's overhead already reserves room for both (see
+     * MAX_CODEX_QUEUE_TEXT_CHARS).
      */
     const maxTextChars = maxTextCharsFor(resolved.endpoint.kind)
     if (text.length > maxTextChars) {

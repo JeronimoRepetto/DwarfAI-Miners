@@ -1390,10 +1390,10 @@ export interface DwarfCapabilities {
    * distinction `maxTextCharsFor` exists for.
    *
    * ABSENT MEANS "work it out from the channel this dwarf reports" —
-   * `maxTextCharsFor(dwarf.textDelivery)`, which is what the composer does.
-   * Since #433 every route answers the same number, so the two agree
-   * everywhere; they did not while the console write carried its own tighter
-   * ceiling, and they need not agree again. Main stamps this on every poll, so
+   * `maxTextCharsFor(dwarf.textDelivery)`, which is what the composer does. The
+   * routes agreed on one number for one release (#433) and disagree again since
+   * #437: the Codex queue keeps a real command-line bound and everything else
+   * answers the wire's sanity ceiling. Main stamps this on every poll, so
    * absence is a matrix written before this member existed (or by hand in a
    * test), and the fallback is the closest honest reading of one.
    */
@@ -1837,103 +1837,134 @@ export interface DwarfActivation {
  * quotation marks HALVES what fits (16,355 accepted), while a payload of
  * backslashes does not (32,712, the same as plain letters).
  *
- * On the wire because it is what bounds a MESSAGE (#431). Two of this app's
- * delivery tiers hand the person's words to a spawned process as ARGV — the
- * relay's courier instruction and the Codex queue's `--message` — so this
- * number, not a typing budget, is what a message has to fit inside. The console
- * write was a third until #433 moved its whole PowerShell script onto the
- * child's stdin, where no such bound exists; it answers this ceiling now because
- * the wire does, not because its own transport asks for one.
+ * On the wire because it is what bounds ONE channel's message (#431, #437). It
+ * bounded every channel for two releases, because three delivery tiers handed
+ * the person's words to a spawned process as ARGV. They left one at a time: the
+ * console write's PowerShell script moved onto the child's stdin in #433, and
+ * the relay's courier instruction moved onto `claude -p`'s in #437. What is
+ * left is the Codex queue's `--message <TEXT>`, which `codex queue --help`
+ * (0.153.4, checked 2026-09-16) offers no stdin form for — so this number is
+ * still real, and it is now real for exactly one route.
  */
 export const WINDOWS_COMMAND_LINE_LIMIT = 32_767
 
 /**
- * What the relay tier's argv costs around one message, before the message
- * itself — the largest fixed overhead any spawn-carried channel has, so the
- * ceiling below is derived from the WORST of them and holds for all.
+ * What `codex queue`'s argv costs around one message, before the message itself
+ * (#437).
  *
- * Itemised, all measured against the shipped builders on 2026-09-16:
+ * Itemised against the shipped `buildCodexQueueArgs` and `resolveProgram`:
  *
- * - the Claude binary's own quoted path — bounded by Windows' MAX_PATH: 262
- * - `-p --model <model> --tools ListAgents,SendMessage --safe-mode`, with the
- *   separators and quotes a command line adds: 128
- * - `buildRelayInstruction`'s own fixed prose and its two delimiters: 590
- * - the target session's name, which rides inside that instruction: 256
- * - `RELAY_PROVENANCE_LINE` and the newline behind it: 74
- * - up to four `[for agent <name>] ` tags, one per foreman hop: 512
+ * - the codex (or node) binary's own quoted path — bounded by MAX_PATH: 262
+ * - the JS entry a `.cmd`/`.bat` shim resolves to, quoted, where there is one
+ *   (#413) — absent for a native binary, counted anyway: 262
+ * - ` queue --thread <uuid> --message `, with the separators a command line
+ *   adds and a 36-character session UUID: 63
+ * - up to four `[for agent <name>] ` tags, one per foreman hop, which ride
+ *   INSIDE the message argument: 512
+ * - the terminating NUL: 1
  *
- * 1,822, rounded up to the next power of two so a sentence added to the relay's
- * instruction does not silently eat the margin.
+ * 1,100, rounded up to the next power of two — the same margin #431 took on the
+ * relay's own overhead, and taken here for the reason that survived: a longer
+ * worker name or a deeper install path must not silently eat it.
+ *
+ * This is NOT the relay's old `ARGV_MESSAGE_OVERHEAD_CHARS`, which #437 deleted
+ * along with the derivation it fed. That one had to reserve room for
+ * `buildRelayInstruction`'s prose, the target session's name and
+ * `RELAY_PROVENANCE_LINE`; none of those is in a command line any more.
  */
-const ARGV_MESSAGE_OVERHEAD_CHARS = 2_048
+const CODEX_QUEUE_ARGV_OVERHEAD_CHARS = 2_048
 
 /**
  * What quoting can multiply a message by on its way into a command line.
  *
  * Two, and it is the measured worst case rather than a guess: a payload of
  * nothing but `"` halves what fits (16,355 characters accepted where 32,712
- * plain ones were). Ordinary prose costs nothing at all, so this is a margin
- * most messages never spend — and it is taken anyway, because a bound that only
- * holds for well-behaved text is a bound that fails on somebody's pasted JSON.
+ * plain ones were, measured 2026-09-16). Ordinary prose costs nothing at all,
+ * so this is a margin most messages never spend — and it is taken anyway,
+ * because a bound that only holds for well-behaved text is a bound that fails
+ * on somebody's pasted JSON.
  */
-const ARGV_QUOTING_FACTOR = 2
+const CODEX_QUEUE_QUOTING_FACTOR = 2
 
 /**
- * The longest message this app will carry on ANY channel (#431).
+ * The longest message the Codex queue can carry, and the last derived-from-argv
+ * ceiling in this app (#437).
  *
- * ## What it used to be, and why that reason is gone
+ * `codex queue --thread <uuid> --message <TEXT>` takes the message as an argv
+ * element and offers no other way in: checked against `codex queue --help` on
+ * 0.153.4, 2026-09-16, which names `--thread`, `--message`, `--image`,
+ * `--model` and the usual config flags, and no stdin form at all. So the queue
+ * keeps the bound every channel used to share — Windows' own command-line
+ * limit, less this tier's fixed argv, halved for the worst case quoting can do
+ * to a payload.
  *
- * 4,000, with the comment "long enough for a real instruction, short enough
- * that keystroke injection stays a few seconds rather than a minute of the
- * user's keyboard being taken over". That was true when a message was TYPED
- * into the foreground console key by key (#10). Since #371 it is written into
- * the session's own console input buffer by verified pid with no keyboard
- * involved, and since #425 in bounded chunks with a 50 ms pause between them.
- * The premise died two releases ago; the number stayed, and it was applied
- * SILENTLY TWICE — a `maxlength` on the composer and a `.slice()` in
- * `sendDwarfText` that still reported the cut message delivered.
- *
- * ## What it is now
- *
- * The command line, which is a real bound and not a budget. Derived rather than
- * written down, so the arithmetic cannot drift away from the number: Windows'
- * own limit, less the largest argv a message travels inside, halved for the
- * worst case quoting can do to it. 15,359 as of this writing.
- *
- * ## Why it is the only bound, since #433
- *
- * It was the loosest of two for one release. The console write was tighter —
- * `MAX_CONSOLE_TEXT_CHARS`, 6,541 — because its whole PowerShell script was
- * spawned in a command line and the script costs several characters per
- * character of message. That was never a fact about a console: #433 hands the
- * script to PowerShell on the child's STDIN, which has no length bound, and the
- * console tier now answers this number like everything else. `maxTextCharsFor`
- * is still the one place the question is asked, and the panel still reads the
- * answer off `DwarfCapabilities.maxTextChars` rather than assuming it.
+ * 15,359, which is the same number #431 derived for the whole app. That is a
+ * coincidence of two comparable argv overheads and not a shared derivation: the
+ * relay's is gone, and this one answers for one route.
  */
-export const MAX_DWARF_TEXT_CHARS = Math.floor(
-  (WINDOWS_COMMAND_LINE_LIMIT - ARGV_MESSAGE_OVERHEAD_CHARS) / ARGV_QUOTING_FACTOR
+export const MAX_CODEX_QUEUE_TEXT_CHARS = Math.floor(
+  (WINDOWS_COMMAND_LINE_LIMIT - CODEX_QUEUE_ARGV_OVERHEAD_CHARS) / CODEX_QUEUE_QUOTING_FACTOR
 )
 
 /**
- * The ceiling for one resolved send route — the ONE place a channel is asked
- * what it can carry (#431, #433).
+ * The longest message this app will carry on the wire at all — a sanity bound
+ * about MEMORY and the IPC payload, and no longer about a command line (#437).
  *
- * Every route answers `MAX_DWARF_TEXT_CHARS` today. It did not always: the
- * console write carried its own tighter ceiling until #433, because its script
- * was spawned in a command line rather than written to stdin. What is left is
- * the QUESTION, and it is kept rather than inlined for the reason it was keyed
- * the way it is — on the ENDPOINT a send resolves to rather than on the channel
- * it reports, because a worker's chain reports `'foreman-relay'` while writing
- * into its foreman's own console, and only the endpoint can tell those apart. A
- * channel that grows a bound of its own again has one place to say so, and
- * `resolve.ts`, `runtime.ts` and the composer all read it here.
+ * ## What it used to be, and why both of those reasons are gone
  *
- * No channel at all answers the same number: nothing is sent without one, so it
- * only ever reaches a composer that is already disabled.
+ * 4,000 first, because a message was TYPED into the foreground console key by
+ * key (#10) and a long one took the keyboard away for a minute. Nothing types
+ * any more (#371, #425), so #431 replaced it with the command line, which was a
+ * real bound rather than a budget: 15,359, derived from Windows' 32,767 less
+ * the relay's own argv, halved for quoting.
+ *
+ * That second reason has now gone the same way as the first. The relay was the
+ * channel that made an argv the wire's bound, and `claude -p` reads its prompt
+ * from stdin when no positional prompt is given (`claude --help`, 2.1.273:
+ * "Print response and exit (useful for pipes)"). Measured live on 2026-09-16
+ * against a throwaway target session (docs/console-hosting.md §6): a
+ * 40,000-character message handed to the relay on stdin arrived as ONE whole
+ * `SendMessage`, all 40,000 characters in order, with `RELAY_PROVENANCE_LINE`
+ * ahead of them. Nothing on that path has a length bound left; it has a TIME
+ * cost instead, and `SENDTEXT_TIMEOUT_S` is what bounds that.
+ *
+ * ## What it is now, and why a quarter of a million
+ *
+ * A message is a string on an IPC payload that Electron structured-clones from
+ * the renderer into main, and then holds in memory on both sides. 250,000
+ * characters is half a megabyte of UTF-16 per message — a cost nobody notices
+ * once, and an obvious mistake if it ever arrives in a loop. It is far past any
+ * text a person types and past any paste made on purpose: the whole of this
+ * file is under a tenth of it. So it is not a limit anyone is meant to meet; it
+ * is the point at which a payload stops looking like a message, and the app
+ * says so honestly rather than truncating.
+ *
+ * Deliberately NOT derived. A derived number invites the next reader to trust
+ * the arithmetic; this one is a judgement, and the comment is where it is
+ * argued. `parseDwarfText` refuses past it at the boundary and `sendDwarfText`
+ * refuses past the ROUTE's own number, which for every route but the Codex
+ * queue is this one.
  */
-export function maxTextCharsFor(_channel: TextDeliveryChannel | null | undefined): number {
-  return MAX_DWARF_TEXT_CHARS
+export const MAX_DWARF_TEXT_CHARS = 250_000
+
+/**
+ * The ceiling for one resolved send route — the ONE place a channel is asked
+ * what it can carry (#431, #433, #437).
+ *
+ * Two answers now, where #433 had left one: the Codex queue's message is an
+ * argv element and everything else is a stream. It is keyed on the ENDPOINT a
+ * send resolves to rather than on the channel it reports, because a worker's
+ * chain reports `'foreman-relay'` while writing into its foreman's own console,
+ * and only the endpoint can tell those apart — `resolve.ts` stamps it from the
+ * endpoint, and `runtime.ts` asks it with the endpoint too.
+ *
+ * No channel at all answers the wire's number rather than the queue's: nothing
+ * is sent without a channel, so it only ever reaches a composer that is already
+ * disabled, and naming the tightest there would state a limit no send of that
+ * dwarf's would ever have met.
+ */
+export function maxTextCharsFor(channel: TextDeliveryChannel | null | undefined): number {
+  return channel === 'codex-queue' ? MAX_CODEX_QUEUE_TEXT_CHARS : MAX_DWARF_TEXT_CHARS
 }
 
 /**
@@ -2325,8 +2356,11 @@ export function parseDwarfAttachments(value: unknown): readonly DwarfAttachment[
  *
  * It checks the WIRE ceiling and never a channel's, because the boundary does
  * not know which channel this dwarf will resolve to — that is the runtime's
- * question, and `sendDwarfText` asks it with `maxTextCharsFor`. So what this
- * refuses is a message NO channel could have carried, and the handler's generic
+ * question, and `sendDwarfText` asks it with `maxTextCharsFor`. Since #437 that
+ * ceiling is a sanity bound about memory rather than a command line, so what
+ * this refuses is a payload that stopped looking like a message at all; the
+ * Codex queue's own tighter bound is still the runtime's to apply. The
+ * handler's generic
  * "could not be delivered" is the honest answer for it: the length sentence
  * names a channel, and there is no channel in hand here. A message the panel
  * itself sent never reaches this refusal — the composer says so, in the
