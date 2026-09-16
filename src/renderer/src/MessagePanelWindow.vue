@@ -19,6 +19,7 @@ import { panelKeyframes } from './lib/shell/panelMotion'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
+  DwarfAttachment,
   DwarfFeedResult,
   DwarfKickState,
   DwarfPermissionDecision,
@@ -69,6 +70,7 @@ const { state, setMines } = useMines()
 const {
   state: messagingState,
   echoes: sentEchoes,
+  echoAttachments: sentEchoAttachments,
   send: sendDwarfText,
   retry: retryDwarfText,
   observe: observeSends,
@@ -663,16 +665,23 @@ watch(
  * verdict lands on the dwarf itself (see DwarfSprite's send-result marker,
  * over in the shell) rather than in a modal.
  */
-function sendText(dwarf: Dwarf, payload: { text: string; pressEnter: boolean }): void {
+/** The composer's payload, which since #408 may carry files as well as words. */
+interface ComposerSend {
+  text: string
+  pressEnter: boolean
+  attachments?: readonly DwarfAttachment[]
+}
+
+function sendText(dwarf: Dwarf, payload: ComposerSend): void {
   void deliverText(dwarf, payload)
 }
 
 /** Hand the composer's text over, then refresh on the verdict (#183). */
-async function deliverText(
-  dwarf: Dwarf,
-  payload: { text: string; pressEnter: boolean }
-): Promise<void> {
-  refreshAfterDelivery(dwarf.id, await sendDwarfText(dwarf.id, payload.text, payload.pressEnter))
+async function deliverText(dwarf: Dwarf, payload: ComposerSend): Promise<void> {
+  refreshAfterDelivery(
+    dwarf.id,
+    await sendDwarfText(dwarf.id, payload.text, payload.pressEnter, payload.attachments ?? [])
+  )
 }
 
 /**
@@ -1234,6 +1243,7 @@ onBeforeUnmount(() => {
         :paging-note="pagingNote ?? undefined"
         :send-state="messagingState.byDwarfId[selectedDwarf.id]"
         :echoes="sentEchoes[selectedDwarf.id]"
+        :echo-attachments="sentEchoAttachments[selectedDwarf.id]"
         :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
         :answer-state="questionState.byDwarfId[selectedDwarf.id]"
         @send="sendText(selectedDwarf, $event)"

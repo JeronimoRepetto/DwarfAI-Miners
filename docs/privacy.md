@@ -53,6 +53,14 @@ checked rather than trusted.
   `git` binary is ever run, and a folder that is not a worktree costs one stat and nothing more
   (`src/main/projects/worktree.ts`).
 
+- **Files you attach to a message, and only those.** Attaching a file — by dropping it on the
+  composer or through the picker — lets the app measure it (its size, and whether it is a folder),
+  and, for an image inside the size limit, decode it once to draw the 40px chip you see. Nothing is
+  copied anywhere: the path you chose is the path handed to the session, and for a session this app
+  holds open the image's bytes are read at send time and go to that session and nowhere else. No
+  directory is walked, no sibling file is looked at, and a file you removed from the composer before
+  pressing Enter is never read again (`src/main/textDelivery/attachmentFiles.ts`, #408).
+
 ### The one-time history scan
 
 The widest read this app performs happens on its first launches, and you should know about it
