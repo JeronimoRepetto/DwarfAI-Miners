@@ -2,6 +2,8 @@ import { REACTION_WINDOW_MS } from '../delivery/reaction'
 import { normalizeConsoleText } from '../../../../shared/consoleText'
 import { ATTACHED_FILE_PREFIX, HELD_IMAGE_PLACEHOLDER } from '../../../../shared/heldSessionText'
 import {
+  HELD_MESSAGE_MAX_CHARS,
+  heldRetainedText,
   stripRelayProvenance,
   type DwarfAttachment,
   type DwarfSendState,
@@ -237,6 +239,55 @@ function stripAttachmentTokens(
 }
 
 /**
+ * Whether this row is what a HELD session's store keeps of this echo's words
+ * once it has CUT them (#431).
+ *
+ * The one place a row can honestly differ from the message that produced it.
+ * `retainHeldMessage` cuts every retained message at `HELD_MESSAGE_MAX_CHARS`
+ * with no marker, because a held conversation rides every poll's snapshot (see
+ * that constant), and #431 raised what a person may SEND far past it — so a
+ * long message's row is now routinely shorter than the echo waiting for it, and
+ * without this the bubble is drawn twice and its ✓ can never become ✓✓.
+ *
+ * ## Why this is not a prefix check
+ *
+ * Because "the row starts with the person's words" is true of a great many rows
+ * that are not this message — the same sentence with more after it, above all —
+ * and crediting one of those throws away the only copy of what they typed. So
+ * the ECHO is put through the store's own cut (`heldRetainedText`, shared from
+ * the wire rather than restated here) and the two are compared whole. Only a
+ * row the store provably shortened can match, which is what the length test
+ * says: a row inside the bound was retained untouched and is therefore evidence
+ * about its own words and nothing else.
+ *
+ * ## Why an echo with attachments is refused outright
+ *
+ * A held message's row is built as the attached files' own lines followed by
+ * the words (`heldContentFor`), and the cut falls on that whole string. What
+ * survives it is therefore the truncation of something this panel never built
+ * — the file lines are main's spelling, and their length decides how much of
+ * the words is left. Matching it would mean rebuilding main's format here and
+ * guessing at the boundary, so the echo stays instead and expires on its own
+ * window. Absent beats guessed, the same direction every unproven reading in
+ * this app falls in.
+ *
+ * The OBSERVED feed needs no equivalent and deliberately has none: nothing in
+ * the transcript parse truncates a user row, and `trimFeed` bounds how many
+ * rows a feed carries rather than how long one is. A long observed message
+ * arrives whole and matches by plain equality.
+ */
+function isHeldTruncationOf(
+  echo: MessageEcho,
+  message: FeedMessage,
+  attachments: readonly DwarfAttachment[]
+): boolean {
+  if (attachments.length > 0) return false
+  if (message.text.length < HELD_MESSAGE_MAX_CHARS) return false
+  const cut = heldRetainedText(normalizeConsoleText(stripRelayProvenance(echo.text)))
+  return normalizeConsoleText(message.text) === normalizeConsoleText(cut)
+}
+
+/**
  * Whether `message` is evidence that `echo` reached the session's transcript.
  *
  * Four conditions, and all four are required, because dropping an echo is
@@ -301,11 +352,13 @@ function accountsFor(
     normalizeConsoleText(stripRelayProvenance(message.text)),
     expectedTokensFor(echo.state.via, attachments)
   )
+  if (stripped === undefined) return false
   // Normalized again: a token can now come out of the middle of the row
   // (or off the end) rather than only the front, and closing the gap that
   // leaves is exactly what `normalizeConsoleText` already does for the
   // console's own whitespace runs.
-  if (stripped === undefined || normalizeConsoleText(stripped) !== normalizeConsoleText(echo.text))
+  const words = normalizeConsoleText(stripped)
+  if (words !== normalizeConsoleText(echo.text) && !isHeldTruncationOf(echo, message, attachments))
     return false
   const at = Date.parse(message.timestamp)
   if (Number.isNaN(at)) return false
