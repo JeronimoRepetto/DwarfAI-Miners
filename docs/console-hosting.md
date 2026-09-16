@@ -1401,6 +1401,71 @@ size actually exercised, on the reasoning that three quick runs on one machine c
 every load and terminal condition a real delivery meets, while still large enough to cut a
 1,935-code-point message to 4 chunks instead of the 200-ceiling's 10.
 
+### The script's own command line is the real ceiling — measured 2026-09-16 (#431)
+
+**A console write is not run from a file: the whole PowerShell script is spawned in the child's
+command line**, and Windows will not start a process with one longer than
+[32,767 characters](https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw).
+`windowsTextDelivery.ts`'s `runPowerShellCommand` spawns
+`powershell.exe -NoProfile -NonInteractive -Command <script>`, and the script carries the
+person's words base64-encoded as UTF-16 plus six lines of scaffolding per chunk — about **3.6
+characters of command line for every character of message**, on a fixed 2,557-character preamble.
+
+The chunk measurement above never met this because its probe ran the script from a **file**
+(`powershell -File <path>`), which has no such bound. The shipped path does not, so this is a
+bound on the shipped path that had never been exercised.
+
+**Measured on a session this measurement launched and ended by itself** — `claude` in a
+throwaway project under `%TEMP%`, this agent's own `CLAUDE*` environment markers
+stripped, the folder-trust dialog accepted by two pid writes (`ESC [ B`, then a bare Enter),
+and the session ended by writing `/exit` and Enter by pid rather than killed. Windows 11,
+Windows Terminal (ConPTY), 2026-09-16 [#431]. Numbered lines with an emoji and accents every line,
+built and spawned through the shipped `buildConsoleInputWriteCommand` and the shipped argv,
+read back verbatim from the session's own transcript:
+
+| Message (code points) | Message (UTF-16) | Command line | Result                                                                      |
+| --------------------- | ---------------- | ------------ | --------------------------------------------------------------------------- |
+| 29,323                | 30,005           | 109,152      | `spawn ENAMETOOLONG` in **2 ms** — no console reached                       |
+| 8,409                 | 8,605            | 33,054       | `spawn ENAMETOOLONG` in **2 ms**                                            |
+| 8,214                 | 8,405            | 32,518       | exit 0 — **arrived whole**, transcript row 8,405 characters                 |
+| 6,397                 | 6,546            | 25,750       | exit 0 in **1,119 ms** — **arrived whole**, transcript row 6,546 characters |
+
+Both successful runs were submitted by the same write's own Enter chunk and read back from the
+transcript head and tail intact. The two failures wrote nothing at all.
+
+**The refusal is invisible to the tiers below it.** `execFile` throws `ENAMETOOLONG`
+_synchronously_, with no exit code, so `runConsoleWriteScript` lands in its own `catch`
+and reports "the agent terminal could not be reached" with **no `neverStarted`** — which is
+the one flag that licenses the relay behind it to try the same text. So an over-long message on this
+tier is not retried anywhere and the person is told the wrong thing. The panel has to refuse first,
+which is what `MAX_CONSOLE_TEXT_CHARS` in `src/shared/contracts.ts` is for.
+
+**The argv bound itself, measured the same day on this host** (`execFile` against a plain
+`node -e` child, binary search on one argv element):
+
+| Payload                                | Longest accepted | One past it    |
+| -------------------------------------- | ---------------- | -------------- |
+| plain letters                          | 32,712           | `ENAMETOOLONG` |
+| words with spaces (quoted, no escapes) | 32,710           | `ENAMETOOLONG` |
+| all backslashes                        | 32,712           | `ENAMETOOLONG` |
+| all double quotes                      | **16,355**       | `ENAMETOOLONG` |
+
+32,712 plus the command, its flags and their separators is 32,766 — the documented 32,767 less the
+terminating NUL. The last row is why the wire ceiling is halved: Node's Windows quoting rewrites
+every `"` as `\"`, so a payload of quotation marks costs twice its length, while
+backslashes (doubled only before a quote) cost nothing.
+
+**What is NOT measured.** Whether the same script would spawn if it were handed to PowerShell on
+**stdin** instead (`-Command -`, which `consoleWorker.ts` already does for every other
+console action, base64ing each request into one line). That would remove the console tier's ceiling
+entirely and leave it bounded only by time — about four seconds for 40,000 characters at
+`MAX_CONSOLE_CHUNK_CODE_POINTS` per 50 ms. It is not done here because the write must run in a
+child of its own (`FreeConsole`/`AttachConsole` rebind the CALLER's console) and the
+exit-code path through `Invoke-Expression` would need its own live run before anything relied
+on it. **Until that is measured, 6,541 is the console's honest ceiling.**
+
+---
+
 ---
 
 ## 7. Open edges

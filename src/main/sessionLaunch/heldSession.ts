@@ -4,12 +4,7 @@ import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
 // shared/heldSessionText.ts for why this cannot stay a local constant.
 import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
-import {
-  HELD_CONVERSATION_LIMIT,
-  HELD_MESSAGE_MAX_CHARS,
-  isMcpConnectionStatus,
-  MAX_DWARF_TEXT_CHARS
-} from '../domain/types'
+import { HELD_CONVERSATION_LIMIT, heldRetainedText, isMcpConnectionStatus } from '../domain/types'
 import type {
   Dwarf,
   DwarfContextUsage,
@@ -534,17 +529,26 @@ export type HeldSessionPort = (request: HeldSessionStartRequest) => Promise<Held
 export type HeldSessionPorts = Partial<Record<DwarfProvider, HeldSessionPort>>
 
 /**
- * The prompt as it will reach the session: trimmed, and capped at the same
- * limit a delivered message gets, for the reason sendDwarfText caps its own
- * payload.
+ * The prompt as it will reach the session: trimmed, and nothing else.
  *
- * The detached launch mode applies the same cap in its own module (#86's first
- * cut). When both modes are in the tree the two should collapse into one
- * helper; they are duplicated rather than shared across a merge nobody has
- * done yet.
+ * AMENDED for #431 (was: `.trim().slice(0, MAX_DWARF_TEXT_CHARS)`, "capped at
+ * the same limit a delivered message gets, for the reason sendDwarfText caps
+ * its own payload"). That reason had stopped being one. A message answers to a
+ * ceiling because three delivery tiers hand it to a SPAWNED process and a
+ * Windows command line is 32,767 characters; a held prompt is passed to the
+ * Agent SDK's `query()` inside this process, so there is no command line for it
+ * to fit inside and no bound for this to enforce. What is left of the old cap
+ * is what #10 wrote it for — a keystroke budget — and nothing types any more.
+ *
+ * `prepareLaunchPrompt` in launch.ts lost the same slice for the same reason on
+ * the same day, and its comment carries the evidence for the detached mode
+ * (that prompt travels on the child's stdin). The note about the two collapsing
+ * into one helper went with the cap: what they now share is a `.trim()`, and a
+ * module exported so two callers can agree on trimming would be worse than
+ * either of them saying it.
  */
 export function prepareHeldPrompt(text: string): string {
-  return text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+  return text.trim()
 }
 
 /**
@@ -680,7 +684,13 @@ export function retainHeldMessage(
   kept: readonly FeedMessage[],
   message: FeedMessage
 ): FeedMessage[] {
-  const text = redactSecrets(message.text.trim()).slice(0, HELD_MESSAGE_MAX_CHARS)
+  // The cut goes through the wire's own `heldRetainedText` rather than a
+  // `.slice` written here (#431): the renderer's echo reconciliation has to
+  // apply the SAME rule to the words it is holding before it can recognise the
+  // row this store keeps, and two spellings of one cut is how one of them
+  // drifts — the failure `stripRelayProvenance` exists to prevent, one store
+  // further along.
+  const text = heldRetainedText(redactSecrets(message.text.trim()))
   if (text === '') return [...kept]
   return trimFeed([...kept, { ...message, text }], HELD_CONVERSATION_LIMIT)
 }

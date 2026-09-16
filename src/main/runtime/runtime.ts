@@ -25,7 +25,8 @@ import {
   ASK_NO_LONGER_OPEN,
   channelCarriesAttachments,
   DWARF_PROVIDERS,
-  MAX_DWARF_TEXT_CHARS,
+  maxTextCharsFor,
+  messageTooLongReason,
   NO_ANSWER_KEYSTROKE_TIER,
   RELAY_PROVENANCE_LINE,
   splitAnswerLabels,
@@ -3087,7 +3088,21 @@ export class AgentRuntime {
       return { delivered: false, via: 'none', error: NO_SUCH_DWARF }
     }
 
-    const text = request.text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
+    /*
+     * Trimmed and NOT cut (#431).
+     *
+     * This used to end `.slice(0, MAX_DWARF_TEXT_CHARS)`, which was the second
+     * of two silent applications of a 4,000-character keystroke budget — the
+     * composer's `maxlength` cut the paste and this cut it again, and the
+     * verdict below then reported the remainder delivered. Nothing types any
+     * more (#371, #425), and the bound that is really underneath is the command
+     * line a spawn-carried channel has to fit inside. It is checked against the
+     * resolved route below, because only there is it known which channel that
+     * is, and a message past it is REFUSED rather than shortened: handing over
+     * a message with its ending removed and calling it delivered is the exact
+     * dishonesty #431 exists to end.
+     */
+    const text = request.text.trim()
     // A message may be words, files, or both (#408) — only nothing at all is
     // refused. The boundary already validated the list against the shared
     // limits, so what arrives here is either empty or every file the person
@@ -3126,6 +3141,31 @@ export class AgentRuntime {
      */
     if (attachments.length > 0 && !channelCarriesAttachments(resolved.channel, dwarf.provider)) {
       return { delivered: false, via: resolved.channel, error: NO_ATTACHMENT_CHANNEL }
+    }
+
+    /*
+     * The length gate, and the one refusal #431 exists to make.
+     *
+     * Read off the ENDPOINT rather than the channel, through the same
+     * `maxTextCharsFor` the capability the composer reads was stamped with
+     * (resolve.ts) — so the panel refuses exactly what this refuses, and the
+     * two can never disagree about which message was too long. The composer
+     * already says so while the person still holds the text, which makes this a
+     * race or a caller that is not the panel; either way the whole message
+     * fails with a reason rather than arriving with its ending cut off.
+     *
+     * The user's own `text` is what is measured, never `payload`: the prefix a
+     * worker chain adds and the relay's provenance line are this app's words,
+     * and the overhead these ceilings were derived from already reserves room
+     * for both (see MAX_DWARF_TEXT_CHARS).
+     */
+    const maxTextChars = maxTextCharsFor(resolved.endpoint.kind)
+    if (text.length > maxTextChars) {
+      return {
+        delivered: false,
+        via: resolved.channel,
+        error: messageTooLongReason(text.length, maxTextChars, resolved.channel)
+      }
     }
 
     const payload = `${resolved.prefix}${text}`

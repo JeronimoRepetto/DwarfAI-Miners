@@ -52,7 +52,8 @@ import {
   initialPanelHeight
 } from '../../lib/message/panelHeight'
 import {
-  MAX_DWARF_TEXT_CHARS,
+  maxTextCharsFor,
+  messageTooLongReason,
   type Dwarf,
   type DwarfAnswerState,
   type DwarfAttachment,
@@ -324,6 +325,43 @@ const attachRefusal = ref<string | null>(null)
 const canAttach = computed(() => canReceive.value && props.dwarf.capabilities?.attach != null)
 const attachTitle = computed(() => attachHint(props.dwarf))
 
+/* --- Message length (#431) — one block, appended -------------------------- */
+
+/**
+ * How much of a message this dwarf's own route can carry, and whether what is
+ * in the box is past it (#431).
+ *
+ * The box used to carry `:maxlength="MAX_DWARF_TEXT_CHARS"`, which cut a long
+ * paste at the end without a word — the first of the two silent applications of
+ * a 4,000-character keystroke budget the issue is about, the second being a
+ * second cut in `sendDwarfText` that still reported the remainder delivered.
+ * The attribute is gone: the box holds whatever the person put in it, the
+ * sentence below says it will not fit, and Enter does nothing until they have
+ * trimmed it. Their words stay theirs.
+ *
+ * The number comes off the CAPABILITY rather than from the wire ceiling,
+ * because the routes genuinely differ — a console write is spawned with the
+ * whole message inside a command line and carries far less than a relay does.
+ * `maxTextCharsFor` is the fallback for a matrix that carries no such member
+ * (see DwarfCapabilities.maxTextChars), never a second opinion about a dwarf
+ * main has already answered for.
+ */
+const textLimit = computed(
+  () => props.dwarf.capabilities?.maxTextChars ?? maxTextCharsFor(props.dwarf.textDelivery ?? null)
+)
+
+/**
+ * The refusal, or null while the message fits — measured on the TRIMMED text,
+ * which is what `submit` sends and what main measures on the other side of the
+ * wire, so the two cannot disagree about a message with trailing newlines.
+ */
+const tooLong = computed(() => {
+  const length = message.value.trim().length
+  if (length <= textLimit.value) return null
+  return messageTooLongReason(length, textLimit.value, props.dwarf.textDelivery ?? null)
+})
+/* --- end of the #431 block ------------------------------------------------ */
+
 function attachmentsOfEcho(echoId: string): readonly DwarfAttachment[] {
   return props.echoAttachments?.[echoId] ?? []
 }
@@ -500,6 +538,11 @@ const sendLine = computed(() => sendStatusLine(props.sendState))
 const kickLine = computed(() => kickStatusLine(props.kickState))
 const statusLine = computed(() => sendLine.value ?? kickLine.value)
 const alertLine = computed(() => {
+  // Ahead of both verdicts below (#431), because it is the only one of the
+  // three about what is in the box RIGHT NOW: the person is holding text the
+  // panel will not send, and a failure from a previous message must not hide
+  // the reason Enter is doing nothing.
+  if (tooLong.value !== null) return tooLong.value
   if (props.sendState?.phase === 'failed') {
     return props.sendState.error ?? 'The message could not be delivered.'
   }
@@ -691,6 +734,10 @@ function submit(): void {
   // Words, files, or both — only nothing at all is refused (#408), which is the
   // same test `sendDwarfText` applies on the other side of the wire.
   if ((text === '' && attachments.length === 0) || isSending.value || !canReceive.value) return
+  // Nothing is sent past the route's own ceiling, and the text is KEPT (#431):
+  // the alert row is already saying why, and clearing the box would throw away
+  // the paste the person now has to trim.
+  if (tooLong.value !== null) return
   // Always with the session's own Enter: `screens/mine.md` says Enter sends,
   // and the panel it draws has no second control to say otherwise.
   emit('send', {
@@ -1092,7 +1139,6 @@ function onKick(): void {
           v-model="message"
           class="panel-input is-selectable"
           rows="2"
-          :maxlength="MAX_DWARF_TEXT_CHARS"
           :disabled="!canReceive"
           :title="action('chat')?.hint"
           placeholder="Write here..."

@@ -23,7 +23,9 @@ import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
 import {
+  MAX_CONSOLE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
+  messageTooLongReason,
   type DwarfAttachment,
   type DwarfAttachmentPick,
   type DwarfPermissionRequest,
@@ -808,8 +810,69 @@ describe('DwarfMessagePanel input', () => {
     expect(wrapper.emitted('send')).toBeUndefined()
   })
 
-  it('caps the message at the shared delivery limit', () => {
-    expect(panel().find('.panel-input').attributes('maxlength')).toBe(String(MAX_DWARF_TEXT_CHARS))
+  /*
+   * AMENDED for #431 (was: 'caps the message at the shared delivery limit',
+   * asserting a `maxlength` of MAX_DWARF_TEXT_CHARS on the box).
+   *
+   * That attribute WAS the defect: a paste longer than the cap lost its ending
+   * without a word, and the runtime then cut the remainder again and reported
+   * it delivered. The box now takes whatever the person pastes and the panel
+   * says, in the alert ink, that it is too long to send — so the words stay
+   * theirs to trim. The five tests below are what replaces this one.
+   */
+  it('lets the box hold whatever was pasted, rather than cutting it at a limit', () => {
+    expect(panel().find('.panel-input').attributes('maxlength')).toBeUndefined()
+  })
+
+  it("says so in the alert ink when the text is past this channel's ceiling", async () => {
+    const wrapper = panel()
+    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    await wrapper.find('.panel-input').setValue(text)
+    expect(wrapper.find('.panel-alert').text()).toBe(
+      messageTooLongReason(text.length, MAX_CONSOLE_TEXT_CHARS, 'terminal')
+    )
+  })
+
+  it('keeps the text and sends nothing when Enter is pressed on an over-long message', async () => {
+    const wrapper = panel()
+    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    const input = wrapper.find('.panel-input')
+    await input.setValue(text)
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect((input.element as HTMLTextAreaElement).value).toBe(text)
+  })
+
+  it('sends again the moment the person has trimmed it back inside the ceiling', async () => {
+    const wrapper = panel()
+    const input = wrapper.find('.panel-input')
+    await input.setValue('x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1))
+    await input.setValue('x'.repeat(MAX_CONSOLE_TEXT_CHARS))
+    expect(wrapper.find('.panel-alert').exists()).toBe(false)
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toHaveLength(1)
+  })
+
+  it('reads the ceiling off the capability, so a wider channel says a wider number', async () => {
+    // A relayed session has no console script to fit inside, so it takes the
+    // wire ceiling — the same message that is refused above goes here.
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        textDelivery: 'claude-relay',
+        capabilities: {
+          sendText: 'claude-relay',
+          cancel: 'claude-relay',
+          adjustEffort: null,
+          attach: null,
+          maxTextChars: MAX_DWARF_TEXT_CHARS
+        }
+      })
+    })
+    const input = wrapper.find('.panel-input')
+    await input.setValue('x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1))
+    expect(wrapper.find('.panel-alert').exists()).toBe(false)
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toHaveLength(1)
   })
 
   it('keeps the input selectable, which the design asks for by name', () => {

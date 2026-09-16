@@ -33,8 +33,18 @@ import {
   channelCarriesAttachments,
   isDwarfAttachment,
   parseDwarfAttachments,
-  refuseAttachment
+  refuseAttachment,
   /* --- end of the #408 block ----------------------------------------------- */
+  /* --- Message length (#431) — one block, appended ------------------------- */
+  HELD_MESSAGE_MAX_CHARS,
+  MAX_CONSOLE_TEXT_CHARS,
+  MAX_DWARF_TEXT_CHARS,
+  WINDOWS_COMMAND_LINE_LIMIT,
+  heldRetainedText,
+  maxTextCharsFor,
+  messageTooLongReason,
+  parseDwarfText
+  /* --- end of the #431 block ----------------------------------------------- */
 } from './contracts'
 
 /*
@@ -751,5 +761,117 @@ describe('channelCarriesAttachments', () => {
 
   it('names the providers whose held stream was measured, and nothing else', () => {
     expect(ATTACHMENT_HELD_PROVIDERS).toEqual(['claude'])
+  })
+})
+
+/* --- Message length (#431) — one block, appended --------------------------- */
+
+/*
+ * Issue #431. `MAX_DWARF_TEXT_CHARS` used to be 4,000 because a message was
+ * TYPED into a console key by key and a long one took the keyboard away for a
+ * minute (#10). Nothing types any more (#371, #425), so these pin the bound
+ * that is actually underneath: the command line every spawn-carried channel
+ * has to fit inside.
+ */
+describe('the message ceilings', () => {
+  it("cites Windows' own documented command-line bound rather than a round number", () => {
+    expect(WINDOWS_COMMAND_LINE_LIMIT).toBe(32_767)
+  })
+
+  it('derives the wire ceiling from that bound, halved for worst-case quoting', () => {
+    // (32_767 − 2_048 of relay argv and instruction) / 2, because Node's own
+    // Windows quoting turns every `"` into `\"` — measured on this machine:
+    // 32,712 plain characters accepted in one argv element, 16,355 quotes.
+    expect(MAX_DWARF_TEXT_CHARS).toBe(15_359)
+  })
+
+  it('leaves the console tier a lower ceiling, because its script carries the text base64', () => {
+    // Measured 2026-09-16 (docs/console-hosting.md §6): the PowerShell the
+    // console write is spawned with grows ~3.57 characters per character of
+    // message, so a 30,000-point message builds a 109,152-character command
+    // line and never starts a process at all.
+    expect(MAX_CONSOLE_TEXT_CHARS).toBe(6_541)
+    expect(MAX_CONSOLE_TEXT_CHARS).toBeLessThan(MAX_DWARF_TEXT_CHARS)
+  })
+
+  it('still raises every channel well past the keystroke budget it replaces', () => {
+    expect(MAX_CONSOLE_TEXT_CHARS).toBeGreaterThan(4_000)
+  })
+})
+
+describe('maxTextCharsFor', () => {
+  it('gives a console endpoint the console ceiling', () => {
+    expect(maxTextCharsFor('terminal')).toBe(MAX_CONSOLE_TEXT_CHARS)
+  })
+
+  it('gives every other endpoint the wire ceiling', () => {
+    for (const channel of [
+      'claude-relay',
+      'foreman-relay',
+      'codex-queue',
+      'held-session',
+      'hosted-stdin',
+      'launched-process'
+    ] as const) {
+      expect(maxTextCharsFor(channel)).toBe(MAX_DWARF_TEXT_CHARS)
+    }
+  })
+
+  it('answers the wire ceiling for no channel at all, rather than the tightest', () => {
+    // Nothing is sent without a channel, so this number only ever feeds a
+    // composer that is already disabled; guessing the tightest would make it
+    // say a limit no send of this dwarf's would ever have met.
+    expect(maxTextCharsFor(null)).toBe(MAX_DWARF_TEXT_CHARS)
+  })
+})
+
+describe('messageTooLongReason', () => {
+  it('names the length, the limit and what would have carried it', () => {
+    const reason = messageTooLongReason(9_000, MAX_CONSOLE_TEXT_CHARS, 'terminal')
+    expect(reason).toContain('9000')
+    expect(reason).toContain(String(MAX_CONSOLE_TEXT_CHARS))
+    expect(reason).toContain('console')
+  })
+
+  it('names a different carrier for a different channel', () => {
+    expect(messageTooLongReason(20_000, MAX_DWARF_TEXT_CHARS, 'codex-queue')).toContain('queue')
+  })
+
+  it('says nothing was sent, because nothing was', () => {
+    expect(messageTooLongReason(20_000, MAX_DWARF_TEXT_CHARS, null)).toContain('nothing was sent')
+  })
+})
+
+describe('heldRetainedText', () => {
+  it('leaves a message inside the retention bound untouched', () => {
+    expect(heldRetainedText('hello')).toBe('hello')
+  })
+
+  it('cuts a longer one at exactly the bound, with no marker', () => {
+    const cut = heldRetainedText('x'.repeat(HELD_MESSAGE_MAX_CHARS + 500))
+    expect(cut).toHaveLength(HELD_MESSAGE_MAX_CHARS)
+    expect(cut.endsWith('…')).toBe(false)
+  })
+})
+/* --- end of the #431 block ------------------------------------------------- */
+
+describe('parseDwarfText', () => {
+  it('takes a message inside the wire ceiling unchanged', () => {
+    expect(parseDwarfText('hello')).toBe('hello')
+    expect(parseDwarfText('x'.repeat(MAX_DWARF_TEXT_CHARS))).toHaveLength(MAX_DWARF_TEXT_CHARS)
+  })
+
+  it('takes an empty message, which is what an attachments-only send carries', () => {
+    expect(parseDwarfText('')).toBe('')
+  })
+
+  it('refuses the whole request past the ceiling rather than cutting it to fit', () => {
+    // The refusal #431 exists for: a payload trimmed here would reach a session
+    // with its ending removed and be reported delivered.
+    expect(parseDwarfText('x'.repeat(MAX_DWARF_TEXT_CHARS + 1))).toBeNull()
+  })
+
+  it.each([42, null, undefined, {}, ['hi']])('refuses %j, which is not a message', (value) => {
+    expect(parseDwarfText(value)).toBeNull()
   })
 })

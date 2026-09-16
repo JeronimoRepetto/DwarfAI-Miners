@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { MAX_CONSOLE_TEXT_CHARS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import type { Dwarf, Mine } from '../domain/types'
 import type { TextDeliveryTarget } from './port'
 import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './resolve'
@@ -499,7 +500,9 @@ describe('stampTextDelivery', () => {
       sendText: 'terminal',
       cancel: 'terminal',
       adjustEffort: null,
-      attach: 'terminal'
+      attach: 'terminal',
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_CONSOLE_TEXT_CHARS
     })
   })
 
@@ -531,7 +534,9 @@ describe('stampTextDelivery', () => {
       sendText: 'codex-queue',
       cancel: null,
       adjustEffort: null,
-      attach: null
+      attach: null,
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 
@@ -552,7 +557,9 @@ describe('stampTextDelivery', () => {
       sendText: null,
       cancel: 'launched-process',
       adjustEffort: null,
-      attach: null
+      attach: null,
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 
@@ -577,7 +584,9 @@ describe('stampTextDelivery', () => {
       sendText: 'terminal',
       cancel: 'terminal',
       adjustEffort: null,
-      attach: 'terminal'
+      attach: 'terminal',
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_CONSOLE_TEXT_CHARS
     })
   })
 
@@ -708,6 +717,8 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
       sendText: 'held-session',
       cancel: null,
       adjustEffort: null,
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_DWARF_TEXT_CHARS,
       // Null for the PROVIDER's sake rather than the channel's (#408): this
       // session is held over Antigravity's NDJSON, which has no measured image
       // block. A held Claude session on the same channel answers 'held-session'.
@@ -848,7 +859,105 @@ describe('a console this machine cannot type into (#366)', () => {
       sendText: 'claude-relay',
       cancel: 'terminal',
       adjustEffort: null,
-      attach: null
+      attach: null,
+      // AMENDED for #431: the matrix gained a per-route ceiling.
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 })
+
+/* --- Message length (#431) — one block, appended ---------------------------- */
+
+/*
+ * Issue #431. The matrix gained a NUMBER: how much of a message this dwarf's
+ * send route can carry. It is stamped here rather than derived in the panel
+ * because only this file holds the endpoint, and the endpoint is what decides
+ * — a worker's chain reports 'foreman-relay' while writing into its foreman's
+ * own console, which is the tighter ceiling of the two.
+ */
+describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
+  // Local copies of the two builders the block above keeps to itself, rather
+  // than widening their scope: this block is appended and changes nothing that
+  // was already here.
+  function dwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+    return {
+      id: 'claude:s1',
+      provider: 'claude',
+      role: 'foreman',
+      name: 'boss',
+      status: 'working',
+      sessionId: 's1',
+      ...overrides
+    }
+  }
+
+  function mine(dwarfs: Dwarf[]): Mine {
+    return {
+      id: 'mine:c:\\work',
+      path: 'C:\\work',
+      name: 'work',
+      tier: 'bronze',
+      dwarfs,
+      tokensObserved: 0,
+      updatedAt: 1
+    }
+  }
+
+  function stampedCapabilities(target: TextDeliveryTarget, consoleInput = true) {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf()])],
+      targetsFrom({ 'claude:s1': target }),
+      consoleInput
+    )
+    return stamped?.dwarfs[0]?.capabilities
+  }
+
+  it('gives a console endpoint the console ceiling', () => {
+    expect(stampedCapabilities({ kind: 'terminal', pid: 42 })?.maxTextChars).toBe(
+      MAX_CONSOLE_TEXT_CHARS
+    )
+  })
+
+  it('gives a named session with no console the wire ceiling', () => {
+    expect(
+      stampedCapabilities({ kind: 'claude-relay', sessionName: 'sample-project-70' })?.maxTextChars
+    ).toBe(MAX_DWARF_TEXT_CHARS)
+  })
+
+  it('keeps the console ceiling for a worker whose foreman is written to at its console', () => {
+    // The channel says 'foreman-relay' and the endpoint is a console; reading
+    // the channel would hand this route more than its spawn can start.
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf({ id: 'claude:s1:agent' }), dwarf()])],
+      targetsFrom({
+        'claude:s1:agent': {
+          kind: 'foreman-relay',
+          foremanDwarfId: 'claude:s1',
+          workerName: 'Explorer'
+        },
+        'claude:s1': { kind: 'terminal', pid: 42 }
+      })
+    )
+    const worker = stamped?.dwarfs.find((item) => item.id === 'claude:s1:agent')
+    expect(worker?.capabilities?.sendText).toBe('foreman-relay')
+    expect(worker?.capabilities?.maxTextChars).toBe(MAX_CONSOLE_TEXT_CHARS)
+  })
+
+  it('gives a console this machine cannot type into the relay ceiling it degrades to', () => {
+    // #366's degrade moves the endpoint off the console, so the ceiling moves
+    // with it rather than staying behind on a tier this send will not take.
+    expect(
+      stampedCapabilities({ kind: 'terminal', pid: 42, sessionName: 'sample-project-70' }, false)
+        ?.maxTextChars
+    ).toBe(MAX_DWARF_TEXT_CHARS)
+  })
+
+  it('reports the wire ceiling for a dwarf with no send channel at all', () => {
+    // A launched process takes no messages; the number reaches a composer that
+    // is already disabled, so it must not claim a limit this dwarf never had.
+    expect(stampedCapabilities({ kind: 'launched-process', launchId: 'L1' })?.maxTextChars).toBe(
+      MAX_DWARF_TEXT_CHARS
+    )
+  })
+})
+/* --- end of the #431 block -------------------------------------------------- */
