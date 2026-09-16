@@ -11,6 +11,7 @@ import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 import type { HeldSessionSubagentSignal } from './heldCrew'
 import {
   heldMessageEntries,
+  isReplayedUserMessage,
   type HeldSessionHandle,
   type HeldSessionPort,
   type HeldSessionStartRequest
@@ -353,7 +354,16 @@ export function createSdkHeldSession(): HeldSessionPort {
            * one row, so this calls onMessage once per entry rather than once
            * per message.
            */
-          if (message.type === 'assistant' || message.type === 'user') {
+          // AMENDED for #428: a `user` message with `isReplay: true` is the
+          // SDK replaying a turn already on this connection — never observed
+          // on 0.3.258 (see isReplayedUserMessage's own comment), but skipped
+          // before it reaches onMessage so a future SDK that does replay
+          // cannot double the row the registry already recorded first-hand
+          // when the panel sent it (HeldSessionRegistry.queue).
+          if (
+            (message.type === 'assistant' || message.type === 'user') &&
+            !isReplayedUserMessage(message)
+          ) {
             for (const entry of heldMessageEntries(message.message.content)) {
               request.onMessage(message.type, entry.text, entry.activity)
             }
