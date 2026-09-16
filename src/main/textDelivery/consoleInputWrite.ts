@@ -5,10 +5,13 @@
  *
  * This is the replacement sendKeys.ts's header anticipated ("a stricter
  * AttachConsole/WriteConsoleInput implementation can replace it later without
- * anything above noticing"). `WindowsTextDelivery` composes it for a message
- * and for #203's permission digit; the question picker's keys (#362) do not
- * come here, because its multi-select confirmation is an ARROW — a virtual key
- * with no character — and nothing has measured a record shaped like that.
+ * anything above noticing"). `WindowsTextDelivery` composes it for a message,
+ * for #203's permission digit, and — since #402 — for the question picker's own
+ * keys (#362). The picker stayed behind at first because its multi-select
+ * confirmation was read as an ARROW, a virtual key with no character, and no
+ * record of that shape had been measured. It is not one: measured live on
+ * 2026-09-16, the arrow travels as the three ORDINARY CHARACTERS of the VT
+ * "cursor right" sequence, `ESC [ C`, which this file was already able to carry.
  *
  * Why it is worth having at all: the paste path typed into whatever held the
  * foreground, so a Windows Terminal window with two tabs could not be typed
@@ -60,11 +63,12 @@
  *    `GetStdHandle(STD_INPUT_HANDLE)` hands back a stale handle and
  *    `WriteConsoleInput` fails on it with ERROR_INVALID_HANDLE — 0 events
  *    written, no error the caller would notice as a delivery failure.
- * 3. **The Enter must be its own `WriteConsoleInput` call, never appended to
- *    the text's.** The SECOND call is what makes Enter read as a submit rather
- *    than pasted content; `ENTER_SPLIT_DELAY_MS` below carries only the
- *    measured margin against the two calls being coalesced into one read while
- *    the receiving process is busy (#404).
+ * 3. **Every key must be its own `WriteConsoleInput` call, never appended to
+ *    another's.** A call of its own is what makes Enter read as a submit rather
+ *    than pasted content, and #402 found the same rule governs each key of an
+ *    answer; `CHUNK_SPLIT_DELAY_MS` below carries only the measured margin
+ *    against two calls being coalesced into one read while the receiving
+ *    process is busy (#404).
  */
 
 import { toConsoleLine } from './sendKeys'
@@ -109,8 +113,8 @@ function base64Utf16(text: string): string {
 }
 
 /**
- * How long the script sleeps between the text's `WriteConsoleInputW` call and
- * the Enter's, in milliseconds.
+ * How long the script sleeps between one chunk's `WriteConsoleInputW` call and
+ * the next's, in milliseconds.
  *
  * The pause is a margin, not the mechanism: what makes Enter submit rather
  * than paste is that it travels in a SECOND call, and every delay measured
@@ -118,51 +122,60 @@ function base64Utf16(text: string): string {
  * 150 ms all worked, one child process and one attach throughout (#404). 50 is
  * kept because it sits near the low end of what was measured, as insurance
  * against the two calls being coalesced into one read while the receiving
- * process is busy rather than something the TUI is waiting out. Table in
+ * process is busy rather than something the TUI is waiting out. The same margin
+ * now sits between every pair of chunks in a sequence, because every chunk of an
+ * answer is a keystroke for the same reason Enter is (#402). Table in
  * `docs/console-hosting.md` §6.
  */
-const ENTER_SPLIT_DELAY_MS = 50
+const CHUNK_SPLIT_DELAY_MS = 50
+
+/** The chunk that submits: a carriage return, the one record carrying a virtual key. */
+const ENTER_CHUNK = '\r'
 
 /**
- * PowerShell that writes `text` into the console input buffer of `pid`,
- * optionally followed by Enter. Null when there is nothing it could honestly
- * do: a pid that cannot name a process, or a call that would write no records.
+ * PowerShell that writes a SEQUENCE of key chunks into the console input buffer
+ * of `pid` — each chunk in its own `WriteConsoleInputW` call, one child process
+ * and one attach for the whole sequence, `CHUNK_SPLIT_DELAY_MS` between calls.
+ * Null when there is nothing it could honestly do: a pid that cannot name a
+ * process, an empty sequence, or a chunk that would write no records.
+ *
+ * **A chunk is a keystroke and a call is what makes it one.** That is #404's
+ * finding generalised: a live Claude Code TUI reads everything arriving in one
+ * read as a PASTE, where a carriage return is line content rather than a submit
+ * — so Enter had to travel in a call of its own. #402 measured the rest of the
+ * picker through the same route and found the rule holds for every key: the
+ * digits that toggle a multi-select, the `ESC [ C` that opens its summary, and
+ * the Enter that accepts it are four keystrokes, so they are four calls.
+ *
+ * Nothing here interprets a chunk. They are code-unit strings, and `ESC [ C` is
+ * a chunk exactly as `hello` is one — the arrow the picker needs turned out not
+ * to be a virtual key at all, just the three ordinary characters of the VT
+ * "cursor right" sequence, which `New-InputBuffer` below encodes with
+ * `wVirtualKeyCode` 0 like any other text. Flattening belongs to the CALLER
+ * that carries a person's own text (see `buildConsoleInputWriteCommand`); a
+ * builder that flattened would eat the `\r` that submits.
  *
  * Null rather than a throw, and fail-closed like every other guard on this
- * path (`buildQuestionAnswerCommand`, the tier pid guard): a script built
- * around a junk pid would attach to whatever process happens to hold that
- * number, and a write into a stranger's console cannot be taken back.
- *
- * Enter travels in its OWN `WriteConsoleInputW` call, never inside the text's
- * — #404's finding. The two calls run in the same child process and the same
- * attach, `ENTER_SPLIT_DELAY_MS` apart, because a live Claude Code TUI reads a
- * multi-character chunk as a paste and a carriage return inside one as line
- * content rather than a submit; only a call of its own reads as a keystroke. A
- * bare Enter (`text` empty) is the one case with a single call, since there is
- * no text write to put it after. Enter is also the only record that carries a
- * virtual key: the text records set `wVirtualKeyCode` 0 and let `UnicodeChar`
- * speak, which is what a TTY reader in raw mode reads.
- *
- * `toConsoleLine` flattens first, for the reason it exists: a console has no
- * way to accept a literal newline without submitting the line, so a pasted
- * paragraph would otherwise send its first line and type the rest into a fresh
- * prompt. After flattening, the only CR in either buffer is Enter's own.
+ * path: a script built around a junk pid would attach to whatever process
+ * happens to hold that number, and a write into a stranger's console cannot be
+ * taken back.
  *
  * The exit codes distinguish the failures the measurement produced, so a
  * caller can say which one happened rather than reporting a bare non-zero:
  * 2 the attach was refused, 3 `CONIN$` would not open, 4 a write was short or
- * failed — including the shape #404 added, where the text's call landed whole
- * and the Enter call behind it did not, leaving an unsubmitted message in the
- * buffer. The console is detached again on every one of them.
+ * failed — including the shape #404 added, where an earlier call landed whole
+ * and a later one did not, leaving an unsubmitted message or a half-pressed
+ * answer in the buffer. The console is detached again on every one of them.
  */
-export function buildConsoleInputWriteCommand(
+export function buildConsoleInputSequenceCommand(
   pid: number,
-  text: string,
-  pressEnter: boolean
+  chunks: readonly string[]
 ): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null
-  const payload = toConsoleLine(text)
-  if (payload === '' && !pressEnter) return null
+  if (chunks.length === 0) return null
+  // A chunk with nothing in it would spend a `WriteConsoleInputW` call writing
+  // zero records, which reports success and presses nothing.
+  if (chunks.some((chunk) => chunk === '')) return null
 
   const lines = [
     "$ErrorActionPreference = 'Stop'",
@@ -173,9 +186,10 @@ export function buildConsoleInputWriteCommand(
     '[DllImport("kernel32.dll", SetLastError = true)] public static extern bool WriteConsoleInputW(IntPtr hConsoleInput, byte[] lpBuffer, uint nLength, out uint lpNumberOfEventsWritten);',
     '[DllImport("kernel32.dll", SetLastError = true)] public static extern bool CloseHandle(IntPtr hObject);',
     "'@",
-    // One record-building routine, called once per buffer (text, and — when
-    // asked — Enter as its own, separate buffer): the two must never share a
-    // call, so they must not share the list they are built from either (#404).
+    // One record-building routine, called once per chunk: the chunks must never
+    // share a call, so they must not share the list they are built from either
+    // (#404). The Enter chunk earns `VK_RETURN` from the same line every other
+    // record is denied one by.
     'function New-InputBuffer([System.Collections.Generic.List[char]]$units) {',
     `  $buffer = New-Object byte[] ($units.Count * ${INPUT_RECORD_BYTES * 2})`,
     '  $offset = 0',
@@ -192,10 +206,6 @@ export function buildConsoleInputWriteCommand(
     '  }',
     '  return $buffer',
     '}',
-    '$textUnits = New-Object System.Collections.Generic.List[char]',
-    `$textUnits.AddRange([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${base64Utf16(
-      payload
-    )}')).ToCharArray())`,
     '[void][Win32.ConsoleInput]::FreeConsole()',
     `if (-not [Win32.ConsoleInput]::AttachConsole(${pid})) { exit 2 }`,
     `$conin = [Win32.ConsoleInput]::CreateFileW('CONIN$', ${GENERIC_READ_WRITE}, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)`,
@@ -208,33 +218,20 @@ export function buildConsoleInputWriteCommand(
     '$expected = [uint32]0'
   ]
 
-  // The text's own call, when there is any text at all — a bare Enter has
-  // none, and must not spend a call writing zero records.
-  if (payload !== '') {
+  for (const [index, chunk] of chunks.entries()) {
+    // Before every call but the first: the margin against two calls being
+    // coalesced into one read while the receiving process is busy (#404).
+    if (index > 0) lines.push(`Start-Sleep -Milliseconds ${CHUNK_SPLIT_DELAY_MS}`)
     lines.push(
-      '$textBuffer = New-InputBuffer $textUnits',
-      '$textWritten = [uint32]0',
-      '$expected += [uint32]($textUnits.Count * 2)',
-      '$ok = $ok -and [Win32.ConsoleInput]::WriteConsoleInputW($conin, $textBuffer, [uint32]($textUnits.Count * 2), [ref]$textWritten)',
-      '$written += $textWritten'
-    )
-  }
-
-  // Enter's call, SECOND and separate from the text's — the shape #404
-  // measured: a chunk with the text and Enter together reads to a live TUI as
-  // a paste, where a carriage return is line content rather than a submit. The
-  // sleep only guards the two calls against being coalesced into one read; it
-  // is skipped for a bare Enter, which has no first call to be coalesced with.
-  if (pressEnter) {
-    if (payload !== '') lines.push(`Start-Sleep -Milliseconds ${ENTER_SPLIT_DELAY_MS}`)
-    lines.push(
-      '$enterUnits = New-Object System.Collections.Generic.List[char]',
-      '$enterUnits.Add([char]13)',
-      '$enterBuffer = New-InputBuffer $enterUnits',
-      '$enterWritten = [uint32]0',
-      '$expected += [uint32]($enterUnits.Count * 2)',
-      '$ok = $ok -and [Win32.ConsoleInput]::WriteConsoleInputW($conin, $enterBuffer, [uint32]($enterUnits.Count * 2), [ref]$enterWritten)',
-      '$written += $enterWritten'
+      `$units${index} = New-Object System.Collections.Generic.List[char]`,
+      `$units${index}.AddRange([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${base64Utf16(
+        chunk
+      )}')).ToCharArray())`,
+      `$buffer${index} = New-InputBuffer $units${index}`,
+      `$written${index} = [uint32]0`,
+      `$expected += [uint32]($units${index}.Count * 2)`,
+      `$ok = $ok -and [Win32.ConsoleInput]::WriteConsoleInputW($conin, $buffer${index}, [uint32]($units${index}.Count * 2), [ref]$written${index})`,
+      `$written += $written${index}`
     )
   }
 
@@ -245,6 +242,35 @@ export function buildConsoleInputWriteCommand(
     'exit 0'
   )
   return lines.join('\n')
+}
+
+/**
+ * PowerShell that writes `text` into the console input buffer of `pid`,
+ * optionally followed by Enter — the MESSAGE shape, which is a two-chunk
+ * sequence and nothing more.
+ *
+ * A thin caller of the builder above rather than a sibling of it, because the
+ * two would otherwise carry the same P/Invoke block, the same record encoding
+ * and the same exit codes twice. What belongs here and not there is the one
+ * thing that is true of a person's own text and of no other chunk:
+ * `toConsoleLine` flattens it first, because a console has no way to accept a
+ * literal newline without submitting the line, so a pasted paragraph would
+ * otherwise send its first line and type the rest into a fresh prompt. After
+ * flattening, the only CR in the sequence is Enter's own.
+ *
+ * A bare Enter (`text` empty) is a one-chunk sequence, so it makes one call with
+ * no sleep in front of it — there is no earlier call for it to be coalesced
+ * with. Text with no Enter is the other one-chunk case, and a call with neither
+ * is refused rather than built.
+ */
+export function buildConsoleInputWriteCommand(
+  pid: number,
+  text: string,
+  pressEnter: boolean
+): string | null {
+  const payload = toConsoleLine(text)
+  const chunks = [...(payload === '' ? [] : [payload]), ...(pressEnter ? [ENTER_CHUNK] : [])]
+  return buildConsoleInputSequenceCommand(pid, chunks)
 }
 
 /** What one non-zero exit of the script above means, for the two readers of it. */

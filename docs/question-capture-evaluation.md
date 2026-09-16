@@ -146,12 +146,19 @@ into `WAITING_ON_HUMAN_REASON` when a registry-proven block coincides with a rea
 from the panel" button is built on for this row. That is exactly why held sessions exist as their own
 mode rather than an enhancement to the ordinary poll.
 
-**What §2's "mechanically present, semantically blind" claim means concretely — and the half of it
-that is now measured.** `sendKeys.ts` can type escaped text and press Enter (`:60-75`), or send a
-bare `{ESC}` for Kick (`:87-94`) — nothing else. For an `AskUserQuestion` picker that is still the
-whole story, and the blindness still stands: nothing here knows which key corresponds to which
-`DwarfQuestionOption`, and row one of `docs/console-hosting.md`'s matrix cannot be built anyway,
-because the ask is not on disk while the menu is open.
+**What §2's "mechanically present, semantically blind" claim means concretely — and the halves of it
+that have since been measured.** When this was written, `sendKeys.ts` could type escaped text and
+press Enter, or send a bare `{ESC}` for Kick, and nothing else; for an `AskUserQuestion` picker that
+was the whole story, nothing here knew which key corresponded to which `DwarfQuestionOption`, and row
+one of `docs/console-hosting.md`'s matrix could not be built anyway because the ask was not on disk
+while the menu was open.
+
+**All three halves of that have since fallen, each to its own measurement.** #362 measured the
+picker's keys against the CLI (`console-hosting.md` §4c): a digit per option, 1-based in the order
+the agent gave them, with a confirmation behind a multi-select. #402 re-measured every one of them
+through the write by pid and moved them onto it (§6), so an answer needs no window and no tab
+guess. And §9 below overturned the on-disk claim outright: on 2.1.273 the ask sits in the transcript
+unresolved for as long as the menu stands.
 
 The **permission** picker is a different dialog and has since been measured — see §4 and the
 matrix's fourth row for the numbers. The short version is that the two mechanisms `sendKeys.ts`
@@ -561,7 +568,8 @@ that value on an observed foreman, redacted at the provider boundary, with `chan
 `DwarfMessagePanel.vue` renders `DwarfQuestionCard` on `v-else-if="dwarf.pendingQuestion"` — the
 existence of the field and nothing else, with no held check and no capability check. And the card
 already knows what a terminal-channel ask is: `ANSWER_ONLY_WHERE_IT_RUNS`, the console jump on any
-refusal about a console, the several-question refusal, and the keystroke answering #362 measured.
+refusal about a console, the several-question refusal, and the keys #362 measured — written into the
+session's own console by pid since #402, so no window is raised to answer with them.
 
 So #298's deliverable — an observed session's open question, with its options, shown while it is
 open, saying it must be answered at the terminal, with the jump — **was built for #354 and #362 and

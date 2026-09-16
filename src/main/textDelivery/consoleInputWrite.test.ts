@@ -1,20 +1,170 @@
 import { describe, expect, it } from 'vitest'
-import { buildConsoleInputWriteCommand, consoleWriteFailureFor } from './consoleInputWrite'
+import {
+  buildConsoleInputSequenceCommand,
+  buildConsoleInputWriteCommand,
+  consoleWriteFailureFor
+} from './consoleInputWrite'
 
 /**
- * The builder's own `ENTER_SPLIT_DELAY_MS` is not exported — pinned here as the
+ * The builder's own `CHUNK_SPLIT_DELAY_MS` is not exported — pinned here as the
  * value the 2026-09-16 measurement table settled on (0, 50 and 150 ms all
  * submitted; 50 is the one shipped), so a change to it fails a named test
  * rather than surprising whoever reads the script (#404).
+ *
+ * RENAMED with the constant for #402: the same margin now sits between every
+ * pair of chunks in a sequence, not only between a message and its Enter.
  */
-const EXPECTED_ENTER_SPLIT_DELAY_MS = 50
+const EXPECTED_CHUNK_SPLIT_DELAY_MS = 50
 
-/** Read back the one base64 payload the script carries, as the text it decodes to. */
+/** The VT "cursor right" sequence that confirms a multi-select picker (#402). */
+const CURSOR_RIGHT = '\u001b[C'
+
+/** Read back the FIRST base64 payload the script carries, as the text it decodes to. */
 function payloadOf(script: string): string {
   const blob = /FromBase64String\('([A-Za-z0-9+/=]*)'\)/.exec(script)?.[1]
   if (blob === undefined) throw new Error('no base64 payload in the script')
   return Buffer.from(blob, 'base64').toString('utf16le')
 }
+
+/** Every chunk the script carries, in the order it writes them (#402). */
+function payloadsOf(script: string): string[] {
+  return [...script.matchAll(/FromBase64String\('([A-Za-z0-9+/=]*)'\)/g)].map((match) =>
+    Buffer.from(match[1] ?? '', 'base64').toString('utf16le')
+  )
+}
+
+/**
+ * The sequence builder (#402), which is the one the message path now calls
+ * through: a list of code-unit chunks, each written in its OWN
+ * `WriteConsoleInputW` call, the measured split delay between them.
+ *
+ * It exists because the question picker's answer is a SEQUENCE — toggles, then
+ * a confirmation, then an accept — and #404 had already proved that a chunk
+ * reads as a keystroke only when it arrives in a call of its own. Writing that
+ * as a second builder beside this one would have meant two copies of the same
+ * PowerShell; `buildConsoleInputWriteCommand` is a thin caller instead.
+ */
+describe('buildConsoleInputSequenceCommand', () => {
+  it('refuses a pid that cannot name a process', () => {
+    // The same fail-closed guard the text builder has, for the same reason: a
+    // script built around a junk pid attaches to whatever holds that number.
+    expect(buildConsoleInputSequenceCommand(0, ['1'])).toBeNull()
+    expect(buildConsoleInputSequenceCommand(-1, ['1'])).toBeNull()
+    expect(buildConsoleInputSequenceCommand(1.5, ['1'])).toBeNull()
+    expect(buildConsoleInputSequenceCommand(Number.NaN, ['1'])).toBeNull()
+  })
+
+  it('refuses a sequence with nothing in it', () => {
+    expect(buildConsoleInputSequenceCommand(4242, [])).toBeNull()
+  })
+
+  it('refuses an empty chunk, which would spend a call writing no records', () => {
+    expect(buildConsoleInputSequenceCommand(4242, [''])).toBeNull()
+    expect(buildConsoleInputSequenceCommand(4242, ['1', '', '\r'])).toBeNull()
+  })
+
+  it('writes one WriteConsoleInputW call per chunk, in order, with the delay between', () => {
+    // The measured multi-select answer of #402: two toggles, the VT cursor-right
+    // that opens the summary, then Enter. Each is its own call because a chunk
+    // arriving inside another chunk's call reads as pasted content (#404).
+    const script = buildConsoleInputSequenceCommand(4242, ['1', '3', CURSOR_RIGHT, '\r']) as string
+    expect(payloadsOf(script)).toEqual(['1', '3', CURSOR_RIGHT, '\r'])
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(4)
+    expect(
+      script.match(new RegExp(`Start-Sleep -Milliseconds ${EXPECTED_CHUNK_SPLIT_DELAY_MS}`, 'g'))
+        ?.length
+    ).toBe(3)
+  })
+
+  it('keeps every chunk in its own buffer, so no two can share a call', () => {
+    const script = buildConsoleInputSequenceCommand(4242, ['1', '\r']) as string
+    const first = script.indexOf(
+      'WriteConsoleInputW($conin, $buffer0, [uint32]($units0.Count * 2), [ref]$written0)'
+    )
+    const sleep = script.indexOf(`Start-Sleep -Milliseconds ${EXPECTED_CHUNK_SPLIT_DELAY_MS}`)
+    const second = script.indexOf(
+      'WriteConsoleInputW($conin, $buffer1, [uint32]($units1.Count * 2), [ref]$written1)'
+    )
+    expect(first).toBeGreaterThan(-1)
+    expect(sleep).toBeGreaterThan(first)
+    expect(second).toBeGreaterThan(sleep)
+  })
+
+  it('sleeps before no chunk but the first, and not at all for a lone one', () => {
+    const lone = buildConsoleInputSequenceCommand(4242, ['\r']) as string
+    expect(lone.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(1)
+    expect(lone).not.toContain('Start-Sleep')
+  })
+
+  it('carries an escape sequence verbatim, since a VT chunk is not text to flatten', () => {
+    // Measured 2026-09-16: `ESC [ C` as three ordinary text records confirms a
+    // multi-select picker. None of the three is whitespace, but flattening is
+    // the caller's job either way — this builder must not touch a chunk.
+    const script = buildConsoleInputSequenceCommand(4242, [CURSOR_RIGHT]) as string
+    expect(payloadsOf(script)).toEqual(['\u001b[C'])
+    expect([...CURSOR_RIGHT].map((unit) => unit.codePointAt(0))).toEqual([27, 91, 67])
+  })
+
+  it('gives a carriage-return record VK_RETURN and every other record none', () => {
+    // One record-building routine for every chunk, so the Enter chunk earns its
+    // virtual key from the same line the text records are denied one by.
+    const script = buildConsoleInputSequenceCommand(4242, ['1', '\r']) as string
+    expect(script).toContain('if ($unit -eq [char]13) { 13 } else { 0 }')
+    expect(script.match(/function New-InputBuffer/g)?.length).toBe(1)
+  })
+
+  it('counts records rather than bytes in nLength, for every chunk', () => {
+    const script = buildConsoleInputSequenceCommand(4242, ['1', '\r']) as string
+    expect(script).toContain('$expected += [uint32]($units0.Count * 2)')
+    expect(script).toContain('$expected += [uint32]($units1.Count * 2)')
+  })
+
+  it('attaches to the pid, frees first, and takes the handle from CONIN$', () => {
+    const script = buildConsoleInputSequenceCommand(4242, ['1']) as string
+    expect(script.indexOf('FreeConsole()')).toBeLessThan(script.indexOf('AttachConsole('))
+    expect(script).toContain('AttachConsole(4242)')
+    expect(script).toContain("CreateFileW('CONIN$'")
+    expect(script).not.toContain('GetStdHandle')
+  })
+
+  it('imports no API that could move the foreground or press a key', () => {
+    // The whole point of this route: an answer reaches the session's own console
+    // and never the foreground, so nothing here may be able to raise a window.
+    const script = buildConsoleInputSequenceCommand(4242, ['1', CURSOR_RIGHT, '\r']) as string
+    for (const forbidden of [
+      'SetForegroundWindow',
+      'ShowWindow',
+      'AttachThreadInput',
+      'GetForegroundWindow',
+      'SendKeys',
+      'SendInput',
+      'keybd_event',
+      'System.Windows.Forms'
+    ]) {
+      expect(script).not.toContain(forbidden)
+    }
+  })
+
+  it('carries every chunk as base64 only, never as text a tokenizer could reach', () => {
+    const script = buildConsoleInputSequenceCommand(4242, ["'; Remove-Item C:\\ #"]) as string
+    expect(script).not.toContain('Remove-Item')
+    expect(payloadsOf(script)).toEqual(["'; Remove-Item C:\\ #"])
+  })
+
+  it('keeps the three measured exit codes, which the sequence does not change', () => {
+    const script = buildConsoleInputSequenceCommand(4242, ['1', '\r']) as string
+    expect(script).toContain('exit 2')
+    expect(script).toContain('exit 3')
+    expect(script).toContain('exit 4')
+    expect(script.match(/\[Win32\.ConsoleInput\]::FreeConsole\(\)/g)?.length).toBe(3)
+  })
+
+  it('is stable for the same arguments', () => {
+    expect(buildConsoleInputSequenceCommand(7, ['1', '\r'])).toBe(
+      buildConsoleInputSequenceCommand(7, ['1', '\r'])
+    )
+  })
+})
 
 describe('buildConsoleInputWriteCommand', () => {
   it('refuses a pid that cannot name a process', () => {
@@ -30,12 +180,13 @@ describe('buildConsoleInputWriteCommand', () => {
   })
 
   it('allows a bare Enter, which is a submit with no text', () => {
+    // AMENDED for #402: the Enter is a CHUNK now rather than a list built from
+    // `[char]13` in the script, so what this reads back is the sequence the
+    // wrapper hands down — one chunk, and that chunk a carriage return. The
+    // shape it pins is unchanged: one call, and no sleep in front of it (#404).
     const script = buildConsoleInputWriteCommand(4242, '', true) as string
     expect(script).not.toBeNull()
-    expect(payloadOf(script)).toBe('')
-    expect(script).toContain('$enterUnits.Add([char]13)')
-    // A bare Enter has no text call to come after, so it is the ONE call this
-    // builder ever makes with no sleep in front of it (#404).
+    expect(payloadsOf(script)).toEqual(['\r'])
     expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(1)
     expect(script).not.toContain('Start-Sleep')
   })
@@ -84,32 +235,34 @@ describe('buildConsoleInputWriteCommand', () => {
   })
 
   it('appends Enter as its own record pair only when asked', () => {
+    // AMENDED for #402 with the test above: an Enter is a second CHUNK now, so
+    // its presence is read off the sequence rather than off a script variable.
+    // What it pins is untouched — Enter rides outside the text's own payload,
+    // so a message can never submit itself.
     const withEnter = buildConsoleInputWriteCommand(4242, 'go', true) as string
     const without = buildConsoleInputWriteCommand(4242, 'go', false) as string
-    expect(withEnter).toContain('$enterUnits.Add([char]13)')
-    expect(without).not.toContain('$enterUnits.Add([char]13)')
-    // Enter rides outside the payload, so a message can never submit itself.
-    expect(payloadOf(withEnter)).toBe('go')
-    expect(payloadOf(without)).toBe('go')
+    expect(payloadsOf(withEnter)).toEqual(['go', '\r'])
+    expect(payloadsOf(without)).toEqual(['go'])
   })
 
   it('never puts the Enter record in the text buffer it builds from', () => {
-    // #404: the payload's own list must never carry char 13, because that list
-    // is what the FIRST call writes — the one a live TUI cannot read as a
+    // #404: the payload's own chunk must never carry char 13, because that
+    // chunk is what the FIRST call writes — the one a live TUI cannot read as a
     // submit no matter what it contains.
     const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
-    expect(script).not.toContain('$textUnits.Add(')
     expect(payloadOf(script)).not.toContain('\r')
   })
 
   it('writes the text and the Enter as two separate WriteConsoleInputW calls, text first, sleep between', () => {
     // #404: one call reads as a paste to a live Claude Code TUI and a
     // carriage return inside it is line content, not a submit — only a
-    // SECOND, separate call is read as a keystroke.
+    // SECOND, separate call is read as a keystroke. AMENDED for #402 for the
+    // buffer names alone: the two calls, their order and the sleep between them
+    // are exactly what they were.
     const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
-    const textCallIndex = script.indexOf('WriteConsoleInputW($conin, $textBuffer')
-    const sleepIndex = script.indexOf(`Start-Sleep -Milliseconds ${EXPECTED_ENTER_SPLIT_DELAY_MS}`)
-    const enterCallIndex = script.indexOf('WriteConsoleInputW($conin, $enterBuffer')
+    const textCallIndex = script.indexOf('WriteConsoleInputW($conin, $buffer0')
+    const sleepIndex = script.indexOf(`Start-Sleep -Milliseconds ${EXPECTED_CHUNK_SPLIT_DELAY_MS}`)
+    const enterCallIndex = script.indexOf('WriteConsoleInputW($conin, $buffer1')
     expect(textCallIndex).toBeGreaterThan(-1)
     expect(sleepIndex).toBeGreaterThan(textCallIndex)
     expect(enterCallIndex).toBeGreaterThan(sleepIndex)
@@ -117,15 +270,17 @@ describe('buildConsoleInputWriteCommand', () => {
   })
 
   it('makes one WriteConsoleInputW call and sleeps none when pressEnter is false', () => {
+    // AMENDED for #402: the absent second buffer is what "no Enter" looks like
+    // in the script now, where it used to be the absent `$enterUnits` list.
     const script = buildConsoleInputWriteCommand(4242, 'go', false) as string
     expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(1)
     expect(script).not.toContain('Start-Sleep')
-    expect(script).not.toContain('$enterUnits')
+    expect(script).not.toContain('$buffer1')
   })
 
   it('names the delay a constant carrying the measured margin, not a bare number', () => {
     const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
-    expect(script).toContain(`Start-Sleep -Milliseconds ${EXPECTED_ENTER_SPLIT_DELAY_MS}`)
+    expect(script).toContain(`Start-Sleep -Milliseconds ${EXPECTED_CHUNK_SPLIT_DELAY_MS}`)
   })
 
   it('gives the Enter record VK_RETURN and every text record none', () => {
@@ -140,14 +295,16 @@ describe('buildConsoleInputWriteCommand', () => {
   })
 
   it('counts records rather than bytes in nLength, for both calls', () => {
+    // AMENDED for #402 for the chunk-indexed names; the arithmetic this guards
+    // against — `nLength` counting bytes instead of records — is unchanged.
     const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
-    expect(script).toContain('$expected += [uint32]($textUnits.Count * 2)')
-    expect(script).toContain('$expected += [uint32]($enterUnits.Count * 2)')
+    expect(script).toContain('$expected += [uint32]($units0.Count * 2)')
+    expect(script).toContain('$expected += [uint32]($units1.Count * 2)')
     expect(script).toContain(
-      'WriteConsoleInputW($conin, $textBuffer, [uint32]($textUnits.Count * 2), [ref]$textWritten)'
+      'WriteConsoleInputW($conin, $buffer0, [uint32]($units0.Count * 2), [ref]$written0)'
     )
     expect(script).toContain(
-      'WriteConsoleInputW($conin, $enterBuffer, [uint32]($enterUnits.Count * 2), [ref]$enterWritten)'
+      'WriteConsoleInputW($conin, $buffer1, [uint32]($units1.Count * 2), [ref]$written1)'
     )
   })
 

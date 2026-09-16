@@ -6,9 +6,12 @@
  * the focus step having succeeded — which is why #371 took TEXT off it
  * entirely. A message and a permission digit are written into the console the
  * session's pid names now (consoleInputWrite.ts), the replacement this header
- * used to anticipate. What is left here is what a pid write cannot express: the
- * keys that carry no character at all — Escape, Ctrl+C, the picker's right
- * arrow — each a VIRTUAL KEY, and none of them measured as an input record.
+ * used to anticipate, and #402 sent the question picker's keys the same way
+ * once the confirmation it was waiting on turned out to be three ordinary
+ * characters rather than a virtual key. What is left here is the interrupt's
+ * Escape and the clean exit's Ctrl+C — both of which the #402 pass measured as
+ * deliverable text records too, and neither of which moved in it, because a
+ * key that ends a turn or a session deserves its own change.
  *
  * With the text builders went the SendKeys escaping (`escapeSendKeys`,
  * `powerShellLiteral` and the four quote codepoints it had to double). Every
@@ -79,61 +82,13 @@ export function buildGracefulExitCommand(): string {
   ].join('\n')
 }
 
-/** The nine rows Claude Code's question picker numbers, and the only keys this builder presses. */
-const ANSWER_DIGITS = /^[1-9]$/
-
-/**
- * PowerShell that answers Claude Code's `AskUserQuestion` picker: each chosen
- * option's digit, then — for a multi-select — `{RIGHT}` and `{ENTER}` (#362).
- *
- * Measured live by the maintainer on 2026-09-10, Claude Code 2.1.267, Windows
- * Terminal, with ONE question per call:
- *
- * - **Single-select**: pressing the option's digit selects AND submits, with no
- *   Enter and no confirmation screen — the same shape #203's permission digit
- *   has. So a single-select answer is one digit and `submit` is false; an Enter
- *   behind it would submit the input box of a session whose picker has closed.
- * - **Multi-select**: each digit TOGGLES its option and the cursor does not
- *   move, so the digits need no arrow counting. `End` does nothing and
- *   `PageDown` jumps to the free-text "Other" row — never a route to submit,
- *   which is why neither appears here. `{RIGHT}` shows the summary of what is
- *   toggled and `{ENTER}` accepts it.
- *
- * Null rather than a throw, and for three reasons the one caller states to the
- * person: nothing was chosen (a bare `{RIGHT}{ENTER}` would accept an empty
- * answer), more rows than the picker numbers, or a "digit" that is not one of
- * the nine. That last guard is the whole of this command's safety, and it is
- * what a builder carrying no escaping needs: a digit is the entire payload.
- *
- * `{RIGHT}` and `{ENTER}` ARE the SendKeys keynames, exactly as `{ESC}` and
- * `^c` are their builders' — spelled here rather than derived from user text.
- * The RIGHT arrow is also why this path did not move to the pid write with
- * #371's text: an arrow carries no character, so the input record it would need
- * is one nothing has measured against a TUI.
- *
- * The settle sleeps mirror every other builder's: 150ms so the just-focused
- * terminal is ready for the first key, 120ms between keys so the TUI registers
- * each as its own keystroke rather than folding two together.
- *
- * This builder presses what it is told, and nothing here knows which window is
- * in front. Where these keys may be pressed at all is the port's question, and
- * since #371 its focus check can tell a phantom console owned by a tab strip
- * from a console a session is alone on — so a shared Windows Terminal window is
- * refused rather than answered in whichever tab was active.
+/*
+ * `buildQuestionAnswerCommand` stood here until #402, and it went with the last
+ * thing that needed a keyname carrying no character. Its `{RIGHT}` was the
+ * whole reason the picker stayed on this path — and the arrow turned out not to
+ * be a virtual key at all: ConPTY hands the hosted process VT input, so the
+ * three ordinary characters `ESC [ C` move the picker, and an answer is written
+ * into the session's own console by pid like everything else. See
+ * `questionAnswerChunks` in questionKeys.ts for the keys and
+ * `buildConsoleInputSequenceCommand` in consoleInputWrite.ts for the write.
  */
-export function buildQuestionAnswerCommand(
-  digits: readonly string[],
-  submit: boolean
-): string | null {
-  if (digits.length === 0 || digits.length > 9) return null
-  if (digits.some((digit) => !ANSWER_DIGITS.test(digit))) return null
-  const keys = submit ? [...digits, '{RIGHT}', '{ENTER}'] : [...digits]
-  const lines = ["$ErrorActionPreference = 'Stop'", 'Add-Type -AssemblyName System.Windows.Forms']
-  for (const [index, key] of keys.entries()) {
-    lines.push(
-      `Start-Sleep -Milliseconds ${index === 0 ? 150 : 120}`,
-      `[System.Windows.Forms.SendKeys]::SendWait('${key}')`
-    )
-  }
-  return lines.join('\n')
-}
