@@ -71,6 +71,7 @@
  *    process is busy (#404).
  */
 
+import { boundedChunks } from '../../shared/consoleText'
 import { toConsoleLine } from './sendKeys'
 
 /**
@@ -262,6 +263,17 @@ export function buildConsoleInputSequenceCommand(
  * no sleep in front of it — there is no earlier call for it to be coalesced
  * with. Text with no Enter is the other one-chunk case, and a call with neither
  * is refused rather than built.
+ *
+ * **The words are bounded before they ever reach the builder (#425).** A
+ * single `WriteConsoleInput` call carrying a long message loses its own
+ * beginning somewhere between ConPTY's translation and a live Claude Code
+ * TUI's reader — measured 2026-09-16, `docs/console-hosting.md` §6 — so
+ * `boundedChunks` (shared/consoleText.ts) splits the flattened text into
+ * `MAX_CONSOLE_CHUNK_CODE_POINTS`-sized pieces first, each becoming its own
+ * chunk and so its own `WriteConsoleInputW` call; a short message still comes
+ * back as the one chunk it always was. This is the ONE place a message and
+ * #203's permission digit both pass through, so both are bounded by the same
+ * change.
  */
 export function buildConsoleInputWriteCommand(
   pid: number,
@@ -269,7 +281,10 @@ export function buildConsoleInputWriteCommand(
   pressEnter: boolean
 ): string | null {
   const payload = toConsoleLine(text)
-  const chunks = [...(payload === '' ? [] : [payload]), ...(pressEnter ? [ENTER_CHUNK] : [])]
+  const chunks = [
+    ...(payload === '' ? [] : boundedChunks(payload)),
+    ...(pressEnter ? [ENTER_CHUNK] : [])
+  ]
   return buildConsoleInputSequenceCommand(pid, chunks)
 }
 

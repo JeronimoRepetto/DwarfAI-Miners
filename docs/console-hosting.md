@@ -897,7 +897,11 @@ and a surrogate pair is two of them — `⛏️` also carries its variation sele
 receiver still read them back as correct UTF-8. **The chunking is the reader's, not the write's**:
 one `WriteConsoleInput` call wrote 32 770 records and node's TTY read them out 1 024 bytes at a
 time. **`EventsWritten` equalled `nLength` every time**, so the input buffer grew rather than
-truncating; no limit was hit at 16 KB, which is far past any message this panel sends.
+truncating at 16 KB. **That is not the same finding as "a long message arrives whole," and #425 is
+the correction: this reading settled delivery to the buffer only, against a raw-mode reader with no
+composer to lose anything to.** A real Claude Code TUI is a different receiver, and a single large
+`WriteConsoleInput` call loses its own beginning somewhere between ConPTY's translation and that
+reader — see the chunk-ceiling measurement at the end of this section.
 
 **Case 3 — the ConPTY target, which is the real case.** A receiver started as
 `wt.exe -w <name> new-tab -d <dir> node receiver.mjs` runs as a direct child of `WindowsTerminal.exe`
@@ -1349,6 +1353,53 @@ files) happened to have both reads finish before anything else was pasted; this 
 The rule `stripAttachmentTokens` enforces is now: each expected token comes off exactly **once**,
 from wherever it sits in the row — a file's exact path, an image's `[Image #<digits>]` shape — never
 tied to a position. A row missing a token, or carrying one nothing sent, still refuses.
+
+### The chunk ceiling — measured 2026-09-16 (#425)
+
+**A long message written by pid can arrive without its beginning, and the panel still reports it
+delivered.** The maintainer pasted a ~1,800-character post into the MessagePanel; the session
+received only the last 738 characters, and pasting those 738 again delivered 4. Every short message
+of the day arrived whole, which is why nobody had seen it before. All writes below went through the
+shipped builders, each numbered sentence so the surviving part is unambiguous [#425]:
+
+| Shape                                                                                                                                         | Sent       | Received                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------- |
+| one text chunk (1,553 code units) + Enter as its own write, 50 ms later                                                                       | whole text | from the middle of paragraph 6 to the end, ~530 code units |
+| one text chunk (1,151), Enter in a separate child **1.5 s** later                                                                             | whole text | from paragraph 9 to the end, ~180 code units               |
+| the same 1,162 characters as **6 chunks of 200 code units**, one `WriteConsoleInput` call each, the builder's 50 ms pause between, then Enter | whole text | **whole text**, all ten paragraphs                         |
+
+So the pause before Enter was never the cause, and the size of one call is: a single large
+`WriteConsoleInput` call loses its own head somewhere between ConPTY's translation and the TUI's
+reader, and a bounded chunk does not. Case 2 above (16 384 ASCII characters, one call, a raw-mode
+reader) could never have shown this — that receiver has no composer for a beginning to go missing
+from, which is the trap #404 fell into as well.
+
+**The ceiling itself, measured on a session this measurement launched and ended by itself** —
+`claude --model haiku`, a throwaway git-inited project under the scratchpad, this agent's own
+`CLAUDE*` environment markers stripped so the child wrote a transcript of its own, the folder-trust
+dialog accepted by two pid writes (`ESC [ B`, then a bare Enter — the same VT "cursor down" plus
+accept the trust dialog took in the `#402` measurement above), and the session ended by writing
+`/exit` and Enter by pid rather than killed. Claude Code 2.1.273, Windows 11, Windows Terminal
+(ConPTY), 2026-09-16 [V, #425]. One 1,935-code-point numbered message per run — accents, `¿…?`, and
+an emoji every paragraph, so a lost head or tail would be legible rather than guessed at — split with
+a code-point-safe chunker (never inside a surrogate pair), one `WriteConsoleInput` call per chunk
+with the builder's own 50 ms pause between them, Enter last and alone; each row is 3 runs, read back
+verbatim from the session's own transcript:
+
+| Chunk size (code points) | Chunks per message | Runs arrived whole |
+| ------------------------ | ------------------ | ------------------ |
+| 200                      | 10                 | 3 / 3              |
+| 400                      | 5                  | 3 / 3              |
+| 800                      | 3                  | 3 / 3              |
+
+All nine runs arrived byte-for-byte whole, first character through the closing `FIN-DEL-TEXTO`
+marker, every one delivered on the first pid write with no retry. **No size above 800 code points was
+tried**, so this table is the top of what is measured, not a discovered ceiling — the instructions for
+this measurement said as much, and a guess above 800 would not be evidence.
+`MAX_CONSOLE_CHUNK_CODE_POINTS` (`src/shared/consoleText.ts`) is set to **500**: below the largest
+size actually exercised, on the reasoning that three quick runs on one machine cannot stand in for
+every load and terminal condition a real delivery meets, while still large enough to cut a
+1,935-code-point message to 4 chunks instead of the 200-ceiling's 10.
 
 ---
 

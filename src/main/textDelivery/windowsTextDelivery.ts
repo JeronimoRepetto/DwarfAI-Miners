@@ -348,13 +348,16 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     // what a text-only message takes, so nothing that worked before this change
     // takes a new path to reach the same script.
     const attachments = request.attachments ?? []
-    const command =
-      attachments.length === 0
-        ? buildConsoleInputWriteCommand(request.pid, request.text, request.pressEnter)
-        : buildConsoleInputSequenceCommand(
-            request.pid,
-            consoleChunksFor(request.text, attachments, request.pressEnter)
-          )
+    let command: string | null
+    if (attachments.length === 0) {
+      command = buildConsoleInputWriteCommand(request.pid, request.text, request.pressEnter)
+    } else {
+      // #425: a pasted path that somehow exceeds the chunk bound is refused by
+      // consoleChunksFor (null) rather than split, exactly like a pid the
+      // builder below will not accept — neither reached a console.
+      const chunks = consoleChunksFor(request.text, attachments, request.pressEnter)
+      command = chunks === null ? null : buildConsoleInputSequenceCommand(request.pid, chunks)
+    }
     if (command === null) {
       return { delivered: false, error: CONSOLE_WRITE_UNBUILDABLE, neverStarted: true }
     }
