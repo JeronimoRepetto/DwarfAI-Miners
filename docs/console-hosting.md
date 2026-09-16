@@ -1193,6 +1193,99 @@ dialog is not the question picker, and every picker measurement above is a write
 read back immediately after it. It is recorded so that a later reader who sees it again has one
 prior sighting rather than none.
 
+### A pasted path attaches only when it names an IMAGE — measured 2026-09-16 (#408)
+
+**#408's comment settled that a bracketed paste of an image path attaches the image, and left four
+things open: the minimum pause before the Enter, what a non-image path does, what a space in the
+name does, and whether more than one file can travel in one message. All four are measured here,
+and one of them contradicts what #404 recorded for plain text.**
+
+Same rig as the two subsections above, and the same discipline: `Start-Process` of `claude.exe` with
+**no `-NoExit`**, `CLAUDE*` stripped from the environment so the session writes a transcript of its
+own, a throwaway `git init` project under the scratchpad, and the target pid taken as the set
+difference of `Get-Process claude` before and after — every other `claude.exe` on this machine is
+somebody's live session. The fixtures were generated, not collected: two 64×64 PNGs, a `.txt`, a
+hand-built one-page `.pdf`, and a copy of each with a space in its name. Every probe went through
+`buildConsoleInputSequenceCommand` as it ships, **one child process and one attach per message**,
+with only the sleep between calls varied. What arrived was read out of the session's own `.jsonl`,
+where an attachment is an `image` content block and a path is not. Claude Code 2.1.273, Windows 11
+[V, #408, 2026-09-16].
+
+**1 — the pause, with the chunks `[ESC [ 200~ <path> ESC [ 201~, \r]`:**
+
+| Sleep between the two calls | Probes | Attached?                    | Submitted?   |
+| --------------------------- | ------ | ---------------------------- | ------------ |
+| 600 ms (the #408 comment's) | 1      | **yes**, one `image` block   | **yes**      |
+| 50 ms (the builder's own)   | 3      | **yes**, 3/3                 | **yes**, 3/3 |
+| 0 ms                        | 3      | **yes** — the chips piled up | **no**, 0/3  |
+
+**Zero is not enough here, and for text it was.** #404 measured text submitting at every pause
+including none; a paste does not. At 0 ms all three images attached to the composer and none of the
+three Enters submitted — the composer simply accumulated, and the whole pile went in one turn when
+the NEXT probe's Enter arrived 50 ms behind its own paste. So the receiving TUI needs the Enter to
+land in a read of its own _after_ it has finished taking the paste in, and a call with no sleep in
+front of it is still inside that read.
+
+**The shipped constant therefore needs no change.** `CHUNK_SPLIT_DELAY_MS` is already 50, 50 is
+measured at 3/3 for attach-and-submit, and every later probe in this subsection — nine more
+messages, including the `/exit` that ended the session — went at 50 and submitted. The margin
+above the measured floor is the whole distance between 0 and 50, because 0 is where it fails.
+
+**2 — what a non-image path does, at 50 ms:**
+
+| Pasted path | What the transcript carries                                               |
+| ----------- | ------------------------------------------------------------------------- |
+| `.png`      | an `image` content block (base64), plus a `[Image #N]` marker in the text |
+| `.txt`      | **the path, as ordinary text.** No block of any kind                      |
+| `.pdf`      | **the path, as ordinary text.** No `document` block                       |
+
+**Only images attach; everything else is a path in the prompt.** In both non-image rows the session
+went on to read the file with its own `Read` tool — an ordinary tool call, gated by the ordinary
+permissions, which is exactly what the image row is NOT (there the CLI reads the bytes as the
+person's own input, which is why #408's comment noted a project-scoped permission does not gate it).
+A `.pdf` behaving like a `.txt` is worth saying plainly: the API has a document block and this path
+does not reach it.
+
+**An attached image is recorded twice.** The turn carrying the `image` block is followed by a second
+user turn holding one `[Image: source: <path>]` line per image. So the session is told the original
+path as well as the bytes, and nothing is copied anywhere for the transfer.
+
+**3 — a space in the name, at 50 ms:**
+
+| Pasted                              | Result                                                       |
+| ----------------------------------- | ------------------------------------------------------------ |
+| `<dir>\a picture with spaces.png`   | **attached**; the recorded source keeps the spaces           |
+| `"<dir>\a picture with spaces.png"` | **attached**; the surrounding quotes are stripped by the CLI |
+| `<dir>\notes with spaces.txt`       | text, exactly as the space-free `.txt` was                   |
+
+**A space needs no quoting, and a quote does no harm.** Both shapes reach the same attachment, so
+the panel has no quoting decision to make — which matters because a terminal drop quotes and a file
+picker does not, and this says the two are the same message.
+
+**4 — more than one, and where the text goes, at 50 ms:**
+
+| Chunks                       | What arrived                                             |
+| ---------------------------- | -------------------------------------------------------- |
+| `paste(A)`, `paste(B)`, `\r` | **both** images, as two blocks, **in paste order**       |
+| `paste(A)`, `text`, `\r`     | the image, then the text: `[Image #12] MARK-TEXT-AFTER`  |
+| `text`, `paste(B)`, `\r`     | the text, then the image: `MARK-TEXT-BEFORE [Image #13]` |
+
+**The composer preserves the order it was written in**, so one message may carry any number of
+images with the person's words before or after them, and the sequence builder needs nothing it does
+not already have: a message is `[paste(path)…, text?, \r]` and the chunk list is the whole design.
+
+**The Codex TUI is still not measured, and this is the second time it has been left open.** A
+`codex` session was launched into the same throwaway project for it and was gone before a probe
+could be read back — no rollout was ever written under `~/.codex/sessions`. It was not retried: by
+then the only live `codex.exe` on the machine belonged to somebody else, and a write by pid aimed at
+a process this agent did not launch is the one mistake this whole mechanism exists to make
+impossible. Nothing in #408 rests on it — the Codex queue is a file inbox and carries text by
+construction, which is a fact about the queue and not about the TUI.
+
+**The session ended the way it was asked to.** `/exit` as text with Enter behind it in a second
+call, one sequence, exit 0 in 287 ms, and `claude.exe` was gone inside eight seconds. No
+`Stop-Process` was reached.
+
 ---
 
 ## 7. Open edges
