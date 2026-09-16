@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
+import { darwinConsoleInputEnabled } from '../config/config'
 import type { ProbeCommand } from './processProbe'
 import type { EndProcessCommand } from './processEnd'
 import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
@@ -209,6 +210,46 @@ describe('createPlatformAdapters — text delivery', () => {
     ).resolves.toEqual({ delivered: true })
     expect(seen.map((command) => command.command)).toEqual(['ps', 'osascript', 'osascript'])
     expect(seen[2]?.args[1]).toContain('keystroke "hi"')
+  })
+
+  /*
+   * The exact round trip index.ts composes (#367 item 1): config.ts's
+   * environment-only reader feeds straight into the option this module
+   * already accepted "for tests and a future opt-in" before anything read the
+   * real environment for it. Proven here as one pipeline — fake env in,
+   * composed capability out — rather than trusting the two halves agree
+   * because each is unit-tested on its own.
+   */
+  it('flips supportsConsoleInput on darwin through the real env parser, end to end', () => {
+    const off = createPlatformAdapters(
+      options('darwin', { darwinConsoleInput: darwinConsoleInputEnabled({}) })
+    )
+    expect(off.textDelivery.supportsConsoleInput).toBe(false)
+
+    const on = createPlatformAdapters(
+      options('darwin', {
+        darwinConsoleInput: darwinConsoleInputEnabled({ DARWIN_CONSOLE_INPUT: '1' })
+      })
+    )
+    expect(on.textDelivery.supportsConsoleInput).toBe(true)
+  })
+
+  /*
+   * createConsoleInput only ever reads darwinConsoleInput on its darwin
+   * branch, so Windows' unconditional true and Linux's unconditional false
+   * above must hold even when the switch is explicitly on — asserted so a
+   * future refactor cannot let it start mattering on a platform #367 was
+   * never about.
+   */
+  it('leaves Windows and Linux console input capability unaffected by the switch', () => {
+    expect(
+      createPlatformAdapters(options('win32', { darwinConsoleInput: true })).textDelivery
+        .supportsConsoleInput
+    ).toBe(true)
+    expect(
+      createPlatformAdapters(options('linux', { darwinConsoleInput: true })).textDelivery
+        .supportsConsoleInput
+    ).toBe(false)
   })
 
   /**
