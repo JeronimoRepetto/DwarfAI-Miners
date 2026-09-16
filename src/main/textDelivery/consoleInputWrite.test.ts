@@ -346,6 +346,50 @@ describe('buildConsoleInputWriteCommand', () => {
       buildConsoleInputWriteCommand(7, 'same', true)
     )
   })
+
+  /*
+   * Issue #425: one `WriteConsoleInput` call carrying a long message loses its
+   * own beginning between ConPTY's translation and a live Claude Code TUI's
+   * reader, and a bounded chunk does not (measured 2026-09-16,
+   * docs/console-hosting.md §6). The split belongs here, where the message
+   * path's chunk list is built, so every caller of this wrapper — a message,
+   * and #203's permission digit — benefits without the sequence builder itself
+   * knowing what a chunk means.
+   */
+  it('splits a long message into bounded chunks before Enter, none over the bound', () => {
+    const text = 'a'.repeat(1_500)
+    const script = buildConsoleInputWriteCommand(4242, text, true) as string
+    const payloads = payloadsOf(script)
+    const enter = payloads.at(-1)
+    const wordChunks = payloads.slice(0, -1)
+    expect(enter).toBe('\r')
+    // 500 is MAX_CONSOLE_CHUNK_CODE_POINTS (shared/consoleText.ts) — pinned
+    // independently in consoleText.test.ts, so this only asserts the split
+    // happened, not the exact ceiling value.
+    for (const chunk of wordChunks) expect(chunk.length).toBeLessThanOrEqual(500)
+    expect(wordChunks.length).toBeGreaterThan(1)
+    expect(wordChunks.join('')).toBe(text)
+    // One WriteConsoleInputW call per chunk, Enter included, each its own —
+    // #404's rule holds for every chunk of a message, not only its first.
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(wordChunks.length + 1)
+  })
+
+  it('never splits a long message inside a surrogate pair', () => {
+    // 700 emoji is 700 code points — over the 500-code-point bound, so this
+    // must split — and 1,400 UTF-16 code units; a boundary landing inside a
+    // pair would show up as an odd-length chunk.
+    const text = '🙂'.repeat(700)
+    const script = buildConsoleInputWriteCommand(4242, text, false) as string
+    const chunks = payloadsOf(script)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) expect(chunk.length % 2).toBe(0)
+    expect(chunks.join('')).toBe(text)
+  })
+
+  it('keeps a short message a single chunk, exactly as before the fix', () => {
+    const script = buildConsoleInputWriteCommand(4242, 'go', true) as string
+    expect(payloadsOf(script)).toEqual(['go', '\r'])
+  })
 })
 
 /*
