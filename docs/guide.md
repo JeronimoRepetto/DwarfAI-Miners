@@ -120,7 +120,9 @@ drawing none.
 ### The message panel
 
 Clicking a dwarf opens its conversation in **a window of its own** — not a page inside the panel.
-It arrives docked beside the shell, and from there you can drag it anywhere on the desktop: closing
+The composer already has the keyboard when it opens, so you can start typing at once, with no
+second click to find the box first. It arrives docked beside the shell, and from there you can drag
+it anywhere on the desktop: closing
 it, reopening it, or restarting the app brings it back where you left it, so it can sit beside your
 editor while the shell stays on its edge. If the spot you left it in no longer exists — a monitor
 unplugged, a resolution change — it comes back beside the shell rather than off-screen.

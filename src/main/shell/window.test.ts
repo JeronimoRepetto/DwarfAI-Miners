@@ -13,6 +13,9 @@ import {
   applyPanelBounds,
   applyUiScale,
   buildMainWindowOptions,
+  // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
+  focusMessagePanelOnSelection,
+  type MessagePanelFocusTarget,
   formatShellTrace,
   messagePanelNeedsReveal,
   messagePanelState,
@@ -535,6 +538,59 @@ describe('setMessagePanel', () => {
     const read = messagePanelState()
     read.dwarfId = 'claude:someone-else'
     expect(messagePanelState().dwarfId).toBe('claude:s1')
+  })
+})
+
+/**
+ * Selecting a dwarf must land the keyboard in its composer, not one click
+ * away from it (#409). The renderer's half — focusing the textarea inside the
+ * page — is DwarfMessagePanel's own test; this is main's half, giving the
+ * PANEL WINDOW the OS focus in the one case nothing else in this file ever
+ * does: switching dwarfs while the panel is already open, so no later
+ * `show()` runs to focus it again (see setMessagePanelHeight and
+ * revealMessagePanelWithoutReport, both of which rely on Electron's own
+ * documented `show()` — "Shows and gives focus to the window" — for a panel
+ * that was not visible yet).
+ */
+describe('focusMessagePanelOnSelection (#409)', () => {
+  function fakeFocusTarget(visible: boolean) {
+    const calls: string[] = []
+    const target: MessagePanelFocusTarget = {
+      isVisible: () => visible,
+      focus: () => calls.push('focus')
+    }
+    return { target, calls }
+  }
+
+  const MESSAGE = { surface: 'message' as const, mineId: 'mine:a', dwarfId: 'claude:s1' }
+  const LAUNCH = { surface: 'launch' as const, mineId: 'mine:a', dwarfId: '' }
+
+  it('focuses an already-open panel when the shell selects or switches a dwarf', () => {
+    const { target, calls } = fakeFocusTarget(true)
+    focusMessagePanelOnSelection(target, MESSAGE, true)
+    expect(calls).toEqual(['focus'])
+  })
+
+  it('never focuses for a request that did not come from the shell', () => {
+    // The panel adopting the dwarf its own launch produced sets this same
+    // surface for itself (#162) — never a reason to steal the keyboard back
+    // from wherever the person already is.
+    const { target, calls } = fakeFocusTarget(true)
+    focusMessagePanelOnSelection(target, MESSAGE, false)
+    expect(calls).toEqual([])
+  })
+
+  it('never focuses for the launch surface, or for none, even from the shell', () => {
+    const { target, calls } = fakeFocusTarget(true)
+    focusMessagePanelOnSelection(target, LAUNCH, true)
+    focusMessagePanelOnSelection(target, emptyMessagePanel(), true)
+    expect(calls).toEqual([])
+  })
+
+  it('never focuses a window that is not visible yet — show() itself focuses that one', () => {
+    const { target, calls } = fakeFocusTarget(false)
+    focusMessagePanelOnSelection(target, MESSAGE, true)
+    expect(calls).toEqual([])
   })
 })
 

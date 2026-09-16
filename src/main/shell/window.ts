@@ -694,6 +694,55 @@ export function messagePanelState(): MessagePanelState {
 }
 
 /**
+ * The slice of BrowserWindow the selection focus needs (#409). Narrow like
+ * the four targets above it: the decision is unit-testable with a fake, and
+ * the live panel window satisfies this structurally.
+ */
+export interface MessagePanelFocusTarget {
+  isVisible: () => boolean
+  focus: () => void
+}
+
+/**
+ * Give the panel window the OS keyboard when a dwarf SELECTION asks for it
+ * (#409) — the person clicked a dwarf to read and answer it, and a click that
+ * still needs a second click on the composer defeats the one thing the panel
+ * exists for.
+ *
+ * All three facts have to hold, and each rules out one way this would go
+ * wrong:
+ *
+ * - **`fromShell`** is what tells a selection apart from the panel setting
+ *   this same surface for ITSELF — adopting the dwarf its own launch
+ *   produced (#162) — which must never steal the keyboard back from wherever
+ *   the person already is. `setMessagePanel`'s only caller that can pass
+ *   `true` is the live IPC request, and only when `event.sender` was the
+ *   shell's own webContents; the periodic read (`getMessagePanel`) and the
+ *   push the OTHER window hears never reach this function at all.
+ * - **`state.surface === 'message'`** keeps the Add Panel's own open silent:
+ *   an unanswered launch has no composer to focus.
+ * - **`target.isVisible()`** is the one case this function actually owns.
+ *   A freshly created or freshly revealed window is focused by `show()`
+ *   itself — Electron's own doc on `BrowserWindow#show`: "Shows and gives
+ *   focus to the window" (see setMessagePanelHeight and
+ *   revealMessagePanelWithoutReport) — so calling focus() again there would
+ *   be a second call for a case already covered. An ALREADY-VISIBLE window,
+ *   switching from one dwarf to another, is never show()n again — nothing
+ *   else in `setMessagePanel` ever moves its OS focus, which is the bug
+ *   #409 reports.
+ */
+export function focusMessagePanelOnSelection(
+  target: MessagePanelFocusTarget,
+  state: MessagePanelState,
+  fromShell: boolean
+): void {
+  if (!fromShell) return
+  if (state.surface !== 'message') return
+  if (!target.isVisible()) return
+  target.focus()
+}
+
+/**
  * Adopt a persisted position before any window exists (#296) — index.ts calls
  * this with the stored one right after loading it, mirroring how the edge
  * preference reaches `seedPanelEdge`. A panel the person had moved then opens
@@ -853,6 +902,10 @@ function revealMessagePanelWithoutReport(): void {
   const panel = messagePanelWindow
   if (panel === null || !messagePanelNeedsReveal(panel, messagePanel.surface)) return
   placeMessagePanel()
+  // Same rule as setMessagePanelHeight's own show() (#409): Electron's doc
+  // says show() "Shows and gives focus to the window", so the fallback
+  // reveal focuses the panel exactly as an ordinary reveal does, with no
+  // extra call needed here.
   panel.show()
   if (shellDebugEnabled()) {
     // The line that says the panel on screen was never measured (#312): a run
@@ -1140,8 +1193,17 @@ function createMessagePanelWindow(parent: BrowserWindow): BrowserWindow {
  * A state that arrives before the shell exists is stored and nothing else: the
  * panel is a child of a window that is not there yet, and the next open after
  * the shell is built places it.
+ *
+ * @param fromShell Whether THIS request is the shell's own click selecting or
+ * switching a dwarf (#409), never the panel setting this same surface for
+ * itself. `index.ts` is the only caller that can pass `true`, and only after
+ * comparing `event.sender` against `shellWebContents()` — the request path
+ * is the one place that fact is knowable at all (see
+ * focusMessagePanelOnSelection for what it gates). Defaults to false, which
+ * is what main's own internal close handler below wants: its surface is
+ * always 'none', so the fact never matters there.
  */
-export function setMessagePanel(state: MessagePanelState): MessagePanelState {
+export function setMessagePanel(state: MessagePanelState, fromShell = false): MessagePanelState {
   const opening = state.surface !== 'none'
   messagePanel = { ...state }
   // Every transition ends the previous wait, whichever way it goes: a close
@@ -1181,6 +1243,10 @@ export function setMessagePanel(state: MessagePanelState): MessagePanelState {
       )
     }
     placeMessagePanel()
+    // #409: the one transition in this whole function that never show()s the
+    // window again — see focusMessagePanelOnSelection for the three facts
+    // that gate it.
+    focusMessagePanelOnSelection(messagePanelWindow, state, fromShell)
   }
   // Both branches, one rule (#312): whichever of them ran, the window is still
   // hidden and only a height report shows it. The report almost always wins
@@ -1226,6 +1292,11 @@ export function setMessagePanelHeight(designHeight: number): void {
   cancelMessagePanelReveal()
   const visibleBefore = messagePanelWindow.isVisible()
   placeMessagePanel()
+  // The FIRST report on a fresh selection lands here, and needs no separate
+  // focus() (#409): Electron's own doc on BrowserWindow#show is "Shows and
+  // gives focus to the window", so the OS keyboard already follows this call.
+  // Only a selection switching dwarfs on an ALREADY-VISIBLE panel skips this
+  // branch — see focusMessagePanelOnSelection in setMessagePanel above.
   if (!messagePanelWindow.isVisible()) messagePanelWindow.show()
   if (debug) {
     // The report that reveals the window is the FIRST one, so `visibleBefore`

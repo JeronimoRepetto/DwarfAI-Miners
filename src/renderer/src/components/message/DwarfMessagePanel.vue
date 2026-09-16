@@ -251,6 +251,50 @@ const isSending = computed(() => props.sendState?.phase === 'sending')
 const isKicking = computed(() => props.kickState?.phase === 'kicking')
 
 /**
+ * The composer text box (#409). Main gives the PANEL WINDOW its OS focus on
+ * the same selection (see `setMessagePanel` in `main/shell/window.ts`); this
+ * is the other half — which control inside that window gets the keyboard.
+ */
+const composerRef = ref<HTMLTextAreaElement | null>(null)
+
+/*
+ * Whether THIS render draws the ordinary composer rather than one of the two
+ * cards that take its slot instead (#203) — the same test the template's
+ * v-if/v-else-if/v-else chain makes below, read back here so a permission or
+ * question clearing can be told apart from every other prop change.
+ */
+const showsComposer = computed(
+  () => props.dwarf.pendingPermission === undefined && props.dwarf.pendingQuestion === undefined
+)
+
+/** Hand the composer the keyboard, once Vue has actually drawn it (#409). */
+async function focusComposer(): Promise<void> {
+  await nextTick()
+  composerRef.value?.focus()
+}
+
+/*
+ * The panel is keyed by dwarf id (MessagePanelWindow.vue), so MOUNTING is the
+ * moment a person selected one. Never on a control the panel is already
+ * explaining as dead (#217): focusing a disabled textarea is a no-op, and the
+ * refusal line beside it already says why it cannot receive.
+ */
+onMounted(() => {
+  if (showsComposer.value && canReceive.value) void focusComposer()
+})
+
+/*
+ * A permission or question card is the one thing that takes the composer's
+ * OWN slot away (#203), and main's next snapshot is what gives it back —
+ * never this component, on its own initiative (see the module comment). That
+ * moment is a second selection in every way that matters here, so it earns
+ * the same focus the mount above gives the first one.
+ */
+watch(showsComposer, (shows) => {
+  if (shows && canReceive.value) void focusComposer()
+})
+
+/**
  * One row of the conversation as this panel draws it: whatever the transcript
  * (or a pending echo) carried, plus the two things resolved per row here —
  * whose portrait it takes (#175) and, for an echo only, its delivery marker
@@ -843,6 +887,7 @@ function onKick(): void {
       />
       <textarea
         v-else
+        ref="composerRef"
         v-model="message"
         class="panel-input is-selectable"
         rows="2"
