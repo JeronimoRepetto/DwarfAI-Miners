@@ -157,7 +157,8 @@ function createTextDelivery(
   focus: (pid: number) => Promise<boolean>,
   cliDetector: CliDetector,
   processEnd: ProcessEndPort,
-  processProbe: ProcessProbePort
+  processProbe: ProcessProbePort,
+  fs: FsLike
 ): TextDeliveryPort {
   const shared = {
     home: options.home,
@@ -171,6 +172,11 @@ function createTextDelivery(
       const detection = await cliDetector.detect('codex')
       return detection.installed ? detection.path : undefined
     },
+    // The same FsLike instance cliDetector was built with (#413): a shim the
+    // detector found is a shim this tier must be able to read too, and two
+    // separate instances would still agree on every real read — sharing one is
+    // simply not paying for a second object with nothing to differ over.
+    fs,
     ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.runRelay === undefined ? {} : { runRelay: options.runRelay }),
     ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue })
@@ -233,11 +239,14 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
     platform,
     ...(options.probeRun === undefined ? {} : { run: options.probeRun })
   })
-  // Built before the delivery port, which asks it for the codex binary (#97).
+  // Shared with the delivery port below (#413): the same disk, the same shim
+  // reads, whichever seam asks. Built before the delivery port, which asks it
+  // for the codex binary (#97).
+  const fs = options.fs ?? new NodeFs()
   const cliDetector = createCliDetector({
     home: options.home,
     platform,
-    fs: options.fs ?? new NodeFs(),
+    fs,
     ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.cliOverrides === undefined ? {} : { overrides: options.cliOverrides })
   })
@@ -261,7 +270,8 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
       focus,
       cliDetector,
       processEnd,
-      processProbe
+      processProbe,
+      fs
     ),
     processProbe,
     processEnd,

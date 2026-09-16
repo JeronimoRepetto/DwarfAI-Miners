@@ -7,10 +7,10 @@ import type { FsLike } from '../adapters/fsLike'
 import { PRODUCT_NAME, notInstalledReason } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
-import { resolveShimTarget, type CliDetector } from '../platform/cliDetection'
+import { resolveProgram, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
-import { buildLaunchArgs, isShellShim, prepareLaunchPrompt } from './launch'
+import { buildLaunchArgs, prepareLaunchPrompt } from './launch'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 
 /**
@@ -232,8 +232,8 @@ export interface LaunchInvocation {
    * Whether `command` is an interpreter running a JS entry rather than the
    * console program itself (#208). It decides console hosting, not argv: a
    * program that IS the console program needs no host, and one that will go on
-   * to spawn one does. Set where the answer is known — `resolveLaunchProgram`,
-   * which is what read the shim.
+   * to spawn one does. Set where the answer is known — `resolveProgram` in
+   * platform/cliDetection.ts, which is what read the shim.
    */
   viaNodeEntry: boolean
 }
@@ -580,32 +580,6 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
 }
 
 /**
- * A shim is a few hundred bytes; an entry that has not appeared by here is
- * not in a shim. Bounded so a wrong detection can never make this read a
- * large file.
- */
-const SHIM_READ_BYTES = 8 * 1024
-
-/**
- * The program to spawn for a detected path, and the argv that precedes the
- * CLI's own (#193). A real executable is itself. A batch shim is read for the
- * node entry it names, which is then run the way the shim would have run it —
- * the `node.exe` beside the shim if there is one, else `node` from PATH.
- * Undefined means the shim named nothing this can run; the caller says
- * "could not be started" rather than guessing.
- */
-async function resolveLaunchProgram(
-  binaryPath: string,
-  fs: FsLike
-): Promise<{ command: string; args: string[]; viaNodeEntry: boolean } | undefined> {
-  if (!isShellShim(binaryPath)) return { command: binaryPath, args: [], viaNodeEntry: false }
-  const target = resolveShimTarget(binaryPath, await fs.readTextHead(binaryPath, SHIM_READ_BYTES))
-  if (target === undefined) return undefined
-  const command = (await fs.exists(target.bundledNode)) ? target.bundledNode : 'node'
-  return { command, args: [target.entry], viaNodeEntry: true }
-}
-
-/**
  * Start one DETACHED session in a mine's folder, for whichever CLI was chosen.
  *
  * Detached is the whole of what this function does, and since #168 it is what a
@@ -620,8 +594,9 @@ async function resolveLaunchProgram(
  * started": it is the one failure the user can actually do something about,
  * and detection (#91) already knows how to say why. A batch shim used to be a
  * second refusal of that kind, naming CODEX_CLI_PATH; #193 removed it, because
- * the program behind the shim can be started (see `resolveLaunchProgram`) and
- * the exit it named was one a packaged user could not take.
+ * the program behind the shim can be started (see `resolveProgram` in
+ * platform/cliDetection.ts) and the exit it named was one a packaged user
+ * could not take.
  *
  * A successful verdict says a process started and nothing more. No dwarf is
  * returned and none is invented: the poll discovers the session, on its own
@@ -647,7 +622,7 @@ export async function launchClaudeSession(
   try {
     // Inside the try because reading a shim is a disk read that can fail like
     // a spawn can, and it fails the same way for the user: nothing started.
-    const program = await resolveLaunchProgram(detection.path, options.fs)
+    const program = await resolveProgram(detection.path, options.fs)
     if (program === undefined) {
       return { launched: false, provider: options.provider, error: couldNotStart(options.provider) }
     }
