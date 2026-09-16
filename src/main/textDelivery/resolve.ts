@@ -409,8 +409,11 @@ export function stampTextDelivery(
           attach: channelCarriesAttachments(sendChannel, dwarf.provider) ? sendChannel : null,
           // Off the ENDPOINT rather than off `sendChannel` (#431): a worker's
           // chain reports 'foreman-relay' while writing into its foreman's own
-          // console, and the console's ceiling is the tighter of the two. The
-          // channel name cannot tell those apart; the endpoint can.
+          // console, and the channel name cannot tell those apart where the
+          // endpoint can. Every endpoint answers the wire ceiling since #433 —
+          // the console write's own was its command line, and its script rides
+          // stdin now — so the stamp is one number today; it is read from the
+          // endpoint anyway, because that is the question being asked.
           maxTextChars: maxTextCharsFor(sendRoute?.endpoint.kind ?? null)
         }
       }

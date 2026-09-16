@@ -1385,17 +1385,16 @@ export interface DwarfCapabilities {
    * different question about the same route: not whether a message can go, but
    * how much of one. It is here rather than derived in the renderer from
    * `sendText` for the reason the rest of the matrix is here — the panel must
-   * refuse exactly what main refuses — and because `sendText` is not enough to
-   * derive it: a worker's chain reports `'foreman-relay'` while writing into
-   * its foreman's own console, which is the tighter of the two ceilings. Only
-   * `resolve.ts` holds the endpoint that decides (see `maxTextCharsFor`).
+   * refuse exactly what main refuses. `resolve.ts` stamps it from the ENDPOINT
+   * a send resolves to rather than from the channel it reports, which is the
+   * distinction `maxTextCharsFor` exists for.
    *
    * ABSENT MEANS "work it out from the channel this dwarf reports" —
-   * `maxTextCharsFor(dwarf.textDelivery)`, which is what the composer does. The
-   * two agree on every route but one: a worker's chain over its foreman's
-   * console, where the channel says `'foreman-relay'` and only the stamped
-   * number knows the console's tighter ceiling. Main stamps this on every poll,
-   * so absence is a matrix written before this member existed (or by hand in a
+   * `maxTextCharsFor(dwarf.textDelivery)`, which is what the composer does.
+   * Since #433 every route answers the same number, so the two agree
+   * everywhere; they did not while the console write carried its own tighter
+   * ceiling, and they need not agree again. Main stamps this on every poll, so
+   * absence is a matrix written before this member existed (or by hand in a
    * test), and the fallback is the closest honest reading of one.
    */
   maxTextChars?: number
@@ -1838,11 +1837,13 @@ export interface DwarfActivation {
  * quotation marks HALVES what fits (16,355 accepted), while a payload of
  * backslashes does not (32,712, the same as plain letters).
  *
- * On the wire because it is what bounds a MESSAGE (#431). Three of this app's
- * delivery tiers hand the person's words to a spawned process — the relay's
- * courier instruction, the Codex queue's `--message`, and the console write's
- * whole PowerShell script — so this number, not a typing budget, is what a
- * message has to fit inside.
+ * On the wire because it is what bounds a MESSAGE (#431). Two of this app's
+ * delivery tiers hand the person's words to a spawned process as ARGV — the
+ * relay's courier instruction and the Codex queue's `--message` — so this
+ * number, not a typing budget, is what a message has to fit inside. The console
+ * write was a third until #433 moved its whole PowerShell script onto the
+ * child's stdin, where no such bound exists; it answers this ceiling now because
+ * the wire does, not because its own transport asks for one.
  */
 export const WINDOWS_COMMAND_LINE_LIMIT = 32_767
 
@@ -1899,107 +1900,40 @@ const ARGV_QUOTING_FACTOR = 2
  * own limit, less the largest argv a message travels inside, halved for the
  * worst case quoting can do to it. 15,359 as of this writing.
  *
- * ## Why it is the LOOSEST bound and not the tightest
+ * ## Why it is the only bound, since #433
  *
- * Because one channel is tighter and says so itself. `MAX_CONSOLE_TEXT_CHARS`
- * below is the console write's own ceiling, and `maxTextCharsFor` is the one
- * place that picks between them — the panel reads the answer off
- * `DwarfCapabilities.maxTextChars` rather than assuming either. This one stays
- * the wire's ceiling: it is what the IPC boundary refuses past, because the
- * boundary does not know which channel the message will take, and it is what a
- * dwarf with no channel at all reports.
+ * It was the loosest of two for one release. The console write was tighter —
+ * `MAX_CONSOLE_TEXT_CHARS`, 6,541 — because its whole PowerShell script was
+ * spawned in a command line and the script costs several characters per
+ * character of message. That was never a fact about a console: #433 hands the
+ * script to PowerShell on the child's STDIN, which has no length bound, and the
+ * console tier now answers this number like everything else. `maxTextCharsFor`
+ * is still the one place the question is asked, and the panel still reads the
+ * answer off `DwarfCapabilities.maxTextChars` rather than assuming it.
  */
 export const MAX_DWARF_TEXT_CHARS = Math.floor(
   (WINDOWS_COMMAND_LINE_LIMIT - ARGV_MESSAGE_OVERHEAD_CHARS) / ARGV_QUOTING_FACTOR
 )
 
 /**
- * The P/Invoke preamble of the console write's PowerShell script, plus the
- * Enter chunk and a worker chain's prefix: everything in that script that does
- * not grow with the message.
+ * The ceiling for one resolved send route — the ONE place a channel is asked
+ * what it can carry (#431, #433).
  *
- * The preamble alone measured 2,557 characters of command line on 2026-09-16
- * (`buildConsoleInputWriteCommand` with an empty message). The rest of this
- * allowance is the prefix a `foreman-relay` chain prepends, which travels
- * through the same script and costs 3.6 characters of it per character.
+ * Every route answers `MAX_DWARF_TEXT_CHARS` today. It did not always: the
+ * console write carried its own tighter ceiling until #433, because its script
+ * was spawned in a command line rather than written to stdin. What is left is
+ * the QUESTION, and it is kept rather than inlined for the reason it was keyed
+ * the way it is — on the ENDPOINT a send resolves to rather than on the channel
+ * it reports, because a worker's chain reports `'foreman-relay'` while writing
+ * into its foreman's own console, and only the endpoint can tell those apart. A
+ * channel that grows a bound of its own again has one place to say so, and
+ * `resolve.ts`, `runtime.ts` and the composer all read it here.
+ *
+ * No channel at all answers the same number: nothing is sent without one, so it
+ * only ever reaches a composer that is already disabled.
  */
-const CONSOLE_SCRIPT_FIXED_CHARS = 4_096
-
-/**
- * What five attached paths cost that same script: one bracketed-paste chunk
- * each, at Windows' own MAX_PATH, base64 of UTF-16 plus its per-chunk
- * scaffolding — about 1,024 characters of command line apiece.
- *
- * Reserved unconditionally rather than subtracted per message, because the
- * ceiling has to be ONE number the composer can state before the person has
- * decided how many files they are attaching. A limit that shrank as chips
- * appeared would refuse text that was fine a moment earlier.
- */
-const CONSOLE_SCRIPT_ATTACHMENT_CHARS = 5_120
-
-/**
- * How many characters of command line one character of message costs on the
- * console tier: 3.6, measured 3.567 on 2026-09-16.
- *
- * Two additions, neither of which is quoting: the text is carried as base64 of
- * its UTF-16 code units (`base64Utf16`), which is 8/3 of a character, and every
- * `MAX_CONSOLE_CHUNK_CODE_POINTS`-sized chunk carries its own six lines of
- * PowerShell (#425). Base64's alphabet holds no quote, so unlike the argv tiers
- * above this slope is the same for every payload.
- */
-const CONSOLE_SCRIPT_CHARS_PER_MESSAGE_CHAR = 3.6
-
-/**
- * The longest message a console write can carry (#431) — the tightest real
- * bound this app has, and the one the issue that found it assumed did not
- * exist.
- *
- * The console tier does not type and has no length of its own to answer for;
- * what it answers for is the spawn. `windowsTextDelivery.ts` runs each write as
- * `powershell.exe -NoProfile -NonInteractive -Command <script>`, with the whole
- * script — the person's words inside it, base64 of UTF-16 — in the child's
- * COMMAND LINE. So the console is bounded by `WINDOWS_COMMAND_LINE_LIMIT` like
- * the relay is, only far more tightly, because the script costs 3.6 characters
- * per character of message where an argv element costs one or two.
- *
- * Measured live 2026-09-16 against a throwaway Claude Code session, through the
- * shipped builder and the shipped spawn (`docs/console-hosting.md` §6):
- * 29,323 code points built a 109,152-character command line and `spawn` refused
- * it with `ENAMETOOLONG` in 2 ms; 8,214 code points (32,518) arrived whole;
- * 8,409 (33,054) was refused again. A refusal there is also SILENT in the
- * useful sense — the throw carries no exit code, so `runConsoleWriteScript`
- * reports "the agent terminal could not be reached" and sets no `neverStarted`,
- * which means no second tier retries it. The panel has to refuse first, which
- * is what this number is for.
- *
- * #425's measurements never found this because its probe ran the script from a
- * FILE (`powershell -File`), and the shipped path does not.
- */
-export const MAX_CONSOLE_TEXT_CHARS = Math.floor(
-  (WINDOWS_COMMAND_LINE_LIMIT - CONSOLE_SCRIPT_FIXED_CHARS - CONSOLE_SCRIPT_ATTACHMENT_CHARS) /
-    CONSOLE_SCRIPT_CHARS_PER_MESSAGE_CHAR
-)
-
-/**
- * The ceiling for one resolved send route — the ONE place the two numbers above
- * are chosen between (#431).
- *
- * Keyed on the ENDPOINT a send resolves to rather than on the channel it
- * reports, and the difference is real: a worker's chain reports
- * `'foreman-relay'` while writing into its foreman's own console, so reading
- * the channel name would hand it the loose ceiling and let the panel accept a
- * message the spawn cannot start. `resolve.ts` passes the endpoint; only
- * `'terminal'` is tighter, and everything else — the two relays over a named
- * session, the queue, a held stream, a hosted process's stdin — answers to the
- * wire ceiling.
- *
- * No channel at all answers the wire ceiling too, never the tightest: nothing
- * is sent without one, so the number only ever reaches a composer that is
- * already disabled, and naming the console's limit there would describe a send
- * this dwarf could never have made.
- */
-export function maxTextCharsFor(channel: TextDeliveryChannel | null | undefined): number {
-  return channel === 'terminal' ? MAX_CONSOLE_TEXT_CHARS : MAX_DWARF_TEXT_CHARS
+export function maxTextCharsFor(_channel: TextDeliveryChannel | null | undefined): number {
+  return MAX_DWARF_TEXT_CHARS
 }
 
 /**

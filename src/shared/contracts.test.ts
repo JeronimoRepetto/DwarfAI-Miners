@@ -37,7 +37,6 @@ import {
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- Message length (#431) — one block, appended ------------------------- */
   HELD_MESSAGE_MAX_CHARS,
-  MAX_CONSOLE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
   WINDOWS_COMMAND_LINE_LIMIT,
   heldRetainedText,
@@ -785,23 +784,34 @@ describe('the message ceilings', () => {
     expect(MAX_DWARF_TEXT_CHARS).toBe(15_359)
   })
 
-  it('leaves the console tier a lower ceiling, because its script carries the text base64', () => {
-    // Measured 2026-09-16 (docs/console-hosting.md §6): the PowerShell the
-    // console write is spawned with grows ~3.57 characters per character of
-    // message, so a 30,000-point message builds a 109,152-character command
-    // line and never starts a process at all.
-    expect(MAX_CONSOLE_TEXT_CHARS).toBe(6_541)
-    expect(MAX_CONSOLE_TEXT_CHARS).toBeLessThan(MAX_DWARF_TEXT_CHARS)
+  /*
+   * AMENDED for #433 (was: 'leaves the console tier a lower ceiling, because its
+   * script carries the text base64', asserting MAX_CONSOLE_TEXT_CHARS === 6,541
+   * and that it was under the wire ceiling; and 'still raises every channel well
+   * past the keystroke budget it replaces', asserting it was over 4,000).
+   *
+   * Both pinned a constant that no longer exists. The console's own ceiling was
+   * never the console's: it was the command line the SCRIPT was spawned in, and
+   * #433 hands that script to PowerShell on stdin instead, where length costs
+   * time and nothing else. The console tier answers the wire ceiling now, which
+   * is what the two tests below say in the place these two stood.
+   */
+  it('leaves the console tier no ceiling of its own, since its script rides stdin', () => {
+    // Measured live 2026-09-16 over that transport (docs/console-hosting.md §6):
+    // a 30,000-code-point message — where 8,409 was refused before — was written
+    // whole in 4,277 ms and the session's transcript carried all 30,000 points.
+    expect(maxTextCharsFor('terminal')).toBe(MAX_DWARF_TEXT_CHARS)
   })
 
   it('still raises every channel well past the keystroke budget it replaces', () => {
-    expect(MAX_CONSOLE_TEXT_CHARS).toBeGreaterThan(4_000)
+    expect(MAX_DWARF_TEXT_CHARS).toBeGreaterThan(4_000)
   })
 })
 
 describe('maxTextCharsFor', () => {
-  it('gives a console endpoint the console ceiling', () => {
-    expect(maxTextCharsFor('terminal')).toBe(MAX_CONSOLE_TEXT_CHARS)
+  it('gives a console endpoint the wire ceiling, like every other endpoint', () => {
+    // AMENDED for #433 (was: 'gives a console endpoint the console ceiling').
+    expect(maxTextCharsFor('terminal')).toBe(MAX_DWARF_TEXT_CHARS)
   })
 
   it('gives every other endpoint the wire ceiling', () => {
@@ -827,9 +837,9 @@ describe('maxTextCharsFor', () => {
 
 describe('messageTooLongReason', () => {
   it('names the length, the limit and what would have carried it', () => {
-    const reason = messageTooLongReason(9_000, MAX_CONSOLE_TEXT_CHARS, 'terminal')
-    expect(reason).toContain('9000')
-    expect(reason).toContain(String(MAX_CONSOLE_TEXT_CHARS))
+    const reason = messageTooLongReason(20_000, MAX_DWARF_TEXT_CHARS, 'terminal')
+    expect(reason).toContain('20000')
+    expect(reason).toContain(String(MAX_DWARF_TEXT_CHARS))
     expect(reason).toContain('console')
   })
 

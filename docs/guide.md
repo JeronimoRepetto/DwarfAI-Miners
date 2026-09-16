@@ -259,21 +259,18 @@ which is the point of writing by process id, and why the prefix is now only for 
 the relay is still the channel.
 
 **How long a message may be** is a fact about the channel above it, not a preference, and the
-panel says so before you press Enter. A message leaves this app inside a **command line** on
-three of those routes — the relay's courier instruction, Codex's `--message`, and the whole
-PowerShell script a console write is spawned with — and Windows will not start a process with a
-command line longer than **32,767 characters**. So:
+panel says so before you press Enter. There is **one limit, 15,359 characters, and it is the same
+on every route**. It comes from the relay: a message leaves this app as one argument of a spawned
+process there, Windows will not start a process with a command line longer than
+**32,767 characters**, and that budget less the relay's own courier instruction, halved because
+Windows' quoting rule can double a payload of quotation marks, is where the number lands. It is
+measured rather than chosen — [`docs/console-hosting.md`](console-hosting.md) §6 carries the runs.
 
-| The route                                           | A message may be      |
-| --------------------------------------------------- | --------------------- |
-| written into a session's own console                | **6,541** characters  |
-| everything else (relay, Codex queue, a held stream) | **15,359** characters |
-
-The console's number is lower because its script carries your words base64-encoded, which costs
-about 3.6 characters of command line for every character you typed; the wider one is the
-command-line limit less the relay's own instruction, halved because Windows' quoting rule can
-double a payload of quotation marks. Both are measured rather than chosen —
-[`docs/console-hosting.md`](console-hosting.md) §6 carries the runs.
+A message written into a session's own console had a **lower** limit of 6,541 characters for one
+release, because the PowerShell script carrying your words was itself handed over on a command
+line. It is handed over on the script's own standard input now, which has no such bound: a long
+message costs time instead, about four seconds for 30,000 characters, and the panel shows it
+arriving.
 
 **Past it, the panel refuses and keeps your text.** The sentence in the alert row names how long
 the message is, how long this session can take, and what would have carried it; Enter does

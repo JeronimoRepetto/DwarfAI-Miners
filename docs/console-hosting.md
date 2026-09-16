@@ -1437,8 +1437,9 @@ transcript head and tail intact. The two failures wrote nothing at all.
 _synchronously_, with no exit code, so `runConsoleWriteScript` lands in its own `catch`
 and reports "the agent terminal could not be reached" with **no `neverStarted`** — which is
 the one flag that licenses the relay behind it to try the same text. So an over-long message on this
-tier is not retried anywhere and the person is told the wrong thing. The panel has to refuse first,
-which is what `MAX_CONSOLE_TEXT_CHARS` in `src/shared/contracts.ts` is for.
+tier is not retried anywhere and the person is told the wrong thing. The panel had to refuse first,
+which is what `MAX_CONSOLE_TEXT_CHARS` in `src/shared/contracts.ts` was for — until the section
+after next removed the ceiling instead (#433).
 
 **The argv bound itself, measured the same day on this host** (`execFile` against a plain
 `node -e` child, binary search on one argv element):
@@ -1455,14 +1456,69 @@ terminating NUL. The last row is why the wire ceiling is halved: Node's Windows 
 every `"` as `\"`, so a payload of quotation marks costs twice its length, while
 backslashes (doubled only before a quote) cost nothing.
 
-**What is NOT measured.** Whether the same script would spawn if it were handed to PowerShell on
-**stdin** instead (`-Command -`, which `consoleWorker.ts` already does for every other
-console action, base64ing each request into one line). That would remove the console tier's ceiling
-entirely and leave it bounded only by time — about four seconds for 40,000 characters at
-`MAX_CONSOLE_CHUNK_CODE_POINTS` per 50 ms. It is not done here because the write must run in a
-child of its own (`FreeConsole`/`AttachConsole` rebind the CALLER's console) and the
-exit-code path through `Invoke-Expression` would need its own live run before anything relied
-on it. **Until that is measured, 6,541 is the console's honest ceiling.**
+### The script on stdin removes that ceiling — measured 2026-09-16 (#433)
+
+**The command line above was never a fact about a console.** Nothing in
+`FreeConsole` → `AttachConsole(pid)` → `CONIN$` → `WriteConsoleInput` needs the script to be an
+argument. `windowsTextDelivery.ts` spawns `powershell.exe -NoProfile -NonInteractive -Command -`
+now and writes the script to that child's **stdin**, with `windowsHide`, the same fresh child per
+write, and the same three exit codes. The child's command line is 53 characters whatever the
+message says.
+
+**The shape is not the obvious one, and the obvious one fails silently.** `-Command -` reads its
+input **line by line** and runs each line as a complete statement, so a raw multi-line script — and
+this one has a here-string, a function and two `if` blocks — is not merely rejected:
+
+| Script over `-Command -`                      | Exit  | Stdout    | Stderr |
+| --------------------------------------------- | ----- | --------- | ------ |
+| `exit 2` (one line)                           | 2     | —         | —      |
+| `if ($true) { exit 7 }` (one line)            | 7     | —         | —      |
+| `if ($true) {` / `exit 8` / `}` (three lines) | **0** | —         | —      |
+| the shipped script, raw, multi-line           | **0** | **empty** | —      |
+
+It ran the first line, swallowed everything from the first unterminated construct onwards, and
+**exited 0** with nothing on stderr. A caller reads 0 as delivered, so that shape would report every
+write a success and write nothing at all. `-File -` is not the answer either: it fell back to an
+interactive host that echoed a `PS …>` prompt per line. So the script travels as **one line** — the
+whole of it base64-encoded and run through `[ScriptBlock]::Create`, which is the idiom
+`consoleWorker.ts` has used since #21. Base64 of UTF-8 here rather than UTF-16 (the alphabet is
+ASCII either way, which is what matters when stdin is decoded with the console's own code page).
+A 300,000-character script went through in 142 ms.
+
+**Measured on a session this measurement launched and ended by itself** — `claude` in a throwaway
+project under `%TEMP%`, this agent's own `CLAUDE*` environment markers stripped, the folder-trust
+dialog accepted by two pid writes (`ESC [ B`, then a bare Enter), and the session ended by writing
+`/exit` and Enter by pid rather than killed. Claude Code, Windows 11, Windows Terminal (ConPTY),
+2026-09-16 [#433]. Everything below went through the shipped builder and the new stdin transport,
+read back verbatim from the session's own transcript:
+
+| What                                         | Script chars | Stdin bytes | Result                                                                        |
+| -------------------------------------------- | ------------ | ----------- | ----------------------------------------------------------------------------- |
+| exit 2 — attach refused (dead pid 999901)    | 2,602        | 3,571       | **exit 2** in 185 ms                                                          |
+| exit 3 — `CONIN$` renamed so the open fails  | 2,541        | 3,487       | **exit 3** in 186 ms                                                          |
+| exit 4 — `CONIN$` opened `GENERIC_READ` only | 2,537        | 3,483       | **exit 4** in 224 ms                                                          |
+| a malformed script (a probe's own bug)       | 3,371        | 4,595       | exit 1, the parse error on stderr — the "anything else" branch                |
+| 200 code points, Enter                       | 3,478        | 4,739       | exit 0 in 311 ms — arrived whole and **submitted**, transcript row 199 points |
+| 15,359 code points, Enter                    | 58,364       | 77,919      | exit 0 in **2,265 ms** — whole, transcript row 15,359 points                  |
+| **30,000 code points, Enter**                | **111,455**  | **148,707** | exit 0 in **4,277 ms** — whole, transcript row **30,000 points**              |
+| one attached PNG path + words, Enter         | 3,631        | 4,943       | exit 0 in 348 ms — the model read the image, transcript carries both rows     |
+
+The three exit codes are the contract `consoleWriteFailureFor` reads, and each was produced by its
+own real failure rather than asserted: a pid with no process for 2, a `CreateFileW` name that cannot
+open for 3, a handle without write access for 4. **They survive the stdin route unchanged**, which
+was the one thing that had to be true before the transport could move.
+
+The 30,000-point run is the same message length that built a 109,152-character command line and was
+refused with `ENAMETOOLONG` in 2 ms in the section above. It costs **4.3 seconds** instead, which is
+the chunker's own arithmetic: 60 calls of `MAX_CONSOLE_CHUNK_CODE_POINTS` plus the Enter, with the
+builder's 50 ms pause between them. Time is now the only thing that grows with a message on this
+tier.
+
+So `MAX_CONSOLE_TEXT_CHARS` and the 3.6-characters-per-character slope behind it are **gone**:
+`maxTextCharsFor('terminal')` is `MAX_DWARF_TEXT_CHARS` (15,359, from the relay's own argv), which
+is the one ceiling left on every channel, and the composer's sentence for a console route names it.
+The spawn-failure guard stays, because a missing `powershell.exe` or a refused spawn is still a
+child that never started — it just can no longer be an over-long script.
 
 ---
 

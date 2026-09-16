@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn as spawnChild } from 'node:child_process'
 import { homedir } from 'node:os'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { focusSessionConsole, type FocusOutcome, type ShellRunner } from '../platform/focus'
@@ -47,6 +47,7 @@ import { consoleChunksFor } from './attachmentDelivery'
 import { questionAnswerChunks } from './questionKeys'
 import { buildGracefulExitCommand, buildSendInterruptCommand } from './sendKeys'
 import { createStageTimer, type StageTimings } from './timing'
+import type { ShellResult } from '../platform/focus'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
 
@@ -127,7 +128,8 @@ export interface WindowsTextDeliveryOptions {
    */
   focus?: (pid: number) => Promise<FocusOutcome>
   /**
-   * Runs ONE pid write, as its own process (#371).
+   * Runs ONE pid write, as its own process (#371), with the script on that
+   * child's stdin (#433).
    *
    * Separate from `runPowerShell` because the two cannot share a shell:
    * `FreeConsole`/`AttachConsole` rebind the console of the process that CALLS
@@ -136,6 +138,10 @@ export interface WindowsTextDeliveryOptions {
    * keystroke transport gets this replaced with it, because a unit test that
    * reached a real powershell.exe here would attach to whatever process holds
    * the pid it made up.
+   *
+   * The seam still takes the built script and answers with an exit code, which
+   * is why #433 could move the script off the command line without anything
+   * above noticing: `createConsoleWriteRunner` is the default behind it.
    */
   runConsoleWrite?: ShellRunner
   /**
@@ -208,6 +214,178 @@ function runPowerShellCommand(command: string): Promise<{ stdout: string; exitCo
   })
 }
 
+/**
+ * The argv a console write is spawned with, and the point of #433 is what is
+ * NOT in it: the script.
+ *
+ * `-Command -` is what makes PowerShell read its statements from stdin — the
+ * same four flags `consoleWorker.ts` has kept a shell alive on since #21,
+ * written out again here rather than shared with it because the two are
+ * different acts that happen to agree: that shell outlives every action, and
+ * this child exists for one write and dies (`FreeConsole`/`AttachConsole` rebind
+ * the CALLER's console, so the write can never join the worker).
+ *
+ * It used to end `'-Command', script`, with the person's words inside a command
+ * line Windows refuses past 32,767 characters — which made a bound on the
+ * MESSAGE out of a detail of the transport, and cost the console tier its own
+ * ceiling of 6,541 characters (#431). Nothing about
+ * `AttachConsole` → `CONIN$` → `WriteConsoleInput` ever needed that.
+ */
+const CONSOLE_WRITE_ARGS = ['-NoProfile', '-NonInteractive', '-Command', '-'] as const
+
+/**
+ * The one line the stdin host is handed: the whole script, base64 of UTF-8.
+ *
+ * **One line is the contract, not a preference.** `powershell.exe -Command -`
+ * reads its input line by line and runs each line as a complete statement, so a
+ * raw multi-line script does not merely fail — measured 2026-09-16, it ran the
+ * first line, swallowed everything from the first unterminated construct (the
+ * `Add-Type` here-string) onwards, and exited **0** with nothing on stderr. A
+ * caller reads 0 as delivered, so that shape would report every write a success
+ * and write nothing. `[ScriptBlock]::Create` over one base64 blob is how
+ * `consoleWorker.ts` has avoided the same trap since #21.
+ *
+ * Base64 of UTF-8 rather than of UTF-16 (which is what the worker uses, for
+ * `-EncodedCommand` parity): the alphabet is `[A-Za-z0-9+/=]` either way, which
+ * is the property that matters here — stdin is decoded with the console's own
+ * code page, so anything outside ASCII would arrive mangled, and the blob puts
+ * the whole script inside the one alphabet no code page disagrees about.
+ */
+function consoleWriteStdinLine(script: string): string {
+  const encoded = Buffer.from(script, 'utf8').toString('base64')
+  return (
+    `& ([ScriptBlock]::Create(` +
+    `[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))` +
+    `))\n`
+  )
+}
+
+/**
+ * The slice of a child process one console write drives. Narrow on purpose, the
+ * same way `ConsoleWorkerProcess` is: a test fake implements it and needs no
+ * real process anywhere — which here is not economy but the rule the injected
+ * runner exists for, since a real child would attach to whatever process holds
+ * the pid a test made up.
+ */
+export interface ConsoleWriteProcess {
+  stdin: {
+    write(chunk: string): void
+    end(): void
+    /** Only ever used to swallow EPIPE; the exit code is the verdict. */
+    on(event: 'error', listener: (error: Error) => void): void
+  } | null
+  on(event: 'error' | 'close', listener: (...args: unknown[]) => void): void
+  kill(): void
+}
+
+export interface ConsoleWriteRunnerOptions {
+  /** Injected for tests; defaults to a real hidden powershell.exe. */
+  spawn?: (
+    command: string,
+    args: readonly string[],
+    options: { windowsHide: boolean; stdio: readonly string[] }
+  ) => ConsoleWriteProcess
+  /** How long one write may run before its child is abandoned. */
+  timeoutMs?: number
+}
+
+function spawnConsoleWriteShell(
+  command: string,
+  args: readonly string[],
+  options: { windowsHide: boolean; stdio: readonly string[] }
+): ConsoleWriteProcess {
+  return spawnChild(command, [...args], {
+    windowsHide: options.windowsHide,
+    stdio: [...options.stdio] as ('pipe' | 'ignore')[]
+  })
+}
+
+/**
+ * A runner for ONE console write, as its own hidden child, with the script on
+ * stdin (#433).
+ *
+ * The verdicts it can give are the ones `runConsoleWriteScript` already reads,
+ * unchanged: an exit code the script chose (0, or 2/3/4 — see
+ * `consoleWriteFailureFor`), or a rejection for a child that never ran. Both
+ * were measured live over this transport on 2026-09-16, each exit code produced
+ * by its own real failure [docs/console-hosting.md §6].
+ *
+ * Stdout is ignored rather than piped: the script says everything it has to say
+ * with its exit code, and a pipe nobody drains is a child that can block on its
+ * own output. `stdout: ''` is kept in the result because `ShellResult` is shared
+ * with the keystroke transport, which does read it.
+ */
+export function createConsoleWriteRunner(
+  options: ConsoleWriteRunnerOptions = {}
+): (script: string) => Promise<ShellResult> {
+  const spawn = options.spawn ?? spawnConsoleWriteShell
+  const timeoutMs = options.timeoutMs ?? CONSOLE_COMMAND_TIMEOUT_MS
+
+  return (script: string) =>
+    new Promise<ShellResult>((resolve, reject) => {
+      let settled = false
+      const settle = (act: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        act()
+      }
+
+      let child: ConsoleWriteProcess
+      try {
+        child = spawn('powershell.exe', CONSOLE_WRITE_ARGS, {
+          windowsHide: true,
+          stdio: ['pipe', 'ignore', 'ignore']
+        })
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)))
+        return
+      }
+
+      const timer = setTimeout(() => {
+        // A child killed here may have written anything, so this is a rejection
+        // rather than a code: `runConsoleWriteScript` takes the cautious reading
+        // and licenses no retry.
+        settle(() => {
+          try {
+            child.kill()
+          } catch {
+            // A child already gone needs no further killing.
+          }
+          reject(new Error('the console write did not finish in time'))
+        })
+      }, timeoutMs)
+
+      child.on('error', (...args: unknown[]) => {
+        const error = args[0]
+        settle(() =>
+          reject(
+            error instanceof Error ? error : new Error('the console write could not be started')
+          )
+        )
+      })
+      child.on('close', (...args: unknown[]) => {
+        const code = args[0]
+        settle(() => {
+          if (typeof code === 'number') resolve({ stdout: '', exitCode: code })
+          // No code at all means something else ended this child; nothing here
+          // can say what reached the console, so it is not an exit code.
+          else reject(new Error('the console write ended without an exit code'))
+        })
+      })
+
+      try {
+        // A child that died mid-write breaks this pipe; the exit code above is
+        // the verdict, so an EPIPE here must not become an unhandled throw.
+        child.stdin?.on('error', () => {})
+        child.stdin?.write(consoleWriteStdinLine(script))
+        child.stdin?.end()
+      } catch (error) {
+        settle(() => reject(error instanceof Error ? error : new Error(String(error))))
+      }
+    })
+}
+
 export class WindowsTextDelivery implements TextDeliveryPort {
   /**
    * Text reaches a console on Windows: by pid since #371, where it used to need
@@ -240,9 +418,13 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.relayTimeoutMs = options.relayTimeoutMs
     this.focus = options.focus ?? focusSessionConsole
     // A per-action child, never the worker below: the attach rebinds the
-    // CALLER's console (see writeToConsoleByPid). An injected keystroke runner
-    // stands in for it so no unit test can reach a real console.
-    this.runConsoleWrite = options.runConsoleWrite ?? options.runPowerShell ?? runPowerShellCommand
+    // CALLER's console (see writeToConsoleByPid). Its own runner rather than
+    // the keystroke transport's since #433 — the script rides that child's
+    // stdin, where a keystroke command still rides a command line. An injected
+    // keystroke runner stands in for it so no unit test can reach a real
+    // console.
+    this.runConsoleWrite =
+      options.runConsoleWrite ?? options.runPowerShell ?? createConsoleWriteRunner()
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
@@ -390,9 +572,14 @@ export class WindowsTextDelivery implements TextDeliveryPort {
       }
       return { delivered: true, stages: timer.timings() }
     } catch {
-      // A shell that would not start wrote nothing, and one killed by the
-      // timeout may have written everything: the two are indistinguishable from
-      // here, so this takes the cautious reading and sets no `neverStarted`.
+      // What still reaches here, after #433: a missing powershell.exe, a spawn
+      // the OS refused, a broken pipe, and a child the timeout had to kill.
+      // NOT an over-long script — that was `ENAMETOOLONG` thrown synchronously
+      // by the argv spawn, and the script rides stdin now. The first three wrote
+      // nothing and the last may have written everything; they are
+      // indistinguishable from here, so this takes the cautious reading and sets
+      // no `neverStarted`, which licenses no second tier to send the same words
+      // again.
       return {
         delivered: false,
         error: 'The agent terminal could not be reached.',

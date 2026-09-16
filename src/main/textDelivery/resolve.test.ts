@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MAX_CONSOLE_TEXT_CHARS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import type { Dwarf, Mine } from '../domain/types'
 import type { TextDeliveryTarget } from './port'
 import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './resolve'
@@ -502,7 +502,7 @@ describe('stampTextDelivery', () => {
       adjustEffort: null,
       attach: 'terminal',
       // AMENDED for #431: the matrix gained a per-route ceiling.
-      maxTextChars: MAX_CONSOLE_TEXT_CHARS
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 
@@ -586,7 +586,7 @@ describe('stampTextDelivery', () => {
       adjustEffort: null,
       attach: 'terminal',
       // AMENDED for #431: the matrix gained a per-route ceiling.
-      maxTextChars: MAX_CONSOLE_TEXT_CHARS
+      maxTextChars: MAX_DWARF_TEXT_CHARS
     })
   })
 
@@ -912,9 +912,12 @@ describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
     return stamped?.dwarfs[0]?.capabilities
   }
 
-  it('gives a console endpoint the console ceiling', () => {
+  // AMENDED for #433 (was: 'gives a console endpoint the console ceiling',
+  // asserting MAX_CONSOLE_TEXT_CHARS). The console write's script rides stdin
+  // now, so the ceiling it used to carry is gone with the constant.
+  it('gives a console endpoint the wire ceiling, like every other endpoint', () => {
     expect(stampedCapabilities({ kind: 'terminal', pid: 42 })?.maxTextChars).toBe(
-      MAX_CONSOLE_TEXT_CHARS
+      MAX_DWARF_TEXT_CHARS
     )
   })
 
@@ -924,9 +927,12 @@ describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
     ).toBe(MAX_DWARF_TEXT_CHARS)
   })
 
-  it('keeps the console ceiling for a worker whose foreman is written to at its console', () => {
-    // The channel says 'foreman-relay' and the endpoint is a console; reading
-    // the channel would hand this route more than its spawn can start.
+  it('still reads a worker whose foreman is written to at its console off the endpoint', () => {
+    // AMENDED for #433 (was: 'keeps the console ceiling for a worker whose
+    // foreman is written to at its console'). The two answers agree now, so
+    // what is left to pin is that the ENDPOINT is what is asked: the channel
+    // says 'foreman-relay' while the send lands in a console, and only the
+    // endpoint can tell those apart if a channel ever differs again.
     const [stamped] = stampTextDelivery(
       [mine([dwarf({ id: 'claude:s1:agent' }), dwarf()])],
       targetsFrom({
@@ -940,7 +946,7 @@ describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
     )
     const worker = stamped?.dwarfs.find((item) => item.id === 'claude:s1:agent')
     expect(worker?.capabilities?.sendText).toBe('foreman-relay')
-    expect(worker?.capabilities?.maxTextChars).toBe(MAX_CONSOLE_TEXT_CHARS)
+    expect(worker?.capabilities?.maxTextChars).toBe(MAX_DWARF_TEXT_CHARS)
   })
 
   it('gives a console this machine cannot type into the relay ceiling it degrades to', () => {

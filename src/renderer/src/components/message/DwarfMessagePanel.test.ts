@@ -23,7 +23,6 @@ import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
 import {
-  MAX_CONSOLE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
   messageTooLongReason,
   type DwarfAttachment,
@@ -825,17 +824,20 @@ describe('DwarfMessagePanel input', () => {
   })
 
   it("says so in the alert ink when the text is past this channel's ceiling", async () => {
+    // AMENDED for #433: this dwarf's route is a console, and the sentence it
+    // gets names the WIRE ceiling now — the console's own 6,541 went with the
+    // command line its script used to be spawned in.
     const wrapper = panel()
-    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    const text = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 1)
     await wrapper.find('.panel-input').setValue(text)
     expect(wrapper.find('.panel-alert').text()).toBe(
-      messageTooLongReason(text.length, MAX_CONSOLE_TEXT_CHARS, 'terminal')
+      messageTooLongReason(text.length, MAX_DWARF_TEXT_CHARS, 'terminal')
     )
   })
 
   it('keeps the text and sends nothing when Enter is pressed on an over-long message', async () => {
     const wrapper = panel()
-    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    const text = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 1)
     const input = wrapper.find('.panel-input')
     await input.setValue(text)
     await input.trigger('keydown', { key: 'Enter' })
@@ -846,16 +848,25 @@ describe('DwarfMessagePanel input', () => {
   it('sends again the moment the person has trimmed it back inside the ceiling', async () => {
     const wrapper = panel()
     const input = wrapper.find('.panel-input')
-    await input.setValue('x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1))
-    await input.setValue('x'.repeat(MAX_CONSOLE_TEXT_CHARS))
+    await input.setValue('x'.repeat(MAX_DWARF_TEXT_CHARS + 1))
+    await input.setValue('x'.repeat(MAX_DWARF_TEXT_CHARS))
     expect(wrapper.find('.panel-alert').exists()).toBe(false)
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toHaveLength(1)
   })
 
-  it('reads the ceiling off the capability, so a wider channel says a wider number', async () => {
-    // A relayed session has no console script to fit inside, so it takes the
-    // wire ceiling — the same message that is refused above goes here.
+  /*
+   * AMENDED for #433 (was: 'reads the ceiling off the capability, so a wider
+   * channel says a wider number', which stamped a relay's wire ceiling and sent
+   * a message the console route above refuses).
+   *
+   * Every route answers the same number now, so that shape could no longer tell
+   * a capability-reading composer from one that had the wire ceiling hardcoded
+   * — it would pass either way. The stamped number is made deliberately narrow
+   * instead, which is the property the test was always about: main decides how
+   * much a route carries, and the panel refuses exactly what main refuses.
+   */
+  it('reads the ceiling off the capability, whatever number main stamped there', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         textDelivery: 'claude-relay',
@@ -864,12 +875,17 @@ describe('DwarfMessagePanel input', () => {
           cancel: 'claude-relay',
           adjustEffort: null,
           attach: null,
-          maxTextChars: MAX_DWARF_TEXT_CHARS
+          maxTextChars: 100
         }
       })
     })
     const input = wrapper.find('.panel-input')
-    await input.setValue('x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1))
+    await input.setValue('x'.repeat(101))
+    expect(wrapper.find('.panel-alert').text()).toBe(messageTooLongReason(101, 100, 'claude-relay'))
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeUndefined()
+
+    await input.setValue('x'.repeat(100))
     expect(wrapper.find('.panel-alert').exists()).toBe(false)
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toHaveLength(1)
