@@ -1027,7 +1027,13 @@ async function init(): Promise<void> {
     // something, and a message panel open on nobody is not a narrower request.
     const request = parseMessagePanelState(payload)
     if (request === null) return messagePanelState()
-    const applied = setMessagePanel(request)
+    // #409: only the shell's OWN click selects or switches a dwarf. The panel
+    // window can set this same surface for itself — adopting the dwarf its
+    // own launch produced (#162) — and that transition must not steal the
+    // keyboard from wherever the person already is. `event.sender` is the
+    // one place that distinction is knowable at all.
+    const fromShell = event.sender === shellWebContents()
+    const applied = setMessagePanel(request, fromShell)
     for (const contents of appWebContents()) {
       if (contents !== event.sender) contents.send(IPC_CHANNELS.messagePanelChanged, applied)
     }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   MESSAGE_PANEL_ASK_HEIGHT,
   MESSAGE_PANEL_MAX_HEIGHT,
@@ -1264,6 +1264,77 @@ describe('DwarfMessagePanel permission (#203)', () => {
       [{ text: 'let me check this first', pressEnter: true }]
     ])
     expect(wrapper.emitted('decide')).toBeUndefined()
+  })
+})
+
+/**
+ * #409: a selection is not finished until the composer has the keyboard — the
+ * person still had to find and click the box themselves. Attached to the
+ * document for every case here, because `document.activeElement` means
+ * nothing against a detached tree.
+ *
+ * Main's half of the same fix (giving the PANEL WINDOW its OS focus) lives in
+ * `window.ts` and cannot be reached from here; what this component owns is
+ * which control inside that window gets the keyboard once it has one.
+ */
+describe('DwarfMessagePanel composer focus (#409)', () => {
+  let attached: ReturnType<typeof panel> | undefined
+
+  function attachedPanel(props: Record<string, unknown> = {}) {
+    attached = mount(DwarfMessagePanel, {
+      attachTo: document.body,
+      props: {
+        dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD }),
+        ...props
+      }
+    })
+    return attached
+  }
+
+  afterEach(() => {
+    attached?.unmount()
+    attached = undefined
+  })
+
+  it('focuses the composer the moment a selection mounts it, enabled', async () => {
+    const wrapper = attachedPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(wrapper.find('.panel-input').element)
+  })
+
+  it('never focuses a composer the panel is already explaining as dead (#217)', async () => {
+    const wrapper = attachedPanel({
+      dwarf: defaultDwarf({ textDelivery: undefined, conversation: HELD })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).not.toBe(wrapper.find('.panel-input').element)
+  })
+
+  it('moves focus to the composer once a pending question clears', async () => {
+    const pendingQuestion = {
+      toolUseId: 'toolu_01',
+      question: 'Which database should the importer write to?',
+      channel: 'held' as const,
+      multiSelect: false,
+      questionCount: 1,
+      options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+    }
+    const wrapper = attachedPanel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD, pendingQuestion })
+    })
+    await wrapper.vm.$nextTick()
+    // Sanity: the card, not the composer, holds the slot while the ask is open.
+    expect(wrapper.find('.panel-input').exists()).toBe(false)
+
+    await wrapper.setProps({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(document.activeElement).toBe(wrapper.find('.panel-input').element)
   })
 })
 
