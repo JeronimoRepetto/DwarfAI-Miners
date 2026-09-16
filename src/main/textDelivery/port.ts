@@ -208,7 +208,7 @@ export interface InterruptRequest {
  * option that is.
  */
 export interface ConsoleAnswerRequest {
-  /** The session pid; its hosting terminal window receives the keystrokes. */
+  /** The session pid; on Windows its own console input buffer receives the keys (#402). */
   pid: number
   /** The chosen options' 1-based positions, ascending, as single characters. */
   digits: readonly string[]
@@ -367,13 +367,13 @@ export interface TextDeliveryPort {
    * each chosen option's digit, then the confirmation where the picker needs
    * one (#362).
    *
-   * A SIBLING of sendToConsole rather than a caller of it, and the reason is
-   * the reason buildQuestionAnswerCommand is its own builder: this is a
-   * SEQUENCE of measured keynames with settle sleeps between them, where that
-   * one types a string and optionally submits it. Routing an answer through it
-   * would have meant either several focus-and-spawn round trips — a window that
-   * can change hands between the digits — or a "text" argument holding
-   * something that is not text.
+   * A SIBLING of sendToConsole rather than a caller of it, because this is a
+   * SEQUENCE of measured keys where that one carries a person's own text.
+   * Routing an answer through it would have meant either several round trips —
+   * a session that can move on between the digits — or a "text" argument
+   * holding something that is not text. On Windows both now end in the same
+   * write: one child process, one attach, one `WriteConsoleInput` call per key
+   * (#402).
    *
    * Optional for the reason `pasteToConsole` is, and its absence states the
    * same kind of per-OS fact rather than a gap somebody forgot: only the
@@ -383,19 +383,15 @@ export interface TextDeliveryPort {
    * — see #367, which is where that key belongs. The runtime turns the absence
    * into a stated refusal (NO_ANSWER_KEYSTROKE_TIER), never a silent no-op.
    *
-   * An implementation MUST refuse a shared terminal window exactly as
-   * sendInterrupt does (#329): these are keystrokes at a window, and a digit
+   * An implementation that SYNTHESIZES these keys at a window must refuse a
+   * shared terminal window exactly as sendInterrupt does (#329), because a digit
    * that lands in the wrong tab chooses an option in a session nobody was
-   * looking at. #371 is what made that refusal fire on the right fact, so a
-   * session in one tab of a Windows Terminal window is refused here — the
-   * person answers at their terminal, which is what the refusal says.
-   *
-   * Text left that refusal behind in #371 and this did not, which is a
-   * limitation rather than a decision to keep: the digits are plain characters
-   * a pid write could carry, but a multi-select confirms with the RIGHT ARROW,
-   * a virtual key carrying no character, and no input record of that shape has
-   * been measured against a TUI. Answering one shape of ask and refusing the
-   * other is the trade #362 already declined.
+   * looking at. The Windows one does not synthesize them any more and so has
+   * nothing to refuse: #402 measured the multi-select confirmation to be `ESC [
+   * C` — three ordinary characters, not the virtual key it was read as — so the
+   * whole answer is written into the console the pid names, which has no tab
+   * strip to be ambiguous about. That closes the gap #371 left, where a message
+   * to a session in a shared window landed and an answer to it could not.
    */
   answerQuestionAtConsole?(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome>
   /**

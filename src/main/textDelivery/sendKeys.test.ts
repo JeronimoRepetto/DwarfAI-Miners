@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildGracefulExitCommand,
-  buildQuestionAnswerCommand,
-  buildSendInterruptCommand,
-  toConsoleLine
-} from './sendKeys'
+import { buildGracefulExitCommand, buildSendInterruptCommand, toConsoleLine } from './sendKeys'
 
 /*
  * REMOVED by #371, with their subjects. `escapeSendKeys` (4 blocks, one of them
@@ -97,87 +92,18 @@ describe('buildGracefulExitCommand', () => {
 })
 
 /*
- * The question-answer path (#362). Claude Code's AskUserQuestion picker is a
- * selector like the permission dialog, and its two gestures were measured live
- * by the maintainer on 2026-09-10 (Claude Code 2.1.267, Windows Terminal), one
- * question per call:
+ * REMOVED by #402, with its subject. `buildQuestionAnswerCommand` (7 blocks,
+ * one of them an it.each over the seven non-digits the guard refuses) went when
+ * the AskUserQuestion picker's keys left the keystroke path: the digits, the
+ * confirmation and the Enter are written into the console the session's pid
+ * names now, one `WriteConsoleInputW` call each, so there is no SendKeys
+ * command left for it to build and no `{RIGHT}` keyname to spell.
  *
- * - single-select: the option's DIGIT selects and submits by itself. No Enter,
- *   no confirmation screen.
- * - multi-select: each digit TOGGLES its option and the cursor does not move;
- *   `{RIGHT}` shows the summary and `{ENTER}` accepts it.
- *
- * Like {ESC}, ^v and ^c, `{RIGHT}` and `{ENTER}` here ARE SendKeys keynames and
- * carry no user text, so they never touch escapeSendKeys.
+ * The coverage that replaced it is in two places, and between them they hold
+ * every block removed here. `questionAnswerChunks` in `questionKeys.test.ts`
+ * inherited the digit guard — the empty set, the tenth option, and the seven
+ * non-digits — plus the measured order the chunks go in. The script those
+ * chunks become is `buildConsoleInputSequenceCommand` in
+ * `consoleInputWrite.test.ts`, which pins one call per chunk, the delay between
+ * them, and the absence of every API that could reach a window.
  */
-describe('buildQuestionAnswerCommand', () => {
-  it('presses one digit and nothing else for a single-select answer', () => {
-    // The measured single-select gesture: the digit fires the selection on its
-    // own, so there is nothing to submit and no confirmation to accept.
-    expect(buildQuestionAnswerCommand(['3'], false)!.split('\n')).toEqual([
-      "$ErrorActionPreference = 'Stop'",
-      'Add-Type -AssemblyName System.Windows.Forms',
-      'Start-Sleep -Milliseconds 150',
-      "[System.Windows.Forms.SendKeys]::SendWait('3')"
-    ])
-  })
-
-  it('toggles each digit then submits with RIGHT and ENTER, in that order', () => {
-    // The measured multi-select gesture. RIGHT shows the summary of what is
-    // toggled and ENTER accepts it; the same settle sleeps every builder here
-    // uses sit between the keys.
-    expect(buildQuestionAnswerCommand(['2', '4'], true)!.split('\n')).toEqual([
-      "$ErrorActionPreference = 'Stop'",
-      'Add-Type -AssemblyName System.Windows.Forms',
-      'Start-Sleep -Milliseconds 150',
-      "[System.Windows.Forms.SendKeys]::SendWait('2')",
-      'Start-Sleep -Milliseconds 120',
-      "[System.Windows.Forms.SendKeys]::SendWait('4')",
-      'Start-Sleep -Milliseconds 120',
-      "[System.Windows.Forms.SendKeys]::SendWait('{RIGHT}')",
-      'Start-Sleep -Milliseconds 120',
-      "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
-    ])
-  })
-
-  it('spells both keynames live, never as the characters an escape would make of them', () => {
-    // AMENDED for #371 with the two above: an escaped keyname is literal
-    // characters where a keystroke belongs.
-    const command = buildQuestionAnswerCommand(['1'], true)!
-    expect(command).not.toContain('{{}RIGHT{}}')
-    expect(command).not.toContain('{{}ENTER{}}')
-    expect(command).toContain("SendWait('{RIGHT}')")
-  })
-
-  it('presses PageDown nowhere: it opens the free-text row, not the summary', () => {
-    // Measured 2026-09-10: End does nothing and PageDown jumps to the "Other"
-    // row and waits for free text. Neither is a route to submit, and an ENTER
-    // landing there would open a composer nobody asked for.
-    const command = buildQuestionAnswerCommand(['1', '2'], true)!
-    expect(command).not.toContain('PGDN')
-    expect(command).not.toContain('END')
-  })
-
-  it('refuses to build anything for an empty set of digits', () => {
-    // Nothing was chosen, so there is no answer to press. Null rather than a
-    // command that only submits: {RIGHT}{ENTER} on an untouched picker would
-    // accept an empty answer.
-    expect(buildQuestionAnswerCommand([], true)).toBeNull()
-    expect(buildQuestionAnswerCommand([], false)).toBeNull()
-  })
-
-  it('refuses a tenth option, which has no digit to press', () => {
-    const nine = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
-    expect(buildQuestionAnswerCommand(nine, true)).not.toBeNull()
-    expect(buildQuestionAnswerCommand([...nine, '1'], true)).toBeNull()
-  })
-
-  it.each([['0'], ['10'], [''], ['a'], ['{ENTER}'], ['1 2'], ['+']])(
-    'refuses %s, which is not one of the nine digits this picker answers to',
-    (digit) => {
-      // The whole payload this command can carry is a digit, so the guard is
-      // what keeps arbitrary text out of a keystroke that never escapes it.
-      expect(buildQuestionAnswerCommand([digit], false)).toBeNull()
-    }
-  )
-})

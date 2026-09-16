@@ -53,6 +53,19 @@ const OWN_CONSOLE = { focused: true, reach: 'own-console' } as const
 const TERMINAL_HOST = { focused: true, reach: 'terminal-host' } as const
 const NOT_FOCUSED = { focused: false, reach: null } as const
 
+/**
+ * The chunks a pid-write script carries, in the order it writes them (#402).
+ *
+ * Read back out of the script's base64 blobs rather than asserted as PowerShell
+ * text, for the reason the blobs exist: the payload never appears in the script
+ * as anything a tokenizer could reach.
+ */
+function chunksOf(script: string): string[] {
+  return [...script.matchAll(/FromBase64String\('([A-Za-z0-9+/=]*)'\)/g)].map((match) =>
+    Buffer.from(match[1] ?? '', 'base64').toString('utf16le')
+  )
+}
+
 function delivery(overrides: Partial<ConstructorParameters<typeof WindowsTextDelivery>[0]> = {}) {
   return new WindowsTextDelivery({
     home: 'C:\\Users\\j',
@@ -94,11 +107,13 @@ describe('WindowsTextDelivery.sendToConsole', () => {
     expect(focus).not.toHaveBeenCalled()
     const script = runConsoleWrite.mock.calls[0]?.[0] as string
     expect(script).toContain('AttachConsole(4242)')
-    // AMENDED for #404: Enter now travels in its own WriteConsoleInputW call,
-    // built from $enterUnits rather than appended to the text's own list — a
-    // live Claude Code TUI reads a chunk carrying both as a paste, where a
-    // carriage return is line content rather than a submit.
-    expect(script).toContain('$enterUnits.Add([char]13)')
+    // AMENDED for #404: Enter now travels in its own WriteConsoleInputW call
+    // rather than appended to the text's own — a live Claude Code TUI reads a
+    // chunk carrying both as a paste, where a carriage return is line content
+    // rather than a submit. AMENDED again for #402 for how that is read back:
+    // the Enter is a second CHUNK, so the two calls are what states it.
+    expect(chunksOf(script)).toEqual(['run the tests', '\r'])
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(2)
     // The text rides as base64, so nothing a shell re-parses ever holds it.
     expect(script).not.toContain('run the tests')
   })
@@ -108,8 +123,8 @@ describe('WindowsTextDelivery.sendToConsole', () => {
     const port = delivery({ runConsoleWrite })
 
     await port.sendToConsole({ pid: 4242, text: '1', pressEnter: false })
-    // AMENDED for #404: see above.
-    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$enterUnits.Add([char]13)')
+    // AMENDED for #404, and again for #402: see above.
+    expect(chunksOf(String(runConsoleWrite.mock.calls[0]?.[0]))).toEqual(['1'])
   })
 
   it('fails closed on a pid the builder will not accept, and runs nothing', async () => {
@@ -521,16 +536,18 @@ describe('WindowsTextDelivery console transport', () => {
    * `sendToConsole`, which no longer uses it — the pid write is a child of its
    * own (see the test below). They drive it through the keystroke tiers that
    * still do, which is the same transport and the same assertion.
+   *
+   * AMENDED again for #402: the answer tier left the shell with them, so the
+   * two actions this drives are both interrupts. What it pins is unchanged —
+   * one shell, spawned once, carrying every keystroke action in turn.
    */
   it('runs every console action through one long-lived shell', async () => {
     const shell = autoReplyShell()
     const spawn = vi.fn(() => shell.process)
     const port = workerDelivery(spawn)
 
-    await expect(
-      port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
-    ).resolves.toMatchObject({ delivered: true })
     await expect(port.sendInterrupt({ pid: 42 })).resolves.toMatchObject({ delivered: true })
+    await expect(port.sendInterrupt({ pid: 43 })).resolves.toMatchObject({ delivered: true })
 
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(shell.written).toHaveLength(2)
@@ -938,93 +955,123 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
  * confirmation a multi-select picker needs. Only Windows carries it — the POSIX
  * console adapter has no arrow key to press (#367) — and the runtime turns its
  * absence into a stated refusal there.
+ *
+ * AMENDED throughout this describe for #402. Every test here pinned a focus
+ * step and a SendKeys command behind it, and both are gone: the keys are
+ * written into the console the session's pid names, one `WriteConsoleInputW`
+ * call per key, exactly as a message has been since #371. The measurement that
+ * moved them is in docs/console-hosting.md §6 — a digit as a text record fires a
+ * single-select and toggles a multi-select row, and `ESC [ C` as three text
+ * records opens the summary an Enter then accepts. So the shared-window refusal
+ * of #329 has nothing left to refuse on this path and its two tests went with
+ * the focus call; `sendInterrupt` and the clean exit keep theirs.
  */
 describe('WindowsTextDelivery.answerQuestionAtConsole', () => {
-  it('brings the terminal forward before pressing the single-select digit', async () => {
-    const order: string[] = []
-    const focus = vi.fn().mockImplementation(async () => {
-      order.push('focus')
-      return OWN_CONSOLE
-    })
-    const runPowerShell = vi.fn().mockImplementation(async () => {
-      order.push('keys')
-      return { stdout: '', exitCode: 0 }
-    })
-    const port = delivery({ focus, runPowerShell })
+  it('writes the single-select digit into the console of that pid, raising no window', async () => {
+    const focus = vi.fn()
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ focus, runConsoleWrite })
 
     await expect(
       port.answerQuestionAtConsole({ pid: 42, digits: ['3'], submit: false })
-    ).resolves.toEqual({
-      delivered: true,
-      stages: { focusMs: expect.any(Number), spawnMs: expect.any(Number) }
-    })
-    expect(focus).toHaveBeenCalledWith(42)
-    expect(order).toEqual(['focus', 'keys'])
-    const command = String(runPowerShell.mock.calls[0]?.[0])
-    expect(command).toContain("SendWait('3')")
-    expect(command).not.toContain('{ENTER}')
+    ).resolves.toEqual({ delivered: true, stages: { spawnMs: expect.any(Number) } })
+    // The whole point of #402: an answer asks for no foreground at all, so a
+    // session in one tab of a shared terminal window can be answered.
+    expect(focus).not.toHaveBeenCalled()
+    const script = String(runConsoleWrite.mock.calls[0]?.[0])
+    expect(script).toContain('AttachConsole(42)')
+    // One chunk, so one call: the digit selects and submits by itself.
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(1)
+    expect(chunksOf(script)).toEqual(['3'])
   })
 
-  it('presses the toggles and their confirmation in ONE command', async () => {
-    // One spawn on purpose: split over several, the foreground could change
-    // hands between a toggle and the Enter that accepts it.
-    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
-    const port = delivery({ runPowerShell })
+  it('writes the toggles, the cursor-right and the Enter as one call each, in order', async () => {
+    // One child process and one attach, four calls inside it: #404's rule is
+    // that a chunk reads as a keystroke only in a call of its own, and every key
+    // of an answer is a keystroke.
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
 
     await port.answerQuestionAtConsole({ pid: 42, digits: ['2', '4'], submit: true })
-    expect(runPowerShell).toHaveBeenCalledTimes(1)
-    const command = String(runPowerShell.mock.calls[0]?.[0])
-    expect(command).toContain("SendWait('2')")
-    expect(command).toContain("SendWait('4')")
-    expect(command).toContain("SendWait('{RIGHT}')")
-    expect(command).toContain("SendWait('{ENTER}')")
+    expect(runConsoleWrite).toHaveBeenCalledTimes(1)
+    const script = String(runConsoleWrite.mock.calls[0]?.[0])
+    expect(chunksOf(script)).toEqual(['2', '4', '\u001b[C', '\r'])
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(4)
+    expect(script.match(/Start-Sleep -Milliseconds 50/g)?.length).toBe(3)
   })
 
-  it('presses nothing in a shared terminal window, where a digit picks for another tab', async () => {
-    // #329, and it matters more here than anywhere else: a stray Esc
-    // interrupts a stranger's turn, and a stray digit CHOOSES in it.
+  it('synthesizes no keystroke at all, so it can never reach the foreground window', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: true })
+    const script = String(runConsoleWrite.mock.calls[0]?.[0])
+    for (const forbidden of ['SendKeys', 'SetForegroundWindow', 'System.Windows.Forms']) {
+      expect(script).not.toContain(forbidden)
+    }
+  })
+
+  it('never routes the answer through the long-lived console shell', async () => {
+    // The attach rebinds the CALLING process's console, so this may no more run
+    // on the shared worker than a message write may (#371).
     const runPowerShell = vi.fn()
-    const port = delivery({ focus: vi.fn().mockResolvedValue(TERMINAL_HOST), runPowerShell })
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runPowerShell, runConsoleWrite })
 
-    const result = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
-    expect(result).toMatchObject({ delivered: false, neverStarted: true })
-    expect(result.error).toMatch(/shares its terminal window/i)
+    await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
     expect(runPowerShell).not.toHaveBeenCalled()
+    expect(runConsoleWrite).toHaveBeenCalledTimes(1)
   })
 
-  it('presses nothing when the terminal could not be foregrounded', async () => {
-    const runPowerShell = vi.fn()
-    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), runPowerShell })
-
-    const result = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
-    expect(result).toMatchObject({ delivered: false, neverStarted: true })
-    expect(result.error).toMatch(/foreground|terminal/i)
-    expect(runPowerShell).not.toHaveBeenCalled()
-  })
-
-  it('refuses digits the builder will not accept, without focusing anything', async () => {
+  it('refuses digits the builder will not accept, and writes nothing', async () => {
     const focus = vi.fn()
-    const runPowerShell = vi.fn()
-    const port = delivery({ focus, runPowerShell })
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ focus, runConsoleWrite })
 
     const result = await port.answerQuestionAtConsole({ pid: 42, digits: [], submit: true })
     expect(result).toMatchObject({ delivered: false, neverStarted: true })
     expect(focus).not.toHaveBeenCalled()
-    expect(runPowerShell).not.toHaveBeenCalled()
+    expect(runConsoleWrite).not.toHaveBeenCalled()
   })
 
-  it('reports a failure when the keystroke command exits non-zero', async () => {
-    const port = delivery({
-      runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 })
+  it('fails closed on a pid the write builder will not accept', async () => {
+    // ADDED for #402: the answer is addressed by pid now, so it inherits the
+    // guard the message write has — a script built around a junk pid would
+    // attach to whatever process holds that number.
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.answerQuestionAtConsole({ pid: 0, digits: ['1'], submit: false })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(runConsoleWrite).not.toHaveBeenCalled()
+  })
+
+  it('carries the write script’s own exit codes, so a retry is licensed only where nothing landed', async () => {
+    // ADDED for #402: the three measured failures reach the person as three
+    // different sentences, and only the two that provably wrote nothing may be
+    // sent again by another tier. Exit 4 left half an answer in the buffer.
+    const attachRefused = delivery({
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 2 })
     })
-    const result = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
-    expect(result.delivered).toBe(false)
-    expect(result.error).toBeTruthy()
+    await expect(
+      attachRefused.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
+    ).resolves.toMatchObject({ delivered: false, neverStarted: true })
+
+    const shortWrite = delivery({
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 4 })
+    })
+    const partial = await shortWrite.answerQuestionAtConsole({
+      pid: 42,
+      digits: ['1', '2'],
+      submit: true
+    })
+    expect(partial.delivered).toBe(false)
+    expect(partial.neverStarted).toBeUndefined()
   })
 
   it('turns a crashing shell into a failed verdict instead of a rejection', async () => {
     const port = delivery({
-      runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
+      runConsoleWrite: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
     })
     await expect(
       port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })

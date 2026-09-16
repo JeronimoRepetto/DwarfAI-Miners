@@ -362,12 +362,12 @@ launched session being a foreman by construction.
 
 Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 
-| Channel                                      | Question form                                                                                                                             | Available while open?                                                                                     | Answer path                                                        |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `AskUserQuestion` in an **observed TUI**     | structured — written to the transcript at **resolve**, backdated, on the 2026-09-02 build; written **when asked**, unresolved, on 2.1.273 | **no** as measured here; **yes** as re-measured 2026-09-16 — see `docs/question-capture-evaluation.md` §9 | keystrokes at that TUI only → **notify and jump**                  |
-| **Cross-session message bus**                | **prose**, options embedded as text                                                                                                       | yes, instantly                                                                                            | prose reply; the peer's human may interpose                        |
-| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                                                                                       | yes                                                                                                       | **full structured loop**, ~6s round trip                           |
-| **Permission prompt** in an **observed TUI** | structured — the `tool_use` is written BEFORE the dialog opens                                                                            | **yes**, and so is what it asks                                                                           | keystrokes at that TUI → **answered from the panel, built (#203)** |
+| Channel                                      | Question form                                                                                                                             | Available while open?                                                                                     | Answer path                                                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `AskUserQuestion` in an **observed TUI**     | structured — written to the transcript at **resolve**, backdated, on the 2026-09-02 build; written **when asked**, unresolved, on 2.1.273 | **no** as measured here; **yes** as re-measured 2026-09-16 — see `docs/question-capture-evaluation.md` §9 | keys into that session's own console → **answered from the panel, built (#362, by pid since #402)** |
+| **Cross-session message bus**                | **prose**, options embedded as text                                                                                                       | yes, instantly                                                                                            | prose reply; the peer's human may interpose                                                         |
+| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                                                                                       | yes                                                                                                       | **full structured loop**, ~6s round trip                                                            |
+| **Permission prompt** in an **observed TUI** | structured — the `tool_use` is written BEFORE the dialog opens                                                                            | **yes**, and so is what it asks                                                                           | keystrokes at that TUI → **answered from the panel, built (#203)**                                  |
 
 - **Row one revised an assumption three earlier phases were built on — and has since been revised
   itself.** A menu left open ~5.5 minutes, transcript scanned twice: **zero `AskUserQuestion` blocks
@@ -414,8 +414,8 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
   **A late keystroke.** The runtime rescans and re-matches the open call immediately before pressing
   anything, because a key presses whatever dialog is actually up. Past that, a late `1` is one stray
   character in the session's idle input and a late `Esc` interrupts the running turn — accepted, and
-  said out loud in the panel's status line under a deny. Row one stays unbuilt, and unbuildable from
-  anything this app reads.
+  said out loud in the panel's status line under a deny. Row one was unbuilt when this was written
+  and is not any more: §4c holds its keys, and #402 the write that carries them.
 
 ### 4c. The AskUserQuestion picker's own keys — measured 2026-09-10 (#362)
 
@@ -437,31 +437,33 @@ landing there would open a composer nobody asked for. Right arrow is equivalent 
 the Submit row, without the count that made round 2's reading fragile: one miscounted press lands
 Enter on the Other row or on an option it would toggle.
 
-| Question form                   | Keystroke sequence                                      |
-| ------------------------------- | ------------------------------------------------------- |
-| single-select, option _n_       | `n`                                                     |
-| multi-select, options _a, b, …_ | `a`, `b`, … (ascending), then `{RIGHT}`, then `{ENTER}` |
+| Question form                   | Key sequence                                           |
+| ------------------------------- | ------------------------------------------------------ |
+| single-select, option _n_       | `n`                                                    |
+| multi-select, options _a, b, …_ | `a`, `b`, … (ascending), then cursor-right, then Enter |
 
-Both are built as pure SendKeys builders beside the graceful exit's (`sendKeys.ts`), from digits
-resolved by `questionKeys.ts`, and sent under the discipline row four's keys already hold: the
-kick's delivery route, the console-input capability, the board re-read and the ask re-matched
-immediately before the press, and never on a shared terminal window. Two things stay refused rather
-than guessed. A call carrying **more than one question** is refused with its reason, because only
-its first question reaches the wire — answering that one walks the picker on to a question the
-panel does not know exists. And **Other** is left inert, because a free-text answer is a payload
-the panel would be putting in the person's mouth; the composer already carries free text as a
-message.
+Both were built as pure SendKeys builders beside the graceful exit's until #402, which **re-measured
+every row above through the write by pid and moved them onto it** — see §6 for the sequences, the
+exit codes and the transcript evidence. The confirmation is spelled `ESC [ C` rather than `{RIGHT}`
+now, because that is what the picker reads; the digits are unchanged. They are resolved by
+`questionKeys.ts` and sent under the discipline row four's keys already hold: the kick's delivery
+route, the console-input capability, and the board re-read with the ask re-matched immediately
+before anything is written. Two things stay refused rather than guessed. A call carrying **more than
+one question** is refused with its reason, because only its first question reaches the wire —
+answering that one walks the picker on to a question the panel does not know exists. And **Other**
+is left inert, because a free-text answer is a payload the panel would be putting in the person's
+mouth; the composer already carries free text as a message.
 
-**A shared terminal window is refused, not answered blind.** This route lands its keys wherever
-the foreground is, so it meets the same shared-window refusal every other keystroke here does
-(#329) — and #371, merged before this shipped, is what made that refusal fire on the right fact: a
-probed console handle can be a phantom OWNED by a Windows Terminal window, and only an owner proven
-to draw one console is the session's own. So a session in one tab of a shared window has its answer
-refused with the panel saying the window is shared, rather than a digit choosing an option in
-whichever tab was in front.
+**A shared terminal window was refused, not answered blind — and is answered now.** This route
+landed its keys wherever the foreground was, so it met the same shared-window refusal every other
+keystroke here does (#329), and #371 is what made that refusal fire on the right fact: a probed
+console handle can be a phantom OWNED by a Windows Terminal window, and only an owner proven to draw
+one console is the session's own. #402 removed the question the refusal answered rather than
+loosening it — the keys go into the console the pid names, so there is no tab strip to consult and a
+session in one tab of a shared window is answered like any other.
 
-**Still to observe.** A late `{RIGHT}{ENTER}` at an idle prompt — expected to be a no-op followed
-by an empty submit, on the same reasoning that made a late `1` one harmless character.
+**Still to observe.** A late confirmation and Enter at an idle prompt — expected to be a no-op
+followed by an empty submit, on the same reasoning that made a late `1` one harmless character.
 
 ---
 
@@ -505,10 +507,13 @@ tab**. The message is written into the session's own console by verified pid now
 (`AttachConsole` + `WriteConsoleInput`, measured in §6): no window is raised, no clipboard is
 borrowed, and there is no tab to pick, so the refusal has nothing left to refuse and the words
 arrive as the person's own prompt in every tab layout. **#203's permission digit took the same
-route**, for the same reason and with the same measurement behind it. What did NOT move is every
-key that carries no character — the interrupt's Escape, the clean exit's Ctrl+C, the question
-picker's right arrow (#362) — because an input record for a virtual key is unmeasured, so those
-still focus and still refuse a shared window.
+route**, for the same reason and with the same measurement behind it, and **#402 sent the question
+picker's keys after them**: a digit, the `ESC [ C` that opens a multi-select's summary, and the
+Enter that accepts it are each one `WriteConsoleInput` call in one child process, measured against
+live pickers with the transcript's `tool_result` proving the options (§6). What did NOT move is the
+interrupt's Escape and the clean exit's Ctrl+C, which still focus and still refuse a shared window —
+by choice rather than for want of a measurement, since #402 wrote both as text records (`0x1b` and
+`0x03`) into a live session and both landed.
 
 **The fallback is one-directional and conditional, and it survived the mechanism change intact.** A
 write that provably reached no console at all may fall back to the relay — that is
@@ -530,9 +535,9 @@ Windows Terminal window — same `WindowsTerminal.exe` host pid for both — and
 foreman interrupted the other, which logged `[Request interrupted by user]` and stopped its turn
 [V, #329]. So `focusSessionConsole` reports WHICH window it reached
 [code: `src/main/platform/focus.ts`], and every tier that still synthesizes a keystroke —
-`sendInterrupt`, `answerQuestionAtConsole`, and the clean-exit Ctrl+C inside `endConsoleSession` —
-refuses a host-level focus with `neverStarted` rather than pressing a key. The two text tiers left
-that refusal behind in #371 and no longer call focus at all. An **ancestor's** console
+`sendInterrupt` and the clean-exit Ctrl+C inside `endConsoleSession` — refuses a host-level focus
+with `neverStarted` rather than pressing a key. The two text tiers left that refusal behind in #371
+and `answerQuestionAtConsole` in #402; none of the three calls focus at all. An **ancestor's** console
 is not a host and is not refused: in a classic `cmd.exe` console the shell and the session share one
 window and nothing else is drawn on it (#190), which is the session's own window in every sense a
 keystroke cares about. Click-to-focus still accepts both — somebody who clicked to see the terminal
