@@ -282,6 +282,36 @@ session also answers to a registry name, a relay cancel is attempted behind that
 instruction the session may decline, weaker than the act you asked for, and the panel names the
 channel that actually delivered.
 
+### Attaching images and files
+
+A message can carry files as well as words. Drop them anywhere on the composer, or press the
+paperclip at the top of the control row to pick them; both do exactly the same thing. Pending files
+appear as chips above the box, each with a `×` that removes it, and `Enter` sends the words, the
+files, or both — an empty composer with nothing attached still sends nothing.
+
+**What the session actually receives depends on the kind of file**, and the panel does not pretend
+otherwise:
+
+- an **image** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) arrives as the image itself, which the
+  agent can look at;
+- **anything else** arrives as its path, and the agent opens it with its own file-reading tool —
+  which means its own permission prompt, exactly as if you had typed the path yourself.
+
+**Where it works.** A Claude session running in a terminal on Windows, and a session this panel is
+holding open. Everywhere else the paperclip is disabled and says why: a relay and the Codex queue
+carry a sentence to another session and cannot carry a file at all, and on macOS and Linux an
+observed session is reached through the relay for the same reason its messages are. A message that
+somehow reaches a channel like that fails whole, with a reason — the words are never delivered
+without the files.
+
+**The limits**, defined once and the same on both sides: at most **5 files** per message, **3 MB**
+for any one file, and **12 MB** for all of them together. A file that breaks one of them is refused
+with a sentence naming which limit it hit, and the files that did fit stay attached. Folders are
+refused.
+
+A sent message keeps its chips under its own bubble, so you can see what was submitted; if it fails,
+`Send again` resends the words and the files together.
+
 ### Focusing a session's terminal
 
 Clicking a dwarf first tries to focus its terminal window. Claude sessions provide a PID, so

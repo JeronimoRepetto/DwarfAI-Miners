@@ -37,6 +37,7 @@ import {
   type HeldTelemetryState,
   type HeldTuningState
 } from './heldSession'
+import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 
 /**
  * Every session the panel is currently holding, and the ask-answer loop over
@@ -846,9 +847,27 @@ export class HeldSessionRegistry {
    * reaching for a second channel: there is no honest one here.
    */
   sendText(sessionId: string, text: string): boolean {
+    return this.queue(sessionId, (handle) => handle.send(text))
+  }
+
+  /**
+   * The same act for a message carrying files (#408).
+   *
+   * Separate from `sendText` rather than a widened parameter, because the two
+   * are not the same promise: every held handle can take a string, and only one
+   * whose protocol documents content blocks can take these. A handle without
+   * `sendContent` answers false and the caller states the failure — it never
+   * flattens the blocks to their text, which would report a ✓ for a message
+   * whose images the session never saw.
+   */
+  sendContent(sessionId: string, content: HeldMessageContent): boolean {
+    return this.queue(sessionId, (handle) => handle.sendContent?.(content) ?? false)
+  }
+
+  private queue(sessionId: string, push: (handle: HeldSessionHandle) => boolean): boolean {
     const record = this.recordFor(sessionId)
     if (record === undefined) return false
-    const sent = record.handle.send(text)
+    const sent = push(record.handle)
     // A message actually queued onto the stream is a new turn starting
     // (issue #245) — the same fact the launch prompt states at record
     // creation, restated here because a session can go idle between turns and

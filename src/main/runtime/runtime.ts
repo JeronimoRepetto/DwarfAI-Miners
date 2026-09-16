@@ -23,6 +23,7 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
+  channelCarriesAttachments,
   DWARF_PROVIDERS,
   MAX_DWARF_TEXT_CHARS,
   NO_ANSWER_KEYSTROKE_TIER,
@@ -30,6 +31,7 @@ import {
   splitAnswerLabels,
   type AgentLaunchRequest,
   type AgentLaunchResult,
+  type DwarfAttachment,
   type AgentModelCatalogList,
   type AgentProviderList,
   type Dwarf,
@@ -144,6 +146,7 @@ import {
   resolveTextDelivery,
   stampTextDelivery
 } from '../textDelivery/resolve'
+import { heldContentFor, type AttachmentReader } from '../textDelivery/attachmentDelivery'
 import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
 import { questionKeystrokesFor, type QuestionKeystrokeRefusal } from '../textDelivery/questionKeys'
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
@@ -225,6 +228,19 @@ const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
  * not repeat the mistake.
  */
 const NO_PASTE_TIER = "This build can't write into a session's console."
+/**
+ * The two attachment refusals (#408), and both are terminal on purpose.
+ *
+ * The first is the capability gate: the composer disables the attach control
+ * wherever it would fire, so reaching it means a race or a caller that is not
+ * the panel — and the whole message fails rather than the words going without
+ * the files. The second is a file that would not read at send time: it may have
+ * been moved or deleted between the chip appearing and Enter, and the rest of
+ * the message is held back with it, because a ✓ over a message missing one of
+ * somebody's images is the claim this feature must never make.
+ */
+const NO_ATTACHMENT_CHANNEL = "This session's channel can't carry files."
+const ATTACHMENT_UNREADABLE = 'One of those files could not be read, so nothing was sent.'
 /**
  * The two held-session refusals (#210).
  *
@@ -694,6 +710,16 @@ export interface RuntimeOptions {
    * never a silently missing control.
    */
   chooseDirectory?: () => Promise<string | null>
+  /**
+   * Reads one attached image into base64 for a held session's content block
+   * (#408), or null when it cannot be read.
+   *
+   * Injected exactly as `chooseDirectory` is, and for the same reason: this
+   * module knows no Electron and no filesystem. Absent means no file can be
+   * carried to a held session, which becomes a stated refusal rather than a
+   * message whose images quietly went missing.
+   */
+  readAttachment?: AttachmentReader
 }
 
 /**
@@ -710,6 +736,8 @@ export class AgentRuntime {
     decision: DwarfPermissionDecision
   ) => PermissionKeystroke | null
   private readonly launchSession: SessionLauncher
+  /** One attached image's bytes, for a held session's content block (#408). */
+  private readonly readAttachment: AttachmentReader
   /** Sessions this panel started and still holds (#86, #94). */
   private readonly heldSessions: HeldSessionRegistry
   /** Claude's own live model list, over a short-lived Agent SDK query (#239). */
@@ -1195,6 +1223,10 @@ export class AgentRuntime {
      */
     this.projects = simulation ? null : (options.projects ?? null)
     this.chooseDirectory = options.chooseDirectory ?? null
+    // Answering null is the honest default: a build with no reader cannot carry
+    // a file, and `heldContentFor` turns that into a refusal rather than a
+    // message that quietly lost its images.
+    this.readAttachment = options.readAttachment ?? (async () => null)
     this.projectObserver =
       this.projects === null
         ? null
@@ -2324,8 +2356,21 @@ export class AgentRuntime {
    * would exit 0 into a queue nothing reads. `delivered` still means exactly
    * what it means everywhere else: handed to a queue something drains.
    */
-  private sendToHeldSession(sessionId: string, text: string): TextDeliveryOutcome {
-    return this.heldSessions.sendText(sessionId, text)
+  private async sendToHeldSession(
+    sessionId: string,
+    text: string,
+    attachments: readonly DwarfAttachment[] = []
+  ): Promise<TextDeliveryOutcome> {
+    if (attachments.length === 0) {
+      return this.heldSessions.sendText(sessionId, text)
+        ? { delivered: true }
+        : { delivered: false, error: HELD_STREAM_CLOSED }
+    }
+    // Read before queueing, and all of it or none (#408): a message whose
+    // second image will not read must not have put its first one on the stream.
+    const content = await heldContentFor(text, attachments, this.readAttachment)
+    if (content === null) return { delivered: false, error: ATTACHMENT_UNREADABLE }
+    return this.heldSessions.sendContent(sessionId, content)
       ? { delivered: true }
       : { delivered: false, error: HELD_STREAM_CLOSED }
   }
@@ -3043,7 +3088,14 @@ export class AgentRuntime {
     }
 
     const text = request.text.trim().slice(0, MAX_DWARF_TEXT_CHARS)
-    if (text === '') return { delivered: false, via: 'none', error: EMPTY_MESSAGE }
+    // A message may be words, files, or both (#408) — only nothing at all is
+    // refused. The boundary already validated the list against the shared
+    // limits, so what arrives here is either empty or every file the person
+    // attached; there is no partial list to reason about.
+    const attachments = request.attachments ?? []
+    if (text === '' && attachments.length === 0) {
+      return { delivered: false, via: 'none', error: EMPTY_MESSAGE }
+    }
 
     const resolved = resolveTextDelivery(
       request.dwarfId,
@@ -3059,6 +3111,21 @@ export class AgentRuntime {
       // with the same fact in the panel's own words.
       const launched = this.launched.launchIdOfDwarf(request.dwarfId) !== undefined
       return { delivered: false, via: 'none', error: launched ? NO_LAUNCH_INBOX : NO_CHANNEL }
+    }
+
+    /*
+     * The capability gate, and the one refusal #408 exists to make (#408).
+     *
+     * The composer already disables the attach control wherever this is false,
+     * so reaching here is a race or a caller that is not the panel. Either way
+     * the whole message fails with a reason rather than the words going and the
+     * files being dropped — "never claim delivery after dropping an
+     * attachment" is the issue's own rule, and a partial send is how it would
+     * be broken. The provider is read for the held tier's sake: one channel,
+     * several protocols, and only the Agent SDK's takes an image.
+     */
+    if (attachments.length > 0 && !channelCarriesAttachments(resolved.channel, dwarf.provider)) {
+      return { delivered: false, via: resolved.channel, error: NO_ATTACHMENT_CHANNEL }
     }
 
     const payload = `${resolved.prefix}${text}`
@@ -3098,7 +3165,12 @@ export class AgentRuntime {
           //
           // request.pressEnter is dropped for the reason the queue tier drops
           // it: there is no console line here to leave unsent.
-          return Promise.resolve(this.sendToHeldSession(endpoint.sessionId, payload))
+          //
+          // With files, the bytes are read HERE rather than at the stream
+          // (#408) — one image that will not read takes the whole message
+          // down, words included, which is a decision that has to be made
+          // before anything is queued.
+          return this.sendToHeldSession(endpoint.sessionId, payload, attachments)
         }
         if (endpoint.kind === 'hosted-stdin') {
           // No stage of its own, for the reason the held tier has none: a write
@@ -3131,7 +3203,8 @@ export class AgentRuntime {
           return paste.call(this.textDelivery, {
             pid: endpoint.pid,
             text: payload,
-            pressEnter: request.pressEnter
+            pressEnter: request.pressEnter,
+            ...(attachments.length === 0 ? {} : { attachments })
           })
         }
         if (endpoint.kind === 'codex-queue') {
@@ -3170,8 +3243,14 @@ export class AgentRuntime {
       // failure, so anything but a proven `neverStarted` (an attach the OS
       // refused, a console input that would not open) stops here with the
       // console's own reason.
+      // The fallback is a RELAY, and a relay carries one sentence to another
+      // session — so a message with files has nowhere to fall back TO (#408).
+      // Taking it anyway would deliver the words, report the channel's success,
+      // and lose every attachment silently, which is the one outcome the issue
+      // rules out. The console's own reason stands instead.
       if (
         endpoint.kind === 'terminal' &&
+        attachments.length === 0 &&
         outcome.neverStarted === true &&
         resolved.relayFallbackSessionName !== undefined
       ) {

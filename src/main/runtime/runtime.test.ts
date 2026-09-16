@@ -1208,6 +1208,150 @@ describe('AgentRuntime.sendDwarfText', () => {
     })
   })
 
+  /*
+   * Attachments, per route (#408). The rule under every one of these is the
+   * issue's own: never claim delivery after dropping an attachment. A channel
+   * that cannot carry a file refuses the WHOLE message rather than sending the
+   * words without it, and the terminal's relay fallback is closed for the same
+   * reason — a relay carries one sentence and would lose every file silently.
+   */
+  const SHOT = {
+    path: 'C:\\work\\red.png',
+    name: 'red.png',
+    kind: 'image' as const,
+    bytes: 900
+  }
+
+  it('hands the files to the console tier alongside the words', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    await expect(
+      runtime.sendDwarfText({
+        dwarfId: FOREMAN_ID,
+        text: 'look at this',
+        pressEnter: true,
+        attachments: [SHOT]
+      })
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'look at this',
+      pressEnter: true,
+      attachments: [SHOT]
+    })
+  })
+
+  it('sends a message that is only files, which is not an empty message', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    await expect(
+      runtime.sendDwarfText({
+        dwarfId: FOREMAN_ID,
+        text: '',
+        pressEnter: true,
+        attachments: [SHOT]
+      })
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: '',
+      pressEnter: true,
+      attachments: [SHOT]
+    })
+  })
+
+  it('still refuses a message that is neither words nor files', async () => {
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: '   ',
+      pressEnter: true,
+      attachments: []
+    })
+    expect(result).toMatchObject({ delivered: false, via: 'none' })
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+  })
+
+  it('leaves the text-only console request exactly as it was, with no empty field', async () => {
+    // The shape #371 ships is what a message without files still sends; an
+    // `attachments: []` appearing here would be a new field on every message.
+    const { runtime, port } = await runtimeWith({
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
+    })
+
+    await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'plain', pressEnter: true })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'plain',
+      pressEnter: true
+    })
+  })
+
+  it.each([
+    ['a relay', { kind: 'claude-relay', sessionName: 'sample-project-70' } as const],
+    ['a Codex queue', { kind: 'codex-queue', threadId: 't1' } as const]
+  ])('refuses the whole message on %s, rather than sending the words alone', async (_n, target) => {
+    const { runtime, port } = await runtimeWith({ [FOREMAN_ID]: target })
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'look at this',
+      pressEnter: true,
+      attachments: [SHOT]
+    })
+    expect(result.delivered).toBe(false)
+    expect(result.error).toBeTruthy()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+  })
+
+  it('never falls back to the relay for a message carrying files', async () => {
+    // A console write that provably reached nothing normally hands the text to
+    // the session's registry name (#319). With files there is nothing to hand
+    // it to: the relay carries a sentence, and taking it would report success
+    // for a message whose attachments went nowhere.
+    const port = fakePort()
+    port.pasteToConsole = vi
+      .fn()
+      .mockResolvedValue({ delivered: false, error: 'nope', neverStarted: true })
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
+      port
+    )
+
+    const result = await runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'look at this',
+      pressEnter: true,
+      attachments: [SHOT]
+    })
+    expect(result).toMatchObject({ delivered: false, via: 'terminal', error: 'nope' })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('still falls back to the relay when the same failure carries no files', async () => {
+    // The half that must keep working: #319's degrade is untouched for an
+    // ordinary message, and this is what says the guard above is narrow.
+    const port = fakePort()
+    port.pasteToConsole = vi
+      .fn()
+      .mockResolvedValue({ delivered: false, error: 'nope', neverStarted: true })
+    const { runtime } = await runtimeWith(
+      { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
+      port
+    )
+
+    await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'look at this', pressEnter: true })
+    expect(port.relayToClaudeSession).toHaveBeenCalled()
+  })
+
   it('refuses a dwarf that is no longer on the floor', async () => {
     const { runtime, port } = await runtimeWith({})
     const result = await runtime.sendDwarfText({
@@ -2878,7 +3022,8 @@ describe('AgentRuntime over the Codex message queue', () => {
     expect(runtime.getMines()[0]?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'codex-queue',
       cancel: null,
-      adjustEffort: null
+      adjustEffort: null,
+      attach: null
     })
   })
 
@@ -3169,7 +3314,8 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     expect(dwarf?.capabilities).toEqual({
       sendText: null,
       cancel: 'launched-process',
-      adjustEffort: null
+      adjustEffort: null,
+      attach: null
     })
   })
 

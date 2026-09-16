@@ -16,6 +16,7 @@
  *   noticing, which is the property it was written for.
  */
 
+import type { DwarfAttachment } from '../domain/types'
 import type { StageTimings } from './timing'
 
 /**
@@ -176,6 +177,16 @@ export interface ConsoleTextRequest {
   pid: number
   text: string
   pressEnter: boolean
+  /**
+   * The files travelling with this message, as bracketed pastes ahead of the
+   * words (#408).
+   *
+   * Only the MESSAGE tier ever carries one — #203's permission digit and #362's
+   * picker keys are keystrokes with nothing to attach — and a port with no
+   * console write tier never sees the field at all, because the runtime refuses
+   * a message with attachments before offering it one.
+   */
+  attachments?: readonly DwarfAttachment[]
 }
 
 export interface RelayTextRequest {

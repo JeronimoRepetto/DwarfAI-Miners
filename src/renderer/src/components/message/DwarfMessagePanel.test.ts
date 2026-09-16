@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MESSAGE_PANEL_ASK_HEIGHT,
   MESSAGE_PANEL_MAX_HEIGHT,
@@ -8,6 +8,9 @@ import {
   initialPanelHeight
 } from '../../lib/message/panelHeight'
 import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
+/* --- Message attachments (#408) — one block, appended -------------------- */
+import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
+/* --- end of the #408 block ----------------------------------------------- */
 import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
 import {
   NO_TRANSCRIPT_NOTE,
@@ -19,7 +22,13 @@ import { CONVERSATION_START_NOTE, READING_OLDER_NOTE } from '../../lib/message/f
 import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
-import { MAX_DWARF_TEXT_CHARS, type DwarfPermissionRequest, type DwarfSendState } from '../../types'
+import {
+  MAX_DWARF_TEXT_CHARS,
+  type DwarfAttachment,
+  type DwarfAttachmentPick,
+  type DwarfPermissionRequest,
+  type DwarfSendState
+} from '../../types'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
 
 /*
@@ -844,7 +853,12 @@ describe('DwarfMessagePanel input', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         provider: 'codex',
-        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
       })
     })
     expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
@@ -867,7 +881,7 @@ describe('DwarfMessagePanel input', () => {
       dwarf: defaultDwarf({
         provider: 'codex',
         textDelivery: 'codex-queue',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
     expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
@@ -879,7 +893,12 @@ describe('DwarfMessagePanel input', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         textDelivery: 'terminal',
-        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+        capabilities: {
+          sendText: 'terminal',
+          cancel: 'terminal',
+          adjustEffort: null,
+          attach: 'terminal'
+        }
       })
     })
     expect(wrapper.find('.panel-refusal').exists()).toBe(false)
@@ -913,7 +932,12 @@ describe('DwarfMessagePanel controls', () => {
   const kickable = defaultDwarf({
     textDelivery: 'terminal',
     conversation: HELD,
-    capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+    capabilities: {
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null,
+      attach: 'terminal'
+    }
   })
 
   /*
@@ -946,7 +970,7 @@ describe('DwarfMessagePanel controls', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'waiting',
-        capabilities: { sendText: null, cancel: null, adjustEffort: null }
+        capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null }
       })
     })
     expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
@@ -968,7 +992,7 @@ describe('DwarfMessagePanel controls', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'working',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
     expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
@@ -993,7 +1017,12 @@ describe('DwarfMessagePanel controls', () => {
   it('names what kicking THIS channel actually does, rather than one generic promise', () => {
     const relay = panel({
       dwarf: defaultDwarf({
-        capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+        capabilities: {
+          sendText: 'claude-relay',
+          cancel: 'claude-relay',
+          adjustEffort: null,
+          attach: null
+        }
       })
     })
     expect(relay.find('.control-kick').attributes('title')).toBe(
@@ -1033,7 +1062,12 @@ describe('DwarfMessagePanel controls', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         provider: 'codex',
-        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
       }),
       kickState: { phase: 'delivered', via: 'launched-process' }
     })
@@ -1561,7 +1595,7 @@ describe('DwarfMessagePanel on a dismissed dwarf', () => {
       dwarf: defaultDwarf({
         provider: 'codex',
         textDelivery: 'codex-queue',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       }),
       kickState: { phase: 'delivered', via: 'dismiss' }
     })
@@ -1998,5 +2032,274 @@ describe('DwarfMessagePanel paging (#364)', () => {
     expect(wrapper.find('.panel-conversation').attributes('aria-label')).toBe(
       `${READING_OLDER_NOTE} ${OBSERVED_NOTE}`
     )
+  })
+})
+
+/*
+ * Attachments in the composer (#408), against the design's 2026-09-16
+ * amendment: two ways in and one model, chips above the input, the limits
+ * stated where they bite, Enter sending text or files or both, and the control
+ * disabled with a reason on a channel that cannot carry one.
+ *
+ * `window.api` is faked per test rather than through a shared harness, because
+ * what each of these is about is which of the three calls the panel made.
+ */
+const CAN_ATTACH = {
+  sendText: 'terminal' as const,
+  cancel: 'terminal' as const,
+  adjustEffort: null,
+  attach: 'terminal' as const
+}
+const CANNOT_ATTACH = {
+  sendText: 'claude-relay' as const,
+  cancel: 'claude-relay' as const,
+  adjustEffort: null,
+  attach: null
+}
+
+const SHOT: DwarfAttachment = {
+  path: 'C:\\work\\red.png',
+  name: 'red.png',
+  kind: 'image',
+  bytes: 900
+}
+const NOTES: DwarfAttachment = {
+  path: 'C:\\work\\notes.txt',
+  name: 'notes.txt',
+  kind: 'file',
+  bytes: 120
+}
+
+/** Installs a fake bridge and answers `describe` with the given picks, in order. */
+function fakeApi(picks: DwarfAttachmentPick[][] = [], chosen: string[] = []) {
+  const describeDwarfAttachments = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve(picks.shift() ?? []))
+  const api = {
+    pathForDroppedFile: vi.fn((file: File) => `C:\\work\\${file.name}`),
+    chooseDwarfAttachments: vi.fn().mockResolvedValue(chosen),
+    describeDwarfAttachments
+  }
+  ;(window as unknown as { api: unknown }).api = api
+  return api
+}
+
+/** A drop event carrying files, as a browser delivers one. */
+function dropEvent(names: string[]) {
+  return { dataTransfer: { files: names.map((name) => new File(['x'], name)) } }
+}
+
+function attachPanel(props: Record<string, unknown> = {}) {
+  return panel({
+    dwarf: defaultDwarf({ textDelivery: 'terminal', capabilities: CAN_ATTACH }),
+    ...props
+  })
+}
+
+describe('DwarfMessagePanel attachments (#408)', () => {
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it.each(['dragover', 'drop'])(
+    'never lets a %s navigate, which would replace the whole window',
+    async (type) => {
+      // The regression the issue asks for by name, and BOTH events matter: a
+      // browser only opens the dropped file if the dragover was not cancelled
+      // too. A file dropped on a page that may navigate REPLACES it, and this
+      // window has no way back.
+      //
+      // Dispatched rather than `trigger`ed, because the claim is about the real
+      // event: a mock `preventDefault` passed as a property is not the method
+      // Vue's `.prevent` calls.
+      fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
+      const wrapper = attachPanel()
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: dropEvent(['red.png']).dataTransfer })
+
+      wrapper.find('.panel-composer').element.dispatchEvent(event)
+      await flushPromises()
+      expect(event.defaultPrevented).toBe(true)
+    }
+  )
+
+  it('adds a chip for every dropped file, through main', async () => {
+    const api = fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+
+    expect(api.describeDwarfAttachments).toHaveBeenCalledWith([SHOT.path])
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(1)
+    expect(wrapper.find('.composer-chip').text()).toContain('red.png')
+  })
+
+  it('adds the same way through the picker, which is the point of one model', async () => {
+    const api = fakeApi([[{ path: NOTES.path, attachment: NOTES }]], [NOTES.path])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.control-attach').trigger('click')
+    await flushPromises()
+
+    expect(api.chooseDwarfAttachments).toHaveBeenCalled()
+    expect(api.describeDwarfAttachments).toHaveBeenCalledWith([NOTES.path])
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(1)
+  })
+
+  it('draws an image chip from a preview main rendered, never from a path', async () => {
+    fakeApi([[{ path: SHOT.path, attachment: SHOT, thumbnail: 'data:image/png;base64,AAA' }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+
+    const src = wrapper.find('.chip-thumb').attributes('src')
+    expect(src).toBe('data:image/png;base64,AAA')
+    expect(src).not.toContain('file://')
+  })
+
+  it('draws a glyph rather than a preview for a file that is not an image', async () => {
+    fakeApi([[{ path: NOTES.path, attachment: NOTES }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['notes.txt']))
+    await flushPromises()
+
+    expect(wrapper.find('.chip-thumb').exists()).toBe(false)
+    expect(wrapper.find('.chip-glyph').exists()).toBe(true)
+  })
+
+  it('removes a chip when its remove control is pressed, and sends without it', async () => {
+    fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+    await wrapper.find('.chip-remove').trigger('click')
+
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+    await wrapper.find('.panel-input').setValue('just words')
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toEqual([[{ text: 'just words', pressEnter: true }]])
+  })
+
+  it('sends the words and the files together', async () => {
+    fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+    await wrapper.find('.panel-input').setValue('look at this')
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send')).toEqual([
+      [{ text: 'look at this', pressEnter: true, attachments: [SHOT] }]
+    ])
+  })
+
+  it('sends files with no words at all, which is a whole message', async () => {
+    fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send')).toEqual([[{ text: '', pressEnter: true, attachments: [SHOT] }]])
+  })
+
+  it('still sends nothing when there are neither words nor files', async () => {
+    fakeApi()
+    const wrapper = attachPanel()
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeUndefined()
+  })
+
+  it('clears the chips once the message has left, releasing what they held', async () => {
+    // The issue's release rule. Nothing here is an object URL — the preview is
+    // a data URL main rendered — so "released" means the component stops
+    // holding it, and this is what says it does.
+    fakeApi([[{ path: SHOT.path, attachment: SHOT, thumbnail: 'data:image/png;base64,AAA' }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(1)
+
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+  })
+
+  it('names the limit that refused a file, in the alert row', async () => {
+    fakeApi([[{ path: 'C:\\work\\src', refusal: 'directory' }]])
+    const wrapper = attachPanel()
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['src']))
+    await flushPromises()
+
+    expect(wrapper.find('.panel-alert').text()).toBe(refusalSentence('directory', 'src'))
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+  })
+
+  it('disables the control with its reason on a channel that carries text only', () => {
+    fakeApi()
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
+    })
+    const control = wrapper.find('.control-attach')
+    expect(control.attributes('disabled')).toBeDefined()
+    expect(control.attributes('title')).toBe(NO_ATTACH_CHANNEL_HINT)
+  })
+
+  it('refuses a drop on that same channel with the same sentence, and asks main nothing', async () => {
+    const api = fakeApi()
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
+    })
+
+    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await flushPromises()
+
+    expect(api.describeDwarfAttachments).not.toHaveBeenCalled()
+    expect(wrapper.find('.panel-alert').text()).toBe(NO_ATTACH_CHANNEL_HINT)
+    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+  })
+
+  it('marks the composer while a drag is over it, and unmarks it on leave', async () => {
+    fakeApi()
+    const wrapper = attachPanel()
+    await wrapper.find('.panel-composer').trigger('dragover')
+    expect(wrapper.find('.panel-composer').classes()).toContain('is-dragging')
+    await wrapper.find('.panel-composer').trigger('dragleave')
+    expect(wrapper.find('.panel-composer').classes()).not.toContain('is-dragging')
+  })
+
+  it('shows what a sent message carried, as chips with no remove control', () => {
+    fakeApi()
+    const echo: MessageEcho = {
+      id: 'echo-1',
+      text: 'look at this',
+      sentAt: 1,
+      state: { phase: 'delivered' }
+    }
+    const wrapper = attachPanel({ echoes: [echo], echoAttachments: { 'echo-1': [SHOT] } })
+
+    expect(wrapper.findAll('.bubble-attachment')).toHaveLength(1)
+    expect(wrapper.find('.bubble-attachment').text()).toContain('red.png')
+    expect(wrapper.find('.bubble-attachment .chip-remove').exists()).toBe(false)
+  })
+
+  it('puts the caret back in the composer after a pick, so #409 still holds', async () => {
+    // The OS dialog takes the focus away; the person's next act is typing.
+    fakeApi([[{ path: SHOT.path, attachment: SHOT }]], [SHOT.path])
+    const wrapper = attachPanel()
+    const input = wrapper.find('.panel-input').element as HTMLTextAreaElement
+    const focus = vi.fn()
+    input.focus = focus
+
+    await wrapper.find('.control-attach').trigger('click')
+    await flushPromises()
+    expect(focus).toHaveBeenCalled()
   })
 })

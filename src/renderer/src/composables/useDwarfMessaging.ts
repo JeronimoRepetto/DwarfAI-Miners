@@ -10,6 +10,7 @@ import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/e
 import {
   defaultDwarfMessagingState,
   type Dwarf,
+  type DwarfAttachment,
   type DwarfSendState,
   type DwarfTextResult,
   type FeedMessage
@@ -57,6 +58,22 @@ const state = reactive(defaultDwarfMessagingState())
  * shape must not grow a renderer-only field.
  */
 const echoes = reactive<Record<string, MessageEcho[]>>({})
+/**
+ * The files each echo was sent with, keyed by dwarf id then echo id (#408).
+ *
+ * A SIBLING of `echoes` rather than a field on `MessageEcho`, and deliberately:
+ * that shape belongs to `lib/message/echo`, whose subject is reconciling the
+ * panel's own bubbles against the transcript — a job attachments play no part
+ * in, since the transcript row that supersedes an echo is matched on its words.
+ * Keeping them apart also means an echo dropped by the cap or by reconciliation
+ * takes its attachments with it through the same three lines that drop the echo,
+ * which is why every deletion below writes both.
+ *
+ * What it is FOR is the two things the design asks of a sent message: the
+ * person's own bubble shows the chips it was sent with, and `Send again`
+ * resends them with the words (#309).
+ */
+const echoAttachments = reactive<Record<string, Record<string, readonly DwarfAttachment[]>>>({})
 const clearTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Open reaction watches, keyed by dwarf id — at most one per dwarf. */
 const watches = new Map<string, ReactionWatch>()
@@ -111,6 +128,23 @@ function markEcho(dwarfId: string, echoId: string, next: DwarfSendState): void {
 }
 
 /**
+ * Forget the attachments of every echo this dwarf no longer has (#408).
+ *
+ * The one place that happens, called wherever `echoes[dwarfId]` is rewritten:
+ * the cap dropping the oldest, and the transcript accounting for a message. A
+ * map that outlived its echoes would hold a data-URL thumbnail for a bubble
+ * nobody can see any more.
+ */
+function pruneAttachments(dwarfId: string): void {
+  const held = echoAttachments[dwarfId]
+  if (held === undefined) return
+  const live = new Set((echoes[dwarfId] ?? []).map((echo) => echo.id))
+  const kept = Object.fromEntries(Object.entries(held).filter(([id]) => live.has(id)))
+  if (Object.keys(kept).length === 0) delete echoAttachments[dwarfId]
+  else echoAttachments[dwarfId] = kept
+}
+
+/**
  * Start watching for proof the session read this message. The marker deliberately
  * stays on screen for as long as the watch is open — the whole point is to show
  * whether a reaction followed, which a four-second ✓ could never do.
@@ -140,7 +174,12 @@ function startWatch(dwarfId: string, echoId: string): void {
  * this one message's. The echo is minted BEFORE the await, which is the whole
  * feature: the bubble is on screen before any channel has been asked anything.
  */
-async function deliver(dwarfId: string, text: string, pressEnter: boolean): Promise<boolean> {
+async function deliver(
+  dwarfId: string,
+  text: string,
+  pressEnter: boolean,
+  attachments: readonly DwarfAttachment[] = []
+): Promise<boolean> {
   if (state.byDwarfId[dwarfId]?.phase === 'sending') return false
   clearTimeout(clearTimers.get(dwarfId))
   clearTimers.delete(dwarfId)
@@ -150,10 +189,21 @@ async function deliver(dwarfId: string, text: string, pressEnter: boolean): Prom
   const echoId = `echo-${++mintedEchoes}`
   const minted: MessageEcho = { id: echoId, text, sentAt: Date.now(), state: { phase: 'sending' } }
   echoes[dwarfId] = boundEchoes([...(echoes[dwarfId] ?? []), minted])
+  if (attachments.length > 0) {
+    echoAttachments[dwarfId] = { ...echoAttachments[dwarfId], [echoId]: attachments }
+  }
+  pruneAttachments(dwarfId)
 
   let result: DwarfTextResult
   try {
-    result = await window.api.sendDwarfText({ dwarfId, text, pressEnter })
+    result = await window.api.sendDwarfText({
+      dwarfId,
+      text,
+      pressEnter,
+      // Omitted rather than sent empty, so a text-only message is the exact
+      // payload every caller sent before #408.
+      ...(attachments.length === 0 ? {} : { attachments })
+    })
   } catch {
     result = { delivered: false, via: 'none', error: 'The panel lost contact with the app.' }
   }
@@ -197,8 +247,18 @@ export function useDwarfMessaging() {
    * dwarf id for the panel to render, not a channel for a caller to learn the
    * verdict of the one call it just made.
    */
-  async function send(dwarfId: string, text: string, pressEnter: boolean): Promise<boolean> {
-    return deliver(dwarfId, text, pressEnter)
+  async function send(
+    dwarfId: string,
+    text: string,
+    pressEnter: boolean,
+    attachments: readonly DwarfAttachment[] = []
+  ): Promise<boolean> {
+    return deliver(dwarfId, text, pressEnter, attachments)
+  }
+
+  /** The files one sent message carried, for its own bubble and its retry (#408). */
+  function attachmentsFor(dwarfId: string, echoId: string): readonly DwarfAttachment[] {
+    return echoAttachments[dwarfId]?.[echoId] ?? []
   }
 
   /**
@@ -217,8 +277,11 @@ export function useDwarfMessaging() {
     const echo = echoes[dwarfId]?.find((candidate) => candidate.id === echoId)
     if (echo === undefined) return false
     // Always with the session's own Enter, exactly as the composer sends: the
-    // retry is the same message, not a different kind of delivery.
-    return deliver(dwarfId, echo.text, true)
+    // retry is the same message, not a different kind of delivery — which since
+    // #408 includes its files. Read BEFORE the new echo is minted, because
+    // minting one can prune this map.
+    const attachments = echoAttachments[dwarfId]?.[echoId] ?? []
+    return deliver(dwarfId, echo.text, true, attachments)
   }
 
   /**
@@ -266,7 +329,9 @@ export function useDwarfMessaging() {
     const current = echoes[dwarfId]
     if (current === undefined || current.length === 0) return
     const kept = reconcileEchoes(current, messages)
-    if (kept.length !== current.length) echoes[dwarfId] = kept
+    if (kept.length === current.length) return
+    echoes[dwarfId] = kept
+    pruneAttachments(dwarfId)
   }
 
   /**
@@ -281,6 +346,9 @@ export function useDwarfMessaging() {
     for (const id of Object.keys(echoes)) {
       if (id !== dwarfId) delete echoes[id]
     }
+    for (const id of Object.keys(echoAttachments)) {
+      if (id !== dwarfId) delete echoAttachments[id]
+    }
   }
 
   function clear(dwarfId: string): void {
@@ -290,18 +358,22 @@ export function useDwarfMessaging() {
     lastSeen.delete(dwarfId)
     delete state.byDwarfId[dwarfId]
     delete echoes[dwarfId]
+    delete echoAttachments[dwarfId]
   }
 
   function clearAll(): void {
     for (const dwarfId of Object.keys(state.byDwarfId)) clear(dwarfId)
     for (const dwarfId of [...watches.keys()]) stopWatch(dwarfId)
     for (const dwarfId of Object.keys(echoes)) delete echoes[dwarfId]
+    for (const dwarfId of Object.keys(echoAttachments)) delete echoAttachments[dwarfId]
     lastSeen.clear()
   }
 
   return {
     state,
     echoes,
+    echoAttachments,
+    attachmentsFor,
     send,
     retry,
     observe,

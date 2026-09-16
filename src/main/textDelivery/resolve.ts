@@ -1,3 +1,4 @@
+import { channelCarriesAttachments } from '../domain/types'
 import type { Mine, TextDeliveryChannel } from '../domain/types'
 import type { KickEndpoint, SendEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './port'
 
@@ -401,7 +402,10 @@ export function stampTextDelivery(
         capabilities: {
           sendText: sendChannel,
           cancel: kickChannel,
-          adjustEffort: null
+          adjustEffort: null,
+          // The provider is read for the held tier alone (#408): one channel
+          // over several protocols, and only the Agent SDK's takes an image.
+          attach: channelCarriesAttachments(sendChannel, dwarf.provider) ? sendChannel : null
         }
       }
     })

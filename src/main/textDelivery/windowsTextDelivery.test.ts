@@ -403,6 +403,98 @@ describe('WindowsTextDelivery.sendInterrupt', () => {
  * the two tests that pinned the refusal on those paths are replaced by the two
  * below, which pin the opposite and are what #371 exists for.
  */
+/*
+ * Attachments through the same write (#408). The route is the one #371 built
+ * and #404 corrected; what is new is that a path travels inside bracketed-paste
+ * markers, which is what makes the receiving CLI attach the file rather than
+ * read a path as words. Measured 2026-09-16, `docs/console-hosting.md` §6.
+ */
+describe('WindowsTextDelivery.pasteToConsole — with attachments', () => {
+  const shot = {
+    path: 'C:\\work\\red.png',
+    name: 'red.png',
+    kind: 'image' as const,
+    bytes: 900
+  }
+  const notes = {
+    path: 'C:\\work\\notes.txt',
+    name: 'notes.txt',
+    kind: 'file' as const,
+    bytes: 120
+  }
+
+  it('wraps the path in paste markers and gives Enter its own call behind it', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.pasteToConsole({
+      pid: 4242,
+      text: 'look at this',
+      pressEnter: true,
+      attachments: [shot]
+    })
+
+    expect(result.delivered).toBe(true)
+    const script = String(runConsoleWrite.mock.calls[0]?.[0])
+    expect(chunksOf(script)).toEqual([`\u001b[200~${shot.path}\u001b[201~`, 'look at this', '\r'])
+    // Three chunks means three calls, which is the rule a paste needs hardest:
+    // with no pause the image attached and the Enter never submitted.
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(3)
+    // The path rides as base64 like every other payload, so no shell re-parses it.
+    expect(script).not.toContain(shot.path)
+  })
+
+  it('sends a message that is only files, with no empty chunk for the absent words', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    await port.pasteToConsole({ pid: 4242, text: '', pressEnter: true, attachments: [shot] })
+    expect(chunksOf(String(runConsoleWrite.mock.calls[0]?.[0]))).toEqual([
+      `\u001b[200~${shot.path}\u001b[201~`,
+      '\r'
+    ])
+  })
+
+  it('pastes several files in the order the composer held them', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    await port.pasteToConsole({
+      pid: 4242,
+      text: '',
+      pressEnter: false,
+      attachments: [shot, notes]
+    })
+    expect(chunksOf(String(runConsoleWrite.mock.calls[0]?.[0]))).toEqual([
+      `\u001b[200~${shot.path}\u001b[201~`,
+      `\u001b[200~${notes.path}\u001b[201~`
+    ])
+  })
+
+  it('writes the old two-chunk shape when there is nothing attached', async () => {
+    // The text-only path is untouched by #408, and this is what says so.
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    await port.pasteToConsole({ pid: 4242, text: 'plain', pressEnter: true, attachments: [] })
+    expect(chunksOf(String(runConsoleWrite.mock.calls[0]?.[0]))).toEqual(['plain', '\r'])
+  })
+
+  it('fails closed on a junk pid even with files to send, and runs nothing', async () => {
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.pasteToConsole({
+      pid: 0,
+      text: '',
+      pressEnter: true,
+      attachments: [shot]
+    })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(runConsoleWrite).not.toHaveBeenCalled()
+  })
+})
+
 describe('WindowsTextDelivery — a host window is never proof of the session (#329)', () => {
   function hostFocused(overrides: Parameters<typeof delivery>[0] = {}) {
     return delivery({ focus: vi.fn().mockResolvedValue(TERMINAL_HOST), ...overrides })

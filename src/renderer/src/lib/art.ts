@@ -76,6 +76,7 @@ import iconDialog from '../../../../docs/assets/icons/dialog.svg?url'
 import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.svg?url'
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
+import iconAttach from '../../../../docs/assets/icons/attach.svg?url'
 import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
 import iconKick from '../../../../docs/assets/icons/klck.svg?url'
 import iconDelete from '../../../../docs/assets/icons/delete.svg?url'
@@ -299,6 +300,13 @@ export const HISTORY_ICON_SRC = iconHistory
  */
 export const KICK_ICON_SRC = iconKick
 export const BOOST_ICON_SRC = iconBoost
+/**
+ * The composer attach control (#408), and the one icon in this set drawn for
+ * this repository rather than exported from the design source: the 2026-09-16
+ * amendment names a paperclip and the source ships none. Same monochrome,
+ * mask-ready shape as its two neighbours, at the control row scale.
+ */
+export const ATTACH_ICON_SRC = iconAttach
 
 export const SORT_ICON_SRC = iconFilter
 export const ADD_ICON_SRC = iconAdd
