@@ -27,7 +27,12 @@ const IDLE: ActionTransientState = { kicking: false }
 function capableDwarf(overrides: Partial<Dwarf> = {}): Dwarf {
   return defaultDwarf({
     textDelivery: 'terminal',
-    capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null },
+    capabilities: {
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null,
+      attach: 'terminal'
+    },
     ...overrides
   })
 }
@@ -57,7 +62,12 @@ describe('refusalLine', () => {
       refusalLine(
         defaultDwarf({
           textDelivery: 'terminal',
-          capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+          capabilities: {
+            sendText: 'terminal',
+            cancel: 'terminal',
+            adjustEffort: null,
+            attach: 'terminal'
+          }
         })
       )
     ).toBeNull()
@@ -66,7 +76,7 @@ describe('refusalLine', () => {
   it('shows why the composer is disabled, in the panel', () => {
     const dwarf = defaultDwarf({
       provider: 'codex',
-      capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+      capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null, attach: null }
     })
     expect(refusalLine(dwarf)).toBe(launchedNoInboxReason('codex'))
   })
@@ -82,7 +92,7 @@ describe('refusalLine', () => {
     const dwarf = defaultDwarf({
       provider: 'codex',
       textDelivery: 'codex-queue',
-      capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+      capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
     })
     expect(refusalLine(dwarf)).toBeNull()
   })
@@ -124,7 +134,12 @@ describe('buildActionBar', () => {
       const entry = entryFor(
         'kick',
         capableDwarf({
-          capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+          capabilities: {
+            sendText: 'claude-relay',
+            cancel: 'claude-relay',
+            adjustEffort: null,
+            attach: null
+          }
         })
       )
       expect(entry.hint).toBe('Asks the agent to stop — it decides how.')
@@ -150,7 +165,7 @@ describe('buildActionBar', () => {
         'kick',
         capableDwarf({
           status: 'waiting',
-          capabilities: { sendText: null, cancel: null, adjustEffort: null }
+          capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null }
         })
       )
       expect(entry.enabled).toBe(true)
@@ -207,7 +222,7 @@ describe('buildActionBar', () => {
         capableDwarf({
           status: 'waiting',
           textDelivery: 'codex-queue',
-          capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+          capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
         })
       )
       expect(entry.enabled).toBe(true)
@@ -242,7 +257,12 @@ describe('buildActionBar', () => {
           provider: 'antigravity',
           status: 'waiting',
           textDelivery: 'held-session',
-          capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+          capabilities: {
+            sendText: 'held-session',
+            cancel: null,
+            adjustEffort: null,
+            attach: 'held-session'
+          }
         })
       )
       expect(entry.enabled).toBe(true)
@@ -255,7 +275,12 @@ describe('buildActionBar', () => {
         'kick',
         capableDwarf({
           textDelivery: 'held-session',
-          capabilities: { sendText: 'held-session', cancel: 'held-session', adjustEffort: null }
+          capabilities: {
+            sendText: 'held-session',
+            cancel: 'held-session',
+            adjustEffort: null,
+            attach: 'held-session'
+          }
         })
       )
       expect(entry.enabled).toBe(true)
@@ -350,7 +375,12 @@ describe('buildActionBar', () => {
       return capableDwarf({
         provider: 'codex',
         textDelivery: undefined,
-        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null },
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        },
         ...overrides
       })
     }
@@ -417,7 +447,7 @@ describe('buildActionBar', () => {
         provider: 'codex',
         oneShot: true,
         textDelivery: undefined,
-        capabilities: { sendText: null, cancel: null, adjustEffort: null },
+        capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null },
         ...overrides
       })
     }
@@ -458,7 +488,12 @@ describe('buildActionBar', () => {
       const entry = entryFor(
         'chat',
         foreign({
-          capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+          capabilities: {
+            sendText: null,
+            cancel: 'launched-process',
+            adjustEffort: null,
+            attach: null
+          }
         })
       )
       expect(entry.hint).toBe(launchedNoInboxReason('codex'))
@@ -582,7 +617,12 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
     const dwarf = defaultDwarf({
       provider: 'antigravity',
       textDelivery: 'held-session',
-      capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+      capabilities: {
+        sendText: 'held-session',
+        cancel: null,
+        adjustEffort: null,
+        attach: 'held-session'
+      }
     })
     const chat = buildActionBar(dwarf, IDLE).find((action) => action.id === 'chat')
     expect(chat?.enabled).toBe(true)
@@ -600,7 +640,12 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
     const dwarf = defaultDwarf({
       provider: 'antigravity',
       textDelivery: 'held-session',
-      capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+      capabilities: {
+        sendText: 'held-session',
+        cancel: null,
+        adjustEffort: null,
+        attach: 'held-session'
+      }
     })
     expect(refusalLine(dwarf)).toBeNull()
   })
@@ -634,14 +679,24 @@ describe('the copy for a named console session that takes messages and interrupt
   function consoleSession(): Dwarf {
     return defaultDwarf({
       textDelivery: 'terminal',
-      capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+      capabilities: {
+        sendText: 'terminal',
+        cancel: 'terminal',
+        adjustEffort: null,
+        attach: 'terminal'
+      }
     })
   }
 
   function headless(): Dwarf {
     return defaultDwarf({
       textDelivery: 'claude-relay',
-      capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+      capabilities: {
+        sendText: 'claude-relay',
+        cancel: 'claude-relay',
+        adjustEffort: null,
+        attach: null
+      }
     })
   }
 
@@ -709,7 +764,7 @@ describe('kick while a turn nothing here can interrupt is open (#305)', () => {
       provider: 'codex',
       status: 'working',
       textDelivery: 'codex-queue',
-      capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null },
+      capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null },
       ...overrides
     })
   }
@@ -766,7 +821,12 @@ describe('kick while a turn nothing here can interrupt is open (#305)', () => {
         provider: 'antigravity',
         status: 'working',
         textDelivery: 'held-session',
-        capabilities: { sendText: 'held-session', cancel: null, adjustEffort: null }
+        capabilities: {
+          sendText: 'held-session',
+          cancel: null,
+          adjustEffort: null,
+          attach: 'held-session'
+        }
       })
     )
     expect(entry.enabled).toBe(false)

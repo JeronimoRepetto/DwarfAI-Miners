@@ -1,3 +1,4 @@
+import { channelCarriesAttachments } from '../domain/types'
 import type { Mine, TextDeliveryChannel } from '../domain/types'
 import type { KickEndpoint, SendEndpoint, TextDeliveryEndpoint, TextDeliveryTarget } from './port'
 
@@ -401,7 +402,8 @@ export function stampTextDelivery(
         capabilities: {
           sendText: sendChannel,
           cancel: kickChannel,
-          adjustEffort: null
+          adjustEffort: null,
+          attach: channelCarriesAttachments(sendChannel) ? sendChannel : null
         }
       }
     })

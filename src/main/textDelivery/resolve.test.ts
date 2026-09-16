@@ -498,7 +498,8 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'terminal',
       cancel: 'terminal',
-      adjustEffort: null
+      adjustEffort: null,
+      attach: 'terminal'
     })
   })
 
@@ -529,7 +530,8 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'codex-queue',
       cancel: null,
-      adjustEffort: null
+      adjustEffort: null,
+      attach: null
     })
   })
 
@@ -549,7 +551,8 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: null,
       cancel: 'launched-process',
-      adjustEffort: null
+      adjustEffort: null,
+      attach: null
     })
   })
 
@@ -573,7 +576,8 @@ describe('stampTextDelivery', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'terminal',
       cancel: 'terminal',
-      adjustEffort: null
+      adjustEffort: null,
+      attach: 'terminal'
     })
   })
 
@@ -583,6 +587,53 @@ describe('stampTextDelivery', () => {
       targetsFrom({ 'claude:s1': { kind: 'claude-relay', sessionName: 'sample-project-70' } })
     )
     expect(stamped?.dwarfs[0]?.capabilities?.adjustEffort).toBeNull()
+  })
+
+  /*
+   * The third member of the matrix (#408). It is narrower than sendText rather
+   * than a mirror of it, which is the whole reason it exists: every channel
+   * takes a string, and only two were measured to carry a file.
+   */
+  it.each([
+    ['terminal', { kind: 'terminal', pid: 42 } as const, 'terminal'],
+    [
+      'held-session',
+      { kind: 'held-session', sessionId: 's1', interruptible: true } as const,
+      'held-session'
+    ]
+  ])(
+    'stamps %s as the attach channel, because a file was measured to reach it',
+    (_name, target, expected) => {
+      const [stamped] = stampTextDelivery([mine([dwarf()])], targetsFrom({ 'claude:s1': target }))
+      expect(stamped?.dwarfs[0]?.capabilities?.attach).toBe(expected)
+    }
+  )
+
+  it.each([
+    ['a relay', { kind: 'claude-relay', sessionName: 'sample-project-70' } as const],
+    ['a Codex queue', { kind: 'codex-queue', threadId: 't1' } as const],
+    ['a hosted stdin', { kind: 'hosted-stdin', hostedId: 'claude:s1' } as const]
+  ])('stamps no attach channel for %s, beside a sendText that still works', (_name, target) => {
+    const [stamped] = stampTextDelivery([mine([dwarf()])], targetsFrom({ 'claude:s1': target }))
+    expect(stamped?.dwarfs[0]?.capabilities?.sendText).not.toBeNull()
+    expect(stamped?.dwarfs[0]?.capabilities?.attach).toBeNull()
+  })
+
+  /*
+   * The machine, not the session (#366/#408). With no console to write into,
+   * `terminal` degrades to the relay for a message — and the file cannot follow
+   * it, because a relay carries one sentence to another session. macOS and
+   * Linux therefore offer no attach control at all, and the panel reads that
+   * here rather than inferring it from the platform.
+   */
+  it('drops the attach channel with the console tier when the host cannot be typed into', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf()])],
+      targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } }),
+      false
+    )
+    expect(stamped?.dwarfs[0]?.capabilities?.sendText).toBe('claude-relay')
+    expect(stamped?.dwarfs[0]?.capabilities?.attach).toBeNull()
   })
 })
 
@@ -656,7 +707,8 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
     expect(mine?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'held-session',
       cancel: null,
-      adjustEffort: null
+      adjustEffort: null,
+      attach: 'held-session'
     })
   })
 })
@@ -765,7 +817,8 @@ describe('a console this machine cannot type into (#366)', () => {
     expect(stamped?.dwarfs[0]?.capabilities).toEqual({
       sendText: 'claude-relay',
       cancel: 'terminal',
-      adjustEffort: null
+      adjustEffort: null,
+      attach: null
     })
   })
 })

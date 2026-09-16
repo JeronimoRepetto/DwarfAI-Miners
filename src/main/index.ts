@@ -4,11 +4,12 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  nativeImage,
   shell,
   type BrowserWindow,
   type WebContents
 } from 'electron'
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
@@ -58,9 +59,14 @@ import {
   isMineTier,
   parseAudioPreferences,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  parseTypographyPreferences
+  parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Message attachments (#408) — one block, appended -------------------- */
+  MAX_DWARF_ATTACHMENTS,
+  parseDwarfAttachments
+  /* --- end of the #408 block ----------------------------------------------- */
 } from '../shared/contracts'
+import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
 import {
   enable as enableAutostart,
   ensureDefaultAutostart,
@@ -204,6 +210,10 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfQuestion)
   ipcMain.removeHandler(IPC_CHANNELS.answerDwarfPermission)
   ipcMain.removeHandler(IPC_CHANNELS.launchHostedProcess)
+  /* --- Message attachments (#408) — one block, appended -------------------- */
+  ipcMain.removeHandler(IPC_CHANNELS.chooseDwarfAttachments)
+  ipcMain.removeHandler(IPC_CHANNELS.describeDwarfAttachments)
+  /* --- end of the #408 block ----------------------------------------------- */
   /* --- System notifications (#316) — one block, appended ------------------- */
   ipcMain.removeHandler(IPC_CHANNELS.getNotificationsEnabled)
   ipcMain.removeHandler(IPC_CHANNELS.setNotificationsEnabled)
@@ -220,10 +230,17 @@ function parseTextRequest(payload: unknown): DwarfTextRequest | null {
   if (typeof payload !== 'object' || payload === null) return null
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string' || typeof record.text !== 'string') return null
+  // All-or-nothing, and the one field here that can refuse the whole request
+  // (#408): a list trimmed to what fits would deliver some of somebody's files
+  // and report success. The limits it reads are the wire's own, so this cannot
+  // come to disagree with the composer about which message was too big.
+  const attachments = parseDwarfAttachments(record.attachments)
+  if (attachments === null) return null
   return {
     dwarfId: record.dwarfId,
     text: record.text,
-    pressEnter: record.pressEnter === true
+    pressEnter: record.pressEnter === true,
+    ...(attachments.length === 0 ? {} : { attachments })
   }
 }
 
@@ -446,6 +463,57 @@ async function chooseProjectDirectory(parent: BrowserWindow): Promise<string | n
   if (result.canceled) return null
   return result.filePaths[0] ?? null
 }
+
+/**
+ * The composer's attach control, the second dialog in the app (#408).
+ *
+ * Files only and no directory, which is the issue's own rule and is enforced
+ * again in `describeAttachments` — the picker's `properties` govern this one
+ * button, and a dropped folder never passed through it at all.
+ *
+ * It answers PATHS, and stops. What each path is comes back from
+ * `describeDwarfAttachments`, the same call a drop makes, so neither entry
+ * point can grow a rule the other lacks.
+ */
+async function chooseAttachmentFiles(parent: BrowserWindow): Promise<string[]> {
+  const result = await dialog.showOpenDialog(parent, {
+    properties: ['openFile', 'multiSelections']
+  })
+  return result.canceled ? [] : result.filePaths
+}
+
+/**
+ * The real filesystem behind `describeAttachments`.
+ *
+ * `nativeImage` is what keeps an arbitrary path out of the renderer: it decodes
+ * the file main was pointed at and hands back a data URL bounded to twice the
+ * chip's own size, so the panel draws a preview without ever being given a
+ * location it could load. A file that will not decode answers null and the chip
+ * falls back to the file glyph — an image that cannot be previewed is still an
+ * image, and refusing it would be a stricter rule than the session's.
+ */
+const attachmentFiles: AttachmentFilePort = {
+  async stat(path) {
+    try {
+      const stats = await stat(path)
+      return { bytes: stats.size, directory: stats.isDirectory() }
+    } catch {
+      return null
+    }
+  },
+  async thumbnail(path) {
+    try {
+      const image = nativeImage.createFromPath(path)
+      if (image.isEmpty()) return null
+      return image.resize({ width: ATTACHMENT_THUMBNAIL_PX, quality: 'good' }).toDataURL()
+    } catch {
+      return null
+    }
+  }
+}
+
+/** Twice the design's 40px chip, so the preview is sharp on a 2× display. */
+const ATTACHMENT_THUMBNAIL_PX = 80
 
 /**
  * Wraps a mines list with its vault totals for both getMines() and the push.
@@ -1238,6 +1306,18 @@ async function init(): Promise<void> {
     const request = parseTextRequest(payload)
     if (request === null) return notDelivered
     return runtime?.sendDwarfText(request) ?? notDelivered
+  })
+
+  ipcMain.handle(IPC_CHANNELS.chooseDwarfAttachments, () => chooseAttachmentFiles(mainWindow))
+
+  ipcMain.handle(IPC_CHANNELS.describeDwarfAttachments, (_event, payload: unknown) => {
+    // A path is a string and nothing here defaults one: a payload that is not a
+    // list of strings is a request this process cannot run, and answering about
+    // a path nobody sent is how a picker would come to describe the wrong file.
+    if (!Array.isArray(payload)) return []
+    const paths = payload.filter((item): item is string => typeof item === 'string' && item !== '')
+    if (paths.length !== payload.length) return []
+    return describeAttachments(paths.slice(0, MAX_DWARF_ATTACHMENTS), attachmentFiles)
   })
 
   const notKicked: DwarfKickResult = {

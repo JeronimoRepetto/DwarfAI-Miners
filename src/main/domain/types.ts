@@ -21,6 +21,10 @@ export type {
   AudioPreferences,
   Dwarf,
   DwarfActivation,
+  DwarfAttachment,
+  DwarfAttachmentKind,
+  DwarfAttachmentPick,
+  DwarfAttachmentRefusal,
   DwarfAttendance,
   DwarfCapabilities,
   DwarfContextUsage,
@@ -163,8 +167,19 @@ export {
   MESSAGING_FONTS,
   isInterfaceFont,
   isMessagingFont,
-  parseTypographyPreferences
+  parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Message attachments (#408) — one block, appended -------------------- */
+  ATTACHMENT_CHANNELS,
+  DWARF_IMAGE_EXTENSIONS,
+  MAX_DWARF_ATTACHMENTS,
+  MAX_DWARF_ATTACHMENT_BYTES,
+  MAX_DWARF_ATTACHMENTS_TOTAL_BYTES,
+  attachmentKindFor,
+  channelCarriesAttachments,
+  isDwarfAttachment,
+  refuseAttachment
+  /* --- end of the #408 block ----------------------------------------------- */
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

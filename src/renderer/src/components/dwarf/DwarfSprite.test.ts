@@ -316,7 +316,12 @@ describe('DwarfSprite', () => {
   describe('kick', () => {
     function kickableDwarf() {
       return defaultDwarf({
-        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+        capabilities: {
+          sendText: 'terminal',
+          cancel: 'terminal',
+          adjustEffort: null,
+          attach: 'terminal'
+        }
       })
     }
 

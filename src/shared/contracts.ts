@@ -1363,6 +1363,21 @@ export interface DwarfCapabilities {
    * session's effort. Modeled now so a future channel plugs in without a UI change.
    */
   adjustEffort: null
+  /**
+   * Which channel would carry a FILE, or null when none would (#408).
+   *
+   * Never wider than `sendText` and usually narrower: a message is a string and
+   * every channel takes one, while only the two in `ATTACHMENT_CHANNELS` were
+   * measured to carry bytes or a path the session can open. So a dwarf may take
+   * words and refuse files, and the panel says which — that is the whole reason
+   * this is a third member rather than a boolean read off `sendText`.
+   *
+   * It is null on every relay tier, which includes macOS and Linux for an
+   * observed session: there is no console-write message tier there, so
+   * `resolveTextDelivery` degrades `terminal` to `claude-relay` and this follows
+   * it down. Nothing in the UI infers that; it reads this.
+   */
+  attach: TextDeliveryChannel | null
 }
 
 export interface Mine {
@@ -1896,12 +1911,207 @@ export const TIER_WEIGHT_THRESHOLDS_KB = {
   uraniumKb: 8192
 }
 
+/**
+ * What an attachment IS to this app, and the distinction the whole feature
+ * rests on (#408).
+ *
+ * `image` means the session will receive the BYTES; `file` means it will
+ * receive the PATH and may open it with its own tools. That is not a taste: it
+ * is what 2026-09-16's measurement found on both channels that can carry
+ * anything at all (`docs/console-hosting.md` §6). A `.png` path inside a
+ * bracketed paste becomes an image content block in the session's own
+ * transcript; a `.txt` and a `.pdf` path arrive as ordinary text and the
+ * session then reads them with an ordinary, permission-gated tool call. So the
+ * two kinds promise different things, and the panel must not draw them alike.
+ *
+ * `path` is the person's own path on this machine and nothing is ever copied:
+ * the file stays where it is, and the app hands over a path they chose. See
+ * `docs/privacy.md`.
+ */
+export type DwarfAttachmentKind = 'image' | 'file'
+
+/** One file the person attached to a message. */
+export interface DwarfAttachment {
+  /** Absolute path on this machine. Never copied, never rewritten. */
+  path: string
+  /** The file's own name — what the chip shows and what the echo keeps. */
+  name: string
+  kind: DwarfAttachmentKind
+  /** Size on disk, measured in main; the limits below are read against it. */
+  bytes: number
+}
+
+/**
+ * The extensions that make a file an IMAGE rather than a path reference.
+ *
+ * Exactly the four media types the Anthropic API accepts as an image block,
+ * which is what the held-session route builds, and what an observed Claude
+ * session's own CLI turned out to accept through a paste. It CLASSIFIES rather
+ * than gates: a file outside this list is still attachable, it just travels as
+ * its path. Nothing here is a guess about a fifth format — a format nobody has
+ * measured would be a promise of bytes that may never arrive.
+ */
+export const DWARF_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'] as const
+
+/**
+ * How many files one message may carry, how large any one of them may be, and
+ * how large they may be together.
+ *
+ * Declared here because the design asks for them ONCE at the wire boundary and
+ * surfaced in the UI: the composer says which limit refused a file and
+ * `main/index.ts` refuses a payload that broke one, and a second copy of either
+ * number is how the two would come to disagree.
+ *
+ * The per-file ceiling is set so a base64 image block stays inside the API's
+ * own per-image limit — base64 costs a third more than the bytes it encodes —
+ * and the total is four of those rather than five, so a message that is all
+ * large images is stopped by the total rather than by the count. Both bind, on
+ * purpose: one bounds what the panel hands over at once, the other what a
+ * single file may cost.
+ */
+export const MAX_DWARF_ATTACHMENTS = 5
+export const MAX_DWARF_ATTACHMENT_BYTES = 3 * 1024 * 1024
+export const MAX_DWARF_ATTACHMENTS_TOTAL_BYTES = 12 * 1024 * 1024
+
+/**
+ * Why one file was refused. A closed set rather than a sentence, because the
+ * sentence is the panel's and the rule is the wire's — main refuses a payload
+ * on the same reasons the composer declines a drop, and only the renderer
+ * spells them (`renderer/src/lib/delivery/attachments.ts`).
+ *
+ * `directory` and `unreadable` are facts about the filesystem, so only main can
+ * reach them; the other four are arithmetic over what is already pending and
+ * are decided by `refuseAttachment` in both processes.
+ */
+export type DwarfAttachmentRefusal =
+  | 'directory'
+  | 'unreadable'
+  | 'already-attached'
+  | 'too-many'
+  | 'file-too-large'
+  | 'total-too-large'
+
+/** Whether `name` names an image, by extension and without touching the disk. */
+export function attachmentKindFor(name: string): DwarfAttachmentKind {
+  const lower = name.toLowerCase()
+  const image = DWARF_IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension))
+  return image ? 'image' : 'file'
+}
+
+/**
+ * Whether `candidate` may join `accepted`, and which limit says no.
+ *
+ * The order is the order the person needs to hear: a file they already have is
+ * not a refusal about size, and a message that is already full is not about
+ * this file's bytes. Reporting the count before the size keeps the sentence
+ * true — naming a size limit to somebody who would have been stopped by the
+ * count sends them to compress a file that was never the problem.
+ */
+export function refuseAttachment(
+  candidate: DwarfAttachment,
+  accepted: readonly DwarfAttachment[]
+): DwarfAttachmentRefusal | null {
+  if (accepted.some((item) => item.path === candidate.path)) return 'already-attached'
+  if (accepted.length >= MAX_DWARF_ATTACHMENTS) return 'too-many'
+  if (candidate.bytes > MAX_DWARF_ATTACHMENT_BYTES) return 'file-too-large'
+  const total = accepted.reduce((sum, item) => sum + item.bytes, candidate.bytes)
+  if (total > MAX_DWARF_ATTACHMENTS_TOTAL_BYTES) return 'total-too-large'
+  return null
+}
+
+/** The wire's own shape check, for the IPC boundary and for anything it feeds. */
+export function isDwarfAttachment(value: unknown): value is DwarfAttachment {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (typeof record.path !== 'string' || record.path === '') return false
+  if (typeof record.name !== 'string' || record.name === '') return false
+  if (record.kind !== 'image' && record.kind !== 'file') return false
+  return Number.isInteger(record.bytes) && (record.bytes as number) >= 0
+}
+
+/**
+ * What main answers about one path the person pointed at (#408).
+ *
+ * Exactly one of `attachment` and `refusal` is present. The refusals reachable
+ * here are the two only main can see — a directory, and a path that cannot be
+ * read — because everything else is arithmetic over what is already pending,
+ * which only the composer knows.
+ *
+ * `thumbnail` is a small data URL rendered IN MAIN, and it is why the renderer
+ * never needs a path of its own: handing the panel a `file://` for an arbitrary
+ * location would make every chip a reason to load anything on the disk. It is
+ * absent for a file that is not an image, for an image already past the
+ * per-file limit, and for one that would not decode.
+ */
+export interface DwarfAttachmentPick {
+  path: string
+  attachment?: DwarfAttachment
+  refusal?: DwarfAttachmentRefusal
+  thumbnail?: string
+}
+
+/**
+ * Read an `attachments` field off an IPC payload, or refuse the whole list.
+ *
+ * Absent is `[]` rather than a refusal, because a text-only message is what
+ * every caller before #408 sent. Everything else is all-or-nothing on purpose:
+ * a list trimmed to what fits would hand over three of somebody's four files
+ * and report success, which is the exact dishonesty this feature exists to
+ * avoid. So one malformed member, one oversized file, or one limit broken takes
+ * the request down, and the panel says so.
+ *
+ * It runs the same `refuseAttachment` the composer runs, cumulatively over what
+ * it has already accepted — so the boundary cannot come to disagree with the
+ * chips about which message was too big.
+ */
+export function parseDwarfAttachments(value: unknown): readonly DwarfAttachment[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return null
+  const accepted: DwarfAttachment[] = []
+  for (const candidate of value) {
+    if (!isDwarfAttachment(candidate)) return null
+    if (refuseAttachment(candidate, accepted) !== null) return null
+    accepted.push(candidate)
+  }
+  return accepted
+}
+
+/**
+ * The channels a file can actually travel on, and therefore the only ones that
+ * may offer the attach control (#408).
+ *
+ * `terminal` because a bracketed paste of the path by pid was measured to
+ * attach the image to an observed Claude session, and `held-session` because
+ * the Agent SDK takes image content blocks directly and needs no console at
+ * all. Every other channel carries a string and nothing else: the relay hands
+ * one sentence to another session, the Codex queue is a text inbox, and the
+ * hosted engine's stdin has never been measured with a paste. A capability,
+ * not a guess — the panel disables the control with a reason rather than
+ * accepting a file it would drop on the floor.
+ */
+export const ATTACHMENT_CHANNELS: readonly TextDeliveryChannel[] = ['terminal', 'held-session']
+
+/** Whether `channel` is one of the two above. Null — no channel — is never one. */
+export function channelCarriesAttachments(channel: TextDeliveryChannel | null): boolean {
+  return channel !== null && ATTACHMENT_CHANNELS.includes(channel)
+}
+
 /** One message the panel wants handed to a dwarf's live session. */
 export interface DwarfTextRequest {
   dwarfId: string
   text: string
   /** Whether the session should also receive an ENTER, submitting the line. */
   pressEnter: boolean
+  /**
+   * The files the person attached, in the order the composer holds them (#408).
+   *
+   * Absent and empty mean the same thing to every reader, which is why it is
+   * optional: a text-only message is what every caller before #408 sent, and
+   * none of them had to change. What may NOT happen is a request carrying
+   * attachments reaching a channel that cannot take them — that fails whole,
+   * with a reason, rather than delivering the words and losing the files.
+   */
+  attachments?: readonly DwarfAttachment[]
 }
 
 /** Verdict of one delivery attempt. Never carries the message itself. */
@@ -3503,6 +3713,29 @@ export const IPC_CHANNELS = {
    */
   openExternalLink: 'shell:openExternalLink',
   sendDwarfText: 'dwarf:sendText',
+  /**
+   * The system file picker, for the composer's attach control (#408).
+   *
+   * Main owns the dialog for the same reason `chooseProjectDirectory` does: it
+   * must come up in FRONT of an always-on-top panel rather than behind it, and
+   * the two must not be interactable at once. It answers paths and nothing
+   * else — a cancelled picker is an empty list, not an error — because
+   * everything a path means is `describeDwarfAttachments`'s answer, which a
+   * dropped file reaches by the same route.
+   */
+  chooseDwarfAttachments: 'dwarf:attachments:choose',
+  /**
+   * What main can see about a path and the renderer cannot: its size, whether
+   * it is a folder, whether it reads at all, and a bounded preview for an image
+   * (#408).
+   *
+   * Both entry points come through here — the picker's paths and a drop's, the
+   * latter turned into paths by `webUtils.getPathForFile` in preload — which is
+   * what makes them one validation path rather than two that drift. The panel
+   * is never handed a `file://` for an arbitrary location: the preview is a data
+   * URL main rendered, so a chip is never a reason to load anything on the disk.
+   */
+  describeDwarfAttachments: 'dwarf:attachments:describe',
   kickDwarf: 'dwarf:kick',
   /**
    * The panel reporting that it WATCHED a kicked agent stop (see #46), so main

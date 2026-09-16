@@ -844,7 +844,12 @@ describe('DwarfMessagePanel input', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         provider: 'codex',
-        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
       })
     })
     expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
@@ -867,7 +872,7 @@ describe('DwarfMessagePanel input', () => {
       dwarf: defaultDwarf({
         provider: 'codex',
         textDelivery: 'codex-queue',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
     expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
@@ -879,7 +884,12 @@ describe('DwarfMessagePanel input', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         textDelivery: 'terminal',
-        capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+        capabilities: {
+          sendText: 'terminal',
+          cancel: 'terminal',
+          adjustEffort: null,
+          attach: 'terminal'
+        }
       })
     })
     expect(wrapper.find('.panel-refusal').exists()).toBe(false)
@@ -913,7 +923,12 @@ describe('DwarfMessagePanel controls', () => {
   const kickable = defaultDwarf({
     textDelivery: 'terminal',
     conversation: HELD,
-    capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
+    capabilities: {
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null,
+      attach: 'terminal'
+    }
   })
 
   /*
@@ -946,7 +961,7 @@ describe('DwarfMessagePanel controls', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'waiting',
-        capabilities: { sendText: null, cancel: null, adjustEffort: null }
+        capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null }
       })
     })
     expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
@@ -968,7 +983,7 @@ describe('DwarfMessagePanel controls', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'working',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
     expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
@@ -993,7 +1008,12 @@ describe('DwarfMessagePanel controls', () => {
   it('names what kicking THIS channel actually does, rather than one generic promise', () => {
     const relay = panel({
       dwarf: defaultDwarf({
-        capabilities: { sendText: 'claude-relay', cancel: 'claude-relay', adjustEffort: null }
+        capabilities: {
+          sendText: 'claude-relay',
+          cancel: 'claude-relay',
+          adjustEffort: null,
+          attach: null
+        }
       })
     })
     expect(relay.find('.control-kick').attributes('title')).toBe(
@@ -1033,7 +1053,12 @@ describe('DwarfMessagePanel controls', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         provider: 'codex',
-        capabilities: { sendText: null, cancel: 'launched-process', adjustEffort: null }
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
       }),
       kickState: { phase: 'delivered', via: 'launched-process' }
     })
@@ -1561,7 +1586,7 @@ describe('DwarfMessagePanel on a dismissed dwarf', () => {
       dwarf: defaultDwarf({
         provider: 'codex',
         textDelivery: 'codex-queue',
-        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null }
+        capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       }),
       kickState: { phase: 'delivered', via: 'dismiss' }
     })
