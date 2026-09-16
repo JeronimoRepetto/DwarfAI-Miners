@@ -2692,9 +2692,11 @@ export class AgentRuntime {
    *
    * `questionKeystrokesFor` holds the measurement (see questionKeys.ts): a
    * single-select option's digit selects and submits by itself, and a
-   * multi-select's digits each toggle, needing `{RIGHT}` then `{ENTER}` behind
-   * them. The labels a person chose are turned into option POSITIONS there, so
-   * nothing agent-authored travels into a keystroke — and a label with no
+   * multi-select's digits each toggle, needing a cursor-right and then an Enter
+   * behind them — written as the VT sequence `ESC [ C` and a carriage return
+   * since #402, where they used to be SendKeys keynames at a focused window.
+   * The labels a person chose are turned into option POSITIONS there, so
+   * nothing agent-authored travels into the write — and a label with no
    * option behind it is refused rather than pressed as the nearest row.
    *
    * The port method is a tier rather than a reuse of `sendToConsole`, and its
