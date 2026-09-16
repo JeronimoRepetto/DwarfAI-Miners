@@ -1,5 +1,11 @@
 import { REACTION_WINDOW_MS } from '../delivery/reaction'
-import { stripRelayProvenance, type DwarfSendState, type FeedMessage } from '../../types'
+import { normalizeConsoleText } from '../../../../shared/consoleText'
+import {
+  stripRelayProvenance,
+  type DwarfAttachment,
+  type DwarfSendState,
+  type FeedMessage
+} from '../../types'
 import type { PanelEntry } from './activityGroup'
 import type { PanelMessage } from './conversation'
 
@@ -123,13 +129,48 @@ export function mergeEchoes<Row extends PanelMessage>(
 }
 
 /**
+ * The console's own marker for one pasted image, whatever digit Claude
+ * Code's own session counter assigned it (#408, measured in
+ * docs/console-hosting.md §6) — never a number this app predicts, only a
+ * shape it recognizes.
+ */
+const IMAGE_MARKER_RE = /^\[Image #\d+\]/
+
+/**
+ * `text` with one literal token per entry of `attachments` taken off the
+ * front, in order — undefined the moment one is missing.
+ *
+ * A file's token is its exact path, matched as a plain prefix; an image's is
+ * `[Image #<digits>]`, matched by the one anchored pattern above because the
+ * digits are Claude Code's own counter and never predictable. Neither is a
+ * search over the WORDS that remain once every token is off — those are
+ * compared by plain equality in `accountsFor`, never by pattern.
+ */
+function stripAttachmentTokens(
+  text: string,
+  attachments: readonly DwarfAttachment[]
+): string | undefined {
+  let rest = text
+  for (const attachment of attachments) {
+    if (attachment.kind === 'image') {
+      const marker = IMAGE_MARKER_RE.exec(rest)
+      if (marker === null) return undefined
+      rest = rest.slice(marker[0].length)
+      continue
+    }
+    if (!rest.startsWith(attachment.path)) return undefined
+    rest = rest.slice(attachment.path.length)
+  }
+  return rest
+}
+
+/**
  * Whether `message` is evidence that `echo` reached the session's transcript.
  *
  * Four conditions, and all four are required, because dropping an echo is
  * throwing away the only copy of the person's words this panel holds:
  *
- * - the same words, trimmed — the composer trims before sending, and a
- *   transcript is free to keep a newline the channel added;
+ * - the same words, normalized — see below;
  * - a `user` turn, since the agent's reply is not the person's message;
  * - **no issuer** — an agent-issued `user` turn was never the human's (#175),
  *   and a coordinator that happened to instruct its worker with the same
@@ -140,17 +181,44 @@ export function mergeEchoes<Row extends PanelMessage>(
  *   be dated at all proves nothing about when it was written, and the echo
  *   stays.
  *
- * The words are compared past the relay's provenance line (#378). A message the
- * relay carries is prefixed with a line naming its author, and the transcript
- * reader takes it off before publishing the row — this is the second place it
- * has to come off, because an echo that never matches its own row is the
- * person's message drawn twice with a ✓ that can never reach ✓✓. Only that one
- * known line: `[for agent <name>] ` stays in the comparison, since it names the
- * recipient and the composer never typed it.
+ * **The words are normalized the way the console itself flattens a message**
+ * (`normalizeConsoleText`, shared with `sendKeys.ts`'s `toConsoleLine`), not by
+ * `.trim()` alone (#419): a message typed with Shift+Enter reaches the
+ * transcript as one line, whitespace runs collapsed, while the echo the panel
+ * is still holding keeps its own newlines. Comparing both sides through the
+ * same rule the console applies is what lets them still read as equal, and it
+ * changes nothing for a plain one-line message — a string with no internal
+ * whitespace run normalizes to itself.
+ *
+ * The words are compared past the relay's provenance line (#378), taken off
+ * before normalizing. A message the relay carries is prefixed with a line
+ * naming its author, and the transcript reader takes it off before publishing
+ * the row — this is the second place it has to come off, because an echo that
+ * never matches its own row is the person's message drawn twice with a ✓ that
+ * can never reach ✓✓. Only that one known line: `[for agent <name>] ` stays in
+ * the comparison, since it names the recipient and the composer never typed
+ * it.
+ *
+ * **`attachments` are this ECHO's own files** (#408) — `useDwarfMessaging`
+ * keeps them keyed by echo id, since attachments play no part in an ordinary
+ * text-only send. A row is expected to carry one token per attachment ahead of
+ * the words, in the exact order they were sent (`stripAttachmentTokens`); a
+ * row missing even one token never accounts for this echo, and an
+ * attachments-only echo (no words at all) matches a row that is exactly those
+ * tokens. See docs/console-hosting.md §6 for the transcript shape this was
+ * measured against.
  */
-function accountsFor(echo: MessageEcho, message: FeedMessage): boolean {
+function accountsFor(
+  echo: MessageEcho,
+  message: FeedMessage,
+  attachments: readonly DwarfAttachment[]
+): boolean {
   if (message.role !== 'user' || message.issuer !== undefined) return false
-  if (stripRelayProvenance(message.text).trim() !== echo.text.trim()) return false
+  const rowWords = stripAttachmentTokens(
+    normalizeConsoleText(stripRelayProvenance(message.text)),
+    attachments
+  )
+  if (rowWords === undefined || rowWords !== normalizeConsoleText(echo.text)) return false
   const at = Date.parse(message.timestamp)
   if (Number.isNaN(at)) return false
   return at >= echo.sentAt && at - echo.sentAt <= ECHO_MATCH_WINDOW_MS
@@ -169,14 +237,25 @@ function accountsFor(echo: MessageEcho, message: FeedMessage): boolean {
  * echo re-derived from the tail alone would come back from the dead at the
  * bottom of the conversation. Dropping is a fact, and later polls do not take
  * a fact back — the same rule `observeReaction` holds to about a reaction.
+ *
+ * `attachmentsByEchoId` is each held echo's own files, keyed by echo id —
+ * `useDwarfMessaging`'s `echoAttachments` (#408), passed straight through
+ * rather than folded into `MessageEcho` itself, since that shape is
+ * `useDwarfMessaging`'s and reconciling is the only thing this module does
+ * with it. Defaulted to `{}` so every caller from before #419 — and every
+ * plain text-only send today — reads as "no attachments", exactly the shape a
+ * message without any already took.
  */
 export function reconcileEchoes(
   echoes: readonly MessageEcho[],
-  messages: readonly FeedMessage[]
+  messages: readonly FeedMessage[],
+  attachmentsByEchoId: Readonly<Record<string, readonly DwarfAttachment[]>> = {}
 ): MessageEcho[] {
   const kept = [...echoes]
   for (const message of messages) {
-    const index = kept.findIndex((echo) => accountsFor(echo, message))
+    const index = kept.findIndex((echo) =>
+      accountsFor(echo, message, attachmentsByEchoId[echo.id] ?? [])
+    )
     if (index !== -1) kept.splice(index, 1)
   }
   return kept

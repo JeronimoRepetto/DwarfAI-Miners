@@ -1,3 +1,5 @@
+import { normalizeConsoleText } from '../../shared/consoleText'
+
 /**
  * KEYSTROKES on Windows: bring the hosting terminal forward (see focus.ts) and
  * synthesize them with `SendKeys`.
@@ -25,9 +27,15 @@
  * Flatten a message to one line. A console has no way to accept a literal
  * newline without submitting the line, so a pasted paragraph would otherwise
  * send its first line and leave the rest typed into a fresh prompt.
+ *
+ * The rule itself lives in `shared/consoleText.ts` now (#419): the renderer's
+ * echo reconciliation has to flatten a message the same way before comparing
+ * it against a transcript row, and the renderer cannot import from `main`, so
+ * the one regex both sides need moved to the one place both can reach it.
+ * This function stays as the name every caller here already uses.
  */
 export function toConsoleLine(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
+  return normalizeConsoleText(text)
 }
 
 /**

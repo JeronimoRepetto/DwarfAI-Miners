@@ -350,11 +350,15 @@ export function useDwarfMessaging() {
    * a held session's own conversation, or the observed tail — so the words the
    * transcript has arrive once rather than twice. The rule is
    * `lib/message/echo`'s; this is only where the answer is kept.
+   *
+   * `echoAttachments[dwarfId]` rides along (#419) so an echo sent with files
+   * can be accounted for too — a row for it carries their tokens ahead of the
+   * words, and `reconcileEchoes` is what reads them off keyed by echo id.
    */
   function reconcile(dwarfId: string, messages: readonly FeedMessage[]): void {
     const current = echoes[dwarfId]
     if (current === undefined || current.length === 0) return
-    const kept = reconcileEchoes(current, messages)
+    const kept = reconcileEchoes(current, messages, echoAttachments[dwarfId] ?? {})
     if (kept.length === current.length) return
     echoes[dwarfId] = kept
     pruneAttachments(dwarfId)

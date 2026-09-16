@@ -1286,6 +1286,40 @@ construction, which is a fact about the queue and not about the TUI.
 call, one sequence, exit 0 in 287 ms, and `claude.exe` was gone inside eight seconds. No
 `Stop-Process` was reached.
 
+### What the transcript actually holds for that shape, and what the parser reads back — measured 2026-09-16 (#419)
+
+#408 above measured the WRITE side: a console paste of files produces one `image` block per image
+plus a `[Image #N]` marker in the text, and a non-image path arrives as ordinary text. #419 is the
+READ side — what a real session's own `.jsonl` holds for that shape, and what
+`parseClaudeTranscriptTail`/`extractClaudeFeed` (`providers/claude/parse.ts`) publish from it —
+needed because the echo the panel is still holding (`lib/message/echo.ts`) has to compare against
+exactly that, never against a guess.
+
+Read off one real turn on this machine, five attachments — two images and three plain files —
+followed by words, Claude Code 2.1.273, 2026-09-16 [V, #419]. `message.content` is an array of
+**three blocks in this order: one `text` block, then the two `image` blocks** — not images first.
+The text block is the only one carrying anything this app reads: its string is the attachment
+tokens **concatenated with no separator at all**, in the exact order they were attached — `[Image
+#<N>]` for each image, the literal path for each non-image file — followed immediately by the
+words, e.g. (paths genericized) `[Image #2]<dir>\debris.mp3[Image #3]<dir>\notes.pdf<dir>\config.txtdig
+deeper…`. Each `image` block carries `source.type: "base64"` and its own `media_type`; neither
+carries a path.
+
+**The image is recorded a second time, and that second turn is already inert.** #408 said an
+attached image is followed by a second user turn holding one `[Image: source: <path>]` line per
+image; measured directly now, that turn carries `isMeta: true`. `userMessageText` in `parse.ts`
+already refuses any line with `isMeta === true` (issue #180's rule), so this second turn was
+already excluded from the feed before #419 — nothing in the parser needed to change for it, and it
+is recorded here only so the next reader does not re-derive the same question.
+
+**What `userMessageText` publishes as `FeedMessage.text` for the first turn is exactly that one
+text block's string**, unchanged: `userContentText` joins only `type: "text"` blocks and this turn
+has exactly one, so every `image` block is skipped by the same filter that already drops
+`tool_result` content — nothing needed to change there either. The row the panel compares an echo
+against is therefore the concatenation described above, token for token, which is what
+`stripAttachmentTokens` in `lib/message/echo.ts` strips off the front before comparing the words
+that remain.
+
 ---
 
 ## 7. Open edges

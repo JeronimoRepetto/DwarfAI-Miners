@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RELAY_PROVENANCE_LINE, type FeedMessage } from '../../types'
+import { RELAY_PROVENANCE_LINE, type DwarfAttachment, type FeedMessage } from '../../types'
 import { groupActivity } from './activityGroup'
 import type { PanelMessage } from './conversation'
 import {
@@ -209,6 +209,90 @@ describe('reconcileEchoes', () => {
     const kept = echo({ text: 'hello' })
     const row = turn({ text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] hello` })
     expect(reconcileEchoes([kept], [row])).toEqual([kept])
+  })
+
+  /*
+   * #419. `toConsoleLine` flattens whitespace runs to a single space before the
+   * pid write, and a console write of files pastes one token per attachment —
+   * `[Image #<digits>]` for an image, the exact path for a file — ahead of the
+   * words, with no separator (measured in docs/console-hosting.md §6, #408). An
+   * echo's own comparison has to read both, or the transcript row for exactly
+   * the message somebody sent never accounts for it.
+   */
+  describe('with attachments (#419)', () => {
+    function attachment(overrides: Partial<DwarfAttachment> = {}): DwarfAttachment {
+      return {
+        path: 'C:\\mine\\seam.png',
+        name: 'seam.png',
+        kind: 'image',
+        bytes: 10,
+        ...overrides
+      }
+    }
+
+    it('accounts for an echo sent with five attachments — two images and three files', () => {
+      // The exact shape #419 was filed over: two images and three plain files,
+      // read back from a real transcript (docs/console-hosting.md §6).
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\a.jpg', name: 'a.jpg', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\debris.mp3', name: 'debris.mp3', kind: 'file' }),
+        attachment({ path: 'C:\\mine\\b.gif', name: 'b.gif', kind: 'image' }),
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' }),
+        attachment({ path: 'C:\\mine\\config.txt', name: 'config.txt', kind: 'file' })
+      ]
+      const sent = echo({ text: 'dig deeper' })
+      const row = turn({
+        text: '[Image #2]C:\\mine\\debris.mp3[Image #3]C:\\mine\\notes.pdfC:\\mine\\config.txtdig deeper'
+      })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for an attachments-only echo against a row that is exactly those tokens', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\a.jpg', kind: 'image' })
+      ]
+      const sent = echo({ text: '' })
+      const row = turn({ text: '[Image #9]' })
+      expect(reconcileEchoes([sent], [row], { [sent.id]: attachments })).toEqual([])
+    })
+
+    it('accounts for a two-line echo against the one-line row the console flattens it to', () => {
+      const sent = echo({ text: 'dig deeper\nfound something' })
+      const row = turn({ text: 'dig deeper found something' })
+      expect(reconcileEchoes([sent], [row])).toEqual([])
+    })
+
+    it('still refuses a row outside the window even once its attachment tokens strip clean', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\a.jpg', kind: 'image' })
+      ]
+      const kept = echo({ text: 'dig deeper' })
+      const later = turn({
+        text: '[Image #4]dig deeper',
+        timestamp: new Date(SENT_AT + ECHO_MATCH_WINDOW_MS + 1).toISOString()
+      })
+      expect(reconcileEchoes([kept], [later], { [kept.id]: attachments })).toEqual([kept])
+    })
+
+    it('refuses a row whose attachment tokens match but whose words differ', () => {
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\notes.pdf', name: 'notes.pdf', kind: 'file' })
+      ]
+      const kept = echo({ text: 'dig deeper' })
+      const row = turn({ text: 'C:\\mine\\notes.pdfsomething else' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
+
+    it('refuses a row carrying only the words when the echo was sent with attachments', () => {
+      // The row a plain send would produce — no attachment token at all — must
+      // not account for an echo that was sent with files.
+      const attachments: DwarfAttachment[] = [
+        attachment({ path: 'C:\\mine\\a.jpg', kind: 'image' })
+      ]
+      const kept = echo({ text: 'dig deeper' })
+      const row = turn({ text: 'dig deeper' })
+      expect(reconcileEchoes([kept], [row], { [kept.id]: attachments })).toEqual([kept])
+    })
   })
 })
 
