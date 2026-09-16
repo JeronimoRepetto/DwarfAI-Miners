@@ -22,13 +22,19 @@ import { externalLinkOf } from '../../../../shared/externalLink'
  *
  * ## Why the vocabulary is closed
  *
- * `components.md`'s #347 amendment names the constructs a bubble draws:
- * paragraphs, emphasis, lists, block quotes, inline code, fenced code and
- * links, with headings folded to bold paragraphs. That list is the whole of
- * this file's vocabulary. Syntax outside it — tables, strikethrough, horizontal
- * rules, images — is left as the characters the agent wrote, which is visible
- * and honest; drawing it would mean inventing UI the design does not specify,
- * and `ui-rebuild` refuses that.
+ * `components.md`'s #347 amendment named paragraphs, emphasis, lists, block
+ * quotes, inline code, fenced code and links, with headings folded to bold
+ * paragraphs, and left tables, strikethrough and horizontal rules as the
+ * characters the agent wrote — the design did not name them yet. Its #412
+ * amendment (2026-09-16) widens the list to all three: the vocabulary is
+ * still closed, it is just closed to the whole of GitHub-flavoured Markdown a
+ * bubble can draw honestly now that the design names exactly this set.
+ * Images stay a stated exception rather than an oversight: a transcript's
+ * image address is untrusted and a local path could not be shown from the
+ * renderer anyway, so an image is drawn as its alt text in the link treatment
+ * below rather than fetched — nothing is ever loaded on the person's behalf.
+ * Drawing UI the design does not specify is still what `ui-rebuild` refuses;
+ * #412 only changes how much of it the design now specifies.
  */
 
 /** A run of characters, exactly as they were written. */
@@ -53,10 +59,21 @@ export interface MarkdownStrong {
   children: readonly MarkdownInline[]
 }
 
+/** `~~struck~~` (#412) — a line through its children, nothing else. */
+export interface MarkdownStrikethrough {
+  kind: 'strikethrough'
+  children: readonly MarkdownInline[]
+}
+
 /**
  * A link whose address `externalLinkOf` already admitted. A refused address
  * never reaches this shape at all: its own words are emitted where it stood, so
  * the sentence survives and the control does not.
+ *
+ * An image (#412) becomes exactly this shape rather than one of its own: its
+ * alt text (or its address, when the alt is empty) is its children, and its
+ * address goes through the same admission check. Nothing here ever draws an
+ * `img` — see `inlineNodes`' `image` case for why.
  */
 export interface MarkdownLink {
   kind: 'link'
@@ -65,7 +82,12 @@ export interface MarkdownLink {
 }
 
 export type MarkdownInline =
-  MarkdownText | MarkdownCode | MarkdownEmphasis | MarkdownStrong | MarkdownLink
+  | MarkdownText
+  | MarkdownCode
+  | MarkdownEmphasis
+  | MarkdownStrong
+  | MarkdownStrikethrough
+  | MarkdownLink
 
 export interface MarkdownParagraph {
   kind: 'paragraph'
@@ -99,7 +121,38 @@ export interface MarkdownCodeBlock {
   text: string
 }
 
-export type MarkdownBlock = MarkdownParagraph | MarkdownList | MarkdownQuote | MarkdownCodeBlock
+/** `---` between paragraphs (#412) — the same rule the block quote's own line draws. */
+export interface MarkdownRule {
+  kind: 'rule'
+}
+
+/** A column's alignment from the delimiter row, or `null` when the row left it unset. */
+export type MarkdownAlign = 'left' | 'center' | 'right' | null
+
+/** One table cell (#412). GFM allows only inlines inside a cell, never a block. */
+export interface MarkdownCell {
+  children: readonly MarkdownInline[]
+}
+
+/**
+ * A GFM table (#412). `align` has one entry per column, read off the header
+ * row's delimiter line — the only place alignment is stated — and every row's
+ * cells line up with it positionally.
+ */
+export interface MarkdownTable {
+  kind: 'table'
+  header: readonly MarkdownCell[]
+  rows: readonly (readonly MarkdownCell[])[]
+  align: readonly MarkdownAlign[]
+}
+
+export type MarkdownBlock =
+  | MarkdownParagraph
+  | MarkdownList
+  | MarkdownQuote
+  | MarkdownCodeBlock
+  | MarkdownTable
+  | MarkdownRule
 
 /**
  * A fence's info string is transcript text like every other part of the
@@ -118,16 +171,13 @@ const LANGUAGE_NAME = /^[a-zA-Z0-9_+.-]+$/
  *   control nobody asked for is the panel deciding something.
  * - `typographer: false` (the default, stated) — a transcript's own quotes and
  *   dashes are not this app's to rewrite.
- * - The four disabled rules are the syntax the design does not name. Disabling
- *   them is what makes their source survive as characters rather than as a
- *   construct with nowhere to be drawn.
+ * - `table`, `strikethrough`, `hr` and `image` are markdown-it's own defaults
+ *   and stay enabled (#412): the design now names all four in the bubble's
+ *   vocabulary, `image` included — it is drawn as a link, never as an `img`,
+ *   so admitting the rule is what lets `inlineNodes` reshape it below rather
+ *   than leave it as raw characters.
  */
-const parser = new MarkdownIt({ html: false, linkify: false, typographer: false }).disable([
-  'table',
-  'strikethrough',
-  'hr',
-  'image'
-])
+const parser = new MarkdownIt({ html: false, linkify: false, typographer: false })
 
 /** What one bubble draws, in order. Empty for a message with nothing in it. */
 export function markdownBlocks(text: string): readonly MarkdownBlock[] {
@@ -198,14 +248,101 @@ function blocksIn(tokens: readonly Token[], from: number, to: number | undefined
         i++
         continue
       }
+      case 'table_open': {
+        const close = closeOf(tokens, i)
+        blocks.push(tableOf(tokens, i, close))
+        i = close + 1
+        continue
+      }
+      // Nesting 0 — one token, nothing to close.
+      case 'hr':
+        blocks.push({ kind: 'rule' })
+        i++
+        continue
       default:
-        // Any other block token contributes nothing on its own. Nothing is lost
-        // by skipping it: the four constructs that would have produced one are
-        // disabled above, so their source is still here as paragraph text.
+        // Any other block token contributes nothing on its own. `html_block`
+        // is the one that could reach here, and `html: false` means it never
+        // does: raw HTML arrives as plain text inside a paragraph instead
+        // (see inlineNodes' default case).
         i++
     }
   }
   return blocks
+}
+
+/**
+ * A table's alignment, read off one `th_open`/`td_open` token's `style`
+ * attribute — the only place markdown-it records it, repeated on every cell
+ * of the column rather than kept once. `null` for a column the delimiter row
+ * left unset.
+ */
+function alignOf(token: Token): MarkdownAlign {
+  const style = token.attrGet('style')
+  if (style === 'text-align:left') return 'left'
+  if (style === 'text-align:center') return 'center'
+  if (style === 'text-align:right') return 'right'
+  return null
+}
+
+/**
+ * The cells of one row — a `tr_open`…`tr_close` span — matched against
+ * `cellType` so the same walk reads a header's `th_open` cells or a body
+ * row's `td_open` cells. A cell holds exactly one `inline` token regardless
+ * of content, even an empty one, so `inlineIn` always has something to read.
+ */
+function cellsOf(
+  tokens: readonly Token[],
+  from: number,
+  to: number,
+  cellType: 'th_open' | 'td_open'
+): { cells: MarkdownCell[]; aligns: MarkdownAlign[] } {
+  const cells: MarkdownCell[] = []
+  const aligns: MarkdownAlign[] = []
+  let i = from
+  while (i < to) {
+    if (tokens[i]!.type !== cellType) {
+      i++
+      continue
+    }
+    const close = closeOf(tokens, i)
+    cells.push({ children: inlineIn(tokens, i + 1, close) })
+    aligns.push(alignOf(tokens[i]!))
+    i = close + 1
+  }
+  return { cells, aligns }
+}
+
+/**
+ * A table, from its `table_open` to the `table_close` the caller already
+ * found. markdown-it's own table rule always emits `thead_open` immediately
+ * after `table_open`, with its one header row immediately after that — so
+ * both are read positionally rather than searched for. A `tbody_open` is
+ * emitted only when at least one body row exists; `rows` is `[]` otherwise.
+ */
+function tableOf(tokens: readonly Token[], open: number, close: number): MarkdownTable {
+  const theadOpen = open + 1
+  const theadClose = closeOf(tokens, theadOpen)
+  const headerTr = theadOpen + 1
+  const headerTrClose = closeOf(tokens, headerTr)
+  const { cells: header, aligns: align } = cellsOf(tokens, headerTr, headerTrClose, 'th_open')
+
+  const rows: MarkdownCell[][] = []
+  const bodyOpen = theadClose + 1
+  if (bodyOpen < close && tokens[bodyOpen]!.type === 'tbody_open') {
+    const bodyClose = closeOf(tokens, bodyOpen)
+    let i = bodyOpen + 1
+    while (i < bodyClose) {
+      if (tokens[i]!.type !== 'tr_open') {
+        i++
+        continue
+      }
+      const trClose = closeOf(tokens, i)
+      rows.push(cellsOf(tokens, i, trClose, 'td_open').cells)
+      i = trClose + 1
+    }
+  }
+
+  return { kind: 'table', header, align, rows }
 }
 
 function itemsIn(tokens: readonly Token[], from: number, to: number): MarkdownItem[] {
@@ -273,6 +410,32 @@ function inlineNodes(tokens: readonly Token[]): MarkdownInline[] {
         const kind = token.type === 'em_open' ? 'emphasis' : 'strong'
         nodes.push({ kind, children: inlineNodes(tokens.slice(i + 1, close)) })
         i = close + 1
+        continue
+      }
+      case 's_open': {
+        const close = closeOf(tokens, i)
+        nodes.push({ kind: 'strikethrough', children: inlineNodes(tokens.slice(i + 1, close)) })
+        i = close + 1
+        continue
+      }
+      /*
+       * An image never becomes an `img` (#412): the transcript's address is
+       * untrusted and a local path could not be shown from the renderer
+       * anyway, so nothing is ever fetched. It becomes the same `link` shape
+       * a real link takes instead — its alt text as the words (or its address,
+       * when the alt is empty, so there is always something to press), and its
+       * address through the identical `externalLinkOf` admission a link's
+       * `href` already goes through. A refused address falls back to plain
+       * text exactly the way `link_open` below does.
+       */
+      case 'image': {
+        const src = String(token.attrGet('src') ?? '')
+        const alt = inlineNodes(token.children ?? [])
+        const children = alt.length > 0 ? alt : [{ kind: 'text', text: src } satisfies MarkdownText]
+        const href = externalLinkOf(src)
+        if (href === null) nodes.push(...children)
+        else nodes.push({ kind: 'link', href, children })
+        i++
         continue
       }
       case 'link_open': {

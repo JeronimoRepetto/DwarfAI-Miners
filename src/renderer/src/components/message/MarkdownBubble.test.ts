@@ -167,6 +167,75 @@ describe('a hostile transcript', () => {
   })
 })
 
+/*
+ * #412 widens the bubble's vocabulary to the whole of GFM it can draw
+ * honestly: a table, strikethrough and a horizontal rule join bold,
+ * emphasis, lists and the rest above.
+ */
+describe('the constructs #412 adds', () => {
+  it('draws a table with its header and body rows', () => {
+    const wrapper = bubble('Name | Score\n--- | ---\nAda | 1')
+    expect(wrapper.find('table.markdown-table').exists()).toBe(true)
+    const headers = wrapper.findAll('thead > tr > th')
+    expect(headers).toHaveLength(2)
+    expect(headers[0]!.text()).toBe('Name')
+    const cells = wrapper.findAll('tbody > tr > td')
+    expect(cells).toHaveLength(2)
+    expect(cells[0]!.text()).toBe('Ada')
+  })
+
+  it("applies the delimiter row's alignment as a per-cell style, and none where it left a column unset", () => {
+    // Column A's `---` sets no alignment at all; B and C do.
+    const wrapper = bubble('A | B | C\n--- | :-: | --:\n1 | 2 | 3')
+    const headers = wrapper.findAll('th')
+    expect(headers[0]!.attributes('style')).toBeUndefined()
+    expect(headers[1]!.attributes('style')).toContain('text-align: center')
+    expect(headers[2]!.attributes('style')).toContain('text-align: right')
+  })
+
+  /*
+   * The same failure #307 fixed for a long code line: a wide table scrolls
+   * inside its own wrapper rather than widening the conversation column.
+   */
+  it('wraps a table in a scroll container', () => {
+    const wrapper = bubble('A | B\n--- | ---\n1 | 2')
+    const scroll = wrapper.find('.markdown-table-scroll')
+    expect(scroll.exists()).toBe(true)
+    expect(scroll.find('table.markdown-table').exists()).toBe(true)
+  })
+
+  it('draws strikethrough as an s element, with the tildes gone', () => {
+    const wrapper = bubble('~~gone~~')
+    expect(wrapper.find('s').text()).toBe('gone')
+    expect(wrapper.text()).not.toContain('~')
+  })
+
+  it('draws --- between paragraphs as an hr element', () => {
+    const wrapper = bubble('first\n\n---\n\nsecond')
+    expect(wrapper.find('hr.markdown-rule').exists()).toBe(true)
+  })
+})
+
+/*
+ * Images are the one construct #412 does not draw as GFM would (#412, #279):
+ * never an `img`, always the alt text in the same link shape a real link
+ * takes.
+ */
+describe('images, the one exception (#412)', () => {
+  it('draws no img element, ever', () => {
+    const wrapper = bubble('![a diagram](https://example.test/a.png)')
+    expect(wrapper.find('img').exists()).toBe(false)
+  })
+
+  it('draws the alt text as a link and reports the address when pressed', async () => {
+    const wrapper = bubble('![a diagram](https://example.test/a.png)')
+    const link = wrapper.find('.markdown-link')
+    expect(link.text()).toBe('a diagram')
+    await link.trigger('click')
+    expect(wrapper.emitted('open-link')).toEqual([['https://example.test/a.png']])
+  })
+})
+
 describe('plain text, which must look exactly as it did', () => {
   it('draws a sentence as one paragraph', () => {
     const wrapper = bubble('Found the seam.')
