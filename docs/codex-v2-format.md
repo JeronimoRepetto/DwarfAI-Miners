@@ -171,7 +171,9 @@ line (tower/tracing style, e.g. `session_loop{thread_id=...}:submission_dispatch
 interrupt received: abort current task`). `thread_id` is populated for
 session-scoped log lines and null for app-server/global lines (e.g. `configRequirements/read`,
 `list_models`). This is a genuine **live heartbeat signal**: the newest row's `ts`
-for a given `thread_id` tells you how recently that thread had any core activity.
+for a given `thread_id` tells you how recently that thread had any core activity — **for the session
+shapes that write rows at all.** A headless `codex exec` run writes none, measured on 0.153.4 in
+§12(c), so the heartbeat is evidence of life and never evidence of its absence.
 
 ### `queue_1.sqlite`
 
@@ -588,9 +590,11 @@ archive, delete, migrate-rollouts, unarchive, fork, cloud, exec-server, features
   command is run BY the session's own process, so its parent chain names that process while the
   session is alive, and its payload names the thread. That is the same opt-in push channel this app
   already has for Claude (`main/hooks`), and it is the only route found that could produce a
-  first-party, per-thread, per-process fact rather than an inference. **UNMEASURED**: the payload's
-  field names, whether the hook runs as a direct child or through a shell, and whether it fires on
-  `resume`. Measuring it means starting a Codex session, which this slice was not permitted to do.
+  first-party, per-thread, per-process fact rather than an inference. **Measured on 2026-09-16 —
+  see §13**, which answers all three questions this paragraph left open: the payload's field names
+  are Claude Code's, the hook runs through a shell rather than as a direct child, and it does fire
+  on `resume`. What §13 adds that is not guessed at here is the trust gate in front of the whole
+  surface.
 - **`~/.codex/thread-writer-locks/<thread-uuid>.lock`** is new: one zero-byte file per live thread
   writer, beside a `.coordination.lock`. It names the thread and carries no pid, and finding the
   process holding a Windows file handle needs a native handle enumeration this app has no port for.
@@ -1050,20 +1054,27 @@ thread in a new process", and §8(b)'s limit 2 measured seven threads served by 
 different pids — "a thread resumed in a new process **keeps its id** and changes its server". So a
 resume is the same `threads.id`, and therefore the same dwarf id, not a new session.
 
-**Not settled, and this is the gap.** Whether that resumed thread keeps its original `rollout_path`
-or gets a fresh rollout file was never observed, and neither was whether Codex re-stamps
-`updated_at_ms` / `recency_at_ms` when it reopens a thread. Those two answers decide whether (b) is
-a corner or the ordinary path:
+**Settled since, by §12 — measured 2026-09-16, and this paragraph is kept for the reasoning it
+sets up.** Whether a resumed thread keeps its original `rollout_path`, and whether Codex re-stamps
+`updated_at_ms` / `recency_at_ms` when it reopens one, were the two facts nobody had. Both are now
+answered, and they answer the question this section poses:
 
 - If resume re-stamps the row, a resumed session is fresh on its own terms and (b) only ever bit a
-  long quiet turn.
-- If it does not, every resumed thread arrives with stamps hours or days old, and the heartbeat is
-  the only thing that can speak for it — which is the case (b) fixes.
+  long quiet turn. **This is what happens** (§12(a)): both stamps move to the resume, and the
+  rollout file is reused rather than replaced.
+- If it did not, every resumed thread would arrive with stamps hours or days old, and the heartbeat
+  would be the only thing that could speak for it — which is the case (b) fixes. That case is
+  therefore a corner, not the ordinary path. It is not empty: §12(c) measured a session shape whose
+  heartbeat never exists at all.
 
 A third stamp is worth knowing while measuring: `created_at_ms` cannot help a resume either way,
 because the thread was created when it was first opened.
 
-### (d) The live check this still owes
+### (d) The live check this owed — walked on 2026-09-16, see §12
+
+The procedure below is kept because it is still the right one to run against a live report. It was
+walked in full on 2026-09-16 and the symptom did not reproduce; §12(d) records what each step
+answered, and §12's own procedure supersedes step 3's last paragraph.
 
 Run while the invisible session is open, from a checkout of this repository. Nothing here writes to
 `CODEX_HOME`; copy the database before querying it, since Codex holds it in WAL mode.
@@ -1104,3 +1115,279 @@ Run while the invisible session is open, from a checkout of this repository. Not
 4. Whether the rollout is even a candidate: a rollout lives in its **start-date** directory forever
    (§5), and the walk covers `scanDays` (default 7). A thread resumed after eight days is outside the
    walk, and only its registry row can find it.
+
+## 12. Resume: what a reopened thread re-stamps, measured 2026-09-16, codex-cli 0.153.4
+
+Issue #264, the live walk §11(d) asked for. **The two facts nobody had are now measured, and they
+are the favourable pair: `codex resume` re-stamps `updated_at_ms` and `recency_at_ms` to the moment
+of the resume, and it reuses the thread's existing `rollout_path` rather than opening a new file.**
+So a resumed session arrives fresh on its own terms, and the heartbeat-join corner §11(b) fixed is a
+corner rather than the ordinary path. **The relaunch scenario the issue reports does not
+reproduce**: a new session started in a folder whose previous session had already ended was on the
+board in the first scan that saw it, with its registry row attached.
+
+One new negative came out of the same walk and it matters more than either positive: **a headless
+`codex exec` run writes no `logs_2.sqlite` rows at all**, so the heartbeat leg is silent for that
+shape of session and the `process_uuid` pid join of §8(b) does not exist for it.
+
+Machine: Windows 11, `codex-cli 0.153.4` (pnpm install). Three Codex runs were started for this
+measurement, all of them in a throwaway git repository created for the purpose, none of them
+touching any real project. Stores were read from copies. Real thread uuids, pids and paths are not
+reproduced here.
+
+### The exact procedure, so nobody walks it again
+
+1. Copy `state_5.sqlite` and `logs_2.sqlite` with their `-wal`/`-shm` siblings into a scratch
+   directory before, between and after each run, and query the COPIES with `node:sqlite`
+   `DatabaseSync(file, { readOnly: true })`. The query is §11(d)'s, plus `created_at` / `updated_at`
+   / `recency_at` (the whole-second columns) beside the `_ms` ones.
+2. **Run A**, a new thread, with the scratch repository as the working directory:
+
+   ```
+   codex exec --skip-git-repo-check "Reply with the single word pong."
+   ```
+
+   The banner prints `session id: <uuid>` — that is `threads.id`, so no lookup is needed to know
+   which row to watch.
+
+3. **Run B**, the resume of that exact thread, non-interactively. This is the form 0.153.4 offers,
+   and the id is positional:
+
+   ```
+   codex exec resume <thread-uuid> --skip-git-repo-check "Reply pong again."
+   ```
+
+   `codex exec resume --last` exists beside it and picks the newest thread for the cwd.
+
+4. **Run C**, the report's own scenario at the provider layer: with run A's session ended, a second
+   new session in the SAME directory, long enough to be scanned while alive —
+   `codex exec --skip-git-repo-check "Count slowly from 1 to 40, one number per line."` — with
+   `RUN_INTEGRATION=1 CODEX_DEBUG=1` running `codexProvider.integration.test.ts` against it.
+
+5. `Get-ChildItem` on the day directory for `Length`, `CreationTime` and `LastWriteTime`. Reads
+   only; no rollout was opened for writing.
+
+### (a) What a resume moves, and what it does not
+
+One row, read before and after run B:
+
+| Column          | After run A     | After run B (the resume)     | Verdict                   |
+| --------------- | --------------- | ---------------------------- | ------------------------- |
+| `id`            | the thread uuid | **unchanged**                | as §8 predicted           |
+| `rollout_path`  | run A's file    | **unchanged, byte for byte** | **reused, no new file**   |
+| `updated_at_ms` | end of run A    | **end of run B**             | **re-stamped**            |
+| `recency_at_ms` | start of run A  | **start of run B**           | **re-stamped**            |
+| `created_at_ms` | birth of A      | birth of A **+31 ms**        | rewritten, not re-stamped |
+| `tokens_used`   | run A's total   | A + B, accumulated           | cumulative across resumes |
+
+`rollout_path` reuse is verified twice over: the registry value is identical, and the day directory
+holds exactly one file for that thread before and after — run B appended 37 KiB to run A's rollout
+instead of opening a second one. Run C, a genuinely new session, got its own file in the same
+directory, so the walk does distinguish the two cases.
+
+The `created_at_ms` movement is the one oddity, and it is worth stating precisely because it looks
+like a re-stamp and is not: the value moved 31 **milliseconds**, not to the resume's clock. A resume
+rewrites the row and re-derives creation from the rollout's own head rather than carrying the
+previous value through. It stays the thread's birth, hours or days old on a real resume, so §11(c)'s
+note stands — `created_at_ms` cannot speak for a resumed thread, and now it does not have to.
+
+### (b) The mtime freeze, re-confirmed, and when it thaws
+
+§4's Windows mtime freeze holds on 0.153.4, and this measurement adds the second half of it. During
+run A the rollout grew to 108 KiB while `LastWriteTime` stayed pinned to `CreationTime`, one second
+after the file appeared. After run B exited, `LastWriteTime` read the moment that process closed the
+handle. So the mtime is not merely stale during a session: **it is written once at open and once at
+close, and says nothing at all in between.** A closed session therefore has a truthful mtime and a
+live one does not, which is the exact inversion a liveness check must not be built on. Size, growth,
+or the registry row — never mtime, as §4 already says.
+
+### (c) `codex exec` writes no log rows — negative, and it narrows §8(b)
+
+`logs_2.sqlite` did not gain a single row across all three runs: 17,840 rows before and after, the
+newest of them six days old, its `-wal` empty. No row carries any of the three thread uuids.
+
+Two consequences, and neither is small:
+
+- **The heartbeat leg is blind to `exec` sessions.** `readCodexHeartbeats` is the freshest evidence
+  this provider has (§11(b)) and it has nothing to say about a headless run. Such a session is
+  carried entirely by growth, the registry stamps and the retention floor — which, on this
+  measurement, was enough: run C was discovered on its registry row within seconds of starting.
+- **§8(b)'s pid join does not cover `exec` either.** `logs.process_uuid` is the one place a thread
+  names an OS process, and a thread that writes no log row has no such name. §8 measured the join on
+  TUI and desktop threads and that measurement is untouched; what is new is that a third shape of
+  session sits outside it entirely. §13's hook route has no such gap — it fired on every one of
+  these runs.
+
+**Unmeasured, and stated as such**: whether an interactive TUI session still writes log rows on
+0.153.4. §8 observed it doing so on 2026-09-09, and the store's newest row is 2026-09-10, which is
+consistent with "the TUI writes and none has run since" — but it is consistent with other stories
+too, and no TUI was started here. A measurement that needs a human at a terminal is not one this
+slice could make.
+
+### (d) The relaunch does not reproduce, and the debug channel says why not
+
+Run C is the report's scenario: session A ended in a folder, session B launched from a terminal in
+the same folder. The first scan that ran while B was alive returned **both** — B `busy` with a
+`working` dwarf carrying its cwd, model and effort from the registry, and A still `idle` with a
+`waiting` dwarf inside its retention window. `isCodexProcessRunning()` answered `true`. Every
+`[codex] skip` line printed in that scan named a rollout from six days earlier, all of them
+`retention-floor` at ages around 500,000 s, and not one named either session.
+
+So #264's symptom is not reproducible on 0.153.4 against `main` at this commit, and the two fixes
+that closed its named causes are both pinned by deterministic tests that pass on the unmodified
+provider:
+
+- `codexProviderRegistry.test.ts` → **"rediscovers the relaunched session on its creation stamp
+  alone"** (f9890d1, the `created_at_ms` leg), and
+- `codexProviderRegistry.test.ts` → **"keeps a session whose only fresh signal is its own logs
+  heartbeat"** (594ec80, the heartbeat exemption), with the reader-level half in `state.test.ts`.
+
+What the measurement did break is the real-machine test itself. `codexProvider.integration.test.ts`
+asserted "busy means one dwarf, idle means none", and an idle session has carried exactly one
+`waiting` dwarf since #202 froze existence to the session — pinned in `codexProvider.test.ts`'s
+working → waiting → working walk. The assertion failed on the first idle Codex session it ever met,
+which is to say on exactly the command §11(d) tells a reporter to run. Corrected in place.
+
+## 13. Hooks as a thread-to-process join, measured 2026-09-16, codex-cli 0.153.4
+
+Issue #305, the candidate §8(d) named and could not measure. **It fires, and its payload is a
+first-party per-thread fact: `session_id` is the registry's own `threads.id`, and `transcript_path`
+is that row's `rollout_path`, byte for byte.** The process half is weaker than §8(d) hoped but
+usable: the hook is run **through a shell**, as a grandchild rather than a direct child, so the
+serving `codex.exe` is the hook's grandparent and is named by a two-step ancestor walk taken at the
+instant the hook runs.
+
+**It is nevertheless not a pid-backed act today**, for a reason that has nothing to do with the
+payload: a hook is a push at an instant, and an act needs a fact at the moment of the act.
+
+### The exact procedure
+
+Read `~/.codex/hooks.json`, record its SHA-256, then write a version that keeps every existing entry
+at its existing index and appends one group per event whose command is
+`powershell -NoProfile -ExecutionPolicy Bypass -File <script>`, where the script reads stdin whole,
+appends it with `$PID` and a `Get-CimInstance Win32_Process` ancestor walk to a scratch log, and
+exits 0. Run A and run B of §12 with `--dangerously-bypass-hook-trust`. Restore the file from the
+backup and re-check the SHA-256. Indices matter: hook trust is keyed by them (below), so appending
+rather than replacing leaves every existing entry's trust intact.
+
+### (a) Support, and the trust gate in front of it
+
+- `hooks` is a **stable feature, on by default** — `codex features list` prints
+  `hooks stable true`, and `config.toml` carried `[features] hooks = true`. No flag is needed to
+  have hooks; a flag is needed to have them RUN, which is a different thing.
+- **Every hook is trust-gated by content hash.** `config.toml` grows a `[hooks.state]` table keyed
+  `'<source>:<event_snake_case>:<group index>:<hook index>'` — so
+  `…hooks.json:session_start:1:0` — each carrying a `trusted_hash = "sha256:…"` and optionally
+  `enabled`. Change a command and its hash no longer matches, so it is not run until a human
+  approves it again. Plugins get their own keys, of the form
+  `<plugin>@<source>:hooks/hooks.json:session_end:0:0`.
+- `codex exec` and `codex exec resume` both take **`--dangerously-bypass-hook-trust`**, documented
+  as running enabled hooks without persisted trust for that invocation. It is per-invocation in
+  fact as well as in wording: `config.toml` was byte-identical (same SHA-256) after both runs, so
+  nothing was persisted and no trust was granted on the way past.
+- A `SessionEnd` hook's timeout is **clamped to 3 s**, announced on stderr
+  (`warning: clamping SessionEnd hook timeout to 3s`). Whatever a SessionEnd hook is for, it is not
+  for work.
+
+### (b) The events fire, on a fresh start and on a resume alike
+
+All three installed events fired on **both** runs — including run B, which answers §8(d)'s "whether
+it fires on `resume`" with a yes. They fired on a headless `codex exec`, not only on a TUI.
+
+The payload is a JSON object on stdin, and the field names are Claude Code's rather than new ones:
+
+| Event              | Fields                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------- |
+| `SessionStart`     | `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `permission_mode`, `source` |
+| `UserPromptSubmit` | the same, plus `turn_id` and `prompt`, minus `source`                                           |
+| `SessionEnd`       | `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `reason`                             |
+
+- **`session_id` IS `threads.id`.** The banner's session id, the hook's `session_id` and the
+  registry row's `id` were one value across both runs.
+- **`transcript_path` IS `threads.rollout_path`**, the same absolute path with the same spelling —
+  and on run B it was run A's file, which is §12(a)'s rollout reuse arriving a second way.
+- **`source` separates the two openings**: `startup` on run A, `resume` on run B. So a consumer can
+  tell a new session from a reopened one without diffing the registry.
+- `turn_id` on `UserPromptSubmit` is a fresh uuid per turn, distinct from the thread's.
+- `SessionEnd.reason` was `other` for a completed `exec` on both runs. A vocabulary of one is not a
+  vocabulary; nothing should branch on it yet.
+- **No pid anywhere in any payload**, and no `CODEX_*` environment variable naming the thread, the
+  turn or the process. The only Codex variables inherited were the pnpm shim's
+  `CODEX_MANAGED_BY_PNPM` and `CODEX_MANAGED_PACKAGE_ROOT`. The process half is the ancestor walk
+  and nothing else.
+
+### (c) The ancestor chain does name the serving process
+
+Identical in shape on all six firings:
+
+```
+powershell.exe  (-File <hook script>)        <- the hook command itself
+powershell.exe  (-NoProfile -Command "…")    <- the shell Codex runs the command through
+codex.exe       (exec … / exec resume …)     <- THE SERVING PROCESS
+node.exe        (…/@openai/codex/bin/codex.js …)
+sh.exe / cmd.exe                             <- whatever launched codex
+```
+
+- **Through a shell, not as a direct child.** §8(d) left this open; it is one extra hop, and a
+  consumer must walk two levels rather than read `ParentProcessId` once.
+- **The `codex.exe` is the session's own**, with an `ExecutablePath` under the CLI package's
+  `vendor/x86_64-pc-windows-msvc/bin/` — so §8's gate 3 (CLI package, not the desktop install tree)
+  is answered by the walk itself rather than by a second lookup.
+- **Its `CreationDate` is available in the same query** that finds it, which is the thing
+  `logs.process_uuid` could never supply (§8(b), "the store records no process creation time"). A
+  hook therefore yields the pid AND the creation time together — the exact pair
+  `LaunchedSessionRegistry` records.
+- **A resume changes the pid**, as §8(b)'s limit 2 said it would: runs A and B were served by two
+  different `codex.exe` processes, each named correctly by its own firing.
+- The chain above the shim is the launching terminal, shared by every tab — §8(c) and #329 again.
+
+### (d) Which of §8's five gates a hook satisfies, and the two it cannot
+
+| Gate                                                          | A hook gives                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1. recent, thread-scoped evidence naming the process          | **Yes** — first-party, exact, with `session_id` beside the pid                  |
+| 2. pid alive with a creation time predating the evidence      | **Better** — the creation time is read in the same query, no inference needed   |
+| 3. `ExecutablePath` in the CLI package, not the desktop tree  | **Yes** — read straight off the walk                                            |
+| 4. a root session and not a subagent sharing a parent process | **Not answered by the hook** — needs `threads.source`/`thread_source` beside it |
+| 5. no other thread bound to the same pid                      | **Not answered by the hook** — and §8's six-threads-per-process finding stands  |
+
+So three of five, and the two it misses are both answerable from `state_5.sqlite` in the same tick,
+which is why the hook route is genuinely stronger than `logs.process_uuid` rather than differently
+weak. `SubagentStop` is in the event vocabulary and was not installed here, so whether a spawned
+thread fires its own events — which would settle gate 4 from the hook side — is **unmeasured**.
+
+### (e) Why this is still not an act, and what it is
+
+The gap is not a field. It is that **a hook is a push at an instant and an act needs a fact at the
+moment of the act.** `LaunchedSessionRegistry` holds a pid it obtained itself and re-probes the
+creation time at every act; a hook hands over a pid that was true when it fired and may be a
+different process by the time somebody clicks. That is repairable — store
+`(threadId, pid, processStartTimeMs)` from the hook and re-probe at the act, exactly as the launched
+registry does, and the pair the hook gives makes the re-probe sound. What is not repairable from the
+hook alone is gate 5, and the same "end the shared backend, or a subagent's parent" failure §8
+describes is still the cost of getting it wrong.
+
+There is also a plainer obstacle, and it is an ownership one rather than a technical one. Codex
+hooks are **trust-gated by content hash in `config.toml`** (a), so installing one is not the silent
+merge into `settings.json` that `main/hooks` performs for Claude: the user has to approve it, and a
+hook this app rewrites has to be approved again. Whatever #305's step 2 becomes, that approval is
+part of it and belongs in the design rather than in the implementation.
+
+**Recommended next step**: treat the hook as the channel and prove the two open questions before
+building anything — install a `SubagentStop`/`SessionStart` pair and check whether a spawned thread
+fires its own events (gate 4), and confirm the same payload on an interactive TUI session, which is
+the shape #305 is actually about and the one no run here used. Both need a human at a terminal.
+
+### Restoration
+
+`~/.codex/hooks.json` was restored from the backup and verified byte-identical by SHA-256, and
+`config.toml` was byte-identical to its own pre-measurement hash without needing restoration.
+
+### Confidence
+
+The events firing, the payload field names, the `session_id` ↔ `threads.id` and `transcript_path` ↔
+`rollout_path` identities, the `startup`/`resume` split, the shell hop, the ancestor chain and the
+pid change across a resume are **verified** on six firings across two runs. The trust-gate mechanics
+are **verified** from `config.toml`'s own table, the CLI's flag, and the unchanged hash after two
+bypassed runs. Everything is `codex exec` on one build on one OS — **no interactive TUI session was
+started**, and `SubagentStop` and `PreToolUse` were not installed.
