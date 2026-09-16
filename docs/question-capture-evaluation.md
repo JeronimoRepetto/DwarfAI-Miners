@@ -526,9 +526,53 @@ carries it too, about a poll interval later, with no new hook event, no matcher 
 
 That does not make the hook worthless: it is a push, it hands over `tool_use_id` without parsing
 anything, and it cannot be missed by a tail window that has scrolled. But it does mean the cheap fix
-and the expensive one now buy nearly the same thing, and the cheap one is §8 item 2 — a capability
-flag and a read-only card — rather than a sixth installed hook event. **Choosing between them is a
-design call, not a measurement one, and it is left open here on purpose.**
+and the expensive one now buy nearly the same thing — and the next subsection is why the cheap one
+turns out to be no fix at all.
+
+### 5b. The feature is already built, and this measurement is the whole of what was missing
+
+**Run the app's own parser over the exact bytes that were on disk while the picker stood open, and a
+complete `pendingQuestion` comes out.** The transcript held 28 lines then and 41 after the answer, so
+its first 28 lines are byte-for-byte that state; `parseClaudeTranscriptTail` was given them
+unmodified, out of this repository at `82e8938`:
+
+```jsonc
+{
+  "toolUseId": "toolu_<id>",
+  "question": "Which stone do you prefer?",
+  "header": "Stone",
+  "multiSelect": false,
+  "questionCount": 1,
+  "options": [
+    { "label": "Granite", "description": "…" },
+    { "label": "Slate", "description": "…" }
+  ],
+  "askedAt": "…:26:15.863Z"
+}
+```
+
+Given all 41 lines it returns `{}` — the ask closes on its own `tool_result`, with no registry, no
+expiry window and nothing to clear. Every field the card needs is there, including the option
+descriptions.
+
+**And nothing downstream is gating it.** `pendingQuestionField` (`claudeProvider.ts`) already stamps
+that value on an observed foreman, redacted at the provider boundary, with `channel: 'terminal'`.
+`stampHeldQuestions` only supersedes it for a session the panel HOLDS, so an observed one keeps it.
+`DwarfMessagePanel.vue` renders `DwarfQuestionCard` on `v-else-if="dwarf.pendingQuestion"` — the
+existence of the field and nothing else, with no held check and no capability check. And the card
+already knows what a terminal-channel ask is: `ANSWER_ONLY_WHERE_IT_RUNS`, the console jump on any
+refusal about a console, the several-question refusal, and the keystroke answering #362 measured.
+
+So #298's deliverable — an observed session's open question, with its options, shown while it is
+open, saying it must be answered at the terminal, with the jump — **was built for #354 and #362 and
+has been sitting behind one upstream behaviour the whole time.** What the maintainer saw on v0.7.0
+was not a missing feature; it was a Claude Code that wrote the block only on resolve. That changed
+in the CLI, not here.
+
+**The recommendation is therefore to write no code for this issue.** Not the hook, and not §8 item 2
+either. What is worth doing instead is a regression test pinning the parser against a transcript
+fixture in exactly this shape — an `AskUserQuestion` `tool_use` with no `tool_result` behind it —
+so that the day this silently reverts upstream, a test says so instead of a person hitting it live.
 
 ### 6. Traps hit on the way, each worth one line
 
