@@ -135,7 +135,6 @@ import {
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
-  ClipboardPort,
   TextDeliveryOutcome,
   TextDeliveryPort,
   TextDeliveryTarget
@@ -213,14 +212,19 @@ const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 /**
- * A console the runtime resolved a paste to, on a port with no paste tier
+ * A console the runtime resolved a message to, on a port with no message tier
  * (#319). It carries `neverStarted`, so the relay behind it takes the message:
- * on the verified platform (Windows) this never happens — the port always
- * pastes — but a non-Windows port that kept a terminal endpoint (console input
- * force-enabled) has no paste, and its message must degrade to the relay rather
+ * on the verified platform (Windows) this never happens — the port always has
+ * one — but a non-Windows port that kept a terminal endpoint (console input
+ * force-enabled) has none, and its message must degrade to the relay rather
  * than be dropped, exactly as macOS/Linux already relay a named session.
+ *
+ * The constant keeps the name of the mechanism that tier used to be (#371
+ * writes into the console by pid instead of pasting), because `pasteToConsole`
+ * is still what the port method is called; the sentence a person reads does
+ * not repeat the mistake.
  */
-const NO_PASTE_TIER = "This build can't paste into a session's console."
+const NO_PASTE_TIER = "This build can't write into a session's console."
 /**
  * The two held-session refusals (#210).
  *
@@ -544,14 +548,6 @@ export interface RuntimeOptions {
   launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   /** Writes a typed message into a live session; injected for tests. */
   textDelivery?: TextDeliveryPort
-  /**
-   * The system clipboard the Windows paste path uses (#319), composed from
-   * Electron's `clipboard` at the composition root and forwarded to the
-   * platform adapters this constructor builds. Absent — as in every test, which
-   * injects `textDelivery` directly and never builds a real Windows port — the
-   * port falls back to a process-local clipboard.
-   */
-  clipboard?: ClipboardPort
   /**
    * The macOS console-input opt-in (#367), read off the REAL environment at
    * the composition root and forwarded to the platform adapters this
@@ -918,10 +914,6 @@ export class AgentRuntime {
         // override honoured here without a line of its own.
         fs,
         cliOverrides: cliOverridesFrom(options.config),
-        // Forwarded to the Windows text-delivery port for the paste path (#319);
-        // this constructor never imports Electron, so the clipboard is composed
-        // at the app's root and passed through here.
-        ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
         ...(options.darwinConsoleInput === undefined
           ? {}
           : { darwinConsoleInput: options.darwinConsoleInput })
@@ -2516,8 +2508,8 @@ export class AgentRuntime {
    *
    * Both acts now use it. Kick has always fallen back this way (#24: Esc at the
    * console, the relay behind it), and since #319 a MESSAGE does too — its
-   * console PASTE is the primary tier again and this relay is its fallback,
-   * reached only when the paste proved it delivered nothing (`neverStarted`).
+   * console tier is the primary again and this relay is its fallback, reached
+   * only when the console proved it delivered nothing (`neverStarted`).
    * The `attempt` parameter names which act, both for the log line and because
    * retiring it would churn a line every runtime log grep in the issues is
    * written against.
@@ -3015,8 +3007,8 @@ export class AgentRuntime {
    *
    * The tier is `resolveTextDelivery`'s answer and never a preference decided
    * here — which since #319 means an observed Claude session with a registry
-   * name is written to by PASTING at its console, and the relay is only what a
-   * paste that could not focus the window falls back to. `kickDwarf` keeps the
+   * name is written to AT ITS CONSOLE, and the relay is only what a console
+   * write that delivered nothing falls back to. `kickDwarf` keeps the
    * console for its interrupt too; see `sendRouteOf` in resolve.ts for the one
    * axis on which send and kick still part company.
    */
@@ -3057,12 +3049,13 @@ export class AgentRuntime {
      *
      * `prefix` is applied to every tier, and only the relay needs it: Claude
      * Code wraps whatever `SendMessage` carries in a cross-session envelope and
-     * tells the receiving agent the words are a peer's, while a paste, a held
-     * stream and the Codex queue all arrive as the person's own prompt — saying
-     * it there would be a sentence the agent has to read past on every message.
+     * tells the receiving agent the words are a peer's, while a console write, a
+     * held stream and the Codex queue all arrive as the person's own prompt —
+     * saying it there would be a sentence the agent has to read past on every
+     * message.
      *
      * And resolve.ts cannot know which tier will carry the text: the relay
-     * behind a console is reached only once a paste has proved it delivered
+     * behind a console is reached only once that console has proved it delivered
      * nothing (#319). The runtime is where that is known, so the runtime is
      * where the line goes on — ahead of `[for agent <name>] `, which stays
      * attached to the words it introduces and still names the RECIPIENT.
@@ -3097,13 +3090,14 @@ export class AgentRuntime {
           return Promise.resolve(this.sendToHostedProcess(endpoint.hostedId, payload))
         }
         if (endpoint.kind === 'terminal') {
-          // The console PASTES the message now, the primary tier again (#319):
-          // the text goes on the clipboard, Ctrl+V lands it at once, and the
-          // relay below is the fallback. `sendToConsole` still exists and still
-          // TYPES — it is what the permission digit (#203) uses — but a message
-          // never types any more.
+          // The console carries the message, the primary tier again (#319), and
+          // since #371 it carries it by WRITING INTO THE CONSOLE THE PID NAMES —
+          // no window raised, no clipboard borrowed — with the relay below as
+          // the fallback. `sendToConsole` beside it reaches the same write; what
+          // separates the two methods is which caller names them (#203's
+          // permission digit takes that one), not what they do.
           //
-          // A port with no paste tier (a non-Windows port that kept a terminal
+          // A port with no message tier (a non-Windows port that kept a terminal
           // endpoint, console input force-enabled) reports `neverStarted` so the
           // relay fallback carries the message rather than dropping it — the
           // same degrade macOS/Linux already make for a named session.
@@ -3146,16 +3140,16 @@ export class AgentRuntime {
           stageSuffix(timer.timings())
       )
       if (outcome.delivered) return { delivered: true, via: resolved.channel }
-      // The console paste never focused, so nothing was pasted and the session's
-      // registry name may take the same text over the relay (#319, reversing
-      // #308's direction). Both halves of that condition are load-bearing: a
-      // paste that RAN and failed may already have landed — Ctrl+V can put the
-      // clipboard into the window before the command reports a non-zero exit —
-      // and relaying behind it would put the person's message into the session
+      // The console write provably delivered nothing, so the session's registry
+      // name may take the same text over the relay (#319, reversing #308's
+      // direction). Both halves of that condition are load-bearing: a write that
+      // REACHED the console and then failed may already have put records in its
+      // input buffer — a short write reports failure with part of the message in
+      // — and relaying behind it would put the person's message into the session
       // a second time. Duplicating somebody's words is worse than an honest
-      // failure, so anything but a proven `neverStarted` (a window that would
-      // not come forward, so no key was sent) stops here with the console's own
-      // reason.
+      // failure, so anything but a proven `neverStarted` (an attach the OS
+      // refused, a console input that would not open) stops here with the
+      // console's own reason.
       if (
         endpoint.kind === 'terminal' &&
         outcome.neverStarted === true &&

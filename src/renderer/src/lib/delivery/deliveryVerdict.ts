@@ -157,7 +157,7 @@ export const SEND_AGAIN_TITLE = 'Send this message again. The one that failed st
  * rather than as the prompt the person typed (#378).
  *
  * One channel and not two. 'foreman-relay' names the HOP and not the tier under
- * it — on Windows a worker's message reaches its foreman by console paste,
+ * it — on Windows a worker's message reaches its foreman at its console,
  * which carries no provenance line at all — so claiming the framing there would
  * describe a message that was never framed as a peer's. The panel cannot tell
  * those apart from the verdict alone, and saying nothing is the honest half of

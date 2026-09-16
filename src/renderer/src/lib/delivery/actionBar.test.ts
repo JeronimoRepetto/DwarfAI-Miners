@@ -614,20 +614,24 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
  * hand-over…') and the console hint warned it was the FALLBACK that TYPES
  * ('warns that the console tier focuses the window and types into it').
  *
- * #319 pastes the message at the console again, so that asymmetric dwarf no
+ * #319 sent the message to the console again, so that asymmetric dwarf no
  * longer exists: a named console session is 'terminal' for both halves, and its
- * send hint describes the PASTE, not the relay. The relay's own hint is still
+ * send hint describes the console, not the relay. The relay's own hint is still
  * asserted, on the headless session where it is now shown.
  *
  * This block is 4 tests where #308's was 5 (net -1 for the file). One removed:
  * 'keeps that warning on the composer of a session whose only channel it is'
  * asserted a terminal-only dwarf's composer hint is CHANNEL_HINT.terminal —
- * exactly what `consolePaste()` (sendText/cancel both 'terminal') is here, so
- * 'describes the send as focusing the terminal and pasting the message in'
- * covers it. Coverage folded in, not dropped.
+ * exactly what `consoleSession()` (sendText/cancel both 'terminal') is here, so
+ * the send-hint test covers it. Coverage folded in, not dropped.
+ *
+ * AMENDED for #371: the hint promised a FOCUS and a PASTE, and the console
+ * tier now does neither — it writes into the console the session's pid names.
+ * A hint a person reads to predict what will happen to their window cannot go
+ * on saying a window comes forward.
  */
-describe('the copy for a named console session that pastes messages and interrupts at its console (#319)', () => {
-  function consolePaste(): Dwarf {
+describe('the copy for a named console session that takes messages and interrupts at its console (#319)', () => {
+  function consoleSession(): Dwarf {
     return defaultDwarf({
       textDelivery: 'terminal',
       capabilities: { sendText: 'terminal', cancel: 'terminal', adjustEffort: null }
@@ -641,15 +645,18 @@ describe('the copy for a named console session that pastes messages and interrup
     })
   }
 
-  it('describes the send as focusing the terminal and pasting the message in', () => {
-    const chat = buildActionBar(consolePaste(), IDLE).find((action) => action.id === 'chat')
+  it('describes the send as a write into that console, promising no window and no clipboard', () => {
+    const chat = buildActionBar(consoleSession(), IDLE).find((action) => action.id === 'chat')
     expect(chat?.enabled).toBe(true)
     expect(chat?.hint).toBe(CHANNEL_HINT.terminal)
-    // Focus and paste, and NOT the typing it replaced: a person should be able
-    // to predict the message landing at once, not being typed out.
-    expect(CHANNEL_HINT.terminal).toMatch(/focus/i)
-    expect(CHANNEL_HINT.terminal).toMatch(/paste/i)
+    // The act, and none of the three mechanisms it has had: not typing
+    // (#308's), not a paste off the clipboard (#319's), and not a focus — the
+    // window stays where it is, which is the thing a person most needs to
+    // predict before pressing send.
+    expect(CHANNEL_HINT.terminal).toMatch(/console/i)
     expect(CHANNEL_HINT.terminal).not.toMatch(/\btyp/i)
+    expect(CHANNEL_HINT.terminal).not.toMatch(/paste|clipboard/i)
+    expect(CHANNEL_HINT.terminal).not.toMatch(/focus/i)
     // No longer the fallback — it is the primary channel again.
     expect(CHANNEL_HINT.terminal).not.toMatch(/fallback/i)
   })
@@ -662,7 +669,7 @@ describe('the copy for a named console session that pastes messages and interrup
    * gone, has been told the wrong thing.
    */
   it('describes the kick as ending that session rather than interrupting its turn', () => {
-    const kick = buildActionBar(consolePaste(), IDLE).find((action) => action.id === 'kick')
+    const kick = buildActionBar(consoleSession(), IDLE).find((action) => action.id === 'kick')
     expect(kick?.hint).toBe(KICK_HINT.terminal)
     expect(KICK_HINT.terminal).toMatch(/ends this session/i)
     expect(KICK_HINT.terminal).not.toMatch(/keystroke|interrupt/i)

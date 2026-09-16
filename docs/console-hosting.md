@@ -622,26 +622,28 @@ and the refusal is visible to the person with its reason. Record the finding in
 identity differently there (a `/proc` read of the CLI's own start time, say) rather than to re-try
 this.
 
-**The permission digits still type.** A decision is answered at the terminal drawing the dialog, so
-it reads the kick's old route rather than the message's — `sendToConsole` for the measured `1`,
-`sendInterrupt` for the `Esc` — because a paste of that digit into a live selector is unverified and
-#319 changed only the message. Those two are the last keystroke callers left, and they inherit the
-shared-window refusal above rather than escaping it: a dialog can only be answered at the window
-drawing it, so where the panel cannot tell which tab that is, it says so instead of pressing.
+**The permission digits took a different route, and #371 ended the difference for one of them.** A
+decision is answered at the terminal drawing the dialog, so it read the kick's old route rather than
+the message's — `sendToConsole` for the measured `1`, `sendInterrupt` for the `Esc` — because a
+paste of that digit into a live selector was unverified and #319 changed only the message. The
+digit now travels the same pid write a message does (§6), so it is answered wherever the dialog was
+drawn; the `Esc` is a virtual key and stays a keystroke, inheriting the shared-window refusal above
+rather than escaping it.
 
-**A per-OS paste is a follow-up, not built here.** The console-paste tier is Windows-verified only.
-macOS and Linux keep the relay for a message exactly as they did (`supportsConsoleInput` is false, so
-a named terminal degrades to the relay before it ever reaches the paste path); an osascript paste on
-macOS or an `xdotool`/`wtype` paste on Linux is a separate issue, noted in `platform-ports`. A
-Settings switch between the visible paste and the invisible relay is likewise deferred to whoever
-owns the Settings surface.
+**A per-OS console write is a follow-up, not built here.** The console tier is Windows-verified
+only. macOS and Linux keep the relay for a message exactly as they did (`supportsConsoleInput` is
+false, so a named terminal degrades to the relay before it ever reaches the console path); an
+osascript path on macOS or an `xdotool`/`wtype` one on Linux is a separate issue, noted in
+`platform-ports`. A Settings switch between the console and the relay is likewise deferred to
+whoever owns the Settings surface.
 
 ### What is not measured yet
 
 Step 2 of #308 still asks for these numbers and they are **not in this document yet**. They now
 measure the RELAY as the fallback rather than the default, and the per-character typing timings §4b
-and #308 recorded are superseded by paste — a paste is one keystroke, not one per character, so the
-~16 s figure no longer describes the primary path. Listed as columns so the gap is visible rather
+and #308 recorded are superseded twice over — first by the paste, then by the pid write, which is
+one API call and no keystrokes at all, so the ~16 s figure has not described the primary path for
+two mechanisms now. Listed as columns so the gap is visible rather
 than filled with plausible ones:
 
 | Quantity                                                     | Value                | How it will be taken                                            |
@@ -685,12 +687,14 @@ already written. Both models are supported; neither had to win.
 
 ## 6. The terminal handoff, when the panel is not the host
 
-> **Since #319 a message to a session with a console takes this path again** — see §4b: it brings
-> the window forward and PASTES, the relay behind it only when the window will not come forward.
-> (#308 had routed a named session's message over the relay instead; #319 reversed that.) The focus
-> mechanics below govern that paste, the permission keystrokes of #203, and a message to a session
-> with no name at all. **They no longer govern Kick** — since #329 it ends the session's process and
-> asks for no window at all (see §4b).
+> **Since #319 a message to a session with a console takes the console again** — see §4b. #319 did
+> it by bringing the window forward and pasting; **since #371 it raises no window at all**, writing
+> into the console the session's pid names, and the permission digit of #203 goes the same way.
+> So the focus mechanics below no longer govern either of them: what is left on this path is the
+> keys that carry no character — the interrupt's `Esc`, the clean exit's `Ctrl+C`, the question
+> picker's arrow (#362). **They stopped governing Kick at #329**, which ends the session's process
+> and asks for no window either (see §4b). The section is kept in full because those keystroke
+> tiers still depend on every measurement in it.
 
 Path 4 keeps one act the other three never need: bringing **somebody else's** terminal window to the
 front before typing into it. Three things about that are counter-intuitive enough to have cost an

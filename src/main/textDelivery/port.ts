@@ -178,29 +178,6 @@ export interface ConsoleTextRequest {
   pressEnter: boolean
 }
 
-/**
- * Reading and writing the system clipboard, behind a port (#319).
- *
- * **Nothing reads it since #371.** The message path put the text on the
- * clipboard, sent Ctrl+V and put the clipboard back; it writes into the
- * session's own console by pid now, so no delivery borrows the person's
- * clipboard at all. The type and the composition chain behind it — the app
- * root, the runtime's options, platformAdapters — are still wired and are a
- * follow-up to unwire, because that chain lives outside the delivery tier.
- *
- * Each call may be synchronous OR return a promise. The installed Electron's
- * `clipboard` is promise-based — `readText(): Promise<string>`,
- * `writeText(): Promise<void>`, "modeled after the W3C navigator.clipboard
- * API" — despite older docs showing a synchronous one; the union kept a plain
- * in-memory fake sync while the real port awaited the promise.
- */
-export interface ClipboardPort {
-  /** The clipboard's current plain text, '' when it holds none. */
-  read(): string | Promise<string>
-  /** Replace the clipboard's plain text. */
-  write(text: string): void | Promise<void>
-}
-
 export interface RelayTextRequest {
   /** The addressable Claude session name, e.g. 'sample-project-70'. */
   sessionName: string

@@ -1,7 +1,6 @@
 import { config as loadDotenv } from 'dotenv'
 import {
   app,
-  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -719,15 +718,6 @@ async function init(): Promise<void> {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath()
-    },
-    // The system clipboard the Windows paste path saves, sets and restores
-    // (#319). Composed here at the one place Electron is imported — the runtime
-    // and the platform adapters never import it — and passed straight through.
-    // This Electron's clipboard is promise-based (readText/writeText return
-    // promises); ClipboardPort accepts that, and pasteToConsole awaits it.
-    clipboard: {
-      read: () => clipboard.readText(),
-      write: (value: string) => clipboard.writeText(value)
     },
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
     // Passed only when the variable is set (#367): unset leaves the shipped
