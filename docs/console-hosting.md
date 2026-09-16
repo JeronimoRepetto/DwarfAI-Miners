@@ -693,11 +693,13 @@ already written. Both models are supported; neither had to win.
 > **Since #319 a message to a session with a console takes the console again** — see §4b. #319 did
 > it by bringing the window forward and pasting; **since #371 it raises no window at all**, writing
 > into the console the session's pid names, and the permission digit of #203 goes the same way.
-> So the focus mechanics below no longer govern either of them: what is left on this path is the
-> keys that carry no character — the interrupt's `Esc`, the clean exit's `Ctrl+C`, the question
-> picker's arrow (#362). **They stopped governing Kick at #329**, which ends the session's process
-> and asks for no window either (see §4b). The section is kept in full because those keystroke
-> tiers still depend on every measurement in it.
+> **#402 sent the question picker's keys after them**, once its multi-select confirmation turned out
+> to be three ordinary characters rather than an arrow key. So the focus mechanics below govern none
+> of those three: what is left on this path is the interrupt's `Esc` and the clean exit's `Ctrl+C`,
+> both of which #402 measured as deliverable text records too and neither of which moved in it.
+> **They stopped governing Kick at #329**, which ends the session's process and asks for no window
+> either (see §4b). The section is kept in full because those two keystroke tiers still depend on
+> every measurement in it.
 
 Path 4 keeps one act the other three never need: bringing **somebody else's** terminal window to the
 front before typing into it. Three things about that are counter-intuitive enough to have cost an
@@ -1015,6 +1017,13 @@ Ctrl+C are the same shape. So a Windows Terminal user with several tabs can now 
 answer a PERMISSION dialog, and still cannot answer a question picker from the panel — which is a
 follow-up with a measurement in front of it, not a gap somebody forgot.
 
+> **That follow-up came back, and the premise was wrong** (#402, two subsections below). The
+> confirmation is not a virtual key: ConPTY hands the hosted process VT input, so the arrow the
+> picker reads is `ESC [ C`, three ordinary characters this builder could already carry. The
+> picker's keys moved to the pid write, and Escape and Ctrl+C turned out to carry characters of
+> their own — `0x1b` and `0x03`, both measured as text records — so what is left on the keystroke
+> path is there by choice rather than for want of a measurement.
+
 ### The Enter must be a second write — measured 2026-09-16 (#404)
 
 **Shipping #371 step 2 surfaced a defect the measurement above could not have caught, because nothing
@@ -1051,8 +1060,9 @@ call and, when `pressEnter` is true, the Enter record in a second — same child
 write for it to follow. Exit code 4 keeps meaning "a write was short or failed," now including the
 shape this bug was: the text's call landing whole and the Enter call behind it failing, which still
 leaves an unsubmitted message sitting in the console's buffer. Exit codes 2 and 3 are unchanged. The
-question picker's keys (#402) will need the same two-call shape; it is not wired through this builder
-yet.
+question picker's keys (#402) needed the same shape and now take it: `buildConsoleInputWriteCommand`
+is a thin caller of `buildConsoleInputSequenceCommand`, which writes a LIST of chunks one call each
+with this delay between, and a message is the two-chunk case of it.
 
 ### An arrow as TEXT records moves an Ink select — measured 2026-09-16 (#402)
 
@@ -1081,10 +1091,102 @@ travelled in its own second call, per #404 above.
 
 **What this does NOT settle, and the distinction matters.** The arrow was sent to the **trust
 dialog**, never to the question picker. The picker's own sequences from §4c — a digit firing a
-single-select outright, and a multi-select's `{RIGHT}` then `{ENTER}` — remain unmeasured through
-this write path; the only thing exercised against a real picker here was the bare Enter, which
-accepted the row the cursor already sat on. Whether a VT sequence walks THAT component the way it
-walked this one is an assumption until somebody sends one. Two Ink selects are not one measurement.
+single-select outright, and a multi-select's `{RIGHT}` then `{ENTER}` — were unmeasured through this
+write path; the only thing exercised against a real picker here was the bare Enter, which accepted
+the row the cursor already sat on. Whether a VT sequence walks THAT component the way it walked this
+one was an assumption until somebody sent one, because two Ink selects are not one measurement.
+**Somebody has now; the next subsection is that measurement, and every sequence held.**
+
+### The picker's own keys, through the write by pid — measured 2026-09-16 (#402)
+
+**Every gesture §4c measured against SendKeys reproduces key-for-key as a write by pid, and the
+multi-select confirms.** So the question picker leaves the keystroke path with this issue: an answer
+raises no window, synthesizes nothing, and asks nobody which tab is in front — the state a message
+has been in since #371 and a permission digit since the same change.
+
+**The session this was measured on was launched for it and ended by it.** `Start-Process powershell
+-File <inner>.ps1` with **no `-NoExit`**, so the tab closes when the CLI exits; the inner script
+strips this agent's own `CLAUDE*` markers from the environment — a session that inherits
+`CLAUDE_CODE_CHILD_SESSION` writes no transcript, and the transcript is half the evidence here
+(`docs/question-capture-evaluation.md` §9) — and runs `claude` in a throwaway `git init` project
+under the scratchpad. The target pid was taken as the **set difference** of `Get-Process claude`
+before and against after the launch, and refused unless exactly one pid was new: every other
+`claude.exe` on the machine is somebody's live session, and "newest by start time" is not a proof of
+ownership. The console was read back with `AttachConsole` + `ReadConsoleOutputCharacterW` on
+`CONOUT$` — read-only, no window raised, nothing focused. Claude Code **2.1.273**, Windows 11
+[V, #402, 2026-09-16].
+
+**Each key its own `WriteConsoleInputW` call, the builder's split delay between them** — #404's rule,
+applied per key rather than only to Enter:
+
+| Step                           | Chunk written                              | Code units | Exit | Took   | What the console showed                                                                          |
+| ------------------------------ | ------------------------------------------ | ---------- | ---- | ------ | ------------------------------------------------------------------------------------------------ |
+| single-select, answer option 2 | `2`                                        | 50         | 0    | 224 ms | `User answered Claude's questions: Which stone do you prefer? → Slate` — selected AND submitted  |
+| multi-select, toggle option 1  | `1`                                        | 49         | 0    | 219 ms | row 1 became `[✔]`; the `❯` cursor did not move                                                  |
+| multi-select, toggle option 3  | `3`                                        | 51         | 0    | 215 ms | row 3 became `[✔]`; the cursor still did not move                                                |
+| multi-select, confirm          | `ESC` `[` `C`                              | 27 91 67   | 0    | 218 ms | `Review your answers … → Pickaxe, Rope`, with `❯ 1. Submit answers` and `2. Cancel`              |
+| multi-select, accept           | bare Enter (empty text, `pressEnter` true) | 13         | 0    | 221 ms | `User answered Claude's questions: Which tools do you want to pack for the dig? → Pickaxe, Rope` |
+
+**The transcript says the chosen options were the intended ones**, which is the half a screen read
+cannot give: the `tool_result` for each `tool_use_id`, read from the session's own `.jsonl`
+[V, #402]:
+
+| Ask                            | `tool_result` content                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------- |
+| single-select, `2` of 3        | `"Which stone do you prefer?"="Slate"` — the second option, as the digit says         |
+| multi-select, `1` and `3` of 3 | `"Which tools do you want to pack for the dig?"="Pickaxe, Rope"` — both, and no third |
+
+**So `{RIGHT}` was never a virtual key problem.** ConPTY hands the hosted process VT input, so the
+arrow Ink reads is the three ordinary characters `ESC [ C`, which `buildConsoleInputWriteCommand`
+could already carry — the same shape the trust dialog's cursor-down took in the subsection above.
+The record shape #402 opened with, a `KEY_EVENT_RECORD` carrying `wVirtualKeyCode` 0x27 and
+`UnicodeChar` 0, was **never sent**: the text route worked on the first attempt, so there was nothing
+to compare it against. That case stays untested, and it is not a gap this repository needs — the
+honest expectation §6 recorded ("an arrow key needs the escape sequence … rather than a virtual key
+at all") is what the measurement found.
+
+**Then the shipped builders were run against a second live picker**, because a paraphrase of a
+measurement is not the measurement (the discipline #371 set two subsections above).
+`questionAnswerChunks` and `buildConsoleInputSequenceCommand`, bundled out of the worktree and run
+exactly as `answerQuestionAtConsole` composes them — ONE child process, one attach, one call per key:
+
+| Answer                        | Chunks                    | Calls | Sleeps | Exit | Took   | `tool_result`                            |
+| ----------------------------- | ------------------------- | ----- | ------ | ---- | ------ | ---------------------------------------- |
+| multi-select, options 2 and 3 | `2`, `3`, `ESC [ C`, `\r` | 4     | 3      | 0    | 406 ms | `"…pack for the dig?"="Lantern, Rope"`   |
+| single-select, option 1       | `1`                       | 1     | 0      | 0    | 220 ms | `"Which stone do you prefer?"="Granite"` |
+
+**One thing the 2.1.267 reading did not say and this build does.** The picker numbers its OWN rows
+after the agent's: with three options the free-text row is **4** and a "Chat about this" row is
+**5**. So a digit past the option count is not a no-op — it is a row nobody chose, which is what
+`label-not-offered` and `more-options-than-digits` in `questionKeys.ts` already stop, and now for a
+reason that has been seen rather than assumed.
+
+**Two keys were measured and deliberately NOT moved.** Both carry a character after all, so the
+foreground is no longer what keeps them where they are — a key that ends a turn or a session is
+worth its own change and its own test:
+
+| Key                           | Written as              | Exit | Took   | What happened                                                                    |
+| ----------------------------- | ----------------------- | ---- | ------ | -------------------------------------------------------------------------------- |
+| `Esc`, mid-turn               | `0x1b`, one text record | 0    | 220 ms | the running turn stopped: `Interrupted · What should Claude do instead?`         |
+| `Ctrl+C`, at an idle composer | `0x03`, one text record | 0    | 215 ms | the composer's text was cleared and the footer read `Press Ctrl-C again to exit` |
+
+So `sendInterrupt` and the clean exit's `Ctrl+C` (#358) both have a measured route off the focus
+path whenever somebody wants to take it. `answerQuestionAtConsole` took its own in this change, and
+those two stayed.
+
+**Both sessions ended the way they were asked to.** `/exit` written as text with Enter behind it in
+a second call — exit 0 in 273 ms and 299 ms — and the `claude.exe` and its host `powershell.exe` were
+both gone within five seconds each time. No `Stop-Process` was reached, which is the point: a forced
+kill leaves the terminal in mouse-reporting mode (#358).
+
+**One observation that is written down rather than explained.** On the first session's folder-trust
+dialog, a single `ESC [ C`-shaped write of `ESC [ B` (cursor down) was followed by a console read
+showing the dialog **gone and the session trusted**, with no Enter written between the two reads.
+The subsection above recorded that dialog taking a cursor-down and then a separate Enter, and this
+run had no second write. Nothing here explains it, and nothing in #402 rests on it — the trust
+dialog is not the question picker, and every picker measurement above is a write whose effect was
+read back immediately after it. It is recorded so that a later reader who sees it again has one
+prior sighting rather than none.
 
 ---
 
