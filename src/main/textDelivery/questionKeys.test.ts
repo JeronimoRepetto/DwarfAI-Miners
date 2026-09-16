@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfQuestion } from '../domain/types'
-import { questionKeystrokesFor } from './questionKeys'
+import { questionAnswerChunks, questionKeystrokesFor } from './questionKeys'
 
 /**
  * Issue #362. The file that decides which digits this app presses in a picker
@@ -138,4 +138,59 @@ describe('questionKeystrokesFor (#362)', () => {
       reason: 'label-not-offered'
     })
   })
+})
+
+/*
+ * The chunks those digits become on the wire (#402).
+ *
+ * Measured live 2026-09-16 on Claude Code 2.1.273, written into the session's
+ * own console by pid rather than synthesized at a window: a digit as one text
+ * record selects a single-select outright and toggles a multi-select row; `ESC
+ * [ C` as three text records opens the multi-select summary; a bare Enter
+ * accepts it. Each of those is one `WriteConsoleInputW` call, which is why they
+ * are a LIST here rather than a string — see docs/console-hosting.md §6.
+ *
+ * The digit guard moved here with them, from buildQuestionAnswerCommand in
+ * sendKeys.ts, which #402 deleted with the SendKeys answer path.
+ */
+describe('questionAnswerChunks (#402)', () => {
+  it('writes a single-select answer as its digit and nothing else', () => {
+    // Measured: the digit fires the selection on its own. An Enter behind it
+    // would submit the input box of a session whose picker has already closed.
+    expect(questionAnswerChunks(['3'], false)).toEqual(['3'])
+  })
+
+  it('writes a multi-select answer as its toggles, then cursor-right, then Enter', () => {
+    expect(questionAnswerChunks(['2', '4'], true)).toEqual(['2', '4', '\u001b[C', '\r'])
+  })
+
+  it('spells the confirmation as the VT sequence, never as a virtual key name', () => {
+    // The finding #402 turns on: an arrow does not have to travel as a virtual
+    // key at all. Three ordinary characters — ESC, '[', 'C' — moved the picker
+    // onto its Submit tab, so the chunk carries exactly those code units.
+    const chunks = questionAnswerChunks(['1'], true) as string[]
+    expect([...(chunks[1] ?? '')].map((unit) => unit.codePointAt(0))).toEqual([27, 91, 67])
+    expect(chunks.join('')).not.toContain('{RIGHT}')
+  })
+
+  it('refuses an empty set of digits, which would accept an empty answer', () => {
+    // A confirmation with no toggle in front of it submits nothing chosen.
+    expect(questionAnswerChunks([], true)).toBeNull()
+    expect(questionAnswerChunks([], false)).toBeNull()
+  })
+
+  it('refuses a tenth digit, which the picker numbers no row for', () => {
+    const nine = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+    expect(questionAnswerChunks(nine, true)).not.toBeNull()
+    expect(questionAnswerChunks([...nine, '1'], true)).toBeNull()
+  })
+
+  it.each([['0'], ['10'], [''], ['a'], ['{ENTER}'], ['1 2'], ['+'], ['\r'], ['\u001b[C']])(
+    'refuses %j, which is not one of the nine digits this picker answers to',
+    (digit) => {
+      // The whole payload a chunk may carry on this path is a digit, and this
+      // guard is what keeps anything else out of somebody else's console.
+      expect(questionAnswerChunks([digit], false)).toBeNull()
+    }
+  )
 })

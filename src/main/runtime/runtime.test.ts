@@ -9671,8 +9671,8 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
 
   it('types the chosen option’s digit, with no submit behind it', async () => {
     // The shipped single-select path: the digit fires the selection by itself,
-    // so `submit` stays false — a {RIGHT}{ENTER} behind it would land in the
-    // input box of a session whose picker has already closed.
+    // so `submit` stays false — a cursor-right and Enter behind it would land
+    // in the input box of a session whose picker has already closed.
     const { runtime, port } = await runtimeWith()
 
     await expect(answer(runtime, ['Pear'])).resolves.toEqual({ answered: true })

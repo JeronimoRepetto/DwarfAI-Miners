@@ -37,12 +37,13 @@ import {
   type RelayResult,
   type RelayRunner
 } from './relayRunner'
-import { buildConsoleInputWriteCommand, consoleWriteFailureFor } from './consoleInputWrite'
 import {
-  buildGracefulExitCommand,
-  buildQuestionAnswerCommand,
-  buildSendInterruptCommand
-} from './sendKeys'
+  buildConsoleInputSequenceCommand,
+  buildConsoleInputWriteCommand,
+  consoleWriteFailureFor
+} from './consoleInputWrite'
+import { questionAnswerChunks } from './questionKeys'
+import { buildGracefulExitCommand, buildSendInterruptCommand } from './sendKeys'
 import { createStageTimer, type StageTimings } from './timing'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
@@ -70,10 +71,10 @@ const CONSOLE_COMMAND_TIMEOUT_MS = 120_000
  * one Claude foreman interrupted the other one, in the tab that happened to be
  * active. Nothing is sent, and `neverStarted` says nothing was.
  *
- * Since #371 this belongs to the tiers that still SYNTHESIZE A KEYSTROKE — the
- * interrupt, the question picker, the clean-exit Ctrl+C. Text no longer comes
- * here at all: a message and a permission digit are written into the console
- * the pid names, which has no tab strip to be ambiguous about.
+ * Since #371 this belongs to the tiers that still SYNTHESIZE A KEYSTROKE, and
+ * #402 left two: the interrupt and the clean-exit Ctrl+C. Nothing else comes
+ * here — a message, a permission digit and a question answer are written into
+ * the console the pid names, which has no tab strip to be ambiguous about.
  */
 const SHARED_TERMINAL_WINDOW =
   'This session shares its terminal window with other tabs, and the panel cannot tell ' +
@@ -284,9 +285,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    *
    * Both callers land here — a message and #203's permission digit — because
    * both are plain text and the difference between them was only ever the
-   * mechanism. #362's picker keys do NOT: its multi-select confirmation is an
-   * arrow, a virtual key carrying no character, and no record of that shape has
-   * been measured against a TUI.
+   * mechanism. #362's picker keys take the same write since #402, through the
+   * sequence builder rather than this two-chunk wrapper.
    */
   async sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
     return this.writeToConsoleByPid(request)
@@ -331,11 +331,26 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * `consoleWriteFailureFor`.
    */
   private async writeToConsoleByPid(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
-    const timer = createStageTimer(this.now)
     const command = buildConsoleInputWriteCommand(request.pid, request.text, request.pressEnter)
     if (command === null) {
       return { delivered: false, error: CONSOLE_WRITE_UNBUILDABLE, neverStarted: true }
     }
+    return this.runConsoleWriteScript(command)
+  }
+
+  /**
+   * Run one built write script in a hidden child of its own, and turn what it
+   * exits with into an outcome (#371, and #402's answer path).
+   *
+   * Shared by the two callers rather than written twice, because everything
+   * below the builder is the same act: one child, one attach, and three exit
+   * codes that mean three different things to the person whose session it is.
+   * `neverStarted` is carried from the exit code rather than inferred, so the
+   * runtime's relay fallback keeps working on the same terms — only a failure
+   * that provably reached no console may be sent again by another tier.
+   */
+  private async runConsoleWriteScript(command: string): Promise<TextDeliveryOutcome> {
+    const timer = createStageTimer(this.now)
     try {
       const result = await timer.measure('spawn', () => this.runConsoleWrite(command))
       if (result.exitCode !== 0) {
@@ -392,9 +407,13 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * A bare ESC into the console at `pid`: bring it forward, then synthesize the
    * one keystroke the Claude Code TUI interrupts a turn on.
    *
-   * Still a foreground act after #371, and deliberately: Escape is a VIRTUAL
-   * KEY carrying no character, so the record a pid write would have to carry is
-   * not the record that was measured. Text moved off this path; a key did not.
+   * Still a foreground act, and now by choice rather than for want of a
+   * measurement: #402's pass wrote `0x1b` as a single text record into a live
+   * Claude Code session's console and the running turn stopped, so this could
+   * follow the picker's keys off the foreground. It did not move in that change
+   * because a key that ends a turn — and the clean exit's Ctrl+C behind it,
+   * which the same pass measured as `0x03` — is worth its own change and its own
+   * test, not a passenger on one [docs/console-hosting.md §6].
    *
    * Kick's terminal path until #329, and no longer — a kick ends the session's
    * process now, which needs no window and cannot miss. What still presses Esc
@@ -436,58 +455,47 @@ export class WindowsTextDelivery implements TextDeliveryPort {
 
   /**
    * Answer the AskUserQuestion picker this console is drawing: the chosen
-   * options' digits, then the confirmation a multi-select needs (#362).
+   * options' digits, then the confirmation a multi-select needs (#362), written
+   * into that console by pid with no window raised at all (#402).
    *
-   * The same two preconditions every keystroke here has, in the same order: the
-   * window must come forward, and it must be one this session is alone on —
-   * #329's `terminal-host` refusal, which matters more on this route than on
-   * any other, because a digit in the wrong tab does not merely interrupt a
-   * stranger's turn, it CHOOSES an option in it. Both refusals press nothing.
+   * **This was the last tier that focused a window to press a key, and what
+   * kept it there was a misreading.** A multi-select confirms with the right
+   * arrow, and an arrow was taken to be a virtual key carrying no character —
+   * the one record shape nothing had measured. ConPTY hands the hosted process
+   * VT input, so the arrow the picker actually reads is `ESC [ C`, three
+   * ordinary characters, and those the write path could always carry. Measured
+   * live on 2026-09-16 against real single- and multi-select pickers, with the
+   * transcript's `tool_result` proving the chosen options
+   * [docs/console-hosting.md §6].
+   *
+   * So #329's shared-window refusal is gone from this path rather than
+   * loosened: there is no foreground to be wrong about, which matters more here
+   * than anywhere else — a digit in the wrong tab does not merely interrupt a
+   * stranger's turn, it CHOOSES an option in it.
    *
    * The digits arrive already resolved to option positions (see questionKeys.ts
-   * for the measurement, and buildQuestionAnswerCommand for the keys), so
-   * nothing agent-authored reaches the command and there is nothing here to
-   * escape. A builder that refuses — no digits, a tenth option, a digit that is
-   * not one — is reported rather than pressed as something else.
+   * for the measurement and for the chunks), so nothing agent-authored reaches
+   * the script and there is nothing here to escape. Two fail-closed guards in
+   * front of the write, each with its own sentence: keys nothing may press — no
+   * digits, a tenth option, a "digit" that is not one — and a pid that cannot
+   * name a process.
    *
-   * One command for the whole sequence, on purpose: the toggles and their
-   * confirmation are one act, and splitting them over several spawns would put
-   * a window in which the foreground could change hands between a toggle and
-   * the Enter that accepts it.
+   * One child process for the whole sequence, on purpose: the toggles and their
+   * confirmation are one act, and the attach they share is what keeps them
+   * aimed at one console. Inside it each key is its own `WriteConsoleInputW`
+   * call, because a key arriving inside another's call is read as pasted
+   * content rather than as a keystroke (#404).
    */
   async answerQuestionAtConsole(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome> {
-    const timer = createStageTimer(this.now)
-    const command = buildQuestionAnswerCommand(request.digits, request.submit)
-    if (command === null) {
+    const chunks = questionAnswerChunks(request.digits, request.submit)
+    if (chunks === null) {
       return { delivered: false, error: ANSWER_KEYS_UNBUILDABLE, neverStarted: true }
     }
-    try {
-      const focus = await timer.measure('focus', () => this.focus(request.pid))
-      if (!focus.focused) {
-        return {
-          delivered: false,
-          error: 'The agent terminal could not be brought to the foreground.',
-          neverStarted: true,
-          stages: timer.timings()
-        }
-      }
-      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
-      const result = await timer.measure('spawn', () => this.runPowerShell(command))
-      if (result.exitCode !== 0) {
-        return {
-          delivered: false,
-          error: 'The answer keystrokes could not be sent to the terminal.',
-          stages: timer.timings()
-        }
-      }
-      return { delivered: true, stages: timer.timings() }
-    } catch {
-      return {
-        delivered: false,
-        error: 'The agent terminal could not be reached.',
-        stages: timer.timings()
-      }
+    const command = buildConsoleInputSequenceCommand(request.pid, chunks)
+    if (command === null) {
+      return { delivered: false, error: CONSOLE_WRITE_UNBUILDABLE, neverStarted: true }
     }
+    return this.runConsoleWriteScript(command)
   }
 
   /**

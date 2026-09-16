@@ -27,6 +27,15 @@ import type { DwarfQuestion } from '../domain/types'
  * cursor is on), the Submit row carries no digit, and `PageDown` is not a jump
  * to it. See docs/console-hosting.md for the three measurement rounds.
  *
+ * **Re-measured through the pid write on 2026-09-16, Claude Code 2.1.273, and
+ * every gesture above held** — see `questionAnswerChunks` below and
+ * `docs/console-hosting.md` §6. What changed is not the keys but where they
+ * land: written into the session's own console rather than synthesized at a
+ * window. One thing the 2.1.267 reading did not say and this build does: the
+ * picker numbers its OWN rows after the agent's, so a "Type something" row takes
+ * the digit immediately past the last option — which is why a digit beyond the
+ * option count is a row nobody chose rather than a no-op.
+ *
  * ## What this refuses, and why each refusal is not a gap
  *
  * A refusal is a typed reason rather than a null, because the runtime turns
@@ -43,23 +52,23 @@ import type { DwarfQuestion } from '../domain/types'
  * leave the option exactly as it started, so the answer sent would not be the
  * answer given. Deduplicating instead would send an answer nobody chose.
  *
- * ## Where these digits may be pressed, which is not this file's question
+ * ## Where these keys land, which stopped being a question at #402
  *
- * A keystroke lands wherever the foreground is, so a session sharing its
- * terminal window with other tabs must never be typed into: a digit aimed at
- * one picker would choose an option in another tab's. That is the port's
- * shared-window refusal (#329), and #371 is what made it fire on the right
- * fact — a probed console handle can be a phantom OWNED by a Windows Terminal
- * window, and only an owner proven to draw one console is this session's. So a
- * shared tab strip is refused here rather than answered blind, and what is left
- * open is the millisecond after the runtime's re-read of the board.
+ * They used to be synthesized at whatever window held the foreground, so a
+ * session sharing its terminal window with other tabs could not be answered at
+ * all: a digit aimed at one picker would have chosen an option in another tab's,
+ * and the port refused rather than guess (#329). They are written into the
+ * console the session's own pid names now, exactly as a message has been since
+ * #371 — no window is raised and the tab strip is never consulted, so the
+ * refusal has nothing left to refuse. What is still open is the millisecond
+ * after the runtime's re-read of the board.
  */
 
 /** Why no keystroke could be derived — one reason per fact, never a bare null. */
 export type QuestionKeystrokeRefusal =
   /** The call carried more than one question, and only its first is on the wire. */
   | 'several-questions'
-  /** Nothing was chosen, and `{RIGHT}{ENTER}` alone would accept an empty answer. */
+  /** Nothing was chosen, and a bare confirmation would accept an empty answer. */
   | 'nothing-chosen'
   /** A label with no option behind it: nothing here may invent a row to press. */
   | 'label-not-offered'
@@ -76,7 +85,7 @@ export type QuestionKeystrokeRefusal =
  * `digits` is ascending in the ask's own option order rather than in click
  * order: the sequence has to be deterministic from the picker's initial state,
  * and the order a person happened to click in is not part of that state.
- * `submit` is the multi-select confirmation — `{RIGHT}` then `{ENTER}` — and is
+ * `submit` is the multi-select confirmation — cursor-right, then Enter — and is
  * false for a single-select, which fires on its digit alone.
  */
 export type QuestionKeystrokes =
@@ -126,4 +135,49 @@ export function questionKeystrokesFor(
     digits: positions.sort((left, right) => left - right).map(String),
     submit: question.multiSelect
   }
+}
+
+/**
+ * The VT "cursor right" sequence — `ESC`, `[`, `C` — which is what a multi-select
+ * picker's confirmation turned out to be (#402).
+ *
+ * Three ORDINARY CHARACTERS, and that is the whole finding. #362 spelled this
+ * key as SendKeys' `{RIGHT}` and #371 left the picker on the keystroke path
+ * because a virtual key carrying no character is not a record anything had
+ * measured. It never needed to be one: ConPTY hands the hosted process VT input,
+ * so the arrow the picker reads is these three code units, written as text
+ * records like any other. Measured live 2026-09-16 against a real multi-select
+ * picker — the summary opened and the toggles were the ones chosen
+ * [docs/console-hosting.md §6].
+ */
+const CURSOR_RIGHT = '\u001b[C'
+
+/** The carriage return that accepts the summary cursor-right opens. */
+const ACCEPT = '\r'
+
+/** The nine digits the picker numbers, and the only payload this path may carry. */
+const ANSWER_DIGIT = /^[1-9]$/
+
+/**
+ * The chunks that answer a picker, one per `WriteConsoleInputW` call, or null
+ * for digits nothing here may press.
+ *
+ * A LIST rather than a string, because a chunk arriving inside another chunk's
+ * call is read by a live TUI as pasted content rather than as a keystroke —
+ * #404's rule for Enter, which #402 measured holds for every key of an answer.
+ * The list is what `buildConsoleInputSequenceCommand` turns into calls.
+ *
+ * The digit guard is this function's whole safety, and it moved here from
+ * `buildQuestionAnswerCommand` when #402 deleted that builder: a digit is the
+ * entire payload, so anything that is not one of the nine must stop here rather
+ * than reach somebody else's console as characters.
+ *
+ * Null rather than a throw, and for the two reasons the one caller states to the
+ * person: nothing was chosen — a confirmation with no toggle in front of it
+ * would accept an empty answer — or more rows than the picker numbers.
+ */
+export function questionAnswerChunks(digits: readonly string[], submit: boolean): string[] | null {
+  if (digits.length === 0 || digits.length > MAX_NUMBERED_OPTIONS) return null
+  if (digits.some((digit) => !ANSWER_DIGIT.test(digit))) return null
+  return submit ? [...digits, CURSOR_RIGHT, ACCEPT] : [...digits]
 }

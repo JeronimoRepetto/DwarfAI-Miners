@@ -173,20 +173,19 @@ What is in it:
   session strip instead.
 
 A question card is answered from the panel whether the session is one it holds or one it only
-watches. For a watched Claude Code session the answer is a keystroke in that session's own terminal,
+watches. For a watched Claude Code session the answer is written into that session's own console,
 measured against the CLI's own picker: clicking an option chooses it and the card then asks for
 **Enter**, which is what sends; where the agent said it would accept several answers the options
-become toggles instead and an **Answer** control releases them, so nothing is typed until you press
-it. That keystroke tier is Windows-only today. The console adapter behind macOS and Linux can type
-text and press Escape and nothing else, while a multi-select's confirmation needs an arrow key — so
-rather than answer one shape of ask and refuse the other, the card there says this build cannot type
-an answer into a console and sends you to the terminal. One shape stays unanswerable from here,
-and the card says so with a jump to the terminal beside it: a call that asked SEVERAL questions at
-once, because only its first reaches the panel and answering that one would move the picker on to a
-question the panel cannot see. A session that shares its terminal window with other tabs
-is the one case where this is refused rather than typed — the panel cannot tell which tab is in
-front, and a digit in the wrong one would answer somebody else's question — so it says so and
-points you at the terminal.
+become toggles instead and an **Answer** control releases them, so nothing is sent until you press
+it. **No window is raised and no keystroke is synthesized**, so a session sharing its terminal window
+with several tabs is answered like any other — the console is addressed by process id and the tab
+strip is never consulted. That tier is Windows-only today. The console adapter behind macOS and
+Linux can type text and press Escape and nothing else, while a multi-select's confirmation needs an
+arrow — so rather than answer one shape of ask and refuse the other, the card there says this build
+cannot type an answer into a console and sends you to the terminal. One shape stays unanswerable from
+here, and the card says so with a jump to the terminal beside it: a call that asked SEVERAL questions
+at once, because only its first reaches the panel and answering that one would move the picker on to
+a question the panel cannot see.
 
 For a Codex session, a question card shows the same kind of question — Codex's own
 `request_user_input` tool call — and still cannot be answered from here: a Codex thread is reached
