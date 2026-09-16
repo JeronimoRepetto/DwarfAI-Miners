@@ -1292,9 +1292,14 @@ call, one sequence, exit 0 in 287 ms, and `claude.exe` was gone inside eight sec
 
 - **`vscode`-source Codex sessions are unproven, not disproven.** Nobody has watched a Desktop-app
   thread drain its queue; it stays `null` until someone runs the same ten minutes against one [#97].
-  Mid-turn drain is untested too, which is why the queue carries no cancel. And an npm-global `codex`
-  is a `.cmd` shim the queue **refuses to run** — a shim needs a shell, and a shell re-parses the
-  payload — so those users must set `CODEX_CLI_PATH`. A real reach limitation.
+  Mid-turn drain is untested too, which is why the queue carries no cancel.
+- **The npm/pnpm shim reach limitation closed (#413).** An npm- or pnpm-global `codex` on Windows is
+  a `.cmd`/`.bat` shim, and the queue used to refuse it outright — a shim needs a shell, and a shell
+  re-parses the payload — naming `CODEX_CLI_PATH` as the only exit, one a packaged user has no
+  Settings UI to take. The queue now reads the shim for the `node` entry it names and runs that
+  directly (`resolveProgram` in `platform/cliDetection.ts`), the same resolution `resolveShimTarget`
+  already gave the launcher in #193, so the message still never reaches a shell. `CODEX_CLI_PATH`
+  remains for whatever install this cannot find on its own.
 - **Gemini and opencode are unestablished.** Neither is installed here, so both rows in §2's table
   are documentation only. opencode's `serve` + SDK looks strongest of the four on paper and has never
   been touched; Gemini's headless approvals are coarse and may never support a structured loop.

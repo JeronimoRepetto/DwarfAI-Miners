@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
+import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { focusSessionConsole, type FocusOutcome, type ShellRunner } from '../platform/focus'
 import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
 import {
@@ -159,6 +160,13 @@ export interface WindowsTextDeliveryOptions {
   /** Injected for tests; defaults to a real codex.exe spawn. */
   runCodexQueue?: CodexQueueRunner
   /**
+   * Reads a `.cmd`/`.bat` shim for the program it names, the same way CLI
+   * detection does (#413) — needed here too, since the queue tier now
+   * resolves a shim rather than refusing it. Injected for tests; defaults to
+   * the real filesystem.
+   */
+  fs?: FsLike
+  /**
    * Ends a process and everything below it — Kick's terminal tier (#329).
    *
    * The same per-OS port a launched session's exit uses (#217), injected the way
@@ -217,6 +225,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
+  private readonly fs: FsLike
   private readonly processEnd: ProcessEndPort
   private readonly processProbe: ProcessProbePort
   private readonly now: () => number
@@ -237,6 +246,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
+    this.fs = options.fs ?? new NodeFs()
     // Pinned to 'win32' rather than asked of the machine: this class IS the
     // Windows port, and reading process.platform here would be a fourth call
     // site for an answer the composition already made (see platform-ports).
@@ -412,7 +422,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
       threadId: request.threadId,
       text: request.text,
       binaryPath: await this.codexBinary(),
-      run: this.runCodexQueue
+      run: this.runCodexQueue,
+      fs: this.fs
     })
   }
 

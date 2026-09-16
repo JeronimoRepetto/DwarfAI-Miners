@@ -5,6 +5,7 @@ import {
   cliExecutableNames,
   createCliDetector,
   pathLookupCandidates,
+  resolveProgram,
   resolveShimTarget
 } from './cliDetection'
 
@@ -49,8 +50,23 @@ describe('conventionalCliPaths', () => {
   it('checks both the native bin and the npm-global shim for codex on Windows', () => {
     expect(conventionalCliPaths('codex', HOME, 'win32')).toEqual([
       '\\home\\j\\.local\\bin\\codex.exe',
-      '\\home\\j\\AppData\\Roaming\\npm\\codex.cmd'
+      '\\home\\j\\AppData\\Roaming\\npm\\codex.cmd',
+      '\\home\\j\\AppData\\Local\\pnpm\\bin\\codex.cmd'
     ])
+  })
+
+  /*
+   * #413. A pnpm-global Codex install (the vendor-documented alternative to
+   * npm) landed on neither the native bin nor the npm row, so it fell through
+   * to a bare PATH guess — which detection never made for `.cmd`/`.bat`
+   * shims before this issue, per the walk in cliExecutableNames. Verified on
+   * a real pnpm machine: `%LOCALAPPDATA%\pnpm\bin` holds `codex.CMD` and
+   * nothing an `.exe` probe would have found.
+   */
+  it("checks pnpm's own global bin for codex on Windows, derived from home rather than the live environment", () => {
+    expect(conventionalCliPaths('codex', HOME, 'win32')).toContain(
+      '\\home\\j\\AppData\\Local\\pnpm\\bin\\codex.cmd'
+    )
   })
 
   it('checks the native bin for codex on POSIX', () => {
@@ -342,5 +358,68 @@ describe('resolveShimTarget', () => {
   it('answers undefined when the entry hangs on a variable only cmd.exe could expand', () => {
     const text = 'node "%APPDATA%\\npm\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
     expect(resolveShimTarget(`${NPM_DIR}\\codex.cmd`, text)).toBe(undefined)
+  })
+})
+
+/*
+ * Issue #413. Lifted out of sessionLaunch/launchRunner.ts, where it was
+ * `resolveLaunchProgram` and unexported, so the Codex queue tier
+ * (textDelivery/codexQueue.ts) can share the exact same resolution instead of
+ * growing a second copy that could drift from the launcher's. launchRunner.ts
+ * still exercises this indirectly through launchClaudeSession — see its own
+ * "starts an npm .cmd shim..." tests — and none of those changed.
+ */
+describe('resolveProgram', () => {
+  const REAL_EXE = 'C:\\Users\\j\\.local\\bin\\codex.exe'
+  const SHIM = 'C:\\tools\\codex.cmd'
+  const ENTRY = 'C:\\tools\\node_modules\\@openai\\codex\\bin\\codex.js'
+  const SHIM_TEXT = `node  "${ENTRY}" %*`
+
+  it('is the path itself for a real executable, reading nothing from disk', async () => {
+    const fs = new FakeFs()
+    expect(await resolveProgram(REAL_EXE, fs)).toEqual({
+      command: REAL_EXE,
+      args: [],
+      viaNodeEntry: false
+    })
+  })
+
+  it("prefers the node.exe beside a shim, the shim's own first choice", async () => {
+    const fs = new FakeFs()
+    fs.addFile(SHIM, SHIM_TEXT)
+    fs.addFile('C:\\tools\\node.exe', 'MZ')
+
+    expect(await resolveProgram(SHIM, fs)).toEqual({
+      command: 'C:\\tools\\node.exe',
+      args: [ENTRY],
+      viaNodeEntry: true
+    })
+  })
+
+  it('falls back to node from PATH when no node.exe sits beside the shim', async () => {
+    const fs = new FakeFs()
+    fs.addFile(SHIM, SHIM_TEXT)
+
+    expect(await resolveProgram(SHIM, fs)).toEqual({
+      command: 'node',
+      args: [ENTRY],
+      viaNodeEntry: true
+    })
+  })
+
+  it('answers undefined, never a guess, when the shim names no JS entry', async () => {
+    const fs = new FakeFs()
+    fs.addFile(SHIM, '@echo off\r\nrem nothing to run\r\n')
+
+    expect(await resolveProgram(SHIM, fs)).toBeUndefined()
+  })
+
+  // FsLike's own contract: readTextHead REJECTS for a missing file rather than
+  // answering empty (see fsLike.ts). This does not catch that — the caller
+  // does (deliverViaCodexQueue, launchClaudeSession), both already proven to
+  // fail closed rather than guess when the read itself throws.
+  it('propagates rather than swallows a shim that cannot be read at all', async () => {
+    const fs = new FakeFs()
+    await expect(resolveProgram(SHIM, fs)).rejects.toThrow()
   })
 })

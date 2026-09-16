@@ -1,4 +1,5 @@
 import { homedir } from 'node:os'
+import { NodeFs, type FsLike } from '../adapters/fsLike'
 import type { Platform } from '../platform/platform'
 import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
 import {
@@ -80,6 +81,13 @@ export interface PosixTextDeliveryOptions {
   /** Injected for tests; defaults to a real codex spawn. */
   runCodexQueue?: CodexQueueRunner
   /**
+   * Reads a `.cmd`/`.bat` shim for the program it names, the same way CLI
+   * detection does (#413). Codex never ships a shim on POSIX, but the plumbing
+   * is uniform across both ports rather than one of them alone knowing it can
+   * skip it. Injected for tests; defaults to the real filesystem.
+   */
+  fs?: FsLike
+  /**
    * Signals one process — Kick's terminal tier (#366).
    *
    * The same per-OS port a launched session's exit uses (#217), injected the way
@@ -119,6 +127,7 @@ export class PosixTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
+  private readonly fs: FsLike
   private readonly processEnd: ProcessEndPort
   private readonly processProbe: ProcessProbePort
   private readonly now: () => number
@@ -135,6 +144,7 @@ export class PosixTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
+    this.fs = options.fs ?? new NodeFs()
     // The platform this port was CONSTRUCTED for, never asked of the machine:
     // this class is the POSIX port for whichever POSIX platform composed it, and
     // reading process.platform here would be a fourth call site for an answer
@@ -190,7 +200,8 @@ export class PosixTextDelivery implements TextDeliveryPort {
       threadId: request.threadId,
       text: request.text,
       binaryPath: await this.codexBinary(),
-      run: this.runCodexQueue
+      run: this.runCodexQueue,
+      fs: this.fs
     })
   }
 
