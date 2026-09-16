@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { reactive } from 'vue'
 import { REACTION_WINDOW_MS } from '../lib/delivery/reaction'
 import { ECHO_LIMIT } from '../lib/message/echo'
 import { defaultDwarf } from '../testing/factories'
-import type { Dwarf, DwarfTextResult, FeedMessage } from '../types'
+import type { Dwarf, DwarfAttachment, DwarfTextResult, FeedMessage } from '../types'
 import { RESULT_VISIBLE_MS, useDwarfMessaging } from './useDwarfMessaging'
 
 function stubApi(sendDwarfText: (...args: never[]) => Promise<DwarfTextResult>): void {
@@ -119,6 +120,39 @@ describe('useDwarfMessaging', () => {
 
     await send('claude:s1', 'hi', false)
     expect(api).toHaveBeenCalledWith({ dwarfId: 'claude:s1', text: 'hi', pressEnter: false })
+  })
+
+  /*
+   * Issue #417. The composer's `pending` is a `ref<readonly DwarfAttachment[]>`,
+   * which Vue makes deeply reactive: the array and every attachment in it are
+   * `Proxy` objects. `ipcRenderer.invoke` (what `window.api.sendDwarfText` is)
+   * serialises its arguments with the structured clone algorithm, which throws
+   * on a `Proxy` — Node's own `structuredClone` throws on exactly the same
+   * input, which is what this test uses to reproduce the failure without
+   * Electron. `deliver` must hand over plain wire objects, never the reactive
+   * ones the composer happens to be holding.
+   */
+  it('hands the bridge plain attachment objects, never Vue reactive proxies (#417)', async () => {
+    const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+    stubApi(api as never)
+    const { send } = useDwarfMessaging()
+
+    const reactiveAttachments = reactive<DwarfAttachment[]>([
+      { path: 'C:\\work\\a.png', name: 'a.png', kind: 'image', bytes: 10 },
+      { path: 'C:\\work\\b.txt', name: 'b.txt', kind: 'file', bytes: 20 }
+    ])
+
+    await send('claude:s1', 'hi', true, reactiveAttachments)
+
+    const sent = api.mock.calls[0]?.[0] as { attachments: readonly DwarfAttachment[] }
+    // Node's structuredClone throws a DataCloneError on a Proxy exactly as
+    // Electron's IPC does — a payload that survives it carries no reactive
+    // object at all.
+    expect(() => structuredClone(sent.attachments)).not.toThrow()
+    expect(sent.attachments).toEqual([
+      { path: 'C:\\work\\a.png', name: 'a.png', kind: 'image', bytes: 10 },
+      { path: 'C:\\work\\b.txt', name: 'b.txt', kind: 'file', bytes: 20 }
+    ])
   })
 
   /*

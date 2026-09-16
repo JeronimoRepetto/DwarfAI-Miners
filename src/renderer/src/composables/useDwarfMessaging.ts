@@ -170,6 +170,28 @@ function startWatch(dwarfId: string, echoId: string): void {
 }
 
 /**
+ * A copy of `attachment` holding exactly the contract's four wire fields, and
+ * nothing this composable happens to be storing it in (#417).
+ *
+ * `pending` in the composer is a `ref<readonly DwarfAttachment[]>`, which Vue
+ * makes deeply reactive: the array and every attachment in it are `Proxy`
+ * objects. `window.api.sendDwarfText` is `ipcRenderer.invoke`, which
+ * serialises its arguments with the structured clone algorithm — the same
+ * algorithm Node's own `structuredClone` runs — and a `Proxy` cannot be
+ * cloned, so the call threw `DataCloneError` before anything reached main.
+ * The renderer must send what the wire says and nothing it happens to hold,
+ * regardless of Vue: this is that copy, made right before the boundary.
+ */
+function plainAttachment(attachment: DwarfAttachment): DwarfAttachment {
+  return {
+    path: attachment.path,
+    name: attachment.name,
+    kind: attachment.kind,
+    bytes: attachment.bytes
+  }
+}
+
+/**
  * Hand `text` to `dwarfId` and record both verdicts for it — the dwarf's, and
  * this one message's. The echo is minted BEFORE the await, which is the whole
  * feature: the bubble is on screen before any channel has been asked anything.
@@ -194,6 +216,10 @@ async function deliver(
   }
   pruneAttachments(dwarfId)
 
+  // Plain objects, never the reactive ones the composer happens to be
+  // holding (#417) — see plainAttachment.
+  const wireAttachments = attachments.map(plainAttachment)
+
   let result: DwarfTextResult
   try {
     result = await window.api.sendDwarfText({
@@ -202,7 +228,7 @@ async function deliver(
       pressEnter,
       // Omitted rather than sent empty, so a text-only message is the exact
       // payload every caller sent before #408.
-      ...(attachments.length === 0 ? {} : { attachments })
+      ...(wireAttachments.length === 0 ? {} : { attachments: wireAttachments })
     })
   } catch {
     result = { delivered: false, via: 'none', error: 'The panel lost contact with the app.' }
