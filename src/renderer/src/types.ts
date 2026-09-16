@@ -174,8 +174,11 @@ export {
   attachmentKindFor,
   channelCarriesAttachments,
   isDwarfAttachment,
-  refuseAttachment
+  refuseAttachment,
   /* --- end of the #408 block ----------------------------------------------- */
+  /* --- Paging a held conversation (#430) — one block, appended ------------- */
+  HELD_MESSAGE_MAX_CHARS
+  /* --- end of the #430 block ----------------------------------------------- */
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */

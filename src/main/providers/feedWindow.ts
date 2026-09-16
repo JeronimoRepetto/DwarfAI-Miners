@@ -1,4 +1,5 @@
 import type { FsLike } from '../adapters/fsLike'
+import { normalizeConsoleText } from '../../shared/consoleText'
 import type { DwarfFeedPageRequest, FeedMessage, FeedPageCursor } from '../domain/types'
 
 /**
@@ -325,14 +326,42 @@ export function feedPageOf(
  * SAID, because that is what the panel counts and what a page is measured in;
  * a tool-call line whose text happened to equal the cursor's would otherwise
  * anchor a page in the middle of a run.
+ *
+ * ## The two tolerances, and why neither is a search (#430)
+ *
+ * TEXT is compared through `normalizeConsoleText` — the shared whitespace rule
+ * `sendKeys.ts` and the renderer's echo reconciliation already read a message
+ * by. A cursor may now come off a row of a HELD session's own exchange, and
+ * `retainHeldMessage` trims a held row before storing it while the transcript
+ * extractors keep whatever whitespace the record carried. That trim is the one
+ * difference measured between the two spellings of the same assistant turn (the
+ * blocks are joined identically, the tool lines come off the one shared
+ * `toolActivityLine`, and both sides run `redactSecrets`), and collapsing
+ * whitespace absorbs it without ever matching two different sentences. It is
+ * still exact equality — of a normalized string — and never a prefix, a
+ * substring or a distance.
+ *
+ * TIMESTAMP is a TIE-BREAKER rather than half the key. A held row is stamped
+ * with this host's clock at the moment the stream carried it, and the
+ * transcript row for that same turn carries the CLI's own — they are two
+ * readings of one event and they never agree, so requiring both is what made a
+ * held conversation unpageable. An exact match on both still WINS and is still
+ * searched newest-first, so nothing about an observed session's paging moves:
+ * the cursor a transcript row produced resolves to that very row. Only when no
+ * row matches both does the newest row saying the same words answer — the same
+ * "a repeat rather than a gap" direction `FeedPageCursor` already argues for.
  */
 function cursorIndex(rows: readonly FeedMessage[], before: FeedPageCursor): number {
+  const wanted = normalizeConsoleText(before.text)
+  let sameWords = -1
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index]!
     if (row.activity !== undefined) continue
-    if (row.timestamp === before.timestamp && row.text === before.text) return index
+    if (normalizeConsoleText(row.text) !== wanted) continue
+    if (row.timestamp === before.timestamp) return index
+    if (sameWords === -1) sameWords = index
   }
-  return -1
+  return sameWords
 }
 
 /**

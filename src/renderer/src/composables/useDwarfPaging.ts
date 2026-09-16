@@ -1,6 +1,6 @@
 import { computed, reactive } from 'vue'
-import { feedPageCursorOf, pagingNoteOf } from '../lib/message/feedPages'
-import type { DwarfFeedPage, FeedMessage } from '../types'
+import { pagingNoteOf } from '../lib/message/feedPages'
+import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
 
 /**
  * The pages of conversation OLDER than the newest feed, for the dwarf the
@@ -98,20 +98,27 @@ export function useDwarfPaging() {
   }
 
   /**
-   * Ask for the page before the oldest thing said in `shown` — whatever the
-   * panel is currently drawing for `dwarfId`, older pages included, so the
-   * cursor walks back one page per request.
+   * Ask for the page before `before` — the row the panel decided its next page
+   * hangs off, so the cursor walks back one page per request.
    *
-   * Refused without a word in five cases, none of them an error: nothing said
-   * to page before, a read already in flight, the start already reached, a
-   * conversation that cannot be paged, and one whose transcript outran the
-   * read's own ceiling. Refused too for a dwarf whose pages this store is not
-   * holding, because the answer would have nowhere to go.
+   * AMENDED for #430 (was: `shown`, the rows on screen, with the cursor derived
+   * from them here). WHICH row a page is asked for is `lib/message/feedPages`'s
+   * decision and always was; it moved out of this store because the answer now
+   * depends on where the newest rows came from — a held session's exchange is
+   * this app's own first-hand copy of the transcript, and only some of its rows
+   * can name a place in the file (`heldFeedPageCursorOf`). This store owns WHEN
+   * a page is asked for, and a null cursor is one of the refusals below.
+   *
+   * Refused without a word in five cases, none of them an error: nothing that
+   * can name a place to page before, a read already in flight, the start
+   * already reached, a conversation that cannot be paged, and one whose
+   * transcript outran the read's own ceiling. Refused too for a dwarf whose
+   * pages this store is not holding, because the answer would have nowhere to
+   * go.
    */
-  async function older(dwarfId: string, shown: readonly FeedMessage[]): Promise<void> {
+  async function older(dwarfId: string, before: FeedPageCursor | null): Promise<void> {
     if (state.dwarfId !== dwarfId) return
     if (state.loading || state.reachedStart || state.unpageable || state.beyondReach) return
-    const before = feedPageCursorOf(shown)
     if (before === null) return
 
     const token = ++pageToken

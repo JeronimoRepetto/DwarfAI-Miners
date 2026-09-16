@@ -12,7 +12,7 @@ import { useMines } from './composables/useMines'
 import { useTypography } from './composables/useTypography'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
-import { joinFeedPages } from './lib/message/feedPages'
+import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from './lib/message/feedPages'
 import { messageSurfaceMotion } from './lib/message/surfaceMotion'
 import { createBoundedMotion } from './lib/shell/boundedMotion'
 import { panelKeyframes } from './lib/shell/panelMotion'
@@ -214,6 +214,18 @@ const pagedMessages = computed<FeedMessage[]>(() =>
 )
 
 /**
+ * The pages the reader scrolled back to, joined and standing on their own
+ * (#430) — every seam between two of them deduped, with nothing in front.
+ *
+ * What `pageBack` hands `heldFeedPageCursorOf` below: for a held session the
+ * pages are the only rows on screen that certainly came OUT of the transcript,
+ * so once one has been read the next cursor comes off it rather than off the
+ * held exchange. Deduped by the same join that draws them, so the row a cursor
+ * names is the row the reader is actually looking at.
+ */
+const olderPages = computed<FeedMessage[]>(() => joinFeedPages(paging.pages, []))
+
+/**
  * The same answer `selectedFeed` carries, with the drawn conversation in place
  * of its own page. `undefined` still means the read has not come back, which
  * the panel says out loud rather than drawing as an empty conversation — and
@@ -393,6 +405,32 @@ const selectedDwarf = computed<Dwarf | undefined>(() => {
 })
 
 /**
+ * The same dwarf, with the pages the reader scrolled back to standing in front
+ * of its HELD exchange (#430).
+ *
+ * The join has to happen on the dwarf rather than beside it, because
+ * `conversationOf` prefers a held exchange over any transcript read of the same
+ * session and is right to: the held rows are first-hand and one turn fresher.
+ * So the older pages reach the panel the one way that does not reopen that
+ * precedence — as the front of the conversation itself, which is what they are.
+ *
+ * `selectedDwarf` above stays the SNAPSHOT's dwarf and is what every other
+ * reader here keeps using, above all the echo reconciliation (#309), which
+ * measures the person's pending words against the live end of the exchange and
+ * never against four pages of older conversation.
+ *
+ * Untouched for an observed session — its pages are joined into `drawnFeed` —
+ * and untouched before the reader has asked for anything, so the ordinary case
+ * hands the panel the very object the snapshot carried.
+ */
+const drawnDwarf = computed<Dwarf | undefined>(() => {
+  const dwarf = selectedDwarf.value
+  if (dwarf === undefined) return undefined
+  if (dwarf.conversation === undefined || paging.pages.length === 0) return dwarf
+  return { ...dwarf, conversation: joinFeedPages(paging.pages, dwarf.conversation) }
+})
+
+/**
  * Whether the Add Panel is what this window is drawing.
  *
  * The launch's own phase decides, not the state main holds: the design's
@@ -494,14 +532,20 @@ async function readSelectedFeed(dwarfId: string): Promise<void> {
  * that dwarf's next observed read (if it ever has one) is a first read again
  * rather than treated as a re-read of stale words.
  *
- * And the older pages with it (#364): a held session's words come from its own
- * stream rather than from a transcript this panel pages, so there is nothing
- * left for the pages to stand in front of.
+ * The older pages are held for `dwarfId` rather than thrown away (AMENDED for
+ * #430; was: `holdOlderPages(null)`, on the reading that a held session's words
+ * come from its own stream and had nothing for pages to stand in front of).
+ * They do now: a held session pages back through its own transcript, and the
+ * pages stand in front of the held exchange. Thrown away here would mean thrown
+ * away on EVERY poll, since this runs whenever the watched signals move — which
+ * is the one way a reader who has scrolled back four pages loses them to the
+ * session saying one more word. `hold` keeps them for the same dwarf and clears
+ * them for anybody else, exactly as it does for an observed one.
  */
-function skipSelectedFeed(): void {
+function skipSelectedFeed(dwarfId: string | null): void {
   feedToken++
   selectedFeedDwarfId = null
-  holdOlderPages(null)
+  holdOlderPages(dwarfId)
   selectedFeed.value = undefined
 }
 
@@ -536,7 +580,7 @@ watch(
   ],
   ([dwarfId]) => {
     if (dwarfId === null || selectedDwarf.value?.conversation !== undefined) {
-      skipSelectedFeed()
+      skipSelectedFeed(dwarfId)
       return
     }
     if (liveSelectedDwarf.value === undefined) return
@@ -568,24 +612,39 @@ watch(
  * Fetch the page of conversation before the oldest row on screen (#364) — the
  * reader having scrolled back to the top of what this panel holds.
  *
- * Never for a held session: it carries its own exchange first-hand, and there
- * is no transcript read behind it to page (the same reason `skipSelectedFeed`
- * exists). Everything else the request has to refuse — one read at a time, no
- * read once the start is reached, nothing to page before — belongs to
- * `useDwarfPaging`, so a repeated report from the panel costs nothing.
+ * AMENDED for #430. It used to refuse outright for a held session, on the
+ * reading that a held row "is not a row of any transcript, so it can never name
+ * a place in one". Half of that was true of the wrong rows: a held Claude
+ * session IS a Claude Code process with the same `.jsonl` on disk the poll
+ * already found for it, and the agent's own turns reach the panel as the very
+ * words the transcript carries. So the refusal moved from the session to the
+ * ROW — `heldFeedPageCursorOf` decides which held rows can name a place — and a
+ * session with nothing to page now says so through the provider answering
+ * `readable: false`, which is the honest route and the one a held Antigravity
+ * session (no transcript this app reads) takes.
  *
- * The cursor comes off `pagedMessages` — the transcript rows themselves —
- * rather than off the conversation `conversationOf` draws. Those two differ in
- * exactly one case that matters here: with no feed read back the panel falls
- * back to the `lastMessage` every poll carries, a bubble whose timestamp is the
- * honest empty string because the poll says what was said and never when. It is
- * not a row of any transcript, so it can never name a place in one.
+ * Everything else the request has to refuse — one read at a time, no read once
+ * the start is reached, nothing to page before — belongs to `useDwarfPaging`,
+ * so a repeated report from the panel costs nothing.
+ *
+ * For an observed session the cursor comes off `pagedMessages` — the transcript
+ * rows themselves — rather than off the conversation `conversationOf` draws.
+ * Those two differ in exactly one case that matters here: with no feed read back
+ * the panel falls back to the `lastMessage` every poll carries, a bubble whose
+ * timestamp is the honest empty string because the poll says what was said and
+ * never when. It is not a row of any transcript, so it can never name a place in
+ * one.
  */
 function pageBack(): void {
   const dwarfId = openDwarfId.value
   if (dwarfId === null) return
-  if (selectedDwarf.value?.conversation !== undefined) return
-  void readOlderPage(dwarfId, pagedMessages.value)
+  const held = selectedDwarf.value?.conversation
+  void readOlderPage(
+    dwarfId,
+    held === undefined
+      ? feedPageCursorOf(pagedMessages.value)
+      : heldFeedPageCursorOf(olderPages.value, held)
+  )
 }
 
 /**
@@ -1236,22 +1295,22 @@ onBeforeUnmount(() => {
         open, which only holds if reopening is a genuine remount.
       -->
       <DwarfMessagePanel
-        v-else-if="selectedDwarf"
-        :key="selectedDwarf.id"
-        :dwarf="selectedDwarf"
+        v-else-if="drawnDwarf"
+        :key="drawnDwarf.id"
+        :dwarf="drawnDwarf"
         :feed="drawnFeed"
         :paging-note="pagingNote ?? undefined"
-        :send-state="messagingState.byDwarfId[selectedDwarf.id]"
-        :echoes="sentEchoes[selectedDwarf.id]"
-        :echo-attachments="sentEchoAttachments[selectedDwarf.id]"
-        :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
-        :answer-state="questionState.byDwarfId[selectedDwarf.id]"
-        @send="sendText(selectedDwarf, $event)"
-        @send-again="sendAgain(selectedDwarf, $event)"
-        @kick="kickDwarf(selectedDwarf)"
-        @answer="answerQuestion(selectedDwarf, $event)"
-        @decide="decidePermission(selectedDwarf, $event)"
-        @open-console="activate(selectedDwarf)"
+        :send-state="messagingState.byDwarfId[drawnDwarf.id]"
+        :echoes="sentEchoes[drawnDwarf.id]"
+        :echo-attachments="sentEchoAttachments[drawnDwarf.id]"
+        :kick-state="kickingState.byDwarfId[drawnDwarf.id]"
+        :answer-state="questionState.byDwarfId[drawnDwarf.id]"
+        @send="sendText(drawnDwarf, $event)"
+        @send-again="sendAgain(drawnDwarf, $event)"
+        @kick="kickDwarf(drawnDwarf)"
+        @answer="answerQuestion(drawnDwarf, $event)"
+        @decide="decidePermission(drawnDwarf, $event)"
+        @open-console="activate(drawnDwarf)"
         @open-path="openPath"
         @open-link="openLink"
         @page-back="pageBack"

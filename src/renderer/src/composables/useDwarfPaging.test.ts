@@ -5,9 +5,10 @@ import {
   CONVERSATION_START_NOTE,
   NO_OLDER_PAGES_NOTE,
   READING_OLDER_NOTE,
+  feedPageCursorOf,
   joinFeedPages
 } from '../lib/message/feedPages'
-import type { DwarfFeedPage, FeedMessage } from '../types'
+import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
 import { useDwarfPaging } from './useDwarfPaging'
 
 /**
@@ -25,6 +26,22 @@ function said(text: string, timestamp: string): FeedMessage {
 
 function ran(text: string, timestamp: string): FeedMessage {
   return { role: 'assistant', text, timestamp, activity: { kind: 'run', target: text } }
+}
+
+/**
+ * ADDED for #430. `older` now takes the CURSOR the panel decided on rather than
+ * the rows it is drawing: WHICH row a conversation hangs its next page off is a
+ * different question for a held session than for an observed one
+ * (`heldFeedPageCursorOf`), and that decision belongs to `lib/message/feedPages`
+ * where it is pinned.
+ *
+ * Every case below still states the rows it is about and derives the cursor
+ * exactly as the panel does for an observed session, so what each one asserts
+ * is unchanged — including the first two, which are about a store that forwards
+ * a cursor it was given and refuses a null one.
+ */
+function before(shown: readonly FeedMessage[]): FeedPageCursor | null {
+  return feedPageCursorOf(shown)
 }
 
 function stubApi(getDwarfFeedPage: (...args: never[]) => Promise<DwarfFeedPage>) {
@@ -61,7 +78,7 @@ describe('useDwarfPaging', () => {
     const { hold, older } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [ran('Ran npm test', 't0'), said('halfway down', 't1')])
+    await older('claude:s1', before([ran('Ran npm test', 't0'), said('halfway down', 't1')]))
 
     expect(api).toHaveBeenCalledWith({
       dwarfId: 'claude:s1',
@@ -74,7 +91,7 @@ describe('useDwarfPaging', () => {
     const { hold, older } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [ran('Ran npm test', 't0')])
+    await older('claude:s1', before([ran('Ran npm test', 't0')]))
 
     expect(api).not.toHaveBeenCalled()
   })
@@ -84,7 +101,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, state, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(state.pages).toEqual([[said('the first thing', 't0')]])
     expect(note.value).toBeNull()
@@ -96,7 +113,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, note } = useDwarfPaging()
 
     hold('claude:s1')
-    const reading = older('claude:s1', [said('halfway down', 't1')])
+    const reading = older('claude:s1', before([said('halfway down', 't1')]))
     expect(note.value).toBe(READING_OLDER_NOTE)
 
     pending.release(PAGE)
@@ -110,8 +127,8 @@ describe('useDwarfPaging', () => {
     const { hold, older } = useDwarfPaging()
 
     hold('claude:s1')
-    const first = older('claude:s1', [said('halfway down', 't1')])
-    await older('claude:s1', [said('halfway down', 't1')])
+    const first = older('claude:s1', before([said('halfway down', 't1')]))
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(api).toHaveBeenCalledTimes(1)
     pending.release(PAGE)
@@ -133,8 +150,8 @@ describe('useDwarfPaging', () => {
     const { hold, older, state } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't2')])
-    await older('claude:s1', [said('the second thing', 't1'), said('halfway down', 't2')])
+    await older('claude:s1', before([said('halfway down', 't2')]))
+    await older('claude:s1', before([said('the second thing', 't1'), said('halfway down', 't2')]))
 
     expect(joinFeedPages(state.pages, [said('halfway down', 't2')])).toEqual([
       said('the first thing', 't0'),
@@ -149,7 +166,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, state } = useDwarfPaging()
 
     hold('claude:s1')
-    const reading = older('claude:s1', [said('halfway down', 't1')])
+    const reading = older('claude:s1', before([said('halfway down', 't1')]))
     hold('claude:s2')
 
     pending.release(PAGE)
@@ -166,7 +183,7 @@ describe('useDwarfPaging', () => {
     const { hold, older } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s2', [said('halfway down', 't1')])
+    await older('claude:s2', before([said('halfway down', 't1')]))
 
     expect(api).not.toHaveBeenCalled()
   })
@@ -182,12 +199,15 @@ describe('useDwarfPaging', () => {
     const { hold, older, state, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(state.pages).toEqual([[said('the first thing ever', 't0')]])
     expect(note.value).toBe(CONVERSATION_START_NOTE)
 
-    await older('claude:s1', [said('the first thing ever', 't0'), said('halfway down', 't1')])
+    await older(
+      'claude:s1',
+      before([said('the first thing ever', 't0'), said('halfway down', 't1')])
+    )
 
     expect(api).toHaveBeenCalledTimes(1)
     expect(note.value).toBe(CONVERSATION_START_NOTE)
@@ -201,7 +221,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, state, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(state.pages).toEqual([])
     expect(note.value).toBe(CONVERSATION_START_NOTE)
@@ -214,13 +234,13 @@ describe('useDwarfPaging', () => {
     const { hold, older, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(note.value).toBe(NO_OLDER_PAGES_NOTE)
     // Unreadable is not the start: there is nothing left to ask, so it stops
     // asking, but it must not claim the transcript was read back to its first
     // line (the distinction DwarfFeedPage draws).
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
     expect(api).toHaveBeenCalledTimes(1)
   })
 
@@ -236,13 +256,13 @@ describe('useDwarfPaging', () => {
     const { hold, older, state, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(note.value).toBe(BEYOND_REACH_NOTE)
     expect(state.pages).toEqual([])
     expect(state.reachedStart).toBe(false)
 
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
     expect(api).toHaveBeenCalledTimes(1)
   })
 
@@ -254,11 +274,11 @@ describe('useDwarfPaging', () => {
     const { hold, older, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     expect(note.value).toBeNull()
 
-    await older('claude:s1', [said('the first thing', 't0'), said('halfway down', 't1')])
+    await older('claude:s1', before([said('the first thing', 't0'), said('halfway down', 't1')]))
     expect(api).toHaveBeenCalledTimes(2)
   })
 
@@ -267,7 +287,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
     expect(note.value).toBe(BEYOND_REACH_NOTE)
 
     hold('claude:s2')
@@ -280,12 +300,12 @@ describe('useDwarfPaging', () => {
     const { hold, older, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     // A lost round trip says nothing about the transcript: it is neither
     // unpageable nor at its start, so the next scroll tries again.
     expect(note.value).toBeNull()
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
     expect(api).toHaveBeenCalledTimes(2)
   })
 
@@ -294,7 +314,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, state } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
     expect(state.pages).toHaveLength(1)
 
     hold('claude:s2')
@@ -308,7 +328,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, state } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     hold(null)
 
@@ -321,7 +341,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, state } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
 
     // The poll re-reads on every sign of activity; four pages of scrollback
     // must not be the price of the session saying one more thing (#196).
@@ -335,7 +355,7 @@ describe('useDwarfPaging', () => {
     const { hold, older, note } = useDwarfPaging()
 
     hold('claude:s1')
-    await older('claude:s1', [said('halfway down', 't1')])
+    await older('claude:s1', before([said('halfway down', 't1')]))
     expect(note.value).toBe(CONVERSATION_START_NOTE)
 
     hold('claude:s2')

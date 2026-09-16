@@ -1999,12 +1999,180 @@ describe('paging back through the conversation (#364)', () => {
     expect(textsOf(wrapper)).toEqual(['Just arrived at the seam'])
   })
 
-  it('never pages a held session, which carries its own exchange first-hand', async () => {
+  /*
+   * AMENDED for #430 (was: 'never pages a held session, which carries its own
+   * exchange first-hand', asserting the same call was never made). The claim
+   * was reversed by the issue: a held Claude session is a Claude Code process
+   * with the same transcript on disk, and it pages back through it like any
+   * other. What survives is the ROW-level refusal, which is all HELD_DWARF can
+   * exercise — its whole conversation is one turn of the person's, and the
+   * transcript may not spell that turn the way this app holds it (see
+   * `heldFeedPageCursorOf`). Nothing else in this test changed.
+   */
+  it('asks for nothing while a held conversation holds only the person’s own words', async () => {
     const { wrapper, api } = await openOn([HELD_DWARF], 'claude:s2')
 
     await scrollToTop(wrapper)
 
     expect(api.getDwarfFeedPage).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * ADDED for #430. A session this panel LAUNCHED pages back through its own
+ * transcript, exactly as an observed one does since #364.
+ *
+ * The held exchange is the newest page — twelve things said, replaced whole by
+ * every poll — and the pages read stand in front of it rather than being folded
+ * into it, which is the same split the block above pins for an observed
+ * session and the same reason: a reader four pages back must not lose them to
+ * the session saying one more word.
+ */
+describe('paging back through a held conversation (#430)', () => {
+  const HELD = [
+    { role: 'user' as const, text: 'dig here', timestamp: 'h0' },
+    { role: 'assistant' as const, text: 'Down the shaft', timestamp: 'h1' },
+    { role: 'assistant' as const, text: 'Seam found', timestamp: 'h2' }
+  ]
+
+  const HELD_PAGED_DWARF = {
+    id: 'claude:s4',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'Launched',
+    status: 'working',
+    sessionId: 's4',
+    lastMessage: '',
+    textDelivery: 'held',
+    conversation: HELD
+  }
+
+  const OLDER = [
+    { role: 'user' as const, text: 'start here', timestamp: 't0' },
+    { role: 'assistant' as const, text: 'Arrived at the mine', timestamp: 't1' }
+  ]
+
+  async function openHeld(overrides: Record<string, unknown> = {}) {
+    return openOn([HELD_PAGED_DWARF], 'claude:s4', overrides)
+  }
+
+  async function scrollToTop(wrapper: VueWrapper) {
+    const list = wrapper.find('.panel-conversation')
+    list.element.scrollTop = 0
+    await list.trigger('scroll')
+    await flushPromises()
+  }
+
+  function textsOf(wrapper: VueWrapper): string[] {
+    return wrapper.findAll('.bubble').map((bubble) => bubble.text())
+  }
+
+  it('asks main for the page before the oldest turn its agent took', async () => {
+    const { wrapper, api } = await openHeld()
+
+    await scrollToTop(wrapper)
+
+    // Never the person's own row above it: the transcript's `user` record for a
+    // send is not always this app's spelling of it, and a cursor the file does
+    // not hold would come back as a conversation that had reached its start.
+    expect(api.getDwarfFeedPage).toHaveBeenCalledWith({
+      dwarfId: 'claude:s4',
+      before: { timestamp: 'h1', text: 'Down the shaft' }
+    })
+  })
+
+  it('draws the page in front of the held exchange, oldest at the top', async () => {
+    const { wrapper } = await openHeld({
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: false })
+    })
+
+    await scrollToTop(wrapper)
+
+    expect(textsOf(wrapper)).toEqual([
+      'start here',
+      'Arrived at the mine',
+      'dig here',
+      'Down the shaft',
+      'Seam found'
+    ])
+  })
+
+  it('asks for the page before the page it just drew, walking back one at a time', async () => {
+    const getDwarfFeedPage = vi
+      .fn()
+      .mockResolvedValueOnce({ readable: true, messages: OLDER, reachedStart: false })
+      .mockResolvedValueOnce({ readable: true, messages: [], reachedStart: true })
+    const { wrapper } = await openHeld({ getDwarfFeedPage })
+
+    await scrollToTop(wrapper)
+    await scrollToTop(wrapper)
+
+    // Off the PAGE's own oldest row now, whichever half of the exchange it is:
+    // every row of it came out of the transcript, so the ordinary rule applies.
+    expect(getDwarfFeedPage).toHaveBeenLastCalledWith({
+      dwarfId: 'claude:s4',
+      before: { timestamp: 't0', text: 'start here' }
+    })
+  })
+
+  it('keeps every page the reader loaded when the poll pushes a fresh exchange', async () => {
+    const { wrapper, api } = await openHeld({
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: true, messages: OLDER, reachedStart: false })
+    })
+    await scrollToTop(wrapper)
+    expect(textsOf(wrapper)).toHaveLength(5)
+
+    // A held conversation rides EVERY snapshot and is replaced whole by it, so
+    // this is the push the issue names as the hard part for a launched session:
+    // the pages in front of it belong to the reader's own scroll.
+    pushSnapshot(api, {
+      mines: [
+        {
+          ...MINE,
+          dwarfs: [
+            {
+              ...HELD_PAGED_DWARF,
+              lastMessage: 'Packing up',
+              conversation: [...HELD, { role: 'assistant', text: 'Packing up', timestamp: 'h3' }]
+            }
+          ]
+        }
+      ],
+      tokensObserved: 0
+    })
+    await flushPromises()
+
+    expect(textsOf(wrapper)).toEqual([
+      'start here',
+      'Arrived at the mine',
+      'dig here',
+      'Down the shaft',
+      'Seam found',
+      'Packing up'
+    ])
+  })
+
+  it('says a held session cannot be paged in its own words when its provider says so', async () => {
+    // The Antigravity case, decided where it belongs: the provider has no
+    // transcript filed for this dwarf and answers null, main turns that into
+    // `readable: false`, and the panel says the one sentence that is true. Not
+    // the held/observed distinction, which is what refused it before.
+    const { wrapper, api } = await openHeld({
+      getDwarfFeedPage: vi
+        .fn()
+        .mockResolvedValue({ readable: false, messages: [], reachedStart: false })
+    })
+
+    await scrollToTop(wrapper)
+
+    expect(api.getDwarfFeedPage).toHaveBeenCalled()
+    const note = wrapper.find('.panel-note').text()
+    expect(note).toContain(NO_OLDER_PAGES_NOTE)
+    expect(note).not.toContain(CONVERSATION_START_NOTE)
   })
 })
 
