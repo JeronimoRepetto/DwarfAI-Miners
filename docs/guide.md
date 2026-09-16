@@ -604,12 +604,14 @@ above for an installed app.
 
 Tier thresholds must be strictly increasing.
 
-`CODEX_CLI_PATH` is also what the Codex message queue addresses. If detection lands on an
-npm-global `codex.cmd`/`.bat` shim, sending is refused with that reason rather than run: a shim
-cannot be spawned without a shell, and a shell would re-parse the message — expanding `%VAR%`
-into it, or letting a quote end the argument. Point this at the real executable to fix it.
-Launching a new Codex session from the Add panel has no such limit: the panel reads the shim and
-starts the `node` entry it names directly, so an npm or pnpm install launches without an override.
+`CODEX_CLI_PATH` is also what the Codex message queue addresses, and detection now knows pnpm's
+global bin (`%LOCALAPPDATA%\pnpm\bin`) alongside npm's — both are npm-global installs the vendor
+documents, and Windows makes each of them a `.cmd`/`.bat` shim rather than a real executable. A
+detected shim no longer blocks sending: the queue reads it for the `node` entry it names and runs
+that directly, exactly as launching a new Codex session from the Add panel already did, so a
+message reaches the thread without a shell ever seeing it (and without `%VAR%` expanding into it,
+or a quote ending the argument early). Set this only for an install detection cannot find on its
+own.
 
 </details>
 

@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import type { FsLike } from '../adapters/fsLike'
+import { resolveProgram } from '../platform/cliDetection'
 import type { TextDeliveryOutcome } from './port'
 
 /**
@@ -9,6 +11,15 @@ import type { TextDeliveryOutcome } from './port'
  * server, so nothing about it differs per operating system. There is no PATH
  * separator to get right either — the binary is addressed in full, resolved
  * through the CLI detection port (#91) rather than a second hardcoded path.
+ *
+ * A detected `.cmd`/`.bat` shim is resolved to the program it names and run
+ * directly (`resolveProgram` in platform/cliDetection.ts, #193) rather than
+ * refused (#413). The launcher already had to solve this exact problem — Node
+ * cannot spawn a batch shim without a shell — and this tier needs the
+ * identical resolution for its own reason: the message is an argv element a
+ * shell would re-parse, and `resolveProgram`'s spawn never goes through one
+ * either. One function shared by both callers, so they cannot drift the way
+ * `isShellShim` (launch.ts) and this file's own now-deleted copy already had.
  *
  * A ✓ from here means the item is persisted on the thread's queue, and the
  * thread drains it at its next idle boundary. That is a hand-over, never a
@@ -51,21 +62,6 @@ export function buildCodexQueueArgs(threadId: string, text: string): string[] {
   return ['queue', '--thread', threadId, '--message', text]
 }
 
-/**
- * Whether this path is a Windows shell shim rather than a real executable.
- *
- * An npm-global `codex` on Windows is a `.cmd`, and Node refuses to spawn one
- * without a shell. Handing the command line to cmd.exe would let it re-parse
- * the payload: `%USERPROFILE%` would expand a real home path INTO the message,
- * and a stray quote could end the argument early. So a shim is refused with the
- * remedy instead — the same line relay.ts draws when it says the worst a
- * payload may achieve is reaching the wrong session, never a command running.
- */
-export function isShellShimPath(binaryPath: string): boolean {
-  const lower = binaryPath.toLowerCase()
-  return lower.endsWith('.cmd') || lower.endsWith('.bat')
-}
-
 export function runCodexQueueProcess(invocation: CodexQueueInvocation): Promise<CodexQueueResult> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -103,14 +99,18 @@ export interface CodexQueueDeliveryOptions {
   binaryPath: string | undefined
   timeoutMs?: number
   run: CodexQueueRunner
+  /**
+   * The same `FsLike` CLI detection probes with (#413) — needed here too, to
+   * read a `.cmd`/`.bat` shim for the program it points at, exactly as
+   * `resolveProgram` needs one. Injected like `run`, so a test never touches a
+   * real disk and never resolves a real shim on the machine running it.
+   */
+  fs: FsLike
 }
 
 const NOT_FOUND =
   'The codex binary could not be found, so there is nowhere to queue the message. ' +
   'Set CODEX_CLI_PATH to it.'
-const SHIM_REFUSED =
-  'The detected codex is a .cmd/.bat shim, which cannot be run safely with a message payload. ' +
-  'Set CODEX_CLI_PATH to the real executable.'
 const UNKNOWN_THREAD = 'Codex no longer knows that session, so the message was not queued.'
 const NOT_STARTED = 'The codex queue command could not be started.'
 
@@ -125,19 +125,32 @@ const NOT_STARTED = 'The codex queue command could not be started.'
  * hold. Exit 1 is named as "session gone" rather than left generic because that
  * is the only thing it has been observed to mean, and it is the one a user can
  * act on.
+ *
+ * A `.cmd`/`.bat` shim used to be refused outright here (naming CODEX_CLI_PATH,
+ * an exit no packaged user could take) on the reasoning that a shell would
+ * re-parse the message. #413 removed that refusal: `resolveProgram` reads the
+ * shim for the program it actually names and this still calls `execFile` on
+ * THAT program with no shell, so the message stays its own argv element —
+ * exactly the property the old refusal existed to protect, just reached a
+ * different way. A shim that cannot be read or names nothing runnable still
+ * fails closed, with this same NOT_STARTED sentence, never a guess.
  */
 export async function deliverViaCodexQueue(
   options: CodexQueueDeliveryOptions
 ): Promise<TextDeliveryOutcome> {
-  const command = options.binaryPath
-  if (command === undefined) return { delivered: false, error: NOT_FOUND }
-  if (isShellShimPath(command)) return { delivered: false, error: SHIM_REFUSED }
+  const binaryPath = options.binaryPath
+  if (binaryPath === undefined) return { delivered: false, error: NOT_FOUND }
 
   const timeoutMs = options.timeoutMs ?? CODEX_QUEUE_TIMEOUT_MS
   try {
+    // Inside the try because reading a shim is a disk read that can fail like
+    // a spawn can, and it fails the same way for the user here too (#413):
+    // nothing queued, never a guess at what the shim would have run.
+    const program = await resolveProgram(binaryPath, options.fs)
+    if (program === undefined) return { delivered: false, error: NOT_STARTED }
     const result = await options.run({
-      command,
-      args: buildCodexQueueArgs(options.threadId, options.text),
+      command: program.command,
+      args: [...program.args, ...buildCodexQueueArgs(options.threadId, options.text)],
       timeoutMs
     })
     if (result.timedOut) {

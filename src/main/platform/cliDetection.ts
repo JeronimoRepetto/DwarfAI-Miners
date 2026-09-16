@@ -1,6 +1,7 @@
 import { posix, win32 } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
 import type { DwarfProvider } from '../domain/types'
+import { isShellShim } from '../sessionLaunch/launch'
 import { currentPlatform, type Platform } from './platform'
 
 /**
@@ -108,6 +109,24 @@ export function cliExecutableNames(cli: AgentCli, platform: Platform): string[] 
  * platform the CLI was actually installed on. macOS and Linux are
  * `~/.local/bin/agy`, which is the shared convention with the executable's own
  * name (see cliExecutableStem), so they need no row of their own.
+ *
+ * codex's second Windows row is pnpm's own global bin, `%LOCALAPPDATA%\pnpm\bin`
+ * (#413) — derived from `home` the same way the antigravity row derives
+ * `AppData\Local`, never read from the live environment, so a test can assert
+ * it without one. Verified on this machine (pnpm global `codex` 0.153.4):
+ * `%LOCALAPPDATA%\pnpm\bin` holds `codex` (a POSIX sh script), `codex.CMD` and
+ * `codex.ps1`, and nothing else — no `.exe` a plain PATH probe for that
+ * spelling would have found. Without this row a pnpm install fell through to
+ * the PATH guess, which is exactly the walk issue #413 traces the refusal to.
+ *
+ * No POSIX pnpm row is added. pnpm's own docs (pnpm.io/global-packages,
+ * pnpm.io/cli/setup, pnpm.io/installation, checked 2026-09-16) say only that a
+ * global bin lives in `$PNPM_HOME/bin` — none of them documents what
+ * `PNPM_HOME` itself defaults to on Linux or macOS. `~/.local/share/pnpm` is
+ * what several users' installs are observed to land on (e.g.
+ * github.com/pnpm/pnpm issue #12319), but an observed default is not a
+ * documented one, and this table is conventions the vendor states, not ones
+ * this app has watched other people's machines pick.
  */
 export function conventionalCliPaths(cli: AgentCli, home: string, platform: Platform): string[] {
   const path = pathModule(platform)
@@ -115,7 +134,11 @@ export function conventionalCliPaths(cli: AgentCli, home: string, platform: Plat
   const nativeBin = path.join(home, '.local', 'bin', `${cliExecutableStem(cli)}${ext}`)
   if (platform !== 'win32') return [nativeBin]
   if (cli === 'codex') {
-    return [nativeBin, path.join(home, 'AppData', 'Roaming', 'npm', 'codex.cmd')]
+    return [
+      nativeBin,
+      path.join(home, 'AppData', 'Roaming', 'npm', 'codex.cmd'),
+      path.join(home, 'AppData', 'Local', 'pnpm', 'bin', 'codex.cmd')
+    ]
   }
   if (cli === 'antigravity') {
     return [nativeBin, path.join(home, 'AppData', 'Local', 'agy', 'bin', 'agy.exe')]
@@ -163,6 +186,41 @@ export function resolveShimTarget(shimPath: string, shimText: string): ShimTarge
   const expanded = quoted[1]!.replace(/%~dp0|%dp0%/gi, `${shimDir}\\`)
   if (expanded.includes('%')) return undefined
   return { entry: win32.normalize(expanded), bundledNode: win32.join(shimDir, 'node.exe') }
+}
+
+/**
+ * A shim is a few hundred bytes; an entry that has not appeared by here is not
+ * in a shim. Bounded so a wrong detection can never make this read a large
+ * file.
+ */
+const SHIM_READ_BYTES = 8 * 1024
+
+/**
+ * The program to spawn for a detected path, and the argv that precedes
+ * whichever CLI argv a caller appends of its own (#193).
+ *
+ * A real executable is itself. A batch shim is read for the node entry it
+ * names, then run the way the shim would have run it — the `node.exe` beside
+ * the shim if one exists, else `node` from PATH (the shim's own IF/ELSE).
+ * Undefined means the shim named nothing this can run; the caller says
+ * "could not be started" rather than guessing.
+ *
+ * Lifted out of sessionLaunch/launchRunner.ts for #413. Two callers need the
+ * exact same resolution now: the launcher, because Node refuses to spawn a
+ * `.cmd`/`.bat` without a shell, and the Codex queue tier
+ * (textDelivery/codexQueue.ts), because a shell would re-parse the message.
+ * One function shared between them is what keeps the two from drifting the
+ * way `isShellShim`/`isShellShimPath` already had before this issue.
+ */
+export async function resolveProgram(
+  binaryPath: string,
+  fs: FsLike
+): Promise<{ command: string; args: string[]; viaNodeEntry: boolean } | undefined> {
+  if (!isShellShim(binaryPath)) return { command: binaryPath, args: [], viaNodeEntry: false }
+  const target = resolveShimTarget(binaryPath, await fs.readTextHead(binaryPath, SHIM_READ_BYTES))
+  if (target === undefined) return undefined
+  const command = (await fs.exists(target.bundledNode)) ? target.bundledNode : 'node'
+  return { command, args: [target.entry], viaNodeEntry: true }
 }
 
 /** Every `<PATH entry>/<executable name>` candidate, in PATH order then name order. */

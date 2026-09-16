@@ -477,6 +477,23 @@ function stageSuffix(timings: StageTimings): string {
   return formatted === '' ? '' : ` [${formatted}]`
 }
 
+/**
+ * The reason appended to a FAILED delivery's log line, e.g. `: The codex queue
+ * command could not be started.` (#413).
+ *
+ * "failed (16 chars)" alone says nothing about why, and the report that
+ * traced #413 was read off exactly that log line with the reason missing —
+ * the maintainer could not tell a dead channel from a shim being refused
+ * without opening the code. `outcome.error` is the same sentence the panel
+ * itself could show, never the message: the privacy rule this file states at
+ * its own top (only lengths, channels and verdicts) is unchanged, because an
+ * outcome's error field is a fixed, curated sentence and never a place the
+ * payload could travel through.
+ */
+function failureReasonSuffix(outcome: TextDeliveryOutcome): string {
+  return outcome.delivered || outcome.error === undefined ? '' : `: ${outcome.error}`
+}
+
 /** Expand only a leading home shorthand; other paths are passed through. */
 export function expandHomePath(path: string, home: string = homedir()): string {
   if (path === '~') return home
@@ -3139,6 +3156,7 @@ export class AgentRuntime {
       console.log(
         `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
           `${outcome.delivered ? 'delivered' : 'failed'} (${payload.length} chars)` +
+          failureReasonSuffix(outcome) +
           stageSuffix(timer.timings())
       )
       if (outcome.delivered) return { delivered: true, via: resolved.channel }

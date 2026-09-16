@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { FakeFs } from '../adapters/fakeFs'
 import type { ShellRunner } from '../platform/focus'
 import { workerSentinel, type ConsoleWorkerProcess } from './consoleWorker'
 import { WindowsTextDelivery } from './windowsTextDelivery'
@@ -645,18 +646,63 @@ describe('WindowsTextDelivery.queueToCodexThread', () => {
 
   /**
    * The npm-global install's `.cmd` cannot be spawned without a shell, and a
-   * shell would re-parse the payload. Refused with the remedy rather than run —
-   * see isShellShimPath in codexQueue.ts.
+   * shell would re-parse the payload — so it is resolved to the node entry it
+   * names and run directly, no shell involved, exactly as the launcher already
+   * does (#193, #413). See resolveProgram in platform/cliDetection.ts.
    */
-  it('refuses a .cmd shim rather than running the payload through a shell', async () => {
+  it('resolves a .cmd shim to its node entry and queues through it, never a shell', async () => {
+    const npmDir = 'C:\\Users\\j\\AppData\\Roaming\\npm'
+    const npmShim = `${npmDir}\\codex.cmd`
+    const npmEntry = `${npmDir}\\node_modules\\@openai\\codex\\bin\\codex.js`
+    const fs = new FakeFs()
+    fs.addFile(
+      npmShim,
+      [
+        '@ECHO off',
+        'GOTO start',
+        ':find_dp0',
+        'SET dp0=%~dp0',
+        'EXIT /b',
+        ':start',
+        'SETLOCAL',
+        'CALL :find_dp0',
+        'IF EXIST "%dp0%\\node.exe" (',
+        '  SET "_prog=%dp0%\\node.exe"',
+        ') ELSE (',
+        '  SET "_prog=node"',
+        '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+        ')',
+        'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
+      ].join('\r\n')
+    )
+    const runCodexQueue = vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false })
+    const port = delivery({
+      codexBinary: async () => npmShim,
+      runCodexQueue,
+      fs
+    })
+
+    const outcome = await port.queueToCodexThread({ threadId: THREAD_ID, text: 'hi' })
+
+    expect(outcome).toEqual({ delivered: true })
+    expect(runCodexQueue.mock.calls[0]?.[0]).toMatchObject({
+      command: 'node',
+      args: [npmEntry, 'queue', '--thread', THREAD_ID, '--message', 'hi']
+    })
+  })
+
+  it('says the queue command could not be started when the shim cannot be read', async () => {
     const runCodexQueue = vi.fn()
     const port = delivery({
       codexBinary: async () => 'C:\\Users\\j\\AppData\\Roaming\\npm\\codex.cmd',
-      runCodexQueue
+      runCodexQueue,
+      fs: new FakeFs()
     })
+
     const outcome = await port.queueToCodexThread({ threadId: THREAD_ID, text: 'hi' })
+
     expect(outcome.delivered).toBe(false)
-    expect(outcome.error).toContain('CODEX_CLI_PATH')
+    expect(outcome.error).toContain('could not be started')
     expect(runCodexQueue).not.toHaveBeenCalled()
   })
 

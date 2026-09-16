@@ -3012,6 +3012,53 @@ describe('AgentRuntime over the Codex message queue', () => {
       log.mockRestore()
     }
   })
+
+  /*
+   * #413. The report that traced this issue was read straight off this log
+   * line, and "failed (16 chars)" said nothing about why: zero milliseconds
+   * meant the tier refused before spawning anything, but the line could not
+   * say WHAT refused it. The reason is a curated sentence the panel itself
+   * could show (never the message — the test above still pins that), so
+   * appending it costs nothing the privacy rule protects.
+   */
+  it('names the reason in the log line when a send fails, not just the verdict (#413)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const port = queuePort({
+        queueToCodexThread: vi.fn().mockResolvedValue({
+          delivered: false,
+          error: 'The codex queue command could not be started.'
+        })
+      })
+      const runtime = await runtimeWithQueue(port)
+
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+
+      const lines = log.mock.calls.map((call) => String(call[0])).join('\n')
+      expect(lines).toContain('failed (2 chars)')
+      expect(lines).toContain('The codex queue command could not be started.')
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('never adds a reason suffix to a delivered send', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const runtime = await runtimeWithQueue(queuePort())
+
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'hi', pressEnter: true })
+
+      const lines = log.mock.calls.map((call) => String(call[0]))
+      const line = lines.find((entry) => entry.includes('Message to'))
+      expect(line).toContain('delivered')
+      // The only ": " in a delivered line is the one before the verdict — a
+      // second one, right after "chars)", would be a wrongly-appended reason.
+      expect(line?.match(/: /g)).toHaveLength(1)
+    } finally {
+      log.mockRestore()
+    }
+  })
 })
 
 /*
