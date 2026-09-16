@@ -132,19 +132,39 @@ export function mergeEchoes<Row extends PanelMessage>(
  * The console's own marker for one pasted image, whatever digit Claude
  * Code's own session counter assigned it (#408, measured in
  * docs/console-hosting.md §6) — never a number this app predicts, only a
- * shape it recognizes.
+ * shape it recognizes. Not anchored to the start of the string: reopened by
+ * #419, the placeholder is inserted at the cursor only once Claude Code
+ * finishes READING the pasted file, while a plain path or the words that
+ * follow paste in immediately — so its position in the row depends on how
+ * long that read took, not on when the image was attached. A slow read can
+ * land it after a later attachment's own token, or after the words entirely
+ * (see `stripAttachmentTokens`).
  */
-const IMAGE_MARKER_RE = /^\[Image #\d+\]/
+const IMAGE_MARKER_RE = /\[Image #\d+\]/
 
 /**
- * `text` with one literal token per entry of `attachments` taken off the
- * front, in order — undefined the moment one is missing.
+ * `text` with one literal token per entry of `attachments` removed, each
+ * taken off once from wherever it landed — undefined the moment one is
+ * missing.
  *
- * A file's token is its exact path, matched as a plain prefix; an image's is
- * `[Image #<digits>]`, matched by the one anchored pattern above because the
- * digits are Claude Code's own counter and never predictable. Neither is a
- * search over the WORDS that remain once every token is off — those are
- * compared by plain equality in `accountsFor`, never by pattern.
+ * A file's token is its exact path, matched as a plain substring anywhere in
+ * the row; an image's is one `[Image #<digits>]` occurrence, matched
+ * anywhere by the one shape-anchored pattern above because the digits are
+ * Claude Code's own counter and never predictable. Position is deliberately
+ * not part of the match — #419 was reopened exactly because the first fix
+ * stripped tokens in send order, and the placeholder's own position moves
+ * with how long its image took to read, independent of the other pastes.
+ * Neither token is a search over the WORDS that remain once every token is
+ * off — those are compared by plain equality in `accountsFor`, never by
+ * pattern, and normalized again there since a token taken off the middle of
+ * the row can leave a whitespace gap the words never had.
+ *
+ * File paths come off before image markers, on purpose: a path is removed by
+ * an exact substring match regardless of what it contains, so a path that
+ * happens to itself contain something shaped like `[Image #5]` is gone as
+ * one whole unit before the marker search ever runs over the row. Searching
+ * for markers first would risk matching that fragment inside a path still
+ * sitting in the text and cutting it in half.
  */
 function stripAttachmentTokens(
   text: string,
@@ -152,14 +172,16 @@ function stripAttachmentTokens(
 ): string | undefined {
   let rest = text
   for (const attachment of attachments) {
-    if (attachment.kind === 'image') {
-      const marker = IMAGE_MARKER_RE.exec(rest)
-      if (marker === null) return undefined
-      rest = rest.slice(marker[0].length)
-      continue
-    }
-    if (!rest.startsWith(attachment.path)) return undefined
-    rest = rest.slice(attachment.path.length)
+    if (attachment.kind === 'image') continue
+    const at = rest.indexOf(attachment.path)
+    if (at === -1) return undefined
+    rest = rest.slice(0, at) + rest.slice(at + attachment.path.length)
+  }
+  for (const attachment of attachments) {
+    if (attachment.kind !== 'image') continue
+    const marker = IMAGE_MARKER_RE.exec(rest)
+    if (marker === null) return undefined
+    rest = rest.slice(0, marker.index) + rest.slice(marker.index + marker[0].length)
   }
   return rest
 }
@@ -201,8 +223,11 @@ function stripAttachmentTokens(
  *
  * **`attachments` are this ECHO's own files** (#408) — `useDwarfMessaging`
  * keeps them keyed by echo id, since attachments play no part in an ordinary
- * text-only send. A row is expected to carry one token per attachment ahead of
- * the words, in the exact order they were sent (`stripAttachmentTokens`); a
+ * text-only send. A row is expected to carry each attachment's token exactly
+ * once, wherever it landed — never assumed to be in send order, and never
+ * assumed to sit ahead of the words, because an image's placeholder is only
+ * inserted once Claude Code finishes reading that file and can end up
+ * anywhere relative to the rest (`stripAttachmentTokens`, #419 reopened). A
  * row missing even one token never accounts for this echo, and an
  * attachments-only echo (no words at all) matches a row that is exactly those
  * tokens. See docs/console-hosting.md §6 for the transcript shape this was
@@ -214,11 +239,16 @@ function accountsFor(
   attachments: readonly DwarfAttachment[]
 ): boolean {
   if (message.role !== 'user' || message.issuer !== undefined) return false
-  const rowWords = stripAttachmentTokens(
+  const stripped = stripAttachmentTokens(
     normalizeConsoleText(stripRelayProvenance(message.text)),
     attachments
   )
-  if (rowWords === undefined || rowWords !== normalizeConsoleText(echo.text)) return false
+  // Normalized again: a token can now come out of the middle of the row
+  // (or off the end) rather than only the front, and closing the gap that
+  // leaves is exactly what `normalizeConsoleText` already does for the
+  // console's own whitespace runs.
+  if (stripped === undefined || normalizeConsoleText(stripped) !== normalizeConsoleText(echo.text))
+    return false
   const at = Date.parse(message.timestamp)
   if (Number.isNaN(at)) return false
   return at >= echo.sentAt && at - echo.sentAt <= ECHO_MATCH_WINDOW_MS

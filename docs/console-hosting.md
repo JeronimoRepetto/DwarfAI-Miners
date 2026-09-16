@@ -1317,8 +1317,33 @@ text block's string**, unchanged: `userContentText` joins only `type: "text"` bl
 has exactly one, so every `image` block is skipped by the same filter that already drops
 `tool_result` content — nothing needed to change there either. The row the panel compares an echo
 against is therefore the concatenation described above, token for token, which is what
-`stripAttachmentTokens` in `lib/message/echo.ts` strips off the front before comparing the words
-that remain.
+`stripAttachmentTokens` in `lib/message/echo.ts` strips off before comparing the words that remain.
+
+### Reopened: the image token's own position moves with the read, not the paste — measured 2026-09-16 (#419)
+
+The measurement above happened to read back in paste order, and the first fix over #419 (#420)
+took that as the rule: strip each token off the FRONT, one paste's worth at a time. A second live
+session, same build, broke it. Chips added in this order — one image, then three plain files, then
+words — but the transcript's own row read (paths genericized):
+
+```
+<dir>\debris.mp3<dir>\notes.pdf[Image #5]<dir>\config.txtdig deeper
+```
+
+The image's own token landed **third**, not first, even though it was pasted first.
+
+**The placeholder is not written at paste time.** #408 above measured the WRITE side as one paste
+producing one block immediately; what it did not separate is that an `image` block needs Claude
+Code to have finished READING the file before the placeholder can be inserted at all, while a plain
+path or the words that follow paste straight into the text with nothing to wait on. The placeholder
+therefore lands wherever the cursor happens to be when that read completes — after whichever other
+attachments pasted in during the wait — and a read that finishes especially late can put it after
+the words entirely, which no in-order rule can express. The first live check (two images, three
+files) happened to have both reads finish before anything else was pasted; this one did not.
+
+The rule `stripAttachmentTokens` enforces is now: each expected token comes off exactly **once**,
+from wherever it sits in the row — a file's exact path, an image's `[Image #<digits>]` shape — never
+tied to a position. A row missing a token, or carrying one nothing sent, still refuses.
 
 ---
 
