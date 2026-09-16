@@ -5,10 +5,11 @@ import {
   NO_OLDER_PAGES_NOTE,
   READING_OLDER_NOTE,
   feedPageCursorOf,
+  heldFeedPageCursorOf,
   joinFeedPages,
   pagingNoteOf
 } from './feedPages'
-import type { FeedMessage } from '../../types'
+import { HELD_MESSAGE_MAX_CHARS, type FeedMessage } from '../../types'
 
 /**
  * #364: the panel holds the newest page and every OLDER page it has fetched,
@@ -169,5 +170,75 @@ describe('pagingNoteOf', () => {
     expect(pagingNoteOf({ ...NOTHING_ASKED, beyondReach: true, reachedStart: true })).toBe(
       BEYOND_REACH_NOTE
     )
+  })
+})
+
+/*
+ * ADDED for #430. A session this panel LAUNCHED pages back through its own
+ * transcript like any other, and the one new question is which of its held rows
+ * may name a place in that file — the rows are this app's own copy of the same
+ * turns, and the copy is not byte-for-byte for all of them.
+ *
+ * Nothing above changed.
+ */
+
+function sent(text: string, timestamp: string): FeedMessage {
+  return { role: 'user', text, timestamp }
+}
+
+describe('heldFeedPageCursorOf', () => {
+  it('names the oldest turn the AGENT took, which is the same words the transcript has', () => {
+    expect(
+      heldFeedPageCursorOf([], [said('down the shaft', 'h1'), said('seam found', 'h2')])
+    ).toEqual({ timestamp: 'h1', text: 'down the shaft' })
+  })
+
+  it('skips the person’s own rows, which the transcript may not spell the same way', () => {
+    // Since #428 a held conversation carries what the person sent too, and a
+    // send with an image publishes its placeholder beside the words while the
+    // transcript keeps only the text blocks. Anchoring one row further down
+    // costs a repeat, and a repeat is visible where a gap is not.
+    expect(
+      heldFeedPageCursorOf([], [sent('dig here', 'h0'), said('down the shaft', 'h1')])
+    ).toEqual({ timestamp: 'h1', text: 'down the shaft' })
+  })
+
+  it('skips a tool-call row, exactly as the ordinary cursor does', () => {
+    expect(heldFeedPageCursorOf([], [ran('Ran npm test', 'h0'), said('seam found', 'h1')])).toEqual(
+      { timestamp: 'h1', text: 'seam found' }
+    )
+  })
+
+  it('skips a reply the retention cap truncated, which is no longer the transcript’s row', () => {
+    // retainHeldMessage caps a held row at HELD_MESSAGE_MAX_CHARS and the
+    // transcript keeps the reply whole, so the two are not the same string and
+    // no normalization makes them one. A cursor the file does not contain comes
+    // back as an empty page claiming the conversation reached its start.
+    const long = said('x'.repeat(HELD_MESSAGE_MAX_CHARS), 'h0')
+    expect(heldFeedPageCursorOf([], [long, said('seam found', 'h1')])).toEqual({
+      timestamp: 'h1',
+      text: 'seam found'
+    })
+  })
+
+  it('names nothing when the session has only the person’s own words to show', () => {
+    expect(heldFeedPageCursorOf([], [sent('dig here', 'h0')])).toBeNull()
+  })
+
+  it('names nothing at all for a conversation with nothing in it', () => {
+    expect(heldFeedPageCursorOf([], [])).toBeNull()
+  })
+
+  it('prefers a page already read, whose every row came out of the transcript', () => {
+    // Only the FIRST request has nothing but held rows to anchor on. After
+    // that the oldest row on screen is a transcript row, so the ordinary rule
+    // applies unchanged — including to the person’s own turn, which is the
+    // transcript’s own spelling of it here.
+    expect(
+      heldFeedPageCursorOf(
+        [sent('dig here', 't0'), said('down the shaft', 't1')],
+        [said('seam found', 'h1')]
+      )
+    ).toEqual({ timestamp: 't0', text: 'dig here' })
   })
 })
