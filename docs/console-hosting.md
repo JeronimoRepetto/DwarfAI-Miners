@@ -362,19 +362,22 @@ launched session being a foreman by construction.
 
 Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 
-| Channel                                      | Question form                                                        | Available while open?           | Answer path                                                        |
-| -------------------------------------------- | -------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------ |
-| `AskUserQuestion` in an **observed TUI**     | structured — but written to the transcript at **resolve**, backdated | **no**                          | keystrokes at that TUI only → **notify and jump**                  |
-| **Cross-session message bus**                | **prose**, options embedded as text                                  | yes, instantly                  | prose reply; the peer's human may interpose                        |
-| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                  | yes                             | **full structured loop**, ~6s round trip                           |
-| **Permission prompt** in an **observed TUI** | structured — the `tool_use` is written BEFORE the dialog opens       | **yes**, and so is what it asks | keystrokes at that TUI → **answered from the panel, built (#203)** |
+| Channel                                      | Question form                                                                                                                             | Available while open?                                                                                     | Answer path                                                        |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `AskUserQuestion` in an **observed TUI**     | structured — written to the transcript at **resolve**, backdated, on the 2026-09-02 build; written **when asked**, unresolved, on 2.1.273 | **no** as measured here; **yes** as re-measured 2026-09-16 — see `docs/question-capture-evaluation.md` §9 | keystrokes at that TUI only → **notify and jump**                  |
+| **Cross-session message bus**                | **prose**, options embedded as text                                                                                                       | yes, instantly                                                                                            | prose reply; the peer's human may interpose                        |
+| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                                                                                       | yes                                                                                                       | **full structured loop**, ~6s round trip                           |
+| **Permission prompt** in an **observed TUI** | structured — the `tool_use` is written BEFORE the dialog opens                                                                            | **yes**, and so is what it asks                                                                           | keystrokes at that TUI → **answered from the panel, built (#203)** |
 
-- **Row one revised an assumption three earlier phases were built on.** A menu left open ~5.5
-  minutes, transcript scanned twice: **zero `AskUserQuestion` blocks while it was open**; the block
-  appeared only after the answer, timestamped at its original creation time. So a pending question
-  read from the transcript tail is **post-hoc** — history, not an open menu — and buttons for an
-  observed TUI are unachievable from anything this app reads. The backdating is a small gift, though:
-  asked-at versus answered-at come free.
+- **Row one revised an assumption three earlier phases were built on — and has since been revised
+  itself.** A menu left open ~5.5 minutes, transcript scanned twice: **zero `AskUserQuestion` blocks
+  while it was open**; the block appeared only after the answer, timestamped at its original creation
+  time. So a pending question read from the transcript tail was **post-hoc** — history, not an open
+  menu. **That expired with the build it was taken on.** Re-measured on Claude Code 2.1.273
+  (2026-09-16, #298): the block is written when the ask is made and sits there unresolved for as long
+  as the menu stands, watched for 27 s and answered afterwards. See
+  `docs/question-capture-evaluation.md` §9 for the timings and for the `PreToolUse` hook that carries
+  the same content as a push. Nothing below about rows two, three and four is affected.
 - **Row two's finding was unplanned.** Asked by an unverifiable external session to answer outside
   its user-visible channel, the peer session **stopped and asked its own human for consent first**,
   via `AskUserQuestion`. So a message-question may have a human interposed on the far side: reply
@@ -1050,6 +1053,38 @@ shape this bug was: the text's call landing whole and the Enter call behind it f
 leaves an unsubmitted message sitting in the console's buffer. Exit codes 2 and 3 are unchanged. The
 question picker's keys (#402) will need the same two-call shape; it is not wired through this builder
 yet.
+
+### An arrow as TEXT records moves an Ink select — measured 2026-09-16 (#402)
+
+**The builder's header says the picker's keys "do not come here, because its multi-select
+confirmation is an ARROW — a virtual key with no character — and nothing has measured a record
+shaped like that." One half of that is now measured, and it went the easy way.** An arrow does not
+have to travel as a virtual key at all: written as the three ordinary TEXT records `ESC` `[` `B`,
+the VT "cursor down" sequence moved an Ink select's highlight, through
+`buildConsoleInputWriteCommand` exactly as it ships.
+
+The measurement was incidental — #298 needed a folder-trust dialog answered in a session the agent
+had launched itself, and that dialog is an Ink select like the question picker is. Claude Code
+2.1.273, Windows Terminal, a console the panel did not spawn [V, 2026-09-16]:
+
+| Record shape                                                     | Exit | Took       | Result                                                           |
+| ---------------------------------------------------------------- | ---- | ---------- | ---------------------------------------------------------------- |
+| `ESC` `[` `B` as three text records, `pressEnter` false          | 0    | 237 ms     | highlight moved one row down, no stray character drawn           |
+| bare Enter (empty text, `pressEnter` true) on the trust dialog   | 0    | 236 ms     | the highlighted row was accepted and the dialog closed           |
+| bare Enter on an open single-select `AskUserQuestion` picker, ×4 | 0    | 219–224 ms | the highlighted option was selected each time, no extra keypress |
+
+**Why it survives the builder untouched.** `toConsoleLine` flattens on `\s+`, and `ESC` (0x1b) is
+not whitespace in that class — neither is `[` or `B` — so all three code units reach
+`New-InputBuffer` intact and become six key records with `wVirtualKeyCode` 0, letting `UnicodeChar`
+speak exactly as a text keystroke does. Nothing about the builder had to change, and the Enter still
+travelled in its own second call, per #404 above.
+
+**What this does NOT settle, and the distinction matters.** The arrow was sent to the **trust
+dialog**, never to the question picker. The picker's own sequences from §4c — a digit firing a
+single-select outright, and a multi-select's `{RIGHT}` then `{ENTER}` — remain unmeasured through
+this write path; the only thing exercised against a real picker here was the bare Enter, which
+accepted the row the cursor already sat on. Whether a VT sequence walks THAT component the way it
+walked this one is an assumption until somebody sends one. Two Ink selects are not one measurement.
 
 ---
 
