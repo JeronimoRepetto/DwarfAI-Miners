@@ -51,15 +51,27 @@ export type { Platform }
  */
 
 /**
- * Whether the macOS console-input path (System Events keystrokes) is offered.
+ * Whether the macOS console-input path (System Events keystrokes) is offered
+ * by default.
  *
  * The osascript builders are unit-tested, but nothing here has been run on a
  * real Mac, and System Events additionally requires the user to grant
  * Accessibility permission — which this app cannot detect. Offering an
  * unverified channel would mean a Send button that appears to work and
  * silently types nowhere, so it stays off and the panel shows the honest
- * disabled button with its reason. Flip it (and the README support matrix)
- * once it has been verified end to end on macOS.
+ * disabled button with its reason.
+ *
+ * Set `DARWIN_CONSOLE_INPUT=1` (config.ts's `darwinConsoleInputEnabled`,
+ * documented beside the other diagnostic switches in docs/guide.md) to
+ * override this constant for one run, through the `darwinConsoleInput` option
+ * below, wired in at index.ts's composition root — this unblocks TESTING only
+ * (#367 item 1). It does not unblock shipping: `createDarwinFocus` still
+ * answers a bare boolean, not the reach verdict `focus.ts`'s Windows port
+ * gives (its own console vs. a shared terminal host, #329), so with the
+ * switch on a keystroke can still land in the wrong tab of a terminal window
+ * shared by two sessions. Flip this constant (and the README support matrix)
+ * only once that reach verdict exists and the whole path has been verified
+ * end to end on macOS (#367 items 2–3).
  */
 export const DARWIN_CONSOLE_INPUT_ENABLED = false
 
@@ -90,7 +102,11 @@ export interface PlatformAdapterOptions {
   /** Node-capable binary the POSIX viewer's formatter runs on; defaults to this process's. */
   nodePath?: string
   env?: NodeJS.ProcessEnv
-  /** Overrides DARWIN_CONSOLE_INPUT_ENABLED; for tests and a future opt-in. */
+  /**
+   * Overrides DARWIN_CONSOLE_INPUT_ENABLED; for tests, and for the
+   * `DARWIN_CONSOLE_INPUT` testing opt-in index.ts feeds in from the real
+   * environment (#367 item 1).
+   */
   darwinConsoleInput?: boolean
   /** Injected for tests; defaults to a real powershell.exe run. */
   runShell?: ShellRunner
