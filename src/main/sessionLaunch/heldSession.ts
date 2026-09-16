@@ -4,7 +4,7 @@ import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
 // shared/heldSessionText.ts for why this cannot stay a local constant.
 import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
-import { HELD_CONVERSATION_LIMIT, heldRetainedText, isMcpConnectionStatus } from '../domain/types'
+import { HELD_CONVERSATION_LIMIT, isMcpConnectionStatus } from '../domain/types'
 import type {
   Dwarf,
   DwarfContextUsage,
@@ -707,20 +707,43 @@ export function isReplayedUserMessage(message: unknown): boolean {
  * store also retains ride between them. A row slice counted them as messages,
  * so a held session that had run twelve tools since it last spoke pushed every
  * word out of its own conversation.
+ *
+ * No per-row cut any more (#436 removed `HELD_MESSAGE_MAX_CHARS` and
+ * `heldRetainedText`, the wire's own rule for it): a held row rode every poll's
+ * snapshot until #436, and the cut existed to keep that push bounded. Now that
+ * `Runtime.dwarfFeed` answers this store's rows on demand, `FEED_LIMIT` at a
+ * time, the only bound left is HELD_CONVERSATION_LIMIT itself — how many rows
+ * this store keeps, never how long one may be. The echo reconciliation this
+ * cut used to require its own branch for (`isHeldTruncationOf`, in the
+ * renderer's echo.ts) is gone with it: a held row is exactly the words the
+ * session said, so a plain equality check is enough again.
  */
 export function retainHeldMessage(
   kept: readonly FeedMessage[],
   message: FeedMessage
 ): FeedMessage[] {
-  // The cut goes through the wire's own `heldRetainedText` rather than a
-  // `.slice` written here (#431): the renderer's echo reconciliation has to
-  // apply the SAME rule to the words it is holding before it can recognise the
-  // row this store keeps, and two spellings of one cut is how one of them
-  // drifts — the failure `stripRelayProvenance` exists to prevent, one store
-  // further along.
-  const text = heldRetainedText(redactSecrets(message.text.trim()))
+  const text = redactSecrets(message.text.trim())
   if (text === '') return [...kept]
   return trimFeed([...kept, { ...message, text }], HELD_CONVERSATION_LIMIT)
+}
+
+/**
+ * Whether a `retainHeldMessage` call actually KEPT the message it was given
+ * (#436) — read off its two lists rather than by re-deriving the rule.
+ *
+ * Both stores drive a revision counter off this, and the counter is what tells
+ * the poll a held session has said something. So the question has to be
+ * answered the same way in both, and answering it by "is the list longer"
+ * would be wrong in the one case that matters most: at the retention bound an
+ * append drops the oldest row, so a busy session's list never grows again.
+ * What always differs there is the LAST row, and what never differs for a
+ * message trimmed away to nothing is either.
+ */
+export function retainedSomething(
+  before: readonly FeedMessage[],
+  after: readonly FeedMessage[]
+): boolean {
+  return after.length !== before.length || after.at(-1) !== before.at(-1)
 }
 
 /**
@@ -1165,8 +1188,16 @@ export type HeldCrewLookup = (sessionId: string) => HeldCrewState
  * follows it — so a dwarf whose id extends another's is a subagent of it. This
  * is the test that keeps one session's crew from being hung off every subagent
  * that shares its session id, the trap stampHeldQuestions names.
+ *
+ * Exported since #436 for the one reader that cannot use `role === 'foreman'`
+ * to ask the same question. Every stamp in this file runs BEFORE
+ * `stampHeldRank` and reads the rank the provider gave, where a session's own
+ * dwarf is always the foreman. `Runtime.dwarfFeed` reads the PUBLISHED board,
+ * after that rank has been rewritten by what the stream actually did — a held
+ * session with no crew out is drawn as a worker — so on that side the id is the
+ * only thing that still says which dwarf is the session.
  */
-function isSubagentDwarf(dwarf: Dwarf, crewOfMine: readonly Dwarf[]): boolean {
+export function isSubagentDwarf(dwarf: Dwarf, crewOfMine: readonly Dwarf[]): boolean {
   return crewOfMine.some((other) => other.id !== dwarf.id && dwarf.id.startsWith(`${other.id}:`))
 }
 
@@ -1273,33 +1304,64 @@ export function stampHeldTelemetry(mines: Mine[], stateOf: HeldTelemetryLookup):
  * (#159) — the same `{held}`-discriminated shape the two lookups above use.
  *
  * `held: false` is the only reading for a session this panel does not hold,
- * and it leaves the dwarf without a conversation at all rather than with an
- * empty one: the words of an observed session are read from its transcript, on
+ * and it leaves the dwarf with nothing here at all rather than with an empty
+ * exchange: the words of an observed session are read from its transcript, on
  * its own channel, and are a different claim (see DwarfFeedResult).
+ *
+ * Three facts since #436, because three different readers want three different
+ * things out of one lookup and a second walk of the registry would be a second
+ * reading of who is held:
+ *
+ * - `conversation` is what `Runtime.dwarfFeed` answers ON DEMAND. It no longer
+ *   reaches the wire whole and is no longer trimmed for the wire's sake.
+ * - `revision` counts what this store has RETAINED, ever. It is the watched
+ *   dwarf's feed signal for a held session, and it has to be a counter rather
+ *   than anything derived from the rows: a hosted process has no transcript, so
+ *   `transcriptUpdatedAt` and `lastMessage` never move for it and a signal read
+ *   off the conversation would freeze the panel the moment the retention bound
+ *   was reached.
+ * - `openingPrompt` is the launch receipt, and is the one row still on the
+ *   snapshot. Kept apart from `conversation[0]` deliberately: the retained list
+ *   drops its oldest row once the bound is reached, and a receipt that expired
+ *   because the session talked too much would break the handover (#191) for
+ *   exactly the sessions that work hardest.
  */
-export type HeldConversationState = { held: false } | { held: true; conversation: FeedMessage[] }
+export type HeldConversationState =
+  | { held: false }
+  | {
+      held: true
+      conversation: FeedMessage[]
+      revision: number
+      openingPrompt?: FeedMessage
+    }
 
 export type HeldConversationLookup = (sessionId: string) => HeldConversationState
 
 /**
- * Copy `mines` with each held session's own exchange stamped onto its foreman
- * (#159) — the same shape and the same two rules `stampHeldTelemetry` follows.
+ * Copy `mines` with each held session's own opening prompt stamped onto its
+ * foreman (#159, #436) — the same shape and the same two rules
+ * `stampHeldTelemetry` follows.
  *
  * Only the foreman, because a Claude worker carries its foreman's `sessionId`
- * and keying on the id alone would copy one session's conversation onto every
- * subagent in it. And an empty exchange stamps NOTHING: absence is what the
- * wire means by "no conversation to show", so a held session that has yet to
- * say a word leaves the field off rather than handing the panel an empty list
- * to render as a conversation with nothing in it.
+ * and keying on the id alone would copy one session's receipt onto every
+ * subagent in it. And a session launched with no prompt stamps NOTHING:
+ * absence is what the wire means by "no receipt here", so a launch that sent
+ * no words leaves the field off rather than handing the panel an empty row to
+ * match against.
+ *
+ * AMENDED for #436 (was: `stampHeldConversation`, which stamped the whole
+ * retained exchange onto `Dwarf.conversation`). The words moved to
+ * `Runtime.dwarfFeed`; what is left is the one row the Add Panel's handover
+ * reads, and it is stamped on the same pass by the same rules.
  */
-export function stampHeldConversation(mines: Mine[], stateOf: HeldConversationLookup): Mine[] {
+export function stampHeldOpeningPrompt(mines: Mine[], stateOf: HeldConversationLookup): Mine[] {
   return mines.map((mine) => ({
     ...mine,
     dwarfs: mine.dwarfs.map((dwarf) => {
       if (dwarf.role !== 'foreman') return dwarf
       const state = stateOf(dwarf.sessionId)
-      if (!state.held || state.conversation.length === 0) return dwarf
-      return { ...dwarf, conversation: state.conversation }
+      if (!state.held || state.openingPrompt === undefined) return dwarf
+      return { ...dwarf, openingPrompt: state.openingPrompt }
     })
   }))
 }

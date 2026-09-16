@@ -186,9 +186,11 @@ const askedDwarfId = computed<string | null>(() =>
 const openDwarfId = computed(() => launchState.value.launchedDwarfId ?? askedDwarfId.value)
 
 /**
- * The transcript read for the open dwarf, for a session this panel only
- * OBSERVES. `undefined` means the read has not come back — which the panel
- * says out loud rather than drawing as an empty conversation.
+ * The feed read for the open dwarf, whichever kind of session it is (#436
+ * unified the channel — a held session's own rows answer here exactly as an
+ * observed session's transcript tail does, marked `source: 'held'`).
+ * `undefined` means the read has not come back — which the panel says out
+ * loud rather than drawing as an empty conversation.
  *
  * The NEWEST page of it, and since #364 that is a distinction worth the word:
  * this holds the latest FEED_LIMIT things said and is replaced whole by every
@@ -230,11 +232,17 @@ const olderPages = computed<FeedMessage[]>(() => joinFeedPages(paging.pages, [])
  * of its own page. `undefined` still means the read has not come back, which
  * the panel says out loud rather than drawing as an empty conversation — and
  * with no read back there are no pages either, because a switch cleared them.
+ *
+ * Spread rather than rebuilt field by field so `source` rides along
+ * unchanged: `DwarfMessagePanel` reads it to say which claim the conversation
+ * carries (`HELD_NOTE` against `OBSERVED_NOTE`), and a version of this that
+ * named only `readable` and `messages` quietly dropped it, so a held session's
+ * own words drew the observed note once pages joined them (#436).
  */
 const drawnFeed = computed<DwarfFeedResult | undefined>(() =>
   selectedFeed.value === undefined
     ? undefined
-    : { readable: selectedFeed.value.readable, messages: pagedMessages.value }
+    : { ...selectedFeed.value, messages: pagedMessages.value }
 )
 /**
  * Which dwarf `selectedFeed` currently answers for — so a re-read for that
@@ -404,31 +412,18 @@ const selectedDwarf = computed<Dwarf | undefined>(() => {
   return last !== undefined && last.id === openDwarfId.value ? last : undefined
 })
 
-/**
- * The same dwarf, with the pages the reader scrolled back to standing in front
- * of its HELD exchange (#430).
+/*
+ * WHERE `drawnDwarf` WENT (#436).
  *
- * The join has to happen on the dwarf rather than beside it, because
- * `conversationOf` prefers a held exchange over any transcript read of the same
- * session and is right to: the held rows are first-hand and one turn fresher.
- * So the older pages reach the panel the one way that does not reopen that
- * precedence — as the front of the conversation itself, which is what they are.
- *
- * `selectedDwarf` above stays the SNAPSHOT's dwarf and is what every other
- * reader here keeps using, above all the echo reconciliation (#309), which
- * measures the person's pending words against the live end of the exchange and
- * never against four pages of older conversation.
- *
- * Untouched for an observed session — its pages are joined into `drawnFeed` —
- * and untouched before the reader has asked for anything, so the ordinary case
- * hands the panel the very object the snapshot carried.
+ * It existed because a held session's exchange rode the snapshot on
+ * `Dwarf.conversation`, and `conversationOf` preferred that field over any
+ * transcript read of the same session — so the older pages a reader had
+ * scrolled back to could only reach the panel by being joined onto the dwarf
+ * itself, in front of the held rows. A held session's words come back through
+ * `dwarfFeed` now, like everybody else's, so the pages are joined once in
+ * `pagedMessages` above for both kinds of session and the panel is handed the
+ * snapshot's own dwarf unchanged.
  */
-const drawnDwarf = computed<Dwarf | undefined>(() => {
-  const dwarf = selectedDwarf.value
-  if (dwarf === undefined) return undefined
-  if (dwarf.conversation === undefined || paging.pages.length === 0) return dwarf
-  return { ...dwarf, conversation: joinFeedPages(paging.pages, dwarf.conversation) }
-})
 
 /**
  * Whether the Add Panel is what this window is drawing.
@@ -524,13 +519,21 @@ async function readSelectedFeed(dwarfId: string): Promise<void> {
 }
 
 /**
- * Skipped for a held session: it carries its own first-hand exchange on every
- * snapshot, and reading its transcript would fetch the same words second-hand
- * and a turn behind. Bumps feedToken without reading anything, so a read the
- * watch had already started cannot land after the panel moved to a held
- * session (or off a dwarf entirely). Clears `selectedFeedDwarfId` too, so
- * that dwarf's next observed read (if it ever has one) is a first read again
- * rather than treated as a re-read of stale words.
+ * Read nothing, and leave nothing of the last dwarf's behind — what the panel
+ * does when there is no dwarf open at all.
+ *
+ * Bumps feedToken without reading anything, so a read the watch had already
+ * started cannot land after the panel moved off a dwarf. Clears
+ * `selectedFeedDwarfId` too, so the next read is a first read again rather
+ * than treated as a re-read of stale words.
+ *
+ * AMENDED for #436 (was: also taken for a HELD session, on the reading that it
+ * "carries its own first-hand exchange on every snapshot, and reading its
+ * transcript would fetch the same words second-hand and a turn behind"). The
+ * first half stopped being true — its exchange is served by `dwarfFeed` now —
+ * and the second half was always main's business rather than this panel's:
+ * `dwarfFeed` answers a held session's own rows in front of any transcript read
+ * of it, so asking is exactly how the panel gets the first-hand words.
  *
  * The older pages are held for `dwarfId` rather than thrown away (AMENDED for
  * #430; was: `holdOlderPages(null)`, on the reading that a held session's words
@@ -550,8 +553,8 @@ function skipSelectedFeed(dwarfId: string | null): void {
 }
 
 /**
- * Read the open dwarf's transcript tail, for a session this panel only
- * OBSERVES. Re-read when either of two signals moves, rather than on every
+ * Read the open dwarf's conversation. Re-read when either of two signals
+ * moves, rather than on every
  * poll, so an idle session still costs no disk at all — and neither signal
  * alone was enough (issue #183). `lastMessage` is the provider reporting the
  * ASSISTANT spoke; it says nothing about a human turn typed into the terminal
@@ -570,6 +573,13 @@ function skipSelectedFeed(dwarfId: string | null): void {
  * transcript" — and the kept dwarf's own signals cannot move any more, so the
  * only thing that could still fire this is the leaving signal falling back to
  * false as the live dwarf goes. That is the case the guard is for.
+ *
+ * A HELD session comes through here too since #436, and neither signal moves
+ * for one that writes no transcript: a hosted process has no `lastMessage` and
+ * no `transcriptUpdatedAt` at all. Those sessions are kept live by main's own
+ * push instead (`watchedDwarfNeedingRead`, which reads the held store's
+ * retention counter), which is why this panel now reports a held dwarf to
+ * `setWatchedDwarf` rather than reporting null for one.
  */
 watch(
   [
@@ -579,7 +589,7 @@ watch(
     () => liveSelectedDwarf.value?.status === 'leaving'
   ],
   ([dwarfId]) => {
-    if (dwarfId === null || selectedDwarf.value?.conversation !== undefined) {
+    if (dwarfId === null) {
       skipSelectedFeed(dwarfId)
       return
     }
@@ -594,16 +604,21 @@ watch(
 )
 
 /**
- * Tell main which OBSERVED dwarf this panel currently has open, so a poll
- * that already re-scans its transcript can carry the feed with the snapshot
- * instead of this panel pulling it a tick later over its own round trip
- * (#196). Never a held session's: it already carries its own conversation, so
- * main is told null for one exactly as it would be for no selection at all.
+ * Tell main which dwarf this panel currently has open, so a poll that already
+ * re-scans its transcript can carry the feed with the snapshot instead of this
+ * panel pulling it a tick later over its own round trip (#196).
+ *
+ * AMENDED for #436 (was: OBSERVED dwarfs only — "never a held session's: it
+ * already carries its own conversation, so main is told null for one exactly as
+ * it would be for no selection at all"). It does not carry it any more, and for
+ * a held session this push is the ONLY thing that keeps the panel live: a
+ * hosted process writes no transcript, so none of the signals the watch above
+ * keys on ever moves for it.
  */
 watch(
-  [openDwarfId, () => selectedDwarf.value?.conversation !== undefined],
-  ([dwarfId, isHeld]) => {
-    window.api.setWatchedDwarf(dwarfId === null || isHeld ? null : dwarfId)
+  openDwarfId,
+  (dwarfId) => {
+    window.api.setWatchedDwarf(dwarfId)
   },
   { immediate: true }
 )
@@ -638,12 +653,15 @@ watch(
 function pageBack(): void {
   const dwarfId = openDwarfId.value
   if (dwarfId === null) return
-  const held = selectedDwarf.value?.conversation
+  // Which kind of session this is comes off the FEED since #436 — the rows
+  // themselves say whether they were first-hand — rather than off a field on
+  // the dwarf. Same question, asked of the thing that now answers it.
+  const feed = selectedFeed.value
   void readOlderPage(
     dwarfId,
-    held === undefined
-      ? feedPageCursorOf(pagedMessages.value)
-      : heldFeedPageCursorOf(olderPages.value, held)
+    feed?.source === 'held'
+      ? heldFeedPageCursorOf(olderPages.value, feed.messages)
+      : feedPageCursorOf(pagedMessages.value)
   )
 }
 
@@ -771,11 +789,17 @@ function sendAgain(dwarf: Dwarf, echoId: string): void {
  * Shared by both ways of handing text over since #309 — the composer's send
  * and a retry from a failed bubble — because a retry is the same delivery with
  * the same aftermath.
+ *
+ * AMENDED for #436: a held session used to be skipped here, because the
+ * snapshot already carried its exchange. It is a read like any other now, and
+ * the reason to make it is stronger for a held session than for an observed
+ * one — main records the panel's own message on the session's exchange the
+ * moment the stream takes it (#428), so the row is there to be fetched before
+ * the agent has said anything at all.
  */
 function refreshAfterDelivery(dwarfId: string, delivered: boolean): void {
   if (!delivered) return
   if (openDwarfId.value !== dwarfId) return
-  if (selectedDwarf.value?.conversation !== undefined) return
   void readSelectedFeed(dwarfId)
 }
 
@@ -1295,22 +1319,22 @@ onBeforeUnmount(() => {
         open, which only holds if reopening is a genuine remount.
       -->
       <DwarfMessagePanel
-        v-else-if="drawnDwarf"
-        :key="drawnDwarf.id"
-        :dwarf="drawnDwarf"
+        v-else-if="selectedDwarf"
+        :key="selectedDwarf.id"
+        :dwarf="selectedDwarf"
         :feed="drawnFeed"
         :paging-note="pagingNote ?? undefined"
-        :send-state="messagingState.byDwarfId[drawnDwarf.id]"
-        :echoes="sentEchoes[drawnDwarf.id]"
-        :echo-attachments="sentEchoAttachments[drawnDwarf.id]"
-        :kick-state="kickingState.byDwarfId[drawnDwarf.id]"
-        :answer-state="questionState.byDwarfId[drawnDwarf.id]"
-        @send="sendText(drawnDwarf, $event)"
-        @send-again="sendAgain(drawnDwarf, $event)"
-        @kick="kickDwarf(drawnDwarf)"
-        @answer="answerQuestion(drawnDwarf, $event)"
-        @decide="decidePermission(drawnDwarf, $event)"
-        @open-console="activate(drawnDwarf)"
+        :send-state="messagingState.byDwarfId[selectedDwarf.id]"
+        :echoes="sentEchoes[selectedDwarf.id]"
+        :echo-attachments="sentEchoAttachments[selectedDwarf.id]"
+        :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
+        :answer-state="questionState.byDwarfId[selectedDwarf.id]"
+        @send="sendText(selectedDwarf, $event)"
+        @send-again="sendAgain(selectedDwarf, $event)"
+        @kick="kickDwarf(selectedDwarf)"
+        @answer="answerQuestion(selectedDwarf, $event)"
+        @decide="decidePermission(selectedDwarf, $event)"
+        @open-console="activate(selectedDwarf)"
         @open-path="openPath"
         @open-link="openLink"
         @page-back="pageBack"

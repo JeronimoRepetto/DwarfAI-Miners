@@ -31,8 +31,8 @@ import type { HostedProcessState } from './hostedProcesses'
  * ## What a hosted dwarf says, and the much longer list of what it does not
  *
  * It says: which mine it is in, that the panel observed it, that it is a root,
- * what program it is, that its process has not exited, and the exchange this
- * panel watched go by on its pipes. That is all, and the absences are the
+ * what program it is, that its process has not exited, and the prompt this
+ * panel put on its stdin. That is all, and the absences are the
  * honest half of #194's decision rather than work left undone — there is no
  * transcript behind this dwarf, so nothing could ever report a model, a token
  * count, a silence, an attendance, a blocked reason, an open question, an MCP
@@ -74,7 +74,7 @@ function hostedDwarf(state: HostedProcessState): Dwarf {
     name: state.program,
     status: 'working',
     sessionId: state.hostedId,
-    ...(state.conversation.length === 0 ? {} : { conversation: state.conversation })
+    ...(state.openingPrompt === undefined ? {} : { openingPrompt: state.openingPrompt })
   }
 }
 

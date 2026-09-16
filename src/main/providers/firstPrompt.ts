@@ -33,11 +33,16 @@ import type { FeedExtractor } from './feedWindow'
 /**
  * How much of a transcript's head one read asks for.
  *
- * A prompt is capped at MAX_DWARF_TEXT_CHARS and the providers write the first
- * human turn within the first few records, so this is slack rather than a
- * measurement — wide enough that a verbose session preamble cannot push the
- * opening prompt out of the window, narrow enough that a mistaken read of a
- * huge transcript costs one bounded page.
+ * The launch prompt carries no cap of its own (#431 removed the last one —
+ * `prepareHeldPrompt` and `prepareLaunchPrompt` only trim it), so this is a
+ * judgement rather than a measurement against a known bound: wide enough that
+ * an ordinary prompt and the provider's own preamble both land inside it,
+ * narrow enough that a mistaken read of a huge transcript still costs one
+ * bounded page. A prompt longer than this window is simply not found — the
+ * read answers undefined, which `readFirstPrompt` below already treats as "no
+ * human turn recorded yet" rather than proof this is somebody else's session,
+ * so a launch this large is merely not recognised this way rather than wrongly
+ * refused.
  */
 export const FIRST_PROMPT_HEAD_BYTES = 256 * 1024
 

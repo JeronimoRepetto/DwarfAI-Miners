@@ -9,7 +9,7 @@ import {
   joinFeedPages,
   pagingNoteOf
 } from './feedPages'
-import { HELD_MESSAGE_MAX_CHARS, type FeedMessage } from '../../types'
+import type { FeedMessage } from '../../types'
 
 /**
  * #364: the panel holds the newest page and every OLDER page it has fetched,
@@ -209,15 +209,19 @@ describe('heldFeedPageCursorOf', () => {
     )
   })
 
-  it('skips a reply the retention cap truncated, which is no longer the transcript’s row', () => {
-    // retainHeldMessage caps a held row at HELD_MESSAGE_MAX_CHARS and the
-    // transcript keeps the reply whole, so the two are not the same string and
-    // no normalization makes them one. A cursor the file does not contain comes
-    // back as an empty page claiming the conversation reached its start.
-    const long = said('x'.repeat(HELD_MESSAGE_MAX_CHARS), 'h0')
+  /*
+   * AMENDED for #436. This was "skips a reply the retention cap truncated,
+   * which is no longer the transcript's row": `retainHeldMessage` used to cut
+   * a held row at HELD_MESSAGE_MAX_CHARS while the transcript kept the reply
+   * whole, so a long row could never anchor a page and `seam found` (one row
+   * later) was picked instead. Nothing is cut on the way in any more, so the
+   * long row IS the transcript's own row and anchors like any other.
+   */
+  it('anchors on a long reply now that nothing cuts it on the way in', () => {
+    const long = said('x'.repeat(50_000), 'h0')
     expect(heldFeedPageCursorOf([], [long, said('seam found', 'h1')])).toEqual({
-      timestamp: 'h1',
-      text: 'seam found'
+      timestamp: 'h0',
+      text: 'x'.repeat(50_000)
     })
   })
 

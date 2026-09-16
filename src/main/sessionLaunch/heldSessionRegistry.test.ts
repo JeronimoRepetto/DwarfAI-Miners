@@ -1520,10 +1520,78 @@ describe('HeldSessionRegistry conversation', () => {
 
     // First-hand: this app composed that prompt and handed it over, so it is
     // the one user message it can state without reading anything back.
+    // AMENDED for #436 — the state grew two fields the poll needs now: the
+    // retention counter the watched-feed signal reads, and the launch receipt
+    // the board stamps.
     expect(registry.conversationState('sess-1')).toEqual({
       held: true,
-      conversation: [{ role: 'user', text: 'dig here', timestamp: AT }]
+      conversation: [{ role: 'user', text: 'dig here', timestamp: AT }],
+      revision: 1,
+      openingPrompt: { role: 'user', text: 'dig here', timestamp: AT }
     })
+  })
+
+  /*
+   * The receipt has to outlive the rows (#436): once the retention bound is
+   * reached the oldest row goes, and a launch receipt read off `conversation[0]`
+   * would expire on exactly the sessions that say the most.
+   */
+  it('keeps the opening prompt after the retained exchange has dropped it', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
+    port.reportSessionId(0, 'sess-1')
+    for (let index = 0; index < HELD_CONVERSATION_LIMIT + 5; index++) {
+      port.reportMessage(0, 'assistant', `line ${index}`)
+    }
+
+    const state = registry.conversationState('sess-1')
+
+    expect(state.held ? state.conversation.some((row) => row.text === 'dig here') : true).toBe(
+      false
+    )
+    expect(state.held ? state.openingPrompt?.text : undefined).toBe('dig here')
+  })
+
+  /*
+   * The signal the poll re-reads a watched held feed on (#436). A counter
+   * rather than anything derived from the rows, because at the bound the list
+   * stops growing — and because a hosted process has no transcript, so nothing
+   * else on its dwarf ever moves.
+   */
+  it('counts what it has retained, and does not count what it threw away', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig here'
+    })
+    port.reportSessionId(0, 'sess-1')
+    const revisionOf = (): number => {
+      const state = registry.conversationState('sess-1')
+      return state.held ? state.revision : -1
+    }
+    expect(revisionOf()).toBe(1)
+
+    port.reportMessage(0, 'assistant', 'Found the seam.')
+    expect(revisionOf()).toBe(2)
+
+    // A message with nothing in it is retained by nobody, so nothing moved and
+    // the poll has no reason to re-read.
+    port.reportMessage(0, 'assistant', '   ')
+    expect(revisionOf()).toBe(2)
+
+    for (let index = 0; index < HELD_CONVERSATION_LIMIT + 5; index++) {
+      port.reportMessage(0, 'assistant', `line ${index}`)
+    }
+    expect(revisionOf()).toBe(HELD_CONVERSATION_LIMIT + 7)
   })
 
   it('keeps every message the stream carried, in the order it carried them', async () => {
@@ -1582,13 +1650,18 @@ describe('HeldSessionRegistry conversation', () => {
       prompt: 'dig here'
     })
     port.reportSessionId(0, 'sess-1')
-    for (let index = 0; index < 100; index++) port.reportMessage(0, 'assistant', `line ${index}`)
+    // AMENDED for #436 (was a hardcoded 100, comfortably past the old bound of
+    // twelve): HELD_CONVERSATION_LIMIT is 200 now, so the loop has to outrun
+    // whatever that number is rather than a number that used to be enough.
+    const messagesSent = HELD_CONVERSATION_LIMIT + 5
+    for (let index = 0; index < messagesSent; index++)
+      port.reportMessage(0, 'assistant', `line ${index}`)
 
     const state = registry.conversationState('sess-1')
     expect(state.held ? state.conversation : []).toHaveLength(HELD_CONVERSATION_LIMIT)
     // The prompt has aged out along with everything else: the bound is on the
     // whole list, not on "the prompt plus the last N".
-    expect(state.held ? state.conversation.at(-1)!.text : '').toBe('line 99')
+    expect(state.held ? state.conversation.at(-1)!.text : '').toBe(`line ${messagesSent - 1}`)
   })
 
   it('retains nothing for a session this panel does not hold', async () => {

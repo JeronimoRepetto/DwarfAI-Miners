@@ -28,8 +28,10 @@ import {
   messageTooLongReason,
   type DwarfAttachment,
   type DwarfAttachmentPick,
+  type DwarfFeedResult,
   type DwarfPermissionRequest,
-  type DwarfSendState
+  type DwarfSendState,
+  type FeedMessage
 } from '../../types'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
 
@@ -72,10 +74,25 @@ const HELD = [
   { role: 'assistant' as const, text: 'Found the seam.', timestamp: '2026-09-03T09:00:01.000Z' }
 ]
 
+/**
+ * The exchange of a session this panel HOLDS, as `Runtime.dwarfFeed` answers it
+ * since #436.
+ *
+ * These rows used to reach the component on `Dwarf.conversation`, which is why
+ * nearly every case in this file used to hand them to the dwarf factory. They
+ * come down the one feed channel now, marked first-hand, and `heldFeed` is that
+ * one word: `source: 'held'` is the whole difference between the note this
+ * panel draws over them and the one it draws over a transcript tail.
+ */
+function heldFeed(messages: readonly FeedMessage[]): DwarfFeedResult {
+  return { readable: true, messages: [...messages], source: 'held' }
+}
+
 function panel(props: Record<string, unknown> = {}) {
   return mount(DwarfMessagePanel, {
     props: {
-      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD }),
+      dwarf: defaultDwarf({ textDelivery: 'terminal' }),
+      feed: heldFeed(HELD),
       ...props
     }
   })
@@ -104,14 +121,14 @@ function heightOf(wrapper: ReturnType<typeof panel>): number {
 
 describe('DwarfMessagePanel shape', () => {
   it('names the selected dwarf, as the design puts it at the top left', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ name: 'Durin', conversation: HELD }) })
+    const wrapper = panel({ dwarf: defaultDwarf({ name: 'Durin' }) })
     expect(wrapper.find('.panel-agent').text()).toBe('Durin')
   })
 
   it("draws the dwarf's own portrait beside what it said", () => {
-    const worker = panel({ dwarf: defaultDwarf({ role: 'worker', conversation: HELD }) })
-    const worker2 = panel({ dwarf: defaultDwarf({ role: 'worker2', conversation: HELD }) })
-    const foreman = panel({ dwarf: defaultDwarf({ role: 'foreman', conversation: HELD }) })
+    const worker = panel({ dwarf: defaultDwarf({ role: 'worker' }) })
+    const worker2 = panel({ dwarf: defaultDwarf({ role: 'worker2' }) })
+    const foreman = panel({ dwarf: defaultDwarf({ role: 'foreman' }) })
     expect(worker.find('.message.is-agent .portrait').attributes('src')).toContain('worker-face')
     expect(worker2.find('.message.is-agent .portrait').attributes('src')).toContain('worker2-face')
     expect(foreman.find('.message.is-agent .portrait').attributes('src')).toContain('foreman')
@@ -123,7 +140,7 @@ describe('DwarfMessagePanel shape', () => {
     // rank and the alt text is the name — the design draws no per-message
     // label, and inventing one is what `ui-rebuild` forbids.
     const wrapper = panel({
-      dwarf: defaultDwarf({ role: 'worker', name: 'survey the seam', conversation: undefined }),
+      dwarf: defaultDwarf({ role: 'worker', name: 'survey the seam' }),
       feed: {
         readable: true,
         messages: [
@@ -152,7 +169,7 @@ describe('DwarfMessagePanel shape', () => {
     // session the panel launched opens with the user's submitted prompt, and no
     // issuer is what says so.
     const wrapper = panel({
-      dwarf: defaultDwarf({ role: 'foreman', name: 'coordinator', conversation: HELD })
+      dwarf: defaultDwarf({ role: 'foreman', name: 'coordinator' })
     })
     await wrapper.vm.$nextTick()
 
@@ -189,7 +206,7 @@ describe('DwarfMessagePanel shape', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         name: 'Scout',
-        conversation: HELD,
+
         workplace: { path: 'C:\\Code\\Anvil-worktrees\\forge', branch: 'feat/console-paste' }
       })
     })
@@ -201,7 +218,6 @@ describe('DwarfMessagePanel shape', () => {
   it('names the worktree s folder when its HEAD is detached and carries no branch', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
-        conversation: HELD,
         workplace: { path: 'C:\\Code\\Anvil-worktrees\\forge' }
       })
     })
@@ -267,7 +283,7 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
   ]
 
   it('draws a tool call as its own muted line rather than a bubble', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.exists()).toBe(true)
@@ -275,13 +291,13 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
   })
 
   it('carries the full text as the title, for the truncated line to expand on hover', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
     expect(wrapper.find('.activity-line').attributes('title')).toBe('Ran pnpm test')
   })
 
   it('draws no portrait and no bubble surface for a tool-call line', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.find('.portrait').exists()).toBe(false)
@@ -289,7 +305,7 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
   })
 
   it('still draws the ordinary bubbles either side of the tool-call line', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     expect(wrapper.findAll('.bubble').map((bubble) => bubble.text())).toEqual([
       'dig here',
       'Tests pass.'
@@ -297,14 +313,14 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
   })
 
   it('counts the tool-call line as one row in the conversation, same as a bubble', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
     expect(wrapper.findAll('.bubble')).toHaveLength(2)
     expect(wrapper.findAll('.activity-line')).toHaveLength(1)
   })
 
   it('draws a run line as a plain paragraph rather than a clickable control', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: CONVERSATION }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
     expect(wrapper.find('.activity-line').element.tagName).toBe('P')
   })
@@ -337,7 +353,7 @@ describe('DwarfMessagePanel path-opening lines (#279)', () => {
   ]
 
   it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_EDIT) })
     await openRun(wrapper)
     const line = wrapper.find('.activity-line')
     expect(line.element.tagName).toBe('BUTTON')
@@ -346,20 +362,20 @@ describe('DwarfMessagePanel path-opening lines (#279)', () => {
   })
 
   it('draws a read line the same way an edit line is drawn', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_READ }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_READ) })
     await openRun(wrapper)
     expect(wrapper.find('.activity-line').element.tagName).toBe('BUTTON')
   })
 
   it("emits the activity's own target on click, not the display text", async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_EDIT) })
     await openRun(wrapper)
     await wrapper.find('.activity-line').trigger('click')
     expect(wrapper.emitted('open-path')).toEqual([['src/main/index.ts']])
   })
 
   it('still carries the full text as the title, same as a plain activity line', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_EDIT }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_EDIT) })
     await openRun(wrapper)
     expect(wrapper.find('.activity-line').attributes('title')).toBe('Edited src/main/index.ts')
   })
@@ -397,14 +413,14 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
   ]
 
   it('draws one disclosure row for the whole run, and none of its lines, until it is pressed', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
     expect(wrapper.findAll('.activity-disclosure')).toHaveLength(1)
     expect(wrapper.findAll('.activity-line')).toHaveLength(0)
     expect(wrapper.findAll('.bubble')).toHaveLength(2)
   })
 
   it('is a button carrying its own state, so Enter and Space reach it like any other control', () => {
-    const row = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) }).find(
+    const row = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) }).find(
       '.activity-disclosure'
     )
     expect(row.element.tagName).toBe('BUTTON')
@@ -413,7 +429,7 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
   })
 
   it('counts the run and names its last call, once a bubble has closed it', () => {
-    const row = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) }).find(
+    const row = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) }).find(
       '.activity-disclosure'
     )
     expect(row.text()).toBe('3 steps — Edited src/main/index.ts')
@@ -422,7 +438,8 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
 
   it('reads Working... while the run is the last thing a live session has done', () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ status: 'working', conversation: RUN_OF_THREE.slice(0, 4) })
+      dwarf: defaultDwarf({ status: 'working' }),
+      feed: heldFeed(RUN_OF_THREE.slice(0, 4))
     })
     expect(wrapper.find('.activity-disclosure').text()).toBe('Working...')
   })
@@ -431,13 +448,14 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
     // Nothing further can join it, so the honest label is the finished one —
     // a "Working..." row on an ended session claims work still going on.
     const wrapper = panel({
-      dwarf: defaultDwarf({ status: 'leaving', conversation: RUN_OF_THREE.slice(0, 4) })
+      dwarf: defaultDwarf({ status: 'leaving' }),
+      feed: heldFeed(RUN_OF_THREE.slice(0, 4))
     })
     expect(wrapper.find('.activity-disclosure').text()).toBe('3 steps — Edited src/main/index.ts')
   })
 
   it('opens in place to the exact lines of the run, in order, on a press', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
     await wrapper.find('.activity-disclosure').trigger('click')
 
     expect(wrapper.findAll('.activity-line').map((line) => line.text())).toEqual([
@@ -449,7 +467,7 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
   })
 
   it('collapses again on a second press', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
     await wrapper.find('.activity-disclosure').trigger('click')
     await wrapper.find('.activity-disclosure').trigger('click')
 
@@ -458,7 +476,7 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
   })
 
   it("still emits an opened line's own target from inside an expanded run", async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: RUN_OF_THREE }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
     await wrapper.find('.activity-disclosure').trigger('click')
     await wrapper.findAll('.activity-line.is-openable')[1]!.trigger('click')
 
@@ -467,17 +485,16 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
 
   it('keeps each run its own, so opening one leaves the other closed', async () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({
-        conversation: [
-          ...RUN_OF_THREE,
-          {
-            role: 'assistant' as const,
-            text: 'Searched TODO',
-            timestamp: 't5',
-            activity: { kind: 'search' as const, target: 'TODO' }
-          }
-        ]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([
+        ...RUN_OF_THREE,
+        {
+          role: 'assistant' as const,
+          text: 'Searched TODO',
+          timestamp: 't5',
+          activity: { kind: 'search' as const, target: 'TODO' }
+        }
+      ])
     })
     const rows = wrapper.findAll('.activity-disclosure')
     expect(rows).toHaveLength(2)
@@ -518,7 +535,7 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
   ]
 
   it('leaves the list exactly where the reader had it when a run is opened', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_RUN }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_RUN) })
     const list = wrapper.find('.panel-conversation').element
     growingScrollHeight(list)
     Object.defineProperty(list, 'clientHeight', { value: 30, configurable: true })
@@ -532,7 +549,7 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
   })
 
   it('does not yank a reader who scrolled up when a collapsed run grows', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: WITH_RUN }) })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_RUN) })
     const list = wrapper.find('.panel-conversation').element
     growingScrollHeight(list)
     Object.defineProperty(list, 'clientHeight', { value: 30, configurable: true })
@@ -540,17 +557,16 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
     list.scrollTop = 5 // 80 - 30 - 5 = 45, well past the tolerance: scrolled up.
 
     await wrapper.setProps({
-      dwarf: defaultDwarf({
-        conversation: [
-          ...WITH_RUN,
-          {
-            role: 'assistant',
-            text: 'Edited src/main/index.ts',
-            timestamp: 't2',
-            activity: { kind: 'edit', target: 'src/main/index.ts' }
-          }
-        ]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([
+        ...WITH_RUN,
+        {
+          role: 'assistant',
+          text: 'Edited src/main/index.ts',
+          timestamp: 't2',
+          activity: { kind: 'edit', target: 'src/main/index.ts' }
+        }
+      ])
     })
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -599,7 +615,7 @@ describe('DwarfMessagePanel scroll (#195)', () => {
     // empty state now draws its own placeholder row — the dwarf's portrait,
     // no conversation yet — so `showLatest` lands on THAT row's height first;
     // there is still no real conversation to have scrolled past.
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: undefined }), feed: undefined })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: undefined })
     const list = wrapper.find('.panel-conversation').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
@@ -622,7 +638,7 @@ describe('DwarfMessagePanel scroll (#195)', () => {
   })
 
   it('sticks to the bottom when a new row arrives and the reader was already there', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: HELD }) })
+    const wrapper = panel({ dwarf: defaultDwarf() })
     const list = wrapper.find('.panel-conversation').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
@@ -630,9 +646,8 @@ describe('DwarfMessagePanel scroll (#195)', () => {
     list.scrollTop = 50 // HELD has 2 rows: 80 - 30 - 50 = 0, exactly at the bottom.
 
     await wrapper.setProps({
-      dwarf: defaultDwarf({
-        conversation: [...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }])
     })
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -641,7 +656,7 @@ describe('DwarfMessagePanel scroll (#195)', () => {
   })
 
   it("keeps the reader's own scroll position when a row arrives below where they had scrolled up to", async () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: HELD }) })
+    const wrapper = panel({ dwarf: defaultDwarf() })
     const list = wrapper.find('.panel-conversation').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
@@ -649,9 +664,8 @@ describe('DwarfMessagePanel scroll (#195)', () => {
     list.scrollTop = 5 // 80 - 30 - 5 = 45, well past the tolerance: scrolled up.
 
     await wrapper.setProps({
-      dwarf: defaultDwarf({
-        conversation: [...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }])
     })
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -670,9 +684,8 @@ describe('DwarfMessagePanel scroll (#195)', () => {
 describe('DwarfMessagePanel height', () => {
   it("opens at the height its dwarf's latest message calls for", () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({
-        conversation: [{ role: 'assistant', text: LONG_REPLY, timestamp: 'now' }]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([{ role: 'assistant', text: LONG_REPLY, timestamp: 'now' }])
     })
     expect(heightOf(wrapper)).toBe(initialPanelHeight(LONG_REPLY))
     expect(heightOf(wrapper)).toBeGreaterThan(MESSAGE_PANEL_MIN_HEIGHT)
@@ -680,17 +693,17 @@ describe('DwarfMessagePanel height', () => {
 
   it('never resizes itself when a new message arrives', async () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ conversation: [{ role: 'assistant', text: 'ok', timestamp: 'now' }] })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([{ role: 'assistant', text: 'ok', timestamp: 'now' }])
     })
     const opened = heightOf(wrapper)
 
     await wrapper.setProps({
-      dwarf: defaultDwarf({
-        conversation: [
-          { role: 'assistant', text: 'ok', timestamp: 'now' },
-          { role: 'assistant', text: LONG_REPLY, timestamp: 'later' }
-        ]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([
+        { role: 'assistant', text: 'ok', timestamp: 'now' },
+        { role: 'assistant', text: LONG_REPLY, timestamp: 'later' }
+      ])
     })
 
     expect(heightOf(wrapper)).toBe(opened)
@@ -700,12 +713,12 @@ describe('DwarfMessagePanel height', () => {
     // The panel is mounted per selection, so "reopening" is a fresh mount —
     // which is the whole reason the height rule is a pure function.
     const short = panel({
-      dwarf: defaultDwarf({ conversation: [{ role: 'assistant', text: 'ok', timestamp: 'now' }] })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([{ role: 'assistant', text: 'ok', timestamp: 'now' }])
     })
     const long = panel({
-      dwarf: defaultDwarf({
-        conversation: [{ role: 'assistant', text: LONG_REPLY, timestamp: 'now' }]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([{ role: 'assistant', text: LONG_REPLY, timestamp: 'now' }])
     })
     expect(heightOf(long)).toBeGreaterThan(heightOf(short))
   })
@@ -945,7 +958,7 @@ describe('DwarfMessagePanel input', () => {
     // #192: the channel the session HAD is still on the dwarf, frozen by the
     // grace window; the box must read the capability model, not the field.
     const wrapper = panel({
-      dwarf: defaultDwarf({ textDelivery: 'terminal', status: 'leaving', conversation: HELD })
+      dwarf: defaultDwarf({ textDelivery: 'terminal', status: 'leaving' })
     })
     const input = wrapper.find('.panel-input')
     expect(input.attributes('disabled')).toBeDefined()
@@ -1047,7 +1060,7 @@ describe('DwarfMessagePanel input', () => {
 describe('DwarfMessagePanel controls', () => {
   const kickable = defaultDwarf({
     textDelivery: 'terminal',
-    conversation: HELD,
+
     capabilities: {
       sendText: 'terminal',
       cancel: 'terminal',
@@ -1262,7 +1275,7 @@ describe('DwarfMessagePanel question', () => {
 
   function asking(props: Record<string, unknown> = {}) {
     return panel({
-      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD, pendingQuestion }),
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion }),
       ...props
     })
   }
@@ -1287,7 +1300,7 @@ describe('DwarfMessagePanel question', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         textDelivery: 'terminal',
-        conversation: HELD,
+
         pendingQuestion: { ...pendingQuestion, channel: 'terminal' as const, questionCount: 2 }
       })
     })
@@ -1365,7 +1378,7 @@ describe('DwarfMessagePanel permission (#203)', () => {
 
   function withPermission(props: Record<string, unknown> = {}) {
     return panel({
-      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD, pendingPermission }),
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingPermission }),
       ...props
     })
   }
@@ -1397,7 +1410,7 @@ describe('DwarfMessagePanel permission (#203)', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         textDelivery: 'terminal',
-        conversation: HELD,
+
         pendingPermission,
         pendingQuestion
       })
@@ -1434,7 +1447,7 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
     attached = mount(DwarfMessagePanel, {
       attachTo: document.body,
       props: {
-        dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD }),
+        dwarf: defaultDwarf({ textDelivery: 'terminal' }),
         ...props
       }
     })
@@ -1455,7 +1468,7 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
 
   it('never focuses a composer the panel is already explaining as dead (#217)', async () => {
     const wrapper = attachedPanel({
-      dwarf: defaultDwarf({ textDelivery: undefined, conversation: HELD })
+      dwarf: defaultDwarf({ textDelivery: undefined })
     })
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -1472,14 +1485,14 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
       options: [{ label: 'Postgres' }, { label: 'SQLite' }]
     }
     const wrapper = attachedPanel({
-      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD, pendingQuestion })
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion })
     })
     await wrapper.vm.$nextTick()
     // Sanity: the card, not the composer, holds the slot while the ask is open.
     expect(wrapper.find('.panel-input').exists()).toBe(false)
 
     await wrapper.setProps({
-      dwarf: defaultDwarf({ textDelivery: 'terminal', conversation: HELD })
+      dwarf: defaultDwarf({ textDelivery: 'terminal' })
     })
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
@@ -1524,7 +1537,7 @@ describe('DwarfMessagePanel honesty', () => {
   })
 
   it('says it is still reading rather than that there is nothing', () => {
-    const wrapper = panel({ dwarf: defaultDwarf() })
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: undefined })
     expect(wrapper.find('.panel-empty').text()).toBe(READING_NOTE)
   })
 })
@@ -1540,7 +1553,7 @@ describe('DwarfMessagePanel honesty', () => {
 describe('DwarfMessagePanel empty portrait (#332)', () => {
   it("draws the dwarf's own portrait beside the empty-state note", () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ conversation: undefined }),
+      dwarf: defaultDwarf(),
       feed: { readable: true, messages: [] }
     })
     const row = wrapper.find('.message.is-agent')
@@ -1549,7 +1562,7 @@ describe('DwarfMessagePanel empty portrait (#332)', () => {
   })
 
   it('draws no empty row once the conversation has messages', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ conversation: HELD }) })
+    const wrapper = panel({ dwarf: defaultDwarf() })
     expect(wrapper.find('.panel-empty').exists()).toBe(false)
     expect(wrapper.findAll('.message')).toHaveLength(HELD.length)
   })
@@ -1560,7 +1573,7 @@ describe('DwarfMessagePanel empty portrait (#332)', () => {
     ['foreman', 'foreman-face']
   ] as const)("shows %s's own face, never the message's", (role, needle) => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ role, conversation: undefined }),
+      dwarf: defaultDwarf({ role }),
       feed: { readable: true, messages: [] }
     })
     expect(wrapper.find('.message.is-agent .portrait').attributes('src')).toContain(needle)
@@ -1576,8 +1589,7 @@ describe('DwarfMessagePanel empty portrait (#332)', () => {
 describe('DwarfMessagePanel awaiting approval', () => {
   const asked = defaultDwarf({
     waitingReason: 'approval',
-    textDelivery: 'terminal',
-    conversation: HELD
+    textDelivery: 'terminal'
   })
 
   it('says where the dialog is, above the composer', () => {
@@ -1598,7 +1610,7 @@ describe('DwarfMessagePanel awaiting approval', () => {
   })
 
   it('says nothing for a dwarf that is merely waiting', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ status: 'waiting', conversation: HELD }) })
+    const wrapper = panel({ dwarf: defaultDwarf({ status: 'waiting' }) })
     expect(wrapper.find('.panel-approval').exists()).toBe(false)
   })
 
@@ -1608,7 +1620,7 @@ describe('DwarfMessagePanel awaiting approval', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         waitingReason: 'approval',
-        conversation: HELD,
+
         pendingPermission: {
           toolUseId: 'toolu_09',
           toolName: 'Bash',
@@ -1647,7 +1659,7 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
     return defaultDwarf({
       waitingReason: 'approval',
       textDelivery: 'terminal',
-      conversation: HELD,
+
       pendingPermission: observedPermission,
       ...extra
     })
@@ -1670,8 +1682,7 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         waitingReason: 'approval',
-        textDelivery: 'terminal',
-        conversation: HELD
+        textDelivery: 'terminal'
       })
     })
     expect(wrapper.find('.panel-approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
@@ -1837,7 +1848,7 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     // A dwarf whose session has ended, or one with no channel at all: sending
     // again would promise a delivery the capability model has already refused.
     const wrapper = panel({
-      dwarf: defaultDwarf({ textDelivery: undefined, conversation: HELD }),
+      dwarf: defaultDwarf({ textDelivery: undefined }),
       echoes: [echo({ state: { phase: 'failed', error: 'nope' } })]
     })
     expect(wrapper.find('.bubble-retry').exists()).toBe(false)
@@ -1852,14 +1863,11 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     // #294 groups consecutive activity rows and labels an open run
     // "Working...". A message somebody typed must not close that run.
     const wrapper = panel({
-      dwarf: defaultDwarf({
-        textDelivery: 'terminal',
-        conversation: [
-          { role: 'assistant', text: 'Ran pnpm test', timestamp: 't0' },
-          { role: 'assistant', text: 'Edited src/foo.ts', timestamp: 't1' }
-        ]
-      }),
-      feed: undefined,
+      dwarf: defaultDwarf({ textDelivery: 'terminal' }),
+      feed: heldFeed([
+        { role: 'assistant', text: 'Ran pnpm test', timestamp: 't0' },
+        { role: 'assistant', text: 'Edited src/foo.ts', timestamp: 't1' }
+      ]),
       echoes: [echo()]
     })
     expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
@@ -1939,9 +1947,8 @@ describe('DwarfMessagePanel markdown (#347)', () => {
 
   function withReply(text: string, role: 'assistant' | 'user' = 'assistant') {
     return panel({
-      dwarf: defaultDwarf({
-        conversation: [{ role, text, timestamp: '2026-09-09T09:00:00.000Z' }]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([{ role, text, timestamp: '2026-09-09T09:00:00.000Z' }])
     })
   }
 
@@ -1990,16 +1997,15 @@ describe('DwarfMessagePanel markdown (#347)', () => {
    */
   it('leaves an activity line as the literal text it always was', async () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({
-        conversation: [
-          {
-            role: 'assistant',
-            text: 'Edited src/_internal_/index.ts',
-            timestamp: 't0',
-            activity: { kind: 'edit', target: 'src/_internal_/index.ts' }
-          }
-        ]
-      })
+      dwarf: defaultDwarf(),
+      feed: heldFeed([
+        {
+          role: 'assistant',
+          text: 'Edited src/_internal_/index.ts',
+          timestamp: 't0',
+          activity: { kind: 'edit', target: 'src/_internal_/index.ts' }
+        }
+      ])
     })
     await wrapper.find('.activity-disclosure').trigger('click')
     const line = wrapper.find('.activity-line')
@@ -2057,7 +2063,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
 
   async function observedPanel() {
     const wrapper = panel({
-      dwarf: defaultDwarf({ conversation: undefined }),
+      dwarf: defaultDwarf(),
       feed: { readable: true, messages: OBSERVED }
     })
     const list = wrapper.find('.panel-conversation').element
@@ -2120,7 +2126,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
 
   it('says the line it was given in front of the note it already carries', () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ conversation: undefined }),
+      dwarf: defaultDwarf(),
       feed: { readable: true, messages: OBSERVED },
       pagingNote: CONVERSATION_START_NOTE
     })
@@ -2133,7 +2139,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
 
   it('says only its own note when nothing has been asked for', () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ conversation: undefined }),
+      dwarf: defaultDwarf(),
       feed: { readable: true, messages: OBSERVED }
     })
     expect(wrapper.find('.panel-note').text()).toBe(OBSERVED_NOTE)
@@ -2141,7 +2147,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
 
   it('carries the whole sentence into the list’s own label, for a reader who cannot see it', () => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ conversation: undefined }),
+      dwarf: defaultDwarf(),
       feed: { readable: true, messages: OBSERVED },
       pagingNote: READING_OLDER_NOTE
     })

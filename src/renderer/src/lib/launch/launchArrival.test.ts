@@ -5,17 +5,20 @@ import { launchedDwarfIn } from './launchArrival'
 
 const PROMPT = 'dig the east gallery'
 
-function dwarf(id: string, conversation?: Dwarf['conversation']): Dwarf {
+// AMENDED for #436: the receipt was `conversation[0]`, the first row of the
+// whole retained exchange, and is now the one row that still rides the
+// snapshot. Every case below asks the same question of the same evidence.
+function dwarf(id: string, openingPrompt?: Dwarf['openingPrompt']): Dwarf {
   return defaultDwarf({
     id,
     name: id,
     sessionId: id,
-    ...(conversation === undefined ? {} : { conversation })
+    ...(openingPrompt === undefined ? {} : { openingPrompt })
   })
 }
 
 function held(id: string, first: string, role: 'user' | 'assistant' = 'user'): Dwarf {
-  return dwarf(id, [{ role, text: first, timestamp: '2026-01-01T00:00:00Z' }])
+  return dwarf(id, { role, text: first, timestamp: '2026-01-01T00:00:00Z' })
 }
 
 function mine(dwarfs: Dwarf[]): Mine {

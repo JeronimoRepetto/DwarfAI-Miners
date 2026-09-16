@@ -143,11 +143,13 @@ What is in it:
   talking. When there is nothing older left, the line under the composer says so and the panel
   stops looking; a session whose transcript cannot be read back at all says that instead, which is
   a different thing from having reached the beginning; and a transcript that goes on past the
-  furthest back the panel is willing to read says a third thing — that this is as far as it
-  reaches, and the rest is in the session's own terminal. All three stop the asking.
-  A session you **started from the Add Panel** pages back the same way and by the same twelve, out
-  of the transcript it writes like any other session — the panel holds the last twelve things said
-  first-hand, and scrolling past them reads the rest off disk.
+  furthest back the panel is willing to read — 8 MiB of the file, read in growing steps — says a
+  third thing: that this is as far as it reaches, and the rest is in the session's own terminal.
+  All three stop the asking.
+  A session you **started from the Add Panel** pages back the same way, out of the transcript it
+  writes like any other session. What you see first is first-hand — this app watched those words
+  go by rather than reading them back off disk — and scrolling past the newest twelve reads the
+  rest off disk exactly as it does for a session you did not start yourself.
 - **Markdown, in agent and person bubbles alike.** Paragraphs, emphasis, lists, block quotes,
   inline code, fenced code, links, tables, strikethrough and horizontal rules draw as such instead
   of the raw `**`, `-`, backtick, `|` and `~~` characters, with a heading drawn as a bold paragraph

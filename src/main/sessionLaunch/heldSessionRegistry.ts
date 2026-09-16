@@ -23,6 +23,7 @@ import {
   permissionToWire,
   prepareHeldPrompt,
   resolveAnswers,
+  retainedSomething,
   retainHeldMessage,
   type HeldActivityState,
   type HeldAnswer,
@@ -250,8 +251,33 @@ interface HeldRecord {
    * first and bounded by `retainHeldMessage`. Seeded with the prompt this app
    * sent, which is the one message it knows first-hand without reading
    * anything: everything after it is what the stream itself carried.
+   *
+   * Main's own memory since #436, and no longer a slice of the wire: the panel
+   * asks for it through `Runtime.dwarfFeed`, which answers the newest
+   * `FEED_LIMIT` rows of it.
    */
   conversation: FeedMessage[]
+  /**
+   * How many messages this record has RETAINED, ever (#436) — never how many it
+   * is holding, which stops moving the moment the bound is reached.
+   *
+   * The feed signal for a watched held dwarf, and a counter rather than a
+   * reading of the rows for the reason `HeldConversationState` gives: a hosted
+   * process writes no transcript, so nothing else on its dwarf ever moves, and
+   * a long-running session at its retention bound would otherwise stop telling
+   * the poll that it had said anything.
+   */
+  revision: number
+  /**
+   * The prompt this app sent to start the session — the launch receipt the
+   * board carries (#191, #436).
+   *
+   * Held apart from `conversation[0]` because that row expires: once the
+   * retention bound is reached the oldest row goes, and the handover this is
+   * evidence for would start failing on the sessions that say the most.
+   * Absent for a launch that sent no words at all.
+   */
+  openingPrompt?: FeedMessage
 }
 
 /**
@@ -413,6 +439,10 @@ export class HeldSessionRegistry {
         onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
         onEnd: (reason) => this.finish(key, reason)
       })
+      // Seeded through the same retention rule every later message goes
+      // through, so the receipt below is the row the store actually kept —
+      // redacted, trimmed, and absent when the prompt was nothing at all.
+      const seeded = retainHeldMessage([], this.message('user', prompt))
       this.held.set(key, {
         mineId: request.mineId,
         minePath: request.minePath,
@@ -434,7 +464,9 @@ export class HeldSessionRegistry {
         // `queue` below, rather than waited for on a stream that never echoes
         // it back. See `queue`'s own comment for the measurement that makes
         // that necessary.
-        conversation: retainHeldMessage([], this.message('user', prompt))
+        conversation: seeded,
+        revision: seeded.length,
+        ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] })
       })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
@@ -555,12 +587,17 @@ export class HeldSessionRegistry {
    * The exchange the panel may draw for this session (#159) — `held: false`
    * for one this panel does not hold, which is the reading that leaves the
    * panel to read an observed session's words off its own transcript instead.
-   * See HeldConversationState and stampHeldConversation.
+   * See HeldConversationState and stampHeldOpeningPrompt.
    */
   conversationState(sessionId: string): HeldConversationState {
     const record = this.recordFor(sessionId)
     if (record === undefined) return { held: false }
-    return { held: true, conversation: record.conversation }
+    return {
+      held: true,
+      conversation: record.conversation,
+      revision: record.revision,
+      ...(record.openingPrompt === undefined ? {} : { openingPrompt: record.openingPrompt })
+    }
   }
 
   /**
@@ -1042,6 +1079,14 @@ export class HeldSessionRegistry {
    * record directly) and a message the PANEL itself sent (`queue`, which
    * already holds the record) go through, so both write `retainHeldMessage`'s
    * one rule the same way.
+   *
+   * `revision` moves only when something was actually RETAINED (#436). The two
+   * cases are told apart by what came back rather than by re-deriving the
+   * retention rule here: a message trimmed away to nothing returns the kept
+   * list with the same length and the same last row, while an append at the
+   * bound returns the same length and a DIFFERENT last row. A signal that
+   * counted the empty case would make the poll re-read a feed nothing had
+   * changed, once per whitespace-only line a hosted process printed.
    */
   private appendMessage(
     record: HeldRecord,
@@ -1049,7 +1094,9 @@ export class HeldSessionRegistry {
     text: string,
     activity?: FeedActivity
   ): void {
-    record.conversation = retainHeldMessage(record.conversation, this.message(role, text, activity))
+    const before = record.conversation
+    record.conversation = retainHeldMessage(before, this.message(role, text, activity))
+    if (retainedSomething(before, record.conversation)) record.revision++
   }
 
   /** One message stamped with this host's own clock — the only honest time there is. */
