@@ -1,26 +1,22 @@
 /**
- * Console input injection on Windows, v1: bring the hosting terminal forward
- * (see focus.ts) and synthesize the keystrokes with `SendKeys`.
+ * KEYSTROKES on Windows: bring the hosting terminal forward (see focus.ts) and
+ * synthesize them with `SendKeys`.
  *
- * SendKeys is the pragmatic mechanism rather than the ideal one — it types into
- * whatever window is in the foreground, so it depends on the focus step having
- * succeeded. It lives behind TextDeliveryPort precisely so a stricter
- * AttachConsole/WriteConsoleInput implementation can replace it later without
- * anything above noticing. Command construction is pure and unit-tested; only
- * running PowerShell is integration territory.
+ * SendKeys types into whatever window is in the foreground, so it depends on
+ * the focus step having succeeded — which is why #371 took TEXT off it
+ * entirely. A message and a permission digit are written into the console the
+ * session's pid names now (consoleInputWrite.ts), the replacement this header
+ * used to anticipate. What is left here is what a pid write cannot express: the
+ * keys that carry no character at all — Escape, Ctrl+C, the picker's right
+ * arrow — each a VIRTUAL KEY, and none of them measured as an input record.
+ *
+ * With the text builders went the SendKeys escaping (`escapeSendKeys`,
+ * `powerShellLiteral` and the four quote codepoints it had to double). Every
+ * command below carries a measured keyname or a guarded digit and no
+ * user-authored text at all, so there is nothing left to escape; the history
+ * holds them if a text keystroke is ever needed again. Command construction is
+ * pure and unit-tested; only running PowerShell is integration territory.
  */
-
-/**
- * The characters SendKeys reads as syntax rather than text: braces delimit key
- * names ({ENTER}), and +^%~()[] carry modifier/grouping meaning. Each is
- * escaped by wrapping it in braces, in a SINGLE pass — escaping them one
- * character at a time would re-escape the braces the earlier passes produced.
- */
-const SENDKEYS_SYNTAX = /[{}+^%~()[\]]/g
-
-export function escapeSendKeys(text: string): string {
-  return text.replace(SENDKEYS_SYNTAX, (character) => `{${character}}`)
-}
 
 /**
  * Flatten a message to one line. A console has no way to accept a literal
@@ -32,91 +28,14 @@ export function toConsoleLine(text: string): string {
 }
 
 /**
- * Every codepoint PowerShell's tokenizer will accept as a single-quote
- * delimiter. It normalises the three typographic variants to U+0027 while
- * parsing, so all four close a literal and all four must be doubled.
- *
- * Escaping only U+0027 was an arbitrary-execution hole: a curly apostrophe
- * closed the string and everything after it parsed as code. It needed no
- * hostile intent either — word processors and phone keyboards emit U+2019 by
- * default, so ordinary pasted prose reached it.
- */
-const POWERSHELL_QUOTES = ["'", '‘', '’', '‚', '‛']
-
-/** Escape for a PowerShell single-quoted literal by doubling every delimiter. */
-function powerShellLiteral(text: string): string {
-  return [...text].map((char) => (POWERSHELL_QUOTES.includes(char) ? char + char : char)).join('')
-}
-
-/**
- * PowerShell that types `text` into the foreground window, optionally followed
- * by ENTER as a separate keystroke (so a payload containing the literal text
- * "{ENTER}" can never submit itself — escapeSendKeys neutralizes it first).
- *
- * The short sleeps give the just-focused terminal time to settle before the
- * first character and before the submit, which on a busy machine is the
- * difference between a complete line and a truncated one.
- */
-export function buildSendKeysCommand(text: string, pressEnter: boolean): string {
-  const keys = powerShellLiteral(escapeSendKeys(toConsoleLine(text)))
-  const lines = [
-    "$ErrorActionPreference = 'Stop'",
-    'Add-Type -AssemblyName System.Windows.Forms',
-    'Start-Sleep -Milliseconds 150',
-    `[System.Windows.Forms.SendKeys]::SendWait('${keys}')`
-  ]
-  if (pressEnter) {
-    lines.push(
-      'Start-Sleep -Milliseconds 120',
-      "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
-    )
-  }
-  return lines.join('\n')
-}
-
-/**
- * PowerShell that pastes the clipboard into the foreground window — Ctrl+V,
- * optionally followed by ENTER as a separate keystroke (#319).
- *
- * This is the message path since #319: the text is put on the clipboard and
- * pasted in one keystroke rather than typed character by character, so a long
- * message lands at once and the window in which a mid-typing focus change could
- * steal the rest of it nearly disappears (measured: 441 chars typed took ~16 s).
- *
- * Deliberately built without escapeSendKeys/buildSendKeysCommand, for the same
- * reason buildSendInterruptCommand is: `^v` and `{ENTER}` here ARE the SendKeys
- * keynames, and there is no user text to escape — the message never enters this
- * command, it rides the clipboard. `^v` is SendKeys for Ctrl+V (`^` is its Ctrl
- * modifier), the same spelling `{ENTER}` and `{ESC}` are the transport's own.
- *
- * The settle sleeps mirror buildSendKeysCommand's: the just-focused terminal
- * needs a moment before the paste, and the paste a moment before the submit.
- */
-export function buildPasteCommand(pressEnter: boolean): string {
-  const lines = [
-    "$ErrorActionPreference = 'Stop'",
-    'Add-Type -AssemblyName System.Windows.Forms',
-    'Start-Sleep -Milliseconds 150',
-    "[System.Windows.Forms.SendKeys]::SendWait('^v')"
-  ]
-  if (pressEnter) {
-    lines.push(
-      'Start-Sleep -Milliseconds 120',
-      "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
-    )
-  }
-  return lines.join('\n')
-}
-
-/**
  * PowerShell that sends a raw ESC keystroke to the foreground window — this is
  * how the Claude Code TUI interrupts (Kick's cancel), not typed text.
  *
- * Deliberately built without escapeSendKeys/buildSendKeysCommand: `{ESC}` here
- * IS the SendKeys keyname, and running it through the escaping path meant for
- * arbitrary user text would turn it into the three literal characters
- * `{{}ESC{}}` instead of the actual Escape keypress. There is no user text
- * involved at all — this command takes no arguments.
+ * `{ESC}` IS the SendKeys keyname: it is spelled here rather than derived from
+ * anything a person wrote, and the escaping path that once existed for user
+ * text would have turned it into the three literal characters `{{}ESC{}}`
+ * instead of the actual Escape keypress. There is no user text involved at all
+ * — this command takes no arguments.
  */
 export function buildSendInterruptCommand(): string {
   return [
@@ -139,11 +58,11 @@ export function buildSendInterruptCommand(): string {
  * Kick's terminal tier presses this first and only force-kills if the process
  * survives.
  *
- * Deliberately built without escapeSendKeys, exactly as buildSendInterruptCommand
- * and buildPasteCommand are: `^c` IS the SendKeys keyname for Ctrl+C (`^` is its
- * Ctrl modifier), and running it through the escaping path meant for arbitrary
- * user text would turn it into the literal characters `{^}c` instead of the
- * keystroke. There is no user text here — the command takes no arguments.
+ * `^c` IS the SendKeys keyname for Ctrl+C (`^` is its Ctrl modifier), exactly
+ * as `{ESC}` above is its own: spelled here, never derived from anything a
+ * person wrote, and never escaped — the escaping path meant for user text would
+ * have turned it into the literal characters `{^}c` instead of the keystroke.
+ * There is no user text here; the command takes no arguments.
  *
  * The settle sleeps mirror the other builders': 150ms so the just-focused
  * terminal is ready for the first Ctrl+C, 120ms between the two so the TUI
@@ -183,14 +102,14 @@ const ANSWER_DIGITS = /^[1-9]$/
  * Null rather than a throw, and for three reasons the one caller states to the
  * person: nothing was chosen (a bare `{RIGHT}{ENTER}` would accept an empty
  * answer), more rows than the picker numbers, or a "digit" that is not one of
- * the nine. That last guard is what keeps arbitrary text out of a command whose
- * keys deliberately never pass through escapeSendKeys.
+ * the nine. That last guard is the whole of this command's safety, and it is
+ * what a builder carrying no escaping needs: a digit is the entire payload.
  *
- * Deliberately built without escapeSendKeys, exactly as buildGracefulExitCommand
- * and buildSendInterruptCommand are: `{RIGHT}` and `{ENTER}` here ARE the
- * SendKeys keynames, and the escaping path meant for arbitrary user text would
- * turn them into literal characters instead of the keystrokes. There is no user
- * text on this path at all — a digit is the whole payload.
+ * `{RIGHT}` and `{ENTER}` ARE the SendKeys keynames, exactly as `{ESC}` and
+ * `^c` are their builders' — spelled here rather than derived from user text.
+ * The RIGHT arrow is also why this path did not move to the pid write with
+ * #371's text: an arrow carries no character, so the input record it would need
+ * is one nothing has measured against a TUI.
  *
  * The settle sleeps mirror every other builder's: 150ms so the just-focused
  * terminal is ready for the first key, 120ms between keys so the TUI registers

@@ -1,27 +1,33 @@
 /**
- * Console input injection on Windows, v2 as a MEASURED PROOF OF CONCEPT: write
- * the text into the session's own console input buffer by pid, with no window
- * raised and no keystroke synthesized at all.
+ * Console input injection on Windows, and since #371 step 2 the one the message
+ * path takes: write the text into the session's own console input buffer by
+ * pid, with no window raised and no keystroke synthesized at all.
  *
- * This is the replacement sendKeys.ts's header anticipates ("a stricter
+ * This is the replacement sendKeys.ts's header anticipated ("a stricter
  * AttachConsole/WriteConsoleInput implementation can replace it later without
- * anything above noticing"), and issue #371's step 2. **Nothing composes it
- * yet** — no port exposes it and no delivery route reaches it. Which acts move
- * off the paste path, and behind which capability, is a product decision that
- * this file deliberately does not make.
+ * anything above noticing"). `WindowsTextDelivery` composes it for a message
+ * and for #203's permission digit; the question picker's keys (#362) do not
+ * come here, because its multi-select confirmation is an ARROW — a virtual key
+ * with no character — and nothing has measured a record shaped like that.
  *
- * Why it is worth having at all: the paste path types into whatever holds the
- * foreground, so a Windows Terminal window with two tabs cannot be typed into
- * safely and #371's step 1 refuses it — the person's own words then arrive over
- * the relay, framed to the receiving agent as a peer's request rather than
- * their user's. A write by pid has no tab ambiguity to refuse, because the tab
- * strip is never consulted.
+ * Why it is worth having at all: the paste path typed into whatever held the
+ * foreground, so a Windows Terminal window with two tabs could not be typed
+ * into safely and #371's step 1 refused it — the person's own words then
+ * arrived over the relay, framed to the receiving agent as a peer's request
+ * rather than their user's. A write by pid has no tab ambiguity to refuse,
+ * because the tab strip is never consulted.
  *
  * Measured live 2026-09-10 against throwaway consoles, plain conhost and
  * ConPTY, including a two-tab Windows Terminal window where the write reached
  * the NON-active tab and the other tab received nothing; the foreground did not
- * move and the host window was not raised. Full record, with the API results
- * and the error codes for every way it fails, in `docs/console-hosting.md` §6.
+ * move and the host window was not raised. Measured again 2026-09-16 with this
+ * builder's own script, run as a `windowsHide` PowerShell child against a live
+ * Claude Code TUI pid the app did not spawn: two writes, exit 0 in 246 ms and
+ * 213 ms, the text complete in that session's composer — read there before
+ * anything submitted it — and received verbatim by the model when the person
+ * pressed Enter. Full record, with the API results, the two unexplained
+ * sightings from the first write, and the error codes for every way it fails,
+ * in `docs/console-hosting.md` §6.
  *
  * Two facts from that measurement are load-bearing here and are not obvious
  * from the API names:
@@ -163,4 +169,51 @@ export function buildConsoleInputWriteCommand(
     'exit 0'
   )
   return lines.join('\n')
+}
+
+/** What one non-zero exit of the script above means, for the two readers of it. */
+export interface ConsoleWriteFailure {
+  /** The sentence the panel shows, naming which of the three failures happened. */
+  error: string
+  /**
+   * Whether the console provably received NOTHING.
+   *
+   * The half that is not for the person: it becomes
+   * `TextDeliveryOutcome.neverStarted`, which is the only thing that licenses a
+   * second tier to send the same text. True only where the script exited before
+   * `WriteConsoleInput` was reached at all.
+   */
+  wroteNothing: boolean
+}
+
+/**
+ * Turn one of the script's exit codes into a failure a caller can state.
+ *
+ * Three codes because the measurement produced three distinct failures, and a
+ * bare non-zero would have collapsed them: attaching to a pid whose session has
+ * ended is an ordinary thing to hit, a `CONIN$` that will not open is not, and a
+ * short write is the one that may have put HALF a message into somebody's
+ * session. The runtime log says which.
+ *
+ * Anything else — PowerShell failing on its own terms, a child killed by the
+ * timeout — takes the cautious answer rather than a new claim: the buffer may
+ * have been written and nothing here can prove otherwise.
+ */
+export function consoleWriteFailureFor(exitCode: number): ConsoleWriteFailure {
+  if (exitCode === 2) {
+    return {
+      error: 'The panel could not attach to that console; the session may have ended.',
+      wroteNothing: true
+    }
+  }
+  if (exitCode === 3) {
+    return {
+      error: 'That console would not open for input, so nothing was written.',
+      wroteNothing: true
+    }
+  }
+  if (exitCode === 4) {
+    return { error: 'The write into that console did not complete.', wroteNothing: false }
+  }
+  return { error: 'The text could not be written into that console.', wroteNothing: false }
 }

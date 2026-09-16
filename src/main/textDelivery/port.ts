@@ -8,10 +8,12 @@
  *   a foreman to defer to). Providers answer it from data they already read
  *   during a scan, so it stays pure and cheap.
  * - `TextDeliveryPort` is the *mechanism*: it actually writes the text. The
- *   shipped implementation is Windows-specific (window focus + synthesized
- *   keystrokes, and a one-shot `claude -p` relay), but nothing above it knows
- *   that — a future AttachConsole/WriteConsoleInput or per-OS implementation
- *   swaps in behind this interface without touching the runtime or the UI.
+ *   shipped implementation is Windows-specific — text into the session's own
+ *   console by pid (AttachConsole/WriteConsoleInput, #371), synthesized
+ *   keystrokes for the keys that carry no character, and a one-shot `claude -p`
+ *   relay — but nothing above it knows that: the swap of the text mechanism
+ *   this header used to anticipate happened without the runtime or the UI
+ *   noticing, which is the property it was written for.
  */
 
 import type { StageTimings } from './timing'
@@ -22,9 +24,9 @@ import type { StageTimings } from './timing'
  * A 'terminal' target may also carry `sessionName`: the same relay address a
  * 'claude-relay' target uses. Which of the two a given ACT reaches for is not
  * a property of the target — send and kick answer it differently, and
- * resolve.ts owns both answers (`sendRouteOf`, `kickEndpointOf`). A message
- * pastes at the console and falls back to the name; a kick ENDS the session at
- * that pid and falls back to the name (#329, #319, over #308, over #24).
+ * resolve.ts owns both answers (`sendRouteOf`, `kickEndpointOf`). A message is
+ * written at the console and falls back to the name; a kick ENDS the session at
+ * that pid and falls back to the name (#371, #329, #319, over #308, over #24).
  *
  * A 'codex-queue' target has no such second address and needs none: it wants
  * neither a window nor a pid, only the thread's own UUID, which is why it is
@@ -179,18 +181,18 @@ export interface ConsoleTextRequest {
 /**
  * Reading and writing the system clipboard, behind a port (#319).
  *
- * The paste path (`pasteToConsole`) puts a message on the clipboard, sends
- * Ctrl+V, and restores whatever was there before. Electron's `clipboard`
- * module is what backs it in the app, but it is injected through this seam so
- * the Windows delivery stays unit-testable with a fake and holds no Electron
- * import — exactly like `focus` and `runPowerShell`.
+ * **Nothing reads it since #371.** The message path put the text on the
+ * clipboard, sent Ctrl+V and put the clipboard back; it writes into the
+ * session's own console by pid now, so no delivery borrows the person's
+ * clipboard at all. The type and the composition chain behind it — the app
+ * root, the runtime's options, platformAdapters — are still wired and are a
+ * follow-up to unwire, because that chain lives outside the delivery tier.
  *
- * Each call may be synchronous OR return a promise, and `pasteToConsole` awaits
- * either. The installed Electron's `clipboard` is promise-based —
- * `readText(): Promise<string>`, `writeText(): Promise<void>`, "modeled after
- * the W3C navigator.clipboard API" — despite older docs showing a synchronous
- * one; the union keeps a plain in-memory fake sync while the real port awaits
- * the promise.
+ * Each call may be synchronous OR return a promise. The installed Electron's
+ * `clipboard` is promise-based — `readText(): Promise<string>`,
+ * `writeText(): Promise<void>`, "modeled after the W3C navigator.clipboard
+ * API" — despite older docs showing a synchronous one; the union kept a plain
+ * in-memory fake sync while the real port awaited the promise.
  */
 export interface ClipboardPort {
   /** The clipboard's current plain text, '' when it holds none. */
@@ -285,13 +287,14 @@ export interface TextDeliveryOutcome {
    * reads the same in both directions the tiers can run (#308, #319). A failed
    * verdict is not enough on its own: a relay turn that ran and then exited
    * non-zero, or was killed by the timeout, may already have called
-   * SendMessage before it died; and a console paste whose Ctrl+V ran may
-   * already have landed even if the command then reported failure. A second
-   * delivery behind either would put the person's message into the session
-   * twice. So the flag says "provably nothing was delivered" — a relay whose
-   * binary would not spawn, a paste whose window would not come forward so no
-   * key was ever sent — rather than "this did not report success", and absence
-   * of it means the caller must assume a possible hand-over and stop.
+   * SendMessage before it died; and a console write that reached
+   * `WriteConsoleInput` may already have put records in the buffer even if the
+   * command then reported failure. A second delivery behind either would put
+   * the person's message into the session twice. So the flag says "provably
+   * nothing was delivered" — a relay whose binary would not spawn, a console
+   * write the OS refused to attach for — rather than "this did not report
+   * success", and absence of it means the caller must assume a possible
+   * hand-over and stop.
    *
    * Optional and false-by-absence for the reason `stages` is: a tier that
    * cannot tell the two apart simply never sets it, and the caller then treats
@@ -327,31 +330,36 @@ export interface TextDeliveryPort {
    */
   readonly supportsConsoleInput?: boolean
   /**
-   * Type the text into the console hosting `pid`, character by character.
+   * Put the text into the console hosting `pid`.
    *
-   * Since #319 a MESSAGE goes through `pasteToConsole` instead; what still
-   * types here is the permission digit of #203 — a measured keystroke that
-   * fires the CLI's selector, where a paste (bracketed or not) is unverified
-   * against a live dialog and must not silently replace the tested key.
+   * The permission digit of #203 is what still calls it, and since #371 the
+   * Windows implementation neither types nor focuses: the text is written into
+   * the input buffer of the console that pid is attached to, so a dialog drawn
+   * in a background tab is answered where it was drawn. How a platform does it
+   * is its own business — the POSIX port still types through `osascript`.
    */
   sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome>
   /**
-   * Paste the text into the console hosting `pid`: put it on the clipboard,
-   * focus the window, send Ctrl+V (and Enter unless `pressEnter` is false),
-   * then restore the previous clipboard (#319). A long message then lands at
-   * once rather than over seconds of typing into the foregrounded window.
+   * Deliver a MESSAGE into the console hosting `pid`.
    *
-   * Optional for the reason `queueToCodexThread` is: a port that cannot paste
-   * simply omits it, and the runtime turns that into a `neverStarted` failure
-   * so the message falls back to the relay. Only the Windows port implements
-   * it — macOS/Linux keep the relay for a message (a per-OS paste is a separate
-   * follow-up, see platform-ports), and where console input is unsupported a
-   * named terminal target degrades to the relay before it ever reaches here.
+   * The name is #319's and the mechanism is no longer a paste: the Windows port
+   * writes the message into that console's input buffer by pid (#371), so
+   * nothing is put on the person's clipboard and no window is raised. The
+   * method stays distinct from `sendToConsole` only because the runtime's
+   * message route names it; renaming that route is a follow-up.
    *
-   * On a focus failure it sets `neverStarted`: nothing was pasted, so the relay
-   * behind it may take the same text without risking a double delivery. Any
-   * other failure leaves it unset — Ctrl+V may already have landed — exactly as
-   * a relay that ran and failed does not fall back to the console.
+   * Optional for the reason `queueToCodexThread` is: a port without a message
+   * tier simply omits it, and the runtime turns that into a `neverStarted`
+   * failure so the message falls back to the relay. Only the Windows port
+   * implements it — macOS/Linux keep the relay for a message (a per-OS console
+   * write is a separate follow-up, see platform-ports), and where console input
+   * is unsupported a named terminal target degrades to the relay before it ever
+   * reaches here.
+   *
+   * It sets `neverStarted` only where the write provably reached no console —
+   * an attach the OS refused, a console input that would not open. Any other
+   * failure leaves it unset, because records may already be in the buffer,
+   * exactly as a relay that ran and failed does not fall back to the console.
    */
   pasteToConsole?(request: ConsoleTextRequest): Promise<TextDeliveryOutcome>
   /** Hand the text to a named, window-less Claude session over its own messaging. */
@@ -404,6 +412,13 @@ export interface TextDeliveryPort {
    * looking at. #371 is what made that refusal fire on the right fact, so a
    * session in one tab of a Windows Terminal window is refused here — the
    * person answers at their terminal, which is what the refusal says.
+   *
+   * Text left that refusal behind in #371 and this did not, which is a
+   * limitation rather than a decision to keep: the digits are plain characters
+   * a pid write could carry, but a multi-select confirms with the RIGHT ARROW,
+   * a virtual key carrying no character, and no input record of that shape has
+   * been measured against a TUI. Answering one shape of ask and refusing the
+   * other is the trade #362 already declined.
    */
   answerQuestionAtConsole?(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome>
   /**

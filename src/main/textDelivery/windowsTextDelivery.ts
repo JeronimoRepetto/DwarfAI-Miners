@@ -8,7 +8,6 @@ import {
   type ProcessProbePort
 } from '../platform/processProbe'
 import type {
-  ClipboardPort,
   CodexQueueRequest,
   ConsoleAnswerRequest,
   ConsoleTextRequest,
@@ -38,36 +37,15 @@ import {
   type RelayResult,
   type RelayRunner
 } from './relayRunner'
+import { buildConsoleInputWriteCommand, consoleWriteFailureFor } from './consoleInputWrite'
 import {
   buildGracefulExitCommand,
-  buildPasteCommand,
   buildQuestionAnswerCommand,
-  buildSendInterruptCommand,
-  buildSendKeysCommand
+  buildSendInterruptCommand
 } from './sendKeys'
 import { createStageTimer, type StageTimings } from './timing'
 
 export type { RelayInvocation, RelayResult, RelayRunner }
-
-/**
- * A process-local clipboard, the default when none is injected (#319).
- *
- * The real port is Electron's `clipboard`, composed at the app's root and
- * injected in — this module holds no Electron import, exactly as it holds none
- * for focus. This fallback keeps the port constructible for a build that never
- * pastes (the runtime composing adapters whose delivery it then overrides, a
- * test exercising another tier); a real paste always runs against the injected
- * system clipboard.
- */
-function createInMemoryClipboard(): ClipboardPort {
-  let value = ''
-  return {
-    read: () => value,
-    write: (text: string) => {
-      value = text
-    }
-  }
-}
 
 /**
  * Windows implementation of TextDeliveryPort.
@@ -90,10 +68,12 @@ const CONSOLE_COMMAND_TIMEOUT_MS = 120_000
  * whichever tab the person last used. A `true` from focus was read as "this
  * session's console is in front" and it is not: measured live, an Esc aimed at
  * one Claude foreman interrupted the other one, in the tab that happened to be
- * active. Nothing is sent, and `neverStarted` says nothing was — so the relay
- * behind the console tier carries the message instead, labelled as another
- * session, which is a price the maintainer accepted where a keystroke in the
- * wrong session is not.
+ * active. Nothing is sent, and `neverStarted` says nothing was.
+ *
+ * Since #371 this belongs to the tiers that still SYNTHESIZE A KEYSTROKE — the
+ * interrupt, the question picker, the clean-exit Ctrl+C. Text no longer comes
+ * here at all: a message and a permission digit are written into the console
+ * the pid names, which has no tab strip to be ambiguous about.
  */
 const SHARED_TERMINAL_WINDOW =
   'This session shares its terminal window with other tabs, and the panel cannot tell ' +
@@ -115,6 +95,17 @@ function sharedWindowRefusal(stages: StageTimings): TextDeliveryOutcome {
  */
 const ANSWER_KEYS_UNBUILDABLE = 'That answer could not be turned into keystrokes.'
 
+/**
+ * A pid the console-write builder would not accept (#371).
+ *
+ * The same shape as the refusal above, and the same fail-closed reasoning as
+ * the tier guard (#231): a write is addressed by process id and nothing else,
+ * so a pid that cannot name a process must stop here rather than reach whatever
+ * process happens to hold that number. Nothing ran, which is what
+ * `neverStarted` says — the relay may still carry the message.
+ */
+const CONSOLE_WRITE_UNBUILDABLE = 'That console could not be addressed by process id.'
+
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
   relayModel: string
@@ -126,18 +117,24 @@ export interface WindowsTextDeliveryOptions {
   /**
    * Injected for tests; defaults to the real window-focus path.
    *
-   * The SCOPED focus, not the boolean one click-to-focus reads (#329): every
-   * method below sends a keystroke, and a keystroke may only follow a window
-   * this session is provably alone on. See `FocusReach` in platform/focus.ts.
+   * The SCOPED focus, not the boolean one click-to-focus reads (#329): a
+   * keystroke may only follow a window this session is provably alone on. See
+   * `FocusReach` in platform/focus.ts. Only the keystroke tiers read it since
+   * #371 — text is written by pid and asks for no window.
    */
   focus?: (pid: number) => Promise<FocusOutcome>
   /**
-   * The system clipboard the paste path saves, sets and restores (#319).
-   * Injected — composed from Electron's `clipboard` at the app's root — so this
-   * module holds no Electron import; defaults to a process-local clipboard for a
-   * build that never pastes.
+   * Runs ONE pid write, as its own process (#371).
+   *
+   * Separate from `runPowerShell` because the two cannot share a shell:
+   * `FreeConsole`/`AttachConsole` rebind the console of the process that CALLS
+   * them, so the write must never run on the long-lived worker — see
+   * `writeToConsoleByPid`. Injected for tests, and a test that replaced the
+   * keystroke transport gets this replaced with it, because a unit test that
+   * reached a real powershell.exe here would attach to whatever process holds
+   * the pid it made up.
    */
-  clipboard?: ClipboardPort
+  runConsoleWrite?: ShellRunner
   /**
    * The per-action fallback shell runner.
    *
@@ -163,8 +160,8 @@ export interface WindowsTextDeliveryOptions {
    * Ends a process and everything below it — Kick's terminal tier (#329).
    *
    * The same per-OS port a launched session's exit uses (#217), injected the way
-   * `focus` and `clipboard` are so a test never spawns a real taskkill; absent,
-   * this composes the Windows one itself.
+   * `focus` and the two shell runners are so a test never spawns a real
+   * taskkill; absent, this composes the Windows one itself.
    */
   processEnd?: ProcessEndPort
   /**
@@ -202,7 +199,10 @@ function runPowerShellCommand(command: string): Promise<{ stdout: string; exitCo
 }
 
 export class WindowsTextDelivery implements TextDeliveryPort {
-  /** user32 SendKeys can type into any foreground console on Windows. */
+  /**
+   * Text reaches a console on Windows: by pid since #371, where it used to need
+   * that console in the foreground.
+   */
   readonly supportsConsoleInput = true
 
   private readonly home: string
@@ -210,8 +210,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly relayModel: string
   private readonly relayTimeoutMs: number
   private readonly focus: (pid: number) => Promise<FocusOutcome>
-  private readonly clipboard: ClipboardPort
   private readonly runPowerShell: ShellRunner
+  private readonly runConsoleWrite: ShellRunner
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
@@ -228,7 +228,10 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.relayModel = options.relayModel
     this.relayTimeoutMs = options.relayTimeoutMs
     this.focus = options.focus ?? focusSessionConsole
-    this.clipboard = options.clipboard ?? createInMemoryClipboard()
+    // A per-action child, never the worker below: the attach rebinds the
+    // CALLER's console (see writeToConsoleByPid). An injected keystroke runner
+    // stands in for it so no unit test can reach a real console.
+    this.runConsoleWrite = options.runConsoleWrite ?? options.runPowerShell ?? runPowerShellCommand
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
@@ -262,117 +265,98 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * Keystrokes land in whatever window holds the foreground, so the focus step
-   * is a precondition, not an optimization: if the terminal will not come
-   * forward, nothing is typed at all rather than typed into the wrong window.
+   * Text into the console the session's own pid is attached to (#371, step 2).
    *
-   * A window that DID come forward is not the end of that precondition (#329):
-   * it also has to be one this session is alone on, or the keystroke goes to
-   * whichever tab of a shared terminal is active. Both refusals type nothing.
+   * What this used to do — focus the window, then type into whatever held the
+   * foreground — is the defect #371 reported: under the Windows 11
+   * default-terminal handoff every session's console window is a phantom owned
+   * by a Windows Terminal window, so raising it raises whichever TAB was last
+   * used, and the keystrokes went there. #376 made that case refuse rather than
+   * misdeliver, which left every multi-tab user's words travelling over the
+   * relay, framed to the receiving agent as a peer's request (#378).
+   *
+   * `AttachConsole(pid)` + `WriteConsoleInput` removes the question instead of
+   * answering it: the console is addressed by the pid the panel already
+   * verifies, so no window is raised, no clipboard is borrowed, and which tab is
+   * in front stops being something anybody has to know. Measured on the
+   * non-active tab of a two-tab window, with the foreground unmoved
+   * [docs/console-hosting.md §6].
+   *
+   * Both callers land here — a message and #203's permission digit — because
+   * both are plain text and the difference between them was only ever the
+   * mechanism. #362's picker keys do NOT: its multi-select confirmation is an
+   * arrow, a virtual key carrying no character, and no record of that shape has
+   * been measured against a TUI.
    */
   async sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
-    const timer = createStageTimer(this.now)
-    try {
-      const focus = await timer.measure('focus', () => this.focus(request.pid))
-      if (!focus.focused) {
-        return {
-          delivered: false,
-          error: 'The agent terminal could not be brought to the foreground.',
-          stages: timer.timings()
-        }
-      }
-      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
-      const result = await timer.measure('spawn', () =>
-        this.runPowerShell(buildSendKeysCommand(request.text, request.pressEnter))
-      )
-      if (result.exitCode !== 0) {
-        return {
-          delivered: false,
-          error: 'The keystrokes could not be sent to the terminal.',
-          stages: timer.timings()
-        }
-      }
-      return { delivered: true, stages: timer.timings() }
-    } catch {
-      return {
-        delivered: false,
-        error: 'The agent terminal could not be reached.',
-        stages: timer.timings()
-      }
-    }
+    return this.writeToConsoleByPid(request)
   }
 
   /**
-   * Deliver a MESSAGE by PASTING it, not typing it (#319): put the text on the
-   * clipboard, bring the window forward, press Ctrl+V (and Enter unless
-   * `pressEnter` is false), then restore the clipboard. A 441-char message that
-   * took ~16 s to type lands at once, and the window in which a mid-typing focus
-   * change could steal the rest of it nearly disappears.
+   * The runtime's MESSAGE route, which since #371 is the same write.
    *
-   * The console-paste tier is the PRIMARY channel again for a named observed
-   * session, the relay its fallback — the reverse of #315 — because pasting
-   * lands the message as the person's own prompt rather than as another
-   * session's, and does it in under a second. `sendToConsole` above still types,
-   * for the one caller that still needs a measured single keystroke (#203).
+   * The name is the port's rather than this mechanism's: nothing is pasted any
+   * more, and the two methods are kept apart only because renaming the port's
+   * message tier reaches the runtime, which this change stays out of. Anything
+   * true of `sendToConsole` above is true here, and a test pins that they build
+   * the identical script.
    */
   async pasteToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
+    return this.writeToConsoleByPid(request)
+  }
+
+  /**
+   * One write into the console at `pid`, in a child of its own.
+   *
+   * **The child is the mechanism, not an implementation detail.** `FreeConsole`
+   * and `AttachConsole` rebind the console of the process that CALLS them, and a
+   * process may hold at most one — so this cannot run on the long-lived console
+   * worker (consoleWorker.ts), which is one powershell.exe kept alive across
+   * every console action: the first write would detach that shell from its own
+   * console and leave it bound to a stranger's for every action after it, and
+   * the queue in front of it would serialize the write against keystrokes it has
+   * nothing to do with. `windowsHide` is load-bearing for the same family of
+   * reasons — without it the child gets a console window, which the
+   * default-terminal handoff turns into a Windows Terminal window that takes the
+   * foreground, reintroducing on the delivery path the exact theft this removes.
+   *
+   * The builder refusing is a fail-closed guard, not an error path: a script
+   * built around a pid that cannot name a process would attach to whatever
+   * process happens to hold that number.
+   *
+   * `neverStarted` is carried from the exit code rather than inferred, exactly
+   * as the paste path carried it from the focus step, so the runtime's relay
+   * fallback keeps working on the same terms: only a failure that provably
+   * reached no console may be sent again by another tier. See
+   * `consoleWriteFailureFor`.
+   */
+  private async writeToConsoleByPid(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
     const timer = createStageTimer(this.now)
-    // Save/restore race (#319): anything that sets the clipboard between the
-    // read here and the restore in `finally` loses its value to the restore.
-    // The window is one focus plus one keystroke command, and not restoring at
-    // all would be worse — the person's clipboard would silently become their
-    // last sent message — so the race is accepted and stated rather than closed.
-    //
-    // Awaited because the installed Electron clipboard is promise-based; a sync
-    // in-memory fake awaits to itself.
-    const previousClipboard = await this.clipboard.read()
-    await this.clipboard.write(request.text)
+    const command = buildConsoleInputWriteCommand(request.pid, request.text, request.pressEnter)
+    if (command === null) {
+      return { delivered: false, error: CONSOLE_WRITE_UNBUILDABLE, neverStarted: true }
+    }
     try {
-      const focus = await timer.measure('focus', () => this.focus(request.pid))
-      if (!focus.focused) {
-        // The focus precondition it always was: nothing is pasted into a window
-        // that would not come forward. Nothing was handed over, so this is the
-        // one send failure that licenses the relay behind it — `neverStarted`
-        // says so, the mirror of a relay that never started falling back to the
-        // console (#308). The clipboard the finally restores was only ever this
-        // method's own write, never a paste into the session.
-        return {
-          delivered: false,
-          error: 'The agent terminal could not be brought to the foreground.',
-          neverStarted: true,
-          stages: timer.timings()
-        }
-      }
-      // The same statement about the same thing (#329): a window came forward
-      // and it is a terminal HOST, so the message would be pasted into whichever
-      // of its tabs is active — Enter included. `neverStarted` for the reason
-      // above, and the relay is then the honest channel: a message labelled as
-      // another session beats a message typed into one.
-      if (focus.reach === 'terminal-host') return sharedWindowRefusal(timer.timings())
-      const result = await timer.measure('spawn', () =>
-        this.runPowerShell(buildPasteCommand(request.pressEnter))
-      )
+      const result = await timer.measure('spawn', () => this.runConsoleWrite(command))
       if (result.exitCode !== 0) {
-        // NOT neverStarted: Ctrl+V may already have pasted before the command
-        // reported a non-zero exit, so the runtime must not relay the same text
-        // behind it — the mirror of a relay that ran and then failed.
+        const failure = consoleWriteFailureFor(result.exitCode)
         return {
           delivered: false,
-          error: 'The paste keystroke could not be sent to the terminal.',
+          error: failure.error,
+          ...(failure.wroteNothing ? { neverStarted: true } : {}),
           stages: timer.timings()
         }
       }
       return { delivered: true, stages: timer.timings() }
     } catch {
-      // Also not neverStarted, and for the same reason: a throw can land after
-      // the paste. The finally still restores the clipboard.
+      // A shell that would not start wrote nothing, and one killed by the
+      // timeout may have written everything: the two are indistinguishable from
+      // here, so this takes the cautious reading and sets no `neverStarted`.
       return {
         delivered: false,
         error: 'The agent terminal could not be reached.',
         stages: timer.timings()
       }
-    } finally {
-      await this.clipboard.write(previousClipboard)
     }
   }
 
@@ -405,9 +389,12 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * A bare ESC into the console at `pid`: bring it forward, same as
-   * sendToConsole, then synthesize the one keystroke the Claude Code TUI
-   * interrupts a turn on instead of typing anything.
+   * A bare ESC into the console at `pid`: bring it forward, then synthesize the
+   * one keystroke the Claude Code TUI interrupts a turn on.
+   *
+   * Still a foreground act after #371, and deliberately: Escape is a VIRTUAL
+   * KEY carrying no character, so the record a pid write would have to carry is
+   * not the record that was measured. Text moved off this path; a key did not.
    *
    * Kick's terminal path until #329, and no longer — a kick ends the session's
    * process now, which needs no window and cannot miss. What still presses Esc

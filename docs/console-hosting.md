@@ -469,15 +469,15 @@ reordered and #319 reordered back. Two acts, two orders, one target: a `terminal
 carries a registry `sessionName` is one session with two answers, and `resolveTextDelivery` /
 `resolveKickDelivery` give them separately [code: `src/main/textDelivery/resolve.ts`].
 
-| Target                             | Message (`sendDwarfText`)                        | Kick (`kickDwarf`)                             | Touches a window? |
-| ---------------------------------- | ------------------------------------------------ | ---------------------------------------------- | ----------------- |
-| `terminal` **with** a session name | `terminal` (paste), relay only if it can't focus | **ends the verified pid** (#329), relay behind | message only      |
-| `terminal` **without** one         | `terminal` (paste) — the only channel it has     | **ends the verified pid**, nothing behind it   | message only      |
-| `claude-relay`                     | `claude-relay`                                   | `claude-relay` (a semantic ask)                | no                |
-| `codex-queue`                      | `codex-queue`                                    | refused — drains between turns (#97)           | no                |
-| `held-session`                     | the stream this panel holds                      | a real interrupt, where the protocol has one   | no                |
-| `hosted-stdin`                     | the pipe this panel holds                        | ends the process (#194)                        | no                |
-| `launched-process`                 | refused — no inbox (#217)                        | ends the process                               | no                |
+| Target                             | Message (`sendDwarfText`)                               | Kick (`kickDwarf`)                             | Touches a window? |
+| ---------------------------------- | ------------------------------------------------------- | ---------------------------------------------- | ----------------- |
+| `terminal` **with** a session name | `terminal` (write by pid), relay only if it never wrote | **ends the verified pid** (#329), relay behind | no                |
+| `terminal` **without** one         | `terminal` (write by pid) — the only channel it has     | **ends the verified pid**, nothing behind it   | no                |
+| `claude-relay`                     | `claude-relay`                                          | `claude-relay` (a semantic ask)                | no                |
+| `codex-queue`                      | `codex-queue`                                           | refused — drains between turns (#97)           | no                |
+| `held-session`                     | the stream this panel holds                             | a real interrupt, where the protocol has one   | no                |
+| `hosted-stdin`                     | the pipe this panel holds                               | ends the process (#194)                        | no                |
+| `launched-process`                 | refused — no inbox (#217)                               | ends the process                               | no                |
 
 The message column assumes a platform that can write into a console, which is Windows alone: where
 `supportsConsoleInput` is false the first two rows' MESSAGE degrades to the relay (or to no channel,
@@ -488,20 +488,34 @@ the console the primary for the honest reason that keystrokes are instant where 
 whole `claude -p` run. #308 reversed it because that console tier **typed** the message character by
 character into the **focused** window — a 441-char message took ~16 s [V, #308, 2026-09-09] and a
 person who clicked away mid-typing had the rest of their sentence written into **that** application.
-#319 keeps the console primary but changes HOW it writes: the message goes on the clipboard, the
-window comes forward, **Ctrl+V pastes the whole thing at once**, then the clipboard is restored. A
-441-char message then lands in well under a second, so the window in which a focus change could steal
-the text nearly disappears — and it arrives as the person's own prompt rather than labelled as
-another session, which a relayed message cannot be. So the defect #308 named was the per-character
-typing, not the console itself; paste answers it without giving up the console.
+#319 kept the console primary and changed HOW it writes: the message went on the clipboard, the
+window came forward, **Ctrl+V pasted the whole thing at once**, then the clipboard was restored. So
+the defect #308 named was the per-character typing, not the console itself.
 
-**The fallback is one-directional and conditional, and it reversed with the order.** A console paste
-whose window would not come forward pasted nothing, so it may fall back to the relay — that is
-`TextDeliveryOutcome.neverStarted`. A paste that RAN and reported failure may already have landed —
-Ctrl+V can put the clipboard into the window before the command's non-zero exit — so it does **not**
-fall back, because a second delivery over the relay would put the message into the session twice.
-`neverStarted` is that distinction, carried rather than inferred from the error string, and it reads
-the same in both directions the tiers have ever run.
+**Row one is #371 now, and the window went with it.** Paste answered the typing cost and kept the
+foreground dependency, which is the half that misdelivered: every Windows Terminal session's console
+window is a phantom owned by the tab strip, so raising it raised whichever tab was last used, and
+#376 could only turn that into a refusal. A refusal is not neutral — the person's words then went by
+relay, which frames them to the receiving agent as a peer's request rather than their user's (#378)
+— so **every multi-tab user's own sentences were downgraded to keep them from landing in the wrong
+tab**. The message is written into the session's own console by verified pid now
+(`AttachConsole` + `WriteConsoleInput`, measured in §6): no window is raised, no clipboard is
+borrowed, and there is no tab to pick, so the refusal has nothing left to refuse and the words
+arrive as the person's own prompt in every tab layout. **#203's permission digit took the same
+route**, for the same reason and with the same measurement behind it. What did NOT move is every
+key that carries no character — the interrupt's Escape, the clean exit's Ctrl+C, the question
+picker's right arrow (#362) — because an input record for a virtual key is unmeasured, so those
+still focus and still refuse a shared window.
+
+**The fallback is one-directional and conditional, and it survived the mechanism change intact.** A
+write that provably reached no console at all may fall back to the relay — that is
+`TextDeliveryOutcome.neverStarted`, and what sets it is now the script's own exit code rather than a
+focus step: the attach being refused (exit 2, the shape a pid whose session has ended produces) or
+`CONIN$` refusing to open (exit 3). A **short write** (exit 4) does not fall back, because records
+may already be in the buffer and a second delivery would put part of the message in twice — exactly
+the reading a paste that had already pressed Ctrl+V got. `neverStarted` is that distinction, carried
+rather than inferred from the error string, and it reads the same in every direction the tiers have
+ever run.
 
 **A focus that succeeded is not proof the session's window is in front — #329.** The focus step
 resolves one of two things (§6): a console window the session is on, or, when the ancestor walk had
@@ -512,8 +526,10 @@ and for a host that is false. Measured live, 2026-09-09: two Claude sessions in 
 Windows Terminal window — same `WindowsTerminal.exe` host pid for both — and an Esc aimed at one
 foreman interrupted the other, which logged `[Request interrupted by user]` and stopped its turn
 [V, #329]. So `focusSessionConsole` reports WHICH window it reached
-[code: `src/main/platform/focus.ts`], and `pasteToConsole`, `sendToConsole` and `sendInterrupt` all
-refuse a host-level focus with `neverStarted` rather than pressing a key. An **ancestor's** console
+[code: `src/main/platform/focus.ts`], and every tier that still synthesizes a keystroke —
+`sendInterrupt`, `answerQuestionAtConsole`, and the clean-exit Ctrl+C inside `endConsoleSession` —
+refuses a host-level focus with `neverStarted` rather than pressing a key. The two text tiers left
+that refusal behind in #371 and no longer call focus at all. An **ancestor's** console
 is not a host and is not refused: in a classic `cmd.exe` console the shell and the session share one
 window and nothing else is drawn on it (#190), which is the session's own window in every sense a
 keystroke cares about. Click-to-focus still accepts both — somebody who clicked to see the terminal
@@ -901,13 +917,13 @@ exact focus theft this mechanism exists to remove. `focus.ts`'s `runPowerShell` 
 
 **What is NOT measured, marked rather than inferred:**
 
-| Question                                                     | Status                                                                                                                                                                                                                                          |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A console this app did not spawn                             | **Unmeasured on purpose.** Every target here was spawned and ended by the measurement; attaching to the maintainer's live sessions was out of bounds. Same user and same session, so no privilege difference is expected — expected, not shown. |
-| A real Claude Code TUI (Ink) rather than a raw-mode receiver | **Unmeasured.** The receiver reproduces Ink's `setRawMode(true)` and reads the same stdin, but no agent CLI was written to. Whether the TUI's own bracketed-paste and key handling accept these records is the next thing to measure.           |
-| A split pane rather than a tab                               | **Unmeasured**, as in step 1. A pane is its own ConPTY, so the pid addressing should hold.                                                                                                                                                      |
-| Whether Enter should be `VK_RETURN` or `\r` as a character   | Both were sent together (`UnicodeChar 0x0D` **and** `wVirtualKeyCode 0x0D`) and arrived as one `\r`. Which one the TUI needs alone is untested.                                                                                                 |
-| `dwControlKeyState` / `wVirtualScanCode`                     | Sent as **0** throughout and nothing objected. A TUI reading modifiers would need them filled.                                                                                                                                                  |
+| Question                                                     | Status                                                                                                                                                                                                                              |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A console this app did not spawn                             | **Measured since — 2026-09-16, below.** Every target in THIS round was spawned and ended by the measurement; attaching to a live session was out of bounds for it.                                                                  |
+| A real Claude Code TUI (Ink) rather than a raw-mode receiver | **Measured since — 2026-09-16, below:** the text reached a live Claude Code composer and the model. The receiver in THIS round reproduces Ink's `setRawMode(true)` and reads the same stdin, but no agent CLI was written to in it. |
+| A split pane rather than a tab                               | **Unmeasured**, as in step 1. A pane is its own ConPTY, so the pid addressing should hold.                                                                                                                                          |
+| Whether Enter should be `VK_RETURN` or `\r` as a character   | Both were sent together (`UnicodeChar 0x0D` **and** `wVirtualKeyCode 0x0D`) and arrived as one `\r`. Which one the TUI needs alone is untested.                                                                                     |
+| `dwControlKeyState` / `wVirtualScanCode`                     | Sent as **0** throughout and nothing objected. A TUI reading modifiers would need them filled.                                                                                                                                      |
 
 **One structural note for whoever wires this up.** `INPUT_RECORD` is **20 bytes**: `WORD EventType`,
 two bytes of padding — the union is 4-aligned because `KEY_EVENT_RECORD` opens with a `BOOL` — then
@@ -918,8 +934,9 @@ declaring the struct in PowerShell at all, and `nLength` counts **records, not b
 parses the hex literal as a signed `Int32` and the `uint32` conversion then fails.
 
 **The builder is the thing that was measured, not a paraphrase of it.**
-`buildConsoleInputWriteCommand` in `src/main/textDelivery/consoleInputWrite.ts` emitted the script
-that was then run against a fresh hidden receiver: exit **0**, and
+`buildConsoleInputWriteCommand` in `src/main/textDelivery/consoleInputWrite.ts` — the same function
+the delivery tier composes today — emitted the script that was then run against a fresh hidden
+receiver: exit **0**, and
 `añadí un túnel ⛏️ — it's the builder's own script` arrived verbatim, both apostrophes and the
 variation selector included [V, #371, 2026-09-10]. Re-run unchanged against the same pid after the
 receiver was killed, it exited **2** — the attach refusal, distinguished from a short write rather
@@ -935,9 +952,55 @@ and the text never exists as text in the script at all. Removing the class beats
 members. UTF-16 is also the unit `WriteConsoleInput` takes, so the decode lands on exactly the code
 units the records carry.
 
-**Not wired in.** No port composes the builder and no delivery route reaches it; a unit test pins the
-absence of every foreground and keystroke API from the script it produces. Which acts move off the
-paste path, and behind which capability, is a product decision — not this measurement's.
+### Against a console this app did not spawn — measured 2026-09-16 (#371 step 2)
+
+The two rows above that said **"unmeasured"** have been taken together, and they are the rows that
+decided whether any of this could ship. **Two writes**, both from the builder's own script run as a
+`windowsHide` PowerShell child against a **live Claude Code TUI pid the app did not spawn** — an
+ordinary interactive session in a `cmd.exe`-parented console, Windows 11, `pressEnter` false
+[V, #371, 2026-09-16]. Same user, same session, no privilege difference, as expected of it.
+
+| Write | Result                                                                                                                                                                                                                  |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Exit **0 in 246 ms**. The text was in the composer, unsubmitted, and reached the model verbatim when the person pressed Enter.                                                                                          |
+| 2     | `PROBE2-kq7`, exit **0 in 213 ms**. The composer was read **before** Enter: the text was complete, its **first character present**, and there **exactly once**. Verbatim to the model as the prefix of the next prompt. |
+
+So the record runs the whole way through: `EventsWritten == nLength` from the API, the probe on the
+TUI's own screen read before anything submitted it, and the model receiving it as the person's
+prompt. The **Ink** question the previous round marked unmeasured — whether a real TUI's key
+handling accepts records written this way rather than a raw-mode receiver's — is answered by the
+middle of those three, and `pressEnter` false behaving exactly as designed is the fourth fact in it:
+the panel hands a person their own words and never submits for them.
+
+**Two artifacts were seen ONCE, on the first write, and neither is understood.** They are written
+down as observations rather than explained, because a cause guessed at now would be read as a
+finding later:
+
+| Seen once                                                                                                               | Where it stands after write 2                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The composer appeared to show the probe **without its first character** (`warfAI…` where the payload began `DwarfAI…`). | **Did not reproduce.** Write 2's first character was read on screen before Enter. A single unexplained sighting; the model had the full 44-character probe either way.                                                                                                                                                                                                   |
+| The prompt appeared **twice in the transcript**, once prefixed by the probe and once without.                           | **Still as observed, once.** The model received exactly one message. One **unverified** context worth stating as nothing more: the maintainer submits prompts through DwarfAI's own message panel, so the panel may echo the message on its side while the terminal shows it with the probe prefix. That is not established, and nothing here should be read as a cause. |
+
+**The wiring does not rest on either of them.** What delivery relies on is the write path's exit
+code and the text the model received, and both are what they need to be across two writes; a
+rendering question about a TUI this app does not draw is not a reason to withhold a channel that
+arrived complete.
+
+**Wired in by #371 step 2.** `WindowsTextDelivery` composes the builder for a MESSAGE
+(`pasteToConsole`, the runtime's message route, whose name outlived the paste it was called after)
+and for #203's **permission digit** (`sendToConsole`). Both run it as a per-action `windowsHide`
+child, and that is forced rather than preferred: `FreeConsole`/`AttachConsole` rebind the console of
+the process that calls them, so running this on the long-lived console worker
+[`consoleWorker.ts`] — one powershell.exe kept alive across every console action — would leave that
+shell attached to a stranger's console for every action after the first.
+
+**What did not move, and why it is a limitation rather than a decision.** The question picker's keys
+(#362) stay on the keystroke path, because a multi-select confirms with the RIGHT ARROW: a virtual
+key carrying no character, and the table above records `dwControlKeyState`/`wVirtualScanCode` as
+sent-zero and the virtual-key-alone case as untested. The interrupt's Escape and the clean exit's
+Ctrl+C are the same shape. So a Windows Terminal user with several tabs can now be MESSAGED and can
+answer a PERMISSION dialog, and still cannot answer a question picker from the panel — which is a
+follow-up with a measurement in front of it, not a gap somebody forgot.
 
 ---
 

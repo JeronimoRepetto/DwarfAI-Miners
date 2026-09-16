@@ -196,7 +196,7 @@ mileage than Windows, so the table keeps the distinction between verified and ex
 | Codex liveness probe                     | PowerShell `Win32_Process`            | `pgrep -fl codex`                                               | `pgrep -fa codex`                                               |
 | Click-to-focus a terminal                | user32 via PowerShell                 | `ps` + System Events (`osascript`)                              | **Unsupported** — falls back to viewer                          |
 | Live transcript viewer                   | Windows Terminal / PowerShell         | Terminal.app via `osascript`                                    | `x-terminal-emulator` → … → `xterm`                             |
-| Paste a message into a session's console | **Verified — the default**            | **Disabled** (relay instead)                                    | **Unsupported** (relay instead)                                 |
+| Write a message into a session's console | **Verified — the default**            | **Disabled** (relay instead)                                    | **Unsupported** (relay instead)                                 |
 | Relay a message to a named session       | Supported — the fallback              | Supported — the default                                         | Supported — the default                                         |
 | Queue a message to a Codex CLI session   | **Verified**                          | Expected to work (spawns `codex`)                               | Expected to work (spawns `codex`)                               |
 | Kick a session running in a terminal     | **Verified** — clean exit, then force | Implemented (SIGTERM, then SIGKILL); unreachable until measured | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
@@ -204,15 +204,15 @@ mileage than Windows, so the table keeps the distinction between verified and ex
 | Packaging                                | NSIS + portable                       | dmg + zip (arm64 & x64)                                         | AppImage + deb                                                  |
 
 The two message rows are one decision seen from two sides, and it reversed twice —
-[`docs/console-hosting.md` §4b](docs/console-hosting.md) records both reversals. Where the panel
-can reach a console (Windows today), a message goes on the clipboard, the console comes forward and
-**Ctrl+V pastes the whole thing at once**, so it arrives as your own prompt in well under a second;
-the clipboard is put back afterwards. Where it cannot (macOS, Linux), a Claude session with a
-registry name takes the relay instead, which touches no window at all. The relay is also the
-fallback on Windows, and only for the one failure that proves nothing was written: a console that
-would not come forward. A Windows Terminal window with several tabs open is refused too and the
-message takes the relay, because nothing can select a tab by session — one tab works as before
-(#371). Kick is no longer a keystroke at all: it ends the session's own process by verified pid,
+[`docs/console-hosting.md` §4b](docs/console-hosting.md) records every reversal. Where the panel can
+reach a console (Windows today), a message is **written straight into the input of the console that
+session's own process is attached to**, addressed by verified process id: no window is raised,
+nothing goes on your clipboard, and which tab of a terminal is in front stops mattering — a session
+in a background tab receives its message and the tab you are working in sees nothing (#371). Where
+it cannot (macOS, Linux), a Claude session with a registry name takes the relay instead, which
+touches no window either. The relay is also the fallback on Windows, and only for the failures that
+prove nothing was written: an attach the console refused, or a console input that would not open.
+Kick is no longer a keystroke at all: it ends the session's own process by verified pid,
 which needs no window, so its row above is about a signal rather than about reaching a console. What
 macOS and Linux still lack there is not the signal but the reading that verifies a pid — no Claude
 session registry entry has been measured for a process creation time on either — so a kick with no
@@ -229,8 +229,8 @@ Notes on the three honest gaps:
   (see [Diagnostic switches](docs/guide.md#diagnostic-switches)) to test it; it also needs the
   user to grant Accessibility permission, which the app cannot detect. While it is off, a session
   with a registry name still takes the relay, and one without gets a Send and a Kick rendered
-  disabled with their reason rather than silently typing nowhere. A per-OS paste path for macOS and
-  Linux is a follow-up, not a gap in this one.
+  disabled with their reason rather than silently typing nowhere. A per-OS console-write path for
+  macOS and Linux is a follow-up, not a gap in this one.
 - **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`) are assumed
   platforms. They are home-relative already and nothing in the formats is Windows-specific, but
   this has not been confirmed against real macOS/Linux fixtures.

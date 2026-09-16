@@ -61,69 +61,118 @@ function delivery(overrides: Partial<ConstructorParameters<typeof WindowsTextDel
     env: { PATH: 'C:\\Windows' },
     focus: vi.fn().mockResolvedValue(OWN_CONSOLE),
     runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 }),
+    // AMENDED for #371: the pid write runs as its own hidden child rather than
+    // through the keystroke transport, so it needs its own fake — a port built
+    // here must never be able to reach a real powershell.exe, and a real one
+    // would attach to whatever process holds the pid a test made up.
+    runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 }),
     runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     ...overrides
   })
 }
 
+/**
+ * The pid write (#371 step 2): text goes into the input buffer of the console
+ * the session's own pid is attached to, so no window is raised, no keystroke is
+ * synthesized, and which tab of a terminal host is in front stops mattering.
+ *
+ * AMENDED throughout this describe for #371. Every test here pinned the focus
+ * step and the SendKeys command behind it, because this method typed into the
+ * foreground until now; both are gone from this path. `focus.ts` is untouched
+ * and still serves click-to-focus and the interrupt.
+ */
 describe('WindowsTextDelivery.sendToConsole', () => {
-  it('brings the hosting terminal forward before typing into it', async () => {
-    const order: string[] = []
-    const focus = vi.fn().mockImplementation(async () => {
-      order.push('focus')
-      return OWN_CONSOLE
-    })
-    const runPowerShell = vi.fn().mockImplementation(async () => {
-      order.push('type')
-      return { stdout: '', exitCode: 0 }
-    })
-    const port = delivery({ focus, runPowerShell })
+  it('writes into the console of the pid it was given, and raises no window at all', async () => {
+    const focus = vi.fn()
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ focus, runConsoleWrite })
 
     await expect(
-      port.sendToConsole({ pid: 42, text: 'run the tests', pressEnter: true })
-    ).resolves.toEqual({
-      delivered: true,
-      stages: { focusMs: expect.any(Number), spawnMs: expect.any(Number) }
-    })
-    expect(focus).toHaveBeenCalledWith(42)
-    expect(order).toEqual(['focus', 'type'])
-    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('run the tests')")
+      port.sendToConsole({ pid: 4242, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, stages: { spawnMs: expect.any(Number) } })
+    // The refusal this replaces began with a focus call; there is none to make.
+    expect(focus).not.toHaveBeenCalled()
+    const script = runConsoleWrite.mock.calls[0]?.[0] as string
+    expect(script).toContain('AttachConsole(4242)')
+    expect(script).toContain('$units.Add([char]13)')
+    // The text rides as base64, so nothing a shell re-parses ever holds it.
+    expect(script).not.toContain('run the tests')
   })
 
-  it('never types anything when the terminal could not be foregrounded', async () => {
-    const runPowerShell = vi.fn()
-    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), runPowerShell })
+  it('leaves the line unsent when pressEnter is false', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
 
-    const result = await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    expect(result.delivered).toBe(false)
-    expect(result.error).toMatch(/foreground|terminal/i)
-    expect(runPowerShell).not.toHaveBeenCalled()
+    await port.sendToConsole({ pid: 4242, text: '1', pressEnter: false })
+    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$units.Add([char]13)')
   })
 
-  it('reports a failure when the keystroke command exits non-zero', async () => {
+  it('fails closed on a pid the builder will not accept, and runs nothing', async () => {
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.sendToConsole({ pid: 0, text: 'hi', pressEnter: true })
+    // A script built around a junk pid would attach to whatever process holds
+    // that number, and a write into a stranger's console cannot be taken back.
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toBeTruthy()
+    expect(runConsoleWrite).not.toHaveBeenCalled()
+  })
+
+  it('says the attach was refused, and that nothing was written, on exit 2', async () => {
     const port = delivery({
-      runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 })
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 2 })
     })
-    const result = await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
+
+    const result = await port.sendToConsole({ pid: 4242, text: 'hi', pressEnter: true })
+    // The measured failure of a pid whose session has ended. Nothing reached a
+    // console, so `neverStarted` lets the relay behind this carry the message.
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/attach/i)
+  })
+
+  it('says the console input would not open, and that nothing was written, on exit 3', async () => {
+    const port = delivery({
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 3 })
+    })
+
+    const result = await port.sendToConsole({ pid: 4242, text: 'hi', pressEnter: true })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(result.error).toMatch(/open/i)
+    // A distinct sentence from the attach refusal: the runtime log has to be
+    // able to say which of the three happened.
+    expect(result.error).not.toMatch(/attach/i)
+  })
+
+  it('does not call a short write neverStarted, since some records may have landed', async () => {
+    const port = delivery({
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 4 })
+    })
+
+    const result = await port.sendToConsole({ pid: 4242, text: 'hi', pressEnter: true })
     expect(result.delivered).toBe(false)
+    // `WriteConsoleInput` reported fewer events than it was given, so part of
+    // the message may be in the session already — relaying it again would put
+    // the person's words in twice.
+    expect(result.neverStarted).toBeUndefined()
     expect(result.error).toBeTruthy()
   })
 
   it('turns a crashing shell into a failed verdict instead of a rejection', async () => {
     const port = delivery({
-      runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
+      runConsoleWrite: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
     })
     await expect(
-      port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
+      port.sendToConsole({ pid: 4242, text: 'hi', pressEnter: false })
     ).resolves.toMatchObject({ delivered: false })
   })
 
   it('keeps the message out of the failure text', async () => {
     const port = delivery({
-      focus: vi.fn().mockResolvedValue(NOT_FOCUSED)
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 4 })
     })
     const result = await port.sendToConsole({
-      pid: 42,
+      pid: 4242,
       text: 'my-secret-payload',
       pressEnter: false
     })
@@ -132,129 +181,79 @@ describe('WindowsTextDelivery.sendToConsole', () => {
 })
 
 /**
- * The paste path (#319): a MESSAGE is delivered by putting it on the clipboard
- * and pressing Ctrl+V, not by typing it character by character. `sendToConsole`
- * above is untouched — it still TYPES, and since #319 the one thing that still
- * needs it is the permission digit of #203, a measured keystroke a paste must
- * not silently replace.
+ * `pasteToConsole` is the port method the runtime's MESSAGE route calls, and
+ * since #371 nothing about it is a paste: it reaches the same pid write
+ * `sendToConsole` does. The two names stay until the port's own vocabulary is
+ * renamed, which is a runtime-side change this one keeps out.
+ *
+ * AMENDED throughout this describe for #371. The clipboard save/restore dance
+ * these tests pinned no longer exists — the message never travels on the
+ * person's clipboard, so there is nothing to borrow and nothing to put back —
+ * and the seam it was asserted through is gone from the port's options.
  */
 describe('WindowsTextDelivery.pasteToConsole', () => {
-  /** Records reads and writes in `order`, so the save/restore dance is assertable. */
-  function trackingClipboard(order: string[], initial = 'previous clipboard') {
-    const writes: string[] = []
-    let value = initial
-    return {
-      port: {
-        read: () => {
-          order.push('read')
-          return value
-        },
-        write: (text: string) => {
-          order.push('write')
-          writes.push(text)
-          value = text
-        }
-      },
-      writes,
-      current: () => value
-    }
-  }
-
-  it('saves the clipboard, writes the message, focuses, pastes, then restores the clipboard', async () => {
-    const order: string[] = []
-    const focus = vi.fn().mockImplementation(async () => {
-      order.push('focus')
-      return OWN_CONSOLE
-    })
-    const runPowerShell = vi.fn().mockImplementation(async () => {
-      order.push('paste')
-      return { stdout: '', exitCode: 0 }
-    })
-    const clip = trackingClipboard(order)
-    const port = delivery({ focus, runPowerShell, clipboard: clip.port })
+  it('writes the message into the session console rather than pasting it anywhere', async () => {
+    const focus = vi.fn()
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ focus, runConsoleWrite })
 
     await expect(
-      port.pasteToConsole({ pid: 42, text: 'run the tests', pressEnter: true })
-    ).resolves.toEqual({
-      delivered: true,
-      stages: { focusMs: expect.any(Number), spawnMs: expect.any(Number) }
-    })
-    expect(focus).toHaveBeenCalledWith(42)
-    expect(order).toEqual(['read', 'write', 'focus', 'paste', 'write'])
-    // The message rode the clipboard; the command pressed the keys and never
-    // carried the text a shell could re-parse.
-    expect(clip.writes[0]).toBe('run the tests')
-    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('^v')")
-    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('{ENTER}')")
-    expect(runPowerShell.mock.calls[0]?.[0]).not.toContain('run the tests')
-    // Left exactly as it was found.
-    expect(clip.current()).toBe('previous clipboard')
-    expect(clip.writes[clip.writes.length - 1]).toBe('previous clipboard')
+      port.pasteToConsole({ pid: 4242, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, stages: { spawnMs: expect.any(Number) } })
+    expect(focus).not.toHaveBeenCalled()
+    const script = runConsoleWrite.mock.calls[0]?.[0] as string
+    expect(script).toContain('AttachConsole(4242)')
+    expect(script).not.toContain('SendWait')
+    expect(script).not.toContain('run the tests')
   })
 
-  it('pastes without an Enter when pressEnter is false', async () => {
-    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
-    const clip = trackingClipboard([])
-    const port = delivery({ runPowerShell, clipboard: clip.port })
+  it('is the same write a permission digit takes, so the two cannot drift apart', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
 
-    await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    expect(runPowerShell.mock.calls[0]?.[0]).toContain("SendWait('^v')")
-    expect(runPowerShell.mock.calls[0]?.[0]).not.toContain("SendWait('{ENTER}')")
+    await port.pasteToConsole({ pid: 4242, text: 'go', pressEnter: false })
+    await port.sendToConsole({ pid: 4242, text: 'go', pressEnter: false })
+    expect(runConsoleWrite.mock.calls[0]?.[0]).toBe(runConsoleWrite.mock.calls[1]?.[0])
   })
 
-  it('sends no paste and reports the fallback-triggering outcome when the window will not come forward', async () => {
-    const runPowerShell = vi.fn()
-    const clip = trackingClipboard([])
+  it('leaves the message unsubmitted when pressEnter is false', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    await port.pasteToConsole({ pid: 4242, text: 'hi', pressEnter: false })
+    expect(runConsoleWrite.mock.calls[0]?.[0]).not.toContain('$units.Add([char]13)')
+  })
+
+  it('reports the fallback-triggering outcome when the attach was refused', async () => {
     const port = delivery({
-      focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
-      runPowerShell,
-      clipboard: clip.port
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 2 })
     })
 
-    const result = await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    // `neverStarted` is the whole point: it proves nothing was pasted, so the
-    // runtime may hand the same text to the relay without a double delivery.
+    const result = await port.pasteToConsole({ pid: 4242, text: 'hi', pressEnter: false })
+    // `neverStarted` is the whole point: it proves nothing reached the console,
+    // so the runtime may hand the same text to the relay without a double
+    // delivery. It is the focus refusal's job that moved, not the flag's.
     expect(result).toMatchObject({ delivered: false, neverStarted: true })
-    expect(result.error).toMatch(/foreground|terminal/i)
-    // Nothing was pasted, and the clipboard is left holding what it held before —
-    // never the message the method briefly set on it.
-    expect(runPowerShell).not.toHaveBeenCalled()
-    expect(clip.current()).toBe('previous clipboard')
   })
 
-  it('restores the clipboard even when the paste command throws', async () => {
-    const clip = trackingClipboard([])
+  it('turns a crashing shell into a failed verdict instead of a rejection', async () => {
     const port = delivery({
-      runPowerShell: vi.fn().mockRejectedValue(new Error('powershell.exe is missing')),
-      clipboard: clip.port
+      runConsoleWrite: vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
     })
 
-    const result = await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    const result = await port.pasteToConsole({ pid: 4242, text: 'hi', pressEnter: false })
     expect(result.delivered).toBe(false)
-    // A throw can land after the paste, so it is NOT neverStarted: the runtime
+    // A throw can land after the write, so it is NOT neverStarted: the runtime
     // must not relay the same text behind it.
     expect(result.neverStarted).toBeUndefined()
-    expect(clip.current()).toBe('previous clipboard')
-  })
-
-  it('does not mark a non-zero paste exit as neverStarted, since Ctrl+V may already have landed', async () => {
-    const clip = trackingClipboard([])
-    const port = delivery({
-      runPowerShell: vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 }),
-      clipboard: clip.port
-    })
-
-    const result = await port.pasteToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    expect(result.delivered).toBe(false)
-    expect(result.neverStarted).toBeUndefined()
-    expect(clip.current()).toBe('previous clipboard')
   })
 
   it('keeps the message out of the failure text', async () => {
-    const clip = trackingClipboard([])
-    const port = delivery({ focus: vi.fn().mockResolvedValue(NOT_FOCUSED), clipboard: clip.port })
+    const port = delivery({
+      runConsoleWrite: vi.fn().mockResolvedValue({ stdout: '', exitCode: 4 })
+    })
     const result = await port.pasteToConsole({
-      pid: 42,
+      pid: 4242,
       text: 'my-secret-payload',
       pressEnter: false
     })
@@ -375,30 +374,36 @@ describe('WindowsTextDelivery.sendInterrupt', () => {
  * person last used, and every keystroke after it went to THAT session — an Esc
  * meant for one foreman interrupted the other. Nothing typed is preferable, and
  * `neverStarted` is what lets the relay carry the message instead.
+ *
+ * AMENDED for #371: that refusal now covers the keystroke tiers ONLY. A message
+ * and a permission digit are written into the session's own console by pid, and
+ * a write consults no window, so the shared tab strip has nothing to refuse —
+ * the two tests that pinned the refusal on those paths are replaced by the two
+ * below, which pin the opposite and are what #371 exists for.
  */
 describe('WindowsTextDelivery — a host window is never proof of the session (#329)', () => {
   function hostFocused(overrides: Parameters<typeof delivery>[0] = {}) {
     return delivery({ focus: vi.fn().mockResolvedValue(TERMINAL_HOST), ...overrides })
   }
 
-  it('pastes nothing, and says the window is shared, so the relay may take the message', async () => {
-    const runPowerShell = vi.fn()
-    const port = hostFocused({ runPowerShell })
+  it('delivers the message anyway, because the write never asks which tab is in front', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = hostFocused({ runConsoleWrite })
 
-    const result = await port.pasteToConsole({ pid: 42, text: 'run the tests', pressEnter: true })
-    expect(result).toMatchObject({ delivered: false, neverStarted: true })
-    expect(result.error).toMatch(/shares its terminal window/i)
-    expect(runPowerShell).not.toHaveBeenCalled()
+    const result = await port.pasteToConsole({ pid: 4242, text: 'run the tests', pressEnter: true })
+    // The multi-tab user whose words used to travel over the relay framed as a
+    // peer's now has them arrive as their own prompt (#371, #378).
+    expect(result.delivered).toBe(true)
+    expect(runConsoleWrite.mock.calls[0]?.[0]).toContain('AttachConsole(4242)')
   })
 
-  it('types nothing, so a permission digit cannot land in another tab', async () => {
-    const runPowerShell = vi.fn()
-    const port = hostFocused({ runPowerShell })
+  it('lands the permission digit in the session that drew the dialog, tab strip or not', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = hostFocused({ runConsoleWrite })
 
-    const result = await port.sendToConsole({ pid: 42, text: '1', pressEnter: false })
-    expect(result).toMatchObject({ delivered: false, neverStarted: true })
-    expect(result.error).toMatch(/shares its terminal window/i)
-    expect(runPowerShell).not.toHaveBeenCalled()
+    const result = await port.sendToConsole({ pid: 4242, text: '1', pressEnter: false })
+    expect(result.delivered).toBe(true)
+    expect(runConsoleWrite.mock.calls[0]?.[0]).toContain('AttachConsole(4242)')
   })
 
   /*
@@ -416,32 +421,15 @@ describe('WindowsTextDelivery — a host window is never proof of the session (#
     expect(runPowerShell).not.toHaveBeenCalled()
   })
 
-  it('restores the clipboard it had already saved, exactly as a failed focus does', async () => {
-    const writes: string[] = []
-    let value = 'previous clipboard'
-    const clipboard = {
-      read: () => value,
-      write: (text: string) => {
-        writes.push(text)
-        value = text
-      }
-    }
-    const port = hostFocused({ clipboard, runPowerShell: vi.fn() })
-
-    await port.pasteToConsole({ pid: 42, text: 'my-secret-payload', pressEnter: true })
-    expect(value).toBe('previous clipboard')
-    expect(writes[writes.length - 1]).toBe('previous clipboard')
-  })
-
-  it('keeps the message out of the refusal', async () => {
-    const port = hostFocused({ runPowerShell: vi.fn() })
-    const result = await port.pasteToConsole({
-      pid: 42,
-      text: 'my-secret-payload',
-      pressEnter: true
-    })
-    expect(result.error).not.toContain('my-secret-payload')
-  })
+  /*
+   * Two tests stood here and went with their subject in #371: one pinned that a
+   * refused paste put the person's clipboard back, and one that the refusal
+   * never quoted the message. The message path borrows no clipboard and states
+   * no shared-window refusal any more — the privacy assertion lives on in
+   * `pasteToConsole`'s own 'keeps the message out of the failure text', and the
+   * refusal itself is still pinned on the two tiers that still synthesize a
+   * keystroke — the interrupt above, and the question picker further down.
+   */
 })
 
 /**
@@ -450,11 +438,16 @@ describe('WindowsTextDelivery — a host window is never proof of the session (#
  * runtime can put real numbers in the log instead of guesses.
  */
 describe('WindowsTextDelivery stage instrumentation', () => {
-  it('times bringing the window forward and running the keystroke command', async () => {
-    const port = delivery({ now: clockOf(0, 12, 12, 42) })
+  /*
+   * AMENDED for #371: the write by pid has one stage, because it has one step.
+   * The focus stage this pinned belonged to the paste path, and the tiers that
+   * still focus — the interrupt below — still report both.
+   */
+  it('times the one child the pid write spawns', async () => {
+    const port = delivery({ now: clockOf(0, 30) })
 
-    const result = await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    expect(result.stages).toEqual({ focusMs: 12, spawnMs: 30 })
+    const result = await port.sendToConsole({ pid: 4242, text: 'hi', pressEnter: false })
+    expect(result.stages).toEqual({ spawnMs: 30 })
   })
 
   it('times the interrupt path the same way', async () => {
@@ -477,7 +470,7 @@ describe('WindowsTextDelivery stage instrumentation', () => {
       focus: vi.fn().mockResolvedValue(NOT_FOCUSED)
     })
 
-    const result = await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    const result = await port.sendInterrupt({ pid: 42 })
     expect(result.delivered).toBe(false)
     expect(result.stages).toEqual({ focusMs: 9 })
   })
@@ -486,7 +479,7 @@ describe('WindowsTextDelivery stage instrumentation', () => {
     const port = delivery({ now: clockOf(0, 1, 1, 2) })
 
     const result = await port.sendToConsole({
-      pid: 42,
+      pid: 4242,
       text: 'my-secret-payload',
       pressEnter: false
     })
@@ -499,7 +492,11 @@ describe('WindowsTextDelivery stage instrumentation', () => {
  * interrupt instead of paying a fresh -NoProfile start per action.
  */
 describe('WindowsTextDelivery console transport', () => {
-  function workerDelivery(spawnConsoleWorker: () => ConsoleWorkerProcess, fallback?: ShellRunner) {
+  function workerDelivery(
+    spawnConsoleWorker: () => ConsoleWorkerProcess,
+    fallback?: ShellRunner,
+    runConsoleWrite?: ShellRunner
+  ) {
     return new WindowsTextDelivery({
       home: 'C:\Users\j',
       relayModel: 'haiku',
@@ -508,22 +505,49 @@ describe('WindowsTextDelivery console transport', () => {
       focus: vi.fn().mockResolvedValue(OWN_CONSOLE),
       runRelay: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
       spawnConsoleWorker,
-      ...(fallback === undefined ? {} : { runPowerShell: fallback })
+      ...(fallback === undefined ? {} : { runPowerShell: fallback }),
+      ...(runConsoleWrite === undefined ? {} : { runConsoleWrite })
     })
   }
 
+  /*
+   * AMENDED for #371: four tests here drove the transport through
+   * `sendToConsole`, which no longer uses it — the pid write is a child of its
+   * own (see the test below). They drive it through the keystroke tiers that
+   * still do, which is the same transport and the same assertion.
+   */
   it('runs every console action through one long-lived shell', async () => {
     const shell = autoReplyShell()
     const spawn = vi.fn(() => shell.process)
     const port = workerDelivery(spawn)
 
     await expect(
-      port.sendToConsole({ pid: 42, text: 'one', pressEnter: false })
+      port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
     ).resolves.toMatchObject({ delivered: true })
     await expect(port.sendInterrupt({ pid: 42 })).resolves.toMatchObject({ delivered: true })
 
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(shell.written).toHaveLength(2)
+  })
+
+  /*
+   * The decision this test exists for. `FreeConsole`/`AttachConsole` rebind the
+   * CALLING process's console, so a write run on the shared shell would leave
+   * that shell attached to somebody else's console for every later action —
+   * and the queue behind it serializes the write against keystrokes it has
+   * nothing to do with. The write gets a hidden child per action instead.
+   */
+  it('never routes the pid write through the long-lived shell', async () => {
+    const shell = autoReplyShell()
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = workerDelivery(() => shell.process, undefined, runConsoleWrite)
+
+    await expect(
+      port.sendToConsole({ pid: 4242, text: 'hi', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+
+    expect(shell.written).toHaveLength(0)
+    expect(runConsoleWrite).toHaveBeenCalledTimes(1)
   })
 
   it('hands the existing command builders through untouched', async () => {
@@ -542,9 +566,7 @@ describe('WindowsTextDelivery console transport', () => {
       throw new Error('ENOENT')
     }, fallback)
 
-    await expect(
-      port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    ).resolves.toMatchObject({ delivered: true })
+    await expect(port.sendInterrupt({ pid: 42 })).resolves.toMatchObject({ delivered: true })
     expect(fallback).toHaveBeenCalledTimes(1)
   })
 
@@ -554,16 +576,14 @@ describe('WindowsTextDelivery console transport', () => {
       throw new Error('ENOENT')
     }, fallback)
 
-    await expect(
-      port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
-    ).resolves.toMatchObject({ delivered: false })
+    await expect(port.sendInterrupt({ pid: 42 })).resolves.toMatchObject({ delivered: false })
   })
 
   it('shuts the persistent shell down cleanly on dispose', async () => {
     const shell = autoReplyShell()
     const port = workerDelivery(() => shell.process)
 
-    await port.sendToConsole({ pid: 42, text: 'hi', pressEnter: false })
+    await port.sendInterrupt({ pid: 42 })
     port.dispose()
 
     expect(shell.end).toHaveBeenCalled()
