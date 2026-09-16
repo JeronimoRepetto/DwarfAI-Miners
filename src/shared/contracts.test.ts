@@ -6,6 +6,7 @@ import {
   DWARF_SILENCE_WINDOW_MS,
   HELDABLE_PROVIDERS,
   MCP_CONNECTION_STATUSES,
+  PANEL_OBSERVER,
   TIER_WEIGHT_THRESHOLDS_KB,
   dwarfSilenceWindowKey,
   dwarfSilenceWindowMs,
@@ -23,6 +24,7 @@ import {
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Message attachments (#408) — one block, appended -------------------- */
   ATTACHMENT_CHANNELS,
+  ATTACHMENT_HELD_PROVIDERS,
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   MAX_DWARF_ATTACHMENT_BYTES,
@@ -655,8 +657,9 @@ describe('channelCarriesAttachments', () => {
     expect(ATTACHMENT_CHANNELS).toEqual(['terminal', 'held-session'])
   })
 
-  it.each(['terminal', 'held-session'] as const)('says %s can', (channel) => {
-    expect(channelCarriesAttachments(channel)).toBe(true)
+  it("says a console can, whoever's session it is: the CLI reads the paste, not us", () => {
+    expect(channelCarriesAttachments('terminal', 'claude')).toBe(true)
+    expect(channelCarriesAttachments('terminal')).toBe(true)
   })
 
   it.each([
@@ -666,10 +669,39 @@ describe('channelCarriesAttachments', () => {
     'hosted-stdin',
     'launched-process'
   ] as const)('says %s cannot, rather than accepting a file it would drop', (channel) => {
-    expect(channelCarriesAttachments(channel)).toBe(false)
+    expect(channelCarriesAttachments(channel, 'claude')).toBe(false)
   })
 
   it('says no channel at all cannot', () => {
-    expect(channelCarriesAttachments(null)).toBe(false)
+    expect(channelCarriesAttachments(null, 'claude')).toBe(false)
+  })
+
+  /*
+   * A held session is the one channel where the PROTOCOL, not the channel,
+   * decides. `held-session` covers every provider this app can hold, and only
+   * the Agent SDK's stream has a measured image block; Antigravity's NDJSON
+   * does not, so offering the control there would promise bytes its session
+   * will never see.
+   */
+  it('says a held Claude session can, because the SDK takes image blocks', () => {
+    expect(channelCarriesAttachments('held-session', 'claude')).toBe(true)
+  })
+
+  it('says a held Antigravity session cannot, because nothing has measured one', () => {
+    expect(channelCarriesAttachments('held-session', 'antigravity')).toBe(false)
+  })
+
+  it('says a held session of NO stated provider cannot, rather than guessing', () => {
+    // Absence is not a yes, the same direction every other unproven capability
+    // in this file falls in.
+    expect(channelCarriesAttachments('held-session')).toBe(false)
+  })
+
+  it('says a dwarf this panel holds over stdio cannot, being in no list at all', () => {
+    expect(channelCarriesAttachments('held-session', PANEL_OBSERVER)).toBe(false)
+  })
+
+  it('names the providers whose held stream was measured, and nothing else', () => {
+    expect(ATTACHMENT_HELD_PROVIDERS).toEqual(['claude'])
   })
 })

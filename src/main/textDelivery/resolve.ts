@@ -403,7 +403,9 @@ export function stampTextDelivery(
           sendText: sendChannel,
           cancel: kickChannel,
           adjustEffort: null,
-          attach: channelCarriesAttachments(sendChannel) ? sendChannel : null
+          // The provider is read for the held tier alone (#408): one channel
+          // over several protocols, and only the Agent SDK's takes an image.
+          attach: channelCarriesAttachments(sendChannel, dwarf.provider) ? sendChannel : null
         }
       }
     })

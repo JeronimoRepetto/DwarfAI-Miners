@@ -171,6 +171,7 @@ export {
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Message attachments (#408) — one block, appended -------------------- */
   ATTACHMENT_CHANNELS,
+  ATTACHMENT_HELD_PROVIDERS,
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   MAX_DWARF_ATTACHMENT_BYTES,

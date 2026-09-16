@@ -62,11 +62,13 @@ import {
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Message attachments (#408) — one block, appended -------------------- */
+  DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   parseDwarfAttachments
   /* --- end of the #408 block ----------------------------------------------- */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
+import type { AttachmentReader } from './textDelivery/attachmentDelivery'
 import {
   enable as enableAutostart,
   ensureDefaultAutostart,
@@ -512,6 +514,34 @@ const attachmentFiles: AttachmentFilePort = {
   }
 }
 
+/**
+ * One attached image's bytes, for a held session's content block (#408).
+ *
+ * The media type comes from the NAME rather than from sniffing the file, which
+ * is the same rule `attachmentKindFor` uses to call it an image at all — one
+ * answer, so a file the panel drew as an image cannot become something else on
+ * its way to the stream. The wire admits four extensions and `.jpg` and
+ * `.jpeg` are one media type, which is the only mapping here that is not the
+ * extension itself.
+ *
+ * The size is bounded before this is reached: the boundary refuses anything
+ * over `MAX_DWARF_ATTACHMENT_BYTES`, so nothing arbitrary is ever read whole
+ * into memory here.
+ */
+const readAttachment: AttachmentReader = async (path) => {
+  const lower = path.toLowerCase()
+  const extension = DWARF_IMAGE_EXTENSIONS.find((candidate) => lower.endsWith(candidate))
+  if (extension === undefined) return null
+  const mediaType =
+    extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : `image/${extension.slice(1)}`
+  try {
+    const bytes = await readFile(path)
+    return { base64: bytes.toString('base64'), mediaType }
+  } catch {
+    return null
+  }
+}
+
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display. */
 const ATTACHMENT_THUMBNAIL_PX = 80
 
@@ -788,6 +818,7 @@ async function init(): Promise<void> {
       appPath: app.getAppPath()
     },
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
+    readAttachment,
     // Passed only when the variable is set (#367): unset leaves the shipped
     // constant in charge rather than pinning it to false from here.
     ...(darwinConsoleInputEnabled() ? { darwinConsoleInput: true } : {}),

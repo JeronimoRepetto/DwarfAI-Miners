@@ -708,8 +708,38 @@ describe('a held session whose protocol has no cancel (#237, step 5)', () => {
       sendText: 'held-session',
       cancel: null,
       adjustEffort: null,
-      attach: 'held-session'
+      // Null for the PROVIDER's sake rather than the channel's (#408): this
+      // session is held over Antigravity's NDJSON, which has no measured image
+      // block. A held Claude session on the same channel answers 'held-session'.
+      attach: null
     })
+  })
+
+  it('stamps no attach channel for a held Antigravity session, whose protocol has none', () => {
+    const held: Dwarf = {
+      id: 'antigravity:agy-1',
+      provider: 'antigravity',
+      role: 'foreman',
+      name: 'boss',
+      status: 'working',
+      sessionId: 'agy-1'
+    }
+    const [mine] = stampTextDelivery(
+      [
+        {
+          id: 'mine:c:\\work',
+          path: 'C:\\work',
+          name: 'work',
+          tier: 'bronze',
+          dwarfs: [held],
+          tokensObserved: 0,
+          updatedAt: 1
+        }
+      ],
+      targetsFrom({ 'antigravity:agy-1': HELD })
+    )
+    expect(mine?.dwarfs[0]?.capabilities?.sendText).toBe('held-session')
+    expect(mine?.dwarfs[0]?.capabilities?.attach).toBeNull()
   })
 })
 

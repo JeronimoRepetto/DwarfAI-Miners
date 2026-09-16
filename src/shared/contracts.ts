@@ -2091,9 +2091,40 @@ export function parseDwarfAttachments(value: unknown): readonly DwarfAttachment[
  */
 export const ATTACHMENT_CHANNELS: readonly TextDeliveryChannel[] = ['terminal', 'held-session']
 
-/** Whether `channel` is one of the two above. Null — no channel — is never one. */
-export function channelCarriesAttachments(channel: TextDeliveryChannel | null): boolean {
-  return channel !== null && ATTACHMENT_CHANNELS.includes(channel)
+/**
+ * The providers whose HELD stream was measured to take a file, which is a
+ * narrower question than which ones can be held at all.
+ *
+ * `held-session` is one channel over several protocols, and only the Agent
+ * SDK's takes an image content block. Antigravity's NDJSON has no measured
+ * shape for one, so a held Antigravity session offers no attach control rather
+ * than promising bytes its session will never see. Same discipline as
+ * `HELDABLE_PROVIDERS`, one capability further in.
+ *
+ * A CONSOLE needs no such list: the paste is read by whatever CLI owns that
+ * console, and this app is not the one interpreting it.
+ */
+export const ATTACHMENT_HELD_PROVIDERS: readonly DwarfProvider[] = ['claude']
+
+/**
+ * Whether this channel can carry a file — and, for a held session, whether this
+ * provider's stream can.
+ *
+ * `provider` is optional and its absence is a NO for a held session, never a
+ * guess: the same direction every unproven capability on this wire falls in.
+ */
+export function channelCarriesAttachments(
+  channel: TextDeliveryChannel | null,
+  observer?: DwarfObserver
+): boolean {
+  if (channel === null || !ATTACHMENT_CHANNELS.includes(channel)) return false
+  if (channel !== 'held-session') return true
+  // `DwarfObserver` rather than `DwarfProvider` because that is what a dwarf
+  // carries, and `'panel'` — a process this app holds over stdio — is simply
+  // not in the list, which is the right answer for it.
+  return (
+    observer !== undefined && (ATTACHMENT_HELD_PROVIDERS as readonly string[]).includes(observer)
+  )
 }
 
 /** One message the panel wants handed to a dwarf's live session. */
