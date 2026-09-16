@@ -18,7 +18,6 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
-  MAX_CONSOLE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
   messageTooLongReason,
   NO_ANSWER_KEYSTROKE_TIER,
@@ -1289,17 +1288,30 @@ describe('AgentRuntime.sendDwarfText', () => {
    * cuts the issue is about. It refuses now, with a sentence naming the length,
    * the limit and what would have carried it, and nothing reaches the port.
    */
+  /*
+   * AMENDED for #433 (the three tests below stood as 'refuses a message longer
+   * than its console can carry, and sends nothing', 'carries a message that is
+   * exactly the console ceiling, whole' and 'lets a relayed session take the
+   * wider wire ceiling its own channel allows', all measured against
+   * MAX_CONSOLE_TEXT_CHARS).
+   *
+   * That constant is gone: the console tier's tighter ceiling was the command
+   * line its PowerShell script was spawned in, and the script rides the child's
+   * stdin now. What the three still pin is what they always pinned — a refusal
+   * past the ceiling with nothing sent, a message exactly AT it carried whole,
+   * and the relay agreeing — at the one ceiling that is left.
+   */
   it('refuses a message longer than its console can carry, and sends nothing', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
     })
 
-    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    const text = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 1)
     const result = await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
     expect(result).toEqual({
       delivered: false,
       via: 'terminal',
-      error: messageTooLongReason(text.length, MAX_CONSOLE_TEXT_CHARS, 'terminal')
+      error: messageTooLongReason(text.length, MAX_DWARF_TEXT_CHARS, 'terminal')
     })
     expect(port.pasteToConsole).not.toHaveBeenCalled()
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
@@ -1310,7 +1322,7 @@ describe('AgentRuntime.sendDwarfText', () => {
       [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
     })
 
-    const text = 'x'.repeat(MAX_CONSOLE_TEXT_CHARS)
+    const text = 'x'.repeat(MAX_DWARF_TEXT_CHARS)
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
     ).resolves.toEqual({ delivered: true, via: 'terminal' })
@@ -1319,18 +1331,17 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.pasteToConsole).toHaveBeenCalledWith({ pid: 42, text, pressEnter: true })
   })
 
-  it('lets a relayed session take the wider wire ceiling its own channel allows', async () => {
+  it('carries past the old console ceiling on that same console, since #433 lifted it', async () => {
     const { runtime, port } = await runtimeWith({
-      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+      [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
     })
 
-    const text = 'y'.repeat(MAX_CONSOLE_TEXT_CHARS + 1)
+    // 6,541 was the console's own ceiling until its script moved to stdin.
+    const text = 'x'.repeat(12_000)
     await expect(
       runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text, pressEnter: true })
-    ).resolves.toMatchObject({ delivered: true, via: 'claude-relay' })
-    expect(port.relayToClaudeSession).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining(text) })
-    )
+    ).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({ pid: 42, text, pressEnter: true })
   })
 
   it('refuses past the wire ceiling on that same relay, naming its own channel', async () => {

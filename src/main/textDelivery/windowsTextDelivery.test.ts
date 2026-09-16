@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
+import { WINDOWS_COMMAND_LINE_LIMIT } from '../domain/types'
 import { FakeFs } from '../adapters/fakeFs'
 import type { ShellRunner } from '../platform/focus'
 import { workerSentinel, type ConsoleWorkerProcess } from './consoleWorker'
-import { WindowsTextDelivery } from './windowsTextDelivery'
+import { buildConsoleInputWriteCommand } from './consoleInputWrite'
+import {
+  WindowsTextDelivery,
+  createConsoleWriteRunner,
+  type ConsoleWriteProcess
+} from './windowsTextDelivery'
 
 /** Hands out the given clock readings in order, so stage timings are exact. */
 function clockOf(...readings: number[]): () => number {
@@ -1216,3 +1222,191 @@ describe('WindowsTextDelivery.answerQuestionAtConsole', () => {
     ).resolves.toMatchObject({ delivered: false })
   })
 })
+
+/* --- The console write's own transport (#433) — one block, appended -------- */
+
+/**
+ * A child that answers whatever the test tells it to, so the transport can be
+ * driven without a real powershell.exe — which on this path is not a
+ * convenience but the same rule the injected runner above exists for: a real
+ * child here would attach to whatever process holds the pid a test made up.
+ */
+function fakeConsoleWriteChild() {
+  const written: string[] = []
+  const kill = vi.fn()
+  const state = { ended: false }
+  let onClose: ((code: number | null) => void) | undefined
+  let onError: ((error: Error) => void) | undefined
+
+  const child: ConsoleWriteProcess = {
+    stdin: {
+      write: (chunk: string) => {
+        written.push(chunk)
+      },
+      end: () => {
+        state.ended = true
+      },
+      on: vi.fn()
+    },
+    on: (event, listener) => {
+      if (event === 'close') onClose = listener as (code: number | null) => void
+      else onError = listener as (error: Error) => void
+    },
+    kill
+  }
+
+  return {
+    child,
+    written,
+    kill,
+    state,
+    close: (code: number | null) => onClose?.(code),
+    fail: (error: Error) => onError?.(error)
+  }
+}
+
+/** The script the runner handed to stdin, read back out of its one base64 blob. */
+function scriptOnStdin(written: readonly string[]): string {
+  const encoded = /FromBase64String\('([A-Za-z0-9+/=]*)'\)/.exec(written.join(''))?.[1] ?? ''
+  return Buffer.from(encoded, 'base64').toString('utf8')
+}
+
+/**
+ * The transport #433 replaced, and why the shape it takes is not the obvious
+ * one.
+ *
+ * The script used to travel in the child's COMMAND LINE, which Windows will not
+ * let past 32,767 characters — a ceiling on the MESSAGE that had nothing to do
+ * with the console (#431). It rides stdin now. What stdin costs is that
+ * `powershell.exe -Command -` reads its input LINE BY LINE and runs each line
+ * as a complete statement: measured 2026-09-16, a raw multi-line script handed
+ * to it ran its first line, swallowed everything from the first unterminated
+ * construct onwards and exited **0**, silently — the worst possible answer,
+ * since a caller reads 0 as delivered. So the script travels as ONE line, the
+ * idiom `consoleWorker.ts` has shipped since #21, and the measurement that made
+ * this change is that `exit 2`, `exit 3` and `exit 4` all come back as the
+ * child's own exit code through it [docs/console-hosting.md §6].
+ */
+describe('createConsoleWriteRunner', () => {
+  it('spawns powershell with the script on stdin and nothing of it in the argv', async () => {
+    const fake = fakeConsoleWriteChild()
+    const spawn = vi.fn(
+      (
+        _command: string,
+        _args: readonly string[],
+        _options: { windowsHide: boolean; stdio: readonly string[] }
+      ) => fake.child
+    )
+    const run = createConsoleWriteRunner({ spawn })
+
+    const script = buildConsoleInputWriteCommand(4242, 'hola', true) ?? ''
+    const settled = run(script)
+    fake.close(0)
+    await expect(settled).resolves.toEqual({ stdout: '', exitCode: 0 })
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const call = spawn.mock.calls[0]
+    expect(call?.[0]).toBe('powershell.exe')
+    expect(call?.[1]).toEqual(['-NoProfile', '-NonInteractive', '-Command', '-'])
+    // The whole of the argv, not just the flags: nothing of the script is on it.
+    expect(call?.[1].join(' ')).not.toContain('AttachConsole')
+    // Load-bearing, not tidiness: a visible child gets a console window, which
+    // the Windows 11 default-terminal handoff turns into a Terminal window that
+    // takes the foreground — the exact theft the pid write exists to remove.
+    expect(call?.[2]).toMatchObject({ windowsHide: true })
+  })
+
+  it('hands the script over whole, and closes stdin so it runs', async () => {
+    const fake = fakeConsoleWriteChild()
+    const run = createConsoleWriteRunner({ spawn: () => fake.child })
+
+    const script = buildConsoleInputWriteCommand(4242, 'hola', true) ?? ''
+    const settled = run(script)
+    fake.close(0)
+    await settled
+
+    expect(scriptOnStdin(fake.written)).toBe(script)
+    // An unclosed stdin is a child waiting for a line that never comes.
+    expect(fake.state.ended).toBe(true)
+  })
+
+  it('carries a thirty-thousand-code-point message, which the command line could not', async () => {
+    // The measurement this change is for: 29,323 code points built a
+    // 109,152-character command line and the spawn was refused with
+    // ENAMETOOLONG in 2 ms (#431). Over stdin the same script is written whole
+    // — measured live at 30,000 code points, exit 0 in 4,277 ms, the transcript
+    // row 30,000 code points [docs/console-hosting.md §6].
+    const fake = fakeConsoleWriteChild()
+    const run = createConsoleWriteRunner({ spawn: () => fake.child })
+
+    const text = 'x'.repeat(30_000)
+    const script = buildConsoleInputWriteCommand(4242, text, true) ?? ''
+    expect(script.length).toBeGreaterThan(WINDOWS_COMMAND_LINE_LIMIT * 3)
+    const settled = run(script)
+    fake.close(0)
+    await settled
+
+    expect(scriptOnStdin(fake.written)).toBe(script)
+  })
+
+  it('sends one line, because the stdin host runs each line as a whole statement', async () => {
+    // Measured, not stylistic: a raw multi-line script over `-Command -` runs
+    // its first line and silently abandons the rest with exit 0.
+    const fake = fakeConsoleWriteChild()
+    const run = createConsoleWriteRunner({ spawn: () => fake.child })
+
+    const script = buildConsoleInputWriteCommand(4242, 'hola', true) ?? ''
+    expect(script).toContain('\n')
+    const settled = run(script)
+    fake.close(0)
+    await settled
+
+    const sent = fake.written.join('')
+    expect(sent.endsWith('\n')).toBe(true)
+    expect(sent.trimEnd()).not.toContain('\n')
+  })
+
+  it.each([0, 2, 3, 4])('reports the script’s own exit code %i unchanged', async (code) => {
+    // The contract `consoleWriteFailureFor` reads. Measured live over this exact
+    // transport on 2026-09-16: 2 against a dead pid, 3 with CONIN$ made
+    // unopenable, 4 with the handle opened read-only — each came back as the
+    // child's own exit code [docs/console-hosting.md §6].
+    const fake = fakeConsoleWriteChild()
+    const run = createConsoleWriteRunner({ spawn: () => fake.child })
+
+    const settled = run(buildConsoleInputWriteCommand(4242, 'hola', false) ?? '')
+    fake.close(code)
+    await expect(settled).resolves.toEqual({ stdout: '', exitCode: code })
+  })
+
+  it('rejects when the child never started, rather than reporting an exit code', async () => {
+    // The guard #433 keeps: a missing powershell.exe or a refused spawn wrote
+    // nothing, and reading that as an exit code would say the write failed
+    // inside a console it never reached.
+    const fake = fakeConsoleWriteChild()
+    const run = createConsoleWriteRunner({ spawn: () => fake.child })
+
+    const settled = run(buildConsoleInputWriteCommand(4242, 'hola', false) ?? '')
+    fake.fail(new Error('spawn powershell.exe ENOENT'))
+    await expect(settled).rejects.toThrow('ENOENT')
+  })
+
+  it('rejects a child the timeout had to kill, which may have written anything', async () => {
+    vi.useFakeTimers()
+    try {
+      const fake = fakeConsoleWriteChild()
+      const run = createConsoleWriteRunner({ spawn: () => fake.child, timeoutMs: 1_000 })
+
+      const settled = run(buildConsoleInputWriteCommand(4242, 'hola', false) ?? '')
+      const caught = settled.catch((error: Error) => error)
+      vi.advanceTimersByTime(1_000)
+      fake.close(null)
+
+      expect(fake.kill).toHaveBeenCalledTimes(1)
+      expect(await caught).toBeInstanceOf(Error)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+/* --- end of the #433 block ------------------------------------------------- */

@@ -95,14 +95,15 @@ describe('boundedChunks', () => {
  * its own, so the answer is simply "sixty calls", and the time that costs is
  * linear in the builder's own pause.
  *
- * What is NOT fine is downstream, and it is the reason the console gets a
- * tighter ceiling than the wire: every chunk becomes six lines of PowerShell
- * carrying its text as base64 of UTF-16, and the whole script is spawned in a
+ * What was NOT fine was downstream, and it gave the console a tighter ceiling
+ * than the wire for one release: every chunk becomes six lines of PowerShell
+ * carrying its text as base64 of UTF-16, and the whole script was spawned in a
  * COMMAND LINE. Measured live 2026-09-16 (docs/console-hosting.md §6), a 29,323
  * code-point message built a 109,152-character command line and the spawn was
- * refused with ENAMETOOLONG. See MAX_CONSOLE_TEXT_CHARS in shared/contracts.ts
- * — that is the number the panel refuses on, and this file's rule is what it
- * was derived against.
+ * refused with ENAMETOOLONG. #433 hands that script to PowerShell on the child's
+ * stdin instead, so the plan this file pins is the only bound left on the tier
+ * and the panel refuses on the wire ceiling (`MAX_DWARF_TEXT_CHARS`) like every
+ * other channel.
  */
 describe('boundedChunks: a thirty-thousand-point message', () => {
   const NUMBERED = Array.from(

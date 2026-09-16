@@ -340,8 +340,10 @@ const attachTitle = computed(() => attachHint(props.dwarf))
  * trimmed it. Their words stay theirs.
  *
  * The number comes off the CAPABILITY rather than from the wire ceiling,
- * because the routes genuinely differ — a console write is spawned with the
- * whole message inside a command line and carries far less than a relay does.
+ * because main is what decides how much a route carries and the panel must
+ * refuse exactly what main refuses. The routes agreed on one number as of #433
+ * — the console write's tighter ceiling was the command line its script was
+ * spawned in, and that script rides stdin now — and they need not agree again.
  * `maxTextCharsFor` is the fallback for a matrix that carries no such member
  * (see DwarfCapabilities.maxTextChars), never a second opinion about a dwarf
  * main has already answered for.
