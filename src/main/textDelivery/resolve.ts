@@ -410,10 +410,10 @@ export function stampTextDelivery(
           // Off the ENDPOINT rather than off `sendChannel` (#431): a worker's
           // chain reports 'foreman-relay' while writing into its foreman's own
           // console, and the channel name cannot tell those apart where the
-          // endpoint can. Every endpoint answers the wire ceiling since #433 —
-          // the console write's own was its command line, and its script rides
-          // stdin now — so the stamp is one number today; it is read from the
-          // endpoint anyway, because that is the question being asked.
+          // endpoint can. Two numbers again since #437 — the Codex queue's
+          // message is an argv element and Codex names no stdin form for it,
+          // while every other endpoint carries its text on a stream and answers
+          // the wire's sanity ceiling.
           maxTextChars: maxTextCharsFor(sendRoute?.endpoint.kind ?? null)
         }
       }

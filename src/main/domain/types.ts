@@ -184,8 +184,11 @@ export {
   attachmentKindFor,
   channelCarriesAttachments,
   isDwarfAttachment,
-  refuseAttachment
+  refuseAttachment,
   /* --- end of the #408 block ----------------------------------------------- */
+  /* --- The relay's prompt on stdin (#437) — one block, appended ------------- */
+  MAX_CODEX_QUEUE_TEXT_CHARS
+  /* --- end of the #437 block ----------------------------------------------- */
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

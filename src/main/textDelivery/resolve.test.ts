@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import { MAX_CODEX_QUEUE_TEXT_CHARS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import type { Dwarf, Mine } from '../domain/types'
 import type { TextDeliveryTarget } from './port'
 import { resolveKickDelivery, resolveTextDelivery, stampTextDelivery } from './resolve'
@@ -536,7 +536,10 @@ describe('stampTextDelivery', () => {
       adjustEffort: null,
       attach: null,
       // AMENDED for #431: the matrix gained a per-route ceiling.
-      maxTextChars: MAX_DWARF_TEXT_CHARS
+      // AMENDED again for #437 (was MAX_DWARF_TEXT_CHARS): the queue is the one
+      // route whose message is still an argv element, so it keeps the
+      // command-line bound the whole app used to share.
+      maxTextChars: MAX_CODEX_QUEUE_TEXT_CHARS
     })
   })
 
@@ -965,5 +968,19 @@ describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
       MAX_DWARF_TEXT_CHARS
     )
   })
+
+  /* --- The relay's prompt on stdin (#437) — appended ----------------------- */
+
+  it("stamps the Codex queue its own command-line bound, which is nobody else's", () => {
+    // #437 left exactly one endpoint with an argv-derived ceiling: `codex queue
+    // --message <TEXT>` names no stdin form. The stamp is what the composer
+    // reads, so a Codex dwarf's box has to refuse at the queue's number while
+    // its neighbours refuse at the wire's.
+    expect(stampedCapabilities({ kind: 'codex-queue', threadId: 't1' })?.maxTextChars).toBe(
+      MAX_CODEX_QUEUE_TEXT_CHARS
+    )
+    expect(MAX_CODEX_QUEUE_TEXT_CHARS).toBeLessThan(MAX_DWARF_TEXT_CHARS)
+  })
+  /* --- end of the #437 block ----------------------------------------------- */
 })
 /* --- end of the #431 block -------------------------------------------------- */

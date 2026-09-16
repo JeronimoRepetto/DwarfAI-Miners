@@ -100,12 +100,31 @@ describe('buildRelayInstruction', () => {
 })
 
 describe('buildRelayArgs', () => {
-  const args = buildRelayArgs({ model: 'haiku', instruction: 'INSTRUCTION' })
+  const args = buildRelayArgs({ model: 'haiku' })
 
+  /*
+   * AMENDED for #437 (was: 'runs one non-interactive turn on the configured
+   * cheap model', which also asserted `args[args.indexOf('-p') + 1]` was the
+   * instruction).
+   *
+   * `-p` takes no positional prompt any more: the instruction goes to the
+   * child's stdin, so there is no argv element for it to be. The assertion that
+   * replaced it is the opposite one — that nothing follows `-p` but the next
+   * flag — and the stdin half is pinned in relayRunner.test.ts.
+   */
   it('runs one non-interactive turn on the configured cheap model', () => {
     expect(args).toContain('-p')
-    expect(args[args.indexOf('-p') + 1]).toBe('INSTRUCTION')
+    expect(args[args.indexOf('-p') + 1]).toBe('--model')
     expect(args[args.indexOf('--model') + 1]).toBe('haiku')
+  })
+
+  it('carries no prompt at all, which is what lets one travel on stdin', () => {
+    // `claude --help`, 2.1.273: the positional prompt is optional and `-p` is
+    // "useful for pipes". A prompt in argv would be read instead of stdin.
+    expect(args).toHaveLength(6)
+    expect(args.every((arg) => arg.startsWith('-') || arg === 'haiku' || arg === RELAY_TOOLS)).toBe(
+      true
+    )
   })
 
   it('limits the relay to the two tools the delivery needs', () => {

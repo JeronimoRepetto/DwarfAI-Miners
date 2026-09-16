@@ -98,19 +98,23 @@ export function buildRelayInstruction(sessionName: string, text: string): string
 }
 
 /**
- * Argv for the relay turn. `--safe-mode` keeps it a fast, predictable one-shot:
- * this machine's hooks, plugins, MCP servers and CLAUDE.md files have nothing
- * to contribute to forwarding a string, and skipping them cuts the run to a
- * couple of seconds. Built-in tools and auth are unaffected.
+ * Argv for the relay turn, and what is NOT in it is the point of #437: the
+ * courier instruction.
+ *
+ * `-p` used to be followed by the whole instruction as a positional prompt,
+ * which put the person's own words inside a command line and made Windows'
+ * 32,767-character bound the bound on a MESSAGE. The positional prompt is
+ * optional — `claude --help` on 2.1.273 documents `-p/--print` as "Print
+ * response and exit (useful for pipes)" — so the instruction goes to the
+ * child's stdin instead (see `runRelayProcess`), where length costs time and
+ * nothing else. The detached launcher has read its prompt that way since #86;
+ * this is the same move for the same reason.
+ *
+ * Everything else is unchanged. `--safe-mode` keeps it a fast, predictable
+ * one-shot: this machine's hooks, plugins, MCP servers and CLAUDE.md files have
+ * nothing to contribute to forwarding a string, and skipping them cuts the run
+ * to a couple of seconds. Built-in tools and auth are unaffected.
  */
-export function buildRelayArgs(options: { model: string; instruction: string }): string[] {
-  return [
-    '-p',
-    options.instruction,
-    '--model',
-    options.model,
-    '--tools',
-    RELAY_TOOLS,
-    '--safe-mode'
-  ]
+export function buildRelayArgs(options: { model: string }): string[] {
+  return ['-p', '--model', options.model, '--tools', RELAY_TOOLS, '--safe-mode']
 }

@@ -23,6 +23,7 @@ import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
 import {
+  MAX_CODEX_QUEUE_TEXT_CHARS,
   MAX_DWARF_TEXT_CHARS,
   messageTooLongReason,
   type DwarfAttachment,
@@ -890,6 +891,42 @@ describe('DwarfMessagePanel input', () => {
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toHaveLength(1)
   })
+
+  /* --- The relay's prompt on stdin (#437) — appended ------------------------ */
+
+  /*
+   * Issue #437. The routes stopped agreeing on one number: the Codex queue
+   * keeps a real command-line bound and everything else answers the wire's
+   * sanity ceiling. The composer's sentence has to name the ROUTE's number, so
+   * a Codex dwarf is told the queue's and its neighbour is not.
+   */
+  it('names the Codex queue own number, which is tighter than every other route', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'codex-queue' }) })
+    const text = 'x'.repeat(MAX_CODEX_QUEUE_TEXT_CHARS + 1)
+    await wrapper.find('.panel-input').setValue(text)
+    expect(wrapper.find('.panel-alert').text()).toBe(
+      messageTooLongReason(text.length, MAX_CODEX_QUEUE_TEXT_CHARS, 'codex-queue')
+    )
+  })
+
+  it('lets a relayed session take 40,000 characters, which no argv could have', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'claude-relay' }) })
+    const input = wrapper.find('.panel-input')
+    await input.setValue('x'.repeat(40_000))
+    expect(wrapper.find('.panel-alert').exists()).toBe(false)
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toHaveLength(1)
+  })
+
+  it('refuses the same 40,000 characters on a Codex dwarf, before anything is sent', async () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'codex-queue' }) })
+    const input = wrapper.find('.panel-input')
+    await input.setValue('x'.repeat(40_000))
+    expect(wrapper.find('.panel-alert').text()).toContain(String(MAX_CODEX_QUEUE_TEXT_CHARS))
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeUndefined()
+  })
+  /* --- end of the #437 block ------------------------------------------------ */
 
   it('keeps the input selectable, which the design asks for by name', () => {
     // Guarded here because it is a stated rule that a stylesheet change could

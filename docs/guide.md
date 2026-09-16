@@ -259,18 +259,32 @@ which is the point of writing by process id, and why the prefix is now only for 
 the relay is still the channel.
 
 **How long a message may be** is a fact about the channel above it, not a preference, and the
-panel says so before you press Enter. There is **one limit, 15,359 characters, and it is the same
-on every route**. It comes from the relay: a message leaves this app as one argument of a spawned
-process there, Windows will not start a process with a command line longer than
-**32,767 characters**, and that budget less the relay's own courier instruction, halved because
-Windows' quoting rule can double a payload of quotation marks, is where the number lands. It is
-measured rather than chosen — [`docs/console-hosting.md`](console-hosting.md) §6 carries the runs.
+panel says so before you press Enter. For almost every session there is **no practical limit**:
+the number the panel would refuse at is **250,000 characters**, which is not a budget for typing
+but a sanity bound — a text that long is a mistake rather than a message, and the app says so
+instead of quietly cutting it. What a long message costs on those routes is **time**, not room.
 
-A message written into a session's own console had a **lower** limit of 6,541 characters for one
-release, because the PowerShell script carrying your words was itself handed over on a command
-line. It is handed over on the script's own standard input now, which has no such bound: a long
-message costs time instead, about four seconds for 30,000 characters, and the panel shows it
-arriving.
+**One channel still has a real limit: a Codex session's queue, at 15,359 characters.** Its message
+leaves this app as one argument of a spawned process, Windows will not start a process with a
+command line longer than **32,767 characters**, and that budget less the queue command's own
+arguments, halved because Windows' quoting rule can double a payload of quotation marks, is where
+the number lands. Codex offers no other way in, so the panel refuses before sending and names that
+number. Every other session — a Claude session written into at its own console, one reached by
+relay, one this panel is holding open — is bounded only by the sanity number above.
+
+Both of the lower limits this app used to have are gone, and each went the same way. A message
+written into a session's own console was capped at 6,541 characters while the PowerShell script
+carrying your words was itself handed over on a command line; it goes on that script's standard
+input now. A message carried by **relay** was capped at 15,359 while its courier instruction was
+an argument to `claude -p`; that goes on standard input now too. Both are measured rather than
+chosen — [`docs/console-hosting.md`](console-hosting.md) §6 carries the runs, including a
+40,000-character message that reached a session by relay whole, in one piece.
+
+**Time is what a long message costs now.** About four seconds for 30,000 characters into a
+console. A relay is slower, because a relay is a whole model turn: about six seconds for a short
+message and about two and a half minutes for 40,000 characters, which is past the one-minute
+delivery timeout — so a very long message to a session reachable only by relay may be reported as
+timed out, and `SENDTEXT_TIMEOUT_S` is the setting that governs it.
 
 **Past it, the panel refuses and keeps your text.** The sentence in the alert row names how long
 the message is, how long this session can take, and what would have carried it; Enter does

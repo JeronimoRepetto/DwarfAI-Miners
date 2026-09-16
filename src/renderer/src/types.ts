@@ -181,8 +181,11 @@ export {
   refuseAttachment,
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- Paging a held conversation (#430) — one block, appended ------------- */
-  HELD_MESSAGE_MAX_CHARS
+  HELD_MESSAGE_MAX_CHARS,
   /* --- end of the #430 block ----------------------------------------------- */
+  /* --- The relay's prompt on stdin (#437) — one block, appended ------------- */
+  MAX_CODEX_QUEUE_TEXT_CHARS
+  /* --- end of the #437 block ----------------------------------------------- */
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */
