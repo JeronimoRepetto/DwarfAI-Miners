@@ -105,18 +105,19 @@ export function oneShotNoExitReason(provider: DwarfProvider): string {
  * `capabilities.cancel` for the same dwarf (the Codex queue, a launched
  * process) — so these sentences describe the SEND and only the send, and
  * KICK_HINT below describes the other half. The console and relay hints changed
- * again with #319: the console PASTES the message now (it no longer types), and
- * it is the primary channel once more, so the relay describes itself as the
- * fallback instead.
+ * again with #319 and again with #371: the console is the primary channel once
+ * more, and it neither types nor pastes — it writes into the session's own
+ * console — so the relay describes itself as the fallback instead.
  */
 export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
-  // The primary channel again for a session with a console (#319): it focuses
-  // the console and PASTES the message straight in, landing a long message at
-  // once — as the person's own prompt — rather than typing it out character by
-  // character. It still comes forward, so the sentence says focus first.
-  terminal: "Focuses this session's console and pastes the message straight in.",
-  // The channel for a session reached by name — one with no terminal to paste
-  // into — and the fallback for one whose console could not be brought forward
+  // The primary channel for a session with a console, and since #371 it raises
+  // no window at all: the message goes into the input of the console that
+  // session's own process is attached to, so it arrives as the person's own
+  // prompt whatever else is in front. The sentence no longer promises a focus,
+  // because there is none to promise.
+  terminal: "Written straight into this session's own console, without raising its window.",
+  // The channel for a session reached by name — one with no console to write
+  // into — and the fallback for one whose console could not be reached at all
   // (#319). Never touches a window, which is its whole point. Says "reads it
   // between tool calls" rather than claiming anything read it — a ✓ here is a
   // hand-over to the queue and nothing more (see reaction.ts).

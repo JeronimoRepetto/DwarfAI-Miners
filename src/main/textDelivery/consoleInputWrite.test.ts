@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildConsoleInputWriteCommand } from './consoleInputWrite'
+import { buildConsoleInputWriteCommand, consoleWriteFailureFor } from './consoleInputWrite'
 
 /** Read back the one base64 payload the script carries, as the text it decodes to. */
 function payloadOf(script: string): string {
@@ -135,5 +135,42 @@ describe('buildConsoleInputWriteCommand', () => {
     expect(buildConsoleInputWriteCommand(7, 'same', true)).toBe(
       buildConsoleInputWriteCommand(7, 'same', true)
     )
+  })
+})
+
+/*
+ * The script's three exit codes are three different facts about a person's own
+ * session, so they become three different sentences rather than one bare
+ * non-zero (#371). The half of each answer that is NOT for the person is
+ * `wroteNothing`: only a failure that provably reached no console may be
+ * retried on another tier, which is what `TextDeliveryOutcome.neverStarted`
+ * carries to the runtime.
+ */
+describe('consoleWriteFailureFor', () => {
+  it('distinguishes the three measured failures by sentence', () => {
+    const sentences = [2, 3, 4].map((code) => consoleWriteFailureFor(code).error)
+    expect(new Set(sentences).size).toBe(3)
+    for (const sentence of sentences) expect(sentence).not.toBe('')
+  })
+
+  it('says nothing was written for an attach that was refused, and for a console that would not open', () => {
+    // Exit 2 is `AttachConsole` returning false — measured against a pid whose
+    // session had ended — and exit 3 is `CONIN$` refusing to open. Neither
+    // reached `WriteConsoleInput` at all.
+    expect(consoleWriteFailureFor(2).wroteNothing).toBe(true)
+    expect(consoleWriteFailureFor(3).wroteNothing).toBe(true)
+  })
+
+  it('never claims nothing was written for a short write', () => {
+    // `EventsWritten` short of `nLength` means records DID go into the buffer;
+    // a second delivery behind it would put part of the message in twice.
+    expect(consoleWriteFailureFor(4).wroteNothing).toBe(false)
+  })
+
+  it('treats an exit code the script does not define as a write that may have landed', () => {
+    // A PowerShell failure of its own (exit 1), or a shell that was killed:
+    // nothing here can prove the buffer was untouched, so it must not say so.
+    expect(consoleWriteFailureFor(1)).toMatchObject({ wroteNothing: false })
+    expect(consoleWriteFailureFor(255).error).toBeTruthy()
   })
 })

@@ -125,7 +125,7 @@ make:
 1. `pnpm install && pnpm dev` (or a packaged build) on your machine, with real Claude Code
    or Codex sessions running.
 2. Walk the matrix rows: session detection, click-to-focus, the transcript viewer, message
-   delivery (the relay on your platform; the console-paste path is Windows-only today), autostart,
+   delivery (the relay on your platform; the console-write path is Windows-only today), autostart,
    tray behavior, packaging.
 3. File an issue per broken row — with your OS version, desktop environment (for Linux:
    X11 or Wayland matters), and what actually happened.

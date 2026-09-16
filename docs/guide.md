@@ -216,25 +216,26 @@ no reaction seen" rather than claiming a reaction.
 
 Which channel carries it depends on the session, not on a preference:
 
-| The session…                               | Message goes by                                                              |
-| ------------------------------------------ | ---------------------------------------------------------------------------- |
-| runs in a console the panel can reach      | **clipboard paste** into that console; the relay if it will not come forward |
-| shares its terminal window with other tabs | the relay — nothing is pasted, because no tab can be picked out by session   |
-| is a named Claude session with no console  | Claude Code's own cross-session messaging (`claude -p` relay)                |
-| is a Codex CLI session                     | Codex's own message queue, read between turns                                |
-| is one this panel is **holding** open      | straight onto the stream the panel already owns                              |
-| was launched with a single prompt          | nothing — it has no inbox, and the composer says so                          |
+| The session…                              | Message goes by                                                         |
+| ----------------------------------------- | ----------------------------------------------------------------------- |
+| runs in a console the panel can reach     | **written straight into that console**; the relay if nothing reached it |
+| is a named Claude session with no console | Claude Code's own cross-session messaging (`claude -p` relay)           |
+| is a Codex CLI session                    | Codex's own message queue, read between turns                           |
+| is one this panel is **holding** open     | straight onto the stream the panel already owns                         |
+| was launched with a single prompt         | nothing — it has no inbox, and the composer says so                     |
 
 The per-platform half of that is the [support matrix](../README.md#platform-support); the reasoning
-behind both reversals of the paste-versus-relay order is
+behind every reversal of the console-versus-relay order is
 [`docs/console-hosting.md`](console-hosting.md). A message to a worker is delivered to its foreman,
 tagged for that worker by name.
 
-The second row is a Windows Terminal window with several tabs open in it, and the panel establishes
-that by counting the consoles the window it would raise is drawing: exactly one is this session's
-and is pasted into as before, more than one — or a count that could not be read — takes the relay.
-Nothing can raise a tab by session, so a paste there would land in whichever tab was last used,
-Enter included.
+The first row no longer cares which window is in front, and that is what changed most recently. The
+message is written into the input of the console your session's own process is attached to, found by
+process id: **no window is raised, nothing goes on your clipboard, and it does not matter which tab
+of a terminal is active** — a session in a background tab of a window full of tabs receives its
+message, and the tab you were working in sees nothing. Until that landed, a terminal window with
+several tabs open had to be refused, because nothing can raise one tab by session and the message
+would have gone to whichever tab was last used, Enter included.
 
 A message the **relay** carries is prefixed with one line stating who wrote it: that your user
 typed this message, and that another session only relayed it verbatim. Claude Code's cross-session
@@ -243,10 +244,10 @@ its user's, and that framing is the harness's rather than this app's to change �
 states its own author. Two facts and no third: the line names no product, because an agent handed
 the name of a tool it does not know spends a turn finding out what it is. The panel's hover on the
 delivery mark says the same thing about the same message, and the line is taken back off when your
-words come round in the transcript, so the panel draws them once rather than twice. A
-pasted message carries no prefix, because it already arrives as the prompt you typed; writing into
-a session's own console by verified process id is what will make every message arrive that way, on
-every platform.
+words come round in the transcript, so the panel draws them once rather than twice. A message
+written into a console carries no prefix, because it already arrives as the prompt you typed —
+which is the point of writing by process id, and why the prefix is now only for the platforms where
+the relay is still the channel.
 
 **Kick** does one of four things, and says which:
 

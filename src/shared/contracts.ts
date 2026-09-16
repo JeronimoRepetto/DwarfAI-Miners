@@ -1809,10 +1809,10 @@ export const MAX_DWARF_TEXT_CHARS = 4000
  *
  * A mitigation and not the fix: #371 item 2 writes into the session's own
  * console by verified pid, which makes the message the user's own prompt on
- * every platform and tab layout, and this line becomes unnecessary wherever
- * that lands.
+ * every tab layout — landed on Windows, so this line is now for the platforms
+ * where the relay is still the channel.
  *
- * Only the relay routes prepend it. A console paste and a write onto a stream
+ * Only the relay routes prepend it. A console write and a write onto a stream
  * this panel holds arrive as the person's prompt already, so saying it there
  * would be noise the agent has to read past. It sits AHEAD of the
  * `[for agent <name>] ` tag a worker's chain adds, because the two say

@@ -1105,9 +1105,17 @@ describe('AgentRuntime.sendDwarfText', () => {
     ])
   }
 
-  // pasteToConsole is the message tier since #319 (sendToConsole still TYPES,
-  // for the permission digit of #203). A fake for both is on the port so a test
-  // can assert which one a message reached.
+  // pasteToConsole is the message tier since #319, sendToConsole the permission
+  // digit's (#203). A fake for both is on the port so a test can assert which
+  // one a message reached.
+  //
+  // VOCABULARY, amended for #371: "paste" below names that port METHOD and the
+  // routing rule around it, both unchanged. The mechanism behind it is not a
+  // paste any more — the Windows port writes into the console the session's pid
+  // names, raising no window and borrowing no clipboard — so the sentences that
+  // described a clipboard, a Ctrl+V or a focus were corrected where they stood.
+  // This file is about which tier the runtime reaches and when it may fall back,
+  // and neither of those changed.
   function fakePort() {
     return {
       sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
@@ -1144,8 +1152,8 @@ describe('AgentRuntime.sendDwarfText', () => {
 
   // AMENDED for #319 (was: 'types the message into the console of a
   // terminal-hosted dwarf', which asserted `sendToConsole` was called). A
-  // message PASTES now — it reaches `pasteToConsole`, never the typing tier.
-  it('pastes the message into the console of a terminal-hosted dwarf', async () => {
+  // message reaches `pasteToConsole`, never the digit's tier.
+  it('sends the message to the console of a terminal-hosted dwarf', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
     })
@@ -1276,17 +1284,17 @@ describe('AgentRuntime.sendDwarfText', () => {
    * could not be started at all', which asserted the relay was tried first and
    * the console second, verdict `via: 'terminal'`).
    *
-   * The two tiers swapped back. The console PASTE is the primary; when it
-   * proves it delivered nothing (a window that would not come forward,
-   * `neverStarted`), the relay behind it takes the same text. The verdict names
-   * the channel that actually delivered, so the ✓ stays honest.
+   * The two tiers swapped back. The console is the primary; when it proves it
+   * delivered nothing (#371: an attach the OS refused), the relay behind it
+   * takes the same text. The verdict names the channel that actually delivered,
+   * so the ✓ stays honest.
    */
-  it('falls back to the relay when the console paste could not focus at all', async () => {
+  it('falls back to the relay when the console delivered nothing at all', async () => {
     const port = {
       sendToConsole: vi.fn(),
       pasteToConsole: vi.fn().mockResolvedValue({
         delivered: false,
-        error: 'The agent terminal could not be brought to the foreground.',
+        error: 'The panel could not attach to that console; the session may have ended.',
         neverStarted: true
       }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
@@ -1320,11 +1328,11 @@ describe('AgentRuntime.sendDwarfText', () => {
    * relay delivers', which asserted the relay was the primary and
    * `sendToConsole` was never called, verdict `via: 'claude-relay'`).
    *
-   * The mirror of that sentence. The console paste is the primary again — it
-   * lands the message at once, as the person's own prompt — so a paste that
-   * succeeds never reaches for the relay.
+   * The mirror of that sentence. The console is the primary again — it lands
+   * the message as the person's own prompt — so a console that succeeds never
+   * reaches for the relay.
    */
-  it('never touches the relay while the console paste delivers', async () => {
+  it('never touches the relay while the console tier delivers', async () => {
     const { runtime, port } = await runtimeWith({
       [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' }
     })
@@ -1342,7 +1350,7 @@ describe('AgentRuntime.sendDwarfText', () => {
    * `'Relay: …\nConsole fallback: …'` and `via: 'claude-relay'`).
    *
    * Both reasons still travel, one line each, in the order they were tried —
-   * which is reversed again: the console paste first, the relay behind it. The
+   * which is reversed again: the console first, the relay behind it. The
    * verdict names the primary the panel was told about.
    */
   it('combines both reasons, console first, when the relay fallback also fails', async () => {
@@ -1375,8 +1383,8 @@ describe('AgentRuntime.sendDwarfText', () => {
     })
   })
 
-  // AMENDED for #319: the primary is the console PASTE; a nameless terminal has
-  // no relay address to fall back to, so a failed paste stops there.
+  // AMENDED for #319: the primary is the console; a nameless terminal has no
+  // relay address to fall back to, so a failed console write stops there.
   it('never falls back for a terminal session that has no relay address', async () => {
     const port = {
       sendToConsole: vi.fn(),
@@ -1400,7 +1408,7 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
-  // AMENDED for #319: the fallback path is the console paste (`neverStarted`)
+  // AMENDED for #319: the fallback path is the console (`neverStarted`)
   // then the relay behind it. Nothing else changed — it asserted the payload
   // stays out of the log before, and it asserts the same thing now.
   it('keeps the message text out of the log on the fallback path too', async () => {
@@ -1612,16 +1620,16 @@ describe('AgentRuntime.sendDwarfText', () => {
    * Windows, where the console tier does exist', which asserted the relay was
    * the primary here too, `via: 'claude-relay'`, `sendToConsole` never called).
    *
-   * #319 pastes the message at the console again — the primary tier on the one
+   * #319 sends the message to the console again — the primary tier on the one
    * platform that has one. The console defect was the letter-by-letter typing,
-   * not the console itself; a paste lands the message at once, as the person's
-   * own prompt, so the console wins the primary slot back and the relay is its
+   * not the console itself; the message lands at once, as the person's own
+   * prompt, so the console wins the primary slot back and the relay is its
    * fallback.
    *
    * The platform is fixed to Windows on purpose: it is the ONE platform where
    * the console tier exists at all, so it is the only place the order differs.
    */
-  it('pastes at a named console session on Windows, the console tier primary again', async () => {
+  it('writes to a named console session on Windows, the console tier primary again', async () => {
     const port = { ...fakePort(), supportsConsoleInput: true }
     const { runtime } = await runtimeWith(
       { [FOREMAN_ID]: { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } },
@@ -1645,7 +1653,7 @@ describe('AgentRuntime.sendDwarfText', () => {
    * `textDelivery: 'claude-relay'` with `sendText: 'claude-relay'`, `cancel:
    * 'terminal'` — the two halves disagreeing).
    *
-   * The message pastes at the console now, so both halves are 'terminal' again:
+   * The message goes to the console now, so both halves are 'terminal' again:
    * the capability the bar reads is the console the send will actually use.
    */
   it('advertises the console for both sending and cancelling on the same dwarf', async () => {
@@ -1673,8 +1681,8 @@ describe('AgentRuntime.sendDwarfText', () => {
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 
-  // AMENDED for #319: a nameless console session PASTES too (`pasteToConsole`).
-  it('pastes into the console of a session with a pid and no name, its only channel', async () => {
+  // AMENDED for #319: a nameless console session takes the same tier.
+  it('writes into the console of a session with a pid and no name, its only channel', async () => {
     const port = { ...fakePort(), supportsConsoleInput: true }
     const { runtime } = await runtimeWith({ [FOREMAN_ID]: { kind: 'terminal', pid: 42 } }, port)
 
@@ -1688,19 +1696,18 @@ describe('AgentRuntime.sendDwarfText', () => {
   /*
    * AMENDED for #319 (was, under #308: 'does not fall back after a relay that ran
    * and exited non-zero', which gated the console fallback on the RELAY's
-   * `neverStarted`). The tiers reversed, so the gate is now on the console
-   * PASTE: a paste that RAN and reported a non-zero exit may already have landed
-   * — Ctrl+V can put the clipboard into the window before the command fails — so
-   * the runtime must not relay the same text behind it. Only a paste that
-   * proved it delivered nothing (a window that would not come forward,
-   * `neverStarted`) may fall back.
+   * `neverStarted`). The tiers reversed, so the gate is now on the CONSOLE: a
+   * write that reached the console and then reported failure may already have
+   * landed — #371's short write puts part of the message in the input buffer
+   * and then reports a non-zero exit — so the runtime must not relay the same
+   * text behind it. Only a write that proved it delivered nothing may fall back.
    */
-  it('does not fall back to the relay after a paste that ran and reported failure', async () => {
+  it('does not fall back to the relay after a console write that ran and reported failure', async () => {
     const port = {
       sendToConsole: vi.fn(),
       pasteToConsole: vi.fn().mockResolvedValue({
         delivered: false,
-        error: 'The paste keystroke could not be sent to the terminal.'
+        error: 'The write into that console did not complete.'
       }),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn()
@@ -1715,21 +1722,21 @@ describe('AgentRuntime.sendDwarfText', () => {
     ).resolves.toEqual({
       delivered: false,
       via: 'terminal',
-      error: 'The paste keystroke could not be sent to the terminal.'
+      error: 'The write into that console did not complete.'
     })
     expect(port.relayToClaudeSession).not.toHaveBeenCalled()
   })
 
   /*
    * AMENDED for #319 (was, under #308: 'does not fall back after a relay that
-   * timed out, which may have delivered first'). Same rule, the paste's second
-   * failure mode: a paste that THREW may have landed after the throw, so it is
-   * not `neverStarted` and the runtime must not relay behind it.
+   * timed out, which may have delivered first'). Same rule, the console tier's
+   * second failure mode: a write that THREW may have landed after the throw, so
+   * it is not `neverStarted` and the runtime must not relay behind it.
    */
-  it('does not fall back to the relay after a paste that threw, which may have landed first', async () => {
+  it('does not fall back to the relay after a console write that threw, which may have landed first', async () => {
     const port = {
       sendToConsole: vi.fn(),
-      pasteToConsole: vi.fn().mockRejectedValue(new Error('boom mid-paste')),
+      pasteToConsole: vi.fn().mockRejectedValue(new Error('boom mid-write')),
       relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
       sendInterrupt: vi.fn()
     } satisfies TextDeliveryPort
@@ -1821,7 +1828,7 @@ describe('AgentRuntime.sendDwarfText', () => {
       )
     })
 
-    it('carries the line on the relay a console paste falls back to (#319)', async () => {
+    it('carries the line on the relay a console write falls back to (#319)', async () => {
       const port = {
         sendToConsole: vi.fn(),
         pasteToConsole: vi.fn().mockResolvedValue({
@@ -1840,15 +1847,15 @@ describe('AgentRuntime.sendDwarfText', () => {
       await runtime.sendDwarfText({ dwarfId: FOREMAN_ID, text: 'dig east', pressEnter: true })
 
       // The fallback is a RELAY however it was reached, so the message it
-      // carries is framed as a peer's exactly as a direct one is. The paste
-      // that failed first was handed the words alone.
+      // carries is framed as a peer's exactly as a direct one is. The console
+      // write that failed first was handed the words alone.
       expect(port.relayToClaudeSession.mock.calls[0]?.[0].text).toBe(
         `${RELAY_PROVENANCE_LINE}\ndig east`
       )
       expect(port.pasteToConsole.mock.calls[0]?.[0].text).toBe('dig east')
     })
 
-    it('never prefixes a console paste, which is the prompt the person typed', async () => {
+    it('never prefixes a console write, which is the prompt the person typed', async () => {
       const { runtime, port } = await runtimeWith({
         [FOREMAN_ID]: { kind: 'terminal', pid: 42 }
       })
@@ -2366,7 +2373,7 @@ describe('AgentRuntime.kickDwarf', () => {
   /**
    * The half #308 left alone, pinned so the next reordering has to say so.
    *
-   * A MESSAGE to this exact dwarf pastes at its console with the relay behind
+   * A MESSAGE to this exact dwarf goes to its console with the relay behind
    * it (#319), and the kick does not share that order: it stays on the terminal
    * tier outright, with no relay in front of it.
    *
@@ -3743,7 +3750,7 @@ describe('AgentRuntime delivery instrumentation', () => {
     }
   }
 
-  // AMENDED for #319: the console tier a message measures is the PASTE now.
+  // AMENDED for #319: the console tier a message measures is `pasteToConsole`.
   it('logs the stages the console tier measured, alongside the verdict', async () => {
     const clock = { value: 0 }
     const port = {
@@ -3821,7 +3828,7 @@ describe('AgentRuntime delivery instrumentation', () => {
     logged.restore()
   })
 
-  // AMENDED for #319: a failed message attempt is a failed PASTE now.
+  // AMENDED for #319: a failed message attempt is a failed console write now.
   it('times a failed attempt too — the slow ones are the ones worth measuring', async () => {
     const clock = { value: 0 }
     const port = {
@@ -3883,7 +3890,7 @@ describe('AgentRuntime delivery instrumentation', () => {
    * AMENDED for #319 (was, under #308: 'instruments the console fallback of a
    * message as its own attempt too', which drove a console fallback behind a
    * relay that never started). The tiers reversed: a message's fallback is the
-   * RELAY behind a console paste that could not focus (`neverStarted`), and it
+   * RELAY behind a console write that delivered nothing (`neverStarted`), and it
    * is timed as its own attempt just as the kick's relay fallback is.
    */
   it('instruments the relay fallback of a message as its own attempt too', async () => {

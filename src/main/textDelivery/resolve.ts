@@ -20,7 +20,7 @@ export interface ResolvedTextDelivery {
   /** Prepended to the user's text, e.g. '[for agent Explorer] '. Empty for a direct send. */
   prefix: string
   /**
-   * The relay this send may fall back to, when the console paste above it could
+   * The relay this send may fall back to, when the console write above it could
    * not be delivered at all (#319, reversing #308). Absent wherever there is no
    * second tier — which is every endpoint but a console reached off a session
    * that is also addressable by registry name.
@@ -29,8 +29,8 @@ export interface ResolvedTextDelivery {
    * `consoleFallbackPid` was: the fallback is not a channel the panel may
    * advertise — `channel` is what the bar reads, and it names the console. See
    * `sendRouteOf` for the rule, and `TextDeliveryOutcome.neverStarted` for the
-   * single condition under which the runtime is allowed to use this (a paste
-   * whose window would not come forward, so nothing was pasted).
+   * single condition under which the runtime is allowed to use this (a write
+   * that provably reached no console, so nothing was delivered).
    */
   relayFallbackSessionName?: string
 }
@@ -121,19 +121,20 @@ function followForemanHops(dwarfId: string, targetOf: TextDeliveryLookup): Forem
  * send and kick routing part company (#308).
  *
  * The rule it adds: a session that owns a console AND is addressable by
- * registry name is written to by PASTING at its console, on the platform that
- * has one (Windows), with the relay kept only as the tier a paste that could
- * not focus falls back to.
+ * registry name is written to AT ITS CONSOLE, on the platform that has one
+ * (Windows), with the relay kept only as the tier a console write that
+ * delivered nothing falls back to.
  *
  * #308 chose the opposite order — the relay primary — to escape the console
  * tier's letter-by-letter typing, which took ~16 s for a 441-char message and
  * wrote the remainder into whatever window a mid-typing focus change gave the
- * foreground. #319 reverses it because the defect was HOW the console wrote,
- * not that it wrote: a PASTE lands the whole message at once in under a second,
- * so the focus-steal window nearly disappears — and the message arrives as the
+ * foreground. #319 reversed it because the defect was HOW the console wrote,
+ * not that it wrote — and #371 finished the job by writing into the console the
+ * session's pid names, so no window is involved at all and the focus-steal
+ * window is gone rather than narrowed. Either way the message arrives as the
  * person's own prompt rather than labelled as another session, which a relayed
- * message cannot be. The relay stays the fallback for a paste that cannot
- * focus (and the only channel for a session with no console at all).
+ * message cannot be. The relay stays the fallback for a write that provably
+ * delivered nothing (and the only channel for a session with no console).
  *
  * Kick's order was never the question — it stays at the console, which is why
  * this rule lives here and not in `deliveryTargetOf`. The reason changed with
@@ -162,8 +163,8 @@ function sendRouteOf(
     return { channel: channelOf(hops, endpoint), endpoint }
   }
   // The name moves off the endpoint to the fallback slot, the mirror of what
-  // #308 did with the pid: the endpoint is the plain console the paste writes
-  // to, and the relay address it may fall back to is not a channel the bar
+  // #308 did with the pid: the endpoint is the plain console the message is
+  // written to, and the relay address it may fall back to is not a channel the bar
   // advertises. `hops.channel` is already 'terminal' for a direct send and
   // 'foreman-relay' for a worker's chain, and neither changes here.
   return {
@@ -196,9 +197,11 @@ function channelOf(hops: ForemanHops, endpoint: TextDeliveryEndpoint): TextDeliv
  * `supportsConsoleInput` was false, and the button that ends a session on
  * Windows asked the agent to stop by relay there instead. Two acts, one label.
  *
- * Console input and an end tier are different capabilities. A keystroke or a
- * paste needs the window server — macOS's osascript path is unverified and
- * Linux has no portable one — while ending a session needs only a pid, which
+ * Console input and an end tier are different capabilities. Writing into a
+ * console needs a per-OS mechanism there is not one of everywhere — macOS's
+ * osascript keystroke path is unverified and Linux has no portable one, where
+ * Windows addresses the console by pid — while ending a session needs only a
+ * pid, which
  * every platform can signal. So the degrade belongs to the send route, next to
  * the rest of the send/kick split this file owns, and `kickEndpointOf` keeps the
  * console: a port without an end tier states that refusal itself
@@ -362,7 +365,7 @@ export function resolveKickDelivery(
  * and a process this panel launched can be ended and takes no messages. Both
  * are facts about a session TYPE. A named observed Claude session used to be a
  * third, one-session asymmetry (#308: relay for a message, console for a kick),
- * but #319 pastes the message at its console too, so both halves are 'terminal'
+ * but #319 sent the message to its console too, so both halves are 'terminal'
  * again and it is symmetric once more — on Windows. On macOS and Linux that
  * same dwarf is asymmetric again for a reason about the MACHINE rather than the
  * session (#366): it cannot be typed into, so a message takes the relay, and it

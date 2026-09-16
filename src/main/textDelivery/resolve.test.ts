@@ -42,13 +42,15 @@ describe('resolveTextDelivery', () => {
    * `channel: 'claude-relay'`, `endpoint: { kind: 'claude-relay', sessionName }`
    * and `consoleFallbackPid: 42` — the relay primary, the console its fallback).
    *
-   * #319 reverses #308 back: a message to a named observed session PASTES at its
-   * console (primary again) and falls back to the relay. So the endpoint is the
+   * #319 reverses #308 back: a message to a named observed session goes to its
+   * CONSOLE (primary again) and falls back to the relay. So the endpoint is the
    * terminal, the pid is the address it uses, and the session name is only what
-   * a paste that could not focus falls back to — the mirror of what #308 held.
-   * See sendRouteOf in resolve.ts.
+   * a console write that delivered nothing falls back to — the mirror of what
+   * #308 held. See sendRouteOf in resolve.ts. The mechanism at that console
+   * changed again in #371 (a write by pid, no window); the routing did not, and
+   * this file is about the routing.
    */
-  it('pastes at a named console session, keeping the relay as the fallback', () => {
+  it('writes to a named console session, keeping the relay as the fallback', () => {
     const resolved = resolveTextDelivery(
       'claude:s1',
       targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42, sessionName: 'sample-project-70' } })
@@ -69,9 +71,9 @@ describe('resolveTextDelivery', () => {
    * The flip is at the endpoint, so the hop that produced the prefix must still
    * survive it: the session at the top is asked to pass the text to the agent
    * the person pointed at (#157). Only the tier under it reversed — the
-   * foreman's console pastes, the foreman's relay is the fallback.
+   * foreman's console takes the message, the foreman's relay is the fallback.
    */
-  it("keeps a worker's prefix while its named foreman's message pastes at the console", () => {
+  it("keeps a worker's prefix while its named foreman's message goes to the console", () => {
     const resolved = resolveTextDelivery(
       'claude:s1:agent-9',
       targetsFrom({
@@ -93,7 +95,7 @@ describe('resolveTextDelivery', () => {
 
   it('leaves a console session with no name on its console, having nothing else to offer', () => {
     // A pid but no registry name, so no relay address exists at all: the console
-    // paste is the only channel, with no fallback behind it.
+    // is the only channel, with no fallback behind it.
     const resolved = resolveTextDelivery(
       'claude:s1',
       targetsFrom({ 'claude:s1': { kind: 'terminal', pid: 42 } })
@@ -557,9 +559,9 @@ describe('stampTextDelivery', () => {
    * `textDelivery: 'claude-relay'` and `sendText: 'claude-relay'` while cancel
    * stayed 'terminal' — the one dwarf whose two halves disagreed).
    *
-   * #319 pastes the message at the console again, so both halves are 'terminal'
+   * #319 sends the message to the console again, so both halves are 'terminal'
    * once more: the asymmetry #308 introduced here is gone. `textDelivery`
-   * follows sendText, and the composer's hint is the console paste's — which is
+   * follows sendText, and the composer's hint is the console tier's — which is
    * exactly what main is now going to do.
    */
   it('stamps the console for both sending and cancelling on a named session', () => {

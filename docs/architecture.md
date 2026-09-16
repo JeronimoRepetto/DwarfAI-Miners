@@ -11,7 +11,7 @@ ClaudeProvider / CodexProvider / AntigravityProvider     (+ the simulated one, d
           Poller -> aggregateMines + TierService -> MaterialLedger
             |                                          ^
         AgentRuntime  <- createPlatformAdapters (focus, viewer, text delivery,
-            |                                    clipboard, process probe, process end)
+            |                                    process probe, process end)
             |          <- HeldSessionRegistry (the sessions this panel keeps open)
       Electron IPC / preload
             |
@@ -45,11 +45,11 @@ the panel's own frame is not intercepted — the panel loads one local document 
 which is why that has never been reachable, not because it is blocked.
 
 One local side effect is worth stating plainly here rather than only in the privacy document:
-sending a message into a session's console **uses your system clipboard**. The message is written
-to it, pasted, and the previous contents are put back immediately afterwards. Anything that writes
-to the clipboard in that window loses its value to the restore — a single focus plus one keystroke —
-and not restoring at all would be worse, so the race is accepted and stated. Only the paste channel
-does this; the relay and the Codex queue touch no clipboard.
+sending a message into a session's console writes it **into that console's own input buffer**,
+addressed by the session's process id (`AttachConsole` + `WriteConsoleInput`, #371). No window is
+brought forward and **no clipboard is involved** — the paste this replaced borrowed the system
+clipboard for the length of one focus and one keystroke, and that port is gone from the app
+entirely.
 
 The app makes no outbound network requests of its own — no telemetry, no auto-updater.
 [`docs/privacy.md`](privacy.md) documents the full data boundary (what is read, what is

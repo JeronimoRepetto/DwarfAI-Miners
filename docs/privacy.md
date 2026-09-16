@@ -171,10 +171,11 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
   hook command written into your Claude config POSTs the hook's own JSON to
   `http://127.0.0.1:<port>` with `--noproxy 127.0.0.1`, so not even a configured proxy can
   route it off the machine (`src/main/hooks/hookCommand.ts`).
-- **The Send action never opens a socket of its own; what it does depends on the channel.** Pasting
-  into a console (the default where the panel can reach one) is entirely local: the message goes on
-  the system clipboard, the console window is brought forward, Ctrl+V is synthesized, and the
-  clipboard's previous contents are put back — see the next section. Handing a message to a Codex
+- **The Send action never opens a socket of its own; what it does depends on the channel.** Writing
+  into a console (the default where the panel can reach one) is entirely local: the message is put
+  into the input buffer of the console your session's own process is attached to, addressed by
+  process id — no window is raised and nothing is put on your clipboard — see the next section.
+  Handing a message to a Codex
   thread's queue spawns your own `codex` binary with the thread id and the text as argv. The relay
   spawns one throwaway `claude -p` turn from `~/.local/bin/claude` (or `claude.exe` under the same
   path on Windows), in `--safe-mode`, restricted to the `ListAgents` and `SendMessage` tools
@@ -195,21 +196,25 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
   `shell.openExternal`, because a renderer's word is never treated as a permission
   (`src/shared/externalLink.ts`, `src/main/shell/openExternalLink.ts`).
 
-## The one thing it borrows: your clipboard
+## Your clipboard: nothing borrows it any more
 
-Sending a message into a session's console writes that message to the **system clipboard**, pastes
-it, and restores what was there before, in a `finally` that runs whichever way the paste ends
-(`src/main/textDelivery/windowsTextDelivery.ts`). Two consequences, both accepted rather than
-hidden:
+**This section used to say the opposite, and the change is worth stating rather than quietly
+deleting.** Until #371, sending a message into a session's console put that message on your
+**system clipboard**, pasted it with Ctrl+V into the window it had just brought forward, and
+restored what was there before. For the length of that focus and keystroke your clipboard held the
+message you had just sent, and anything that wrote to the clipboard in the same instant lost its
+value to the restore. Both were accepted deliberately and stated here.
 
-- For the length of one window focus plus one keystroke, your clipboard holds the message you just
-  sent. Anything that reads the clipboard in that window could read it.
-- Anything that _writes_ to the clipboard in that same window loses its value to the restore.
+Neither happens now. The message is written straight into the input buffer of the console your
+session's own process is attached to, found by **process id**
+(`src/main/textDelivery/consoleInputWrite.ts`, `windowsTextDelivery.ts`): no window is brought
+forward, no keystroke is synthesized, and **your clipboard is not read or written at all**. The
+app no longer holds a clipboard port of any kind — nothing in it reads or writes one, on any
+channel.
 
-Not restoring at all would be worse — your clipboard would silently become your last sent message —
-so the race is taken deliberately. It happens only on the console-paste channel: the relay, the
-Codex queue, and a session the panel holds open all touch no clipboard, and no other action in the
-app reads or writes one.
+The text does still leave the app on that path, and it always did: it is handed to the console of
+the session you addressed, which is a program running as you on your own machine. What is gone is
+the second copy that sat on a system-wide clipboard on its way there.
 
 ## What is shown on screen
 
