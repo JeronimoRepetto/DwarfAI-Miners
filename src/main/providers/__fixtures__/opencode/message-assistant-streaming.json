@@ -2,7 +2,7 @@
   "role": "assistant",
   "parentID": "msg_placeholder_user",
   "mode": "build",
-  "agent": "gentle-orchestrator",
+  "agent": "sample-agent",
   "path": { "cwd": "~/Sample-Project" },
   "modelID": "qwen3.6-plus",
   "providerID": "opencode-go",

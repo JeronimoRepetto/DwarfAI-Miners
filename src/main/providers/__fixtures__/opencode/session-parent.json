@@ -14,7 +14,7 @@
   "tokens_reasoning": 0,
   "tokens_cache_read": 61200,
   "tokens_cache_write": 0,
-  "agent": "gentle-orchestrator",
+  "agent": "sample-agent",
   "model": "{\"id\":\"qwen3.6-plus\",\"providerID\":\"opencode-go\"}",
   "time_created": 1757900000000,
   "time_updated": 1757900060000,

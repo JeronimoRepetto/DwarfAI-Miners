@@ -10,9 +10,10 @@ invented. `docs/opencode-format.md` records the format these were read from, inc
 negative rows (no `storage/` tree, no pid column, no per-session JSONL, no `permission` row and no
 `session_message`/`session_input` row in the measured interactive turn).
 
-**`session.agent` is a user-configured agent name, not a fixed identity.** The measured value
-(`gentle-orchestrator`) was the maintainer's own configured agent nickname and is replaced here
-with the same placeholder throughout, exactly as it would be for any other account-specific value.
+**`session.agent` is a user-configured agent name, not a fixed identity.** The agent names in
+these files are `sample-agent` — standing in for the maintainer's own configured nickname, exactly
+as `j` stands in for the account name — and `general`, OpenCode's built-in subagent name, which
+the measured delegated child really carried and which identifies nobody.
 
 | File                               | What it is                                                                                                                                                                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

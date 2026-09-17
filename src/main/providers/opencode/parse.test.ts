@@ -29,7 +29,7 @@ describe('parseOpenCodeMessageData', () => {
     expect(parseOpenCodeMessageData(fixture('message-user.json'))).toEqual({
       role: 'user',
       timeCreatedMs: 1757900000000,
-      agent: 'gentle-orchestrator'
+      agent: 'sample-agent'
     })
   })
 
@@ -37,7 +37,7 @@ describe('parseOpenCodeMessageData', () => {
     expect(parseOpenCodeMessageData(fixture('message-assistant-streaming.json'))).toEqual({
       role: 'assistant',
       timeCreatedMs: 1757900001000,
-      agent: 'gentle-orchestrator'
+      agent: 'sample-agent'
     })
   })
 
@@ -47,7 +47,7 @@ describe('parseOpenCodeMessageData', () => {
       timeCreatedMs: 1757900001000,
       timeCompletedMs: 1757900030000,
       finish: 'tool-calls',
-      agent: 'gentle-orchestrator'
+      agent: 'sample-agent'
     })
   })
 
@@ -57,7 +57,7 @@ describe('parseOpenCodeMessageData', () => {
       timeCreatedMs: 1757900031000,
       timeCompletedMs: 1757900045000,
       finish: 'stop',
-      agent: 'gentle-orchestrator'
+      agent: 'sample-agent'
     })
   })
 
@@ -79,7 +79,7 @@ describe('parseOpenCodeMessageData', () => {
     expect(parseOpenCodeMessageData(raw)).toEqual({
       role: 'user',
       timeCreatedMs: 1757900000000,
-      agent: 'gentle-orchestrator'
+      agent: 'sample-agent'
     })
   })
 })
@@ -172,7 +172,7 @@ describe('parseOpenCodePartData', () => {
 const userMessage = (id: string, timeCreatedMs: number): OpenCodeMessageRow => ({
   id,
   timeCreatedMs,
-  data: { role: 'user', time: { created: timeCreatedMs }, agent: 'gentle-orchestrator' }
+  data: { role: 'user', time: { created: timeCreatedMs }, agent: 'sample-agent' }
 })
 
 const assistantMessage = (
@@ -188,7 +188,7 @@ const assistantMessage = (
       created: timeCreatedMs,
       ...(timeCompletedMs === undefined ? {} : { completed: timeCompletedMs })
     },
-    agent: 'gentle-orchestrator',
+    agent: 'sample-agent',
     ...(timeCompletedMs === undefined ? {} : { finish: 'stop' })
   }
 })

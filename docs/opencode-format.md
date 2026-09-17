@@ -55,7 +55,8 @@ One ordinary OpenCode turn ("what does this project do") was run through the int
 read back after it quit.
 
 - **`session`** after the turn: `parent_id: null` (a root), `directory` = the project folder
-  (forward slashes on Windows), `agent: "gentle-orchestrator"` (the agent name OpenCode ran as),
+  (forward slashes on Windows), `agent: "sample-agent"` (a placeholder for the agent name OpenCode
+  ran as),
   `model` = a JSON string `{"id":"mimo-v2.5","providerID":"opencode-go"}`, token and cost columns
   populated, `time_updated` moved to the turn's end.
 - **`message.data`** (JSON): the **user** message carries `role: "user"`, `time.created`, `agent`,
