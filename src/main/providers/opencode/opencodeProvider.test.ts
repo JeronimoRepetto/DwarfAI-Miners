@@ -972,3 +972,126 @@ describe('OpenCodeProvider.scan — an unchanged store re-derives the verdict, n
     expect(calls()).toBe(callsAfterFirst)
   })
 })
+
+/*
+ * #459. Two board rules read `transcriptUpdatedAt` and both went quietly
+ * blind for OpenCode, which published none: a dismissal lifts on it
+ * (`showsActivitySince`, #293) and the message panel re-reads its feed on it
+ * (`watchedFeedSignalKey`, #196). There is no file to take an mtime from, so
+ * it is built from the session's OWN facts — `session.time_updated`, the
+ * newest assistant row's time, the scan that last saw its `event.seq` move —
+ * never the store-wide WAL mtime (#452's CRITICAL 2), and never the clock.
+ */
+describe('OpenCodeProvider.scan — transcriptUpdatedAt from per-session facts (#459)', () => {
+  it('moves when an idle session gains a finished row between polls, with the dwarf never seen working', async () => {
+    const fake = new FakeFs()
+    seedStore(fake, 100, 10)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm1',
+        sessionId: 'ses_a',
+        timeCreatedMs: NOW - 5_000,
+        data: settledTurn(NOW - 5_000, NOW - 4_000)
+      })
+    )
+    let clock = NOW
+    const provider = makeProvider({ fs: fake, sqlite, now: () => clock })
+    const [first] = await provider.scan()
+    expect(first?.dwarfs[0]?.status).toBe('waiting')
+    const before = first?.dwarfs[0]?.transcriptUpdatedAt
+    expect(before).toBeDefined()
+
+    // A turn shorter than the poll interval: it began and finished between
+    // two scans, no event row moved the seq in between, and the row is the
+    // only trace. #293's dismissal has to lift on this trace alone.
+    clock += 10_000
+    const completedMs = clock - 1_000
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm2',
+        sessionId: 'ses_a',
+        timeCreatedMs: clock - 3_000,
+        data: settledTurn(clock - 3_000, completedMs)
+      })
+    )
+    fake.addFile(WAL_PATH, 'y'.repeat(40), NOW)
+    const [second] = await provider.scan()
+    expect(second?.dwarfs[0]?.status).toBe('waiting')
+    // The row's own time, not the clock: nothing this scan saw happened AT
+    // the scan, so the stamp is the write it read, never the moment it read.
+    expect(second?.dwarfs[0]?.transcriptUpdatedAt).toBe(completedMs)
+    expect(second?.dwarfs[0]?.transcriptUpdatedAt).toBeGreaterThan(before!)
+  })
+
+  it('holds still across scans on an unchanged store rather than following the clock', async () => {
+    const fake = new FakeFs()
+    seedStore(fake, 100, 10)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    let clock = NOW
+    const provider = makeProvider({ fs: fake, sqlite, now: () => clock })
+    const [first] = await provider.scan()
+    const stamped = first?.dwarfs[0]?.transcriptUpdatedAt
+    expect(stamped).toBeDefined()
+
+    clock += 30_000
+    const [second] = await provider.scan()
+    expect(second?.dwarfs[0]?.transcriptUpdatedAt).toBe(stamped)
+  })
+
+  it('moves on a new user row while lastMessage stays the same, so the feed watch re-reads', async () => {
+    const fake = new FakeFs()
+    seedStore(fake, 100, 10)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(DB_PATH, eventInsert('e1', 'ses_a', 1))
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm1',
+        sessionId: 'ses_a',
+        timeCreatedMs: NOW - 5_000,
+        data: settledTurn(NOW - 5_000, NOW - 4_000)
+      })
+    )
+    sqlite.exec(
+      DB_PATH,
+      partInsert({
+        id: 'p1',
+        messageId: 'm1',
+        sessionId: 'ses_a',
+        timeCreatedMs: NOW - 4_500,
+        data: { type: 'text', text: 'Done.' }
+      })
+    )
+    let clock = NOW
+    const provider = makeProvider({ fs: fake, sqlite, now: () => clock })
+    const [first] = await provider.scan()
+    expect(first?.dwarfs[0]?.lastMessage).toBe('Done.')
+    const before = first?.dwarfs[0]?.transcriptUpdatedAt
+    expect(before).toBeDefined()
+
+    // The human types: a user row and the seq it moves, no assistant reply
+    // yet. `lastMessage` reports only the assistant's side, so it cannot say
+    // this happened — the field under test is the one that has to.
+    clock += 5_000
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm2',
+        sessionId: 'ses_a',
+        timeCreatedMs: clock - 1_000,
+        data: { role: 'user', time: { created: clock - 1_000 } }
+      })
+    )
+    sqlite.exec(DB_PATH, eventInsert('e2', 'ses_a', 2))
+    fake.addFile(WAL_PATH, 'y'.repeat(40), NOW)
+    const [second] = await provider.scan()
+    expect(second?.dwarfs[0]?.lastMessage).toBe('Done.')
+    expect(second?.dwarfs[0]?.transcriptUpdatedAt).toBeGreaterThan(before!)
+  })
+})

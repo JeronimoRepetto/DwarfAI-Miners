@@ -131,15 +131,16 @@ all, since it reads the store directly.
 
 ## What this settles for the design
 
-| Question         | Answer                                                                                                                      |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Source of truth  | `opencode.db` only (Row 1). No JSON-tree fixture, no dual-shape merge.                                                      |
-| Liveness         | `event.seq` advance, or the newest assistant message lacking `time.completed`; never the database file's own mtime (Row 3). |
-| `waiting`        | Never reported — no pending-permission evidence exists on disk (Row 3 residue).                                             |
-| Topology         | `session.parent_id` only; positive (Row 4) — a worker is drawn beside its foreman.                                          |
-| Delivery channel | None — `textDelivery` returns `null` (Row 5).                                                                               |
-| `transcriptPath` | Always `undefined` — there is no per-session file to tail (Row 2).                                                          |
-| `tokensObserved` | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                           |
+| Question              | Answer                                                                                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source of truth       | `opencode.db` only (Row 1). No JSON-tree fixture, no dual-shape merge.                                                                                |
+| Liveness              | `event.seq` advance, or the newest assistant message lacking `time.completed`; never the database file's own mtime (Row 3).                           |
+| `waiting`             | Never reported — no pending-permission evidence exists on disk (Row 3 residue).                                                                       |
+| Topology              | `session.parent_id` only; positive (Row 4) — a worker is drawn beside its foreman.                                                                    |
+| Delivery channel      | None — `textDelivery` returns `null` (Row 5).                                                                                                         |
+| `transcriptPath`      | Always `undefined` — there is no per-session file to tail (Row 2).                                                                                    |
+| `tokensObserved`      | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                                                     |
+| `transcriptUpdatedAt` | The newest of `session.time_updated`, the newest assistant row's time and the scan that last saw its `event.seq` advance; never the WAL mtime (#459). |
 
 ## Poll cost
 

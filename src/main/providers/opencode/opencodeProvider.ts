@@ -139,6 +139,14 @@ interface SessionFacts {
   seqChangedAtMs: number
   /** Redacted newest assistant text — read only for a session still inside its silence window. */
   lastMessage?: string
+  /**
+   * `Dwarf.transcriptUpdatedAt` (#459): the newest of the three per-session
+   * facts D3 names for liveness — `updatedMs`, the newest assistant row's own
+   * time, `seqChangedAtMs` — and never lower than the value last published.
+   * Never the WAL's mtime, which is store-wide and says nothing about WHICH
+   * session moved; never the clock, which moves whether anyone wrote or not.
+   */
+  transcriptUpdatedAt: number
 }
 
 /** The newest assistant row's own time: completed once it has one, else created. */
@@ -260,13 +268,20 @@ export class OpenCodeProvider implements Provider {
         cwd: normalize(session.cwd),
         updatedMs: session.updatedMs,
         seq,
-        seqChangedAtMs: seqAdvanced ? nowMs : (previous?.seqChangedAtMs ?? nowMs)
+        seqChangedAtMs: seqAdvanced ? nowMs : (previous?.seqChangedAtMs ?? nowMs),
+        transcriptUpdatedAt: 0
       }
       if (session.parentSessionId !== undefined) read.parentSessionId = session.parentSessionId
       if (session.agent !== undefined) read.agent = session.agent
       if (session.modelId !== undefined) read.modelId = session.modelId
       const newest = newestAssistant.get(session.sessionId)
       if (newest !== undefined) read.newest = newest
+      read.transcriptUpdatedAt = Math.max(
+        previous?.transcriptUpdatedAt ?? 0,
+        read.updatedMs,
+        newestRowMs(read),
+        read.seqChangedAtMs
+      )
 
       // The one per-session query. Not paid for a session already past its
       // window: publish() below will drop it before anyone reads the text.
@@ -325,7 +340,8 @@ export class OpenCodeProvider implements Provider {
         // claudeProvider.ts's own attendance field) rather than left to the
         // contract's absent-reads-as-'unknown' fallback, so design and code
         // agree out loud (#444).
-        attendance: 'unknown'
+        attendance: 'unknown',
+        transcriptUpdatedAt: facts.transcriptUpdatedAt
       }
       if (facts.modelId !== undefined) dwarf.model = facts.modelId
       if (facts.parentSessionId !== undefined) {

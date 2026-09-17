@@ -143,6 +143,16 @@ carries no pid column to join against.
 - AND every scan in between may find the store's sizes unchanged — the drop is measured against
   the clock, never against a write
 
+#### Scenario: The dwarf's transcriptUpdatedAt moves with its own session
+
+- GIVEN a published OpenCode dwarf, whose session has no file to take an mtime from
+- WHEN its session gains a row between two polls, or its `event.seq` advances
+- THEN the dwarf's `transcriptUpdatedAt` moves, to the newest of `session.time_updated`, the newest
+  assistant row's own time and the scan that last saw its `event.seq` advance (#459)
+- AND it stands still across scans on an unchanged store rather than following the clock
+- AND the store-wide WAL mtime never sets it, since one file for every session says nothing about
+  which one moved
+
 ### Requirement: Tokens are observed, but no ore is claimed in this change
 
 The per-session token columns ARE populated at the end of a turn ([V],
