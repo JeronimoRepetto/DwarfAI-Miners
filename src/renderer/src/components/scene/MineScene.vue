@@ -24,16 +24,8 @@ import {
   spriteFootprintPx,
   spriteMarginPercent
 } from '../../lib/scene/sceneSizing'
-import type {
-  AgentModelCatalog,
-  Dwarf,
-  DwarfKickState,
-  DwarfSendState,
-  DwarfTuningRequest,
-  Mine
-} from '../../types'
+import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../../types'
 import DwarfSprite from '../dwarf/DwarfSprite.vue'
-import SessionStrip from './SessionStrip.vue'
 import VaultChip from '../vault/VaultChip.vue'
 
 const props = defineProps<{
@@ -58,19 +50,6 @@ const props = defineProps<{
    */
   arrived?: ReadonlySet<string>
   /**
-   * Every provider's live model catalogue, as the shell already asked for it
-   * (issue #96, over #239's own channel). Handed straight to the session
-   * strip: this scene builds no model list of its own, so there is exactly
-   * one answer to "what can this session switch to" in the whole renderer.
-   */
-  catalogs?: readonly AgentModelCatalog[]
-  /**
-   * Why the last tuning change was refused, when one was (issue #96). Owned
-   * by the shell, beside the request it answers — a refusal belongs to a
-   * click rather than to the board, so no snapshot could ever carry it here.
-   */
-  tuningRefusal?: string
-  /**
    * Whether this run's mine ambience is muted (#173).
    *
    * The verdict, never the wish — the audio engine above owns it, so a control
@@ -90,13 +69,6 @@ const emit = defineEmits<{
   add: []
   /** The History action was used; the shell above opens the Mine History panel (#192). */
   history: []
-  /**
-   * A session-strip control was used (issue #96). Forwarded rather than acted
-   * on: the request and its verdict belong to the shell, which is the one
-   * place that talks to main — the same split the send and kick verdicts
-   * already follow.
-   */
-  tune: [request: DwarfTuningRequest]
   /**
    * The ambience mute was pressed (#173). Emits and decides nothing, for the
    * reason Close, History and Add do: the audio engine belongs to App.vue,
@@ -227,17 +199,6 @@ const crew = computed(() => {
     return true
   })
 })
-
-/**
- * The selected dwarf, resolved from the crew rather than trusted blind
- * (issue #96) — `selectedId` can outlive the dwarf it named (a departed
- * session, a stale id from a previous mine), and SessionStrip's own "nothing
- * selected" reading is for no dwarf at all, not for one that no longer
- * exists.
- */
-const selectedDwarf = computed<Dwarf | undefined>(() =>
-  crew.value.find((dwarf) => dwarf.id === props.selectedId)
-)
 
 const layout = computed(() => sceneLayout(props.mine.tier))
 const placements = computed(() => assignScene(crew.value, layout.value))
@@ -431,20 +392,6 @@ onBeforeUnmount(() => {
           />
         </div>
       </div>
-
-      <!--
-        The read-only session strip (#96), for the SELECTED dwarf only — the
-        placement the maintainer named on 2026-09-07: the mine, along the
-        interior's lower edge, above the materials strip below. Everything
-        about which sessions can report anything, and what a reading means,
-        is SessionStrip's own; this only hands it the dwarf.
-      -->
-      <SessionStrip
-        :dwarf="selectedDwarf"
-        :catalogs="catalogs"
-        :refusal="tuningRefusal"
-        @tune="emit('tune', $event)"
-      />
 
       <!--
         This mine's own vault, along the bottom edge of the interior exactly
