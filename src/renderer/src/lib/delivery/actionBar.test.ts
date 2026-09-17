@@ -540,6 +540,52 @@ describe('buildActionBar', () => {
     })
   })
 
+  /*
+   * DET-R6 ("Panel offers actions for an observed OpenCode dwarf"), proven
+   * for the provider itself rather than only through the generic
+   * PANEL_OBSERVER case above (#453). OpenCode's own textDelivery() and
+   * transcriptPath() are constants (opencodeProvider.ts) — no channel ever
+   * reaches the wire — so its capabilities are all-null, but it is never
+   * `oneShot`: that flag names a single-prompt run, and OpenCode is neither
+   * launched nor held by this panel at all, just observed.
+   */
+  describe('observed OpenCode dwarf (DET-R6)', () => {
+    function opencodeDwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+      return capableDwarf({
+        provider: 'opencode',
+        textDelivery: undefined,
+        capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null },
+        ...overrides
+      })
+    }
+
+    it('disables Send with NO_CHANNEL_REASON', () => {
+      const entry = entryFor('chat', opencodeDwarf())
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).toBe(NO_CHANNEL_REASON)
+    })
+
+    /*
+     * The spec scenario used to ask for Kick "disabled with NO_CHANNEL_REASON"
+     * too; #293 (predating this change) replaced that refusal with a
+     * dismissal for every provider with no interrupt channel, so this proves
+     * the ACTUAL, corrected clause instead (see the spec.md amendment note).
+     */
+    it('dismisses the dwarf from the board rather than disabling Kick for want of a channel', () => {
+      const entry = entryFor('kick', opencodeDwarf({ status: 'waiting' }))
+      expect(entry.enabled).toBe(true)
+      expect(entry.hint).toBe(DISMISS_HINT)
+      expect(entry.hint).not.toBe(NO_CHANNEL_REASON)
+    })
+
+    it('disables Kick with the turn-in-progress reason while still working, never with NO_CHANNEL_REASON', () => {
+      const entry = entryFor('kick', opencodeDwarf({ status: 'working' }))
+      expect(entry.enabled).toBe(false)
+      expect(entry.hint).toBe(OPEN_TURN_NO_INTERRUPT_HINT)
+      expect(entry.hint).not.toBe(NO_CHANNEL_REASON)
+    })
+  })
+
   describe('console', () => {
     it('is always available: focusing the terminal needs no delivery channel', () => {
       const entry = entryFor('console', defaultDwarf())
