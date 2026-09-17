@@ -290,6 +290,25 @@ export class CodexProvider implements Provider {
    * current scan's candidates at the end of every scan().
    */
   private readonly rolloutCache = new Map<string, { size: number; info: CodexRolloutInfo }>()
+  /**
+   * Rollout path -> the freshest moment this provider could PROVE the file was
+   * written, published as the dwarf's `transcriptUpdatedAt` (#458).
+   *
+   * Claude stamps the transcript's mtime there and the panel re-reads a feed
+   * when it moves. A rollout's mtime is frozen for the whole life of the file
+   * on Windows (docs/codex-v2-format.md §4, §12(b)), so it cannot serve, and
+   * the assistant's `lastMessage` — the other field the panel watches — never
+   * moves for the person's OWN send. So a launched exec thread continued by
+   * `codex exec resume` took the message and the panel showed nothing until
+   * it was closed and reopened. What this provider can prove instead is
+   * growth: the scan that sees the size move is a write happening now, and
+   * `activityMs` already carries that scan's clock for it. Remembered per
+   * path so the stamp is monotone — the scan AFTER growth sees the same
+   * frozen mtime, which is older, and a signal that fell back would re-read
+   * words the panel already has and publish a time that is not a write.
+   * Pruned to the scan's candidates like rolloutCache, for the same reason.
+   */
+  private readonly lastWrittenAt = new Map<string, number>()
   /** Last isCodexProcessRunning() verdict, reused for processProbeCacheTtlS seconds. */
   private probeCache: { running: boolean; checkedAtMs: number } | undefined
   /**
@@ -494,6 +513,9 @@ export class CodexProvider implements Provider {
     // retired session's parse result does not linger forever.
     for (const path of [...this.rolloutCache.keys()]) {
       if (!sizesThisScan.has(path)) this.rolloutCache.delete(path)
+    }
+    for (const path of [...this.lastWrittenAt.keys()]) {
+      if (!sizesThisScan.has(path)) this.lastWrittenAt.delete(path)
     }
     // Only reached on success: a throwing scan leaves the previous generation
     // in place rather than stripping it.
@@ -845,6 +867,15 @@ export class CodexProvider implements Provider {
       // the raw parse; only what leaves the provider is scrubbed.
       lastMessage: redactSecrets(rollout?.info.lastMessage),
       sessionId
+    }
+    // The feed signal the person's OWN send can move (#458) — see
+    // lastWrittenAt for why it is growth rather than the mtime, and why it
+    // never goes backwards. Zero is "no signal at all" (reportSkip says the
+    // same), and the contract's absence rule holds: no evidence, no field.
+    const writtenAt = Math.max(context.activityMs, this.lastWrittenAt.get(path) ?? 0)
+    if (writtenAt > 0) {
+      this.lastWrittenAt.set(path, writtenAt)
+      mainDwarf.transcriptUpdatedAt = writtenAt
     }
     // What a spawned agent was asked to do (#218). Registry-only, and only
     // ever the spawn blob's own `agent_path`: a root thread was nobody's

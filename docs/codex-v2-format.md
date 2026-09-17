@@ -1507,12 +1507,30 @@ the `session_meta` head, the developer preamble and the injected user item. `FIR
 is 256 KiB, so the receipt (#191) reaches it with about 110 KB to spare on this build — and before
 this fix it answered the 30 kB `<recommended_plugins>` item, because that is the first user item.
 
+### (e) Why the panel stayed still — a code reading beside the measurement
+
+The panel re-reads a watched feed when `lastMessage` or `transcriptUpdatedAt` on the dwarf moves
+(`watchedFeedSignalKey` in `MessagePanelWindow.vue`; `feedSignalOf` in `runtime.ts`, whose #196
+tests pin that a moving `transcriptUpdatedAt` alone reads and pushes the feed). `lastMessage` is
+the assistant's side and cannot move for the person's own send. The Claude provider stamps the
+transcript's mtime as `transcriptUpdatedAt`; **the Codex provider stamped nothing**, because a
+rollout's mtime is frozen for the life of the file (§4, §12(b)) and there was no other write clock.
+`refreshAfterDelivery` does read once after a send, but the resume tier answers `delivered` when
+the process has taken stdin and survived its start window (`codexResume.ts`) — before the rollout
+carries the item — so that read found nothing new either. Not reproduced: the REPLY failing to
+appear live. In the fixture, `lastMessage` moves the moment the reply lands, on the unmodified
+provider; the observation on 2026-09-17 may have been the person's rows only.
+
 ### Fix implemented
 
 - `parse.ts`: `isInjectedContextItem` applies Rule 1 then Rule 2. `extractCodexFeed` yields
   `role: 'user'` rows from user items **only for a window that carries no `user_message` event**,
   and never from a developer item; `firstCodexUserMessage` applies the same filter, so the receipt
   is the prompt.
+- `codexProvider.ts`: the dwarf carries `transcriptUpdatedAt`, the freshest write the provider can
+  PROVE — the scan that saw the rollout grow, else the registry's stamp or the heartbeat — kept
+  monotone per path (`lastWrittenAt`) so the scan after growth does not publish the older frozen
+  mtime as a move.
 - Fixture `__fixtures__/codex/rollout-exec.jsonl`: the (b) shape over an opening turn and two
   resumed turns, every text a placeholder. Tests in `parse.test.ts` and `codexProvider.test.ts`
   under `#458`.

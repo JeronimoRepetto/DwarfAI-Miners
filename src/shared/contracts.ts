@@ -1165,6 +1165,13 @@ export interface Dwarf {
    *
    * Same absence rule as `silentForMs`: no such evidence is no key at all,
    * never a value a real write could also have produced.
+   *
+   * A provider whose store freezes the mtime for the life of the file — Codex
+   * on Windows, docs/codex-v2-format.md §4 — stamps the freshest write it can
+   * PROVE instead: the scan that saw the file grow, else its registry's own
+   * stamp, and never a value older than the one it last published (#458).
+   * The field's job is unchanged either way: it moves when a writer wrote,
+   * whoever the writer was.
    */
   transcriptUpdatedAt?: number
   /**

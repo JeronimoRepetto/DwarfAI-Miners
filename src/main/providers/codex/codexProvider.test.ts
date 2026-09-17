@@ -1299,6 +1299,141 @@ describe('CodexProvider.firstPrompt', () => {
 })
 
 /**
+ * A `codex exec` thread this panel launched and then continued with
+ * `codex exec resume` (#458): the same rollout, appended to by a NEW process
+ * this app does not hold (#455), on a Windows file whose mtime is frozen for
+ * the whole of its life (docs/codex-v2-format.md §4, §12(b)).
+ *
+ * The panel re-reads a feed when `lastMessage` or `transcriptUpdatedAt` on the
+ * dwarf moves (`watchedFeedSignalKey`, and `feedSignalOf` in the runtime — the
+ * #196 block of runtime.test.ts pins that a moving `transcriptUpdatedAt` alone
+ * is enough). `lastMessage` is the ASSISTANT's side and cannot move for the
+ * person's own send, so the send has to reach the panel through the other
+ * field — and this provider never stamped one.
+ *
+ * The fixture is the measured exec shape (§14), cut at the resumed turn so the
+ * file can grow between two scans exactly as the real one did.
+ */
+describe('a codex exec thread continued by resume (#458)', () => {
+  const execRollout = readFileSync(join(FIXTURES, 'rollout-exec.jsonl'), 'utf8')
+  const execLines = execRollout.split('\n').filter(Boolean)
+  const EXEC_THREAD_ID = '01a0af41-0000-7621-ba46-000000000458'
+  const EXEC_DWARF_ID = `codex:${EXEC_THREAD_ID}`
+  const PATH = `${ROOT}\\2026\\08\\29\\rollout-2026-08-29T11-40-00-${EXEC_THREAD_ID}.jsonl`
+
+  /** The last resume opens with Codex re-applying the thread's settings (§12). */
+  const resumeAt =
+    execLines.length -
+    1 -
+    [...execLines].reverse().findIndex((line) => line.includes('"thread_settings_applied"'))
+  /** ...and its reply is the first AgentMessage after that. */
+  const replyAt = execLines.findIndex(
+    (line, index) => index > resumeAt && line.includes('"AgentMessage"')
+  )
+  const twoTurns = execLines.slice(0, resumeAt).join('\n') + '\n'
+  /** The resumed turn as far as the person's own send — no reply yet. */
+  const withResumedSend = execLines.slice(0, replyAt).join('\n') + '\n'
+
+  /** Written once at open and never again while the file is held (§12(b)). */
+  const FROZEN_MTIME = NOW - 60_000
+  let fake: FakeFs
+  let clock: number
+
+  function makeProvider(): CodexProvider {
+    return new CodexProvider({
+      fs: fake,
+      sessionsRoot: ROOT,
+      livenessWindowS: WINDOW_S,
+      scanDays: 7,
+      idleRetentionS: 0,
+      now: () => clock
+    })
+  }
+
+  function dwarfOf(snapshots: ProviderSnapshot[]) {
+    return snapshots.find((snapshot) => snapshot.sessionId === EXEC_THREAD_ID)?.dwarfs[0]
+  }
+
+  beforeEach(() => {
+    fake = new FakeFs()
+    clock = NOW
+    fake.addFile(PATH, twoTurns, FROZEN_MTIME)
+  })
+
+  it('moves the feed signal when the person’s resumed send lands in the rollout, before any reply', async () => {
+    const provider = makeProvider()
+    const before = dwarfOf(await provider.scan())
+    expect(before?.lastMessage).toBe('ALPHA BETA')
+
+    fake.addFile(PATH, withResumedSend, FROZEN_MTIME)
+    clock += 2_000
+    const after = dwarfOf(await provider.scan())
+
+    // The assistant has not spoken, so this field cannot carry the change...
+    expect(after?.lastMessage).toBe('ALPHA BETA')
+    // ...and the other one must.
+    expect(after?.transcriptUpdatedAt).toBeDefined()
+    expect(after?.transcriptUpdatedAt).not.toBe(before?.transcriptUpdatedAt)
+  })
+
+  it('serves the person’s own send as the newest row of the feed', async () => {
+    const provider = makeProvider()
+    await provider.scan()
+    fake.addFile(PATH, withResumedSend, FROZEN_MTIME)
+    clock += 2_000
+    await provider.scan()
+
+    const feed = await provider.feed(EXEC_DWARF_ID, 20)
+    expect(feed?.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'Which word did I ask you to remember?'
+    })
+  })
+
+  /*
+   * The other half of the signal, already true on the unmodified provider and
+   * pinned so the fix above cannot be mistaken for the reason it works.
+   */
+  it('moves lastMessage once the reply lands', async () => {
+    const provider = makeProvider()
+    await provider.scan()
+    fake.addFile(PATH, execRollout, FROZEN_MTIME)
+    clock += 2_000
+
+    expect(dwarfOf(await provider.scan())?.lastMessage).toBe('ALPHA, then BETA.')
+  })
+
+  /*
+   * Growth is the one write this provider can PROVE on a frozen mtime, and it
+   * is observed on exactly one scan. The scan after it sees no growth and the
+   * same frozen mtime — which is older — and must not report the file as
+   * having moved backwards: a signal that flips back is a second re-read of
+   * words the panel already has, and a timestamp that lies.
+   */
+  it('never lets the stamp fall back to the frozen mtime once growth stops', async () => {
+    const provider = makeProvider()
+    await provider.scan()
+    fake.addFile(PATH, withResumedSend, FROZEN_MTIME)
+    clock += 2_000
+    const grown = dwarfOf(await provider.scan())?.transcriptUpdatedAt
+
+    clock += 2_000
+    const settled = dwarfOf(await provider.scan())?.transcriptUpdatedAt
+    expect(settled).toBe(grown)
+    expect(settled).toBeGreaterThan(FROZEN_MTIME)
+  })
+
+  it('answers the person’s prompt as the launch receipt, not the plugin list', async () => {
+    const provider = makeProvider()
+    await provider.scan()
+
+    await expect(provider.firstPrompt(EXEC_DWARF_ID)).resolves.toBe(
+      'Reply with exactly the word ALPHA and nothing else.\n'
+    )
+  })
+})
+
+/**
  * The one question Codex records, reaching the dwarf (#265).
  *
  * The fixture is the measured shape (docs/codex-v2-format.md §9(c)): a
