@@ -1,5 +1,200 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:7e40b6555dd79fe2a07fb25ce181ac9c83c9d3f717cd01cd0e0d802d3b31f037
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 17/17
+scenarios: 39/39
+test_command: node node_modules/vitest/vitest.mjs run src/main/config/configFile.test.ts src/main/providers/pathPortability.test.ts src/main/providers/opencode src/renderer/src/lib/delivery/actionBar.test.ts src/main/domain/launchProviders.test.ts
+test_exit_code: 0
+test_output_hash: sha256:dccd7521a39c6ed2575b9749d5cf3863db62f9a5e84e1cf9cb2fdd256a7b6e46
+build_command: node node_modules/electron-vite/bin/electron-vite.js build
+build_exit_code: 0
+build_output_hash: sha256:bada3180cedcdc084c5143c7cadbefb41621914f9afbaf32e77d7c937da70e3d
+```
+
+## Final verification for archive (#453, HEAD 1eface17fb6436e8f7964695c0adcd428b735cf0) - 2026-09-17
+
+**Scope**: bounded, final re-verification of the six Follow-up #453 commits (`16f07d3`, `2021d6e`,
+`deb9b66`, `bd747a1`, `cefc836`, `1eface1`) in a dedicated worktree
+(`agent-name-worktrees/observer-453`, branch `fix/opencode-observer-verify-exceptions`), on top of
+`origin/main` `f61c6ed` -- which already carries the merged PR #452 through `aa1e982`, i.e. both prior
+remediation rounds. `evidence_revision` is the SHA-256 over the exact bytes of
+`git diff origin/main...HEAD`: the follow-up's own patch (9 files, +300/-15 -- 5 test files, 1
+production comment-only file, 2 openspec docs, 1 spec.md amendment), not the whole change. Every
+line item below was checked directly against source (`git show`, direct file reads of the current
+implementation) and by re-running the named tests myself in this worktree; nothing here is taken on
+the apply report's word alone.
+
+### Per-item verification
+
+| Item                                           | Commit    | Test (file > title)                                                                                                                           | Verified by                                                                                                                                                                            | Result                              |
+| ---------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| SUGGESTION 1 (DET-R1, blank-env-over-file)     | `16f07d3` | `configFile.test.ts > does not let a blank OPENCODE_STORE_ROOT mask the file value`                                                           | Read `withConfigFileFallback`'s blank-over-file guard (`configFile.ts:44-51`); re-ran the test                                                                                         | PASS                                |
+| SUGGESTION 2 (DET-R1, OS-invariant expansion)  | `2021d6e` | `pathPortability.test.ts > expands the default OpenCode store root identically, given a fixed home`                                           | Read `expandHomePath`/`defaultConfig` (`runtime.ts:531-537`, `config.ts:236-239`); confirmed no `Platform` value is read anywhere under `src/main/providers/opencode`; re-ran the test | PASS, see note below tables         |
+| SUGGESTION 3 (DET-R2, `snapshot.cwd`)          | `deb9b66` | `opencodeProvider.test.ts > appears within one scan` (assertion added)                                                                        | Read the scan loop's `cwd = normalize(session.cwd)` and the `cwd,` field in the published snapshot (`opencodeProvider.ts:197-198,256`); re-ran the test                                | PASS                                |
+| WARNING 4 (mutation-tested promotion test)     | `deb9b66` | `opencodeProvider.test.ts > promotes a middle-tier worker to foreman once it becomes a parent itself, without losing its own parentId`        | Read `roleOf`/`parentSessions` (`opencodeProvider.ts:176,273-276`) and independently confirmed the deviation (see below); re-ran the test                                              | PASS, deviation judged CORRECT      |
+| SUGGESTION 5 (DET-R6, panel actions)           | `bd747a1` | `actionBar.test.ts > observed OpenCode dwarf (DET-R6)` (3 cases)                                                                              | Read `kickAction` (`actionBar.ts`) and `DwarfCapabilities.cancel`'s doc comment (`contracts.ts`); re-ran the tests                                                                     | PASS, spec amendment judged CORRECT |
+| WARNING 5 (stale `NOT_LAUNCHABLE` doc comment) | `cefc836` | `launchProviders.test.ts > pins that a detected OpenCode is marked installed but not launchable, with NOT_LAUNCHABLE as its reason` (renamed) | Read the rewritten comment in `launchProviders.ts`; re-ran the test                                                                                                                    | PASS                                |
+| Tasks/apply-progress bookkeeping               | `1eface1` | N/A -- docs only                                                                                                                              | Confirmed R7-R13 all checked in `tasks.md`; confirmed zero unchecked task lines remain anywhere in the file                                                                            | PASS                                |
+
+Independently re-run in this worktree (not copied from the apply report):
+
+- `node node_modules/vitest/vitest.mjs run src/main/config/configFile.test.ts src/main/providers/pathPortability.test.ts src/main/providers/opencode src/renderer/src/lib/delivery/actionBar.test.ts src/main/domain/launchProviders.test.ts`
+  -> 9 test files, 183 tests, 0 failed, exit 0.
+- `node node_modules/electron-vite/bin/electron-vite.js build` -> exit 0, all three targets built
+  (built in under 1 second, no errors).
+- `node skills/test-safety/assets/test-census.mjs --base origin/main` -> net +6 across 5 files,
+  0 lost, exit 0 -- reproduces `apply-progress.md`'s own census table exactly.
+
+`permissionSummary.test.ts` (WARNING 3's fix) and `feedWindow.test.ts`/`config.test.ts` (other
+pre-existing FEED-R2/FEED-R3/DET-R1 evidence) were not re-run in this pass: `git diff --stat
+origin/main...HEAD` shows the follow-up touched none of their production sources, so the prior
+re-verification's evidence for them (HEAD `aa1e982`, same underlying code) stands unchanged.
+
+### Deviations -- verdict
+
+- **(a) WARNING 4's proposed mutation target.** Judged CORRECT. `roleOf(sessionId,
+parentSessionId)` (`opencodeProvider.ts:273-276`) returns `'foreman'` when EITHER
+  `parentSessions.has(sessionId)` OR `parentSessionId === undefined`. Every pre-existing topology
+  fixture's foreman session carries no `parentSessionId` of its own, so the second branch alone
+  already answers `'foreman'` for all 27 pre-existing cases regardless of what the `parentSessions`
+  set (populated at line 176) holds -- confirmed directly by reading both call sites, not only by
+  trusting the apply report's mutation run. The new "promotes a middle-tier worker" test is the only
+  case in the file where the session under test HAS its own `parentSessionId` (so it starts from the
+  `'worker'` branch) and is simultaneously somebody else's parent -- exactly the condition line 176
+  exists to decide. The substitute test is the right one and is genuinely load-bearing.
+- **(b) DET-R6's spec correction.** Judged CORRECT. `kickAction` (`actionBar.ts`) never returns
+  `NO_CHANNEL_REASON`: when `channel` (i.e. `dwarf.capabilities?.cancel`) is `null`, it returns
+  `DISMISS_HINT`, `ENDED_DISMISS_HINT`, or `OPEN_TURN_NO_INTERRUPT_HINT` depending on `ended`/
+  `openTurn` -- `NO_CHANNEL_REASON` belongs to `chatAction` alone. `DwarfCapabilities.cancel`'s own
+  doc comment in `contracts.ts` states, in its own "AMENDED for #293" note: null means nothing can
+  INTERRUPT this session, and no longer that the Kick control is dead, it decides WHICH kick to
+  offer -- precisely the fact the follow-up used to correct the scenario. The old scenario text
+  ("Send and Kick are disabled with `NO_CHANNEL_REASON`") was stale and predates #293; the amendment
+  is accurate, and the three new tests exercise the corrected clause specifically for
+  `provider: 'opencode'` rather than only through the generic `PANEL_OBSERVER` case.
+
+### Coverage totals -- all four specs, as they stand after the spec.md amendment
+
+#### opencode-store-evidence -- 8/8 complete (unchanged by #453; inspection-based by design, no test layer for this capability)
+
+| Req   | Scenario                                                     | Evidence                                                                             | Result     |
+| ----- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ---------- |
+| SE-R1 | A claim carried over from exploration without being observed | `docs/opencode-format.md` V/I legend; no I-marked key read by `parse.ts`/`state.ts`  | PASS       |
+| SE-R1 | Build changes under the fixtures later                       | `docs/opencode-format.md` version stamp (build, date, host OS)                       | PASS       |
+| SE-R2 | The measured install wrote SQLite only                       | Fixture set (DDL + row fixtures + unknown-schema DB, no JSON tree) + `state.test.ts` | PASS       |
+| SE-R2 | A row set is captured before any session has run             | N/A -- GIVEN never held; row set was captured from a real turn                       | PASS (N/A) |
+| SE-R2 | A captured value carries a machine identifier                | Fixture scrub + fingerprint re-check (Remediation, `0569e53`)                        | PASS       |
+| SE-R3 | A row comes back negative                                    | `docs/opencode-format.md` row 10 negative + spec amendment (task 1.11)               | PASS       |
+| SE-R3 | The native Windows binary misbehaves                         | `docs/opencode-format.md:121-129` records both paths                                 | PASS       |
+| SE-R4 | A parser is attempted from the exploration document alone    | Commit order: evidence/fixtures precede the parser                                   | PASS       |
+
+#### opencode-session-detection -- 14/14 complete (4 closed by #453)
+
+| Req    | Scenario                                            | Test                                                                                                                                                          | Result          |
+| ------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| DET-R1 | All three layers are present                        | `configFile.test.ts > does not let a blank OPENCODE_STORE_ROOT mask the file value` (#453) + pre-existing env-wins/file-only cases                            | PASS            |
+| DET-R1 | The default shape is the same on every OS           | `pathPortability.test.ts > expands the default OpenCode store root identically, given a fixed home` (#453) + static: no `Platform` param exists to vary by OS | PASS (see note) |
+| DET-R2 | The measured store shape                            | `opencodeProvider.test.ts > appears within one scan` (`snapshot.cwd` assertion, #453)                                                                         | PASS            |
+| DET-R2 | Legacy JSON tree and no database                    | `opencodeProvider.test.ts > returns no snapshots and does not throw when no store exists` + static: `store.ts` never lists a directory                        | PASS            |
+| DET-R3 | Machine without OpenCode installed                  | `opencodeProvider.test.ts > returns no snapshots and does not throw when no store exists`                                                                     | PASS            |
+| DET-R3 | Database with an unknown schema                     | `opencodeProvider.test.ts > returns no snapshots and does not throw against an unknown schema` + `state.test.ts` (x4)                                         | PASS            |
+| DET-R4 | Database mtime frozen while the session works       | `opencodeProvider.test.ts > is working when only event.seq advanced since the previous poll`                                                                  | PASS            |
+| DET-R4 | An assistant message is still streaming             | `opencodeProvider.test.ts > is working while the newest assistant message lacks time.completed`                                                               | PASS            |
+| DET-R4 | A turn stops between tool calls                     | `opencodeProvider.test.ts > is still working after a completed intermediate step (finish: tool-calls)`                                                        | PASS            |
+| DET-R4 | The turn finishes                                   | `opencodeProvider.test.ts > turns waiting once time.completed is set with finish: stop` + `> never reports ... waiting`                                       | PASS            |
+| DET-R4 | Session quits and goes stale                        | `opencodeProvider.test.ts > drops a frozen session even while another session keeps the store WAL hot` (Remediation, `c690273`)                               | PASS            |
+| DET-R5 | A finished turn with token columns filled           | `opencodeProvider.test.ts > never puts tokens or cost on the wire, even once a finished turn fills those columns` (Remediation 2, `86a53e3`)                  | PASS            |
+| DET-R6 | Panel offers actions for an observed OpenCode dwarf | `actionBar.test.ts > observed OpenCode dwarf (DET-R6)`, 3 cases (#453) + `specs/opencode-session-detection/spec.md` amended                                   | PASS            |
+| DET-R6 | Add Panel shows OpenCode                            | `launchProviders.test.ts > pins that a detected OpenCode is marked installed but not launchable, with NOT_LAUNCHABLE as its reason`                           | PASS            |
+
+See the note below the tables on DET-R1's OS-invariance evidence.
+
+#### opencode-session-feed -- 8/8 complete (unchanged by #453)
+
+| Req     | Scenario                                                  | Test                                                                                                                        | Result |
+| ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------ |
+| FEED-R1 | Session has replied at least once                         | `opencodeProvider.test.ts > carries the newest assistant text as lastMessage, absent when none exists`                      | PASS   |
+| FEED-R1 | Session has not replied yet                               | Same test, strengthened with `expect(noReplyYet).toHaveLength(1)` (Remediation 2, `86a53e3`)                                | PASS   |
+| FEED-R2 | Unknown dwarf id                                          | `opencodeProvider.test.ts > returns null from feed and feedPage for an id the latest scan does not know`                    | PASS   |
+| FEED-R2 | The session row was deleted between the scan and the read | `opencodeProvider.test.ts > answers feed [] and feedPage an empty reachedStart page when the store vanished after the scan` | PASS   |
+| FEED-R2 | Paging older than the panel's oldest row                  | `opencodeProvider.test.ts > redacts a secret in a feed row...` (2nd half) + `feedWindow.test.ts`                            | PASS   |
+| FEED-R3 | A secret appears in a user turn                           | `opencodeProvider.test.ts > redacts a secret in a feed row, and a cursor built from the redacted row still matches`         | PASS   |
+| FEED-R3 | A cursor names a row that contained a secret              | Same test + `feedWindow.test.ts > cursorIndex... > resolves a cursor against rows already redacted`                         | PASS   |
+| FEED-R4 | A terminal tail is requested for an OpenCode dwarf        | `opencodeProvider.test.ts > never returns a transcriptPath and never offers a delivery channel`                             | PASS   |
+
+#### opencode-session-topology -- 9/9 complete (unchanged by #453 except the renamed pin)
+
+| Req     | Scenario                                                     | Test                                                                                                                                                                                       | Result |
+| ------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| TOPO-R1 | Row 4 positive -- a subagent is spawned                      | `opencodeProvider.test.ts > pins that a child ranks below the root and the parent shows foreman -- the measured row-4 pair` (renamed, #453)                                                | PASS   |
+| TOPO-R1 | A root session whose assistant messages carry a reply edge   | `parse.test.ts > never surfaces message.data.parentID as a parent -- it is a reply edge, not topology` + `opencodeProvider.test.ts > publishes a null parent_id session as a root foreman` | PASS   |
+| TOPO-R1 | Row 4 closed positive -- a Task subagent populates the field | Same measured-pair test + `docs/opencode-format.md:95-112`                                                                                                                                 | PASS   |
+| TOPO-R1 | A parent edge points at a session this scan did not see      | `opencodeProvider.test.ts > publishes a child whose parent is absent from the store, inventing no parent`                                                                                  | PASS   |
+| TOPO-R2 | Worker beside foreman                                        | `opencodeProvider.test.ts > pins that a child ranks below the root...` (child worker, parent foreman)                                                                                      | PASS   |
+| TOPO-R2 | The crew finishes                                            | `opencodeProvider.test.ts > keeps a foreman rank after its crew has gone home`                                                                                                             | PASS   |
+| TOPO-R3 | Unproven root                                                | `opencodeProvider.test.ts > keeps a root (foreman) dwarf past the short window, up to the long one`                                                                                        | PASS   |
+| TOPO-R3 | A child session's window                                     | `opencodeProvider.test.ts > drops a worker (parent_id set) past the short window`                                                                                                          | PASS   |
+| TOPO-R3 | Nothing records a decision from unknown                      | `opencodeProvider.test.ts > reports unknown attendance, as D4 and task 3.6 both state (#444)` (Remediation 2, `86a53e3`)                                                                   | PASS   |
+
+**Totals: 17/17 requirements, 39/39 scenarios -- every scenario evidenced by a passing test, except
+`opencode-store-evidence`'s 8, which are evidenced by direct inspection of committed artifacts, as
+recorded by design since no test layer exists for that capability (`tasks.md` PR 1 header).**
+
+**Note on DET-R1's "The default shape is the same on every OS" evidence (marked "PASS (see note)" above).** The new test
+runs `expandHomePath`/`node:path.join` once, on whichever host actually runs the suite (Windows, in
+this pass) -- it does not literally invoke a win32/darwin/linux build three times and compare the
+three outputs, because no such per-OS builder exists: `expandHomePath` and `defaultConfig` take no
+`Platform` parameter at all, confirmed by searching across `src/main/providers/opencode` (unchanged
+from the first pass). Given the code has zero OS-conditional branches, there is no possible per-host
+variance for three separate invocations to expose; the one thing the previous PARTIAL actually
+lacked -- proof that the literal expansion (not just the unexpanded default string) resolves
+correctly -- is what the new test now supplies. This is judged sufficient to close the scenario, but
+it is a narrower proof than "run for three platforms" reads literally as, and is recorded here rather
+than silently rounded up to an unqualified pass.
+
+### Residual, non-blocking items (out of #453's stated scope, never closed by this batch)
+
+These were never claimed closed by Follow-up #453 and remain open exactly as the first pass left
+them -- SUGGESTION-level coverage polish, never CRITICAL/WARNING, and none of them corresponds to an
+UNTESTED scenario in the totals above:
+
+- SUGGESTION 6 -- `FEED-R3`'s `lastMessage` field specifically (not just `feed()`/`feedPage()` rows)
+  has no dedicated redaction test; the Requirement's prose names it but the two enumerated scenarios
+  only exercise `feed()` rows, so this is a requirement-level polish note, not a scenario gap.
+- SUGGESTION 7 -- `runtime.test.ts:5268`'s `not.toHaveBeenCalledWith('opencode')` could be
+  strengthened to `not.toHaveBeenCalled()`.
+- SUGGESTION 8 -- the change shipped as one ~1,900-line PR against D9's four-PR forecast; already
+  accepted as exception-ok/size:exception by the apply run.
+
+### Validator run
+
+`gentle-ai sdd-verify-validate --input openspec/changes/opencode-observer/verify-report.md
+--requirements 17 --scenarios 39` -- output recorded verbatim below this line.
+
+```json
+{
+  "valid": true,
+  "verdict": "pass",
+  "evidence_revision": "sha256:7e40b6555dd79fe2a07fb25ce181ac9c83c9d3f717cd01cd0e0d802d3b31f037"
+}
+```
+
+### Final verdict
+
+PASS. Zero CRITICAL, zero WARNING, zero GAP, zero FAILING. All 17 requirements and all 39 scenarios
+across the four specs are now evidenced by a passing test (or, for `opencode-store-evidence`, by
+direct inspection as recorded by design). Both stated deviations (WARNING 4's mutation target,
+DET-R6's spec correction) were independently re-derived from source in this pass and judged correct,
+not merely restated from the apply report. Three non-blocking SUGGESTIONs remain open, out of scope
+for #453 and not affecting the 17/17 / 39/39 counts above. This change is archive-ready.
+
+---
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:653e476a0773d38546bda2cd9ce9eed7d4785f4f5f42cdb985a21a07fe17a4e7
 verdict: fail
 blockers: 0
