@@ -2446,3 +2446,42 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     expect(focus).toHaveBeenCalled()
   })
 })
+
+/* --- The Codex resume channel (#450) — appended ------------------------------ */
+
+/**
+ * The report #450 is: a Codex session launched from this panel took its opening
+ * prompt and went mute, composer disabled, with an honest sentence saying so.
+ * The sentence was true and the launch shape it described is not the only way
+ * in — `codex exec resume <id> -` continues the very same thread — so what the
+ * person sees here is the composer, and no refusal row at all.
+ */
+describe('DwarfMessagePanel on a resumed Codex thread (#450)', () => {
+  function resumed() {
+    return panel({
+      dwarf: defaultDwarf({
+        provider: 'codex',
+        // Still true of the session's shape (#231), and no longer a refusal.
+        oneShot: true,
+        textDelivery: 'codex-exec-resume',
+        capabilities: {
+          sendText: 'codex-exec-resume',
+          cancel: null,
+          adjustEffort: null,
+          attach: null
+        }
+      })
+    })
+  }
+
+  it('leaves the composer live, with no refusal row to explain', () => {
+    const wrapper = resumed()
+    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+  })
+
+  it('names what the message will actually do, on the box itself', () => {
+    expect(resumed().find('.panel-input').attributes('title')).toContain('next turn')
+  })
+})
+/* --- end of the #450 block --------------------------------------------------- */

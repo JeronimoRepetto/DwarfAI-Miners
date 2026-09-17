@@ -26,6 +26,7 @@ import {
   type CodexRolloutInfo
 } from './parse'
 import { canQueueToCodexThread } from './queue'
+import { canResumeCodexThread, type CodexResumeAddress } from './resume'
 import {
   isCodexOneShotThread,
   readCodexCliVersions,
@@ -311,6 +312,19 @@ export class CodexProvider implements Provider {
    */
   private queueTargets: ReadonlyMap<string, string> = new Map()
   /**
+   * dwarfId -> what `codex exec resume` needs: the thread UUID and the folder
+   * its next turn runs in (#450).
+   *
+   * Its own map rather than a second value on `queueTargets`, because the two
+   * gates answer different halves of one registry row and nothing may ever read
+   * one for the other: a thread is queued or resumed, never both.
+   *
+   * Rebuilt and swapped exactly as feedSources and queueTargets are (#12), and
+   * carried across generations for as little time, for the same reason: a
+   * thread that has ended must stop answering with an address.
+   */
+  private resumeTargets: ReadonlyMap<string, CodexResumeAddress> = new Map()
+  /**
    * Session ids ever observed as the PARENT of a Codex sub-agent.
    *
    * The whole of what this provider remembers about topology, and the reason
@@ -386,6 +400,7 @@ export class CodexProvider implements Provider {
     // reason their comment gives: a thread that ended must stop answering.
     const feedSources = new Map<string, string>(this.feedSources)
     const queueTargets = new Map<string, string>()
+    const resumeTargets = new Map<string, CodexResumeAddress>()
     const nowMs = this.now()
     const freshAfter = nowMs - this.livenessWindowS * 1_000
     // Retention is ADDITIVE to the liveness window (as documented for
@@ -458,6 +473,7 @@ export class CodexProvider implements Provider {
           size,
           feedSources,
           queueTargets,
+          resumeTargets,
           cliVersion: thread === undefined ? undefined : registry.cliVersions.get(thread.threadId),
           nowMs
         }
@@ -483,6 +499,7 @@ export class CodexProvider implements Provider {
     // in place rather than stripping it.
     this.feedSources = feedSources
     this.queueTargets = queueTargets
+    this.resumeTargets = resumeTargets
     // A spawned agent that has closed its turn goes home (#219). Filtered HERE
     // rather than in snapshotSession, and strictly after linkSubagents, for a
     // reason that is easy to get backwards: the spawn edge lives on the CHILD,
@@ -673,7 +690,14 @@ export class CodexProvider implements Provider {
    */
   textDelivery(dwarfId: string): TextDeliveryTarget | null {
     const threadId = this.queueTargets.get(dwarfId)
-    return threadId === undefined ? null : { kind: 'codex-queue', threadId }
+    if (threadId !== undefined) return { kind: 'codex-queue', threadId }
+    // The second channel, and the one the queue above deliberately does not
+    // become (#450). Asked SECOND rather than first only for reading order:
+    // the two maps are filled from mutually exclusive `threads.source` values,
+    // so no thread can be in both and the order decides nothing.
+    const resume = this.resumeTargets.get(dwarfId)
+    if (resume === undefined) return null
+    return { kind: 'codex-exec-resume', threadId: resume.threadId, cwd: resume.cwd }
   }
 
   /**
@@ -696,6 +720,8 @@ export class CodexProvider implements Provider {
       feedSources: Map<string, string>
       /** dwarfId -> thread UUID, filled in for queue-reachable threads only (#97). */
       queueTargets: Map<string, string>
+      /** dwarfId -> thread UUID and folder, filled in for exec threads only (#450). */
+      resumeTargets: Map<string, CodexResumeAddress>
       /** The Codex build that opened this thread, for the queue's version floor (#97). */
       cliVersion: string | undefined
       /** This scan's clock, for the debug report's ages only (#264). */
@@ -771,6 +797,18 @@ export class CodexProvider implements Provider {
       })
     ) {
       context.queueTargets.set(dwarfId, thread.threadId)
+    }
+    // The other half of the same row, and never both (#450): the thread a
+    // resume reaches is exactly the one the queue refuses. Keyed on the
+    // registry for the reason above — `source` is a registry fact, and a
+    // rollout the registry never recorded proves nothing about it. The folder
+    // is the one already resolved for the snapshot, so the turn runs where the
+    // thread lives rather than wherever this app happens to have been started.
+    if (
+      thread !== undefined &&
+      canResumeCodexThread(thread.sourceTag === undefined ? {} : { sourceTag: thread.sourceTag })
+    ) {
+      context.resumeTargets.set(dwarfId, { threadId: thread.threadId, cwd })
     }
 
     const mainDwarf: Dwarf = {

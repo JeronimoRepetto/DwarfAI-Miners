@@ -18,6 +18,7 @@ import {
 import type { TextDeliveryPort } from '../textDelivery/port'
 import { PosixTextDelivery } from '../textDelivery/posixTextDelivery'
 import type { CodexQueueRunner } from '../textDelivery/codexQueue'
+import type { CodexResumeRunner } from '../textDelivery/codexResume'
 import type { RelayRunner } from '../textDelivery/relayRunner'
 import { WindowsTextDelivery } from '../textDelivery/windowsTextDelivery'
 import {
@@ -122,6 +123,8 @@ export interface PlatformAdapterOptions {
   runRelay?: RelayRunner
   /** Injected for tests; defaults to a real codex spawn (#97). */
   runCodexQueue?: CodexQueueRunner
+  /** Injected for tests; defaults to a real codex spawn (#450). */
+  runCodexResume?: CodexResumeRunner
   /** Explicit binary paths that override CLI detection; blank means "detect it" (#91). */
   cliOverrides?: Partial<Record<AgentCli, string>>
   /** Injected for tests; defaults to the real filesystem, used by CLI detection. */
@@ -179,7 +182,8 @@ function createTextDelivery(
     fs,
     ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.runRelay === undefined ? {} : { runRelay: options.runRelay }),
-    ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue })
+    ...(options.runCodexQueue === undefined ? {} : { runCodexQueue: options.runCodexQueue }),
+    ...(options.runCodexResume === undefined ? {} : { runCodexResume: options.runCodexResume })
   }
   if (platform === 'win32') {
     // The SCOPED focus, and the one place the two part company (#329): every

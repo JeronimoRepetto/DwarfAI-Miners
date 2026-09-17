@@ -625,6 +625,12 @@ export function dwarfSilenceWindowKey(
  * codex-queue: the session is a Codex thread whose own message queue accepts an
  *   item addressed by thread id, so `codex queue` hands it over without any
  *   window, pid or console (#97).
+ * codex-exec-resume: the session is a Codex thread that was STARTED with
+ *   `codex exec`, so no process is left to hand anything to — and a new one
+ *   continues it. `codex exec resume <id> -` reopens the very same thread with
+ *   the message on stdin (#450). The sibling of the queue and never a
+ *   replacement for it: the queue reaches a thread that is running, and this
+ *   starts the turn on one that is not.
  * held-session: THIS PANEL is holding the session's own stream open, so the text
  *   goes onto that stream in-process — no window, no pid, no relay turn (#210).
  * launched-process: THIS PANEL started that session detached and still holds the
@@ -686,6 +692,32 @@ export type TextDeliveryChannel =
    * renderer's reaction.ts, which this channel can never promote past.
    */
   | 'hosted-stdin'
+  /**
+   * A NEW `codex exec` process continuing a thread that already exists (#450)
+   * — the one channel whose act is starting a turn rather than handing a
+   * message to something already running.
+   *
+   * `codex exec [OPTIONS] resume <SESSION_ID> -` was measured live on Codex CLI
+   * 0.153.4: same session id, prior context intact, prompt on stdin, exit 0,
+   * and ONE registry row whose `source` stays `'exec'`. That last fact is why
+   * this is its own channel and not a widening of 'codex-queue': the queue gate
+   * still refuses an exec thread, and still correctly — `codex queue` persists
+   * an item for a running thread to drain, and there is no running thread here.
+   * Two different acts against two different session shapes, kept apart the way
+   * reaction.ts keeps delivered and reacted apart.
+   *
+   * A ✓ means what it means everywhere else and no more: the message reached
+   * the session and its turn began. The panel cannot wait for that turn — it
+   * blocks for its whole length, 29 s measured for a trivial one — so the
+   * verdict is taken once the process has survived a short bounded start
+   * window (see CODEX_RESUME_START_WINDOW_MS). Handed over, never reacted;
+   * only the transcript watcher may ever say more.
+   *
+   * It carries no attachment and no kick. The message is stdin and nothing
+   * else, and the process a resume starts is one nothing on the board tracks —
+   * the launch this panel held was the OPENING turn's, and it has exited.
+   */
+  | 'codex-exec-resume'
 
 /**
  * One answer an agent said it would accept, in its own words.
@@ -1308,19 +1340,34 @@ export interface Dwarf {
    */
   launchId?: string
   /**
-   * True when this session's whole life is ONE prompt and one turn: it was
-   * handed its instruction on stdin and exits when it finishes, so it has no
-   * inbox and never will (#231).
+   * True when this session's whole PROCESS is ONE prompt and one turn: it was
+   * handed its instruction on stdin and exits when it finishes (#231).
+   *
+   * AMENDED for #450 (was: '…so it has no inbox and never will'). That last
+   * clause is false for Codex since the resume channel: `codex exec resume
+   * <id> -` starts a NEW process on the same thread, context intact, so the
+   * session behind a finished one-shot run is reachable after all. What the
+   * field still says is exactly what it is for — no live process, no console,
+   * and no exit this panel can offer — and what it never said is who started
+   * it. A reader deciding whether a message can land must read the channel,
+   * which is the one place that answer lives.
    *
    * A fact about the SESSION, not about who started it, and that is what it is
    * for. The panel already had an honest sentence for a launch of its OWN —
    * "takes no messages: it reads one prompt and exits with its turn. Kick ends
    * it." — resolved from `capabilities.cancel` (#217). The same shape started
    * from a terminal, or by a run of this app that has since restarted and can
-   * no longer prove which process it was, has neither a channel nor an exit,
+   * no longer prove which process it was, had neither a channel nor an exit,
    * and fell back to the generic "this session type can't receive messages
    * yet" — which describes a gap in this app rather than the session in front
    * of the reader.
+   *
+   * Since #450 that reader is Codex-shaped no longer: the same registry row
+   * that stamps this field is the one the resume channel is offered from, so
+   * such a dwarf has a channel and only its EXIT is still missing. The field
+   * stayed because that is what it always described — a session with no live
+   * process to end — and the sentence it used to summon is now reached by
+   * nobody (see oneShotNoExitReason in the renderer's actionBar.ts).
    *
    * Codex is the one provider that can say it today: `codex exec` writes its
    * registry row with a `source` tag of its own, distinct from the 'cli' tag
@@ -2005,7 +2052,11 @@ const CHANNEL_CARRIER: Record<TextDeliveryChannel, string> = {
   'held-session': 'the stream this panel is holding open',
   // Never a send channel (#217); present because the map is total.
   'launched-process': 'this session',
-  'hosted-stdin': "this process's own stdin"
+  'hosted-stdin': "this process's own stdin",
+  // Named apart from the queue above (#450) because they are two acts against
+  // one session, and a refusal that said "queue" would send the reader looking
+  // for something this route never touched.
+  'codex-exec-resume': "this Codex session's next turn"
 }
 
 /**

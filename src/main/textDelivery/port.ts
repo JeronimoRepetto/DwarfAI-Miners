@@ -86,6 +86,22 @@ export type TextDeliveryTarget =
     }
   | { kind: 'launched-process'; launchId: string }
   | { kind: 'hosted-stdin'; hostedId: string }
+  | {
+      kind: 'codex-exec-resume'
+      /** The Codex thread's own UUID, which is what `codex exec resume` takes. */
+      threadId: string
+      /**
+       * The mine this thread belongs to, and where its next turn is run.
+       *
+       * Carried rather than inherited from this process, and that is not
+       * tidiness: Codex declines to run outside a Git repository, and the
+       * working directory of a packaged Electron app is nothing anybody chose.
+       * Whether a thread can be resumed from a DIFFERENT folder than it was
+       * launched in is unmeasured — so it is resumed in its own, which is the
+       * one folder the measurement covered.
+       */
+      cwd: string
+    }
 
 /**
  * A target that can actually be written to (a foreman hop has been resolved away).
@@ -109,6 +125,7 @@ export type TextDeliveryEndpoint = Extract<
   | { kind: 'held-session' }
   | { kind: 'launched-process' }
   | { kind: 'hosted-stdin' }
+  | { kind: 'codex-exec-resume' }
 >
 
 /**
@@ -128,6 +145,15 @@ export type TextDeliveryEndpoint = Extract<
  * pipe instead of closing it. So the exclusion above is about a closed stdin
  * rather than about "a process we launched" — which is why hosting is worth
  * its lifetime cost at all.
+ */
+/*
+ * 'codex-exec-resume' is INCLUDED, and it is the answer to the exclusion above
+ * rather than an exception to it (#450). The launched Codex process really did
+ * close its stdin and exit — nothing about that changed — but the THREAD it
+ * wrote survives in Codex's own store, and `codex exec resume <id> -` opens a
+ * NEW process on that thread with the message on stdin. So a launched dwarf is
+ * unreachable only for as long as its opening process is the thing being
+ * addressed; the session behind it is not.
  */
 export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-process' }>
 
@@ -170,7 +196,18 @@ export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-proce
  * at another program's key bindings — so the only act available is the tree
  * kill, and the only honest thing to call it is ending the session.
  */
-export type KickEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'codex-queue' }>
+/*
+ * 'codex-exec-resume' is excluded for a reason of its own, and a plainer one
+ * (#450): the turn a resume starts runs in a process nothing here holds a
+ * handle to. The launch this panel DID hold was the opening turn's, and it has
+ * exited — so there is no pid to end and no stream to interrupt, and a kick
+ * routed here would have to invent one. The panel dismisses the dwarf instead,
+ * which is the honest act and the one #293 already provides.
+ */
+export type KickEndpoint = Exclude<
+  TextDeliveryEndpoint,
+  { kind: 'codex-queue' } | { kind: 'codex-exec-resume' }
+>
 
 export interface ConsoleTextRequest {
   /** The session pid; its hosting terminal window is what receives the keystrokes. */
@@ -198,6 +235,15 @@ export interface RelayTextRequest {
 export interface CodexQueueRequest {
   /** The Codex thread's own UUID, which is what `codex queue --thread` takes. */
   threadId: string
+  text: string
+}
+
+/** One resumed Codex turn (#450): same thread, new process, prompt on stdin. */
+export interface CodexResumeRequest {
+  /** The Codex thread's own UUID, which is what `codex exec resume` takes. */
+  threadId: string
+  /** The mine the thread belongs to; Codex declines to run outside a Git repository. */
+  cwd: string
   text: string
 }
 
@@ -386,6 +432,22 @@ export interface TextDeliveryPort {
    * implement it — it spawns a CLI, so it is platform-neutral like the relay.
    */
   queueToCodexThread?(request: CodexQueueRequest): Promise<TextDeliveryOutcome>
+  /**
+   * Continue a Codex thread that was started with `codex exec`, by starting its
+   * next turn with this message as the prompt (#450).
+   *
+   * Optional on the same terms `queueToCodexThread` is, and both shipped ports
+   * implement it for the same reason: it spawns a CLI, so it is
+   * platform-neutral like the relay.
+   *
+   * The one tier that does not wait for its own act to finish. `codex exec
+   * resume` blocks for the whole model turn — 29 s measured for a trivial one —
+   * so an implementation reports the hand-over once the process has taken the
+   * message on stdin and survived a short bounded start window, and reports a
+   * failure for one that died inside it. See codexResume.ts, which holds the
+   * window and the reasoning behind its length.
+   */
+  resumeCodexThread?(request: CodexResumeRequest): Promise<TextDeliveryOutcome>
   /**
    * Send a raw interrupt keystroke (ESC) to the console hosting `pid`. Never
    * routed through the message path: there is no text to escape, only a

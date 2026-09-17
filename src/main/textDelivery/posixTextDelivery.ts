@@ -10,6 +10,7 @@ import {
 import type { ConsoleInputAdapter } from './osascriptInput'
 import type {
   CodexQueueRequest,
+  CodexResumeRequest,
   ConsoleTextRequest,
   EndSessionRequest,
   InterruptRequest,
@@ -18,6 +19,7 @@ import type {
   TextDeliveryPort
 } from './port'
 import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
+import { deliverViaCodexResume, runCodexResumeProcess, type CodexResumeRunner } from './codexResume'
 import {
   GRACEFUL_EXIT_POLL_COUNT,
   GRACEFUL_EXIT_POLL_INTERVAL_MS,
@@ -80,6 +82,8 @@ export interface PosixTextDeliveryOptions {
   codexBinary?: () => Promise<string | undefined>
   /** Injected for tests; defaults to a real codex spawn. */
   runCodexQueue?: CodexQueueRunner
+  /** Injected for tests; defaults to a real codex spawn (#450). */
+  runCodexResume?: CodexResumeRunner
   /**
    * Reads a `.cmd`/`.bat` shim for the program it names, the same way CLI
    * detection does (#413). Codex never ships a shim on POSIX, but the plumbing
@@ -127,6 +131,7 @@ export class PosixTextDelivery implements TextDeliveryPort {
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
+  private readonly runCodexResume: CodexResumeRunner
   private readonly fs: FsLike
   private readonly processEnd: ProcessEndPort
   private readonly processProbe: ProcessProbePort
@@ -144,6 +149,7 @@ export class PosixTextDelivery implements TextDeliveryPort {
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
+    this.runCodexResume = options.runCodexResume ?? runCodexResumeProcess
     this.fs = options.fs ?? new NodeFs()
     // The platform this port was CONSTRUCTED for, never asked of the machine:
     // this class is the POSIX port for whichever POSIX platform composed it, and
@@ -201,6 +207,21 @@ export class PosixTextDelivery implements TextDeliveryPort {
       text: request.text,
       binaryPath: await this.codexBinary(),
       run: this.runCodexQueue,
+      fs: this.fs
+    })
+  }
+
+  /**
+   * The Codex resume tier (#450): platform-neutral for the reason the queue
+   * beside it is, and reached through the same detected binary.
+   */
+  async resumeCodexThread(request: CodexResumeRequest): Promise<TextDeliveryOutcome> {
+    return deliverViaCodexResume({
+      threadId: request.threadId,
+      cwd: request.cwd,
+      text: request.text,
+      binaryPath: await this.codexBinary(),
+      run: this.runCodexResume,
       fs: this.fs
     })
   }
