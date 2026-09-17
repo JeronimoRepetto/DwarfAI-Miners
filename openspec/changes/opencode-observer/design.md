@@ -1,0 +1,300 @@
+# Design: OpenCode observer — draw OpenCode sessions as dwarfs
+
+Change: `opencode-observer` · Phase: sdd-design · Date: 2026-09-17 (amended same day after validation and a live read-only measurement) · Input: `proposal.md`, `exploration.md`, `measurements-2026-09-17.md` (same folder). Spec runs in parallel and is not read here.
+
+Legend: **[V]** verified in this repository at the cited line, or in `measurements-2026-09-17.md` for OpenCode 1.18.31 · **[I]** inferred about OpenCode's store from public text only; a field or path name marked [I] is a placeholder until the PR 1 fixture exists and MUST NOT be written into production code as settled.
+
+**What the measurements settled (1.18.31, `npx opencode-ai`, Windows):** the store is `~/.local/share/opencode/opencode.db` in WAL mode with NO `storage/` JSON tree [V]; the full DDL is captured [V]; `session` carries `parent_id` (indexed), `directory`, `agent`, `model`, `time_updated`, `time_archived`, token and cost columns [V]; no pid or process column exists anywhere [V]. One live turn (row 3) verified the `message.data` and `part.data` JSON shapes, and showed the `event` table as an event-sourced log whose per-session `seq` grows while a turn runs [V]. The pnpm global shim on this machine is a broken placeholder, so PATH presence is not proof of a working install [V].
+
+**Maintainer decision (same day): SQLite only.** The provider reads `opencode.db` and nothing else. A machine with the legacy `storage/` tree and no database is "OpenCode not observed"; `docs/opencode-format.md` states the version floor (1.18.31 measured). No JSON reader, no compat fixtures, no dual-shape merge.
+
+## Technical Approach
+
+A store-reading `OpenCodeProvider` in the `CodexProvider` shape (`codexProvider.ts:259`): pure parsers over row `data` blobs, a `SqliteLike` orchestration class with `FsLike` used only to `stat` the database files, generation-swap on success, no process probe, no delivery channel. `opencode.db` [V] is the single source: `session` rows become dwarfs, `event.seq` and `message.data.time.completed` decide working versus resting, `message` × `part` rows become the feed. `'opencode'` joins `DWARF_PROVIDERS`; every `Record<DwarfProvider, …>` and test-pinned provider list gains its arm; the launch path gains the gate it currently lacks. One setting, `providers.opencode.storeRoot`.
+
+**Wire statement (config.yaml `rules.design`):** no new wire type. The only `contracts.ts` edit is `'opencode'` in `DWARF_PROVIDERS` (`contracts.ts:135`). Both barrels already re-export the table (`main/domain/types.ts:131,152`; renderer barrel likewise), so neither barrel changes.
+
+## Architecture Decisions
+
+### D1 — Module layout and reuse
+
+| Path | Role | Mirrors |
+|---|---|---|
+| `src/main/providers/opencode/store.ts` | Pure path builders: `opencodeDbPath(root)` and `opencodeWalPath(root)` [V: `opencode.db`, `opencode.db-wal`]; built with `node:path.join`, never hand-joined separators | `antigravity/discovery.ts:35-45` |
+| `opencode/parse.ts` | Pure, over the `data` JSON blobs [V row 3]: `parseOpenCodeMessageData(unknown)` → `{ role, timeCreatedMs, timeCompletedMs?, finish?, agent?, modelId?, providerId? }` or `null`; `parseOpenCodePartData(unknown)` → `text \| reasoning \| tool \| step-start \| step-finish` or `null` for an unknown `type`; `parseOpenCodeModel(string)` for `session.model`'s `{id, providerID}` JSON; `openCodeFeedRows(messages, parts)` → `FeedMessage[]`; `lastAssistantText(messages, parts)` | `codex/parse.ts:131-500` |
+| `opencode/state.ts` | SQL over `SqliteDb`, columns [V]: `readOpenCodeSessions(db, sinceMs)` (`id, parent_id, directory, title, model, agent, tokens_*, cost, time_created, time_updated` where `time_archived IS NULL`), `readOpenCodeEventSeqs(db)` (`SELECT aggregate_id, MAX(seq) FROM event GROUP BY aggregate_id`, on the unique `(aggregate_id, seq)` index [V]), `readOpenCodeNewestAssistant(db, sessionIds)` (newest `message` row per session, `data` parsed by `parse.ts`), `readOpenCodeMessages(db, sessionId, limit)` (`message` × `part` by `message_id`, ordered by `time_created, id` on the measured indexes); every helper tolerates `all()` → `[]` | `codex/state.ts:242-295` |
+| `opencode/opencodeProvider.ts` | `OpenCodeProvider implements Provider`: `scan`, `feed`, `feedPage`, `transcriptPath` (→ `undefined`, D1 note), `textDelivery` (→ `null`) | `codexProvider.ts`, `simulatedProvider.ts:148-162` |
+| `opencode/stateSeed.ts` | Test support reading `__fixtures__/opencode/opencode-schema.sql` and the `data` blob fixtures into `MemorySqlite` seeds | `codex/stateSeed.ts` |
+| `src/main/providers/__fixtures__/opencode/` | `README.md`; `opencode-schema.sql` (the measured 1.18.31 DDL [V], foreign keys to unread tables stripped as `codex/state-schema.sql:1-3` does); `opencode-unknown-schema.sql` (synthetic: same file name, tables renamed — the degradation fixture the evidence spec requires, committed regardless of row 2); `message-user.json`, `message-assistant-streaming.json` (no `time.completed`), `message-assistant-toolcalls.json` (`finish: 'tool-calls'`), `message-assistant-stop.json`; `part-text.json`, `part-reasoning.json`, `part-tool.json`, `part-step-start.json`, `part-step-finish.json`, `part-unknown.json` — the row-3 blobs, redacted [V]; `session-child` seed only if row 4's live check populates `parent_id` | `__fixtures__/antigravity/README.md` |
+| `docs/opencode-format.md` | Dated, version-stamped evidence with [V]/[I] rows and negative results; starts from `measurements-2026-09-17.md` | `docs/codex-v2-format.md` §1-4 |
+
+Each `*.ts` has its `*.test.ts` beside it (src/README.md filing rule); no per-group barrel.
+
+**Reused, not copied:** `redactSecrets` (`domain/redactSecrets`), `trimFeed`/`feedPageOf` (`feedWindow.ts:131,304`), `pollProfiler.measure` (`runtime/perf`), the `linkSubagents` shape (`codexProvider.ts:954-974`), the generation-swap idiom (`claudeProvider.ts:707-711`), the `FeedMessage.activity` tool line (`contracts.ts:1572-1588`) as Codex's `extractCodexFeed` emits it. `normalizePathKey` is no longer needed: there is no path set to dedupe.
+
+**Departure from the proposal:** `readFeedWindow`/`readFeedPage` (`feedWindow.ts:241,399`) tail-read ONE append-only file; OpenCode's store is a database, not a file. So the feed is assembled from `readOpenCodeMessages` rows into `FeedMessage[]`, then `trimFeed` for `feed()` and `feedPageOf` after cursor resolution for `feedPage()`. The cursor-resolution step currently private inside `readFeedPage` (`feedWindow.ts:316+`) is extracted into an exported pure helper in PR 2 with its own test. Consequence, settled by row 1 [V]: there is no per-session JSONL, so `transcriptPath` returns `undefined` and the runtime falls back to the in-panel feed, as for `SimulatedProvider`. The proposal's success criterion "`transcriptPath` opens a terminal tail" is replaced by "the panel feed pages".
+
+**Feed rules [V row 3]:** rows are ordered by `message.time_created, message.id` then `part` order; a `user` message becomes one `role: 'user'` row; each `text` part of an assistant message becomes a `role: 'assistant'` row; `reasoning` parts are NOT shown as the agent's words (they are the model's scratch, the rule Antigravity's parser already follows for prose-shaped fields); `tool` parts become tool lines via `activity`, spelled as Codex's are (tool name plus `callID`'s subject when the state carries one); `step-start`/`step-finish` emit nothing. The last assistant text is the newest `text` part of the newest `role: 'assistant'` message.
+
+### D2 — Single-source read and degradation
+
+**Settled by row 1 [V] and the maintainer decision:** the proposal's JSON-first dual-shape read is gone. 1.18.31 writes SQLite only, and older JSON-only installs are declared unobserved rather than supported.
+
+```
+scan(nowMs)
+ ├─ stat(opencode.db), stat(opencode.db-wal)   → sizes; when BOTH unchanged since last scan, reuse the previous
+ │                                                generation whole (the Codex `unchanged` idiom, codexProvider.ts:912-916)
+ ├─ openReadOnly(opencode.db)                  → null when missing → no snapshots, no warning
+ ├─ readOpenCodeSessions(db, retainAfter)      → [] on unknown schema (sqliteLike.ts:9-11)
+ ├─ readOpenCodeEventSeqs(db)                  → aggregate_id → max seq
+ ├─ readOpenCodeNewestAssistant(db, ids)       → per session: time.completed?, finish?
+ ├─ per session: liveness (D3), topology (D4), Dwarf build
+ └─ swap feedSources / seq memory only on success
+```
+
+| Rule | Decision |
+|---|---|
+| Source | `opencode.db` only; `storage/` is never listed, so a legacy tree costs nothing and shows nothing |
+| Identity | `session.id` [V]; `Dwarf.id = 'opencode:<id>'` |
+| `cwd` | `session.directory` [V row 3: the project folder, forward slashes on Windows] — normalised with `node:path` for the host before it becomes a mine key; `project.worktree` [V] is NOT consulted, the session's own column is the later evidence. An empty directory drops the session, never places it (the #166 phantom-project guard, `antigravityProvider.ts:137-140`) |
+| Name / model | `Dwarf.name` from `session.agent` [V] falling back to `opencode-<id prefix>`; `Dwarf.model` from `parseOpenCodeModel(session.model).id` [V: JSON `{id, providerID}`] |
+| Archived | `time_archived IS NOT NULL` [V] → not a candidate |
+| Missing root or db | `stat` → `null`, `openReadOnly` → `null`: two cheap probes, no warning, "not observed" |
+| Unknown schema | Every `all()` → `[]` → no rows, no throw; proven by `opencode-unknown-schema.sql` |
+| Unknown `data` | `parse.ts` returns `null` for a message or part it cannot read; the session still publishes from its `session` row, the row is simply absent from the feed |
+| WAL | Read with `-wal`/`-shm` present exactly as the Codex reader does today [V, measurements row 2]; the design adds nothing for it |
+| Thrown poll tick | Never: `openReadOnly` and `all()` fail closed; `JSON.parse` of `data` is inside `parse.ts` behind a `try/catch`; generation swap after the loop |
+| Pure, fs-free | `parse.ts`, `store.ts`, `state.ts` (given a `SqliteDb`) |
+
+### D3 — Liveness without a probe
+
+Row 3 [V] supplies two structured turn markers, so liveness leads with them and timestamps follow: `activityMs = max(eventSeqAdvanced ? nowMs : 0, newest assistant message.time.completed ?? time.created [V], session.time_updated [V, moves at turn end], stat(opencode.db-wal).mtimeMs)` — events and row fields first, mtime last (`docs/codex-v2-format.md` §4 mtime freeze; `antigravityProvider.ts:257-262`).
+
+| Question | Decision |
+|---|---|
+| `working` | The session's newest `role: 'assistant'` message has NO `time.completed` [V: absent while streaming], OR its max `event.seq` [V] advanced since the previous poll (the provider remembers `sessionId → seq` per generation, exactly as Codex remembers `lastSeenSizes`). Either alone is sufficient; the `seq` half catches the gap between a user message being written and the first assistant row appearing |
+| `idle` | `time.completed` is set and `finish === 'stop'` [V]. A completed message with `finish === 'tool-calls'` is an intermediate step: the turn continues, so the session stays `working` until the next assistant message settles or the `seq` stops advancing for `BUSY_WINDOW_MS` (module constant, 120 s — the guard against a crashed mid-turn row, Antigravity's `busyWindowS` precedent) |
+| Store growth | `opencode.db` + `opencode.db-wal` sizes are STORE-level: growth proves writes somewhere, not which session. It only gates cost — both unchanged → reuse the previous generation without opening the database |
+| Dwarf status | `working ? 'working' : 'waiting'`; `SessionStatus` is `busy`/`idle` only — `waiting` is never reported (`contracts.ts:1486-1492`): the `permission` table stayed empty across the measured turn [V], so there is no pending-permission evidence on disk to report |
+| Retention | Per dwarf: a session is published while `nowMs - activityMs <= dwarfSilenceWindowMs(role, 'unknown')` (`contracts.ts:583`) — the long window for a root, the short one for a `worker` with a `parent_id`, chosen by the contract's own rule as `claudeProvider.ts:1636` chooses via `dwarfSilenceWindowKey`. No leave grace is added: the runtime's `dwarfLeaveGraceS` already governs the walk-out. An idle root TUI leaves after ~1 h of silence — the honest reading for `'unknown'` attendance (#255: unknown does not earn a resting seat) |
+| Probe seam | `OpenCodeProviderOptions.isOpenCodeProcessRunning?: () => Promise<boolean>` is NOT added in this slice; row 5 is negative in the schema [V] (no pid column). If a live process check ever justifies one, the seam is a `ProcessProbePort` builder pair per OS in `platform/processProbe.ts` (`platform-ports`), injected through `ProviderContext.platform` exactly as `registry.ts:121` does for Codex — and it would extend retention, never decide liveness alone |
+
+Rejected: a configurable `OPENCODE_STALE_WINDOW_S` (proposal fixes one setting; a knob that can undercut the silence window recreates #47/#68). Rejected: one flat retention constant for every rank (the earlier draft) — it would have kept a spawned worker on the board for the root's hour, which `dwarfSilenceWindowKey` forbids.
+
+### D4 — Topology
+
+Row 4 is **structurally positive**: `session.parent_id` is a real, indexed column (`session_parent_idx`) [V]; the measured root turn had `parent_id: null` [V]. Whether a Task subagent populates it is row 4's remaining live check. **`message.data.parentID` is a reply edge from an assistant message to the user message it answers [V row 3] and MUST NEVER be read as topology** — only `session.parent_id` is.
+
+| Case | `role` | `parentId` | `attendance` |
+|---|---|---|---|
+| `session.parent_id` non-null [V column] | `'worker'` | `'opencode:<parent_id>'`; parent promoted `'foreman'` via a `parentSessions` set applied after the whole scan (`codexProvider.ts:954-974`) | `'unknown'` |
+| `parent_id` null | `'foreman'` | absent | `'unknown'` |
+| Row 4 live check negative (column never populated) | every session `'foreman'`; no worker drawn; `docs/opencode-format.md` records the negative; the code path above stays, fixture-tested | absent | `'unknown'` |
+
+Rationale for `'foreman'` default (departs from Codex's `'worker'` absence rule, `codexProvider.ts:779-783`): OpenCode's root/child fact lives on the session's own row [V], so a null `parent_id` is a positive root reading, not the absence of a separate spawn table; `docs/session-topology-and-roles.md` §4/§6 names `foreman` as the fallback; and `dwarfSilenceWindowKey` (`contracts.ts:598-603`) gives any non-foreman the short window, which would call a human's TUI silent after 30 minutes — the false departure #47/#68 forbids. `'unknown'` never becomes `'attended'`.
+
+### D5 — Contract growth: every site, verified
+
+Compile-enforced (`Record<DwarfProvider` or exhaustive switch, Grep-verified complete):
+
+| Site | Arm |
+|---|---|
+| `config.ts:136` `ProviderConfigs` | `opencode: OpenCodeConfig`; `defaultConfig` `:195`; `loadConfig` `:405` |
+| `registry.ts:107` `PROVIDER_REGISTRY` | `opencode: ({ config, fs, sqlite, expandPath }) => new OpenCodeProvider({ fs, sqlite, storeRoot: expandPath(config.providers.opencode.storeRoot) })` — no platform, no probe, no held-session lookup |
+| `launchProviders.ts:91` `PRODUCT_NAME` | `opencode: 'OpenCode'` |
+| `launchTuning.ts:76` `PROVIDER_EFFORT_LEVELS` | `opencode: []` — OpenCode exposes per-model `variants`, not a CLI-documented closed list (exploration §4) |
+| `launch.ts:259` `buildLaunchArgs` switch | `case 'opencode': throw new Error(NOT_LAUNCHABLE)` (`launchProviders.ts:74`) — a refusing arm; no argv invented; unreachable once the gate below exists |
+| `actionBar.ts:50` `LAUNCH_COMMAND` | `opencode: 'opencode run'` — the documented headless form (exploration §2.4 [V]); read only by `launchedNoInboxReason`/`oneShotNoExitReason`, unreachable for an observed-only provider |
+
+Test-enforced (not compile-enforced; missed by the proposal):
+
+| Site | Change |
+|---|---|
+| `runtime.ts:3418` `listAgentModels`; `runtime.test.ts:7957` (order assertion) and `:8016,8047,8084,8168,8195` (`toHaveLength(3)`) | Append `unavailableOpenCodeModelCatalog()` (`source: 'none'`, `efforts: PROVIDER_EFFORT_LEVELS.opencode`) in `domain/agentModelCatalog.ts`; amend the order list and the five counts to 4 (append-and-amend, `test-safety`) |
+| `contracts.test.ts:62` | Amend the pinned list |
+| `launchProviders.test.ts:84` | Unchanged — `LAUNCHABLE_PROVIDERS` does not grow |
+
+Loose sites needing no arm: `cliDetection.ts:75` (`Partial`; stem `opencode` derives correctly; PATH fallback), `heldSession.ts:529` (`Partial`), `cliOverridesFrom` (loop), renderer `observerLabel` (returns the raw name), no `Record<DwarfObserver` or per-provider CSS switch found.
+
+**The launch gate is absent today — verified, and settled here.** `parseLaunchRequest` (`index.ts:262-270`) admits any `isDwarfProvider`; `runtime.launchAgent` (`runtime.ts:3488`) never consults `LAUNCHABLE_PROVIDERS`; `launchClaudeSession` (`launchRunner.ts:605-640`) checks only `detector.detect` at `:612` and then calls `buildLaunchArgs` at `:636` inside a `try`. In production the constant is read only by `agentProviderList` (`launchProviders.ts:119`), and the renderer filters chips on the `launchable` field it produces. So today a crafted IPC request for a non-launchable provider reaches the argv builder. **Decision:** `launchClaudeSession` gains a `LAUNCHABLE_PROVIDERS.includes(provider)` check BEFORE `detector.detect` (`:612`), returning `{ launched: false, provider, error: NOT_LAUNCHABLE }` — the cheapest-refusal-first order the function already states at `:609`. RED test: `launchAgent('opencode')` (and the runner directly) refuses with `NOT_LAUNCHABLE` and the detector fake records zero calls. The `throw` arm in `buildLaunchArgs` then documents the invariant at the type level and is covered by its own unit test.
+
+**`buildLaunchArgs` tradeoff.** Narrowing the record key to a `LaunchableProvider` type was rejected: `LAUNCHABLE_PROVIDERS` is `readonly DwarfProvider[]` (`launchProviders.ts:53`), so deriving a literal union means `as const` plus retyping `launchRunner.ts`'s three callers and `actionBar.ts:73,94` — launch code this change does not own. The throwing arm plus the gate is truthful and cheap.
+
+**CLI detection (row 1 / row 10 [V]).** PATH presence is not a working install: the pnpm global shim on the measured machine is a 479-byte placeholder that exits with a postinstall message. Decision for this slice: detection stays override → convention → PATH (`cliDetection.ts:131`), no new convention row (the only known Windows location is the broken shim, and a row pointing at it would report a CLI that cannot run); `OPENCODE_CLI_PATH` is the documented way to name the working binary; the observer itself never needs detection, since it reads the store. The "installed" chip may therefore be optimistic on a broken-shim machine, which is stated in `docs/guide.md` and is harmless while the provider is not launchable. A `--version` probe to verify a shim is a subprocess and belongs, if ever, to `opencode-held`.
+
+### D6 — Configuration
+
+```ts
+export interface OpenCodeConfig extends ProviderConfig {
+  /** The `~/.local/share/opencode` store root; `opencode.db` lives directly under it. A leading ~ is expanded. */
+  storeRoot: string
+}
+// defaults: { cliPath: '', storeRoot: '~/.local/share/opencode' }
+// reader: readProviderConfig(env, { cliPath: 'OPENCODE_CLI_PATH' }, fallback) + readTrimmed(env, 'OPENCODE_STORE_ROOT', fallback.storeRoot)
+```
+
+- Reachable from a packaged app through the `userData` file (`config-layering`); env → file → default; blank = unset (`readTrimmed`, `config.ts:307`).
+- `~` expanded by `expandPath`, wired at `runtime.ts:1010` to `expandHomePath(path, home)` (`runtime.ts:530`, `home` defaulting to `homedir()`), which on Windows yields `%USERPROFILE%\.local\share\opencode` — the POSIX-shaped tree OpenCode builds under the profile, confirmed by row 1 [V]. **The default's shape is OS-invariant:** the same `~/.local/share/opencode` string on Windows, macOS and Linux, so the default takes `home` as its one parameter and no `Platform`. `OpenCodeProvider` takes no `Platform` at all: there is no path set to fold, and `session.directory` is normalised with `node:path` for whichever host runs the suite (the `pathPortability.test.ts:8-15` idiom).
+- `XDG_DATA_HOME` is not read: `defaultConfig` is pure and the override exists for exactly that user. Documented in `docs/guide.md`.
+- Bad shape (malformed `userData` document) degrades and warns — existing `configFile` behaviour. Bad value: a path string has no invalid value at load time; an unreadable root is a runtime "nothing found", not a startup error. Tests beside `configFile.test.ts:123` and `config.test.ts:152`.
+
+### D7 — Measurement rows as design inputs
+
+| Row | Status | Feeds | Default if (still) negative |
+|---|---|---|---|
+| 1 | **[V] positive for SQLite, negative for JSON** — `opencode.db` WAL, no `storage/`; maintainer chose SQLite only | D2 is single-source; `store.ts` holds two paths; version floor 1.18.31 in `docs/opencode-format.md` | n/a — a JSON-only machine is "not observed" by decision, not by default |
+| 2 | **[V]** full DDL captured | `opencode-schema.sql` verbatim; every `state.ts` column name | The synthetic `opencode-unknown-schema.sql` fixture is committed regardless, so degradation is proven, not assumed |
+| 3 | **[V]** one live turn: `message.data`, `part.data` shapes, `event` log, `session.model` JSON, `agent`, tokens/cost populated at turn end | D3's `time.completed`/`finish`/`event.seq` rule; D1's feed rules; `parse.ts` fixtures; `Dwarf.name`/`model` | n/a for shape. Still open: whether the interactive TUI also fills `session_message`/`session_input` [V empty after a `run`]; `tokensObserved` omitted until maintainer Q3 is answered (no ore; Antigravity precedent) |
+| 4 | **Structurally positive** [V]: `parent_id`, indexed; live population open | D4 | Every session `'foreman'`, no worker drawn; the code path remains, fixture-tested |
+| 5 | **Negative in the schema** [V]: no pid column | No probe seam (D3); `textDelivery` → `null`; retention = per-dwarf silence window | Unchanged; only a live process check could ever add a join |
+| 10 | Native runs via `npx opencode-ai` [V]; pnpm shim broken [V]; WSL not required | Detection decision (D5): no new convention row; `OPENCODE_CLI_PATH` documented | If a later install path is measured, a `conventionalCliPaths` row may be added with its evidence |
+
+### D8 — Test strategy (strict TDD; RED first, each in its own task)
+
+| Layer | Fake | What |
+|---|---|---|
+| Pure `parse.test.ts` | none | Each row-3 blob fixture parses to its typed record; `part-unknown.json` and a non-JSON string → `null`; `session.model` JSON → `id`; feed rows ordered by `time_created, id`; `reasoning` parts absent from the feed; `tool` parts become `activity` lines; `step-*` parts emit nothing; last assistant text is the newest `text` part of the newest assistant message; **`message.parentID` is never surfaced as a parent**; redaction is NOT applied here (boundary does it) |
+| Pure `store.test.ts` | none | DB and WAL paths build with `join` from POSIX and Windows roots; assertions through `node:path.join` (`pathPortability.test.ts:8-15`) |
+| `state.test.ts` | `MemorySqlite` + `opencode-schema.sql` [V] and `opencode-unknown-schema.sql` | Real SQL runs against the measured DDL; archived rows excluded; `parent_id` read; max `event.seq` per `aggregate_id`; newest assistant message per session; message × part join order; the unknown-schema DB answers `[]` for every query |
+| `opencodeProvider.test.ts` | `FakeFs` (db/wal stats) + `MemorySqlite` seeded from the fixtures, injected `now` | Appears within one scan; `working` while the newest assistant message lacks `time.completed`; still `working` after a `finish: 'tool-calls'` completion; `working` when only `event.seq` advanced; `waiting` once `time.completed` is set with `finish: 'stop'`; a stuck streaming row goes `waiting` after `BUSY_WINDOW_MS` with no `seq` advance; never `SessionStatus 'waiting'`; **a worker (with `parent_id`) leaves after the short window, a root after the long one** (`dwarfSilenceWindowMs`); missing root or db → `[]` with no throw; unknown-schema DB → `[]` with no throw; unchanged db/wal sizes → no `openReadOnly` call (fake counts them); an unparseable `data` blob drops that row from the feed but not the session; **backing store vanished between scan and read → `feed` returns `[]` and `feedPage` an empty page with `reachedStart: true`** (`claudeProvider.ts:722,752` precedent); `textDelivery` null; `transcriptPath` undefined; feed redacted; `onBeforeRead` mid-scan stability (#12); `'unknown'` attendance; `Dwarf.name` from `agent`, `Dwarf.model` from the model JSON; D4 cases |
+| `opencodeProviderRegistry.test.ts` | as `codexProviderRegistry.test.ts` | The row wires `storeRoot` through `expandPath` |
+| `pathPortability.test.ts` | append | POSIX root case for OpenCode |
+| Compile-site and gate tests | `launchRunner.test.ts` detector fake | `launch.test.ts` refusing arm; **`launchRunner.test.ts`: `launchClaudeSession({ provider: 'opencode' })` returns `NOT_LAUNCHABLE` with zero `detect` calls; `runtime.test.ts`: `launchAgent('opencode')` refuses the same way**; `launchProviders.test.ts` `installed && !launchable` → `NOT_LAUNCHABLE`; `runtime.test.ts` catalogue 4 with `source 'none'`; `contracts.test.ts:62`; `config.test.ts` env override; `configFile.test.ts` precedence |
+| macOS/Linux on Windows host | `store.ts` builds with `node:path.join`; `session.directory` is normalised for the host; `FakeFs` separator normalization (`fakeFs.ts:18-20`) lets one fixture root serve both separators | No `process.platform` read in tests, and no `Platform` parameter on this provider — there is nothing per-OS in reading one database |
+
+Census (`skills/test-safety/assets/test-census.mjs`) runs before each PR is reported done.
+
+### D9 — PR slicing (800-line budget)
+
+| PR | Contents | Est. | Notes |
+|---|---|---|---|
+| 1 | `docs/opencode-format.md` (seeded from `measurements-2026-09-17.md`, with the 1.18.31 version floor), `opencode-schema.sql` [V], `opencode-unknown-schema.sql`, the ten row-3 `data` blob fixtures, fixture README | 300-420 | Measurement milestone; nothing compiles against it yet |
+| 2 | `store.ts`, `parse.ts`, `state.ts`, `stateSeed.ts`, tests; `feedWindow.ts` cursor-helper extraction + test | 380-500 | No contract change; modules unreferenced by production until PR 3. Down from 450-600: no JSON reader, no `merge.ts` |
+| 3 | `'opencode'` in `DWARF_PROVIDERS`; `OpenCodeConfig`; `OpenCodeProvider`; registry row; six compile sites; the `launchRunner.ts` gate; `agentModelCatalog`; `runtime.listAgentModels`; test amendments | 560-700 | Under the edge with margin. Down from 680-820: the provider has one source, no merge step, no per-file `try/catch` loop, no `Platform`. Cannot split contract from registry row (`Record<DwarfProvider`), nor the provider class from the contract (`readonly kind: DwarfProvider`). The gate is ~6 lines plus two tests and belongs with the arm it protects |
+| 4 | README lines 42/84/160/201/258; `docs/guide.md` §Providers in depth and config table (`:678` block); `docs/privacy.md:30` bullet; `docs/provider-formats.md` pointer row | 80-150 | |
+
+**Trim for PR 3, if ever needed:** feed assembly and parsing are already pure in PR 2, so `opencodeProvider.ts` is orchestration only. Should `sdd-tasks` still forecast PR 3 above 800, split **topology (D4)** into PR 3b — it is additive, gated on row 4 anyway, and independently revertible; the contract, config, registry row and compile sites stay together.
+
+### D10 — Rollback and privacy
+
+Revert per PR; no schema migration, no new persisted file. A `last_provider` of `'opencode'` in `projects-v1.db` reads as no provider via `isDwarfProvider` (`contracts.ts:147`); a stray `OPENCODE_STORE_ROOT` in the `userData` file is an unread key. Fixtures use `j`, `placeholder-host`, `Sample-Project`, repeated-digit ids; the fixture README states the redaction; `docs/opencode-format.md` describes paths generically and never reproduces a real one or a guard pattern. CI's privacy guard is the first step of the checks job.
+
+## Data Flow
+
+```
+poll tick ──► OpenCodeProvider.scan()
+               ├─ FsLike.stat(opencode.db, opencode.db-wal) ──► both unchanged? reuse previous generation
+               ├─ SqliteLike.openReadOnly(opencode.db) ──► state.ts: sessions · event max seq · newest assistant
+               │                                              └─► parse.ts (message data: time.completed, finish)
+               │                                                                        ▼
+               │                                  liveness (D3) · topology (D4) · Dwarf build
+               └─ ProviderSnapshot[] ──► poller ──► aggregate ──► IPC ──► renderer
+
+panel open ──► feed()/feedPage() ──► state.readOpenCodeMessages (message × part rows)
+                                    ──► parse.openCodeFeedRows ──► redactSecrets
+                                    ──► trimFeed / feedPageOf ──► FeedMessage[]
+```
+
+Sequence, one session appearing and leaving:
+
+```
+OpenCode CLI         opencode.db (+wal)         OpenCodeProvider                 runtime
+    │ session + user msg ──►│                          │                            │
+    │                        │◄── tick: stat grew ─────│ read sessions, seq, newest │
+    │                        │─── rows, seq=2 ────────►│ seq advanced → working     │
+    │                        │                         │─ snapshot 'working' ──────►│ dwarf appears, digging
+    │ streams assistant ────►│  (no time.completed)    │                            │
+    │                        │◄── tick: wal grew ──────│ still no time.completed    │
+    │                        │─────────────────────────►│─ snapshot 'working' ──────►│
+    │ finish: 'stop' ───────►│  time.completed set     │                            │
+    │                        │◄── tick ────────────────│ completed + stop → idle    │
+    │                        │─────────────────────────►│─ snapshot 'waiting' ──────►│ dwarf rests
+    │ quits (no write)       │                         │ sizes unchanged; reuse     │
+    │                        │   … dwarfSilenceWindowMs(role, 'unknown') elapses …  │
+    │                        │                         │─ no snapshot ─────────────►│ 'leaving' → drop
+```
+
+## File Changes
+
+| File | Action | Description |
+|---|---|---|
+| `src/shared/contracts.ts:135` | Modify | `'opencode'` in `DWARF_PROVIDERS` (cross-boundary; no new symbol) |
+| `src/main/config/config.ts` | Modify | `OpenCodeConfig`, `ProviderConfigs.opencode`, default, `readOpenCodeConfig`, `loadConfig` entry |
+| `src/main/providers/registry.ts:107` | Modify | One factory row |
+| `src/main/providers/opencode/*.ts` (+tests) | Create | D1 |
+| `src/main/providers/__fixtures__/opencode/*` | Create | D1, D10 |
+| `src/main/providers/feedWindow.ts` | Modify | Export the cursor-resolution helper (PR 2) |
+| `src/main/domain/launchProviders.ts:91`, `launchTuning.ts:76` | Modify | `PRODUCT_NAME`, `PROVIDER_EFFORT_LEVELS` arms |
+| `src/main/sessionLaunch/launch.ts:259` | Modify | Refusing arm in the switch |
+| `src/main/sessionLaunch/launchRunner.ts:612` | Modify | `LAUNCHABLE_PROVIDERS` gate before `detector.detect`, returning `NOT_LAUNCHABLE` |
+| `src/renderer/src/lib/delivery/actionBar.ts:50` | Modify | `LAUNCH_COMMAND` arm |
+| `src/main/domain/agentModelCatalog.ts` | Modify | `unavailableOpenCodeModelCatalog()` |
+| `src/main/runtime/runtime.ts:3418` | Modify | Fourth catalogue entry |
+| `src/main/providers/pathPortability.test.ts`, `contracts.test.ts`, `runtime.test.ts`, `config.test.ts`, `configFile.test.ts`, `launch.test.ts`, `launchRunner.test.ts`, `launchProviders.test.ts` | Modify (append-and-amend) | D8 |
+| `docs/opencode-format.md` | Create | Evidence |
+| `README.md`, `docs/guide.md`, `docs/privacy.md`, `docs/provider-formats.md` | Modify | PR 4 rows |
+
+## Interfaces / Contracts
+
+```ts
+// opencode/state.ts — column names [V] from the 1.18.31 DDL and the row-3 turn
+export interface OpenCodeSession {
+  sessionId: string          // session.id
+  cwd: string                // session.directory (forward slashes on Windows; normalised for the host)
+  title?: string             // session.title
+  agent?: string             // session.agent — the dwarf's name
+  modelId?: string           // parseOpenCodeModel(session.model).id — session.model is JSON {id, providerID}
+  parentSessionId?: string   // session.parent_id (null → absent). THE ONLY topology source.
+  createdMs: number          // session.time_created
+  updatedMs: number          // session.time_updated — moves at turn end, not during
+}
+
+// opencode/parse.ts — message.data / part.data [V row 3]
+export interface OpenCodeMessage {
+  role: 'user' | 'assistant'
+  timeCreatedMs: number
+  timeCompletedMs?: number   // assistant only; ABSENT while streaming
+  finish?: 'tool-calls' | 'stop' | string   // assistant only; 'tool-calls' = intermediate step
+  agent?: string
+  // message.data.parentID is deliberately NOT modelled: it is the id of the USER message an
+  // assistant message answers — a reply edge — and must never reach Dwarf.parentId.
+}
+export type OpenCodePart =
+  | { type: 'text'; text: string }
+  | { type: 'reasoning' }                          // never shown as the agent's words
+  | { type: 'tool'; tool: string; callId: string; status?: string }
+  | { type: 'step-start' }
+  | { type: 'step-finish' }
+
+export interface OpenCodeProviderOptions {
+  fs: FsLike                 // stat of opencode.db / opencode.db-wal only
+  sqlite: SqliteLike         // opencode.db missing → not observed
+  storeRoot: string          // already expanded
+  now?: () => number
+}
+```
+
+`OpenCodeProvider.kind = 'opencode' as const`; `textDelivery()` returns `null`; `transcriptPath()` returns `undefined`; `feedPage` implemented over `message` × `part` rows. Token and cost columns are read into no field in this slice (maintainer Q3 pending): nothing is put on the wire that was not decided.
+
+## Testing Strategy
+
+See D8. Unit only; no integration or e2e layer exists (config.yaml). Every behaviour task pairs with its RED test; fixtures are the only source of OpenCode field names.
+
+## Threat Matrix
+
+N/A — no routing, shell, subprocess, VCS/PR automation, executable-file classification, or process-integration boundary. The provider reads files and a read-only SQLite handle through existing seams; the one launch-adjacent edit is a refusing arm that spawns nothing. Should row 5 later justify a process probe, that slice loads the matrix for the probe command builders.
+
+## Migration / Rollout
+
+Four chained PRs (D9), each with its own verification and revert. No data migration; no feature flag — an absent store root is the off state.
+
+## Open Questions
+
+- [x] Row 10: native binary runs via `npx opencode-ai` on Windows; WSL not required [V]. Closed.
+- [x] Row 1: no per-session JSONL; `transcriptPath` stays `undefined` [V]. Closed.
+- [x] Launch gate: verified absent; adding it before detection is settled in D5. Closed.
+- [x] Row 3 `data` shapes and the open-turn marker: `time.completed` / `finish` / `event.seq` [V]. Closed; D3 leads with them.
+- [ ] Row 3 residue: does the interactive TUI (as opposed to `opencode run`) also write `session_message`/`session_input`? Both were empty after the measured run; the design reads neither, so a positive answer is an enrichment, not a correction.
+- [ ] Row 4 live check: does a Task subagent populate `session.parent_id`? Decides whether a worker is ever drawn.
+- [ ] Maintainer round Q3: ore from `tokens_*` [V columns, populated at turn end] in this slice (default: omitted, no ore).
+- [ ] Poll cost of `readOpenCodeEventSeqs` (`MAX(seq) GROUP BY aggregate_id` over `event`) on a store that has grown for months — profile under `pollProfiler` in PR 3; the db/wal size gate is the intended bound, the unique `(aggregate_id, seq)` index [V] keeps it a covering walk, and a `WHERE aggregate_id IN (…live ids…)` narrowing is the fallback if it is not.

@@ -1,0 +1,9 @@
+{
+  "type": "tool",
+  "tool": "task",
+  "callID": "call_placeholder_task",
+  "state": {
+    "status": "completed",
+    "input": { "description": "Placeholder subagent task" }
+  }
+}

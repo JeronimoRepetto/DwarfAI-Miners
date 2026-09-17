@@ -1,0 +1,23 @@
+{
+  "id": "ses_placeholder_parent",
+  "project_id": "prj_placeholder",
+  "workspace_id": null,
+  "parent_id": null,
+  "slug": "sample-project",
+  "directory": "/home/j/Sample-Project",
+  "path": "",
+  "title": "Placeholder root session",
+  "version": "1.18.31",
+  "cost": 0.00812,
+  "tokens_input": 41200,
+  "tokens_output": 960,
+  "tokens_reasoning": 0,
+  "tokens_cache_read": 61200,
+  "tokens_cache_write": 0,
+  "agent": "gentle-orchestrator",
+  "model": "{\"id\":\"qwen3.6-plus\",\"providerID\":\"opencode-go\"}",
+  "time_created": 1757900000000,
+  "time_updated": 1757900060000,
+  "time_compacting": null,
+  "time_archived": null
+}

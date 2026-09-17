@@ -1,0 +1,103 @@
+schema: spec-driven
+
+context: |
+  Project: dwarfai-miners (DwarfAI-Miners)
+  Stack: Electron 44 + Vue 3.5 + TypeScript 6, electron-vite/vite 7, single app (no monorepo)
+  Architecture: main/preload/renderer processes sharing src/shared/contracts.ts as the wire
+    boundary; per-OS behavior isolated behind pure builders in src/main/platform
+  Testing: vitest 4 (vitest run), @vue/test-utils, jsdom; deterministic fakes only, no
+    network/real fs/live CLI in unit tests
+  Style: eslint 10 (flat config) + prettier 3, strict TypeScript, conventional commits,
+    no AI attribution trailers
+
+strict_tdd: true
+
+testing:
+  strict_tdd_mode: true
+  detected: "2026-09-17"
+  test_runner:
+    command: "pnpm test"
+    framework: "vitest run"
+    watch_command: "pnpm test:watch"
+  test_layers:
+    unit:
+      available: true
+      tool: "vitest + @vue/test-utils + jsdom, deterministic fakes (FakeFs, FakeHookFs, in-memory sqlite)"
+    integration:
+      available: false
+      tool: "none detected — opt-in only per repo policy, not present in package.json scripts"
+    e2e:
+      available: false
+      tool: "none detected (no playwright/cypress/selenium dependency)"
+  coverage:
+    available: false
+    command: ""
+  quality_tools:
+    linter:
+      available: true
+      command: "pnpm lint"
+      tool: "eslint 10 (flat config), eslint-plugin-vue, typescript-eslint"
+    type_checker:
+      available: true
+      command: "pnpm typecheck"
+      tool: "tsc --noEmit (node) + vue-tsc --noEmit (web), split typecheck:node/typecheck:web"
+    formatter:
+      available: true
+      command: "pnpm format:check"
+      tool: "prettier 3 (write: pnpm format)"
+  skill_sync_check:
+    command: "node skills/skill-sync/assets/sync.mjs --check"
+    note: "verifies AGENTS.md generated tables (skill catalogue, auto-invoke, main/ tree) match skill frontmatter and filesystem"
+  build_command: "pnpm build"
+  ci_check_order:
+    - "privacy guard: ! git grep -n -I -E \"$PRIVACY_GUARD_PATTERN\" -- . (secret-driven, fails closed if secret missing)"
+    - "pnpm typecheck"
+    - "pnpm lint"
+    - "pnpm format:check"
+    - "node skills/skill-sync/assets/sync.mjs --check"
+    - "pnpm test"
+    - "pnpm build"
+  house_skills:
+    tdd: "skills/tdd/SKILL.md"
+    test_safety: "skills/test-safety/SKILL.md"
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Respect the scope/non-goals list in CONTRIBUTING.md (no game-engine migration, cosmetics
+      economy deferred, new providers need verifiable session artifacts)
+    - Flag any change touching src/shared/contracts.ts as cross-boundary (main/preload/renderer)
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Call out which domain invariant(s) from AGENTS.md a spec touches (materials, delivered vs
+      reacted, provisional tier, pendingBackgroundAgentCount, silence windows, anchors)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - State explicitly whether the design adds a new wire type (goes in src/shared/contracts.ts,
+      then re-exported from both barrels) per AGENTS.md boundary rules
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - Every task that changes behavior includes its test (Strict TDD is enabled for this project)
+  apply:
+    guidelines:
+      - Follow existing code patterns
+      - One writer per zone — do not touch files outside the task's declared surface
+      - Per-platform code stays pure builders behind src/main/platform/platformAdapters.ts;
+        never call process.platform or shell out directly from feature code
+    tdd: true # Strict TDD enabled for this session — RED-GREEN-REFACTOR
+    test_command: "pnpm test"
+  verify:
+    test_command: "pnpm test"
+    build_command: "pnpm build"
+    coverage_threshold: 0
+    additional_checks:
+      - "pnpm typecheck"
+      - "pnpm lint"
+      - "pnpm format:check"
+      - "node skills/skill-sync/assets/sync.mjs --check"
+  archive:
+    - Warn before merging destructive deltas
+    - Run node skills/skill-sync/assets/sync.mjs after any change under skills/ before archiving

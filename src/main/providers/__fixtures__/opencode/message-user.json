@@ -1,0 +1,7 @@
+{
+  "role": "user",
+  "time": { "created": 1757900000000 },
+  "agent": "gentle-orchestrator",
+  "model": { "providerID": "opencode-go", "modelID": "qwen3.6-plus" },
+  "summary": false
+}
