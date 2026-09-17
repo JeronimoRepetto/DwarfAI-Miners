@@ -469,3 +469,207 @@ describe('firstCodexUserMessage', () => {
     expect(firstCodexUserMessage(rolloutLines[0]!)).toBeUndefined()
   })
 })
+
+/*
+ * The `codex exec` shape (#458), measured 2026-09-17 on codex-cli 0.153.4 and
+ * recorded in docs/codex-v2-format.md §14. Five real exec rollouts carried ZERO
+ * `event_msg/user_message`; the person's prompts survive only as `response_item`
+ * user items, and beside them sit two things that are not the person's words:
+ * `developer` items (skills, permissions, a model switch), and `user`-role
+ * items of injected context — `<recommended_plugins>`, the AGENTS.md text,
+ * `<environment_context>` — whose metadata names no `user.*` content kind.
+ */
+const execRollout = readFileSync(join(FIXTURES, 'rollout-exec.jsonl'), 'utf8')
+
+/** Every prompt the person typed into the exec fixture, in order, with the replies between. */
+const EXEC_CONVERSATION: [string, string][] = [
+  ['user', 'Reply with exactly the word ALPHA and nothing else.\n'],
+  ['assistant', 'ALPHA'],
+  ['user', 'What word did you just say? Reply with that word plus the word BETA.'],
+  ['assistant', 'ALPHA BETA'],
+  ['user', 'Which word did I ask you to remember?'],
+  ['assistant', 'ALPHA, then BETA.']
+]
+
+/** One rollout record; `kinds` is the `content_item_kinds` passthrough Codex writes on a message item. */
+function execRecord(
+  type: string,
+  payload: Record<string, unknown>,
+  timestamp = '2026-09-17T12:05:24.000Z'
+): string {
+  return JSON.stringify({ timestamp, type, payload })
+}
+
+function messageItem(role: string, texts: string[], kinds?: string[]): string {
+  return execRecord('response_item', {
+    type: 'message',
+    id: `msg_${role}`,
+    role,
+    content: texts.map((text) => ({ type: 'input_text', text })),
+    ...(kinds === undefined
+      ? {}
+      : {
+          internal_chat_message_metadata_passthrough: { turn_id: 't1', content_item_kinds: kinds }
+        })
+  })
+}
+
+const assistantItem = (text: string): string =>
+  execRecord('response_item', {
+    type: 'message',
+    role: 'assistant',
+    content: [{ type: 'output_text', text }]
+  })
+
+const userEvent = (message: string): string =>
+  execRecord('event_msg', { type: 'user_message', message })
+
+/**
+ * The opening tags measured on user-role items that carry NO metadata (builds
+ * 0.145 through 0.149 on this machine) — the fallback rule's whole vocabulary.
+ */
+const INJECTED_TAGS = [
+  '<recommended_plugins>',
+  '<environment_context>',
+  '<realtime_delegation>',
+  '<codex_delegation>',
+  '<user_shell_command>',
+  '<turn_aborted>'
+]
+
+describe('extractCodexFeed on a codex exec rollout (#458)', () => {
+  it('shows the person’s prompts and the replies, and none of the injected context', () => {
+    expect(extractCodexFeed(execRollout, 20).map((m) => [m.role, m.text])).toEqual(
+      EXEC_CONVERSATION
+    )
+  })
+
+  /*
+   * Refused by ROLE, before either injected-context rule is reached: 470 of
+   * the corpus's developer items carry no metadata and open with a plain
+   * line, so neither rule would catch them — the role is the only thing that
+   * says these are not a person's words.
+   */
+  it('never reads a developer item as anybody’s words', () => {
+    const tail = [
+      messageItem('developer', ['You are `/root`, the primary agent in a team of agents.']),
+      messageItem(
+        'developer',
+        ['<skills_instructions>\nPlaceholder.'],
+        ['host_skills.instructions']
+      ),
+      assistantItem('Ready.')
+    ].join('\n')
+    expect(extractCodexFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
+      ['assistant', 'Ready.']
+    ])
+  })
+
+  /*
+   * The shape the committed TUI fixture has (a `user_message` event) and the
+   * shape an older TUI rollout has (the event AND the item for the same words)
+   * must both read as one row per human message: the event wins, exactly as
+   * firstCodexUserMessage already rules, and the item is only ever read for a
+   * window that carries no event at all.
+   */
+  it('keeps exactly one row per human message where a rollout carries both the event and the item', () => {
+    const tail = [
+      messageItem('user', ['dig the east gallery'], ['user.text']),
+      userEvent('dig the east gallery'),
+      assistantItem('Digging.'),
+      messageItem('user', ['now shore it'], ['user.text']),
+      userEvent('now shore it'),
+      assistantItem('Shored.')
+    ].join('\n')
+    expect(extractCodexFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'dig the east gallery'],
+      ['assistant', 'Digging.'],
+      ['user', 'now shore it'],
+      ['assistant', 'Shored.']
+    ])
+  })
+
+  it('still reads the shared TUI fixture as one user row and one reply', () => {
+    expect(extractCodexFeed(rollout, 20).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'Placeholder plain message.'],
+      ['assistant', 'Placeholder text block.']
+    ])
+  })
+
+  /*
+   * The TUI's own turn-one context item opens with a PLAIN line — 47 items on
+   * 0.150.1 through 0.153.4 read `# AGENTS.md instructions for <cwd>` first —
+   * so a tag alone cannot tell it from a person; the metadata can, and it is
+   * the rule wherever Codex wrote it.
+   */
+  it('skips a user item whose metadata names no user.* kind, even when its first line is plain', () => {
+    const tail = [
+      messageItem(
+        'user',
+        [
+          '# AGENTS.md instructions for C:\\Users\\j\\Desktop\\Sample-Project',
+          '<environment_context>\n</environment_context>'
+        ],
+        ['agents_md.instructions', 'environments.environment_context']
+      ),
+      messageItem('user', ['dig'], ['user.text']),
+      assistantItem('Digging.')
+    ].join('\n')
+    expect(extractCodexFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'dig'],
+      ['assistant', 'Digging.']
+    ])
+  })
+
+  it('keeps a user item whose metadata names an image beside its text', () => {
+    const tail = messageItem(
+      'user',
+      ['look at this', 'and this'],
+      ['user.text', 'user.image', 'user.text']
+    )
+    expect(extractCodexFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'look at this\nand this']
+    ])
+  })
+
+  it.each(INJECTED_TAGS)('skips an item without metadata whose first line opens with %s', (tag) => {
+    const tail = [messageItem('user', [`${tag}\nPlaceholder body.`]), assistantItem('Ok.')].join(
+      '\n'
+    )
+    expect(extractCodexFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([['assistant', 'Ok.']])
+  })
+
+  /* A fork's prompt (#218): no event, no metadata, a plain first line — a person. */
+  it('keeps an item without metadata whose first line is plain', () => {
+    expect(extractCodexFeed(messageItem('user', ['dig the east gallery']), 20)).toEqual([
+      { role: 'user', text: 'dig the east gallery', timestamp: '2026-09-17T12:05:24.000Z' }
+    ])
+  })
+})
+
+describe('firstCodexUserMessage on a codex exec rollout (#458)', () => {
+  it('answers the person’s prompt, not the plugin list that precedes it', () => {
+    expect(firstCodexUserMessage(execRollout)).toBe(EXEC_CONVERSATION[0]![1])
+  })
+
+  it('skips a metadata-bearing context item and a developer item alike', () => {
+    const head = [
+      messageItem(
+        'developer',
+        ['<skills_instructions>\nPlaceholder.'],
+        ['host_skills.instructions']
+      ),
+      messageItem('user', ['# AGENTS.md instructions'], ['agents_md.instructions']),
+      messageItem('user', ['dig'], ['user.text'])
+    ].join('\n')
+    expect(firstCodexUserMessage(head)).toBe('dig')
+  })
+
+  it.each(INJECTED_TAGS)('skips an item without metadata whose first line opens with %s', (tag) => {
+    const head = [
+      messageItem('user', [`${tag}\nPlaceholder body.`]),
+      messageItem('user', ['dig'])
+    ].join('\n')
+    expect(firstCodexUserMessage(head)).toBe('dig')
+  })
+})

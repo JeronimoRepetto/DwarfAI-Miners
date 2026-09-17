@@ -1391,3 +1391,136 @@ pid change across a resume are **verified** on six firings across two runs. The 
 are **verified** from `config.toml`'s own table, the CLI's flag, and the unchanged hash after two
 bypassed runs. Everything is `codex exec` on one build on one OS — **no interactive TUI session was
 started**, and `SubagentStop` and `PreToolUse` were not installed.
+
+## 14. What a `codex exec` rollout says a person said, measured 2026-09-17, codex-cli 0.153.4
+
+Issue #458: a session launched from the panel and continued with `codex exec resume` (#455) showed
+the agent's replies only after the panel was closed and reopened, and never the person's own
+messages. **Three verdicts.** The rollout carries no `event_msg/user_message` at all, so a feed
+built on that event has no human side; the person's prompts are `response_item` user items, and
+the harness writes its own context under the SAME role, so the role alone cannot pick them out;
+and the Codex dwarf carried no `transcriptUpdatedAt`, so the one signal the panel re-reads a feed
+on for a person's own send never moved.
+
+Machine: Windows 11, `codex-cli 0.153.4` (pnpm install). Read-only throughout: the five
+`source: "exec"` rollouts written that day, then every rollout on the machine for the census. No
+Codex session was started, resumed, prompted or signalled for this measurement. Thread ids,
+paths and prompt texts are not reproduced.
+
+### The exact procedure, so nobody walks it again
+
+1. For each rollout under the day directory, `JSON.parse` every line and tally
+   `event_msg`/`user_message`; then list every `response_item`/`message` item with its `role`, the
+   first line of its first content block, the joined text length, and
+   `internal_chat_message_metadata_passthrough.content_item_kinds`.
+2. The same over every `*.jsonl` under the sessions tree — 214 rollouts, 18 `cli_version` values
+   from `0.145.0-alpha.27` to `0.153.4` — keyed by `(role, content_item_kinds, opening tag)`.
+3. Count `event_msg`/`item_completed` with `item.type: "UserMessage"` per file beside the human
+   items the rule below finds, and list the files where the two disagree.
+4. The byte offset of the first human item in each exec rollout, against
+   `FIRST_PROMPT_HEAD_BYTES`.
+
+### (a) No `user_message` event — negative, and machine-wide
+
+**Zero** `event_msg`/`user_message` in the five exec rollouts (27 to 300 records, 146 KB to 2.0 MB,
+2 to 5 prompts each) — and **zero across all 214 rollouts on the machine**. §9(a) already recorded
+the event's migration into `item_completed`; what is new is that nothing on this disk writes it any
+more. The committed TUI fixture (`__fixtures__/codex/rollout.jsonl`, `0.150.0-alpha.8`, Codex
+Desktop) is the only `user_message` this repository still has, and it is kept because
+`extractCodexFeed` must go on reading it as one row per human message — the event wins wherever a
+window carries one, exactly as `firstCodexUserMessage` has ruled since #218.
+
+`item_completed`/`UserMessage` is **not** a substitute. It disagrees with the human items in 76 of
+214 files, and on `0.153.4` alone eleven rollouts (`cli`, `subagent` and one `exec`) carry a human
+item with **no** `UserMessage` event beside it. The item is the one record that is always there.
+
+### (b) The item order of one exec turn — positive
+
+Every exec turn measured, first turn and resumed turn alike:
+
+```
+event_msg        task_started
+response_item    message  role: developer   <skills_instructions> (+ <permissions instructions>,
+                                            <apps_instructions>, <plugins_instructions> as further
+                                            blocks of the SAME item; ~15–21 kB)
+response_item    message  role: developer   plain "You are `/root`, …" and <multi_agent_mode>
+                                            (first turn only)
+response_item    message  role: user        <recommended_plugins> · "# AGENTS.md instructions for
+                                            <cwd>" · <environment_context>  — three blocks, ~14–30 kB
+world_state
+turn_context
+response_item    message  role: user        THE PERSON'S PROMPT — one block, 16 to 825 chars
+event_msg        item_completed / UserMessage        (see (a): not always)
+…reasoning / tool items…
+event_msg        item_completed / AgentMessage
+response_item    message  role: assistant
+token_usage_record · event_msg token_count
+event_msg        task_complete                        (last_agent_message)
+```
+
+A resumed turn (`codex exec resume`, §12) opens with `thread_settings_applied` before its
+`task_started`, and after a model switch its preamble was `developer <model_switch>` ·
+`user <recommended_plugins>…` · `developer "### RUNTIME SESSION IDENTITY"` · the person's item.
+So a developer item can follow the injected user item, and a plain-text developer item exists —
+which is why developer items are refused by **role**, not by tag.
+
+### (c) What tells a person's item from the harness's — positive, two rules
+
+**Rule 1 — the metadata, wherever the build wrote it.** `content_item_kinds` on a person's item
+names `user.text` (and `user.image` beside it for a pasted picture, 9 items); on an injected
+user-role item it names the harness and never a `user.*` kind:
+
+| `content_item_kinds` on a `role: user` item                                             | Items | Opens with                                       |
+| --------------------------------------------------------------------------------------- | ----: | ------------------------------------------------ |
+| `user.text` (1 to 61 blocks), `user.image` among them                                   |   352 | the person's line                                |
+| `plugins.recommendations`, `agents_md.instructions`, `environments.environment_context` |    38 | `<recommended_plugins>` (the exec shape)         |
+| `agents_md.instructions`, `environments.environment_context`                            |    47 | **`# AGENTS.md instructions for <cwd>` — plain** |
+| `environments.environment_context`                                                      |     7 | `<environment_context>`                          |
+| `agents_md.instructions`                                                                |     2 | plain                                            |
+| `shell.user_command`                                                                    |     2 | `<user_shell_command>`                           |
+| `generic.turn_aborted`                                                                  |     1 | `<turn_aborted>`                                 |
+
+The 47 plain-opening items are the TUI's own turn-one context on `0.150.0-alpha.8` through
+`0.153.4` (`cli`, `subagent` and `vscode` alike). **A tag test alone would show every one of them
+as the person's first message.** The metadata is the rule wherever it exists.
+
+**Rule 2 — the opening tag, for an item with no metadata at all.** 710 user-role items (builds
+`0.145.0-alpha.27` through `0.149.0`) carry no `content_item_kinds`. Of those, 508 open with a
+plain line and 202 with one of four tags: `<realtime_delegation>` 77, `<recommended_plugins>` 67,
+`<codex_delegation>` 46, `<environment_context>` 12. Together with the two tags Rule 1's table
+measured only on metadata-bearing items, that is the complete pinned set of six —
+`INJECTED_CONTEXT_TAGS` in `parse.ts`. `<user_instructions>`, which #458 guessed at, was **not
+observed** on any rollout and is not pinned.
+
+Developer items: 470 carry no metadata; the rest name `hooks.additional_context` 182,
+`multi_agent.mode_instructions` 54, `multi_agent.usage_hint` 48,
+`permissions.approved_command_prefix_saved` 43, the `host_skills.instructions` / `permissions.` /
+`apps.` / `plugins.usage_instructions` / `collaboration_mode.instructions` bundle in several
+orders, `model_switch.instructions` 10, `guardian.followup_review_reminder` 9,
+`generic.developer_instructions`, `generic.turn_aborted`, `images.resize_notice`. None is a
+person's words; none is read.
+
+### (d) The receipt's head window — positive, with the margin stated
+
+The first human item sits **100 to 143 KB** into each of the 17 exec rollouts on the machine, behind
+the `session_meta` head, the developer preamble and the injected user item. `FIRST_PROMPT_HEAD_BYTES`
+is 256 KiB, so the receipt (#191) reaches it with about 110 KB to spare on this build — and before
+this fix it answered the 30 kB `<recommended_plugins>` item, because that is the first user item.
+
+### Fix implemented
+
+- `parse.ts`: `isInjectedContextItem` applies Rule 1 then Rule 2. `extractCodexFeed` yields
+  `role: 'user'` rows from user items **only for a window that carries no `user_message` event**,
+  and never from a developer item; `firstCodexUserMessage` applies the same filter, so the receipt
+  is the prompt.
+- Fixture `__fixtures__/codex/rollout-exec.jsonl`: the (b) shape over an opening turn and two
+  resumed turns, every text a placeholder. Tests in `parse.test.ts` and `codexProvider.test.ts`
+  under `#458`.
+
+### Confidence
+
+The zero count, the item order, both tables, the tag set, the offsets and the `UserMessage`
+disagreement are **verified** against every rollout on this machine. Rule 1 is verified on 449
+metadata-bearing user items and Rule 2 on 710 without; a build that writes metadata on some items
+of a turn and not others was **not observed**. The live-refresh reading is a code walk pinned by
+deterministic tests, not a re-run of the maintainer's session. One OS, one machine.

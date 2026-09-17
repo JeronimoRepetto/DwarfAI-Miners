@@ -413,13 +413,94 @@ function codexToolInput(name: string, payload: Rec): Record<string, unknown> | u
 }
 
 /**
- * The last `limit` things SAID in a rollout: user_message events,
- * assistant response_items, and one line per tool call the design's four
- * verbs name (#240), interleaved between them in the order the rollout
- * carried them. agent_message events are skipped because they duplicate the
- * response_item text of the same reply, and so is a tool call
- * `toolActivityLine` names no verb for — `exec`'s 5000-plus calls above all,
- * whose input is a JavaScript program rather than a command line.
+ * The `content_item_kinds` a person's own words carry on a `response_item`
+ * message item: `user.text`, and `user.image` beside it for a pasted picture.
+ * Every other kind measured on a user-role item names the harness —
+ * `plugins.recommendations`, `agents_md.instructions`,
+ * `environments.environment_context`, `shell.user_command`,
+ * `generic.turn_aborted` (docs/codex-v2-format.md §14).
+ */
+const USER_CONTENT_KIND_PREFIX = 'user.'
+
+/**
+ * Every tag measured opening a user-role item that is NOT the person's words —
+ * 214 rollouts, 0.145 through 0.153.4, with and without metadata (§14) —
+ * pinned rather than guessed at. This is the FALLBACK rule, for an item on a
+ * build that wrote no `content_item_kinds` (0.145 through 0.149 on this
+ * machine); wherever Codex wrote the metadata, the metadata decides. A tag
+ * this list does not name is a person's line until a rollout says otherwise.
+ */
+const INJECTED_CONTEXT_TAGS: readonly string[] = [
+  '<recommended_plugins>',
+  '<environment_context>',
+  '<realtime_delegation>',
+  '<codex_delegation>',
+  '<user_shell_command>',
+  '<turn_aborted>'
+]
+
+/**
+ * True when a `role: "user"` message item is the harness talking to the
+ * model rather than a person talking to it (#458).
+ *
+ * Codex writes the person's prompt and its own injected context — the plugin
+ * list, the AGENTS.md text, the environment block — as items of the SAME role,
+ * so the role cannot tell them apart. Two records can, and they are tried in
+ * this order:
+ *
+ * 1. `internal_chat_message_metadata_passthrough.content_item_kinds`, where
+ *    the build wrote one: a person's item names a `user.*` kind and an
+ *    injected one never does. This is the rule that matters on 0.150.1 and
+ *    later, because the TUI's turn-one context item opens with a PLAIN line
+ *    (`# AGENTS.md instructions for <cwd>`, 47 items measured) that no tag
+ *    test could catch.
+ * 2. The first line of the text, for an item with no metadata at all: an
+ *    injected block opens with one of the tags above, a person's line does
+ *    not. This is what a fork's prompt (#218) and a pre-0.150 rollout are read
+ *    by.
+ *
+ * Only a `user` item is ever asked; a `developer` item is never the person's
+ * words and is refused by role before this is reached.
+ */
+function isInjectedContextItem(payload: Rec): boolean {
+  const passthrough = payload.internal_chat_message_metadata_passthrough
+  const kinds = isRecord(passthrough) ? passthrough.content_item_kinds : undefined
+  if (Array.isArray(kinds)) {
+    return !kinds.some(
+      (kind) => typeof kind === 'string' && kind.startsWith(USER_CONTENT_KIND_PREFIX)
+    )
+  }
+  const text = messageItemText(payload) ?? ''
+  const firstLine = text.trimStart().split('\n', 1)[0] ?? ''
+  return INJECTED_CONTEXT_TAGS.some((tag) => firstLine.startsWith(tag))
+}
+
+/** Whether this window carries Codex's own `user_message` event for any human turn. */
+function carriesUserEvents(records: readonly { type: string; payload: Rec }[]): boolean {
+  return records.some(
+    (record) => record.type === 'event_msg' && record.payload.type === 'user_message'
+  )
+}
+
+/**
+ * The last `limit` things SAID in a rollout: the person's turns, assistant
+ * response_items, and one line per tool call the design's four verbs name
+ * (#240), interleaved between them in the order the rollout carried them.
+ * agent_message events are skipped because they duplicate the response_item
+ * text of the same reply, and so is a tool call `toolActivityLine` names no
+ * verb for — `exec`'s 5000-plus calls above all, whose input is a JavaScript
+ * program rather than a command line.
+ *
+ * A person's turn is read from `user_message` events where the window carries
+ * any, and from `response_item` user items only where it carries none (#458).
+ * The event wins outright rather than the two racing on position, exactly as
+ * `firstCodexUserMessage` rules and for its reason: an event is Codex stating
+ * that a person sent this, an item is the model's input, and a rollout that
+ * carries both would read every prompt twice. `codex exec` writes no event at
+ * all — zero across five real rollouts, and zero across the 214 on this
+ * machine (docs/codex-v2-format.md §14) — so for it the items are the only
+ * record, filtered by `isInjectedContextItem` because the harness writes its
+ * own context under the same role.
  *
  * `limit` counts the texts and never the activity lines (`trimFeed`, #359),
  * the same rule the Claude and Antigravity extractors trim by.
@@ -433,19 +514,30 @@ export function extractCodexFeed(
   activityLimit?: number
 ): FeedMessage[] {
   const feed: FeedMessage[] = []
-  for (const record of jsonlRecords(tailText)) {
+  const records = jsonlRecords(tailText)
+  const readUserItems = !carriesUserEvents(records)
+  for (const record of records) {
     if (record.type === 'event_msg' && record.payload.type === 'user_message') {
       const text = asString(record.payload.message)
       if (text !== undefined) feed.push({ role: 'user', text, timestamp: record.timestamp })
       continue
     }
-    if (
-      record.type === 'response_item' &&
-      record.payload.type === 'message' &&
-      record.payload.role === 'assistant'
-    ) {
-      const text = outputText(record.payload)
-      if (text !== undefined) feed.push({ role: 'assistant', text, timestamp: record.timestamp })
+    if (record.type === 'response_item' && record.payload.type === 'message') {
+      if (record.payload.role === 'assistant') {
+        const text = outputText(record.payload)
+        if (text !== undefined) {
+          feed.push({ role: 'assistant', text, timestamp: record.timestamp })
+        }
+        continue
+      }
+      if (
+        readUserItems &&
+        record.payload.role === 'user' &&
+        !isInjectedContextItem(record.payload)
+      ) {
+        const text = messageItemText(record.payload)
+        if (text !== undefined) feed.push({ role: 'user', text, timestamp: record.timestamp })
+      }
       continue
     }
     if (
@@ -477,14 +569,17 @@ function messageItemText(payload: Rec): string | undefined {
 /**
  * The FIRST thing a person said in one rollout, for the launch receipt (#191).
  *
- * Deliberately not `extractCodexFeed(head, …)[0]`. That reading is the panel's
- * — user_message events only, because they are what a human typed and an
- * `agent_message` would duplicate a reply — and it is right for a feed and
- * incomplete for this. A Codex child thread is a FORK: #218 measured that it
- * carries no `event_msg/user_message` at all, and its human prompt survives
- * only as a `response_item` request item. `codex exec`'s own rollout shape has
- * not been read on this machine, so both are accepted rather than betting on
- * the one this app happens to have fixtures for.
+ * Deliberately not `extractCodexFeed(head, …)[0]`: that reading bounds by the
+ * LAST `limit` texts, the opposite end from the one wanted here, and it keeps
+ * tool lines this has no use for. What the two share is the rule for a
+ * person's turn. A Codex child thread is a FORK: #218 measured that it carries
+ * no `event_msg/user_message` at all, and its human prompt survives only as a
+ * `response_item` request item. `codex exec` is the same shape, measured on
+ * 2026-09-17 (#458, docs/codex-v2-format.md §14): no event on any of five
+ * real rollouts, the prompt as a user item — and BEFORE it, under the same
+ * role, a 30 kB `<recommended_plugins>` block of injected context. Reading
+ * the first user item whole made that block the receipt, so the item is
+ * filtered by `isInjectedContextItem` exactly as the feed's is.
  *
  * The event WINS over an item that precedes it, rather than the two racing on
  * position. An event is Codex stating outright that a person sent this; a
@@ -509,7 +604,8 @@ export function firstCodexUserMessage(text: string): string | undefined {
       requested === undefined &&
       record.type === 'response_item' &&
       record.payload.type === 'message' &&
-      record.payload.role === 'user'
+      record.payload.role === 'user' &&
+      !isInjectedContextItem(record.payload)
     ) {
       requested = messageItemText(record.payload)
     }
