@@ -1,5 +1,153 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
+evidence_revision: sha256:653e476a0773d38546bda2cd9ce9eed7d4785f4f5f42cdb985a21a07fe17a4e7
+verdict: fail
+blockers: 0
+critical_findings: 0
+requirements: 14/17
+scenarios: 35/39
+test_command: pnpm exec vitest run src/main/providers/opencode src/main/domain/permissionSummary.test.ts
+test_exit_code: 0
+test_output_hash: sha256:9bc339e9336375978d014078f03f3a4eeafb2c6f922d8fe436266b6dff980422
+build_command: pnpm build
+build_exit_code: 0
+build_output_hash: sha256:1dd4719de6420b4a7068d8ffed92b4fc9832ce64a60600f15fefe4386edc683b
+```
+
+`evidence_revision` is the SHA-256 over the exact bytes of `git diff 3d8fb3b...aa1e982` (UTF-8, host
+line endings) - the same base commit `3d8fb3be74e852f675a64e0d996ced9d6c50a51c` the first pass used,
+not the shared `main` tree's current tip (`f3146d5`, which has since advanced through unrelated
+merges on this machine). HEAD is `aa1e982b464120f73739e6280cbf94250672ec50` on `feat/opencode-observer`.
+
+## Re-verification after remediation (HEAD aa1e982) - 2026-09-17
+
+**Scope**: bounded re-verification of the four remediation commits (`0569e53`, `c690273`,
+`86a53e3`, `aa1e982`) against the first pass's FAIL findings. This section does not redo the whole
+first pass; it confirms each finding's resolution against code and tests, re-checks the affected
+Spec Compliance Matrix rows, and re-runs the real-store smoke check. The first pass's full report
+is preserved verbatim below, unedited.
+
+### A shared-tree hazard encountered and how it was handled
+
+Before any evidence was collected, the shared main checkout was found already switched to `main`
+at `f3146d5` (a concurrent agent's merge of PR #448), with a live uncommitted change in flight
+(`D src/renderer/src/components/scene/SessionStrip.vue`, later joined by edits to `App.vue`,
+`MineScene.vue`/`.test.ts` and two more deletions) - exactly the "another agent's work in flight"
+condition `AGENTS.md` describes as routine. An initial focused test run executed against that
+shared tree before this was noticed returned a result that could not be trusted (the tree's branch
+could have changed between commands), so per the project's own worktree memory ("never `git
+checkout` another branch in the main checkout") no checkout was ever performed on the shared tree.
+
+Instead, all code-level re-verification in this section ran inside a disposable, detached git
+worktree at `agent-name-worktrees/verify-opencode-observer`, pinned to `aa1e982`, with
+`node_modules` junctioned per the project's documented convention, and every check invoked through
+the binaries directly (`node node_modules/vitest/vitest.mjs`,
+`node node_modules/electron-vite/bin/electron-vite.js build`) - never `pnpm <script>` - to avoid
+pnpm's dependency-status check deleting the shared, junctioned `node_modules`. The junction was
+removed and the worktree deregistered after each use; the shared main tree was read (`git status`,
+`git branch`) but never written to, checked out, staged, or otherwise touched at any point in this
+verification.
+
+### Per-finding resolution
+
+| #          | Finding (first pass)                                                                                         | Resolution              | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CRITICAL 1 | Real user-configured OpenCode agent nickname committed; README falsely claimed redaction                     | RESOLVED (`0569e53`)    | Live-store fingerprint check re-run against the exact `aa1e982` tracked-file snapshot (isolated worktree): the value matching the first pass's fingerprint (19 chars, lowercase, hyphenated, SHA-256 prefix `85b896e1`, confirmed by re-hashing the live store's own distinct `session.agent` values) has zero occurrences in tracked files; `sample-agent` appears on 21 lines across the nine files the commit lists. `parse.test.ts` and the whole `opencode` directory pass.                                                                                |
+| CRITICAL 2 | Store-wide `opencode.db-wal` mtime floored every session's `activityMs`, so no dwarf was ever dropped        | RESOLVED (`c690273`)    | `git show` confirms `walStat?.mtimeMs` is no longer a `Math.max` argument (a comment records why). The new test `drops a frozen session even while another session keeps the store WAL hot` was reproduced RED in the isolated worktree by temporarily re-adding the removed term (reverted immediately after): `expected [ 'ses_frozen', 'ses_active' ] to deeply equal [ 'ses_active' ]`, byte-for-byte the failure the commit message reports. Restoring the real code turns it GREEN. Nine amended seeds were spot-checked; none had an assertion weakened. |
+| WARNING 1  | Built `Dwarf` never carried `attendance`, though D4 and task 3.6 both say `'unknown'`                        | RESOLVED (`86a53e3`)    | `attendance: 'unknown'` added to the object literal; `reports unknown attendance, as D4 and task 3.6 both state (#444)` passes in the focused run.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| WARNING 2  | `noReplyYet[0]?.dwarfs[0]?.lastMessage).toBeUndefined()` passed vacuously even if `scan()` published nothing | RESOLVED (`86a53e3`)    | `expect(noReplyYet).toHaveLength(1)` added immediately before the pre-existing assertion; the test can no longer pass on an empty publish.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| WARNING 3  | `TOOL_ACTIVITY_KINDS` keyed only `glob`, missing 81/82 measured OpenCode tool calls                          | RESOLVED (`86a53e3`)    | `bash: 'run'`, `read: 'read'`, `grep: 'search'`, `write: 'edit'` added, each with a passing `it.each` row in `permissionSummary.test.ts`; `task` stays deliberately unmapped (agent traffic already drawn as a dwarf), matching Claude's own `Agent` omission in the same table.                                                                                                                                                                                                                                                                                |
+| GAP DET-R5 | No test pinned "tokens/cost never reach the wire" against real non-zero columns                              | RESOLVED (`86a53e3`)    | New test seeds `cost`/`tokens_*` via a raw `UPDATE` and asserts `'tokensObserved' in dwarf === false` and `'cost' in dwarf === false`; passes (GREEN-on-first-run is explicitly acceptable for a pin test per the original report's own instruction).                                                                                                                                                                                                                                                                                                           |
+| WARNING 4  | Four test groups were GREEN on first run and never demonstrated they could fail                              | DEFERRED - non-blocking | Test-hygiene only (Strict TDD triangulation quality), not a spec or behavior gap; no code changed this batch that would alter the analysis. Left open per `apply-progress.md`'s own statement that it was out of Remediation 2's scope. Does not block merge: nothing it names is untested, only unproven-by-mutation.                                                                                                                                                                                                                                          |
+| WARNING 5  | `NOT_LAUNCHABLE`'s doc comment still claims the string is unreachable, though this change makes it reachable | DEFERRED - non-blocking | Re-read at `aa1e982`: `launchProviders.ts`'s comment is still stale (confirmed unchanged). Comment-only drift with no behavioral or spec effect - the code and its test already assert the correct (reachable) behavior; only the prose describing it is wrong. Does not block merge.                                                                                                                                                                                                                                                                           |
+
+### Updated Spec Compliance Matrix rows
+
+| Req     | Scenario                                      | Prior   | Now       | Test                                                                                                   |
+| ------- | --------------------------------------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| SE-R2   | A captured value carries a machine identifier | FAILING | COMPLIANT | Fixture scrub + fingerprint re-check (above)                                                           |
+| DET-R4  | Session quits and goes stale                  | FAILING | COMPLIANT | `opencodeProvider.test.ts > drops a frozen session even while another session keeps the store WAL hot` |
+| DET-R5  | A finished turn with token columns filled     | GAP     | COMPLIANT | `opencodeProvider.test.ts > never puts tokens or cost on the wire...`                                  |
+| TOPO-R3 | Nothing records a decision from unknown       | PARTIAL | COMPLIANT | `opencodeProvider.test.ts > reports unknown attendance...`                                             |
+| FEED-R1 | Session has not replied yet                   | PARTIAL | COMPLIANT | `opencodeProvider.test.ts > carries the newest assistant text...` (strengthened)                       |
+
+Requirements fully satisfied: 14/17 (store-evidence 4/4, detection 3/6, feed 4/4, topology 3/3) -
+up from 9/17. Scenarios fully evidenced: 35/39 - up from 30/39.
+
+Four PARTIAL scenario rows remain unchanged, not addressed this batch, and not blocking - each was
+already a SUGGESTION (coverage polish), never a CRITICAL/WARNING, in the first pass:
+
+| Req    | Scenario                                            | Status  | First-pass suggestion |
+| ------ | --------------------------------------------------- | ------- | --------------------- |
+| DET-R1 | All three layers are present                        | PARTIAL | SUGGESTION 1          |
+| DET-R1 | The default shape is the same on every OS           | PARTIAL | SUGGESTION 2          |
+| DET-R2 | The measured store shape                            | PARTIAL | SUGGESTION 3          |
+| DET-R6 | Panel offers actions for an observed OpenCode dwarf | PARTIAL | SUGGESTION 5          |
+
+### Test execution (re-run)
+
+`node node_modules/vitest/vitest.mjs run src/main/providers/opencode src/main/domain/permissionSummary.test.ts`
+(binary-equivalent of `pnpm exec vitest run` - the isolated worktree is junctioned, per the "never
+run `pnpm <script>` in a junctioned worktree" rule) - 6 files, 122 tests, 0 failed, exit 0, run
+against the exact `aa1e982` tree. `node node_modules/electron-vite/bin/electron-vite.js build` -
+exit 0, all three targets built.
+
+Both hashes above are computed over the exact captured output of these runs. The wider CI checks
+(full 267-file suite, typecheck, lint, format:check, skill-sync --check, and the per-file test
+census) were not re-run in this bounded pass; the orchestrator already reports them green on this
+exact `aa1e982` HEAD, and nothing touched by this bounded pass (a fixture scrub, one `Math.max`
+term, one object-literal field, four table entries, and their tests) plausibly regresses them.
+
+### Real-Store Smoke Check - retention behaviour, re-run
+
+Read-only, same method as the first pass (Node 24.11.1 native type-stripping, `DatabaseSync(...,
+{ readOnly: true })`, no session started, no write), executed inside the isolated `aa1e982`
+worktree so the imported modules are the fixed code, not whatever the shared tree happened to hold.
+
+| Measurement                                 | First pass (hours earlier)           | This re-verification                                                               |
+| ------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `dwarfSilenceWindowMs('foreman','unknown')` | not printed numerically              | 3,600,000 ms (60 min) - the long/attended window, confirmed live from the contract |
+| `dwarfSilenceWindowMs('worker','unknown')`  | not printed numerically              | 1,800,000 ms (30 min)                                                              |
+| Non-archived sessions published             | 4                                    | 3                                                                                  |
+| Roles/status published                      | 2 foreman settled/mid-turn, 2 worker | 2 foreman (1 busy/no lastMessage, 1 idle/has lastMessage), 1 worker busy           |
+| `attendance` on every published dwarf       | not a field yet (WARNING 1 open)     | `'unknown'` on all three - WARNING 1's fix visible against the live store          |
+
+The published count dropped from 4 to 3 over the hours between the two checks, on a store whose
+WAL kept advancing throughout (other sessions/agents were actively writing on this machine the
+entire time) - precisely the direction CRITICAL 2's fix predicts and the opposite of what the bug
+would have produced (under the bug, that WAL activity would have kept every session's `activityMs`
+pinned to "now" and the count could only grow). This is directional corroboration, not a
+byte-for-byte controlled comparison: the first-pass report recorded categories, not session ids, so
+which specific session dropped cannot be confirmed by identity - only that dropping is now
+observably happening at all, which the bug made impossible. No session was started, prompted, or
+written to; `git status` in the smoke worktree was clean before and after.
+
+### Verdict
+
+The machine-readable verdict above is `fail`, per this validator's own completeness rule: a
+`pass` verdict requires full requirement/scenario coverage (17/17, 39/39), and four PARTIAL
+scenario rows still remain (unchanged this batch, listed above). That rule is stricter than the
+narrative judgment below, and this report defers to it rather than overriding it.
+
+In narrative terms: both CRITICAL findings and the one GAP are resolved and evidenced by tests
+re-run against the exact `aa1e982` commit in an isolated worktree; three of five WARNINGs are
+resolved the same way. Zero CRITICAL findings and zero blockers remain. WARNING 4 (test-hygiene)
+and WARNING 5 (a stale doc comment) stay open by design, and the four remaining PARTIAL rows were
+already SUGGESTION-level coverage gaps in the first pass, not CRITICAL/WARNING findings - none of
+the seven items still open changes runtime behavior or contradicts a spec scenario.
+
+Per this system's own rule, a canonical `fail` with incomplete-but-non-critical evidence is valid
+and persistable but not archive-ready. Closing the four remaining SUGGESTIONs (an `sdd-apply` pass
+over `DET-R1` x2, `DET-R2`, `DET-R6`) would make the next re-verification pass cleanly. Absent
+that, the maintainer may instead choose to accept the residual gaps as a documented exception
+before archiving, the same way this change already accepted its PR-slicing deviation (D9).
+
+---
+
+_(What follows is the first pass's report, preserved verbatim and unedited below this line.)_
+
+```yaml
+schema: gentle-ai.verify-result/v1
 evidence_revision: sha256:3a28c155854c10326b260d79b30b91d1dd189fc155820515c0036a0d6e878fb3
 verdict: fail
 blockers: 0
