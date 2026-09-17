@@ -150,6 +150,21 @@ describe('withConfigFileFallback', () => {
     expect(loadConfig(layered).providers.opencode.storeRoot).toBe('~/from-env/opencode')
   })
 
+  /*
+   * DET-R1 ("All three layers are present"): the blank-over-file fall-through
+   * above (line ~109) is only pinned generically, through POLL_INTERVAL_MS —
+   * this repeats it against OPENCODE_STORE_ROOT's own key, so the clause is
+   * exercised for this provider's setting and not only inferred from a
+   * different one.
+   */
+  it('does not let a blank OPENCODE_STORE_ROOT mask the file value', () => {
+    const layered = withConfigFileFallback(
+      { OPENCODE_STORE_ROOT: '   ' },
+      { OPENCODE_STORE_ROOT: '~/from-file/opencode' }
+    )
+    expect(loadConfig(layered).providers.opencode.storeRoot).toBe('~/from-file/opencode')
+  })
+
   it('still resolves keys the file never mentions', () => {
     const layered = withConfigFileFallback({ HOOKS_PORT: '51000' }, { POLL_INTERVAL_MS: '5000' })
     expect(loadConfig(layered).hooksPort).toBe(51000)
