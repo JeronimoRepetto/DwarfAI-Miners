@@ -28,14 +28,7 @@ import { shellComposition } from './lib/shell/composition'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import type {
-  AppBuild,
-  Dwarf,
-  Mine,
-  MineHistoryResult,
-  MinesSnapshot,
-  ShellArea
-} from './types'
+import type { AppBuild, Dwarf, Mine, MineHistoryResult, MinesSnapshot, ShellArea } from './types'
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()

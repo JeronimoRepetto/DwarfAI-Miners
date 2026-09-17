@@ -24,12 +24,7 @@ import {
   spriteFootprintPx,
   spriteMarginPercent
 } from '../../lib/scene/sceneSizing'
-import type {
-  Dwarf,
-  DwarfKickState,
-  DwarfSendState,
-  Mine
-} from '../../types'
+import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../../types'
 import DwarfSprite from '../dwarf/DwarfSprite.vue'
 import VaultChip from '../vault/VaultChip.vue'
 
