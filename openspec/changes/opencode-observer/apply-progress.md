@@ -135,8 +135,8 @@ Full seven-check run for PR 3: typecheck (node+web) clean; lint clean; format:ch
 
 ## Final summary
 
-All 49 tasks across PR 1–4 are complete. Three commits on `feat/opencode-observer` cover the whole
-change (`docs(opencode-observer)`, then two `feat(opencode-observer)` commits for the pure modules
-and the wiring); PR 4's doc changes are staged for a fourth commit. Per this run's delivery
-decision (`exception-ok` / `size:exception`), all of this lands as ONE pull request — the
+All 49 tasks across PR 1–4 are complete. Four commits on `feat/opencode-observer` cover the whole
+change: `ef02e6c` (evidence/fixtures + SDD artifacts), `e22358d` (pure store/parse/state modules),
+`a02e44f` (contract growth, provider, wiring), `71d0afd` (documentation rows). Per this run's
+delivery decision (`exception-ok` / `size:exception`), all of this lands as ONE pull request — the
 orchestrator pushes and opens it; nothing here does.
