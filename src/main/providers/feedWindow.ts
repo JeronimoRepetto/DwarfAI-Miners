@@ -350,8 +350,14 @@ export function feedPageOf(
  * the cursor a transcript row produced resolves to that very row. Only when no
  * row matches both does the newest row saying the same words answer — the same
  * "a repeat rather than a gap" direction `FeedPageCursor` already argues for.
+ *
+ * Exported (#444) for a caller with no file to walk at all: OpenCode's own
+ * `feedPage` assembles its rows in memory from `state.ts`'s message × part
+ * read rather than tailing a transcript, so it composes this step directly
+ * with `feedPageOf` instead of going through `readFeedPage`'s byte-window
+ * walk below. Behaviour is unchanged for every existing caller.
  */
-function cursorIndex(rows: readonly FeedMessage[], before: FeedPageCursor): number {
+export function cursorIndex(rows: readonly FeedMessage[], before: FeedPageCursor): number {
   const wanted = normalizeConsoleText(before.text)
   let sameWords = -1
   for (let index = rows.length - 1; index >= 0; index--) {

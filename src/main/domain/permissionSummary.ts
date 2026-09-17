@@ -157,7 +157,14 @@ const TOOL_ACTIVITY_KINDS: Readonly<Record<string, FeedActivityKind>> = {
   grep_search: 'search',
   find_by_name: 'search',
   write_to_file: 'edit',
-  replace_file_content: 'edit'
+  replace_file_content: 'edit',
+  // OpenCode (#444). Lowercase, unlike every CLI above — its own `part.data`
+  // measured live, `measurements-2026-09-17.md` row 4: a delegated child's own
+  // part was a real `tool: "glob"` call. Only the one measured name is added
+  // here; an unmeasured OpenCode tool name falls through to no line at all,
+  // the same "no subject a line could name" answer every other unrecognised
+  // tool already gets.
+  glob: 'search'
 }
 
 /**
