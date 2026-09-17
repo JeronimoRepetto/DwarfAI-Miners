@@ -177,3 +177,36 @@ WARNING 5 stayed out of scope.
       genuinely publish a dwarf, but the test was never strengthened with a length assertion. Added
       `expect(noReplyYet).toHaveLength(1)` before the existing `toBeUndefined()` check; passed
       immediately (the underlying behaviour was already correct).
+
+## Follow-up #453 (post-verify PARTIAL rows and WARNING 4/5)
+
+Verify's re-verification pass (HEAD `aa1e982`) listed four remaining PARTIAL scenario rows
+(SUGGESTIONs 1, 2, 3, 5) and left WARNING 4 and WARNING 5 open. This batch closes all six.
+
+- [x] R7 **SUGGESTION 1 — DET-R1 blank-env-over-file for `OPENCODE_STORE_ROOT`.** Added
+      `configFile.test.ts`'s own OpenCode-keyed case beside the generic `POLL_INTERVAL_MS` one.
+      Proved fallible: temporarily disabled `withConfigFileFallback`'s blank check, confirmed RED,
+      reverted.
+- [x] R8 **SUGGESTION 2 — DET-R1 OS-invariant default expansion.** Added an `expandHomePath` case to
+      `pathPortability.test.ts`, asserted through `node:path.join` on both sides. Proved fallible:
+      temporarily dropped `home` from `expandHomePath`'s tilde branch, confirmed RED, reverted.
+- [x] R9 **SUGGESTION 3 — DET-R2 measured store shape (`snapshot.cwd`).** Added the assertion to
+      `opencodeProvider.test.ts > appears within one scan`. Proved fallible: temporarily swapped the
+      published `cwd` for the session id, confirmed RED, reverted.
+- [x] R10 **SUGGESTION 5 — DET-R6 panel actions for an observed OpenCode dwarf.** Added three cases
+      to `actionBar.test.ts` proving Send disables with `NO_CHANNEL_REASON` and Kick dismisses
+      (or, mid-turn, disables with the turn-in-progress reason) — never with `NO_CHANNEL_REASON`.
+      Corrected the spec scenario's stale Kick clause (predates #293) in the same commit, stated out
+      loud. Each new assertion proved fallible by a temporary, reverted break in `actionBar.ts`.
+- [x] R11 **WARNING 4 — four GREEN-on-first-run test groups.** Renamed three to state plainly they
+      are pins (`pathPortability.test.ts` ×2, `launchProviders.test.ts` ×1). For the fourth
+      (topology), discovered the report's own proposed mutation target does not actually depend on
+      the named line — proved this by removing the line and running the whole file (27/27 still
+      GREEN) — so instead renamed that pin honestly and added a new, genuinely load-bearing test
+      (a middle-tier session promoted to foreman) that goes RED on the same mutation. Deviation
+      stated in `apply-progress.md`.
+- [x] R12 **WARNING 5 — stale `NOT_LAUNCHABLE` doc comment.** Rewrote `launchProviders.ts`'s comment
+      to name OpenCode as the provider that now reaches the string, pointing at the test that
+      exercises it.
+- [x] R13 Ran the seven CI checks in order plus the per-file test census — all green; see
+      `apply-progress.md`'s "Follow-up #453" section for full evidence.
