@@ -137,6 +137,34 @@ describe('OpenCodeProvider.scan — discovery', () => {
     expect(snapshot?.dwarfs.map((dwarf) => dwarf.id)).toEqual(['opencode:ses_a'])
   })
 
+  it('reports unknown attendance, as D4 and task 3.6 both state (#444)', async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
+    expect(snapshot?.dwarfs[0]?.attendance).toBe('unknown')
+  })
+
+  it('never puts tokens or cost on the wire, even once a finished turn fills those columns (DET-R5, #444)', async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    // sessionInsert hardcodes the token/cost columns to 0 (D1 note); a raw
+    // UPDATE against the real column names proves the omission against
+    // non-zero values, not merely against sessionInsert's own default.
+    sqlite.exec(
+      DB_PATH,
+      `UPDATE session SET cost = 1.23, tokens_input = 100, tokens_output = 200, ` +
+        `tokens_reasoning = 5, tokens_cache_read = 3, tokens_cache_write = 2 WHERE id = 'ses_a'`
+    )
+    const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
+    const dwarf = snapshot?.dwarfs[0]
+    expect(dwarf !== undefined && 'tokensObserved' in dwarf).toBe(false)
+    expect(dwarf !== undefined && 'cost' in dwarf).toBe(false)
+  })
+
   it('returns no snapshots and does not throw when no store exists', async () => {
     const provider = makeProvider({ fs: new FakeFs(), sqlite: new MemorySqlite() })
     await expect(provider.scan()).resolves.toEqual([])
@@ -353,7 +381,10 @@ describe('OpenCodeProvider.scan — retention', () => {
     seedStore(fake)
     const sqlite = realSqlite()
     // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
     sqlite.exec(
       DB_PATH,
       sessionInsert({
@@ -495,6 +526,10 @@ describe('OpenCodeProvider — feed', () => {
       })
     )
     const noReplyYet = await makeProvider({ fs: fake, sqlite }).scan()
+    // WARNING 2 (#444): asserted BEFORE the toBeUndefined() below, so a
+    // scan() that publishes nothing at all can no longer satisfy this
+    // scenario vacuously — the dwarf must actually be on the board.
+    expect(noReplyYet).toHaveLength(1)
     expect(noReplyYet[0]?.dwarfs[0]?.lastMessage).toBeUndefined()
 
     sqlite.exec(
@@ -686,7 +721,10 @@ describe('OpenCodeProvider — topology (D4)', () => {
     seedStore(fake)
     const sqlite = realSqlite()
     // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_root', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_root', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
     const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
     expect(snapshot?.dwarfs[0]?.role).toBe('foreman')
     expect(snapshot?.dwarfs[0]?.parentId).toBeUndefined()
@@ -697,7 +735,10 @@ describe('OpenCodeProvider — topology (D4)', () => {
     seedStore(fake)
     const sqlite = realSqlite()
     // #444: fresh per-session facts — retention no longer floors on the store-wide WAL mtime.
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
     sqlite.exec(
       DB_PATH,
       sessionInsert({

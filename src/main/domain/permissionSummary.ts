@@ -158,12 +158,21 @@ const TOOL_ACTIVITY_KINDS: Readonly<Record<string, FeedActivityKind>> = {
   find_by_name: 'search',
   write_to_file: 'edit',
   replace_file_content: 'edit',
-  // OpenCode (#444). Lowercase, unlike every CLI above — its own `part.data`
-  // measured live, `measurements-2026-09-17.md` row 4: a delegated child's own
-  // part was a real `tool: "glob"` call. Only the one measured name is added
-  // here; an unmeasured OpenCode tool name falls through to no line at all,
-  // the same "no subject a line could name" answer every other unrecognised
-  // tool already gets.
+  // OpenCode (#444). Lowercase, unlike every CLI above. The maintainer's own
+  // live-store tool histogram (docs/opencode-format.md, 254 `part` rows):
+  // `bash` 37, `read` 36, `grep` 4, `task` 2, `glob` 2, `write` 1. Every
+  // measured name but `task` gets the kind its capitalised Claude twin
+  // already carries in this same table, so the shared `namedSubject` fields
+  // keep naming the same call. `task` is deliberately left out: it is agent
+  // traffic already drawn as a dwarf on the board, the same "Agent traffic"
+  // omission this table already gives Claude's own `Agent` tool above — a
+  // line would say less than the dwarf sitting beside it. An unmeasured
+  // OpenCode tool name still falls through to no line at all, the same "no
+  // subject a line could name" answer every other unrecognised tool gets.
+  bash: 'run',
+  read: 'read',
+  grep: 'search',
+  write: 'edit',
   glob: 'search'
 }
 

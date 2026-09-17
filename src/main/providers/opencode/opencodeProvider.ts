@@ -236,7 +236,12 @@ export class OpenCodeProvider implements Provider {
         role,
         name: session.agent ?? `opencode-${session.sessionId.slice(0, 8)}`,
         status: busy ? 'working' : 'waiting',
-        sessionId: session.sessionId
+        sessionId: session.sessionId,
+        // D4: every case reports 'unknown' — stated explicitly (mirroring
+        // claudeProvider.ts's own attendance field) rather than left to the
+        // contract's absent-reads-as-'unknown' fallback, so design and code
+        // agree out loud (#444).
+        attendance: 'unknown'
       }
       if (session.modelId !== undefined) dwarf.model = session.modelId
       if (session.parentSessionId !== undefined) {
