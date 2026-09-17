@@ -6,6 +6,7 @@ import {
   FEED_ACTIVITY_LIMIT,
   FEED_WINDOW_CEILING_BYTES,
   FEED_WINDOW_STEPS,
+  cursorIndex,
   feedPageOf,
   parseDwarfFeedPageRequest,
   readFeedPage,
@@ -872,5 +873,42 @@ describe('readFeedPage with a cursor a held conversation produced (#430)', () =>
     )
 
     expect(texts(page.messages)).toEqual(['arrived at the seam'])
+  })
+})
+
+/*
+ * Issue #444. OpenCode's own feedPage has no file to tail — its rows come out
+ * of `state.ts` already assembled in memory — so it cannot walk
+ * `readFeedPage`'s byte windows. The cursor-resolution step that function
+ * always kept private is exported here, unchanged, so OpenCode's provider can
+ * resolve a cursor against the redacted rows it already holds.
+ */
+describe('cursorIndex, exported for a caller with no file to walk (#444)', () => {
+  it('resolves a cursor against rows already redacted, matching text and timestamp', () => {
+    const rows: FeedMessage[] = [
+      { role: 'user', text: 'my key is [REDACTED]', timestamp: 't1' },
+      { role: 'assistant', text: 'Got it.', timestamp: 't2' }
+    ]
+    expect(cursorIndex(rows, { timestamp: 't2', text: 'Got it.' })).toBe(1)
+  })
+
+  it('reports -1 for a cursor naming a row these rows do not hold', () => {
+    const rows: FeedMessage[] = [{ role: 'user', text: 'hello', timestamp: 't1' }]
+    expect(cursorIndex(rows, { timestamp: 'never', text: 'never said' })).toBe(-1)
+  })
+
+  it('composes with feedPageOf to answer one page and reachedStart, with no file at all', () => {
+    // The exact composition OpenCode's feedPage uses: find the cursor, slice
+    // everything older, hand that slice to feedPageOf. reachedStart is the
+    // caller's own fact here (it knows its whole row set), not something this
+    // helper reports — proven by using it precisely as that caller will.
+    const rows: FeedMessage[] = [
+      { role: 'user', text: 'first', timestamp: 't1' },
+      { role: 'assistant', text: 'second', timestamp: 't2' },
+      { role: 'user', text: 'third', timestamp: 't3' }
+    ]
+    const at = cursorIndex(rows, { timestamp: 't3', text: 'third' })
+    const page = feedPageOf(rows.slice(0, at), 2)
+    expect(texts(page)).toEqual(['first', 'second'])
   })
 })

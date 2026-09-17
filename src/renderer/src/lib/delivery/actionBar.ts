@@ -57,7 +57,12 @@ const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
   // spelling that is actually TRUE of the mode a launched or one-shot
   // Antigravity dwarf runs in — the same shorthand 'claude -p' and
   // 'codex exec' already are, not the full argv.
-  antigravity: 'agy --input-format text'
+  antigravity: 'agy --input-format text',
+  // #444. Unreachable in this build — OpenCode is never launched or held, so
+  // neither launchedNoInboxReason nor oneShotNoExitReason is ever called for
+  // it — but the record is exhaustive over DwarfProvider, so the arm must
+  // exist. `opencode run` is the documented headless form (exploration §2.4).
+  opencode: 'opencode run'
 }
 
 /**

@@ -56,10 +56,11 @@ import {
  */
 describe('DWARF_PROVIDERS', () => {
   it('names every provider identity the wire admits, and nothing else', () => {
-    // AMENDED for #237 (was: ['claude', 'codex']). Antigravity's identity on
-    // the wire is the harness, not its executable: `agy` is only what the
-    // binary is called, and the CLI can front models other than Gemini.
-    expect(DWARF_PROVIDERS).toEqual(['claude', 'codex', 'antigravity'])
+    // AMENDED for #444 (was: ['claude', 'codex', 'antigravity']). OpenCode
+    // reads opencode.db only — no launch, no hold, no delivery channel — so
+    // it joins this table alone; LAUNCHABLE_PROVIDERS and HELDABLE_PROVIDERS
+    // stay exactly as they were (see launchProviders.test.ts:84).
+    expect(DWARF_PROVIDERS).toEqual(['claude', 'codex', 'antigravity', 'opencode'])
   })
 
   /*

@@ -100,7 +100,22 @@ describe('toolActivityLine', () => {
     ['grep_search', { pattern: 'FeedMessage', path: 'src' }, 'search', 'Searched FeedMessage'],
     ['find_by_name', { pattern: '*.test.ts', path: 'src' }, 'search', 'Searched *.test.ts'],
     ['write_to_file', { file_path: 'scratch/note.md' }, 'edit', 'Edited scratch/note.md'],
-    ['replace_file_content', { file_path: 'src/parse.test.ts' }, 'edit', 'Edited src/parse.test.ts']
+    [
+      'replace_file_content',
+      { file_path: 'src/parse.test.ts' },
+      'edit',
+      'Edited src/parse.test.ts'
+    ],
+    // AMENDED for #444 (was: the it.each list ended at replace_file_content).
+    // OpenCode CLI rows, lowercase unlike every CLI above, keyed by the
+    // maintainer's own live-store tool histogram (docs/opencode-format.md):
+    // `bash` 37, `read` 36, `grep` 4 and `write` 1 calls over 254 `part` rows.
+    // Each name gets the kind its capitalised Claude twin already carries in
+    // this same table.
+    ['bash', { command: 'pnpm test' }, 'run', 'Ran pnpm test'],
+    ['read', { file_path: 'AGENTS.md' }, 'read', 'Read AGENTS.md'],
+    ['grep', { pattern: 'FeedMessage', path: 'src' }, 'search', 'Searched FeedMessage'],
+    ['write', { file_path: 'src/shared/contracts.ts' }, 'edit', 'Edited src/shared/contracts.ts']
   ])('speaks a %s call as one line', (toolName, input, kind, text) => {
     expect(toolActivityLine(toolName, input)).toEqual({
       role: 'assistant',
@@ -133,7 +148,11 @@ describe('toolActivityLine', () => {
     ['Antigravity agent management, drawn as a dwarf already', 'manage_subagents', { path: 'x' }],
     ['an Antigravity subagent launch, drawn as a dwarf already', 'invoke_subagent', { path: 'x' }],
     ['the Antigravity agent scheduling a wakeup rather than acting', 'schedule', { command: 'x' }],
-    ['an Antigravity MCP call with no subject this table names', 'call_mcp_tool', { path: 'x' }]
+    ['an Antigravity MCP call with no subject this table names', 'call_mcp_tool', { path: 'x' }],
+    // AMENDED for #444 (was: the it.each list ended at call_mcp_tool).
+    // OpenCode's own agent traffic, drawn as a dwarf already — the same
+    // omission kind Claude's `Agent` case above already states.
+    ['OpenCode agent traffic, drawn as a dwarf already', 'task', { description: 'delegate' }]
   ])('answers nothing for %s', (_case, toolName, input) => {
     expect(toolActivityLine(toolName, input)).toBeUndefined()
   })
