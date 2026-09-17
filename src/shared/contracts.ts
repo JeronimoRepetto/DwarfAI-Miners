@@ -1170,8 +1170,12 @@ export interface Dwarf {
    * on Windows, docs/codex-v2-format.md §4 — stamps the freshest write it can
    * PROVE instead: the scan that saw the file grow, else its registry's own
    * stamp, and never a value older than the one it last published (#458).
-   * The field's job is unchanged either way: it moves when a writer wrote,
-   * whoever the writer was.
+   * A provider with no file at all — OpenCode, whose conversation is rows in
+   * a store — stamps the newest of its session's own facts: the session row's
+   * `time_updated`, the newest assistant row's time, and the scan that last
+   * saw its `event.seq` move (#459); never the store's WAL mtime, one file
+   * for every session. The field's job is unchanged either way: it moves
+   * when a writer wrote, whoever the writer was.
    */
   transcriptUpdatedAt?: number
   /**

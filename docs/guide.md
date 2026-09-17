@@ -447,7 +447,9 @@ effort can be changed later, from the session strip in the mine.
 **OpenCode is observed only, and says so.** DwarfAI-Miners reads `opencode.db` — the SQLite store
 OpenCode 1.18.31 keeps under `~/.local/share/opencode` — and nothing else: no launch invocation for
 it has been measured, so the Add Panel shows it installed but not launchable, and its dwarf offers
-no Send, Kick or Boost, with the same fixed reason every un-launchable provider gets. There is no
+no Send or Boost, with the same fixed reason every un-launchable provider gets. Kick dismisses the
+dwarf from the board, and it returns on its own when its session moves — a new row, or the store's
+event log advancing for it — rather than only when a poll catches it working. There is no
 per-session file either, so there is nothing for the terminal-focus fallback to tail; the message
 panel's own feed, paged from the store, is the whole reading surface. An OpenCode dwarf mines no
 ore: token counts sit in the store but are not read onto the wire in this release.

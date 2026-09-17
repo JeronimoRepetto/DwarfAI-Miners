@@ -119,10 +119,20 @@ carries no pid column to join against.
 
 #### Scenario: The turn finishes
 
+> **AMENDED 2026-09-17, stated out loud (#461).** This scenario and the next gained their last
+> clause. The size gate (D2) skips the read when neither `opencode.db` nor `opencode.db-wal` changed
+> size; it used to return the previous generation whole, so the `busy` published by the scan that
+> saw the turn's last write — its `event.seq` had advanced — outlived the turn for as long as nobody
+> wrote a byte, and no silence window was ever re-evaluated. The gate saves the read, never the
+> verdict: a quiet-store scan draws the generation again from the facts the last read left, with the
+> current clock.
+
 - GIVEN the newest assistant message has `time.completed` set and `finish` of `'stop'`
 - WHEN a scan runs
 - THEN its status is `idle`
 - AND `waiting` is never reported, from assistant text or from a guess
+- AND this holds on a scan whose store sizes are unchanged since the previous one: an `event.seq`
+  advance counts as `busy` only on the scan that saw it, and the row alone decides afterwards
 
 #### Scenario: Session quits and goes stale
 
@@ -130,6 +140,18 @@ carries no pid column to join against.
 - WHEN scans continue until the silence window from `dwarfSilenceWindowMs` for its role and
   attendance has fully elapsed
 - THEN the dwarf is dropped on the first scan after that window and never before it
+- AND every scan in between may find the store's sizes unchanged — the drop is measured against
+  the clock, never against a write
+
+#### Scenario: The dwarf's transcriptUpdatedAt moves with its own session
+
+- GIVEN a published OpenCode dwarf, whose session has no file to take an mtime from
+- WHEN its session gains a row between two polls, or its `event.seq` advances
+- THEN the dwarf's `transcriptUpdatedAt` moves, to the newest of `session.time_updated`, the newest
+  assistant row's own time and the scan that last saw its `event.seq` advance (#459)
+- AND it stands still across scans on an unchanged store rather than following the clock
+- AND the store-wide WAL mtime never sets it, since one file for every session says nothing about
+  which one moved
 
 ### Requirement: Tokens are observed, but no ore is claimed in this change
 
