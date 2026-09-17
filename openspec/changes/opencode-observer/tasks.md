@@ -129,22 +129,51 @@ Verify (`verify-report.md`, verdict FAIL) found two criticals against the full v
 are fixed on this branch, each with its own commit.
 
 - [x] R1 **CRITICAL 1 — false redaction (privacy).** The fixtures README claimed the maintainer's
-  configured OpenCode agent nickname "is replaced here with the same placeholder throughout"; it
-  was not — the real value sat verbatim in five fixtures, `parse.test.ts` (7 occurrences),
-  `docs/opencode-format.md:58` and `measurements-2026-09-17.md:99,126`. Scrubbed to the neutral
-  placeholder `sample-agent` in all nine files and rewrote the README paragraph to describe what
-  the files actually carry (`sample-agent` standing in for the configured nickname, `general` for
-  the built-in subagent the measured delegation spawned). Proof: repo-wide grep prints zero files
-  for the old value; `parse.test.ts` 25/25 and the whole `src/main/providers/opencode` directory
-  passed with the new placeholder. Commit `0569e53`.
+      configured OpenCode agent nickname "is replaced here with the same placeholder throughout"; it
+      was not — the real value sat verbatim in five fixtures, `parse.test.ts` (7 occurrences),
+      `docs/opencode-format.md:58` and `measurements-2026-09-17.md:99,126`. Scrubbed to the neutral
+      placeholder `sample-agent` in all nine files and rewrote the README paragraph to describe what
+      the files actually carry (`sample-agent` standing in for the configured nickname, `general` for
+      the built-in subagent the measured delegation spawned). Proof: repo-wide grep prints zero files
+      for the old value; `parse.test.ts` 25/25 and the whole `src/main/providers/opencode` directory
+      passed with the new placeholder. Commit `0569e53`.
 - [x] R2 **CRITICAL 2 — retention neutralised by the store-wide WAL mtime.** `opencodeProvider.ts`
-  computed per-session `activityMs` including `walStat.mtimeMs` — one file for the whole store, so
-  any session's write refreshed every session's activity and no dwarf ever went stale. Removed the
-  term (the WAL still gates re-read cost via sizes, D2) and added the missing test: a frozen
-  session beside an active one, the shared WAL stamped past the frozen session's window — RED
-  (`expected [ 'ses_frozen', 'ses_active' ] to deeply equal [ 'ses_active' ]`) then GREEN. Nine
-  existing seeds that had silently leaned on the WAL floor gained explicit fresh per-session
-  timestamps or a clock at measurement time (stated amendments, no assertion touched). Whole
-  directory 70/70. Commit: the second remediation commit (subject
-  `fix(opencode-observer): never let the store-wide WAL mtime count as per-session activity (#444)`),
-  which also carries this appendix.
+      computed per-session `activityMs` including `walStat.mtimeMs` — one file for the whole store, so
+      any session's write refreshed every session's activity and no dwarf ever went stale. Removed the
+      term (the WAL still gates re-read cost via sizes, D2) and added the missing test: a frozen
+      session beside an active one, the shared WAL stamped past the frozen session's window — RED
+      (`expected [ 'ses_frozen', 'ses_active' ] to deeply equal [ 'ses_active' ]`) then GREEN. Nine
+      existing seeds that had silently leaned on the WAL floor gained explicit fresh per-session
+      timestamps or a clock at measurement time (stated amendments, no assertion touched). Whole
+      directory 70/70. Commit: the second remediation commit (subject
+      `fix(opencode-observer): never let the store-wide WAL mtime count as per-session activity (#444)`),
+      which also carries this appendix.
+
+## Remediation 2 (post-verify warnings and gap)
+
+Verify (`verify-report.md`, verdict FAIL) also listed five warnings and one gap against the full
+verification. This batch closes WARNING 1, WARNING 3, GAP DET-R5 and WARNING 2; WARNING 4 and
+WARNING 5 stayed out of scope.
+
+- [x] R3 **WARNING 1 — missing `attendance: 'unknown'`.** D4's own table and this file's task 3.6
+      both say every case reports `'unknown'` attendance; the built `Dwarf` never carried the field.
+      RED: `opencodeProvider.test.ts`'s new attendance case failed with `expected undefined to be
+'unknown'`. GREEN: `attendance: 'unknown'` added to the built `Dwarf`, mirroring
+      `claudeProvider.ts`'s own explicit field. `pnpm exec vitest run src/main/providers/opencode`
+      passed.
+- [x] R4 **WARNING 3 — `TOOL_ACTIVITY_KINDS` missed 81 of 82 measured OpenCode tool calls.** Only
+      `glob` (row 4's one measured name) had a table entry; the maintainer's live-store histogram (254
+      `part` rows) measured `bash` 37, `read` 36, `grep` 4, `task` 2, `glob` 2, `write` 1. RED: four new
+      rows in `permissionSummary.test.ts`'s `toolActivityLine` `it.each` (`bash`, `read`, `grep`,
+      `write`) each failed with `expected undefined to deeply equal {...}`. GREEN: added those four
+      names with the kind their capitalised Claude twins already carry; `task` stays out on purpose,
+      the same "agent traffic drawn as a dwarf already" omission Claude's own `Agent` tool gets in this
+      table. The table's own comment now states the measured histogram.
+- [x] R5 **GAP DET-R5 — tokens/cost stay off the wire (pin test).** Added a test seeding non-zero
+      `cost`/`tokens_*` columns via a raw `UPDATE` and asserting the published dwarf carries neither
+      `tokensObserved` nor `cost`. Passed immediately (GREEN on first run — allowed for a pin test per
+      the verify report's own instruction); kept as a regression pin.
+- [x] R6 **WARNING 2 — vacuous "no reply yet" assertion.** Commit `c690273` made the scenario
+      genuinely publish a dwarf, but the test was never strengthened with a length assertion. Added
+      `expect(noReplyYet).toHaveLength(1)` before the existing `toBeUndefined()` check; passed
+      immediately (the underlying behaviour was already correct).

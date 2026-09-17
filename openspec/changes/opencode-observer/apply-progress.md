@@ -164,7 +164,7 @@ critical findings. This section records their fixes; no other finding was in rem
   passed with the new placeholder (`parse.test.ts` 25/25), plus a repo-wide grep for the old value
   (tracked and untracked files, `node_modules`/`.git`/`out` excluded) printing zero files.
 - **Commit**: `0569e53` `fix(opencode-observer): scrub the machine identifier from fixtures and
-  document the true contents (#444)`.
+document the true contents (#444)`.
 
 ### CRITICAL 2 — retention neutralised by the store-wide WAL mtime
 
@@ -174,7 +174,7 @@ critical findings. This section records their fixes; no other finding was in rem
   stale, contradicting D3's own "store growth proves writes somewhere, not which session; it only
   gates cost".
 - **RED (test first)**: appended `drops a frozen session even while another session keeps the
-  store WAL hot` to `opencodeProvider.test.ts`'s retention describe — two root sessions, the
+store WAL hot` to `opencodeProvider.test.ts`'s retention describe — two root sessions, the
   frozen one's facts still, the active one's `time_updated` moved to the new now, the shared WAL
   re-added with its mtime stamped at the new now (`FakeFs.addFile` stamps a fixed mtime, so the
   WAL is registered with the future time directly). Run before the fix it **failed** with
@@ -196,16 +196,103 @@ critical findings. This section records their fixes; no other finding was in rem
 - **Tests that prove it**: `pnpm exec vitest run src/main/providers/opencode` — 5 files, **70/70**
   passed.
 - **Commit**: this commit — `fix(opencode-observer): never let the store-wide WAL mtime count as
-  per-session activity (#444)`.
+per-session activity (#444)`.
 
 ### Checks run for the remediation
 
-| Check                                                              | Result                                                                                          |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `pnpm exec vitest run src/main/providers/opencode`                 | ✅ 5 files, 70/70 passed                                                                         |
-| `node skills/test-safety/assets/test-census.mjs --base main`       | ✅ exit 0 — no file lost test statements (net +88 across 16 files; `opencodeProvider.test.ts` 0→26 as a new file vs main) |
-| `pnpm typecheck`                                                   | ✅ exit 0 (node + web)                                                                           |
-| `pnpm lint`                                                        | ✅ exit 0                                                                                        |
+| Check                                                        | Result                                                                                                                    |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm exec vitest run src/main/providers/opencode`           | ✅ 5 files, 70/70 passed                                                                                                  |
+| `node skills/test-safety/assets/test-census.mjs --base main` | ✅ exit 0 — no file lost test statements (net +88 across 16 files; `opencodeProvider.test.ts` 0→26 as a new file vs main) |
+| `pnpm typecheck`                                             | ✅ exit 0 (node + web)                                                                                                    |
+| `pnpm lint`                                                  | ✅ exit 0                                                                                                                 |
 
 The full suite and `pnpm build` were deliberately not run — remediation scope is the two
 criticals and their blast radius only.
+
+## Remediation 2 — verify warnings and gap
+
+Verify (`verify-report.md`, verdict FAIL) also listed five warnings and one gap. Per the
+remediation brief, this batch resolves WARNING 1, WARNING 3, GAP DET-R5 and WARNING 2 (WARNING 4
+and WARNING 5 were out of this batch's scope).
+
+### WARNING 1 — missing `attendance: 'unknown'`
+
+- **What was wrong**: `opencodeProvider.ts` built the `Dwarf` without an `attendance` field. D4's
+  own table and task 3.6 both say every case reports `'unknown'`; the contract reads an absent
+  field the same way, so behaviour was already correct — this was a stated-versus-actual mismatch,
+  not a live defect.
+- **RED**: appended `reports unknown attendance, as D4 and task 3.6 both state (#444)` to
+  `opencodeProvider.test.ts`'s discovery describe. Failed with `AssertionError: expected undefined
+to be 'unknown'` before the fix.
+- **GREEN**: added `attendance: 'unknown'` to the built `Dwarf` object literal, mirroring
+  `claudeProvider.ts`'s own explicit `attendance` field, with a comment naming why it is written
+  out rather than left to the contract's absence-reads-as-unknown fallback.
+- **Tests that prove it**: `pnpm exec vitest run src/main/providers/opencode` — all pass.
+
+### WARNING 3 — `TOOL_ACTIVITY_KINDS` misses 81 of 82 measured OpenCode tool calls
+
+- **What was wrong**: only `glob` (the one tool name row 4's measurement happened to show) had a
+  table entry. The maintainer's live-store tool histogram (254 `part` rows,
+  `docs/opencode-format.md`) measured `bash` 37, `read` 36, `grep` 4, `task` 2, `glob` 2, `write` 1
+  — so 81/82 real calls produced no feed line despite D1's "tool parts become lines" promise.
+- **RED**: appended four rows (`bash`, `read`, `grep`, `write`) to `permissionSummary.test.ts`'s
+  `toolActivityLine` `it.each` table, each with the kind its capitalised Claude twin already
+  carries. All four failed with `expected undefined to deeply equal {...}` before the fix (the
+  `task` "answers nothing" case was appended too, and passed immediately — no entry was ever added
+  for it).
+- **GREEN**: added `bash: 'run'`, `read: 'read'`, `grep: 'search'`, `write: 'edit'` to
+  `TOOL_ACTIVITY_KINDS` (`glob: 'search'` already there from PR 2). `task` is deliberately left
+  out: it is agent traffic already drawn as a dwarf on the board, the same "Agent traffic, drawn as
+  dwarfs already" omission this table already gives Claude's own `Agent` tool. The table's own
+  comment now states the measured histogram instead of "only the one measured name is added".
+- **Tests that prove it**: `pnpm exec vitest run src/main/domain/permissionSummary.test.ts
+src/main/providers/opencode` — all pass.
+
+### GAP DET-R5 — tokens/cost stay off the wire (pin test)
+
+- Added `never puts tokens or cost on the wire, even once a finished turn fills those columns
+(DET-R5, #444)` to `opencodeProvider.test.ts`: seeds a session row via `sessionInsert`, then a raw
+  `UPDATE` sets `cost` and every `tokens_*` column to a non-zero value (`sessionInsert` itself
+  hardcodes them to 0, so this proves the omission against real non-zero values, not merely
+  against the seed helper's own default). Asserts `'tokensObserved' in dwarf === false` and
+  `'cost' in dwarf === false`.
+- **This test passed immediately** — GREEN on first run, as allowed for a pin test: no field named
+  `tokensObserved` or `cost` is ever assigned to the built `Dwarf` anywhere in
+  `opencodeProvider.ts`, and no query in `state.ts` selects those columns. Kept as a regression pin
+  per the verify report's own instruction.
+
+### WARNING 2 — vacuous "no reply yet" assertion
+
+- Commit `c690273`'s retention fix made the "no reply yet" scenario genuinely publish a dwarf (the
+  session's own `timeUpdatedMs` is now fresh instead of leaning on the removed WAL floor), but the
+  test itself was never strengthened with an explicit length assertion. Added
+  `expect(noReplyYet).toHaveLength(1)` immediately before the existing `toBeUndefined()` check, so
+  the assertion can no longer pass vacuously when `scan()` publishes nothing.
+- This assertion also passed immediately (the underlying behaviour was already correct after
+  `c690273`; only the test's own strength was missing).
+
+### Checks run for Remediation 2
+
+| Check                                                                                                                         | Result                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm exec vitest run src/main/providers/opencode src/main/domain/permissionSummary.test.ts src/main/runtime/runtime.test.ts` | ✅ 498/498 passed                                                                                                                                                                                                                               |
+| `node skills/test-safety/assets/test-census.mjs --base main`                                                                  | ✅ exit 0 — no file lost test statements (net +97 across 18 files; `permissionSummary.test.ts` delta 0 — a value-changing amendment, five existing `it.each` arrays gaining rows, exactly the kind of change the census cannot show as a delta) |
+| `pnpm typecheck`                                                                                                              | ✅ exit 0 (node + web)                                                                                                                                                                                                                          |
+| `pnpm lint`                                                                                                                   | ✅ exit 0                                                                                                                                                                                                                                       |
+| `pnpm format:check`                                                                                                           | ✅ exit 0 (after formatting the touched planning artifacts and this test file)                                                                                                                                                                  |
+| `node skills/skill-sync/assets/sync.mjs --check`                                                                              | ✅ `AGENTS.md already up to date`                                                                                                                                                                                                               |
+| `pnpm build`                                                                                                                  | ✅ succeeded                                                                                                                                                                                                                                    |
+
+**Note on the shared working tree**: `src/main/sessionLaunch/heldCrew.ts`, `heldCrew.test.ts` and
+`sdkHeldSession.ts` carried unstaged, uncommitted changes from another agent working the same repo
+concurrently throughout this remediation batch (`AGENTS.md`'s "one writer per zone" note) — at one
+point that agent's own process even checked the shared working directory out onto its own branch
+(`fix/held-subagent-model`) mid-session; this batch checked `feat/opencode-observer` back out
+(git's own conflict check confirmed nothing would be clobbered) and continued without reading,
+editing, staging or committing any of those three files. `pnpm typecheck`/`pnpm lint`/`pnpm build`
+above ran against a tree that included that other agent's in-flight edits, which is the shared-tree
+condition `AGENTS.md` describes as routine, not a defect in this batch's own diff.
+
+WARNING 4 and WARNING 5 were not in this remediation's assigned scope and remain open for a later
+batch or the maintainer's own review.
