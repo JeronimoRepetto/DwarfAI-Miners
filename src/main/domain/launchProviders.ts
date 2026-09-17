@@ -55,15 +55,17 @@ export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex'
 /**
  * What a detected provider with no launch path says for itself.
  *
- * AMENDED for #237, step 4. This comment used to record the one case this
- * constant had been reached for: an installed Antigravity, detected but not
- * yet launchable. That case is gone now that every `DWARF_PROVIDERS` member
- * is also a `LAUNCHABLE_PROVIDERS` member — so this string is, once again,
- * unreachable through any real provider in this build. It is kept exactly
- * as #168's own original comment kept it: for the next provider that can be
- * READ but has no launch invocation yet, so a detected-but-unlaunchable CLI
- * always has honest copy waiting rather than a hole that needs filling under
- * pressure.
+ * AMENDED for #444. The previous comment (written for #237, step 4) recorded
+ * this string as unreachable again — every `DWARF_PROVIDERS` member was also
+ * a `LAUNCHABLE_PROVIDERS` member at the time. OpenCode ends that: it reads
+ * `opencode.db` only and is never added to `LAUNCHABLE_PROVIDERS` (D5), so a
+ * detected OpenCode CLI is exactly the "installed, not yet launchable" case
+ * this string exists for — see
+ * `launchProviders.test.ts > pins that a detected OpenCode is marked
+ * installed but not launchable`. Kept in the same words either way, as
+ * #168's original comment intended: honest copy waiting for whichever
+ * provider can be READ but has no launch invocation yet, so the next one
+ * finds it already written rather than a hole to fill under pressure.
  *
  * Fixed copy this app wrote, which is the whole reason it is safe to publish:
  * the detector's own reasons name `~/.local/bin` and, for a configured
