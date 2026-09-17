@@ -1,10 +1,10 @@
 # Privacy and data boundary
 
 DwarfAI-Miners is a local desktop app. Everything it does happens on your machine: it reads
-the local files Claude Code, Codex and Antigravity already write, renders them in a floating panel,
-and keeps a handful of small files of its own. This document states exactly what is read, what is
-stored, and what is transmitted. Every claim names the source that implements it, so it can be
-checked rather than trusted.
+the local files Claude Code, Codex, Antigravity and OpenCode already write, renders them in a
+floating panel, and keeps a handful of small files of its own. This document states exactly what
+is read, what is stored, and what is transmitted. Every claim names the source that implements it,
+so it can be checked rather than trusted.
 
 ## What it reads
 
@@ -33,6 +33,12 @@ checked rather than trusted.
   and the conversation's `transcript.jsonl` for the feed and for whether a turn is still open
   (`src/main/providers/antigravity/antigravityProvider.ts`, `discovery.ts`, `parse.ts`). Read-only,
   bounded, and in place.
+- **`opencode.db`, read-only.** The OpenCode CLI's SQLite store (default
+  `~/.local/share/opencode`, overridable with `OPENCODE_STORE_ROOT`) is opened **read-only** for
+  session rows, an event log used only for liveness, and message/part rows for the feed — the
+  same read-only seam Codex's own databases go through. No other file under that store is ever
+  listed or read (`src/main/providers/opencode/opencodeProvider.ts`, `state.ts`,
+  `src/main/adapters/sqliteLike.ts`).
 - **Project directories: names, sizes, and the first 4 KB of every source file counted.** To
   pick a mine's tier, the tier service walks the project directory and adds up the byte size
   of the source files it finds — a bounded, capped walk that skips `node_modules`, `.git`,

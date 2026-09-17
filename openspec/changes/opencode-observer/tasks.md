@@ -114,9 +114,9 @@ lists, so **the generated region does not change** and no `MAIN_TREE_GLOSSES` en
 
 ## PR 4 — Documentation rows (~103 lines)
 
-- [ ] 4.1 `README.md` lines 42 / 84 / 160 / 201 / 258: status line, support matrix, Provider support table — observed, not launchable · dep: PR 3 · ~25
-- [ ] 4.2 `docs/guide.md`: provider list, §Providers in depth (no ore, no Send/Kick, the panel feed is the reading surface, `OPENCODE_CLI_PATH` for a broken PATH shim, `XDG_DATA_HOME` deliberately unread) and the config table at `:678` for `providers.opencode.storeRoot` · dep: 4.1 · ~45
-- [ ] 4.3 `docs/privacy.md:30`: a "What it reads" bullet for `opencode.db` · dep: 4.1 · ~8
-- [ ] 4.4 `docs/provider-formats.md`: a pointer row to `docs/opencode-format.md` · dep: 4.1 · ~10
-- [ ] 4.5 State the topology outcome where users read it: `docs/guide.md` §Providers in depth and the `docs/session-topology-and-roles.md` pointer gain the measured row-4 result — a `task`-tool delegation draws a worker beside its foreman in the same mine · dep: 4.2 · ~15
-- [ ] 4.6 Run the seven CI checks in order and report the change done · dep: 4.1–4.5 · ~0
+- [x] 4.1 `README.md` lines 42 / 84 / 160 / 201 / 258: status line, support matrix, Provider support table — observed, not launchable · dep: PR 3 · ~25 — also fixed a now-stale "All three providers can be read and launched" claim in `docs/guide.md` discovered while editing the same section
+- [x] 4.2 `docs/guide.md`: provider list, §Providers in depth (no ore, no Send/Kick, the panel feed is the reading surface, `OPENCODE_CLI_PATH` for a broken PATH shim, `XDG_DATA_HOME` deliberately unread) and the config table at `:678` for `providers.opencode.storeRoot` · dep: 4.1 · ~45
+- [x] 4.3 `docs/privacy.md:30`: a "What it reads" bullet for `opencode.db` · dep: 4.1 · ~8
+- [x] 4.4 `docs/provider-formats.md`: a pointer row to `docs/opencode-format.md` · dep: 4.1 · ~10
+- [x] 4.5 State the topology outcome where users read it: `docs/guide.md` §Providers in depth and the `docs/session-topology-and-roles.md` pointer gain the measured row-4 result — a `task`-tool delegation draws a worker beside its foreman in the same mine · dep: 4.2 · ~15
+- [x] 4.6 Run the seven CI checks in order and report the change done · dep: 4.1–4.5 · ~0 — typecheck/lint/format:check/skill-sync/test(7135 passed)/build all green; privacy guard manually reviewed (docs-only slice, no paths/identifiers introduced)

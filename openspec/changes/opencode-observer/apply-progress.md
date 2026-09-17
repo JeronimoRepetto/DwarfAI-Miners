@@ -8,7 +8,7 @@ merge into it, never overwrite it, on a later apply run.
 
 ## Status
 
-49 tasks total. **43/49 done** (PR 1, PR 2, PR 3 complete). PR 4 remains (documentation rows only).
+49/49 tasks done. All four PR slices complete.
 
 ## TDD Cycle Evidence
 
@@ -124,6 +124,19 @@ Full seven-check run for PR 3: typecheck (node+web) clean; lint clean; format:ch
 - No live `npx opencode-ai` install was available in this apply session to exercise the design's own runtime harness ("`npx opencode-ai` one turn in a project folder, `pnpm dev`: dwarf appears, works, rests, leaves"). All behavior is proven against the measured fixtures (`measurements-2026-09-17.md`) and `MemorySqlite`/`FakeFs`; a real end-to-end check is recommended before/during `sdd-verify` or by the maintainer directly.
 - Maintainer questions still open per design's Open Questions: row 3 residue (interactive TUI vs `opencode run` writing `session_message`/`session_input` — treated as closed per the addendum in `measurements-2026-09-17.md`), `tokensObserved`/ore (Q3, deliberately omitted in this slice), and the `readOpenCodeEventSeqs` poll-cost narrowing (instrumented only, not narrowed — see 3.20).
 
-## Remaining tasks
+## PR 4 — Documentation rows — COMPLETE
 
-PR 4 (4.1–4.6) — 6 tasks remain (documentation rows only, no code).
+- [x] 4.1 `README.md`: status line, Highlights bullet, first-run bullet, support-matrix row (`OpenCode session detection`), Provider support table row (`Read: yes, Launch: no, Hold: no`), and the "Session-data layouts" caveat bullet.
+- [x] 4.2 `docs/guide.md`: the "Observer" bullet's provider list, a new OpenCode paragraph in §Providers in depth (no ore, no Send/Kick/Boost, the panel's own feed is the reading surface, `OPENCODE_CLI_PATH` for a broken PATH shim, `XDG_DATA_HOME` deliberately unread), the config table (`OPENCODE_STORE_ROOT`, `OPENCODE_CLI_PATH`) — and fixed a now-stale "All three providers can be read and launched" sentence found in the same section.
+- [x] 4.3 `docs/privacy.md`: intro sentence and a new "What it reads" bullet for `opencode.db`, read-only.
+- [x] 4.4 `docs/provider-formats.md`: a pointer row in the §5 confidence-summary table to `docs/opencode-format.md`.
+- [x] 4.5 Topology outcome stated where users read it: the OpenCode paragraph in `docs/guide.md` names the row-4 result, and `docs/session-topology-and-roles.md` gained a short "Update (#444)" note confirming the anticipated model held for a third provider.
+- [x] 4.6 Seven CI checks: typecheck (node+web) clean, lint clean, format:check clean, skill-sync --check clean, `pnpm test` 7135 passed / 5 skipped (no test files touched — docs only), `pnpm build` succeeded. Privacy guard manually reviewed (no paths, usernames or hostnames introduced).
+
+## Final summary
+
+All 49 tasks across PR 1–4 are complete. Three commits on `feat/opencode-observer` cover the whole
+change (`docs(opencode-observer)`, then two `feat(opencode-observer)` commits for the pure modules
+and the wiring); PR 4's doc changes are staged for a fourth commit. Per this run's delivery
+decision (`exception-ok` / `size:exception`), all of this lands as ONE pull request — the
+orchestrator pushes and opens it; nothing here does.

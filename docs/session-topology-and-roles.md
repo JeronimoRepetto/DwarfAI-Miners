@@ -4,6 +4,14 @@ Research for issue #62. **The normalized model proposed in §6 is not implemente
 next backend — Gemini, OpenCode, a local LLM — does not have to guess what `foreman` means, and so
 the two backends that already ship stop disagreeing about it.
 
+**Update (#444, 2026-09-17): OpenCode shipped, and the anticipation held.** `session.parent_id` is
+a real, indexed column, and a live measurement (`opencode-observer`'s
+`measurements-2026-09-17.md`, row 4) confirmed it populates for a Task-tool delegation: the child
+gets `worker`, the parent is promoted `foreman` after the whole scan — exactly §4's fallback policy
+and §7's "Root with child" case, reached by a third provider without reopening either. §6's
+normalized model is still not implemented; `OpenCodeProvider` reads `session.parent_id` directly,
+the same way Codex's own topology arm does.
+
 Two things this document argued for have since shipped on their own axes: the attendance split
 (#68) and the Codex rank-and-existence fix §1 reported as a live defect (#202) — which #219 then
 narrowed, because freezing a dwarf's existence to its session was right for a root and wrong for a

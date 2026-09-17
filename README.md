@@ -39,12 +39,12 @@ DwarfAI-Miners is a floating desktop panel that turns active AI coding sessions 
 dwarfs. A mine represents one project; workers and foremen represent the agents currently
 operating in that project.
 
-**Status:** functional MVP. Session detection for Claude Code, Codex and Antigravity; live IPC
-updates; mine tiers; animated dwarfs; a floating message panel you can send into, attach files to,
-kick from and read history in; terminal focus with a transcript fallback; background music, mine
-ambience and dwarf voices; autostart; and packaging are all implemented. Windows is the platform
-verified end to end; macOS and Linux have been run on real hardware with lighter coverage — the
-[support matrix](#platform-support) says which is which.
+**Status:** functional MVP. Session detection for Claude Code, Codex, Antigravity and OpenCode;
+live IPC updates; mine tiers; animated dwarfs; a floating message panel you can send into, attach
+files to, kick from and read history in; terminal focus with a transcript fallback; background
+music, mine ambience and dwarf voices; autostart; and packaging are all implemented. Windows is
+the platform verified end to end; macOS and Linux have been run on real hardware with lighter
+coverage — the [support matrix](#platform-support) says which is which.
 
 ## Feature tour
 
@@ -81,8 +81,8 @@ processed.
 
 ## Highlights
 
-- **Live session detection** — Claude Code, Codex and Antigravity sessions become dwarfs the moment
-  they appear, no configuration required.
+- **Live session detection** — Claude Code, Codex, Antigravity and OpenCode sessions become dwarfs
+  the moment they appear, no configuration required.
 - **Every worktree, one mine** — start a session in any git worktree of a project and it lands in
   that project's own mine, not a new one; a dwarf's message panel names which worktree it is
   actually in whenever a crew is spread across more than one.
@@ -157,8 +157,8 @@ change that choice from the tray menu. The first run never sends session data an
 
 Three things worth knowing on that first run:
 
-- **You need nothing to configure.** Start a Claude Code, Codex or Antigravity session in any
-  project and its dwarf appears within about two seconds.
+- **You need nothing to configure.** Start a Claude Code, Codex, Antigravity or OpenCode session in
+  any project and its dwarf appears within about two seconds.
 - **Music starts playing.** That is the shipped default; the note button at the bottom of the
   navigation column silences it for this run, and Settings' **Music at startup** is where you say
   it should stay off. See [Sound](docs/guide.md#sound).
@@ -194,22 +194,23 @@ mileage than Windows, so the table keeps the distinction between verified and ex
 <details>
 <summary><strong>Full support matrix</strong> (Windows verified; macOS/Linux run, lighter coverage)</summary>
 
-| Capability                                     | Windows                                                   | macOS                                                           | Linux                                                           |
-| ---------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
-| Overall                                        | **Verified**                                              | Run, lighter coverage                                           | Run, lighter coverage                                           |
-| Session detection (Claude Code / Codex)        | Verified                                                  | Expected to work (home-relative paths)                          | Expected to work                                                |
-| Antigravity session detection                  | Verified                                                  | Expected to work (home-relative paths)                          | Expected to work                                                |
-| Codex liveness probe                           | PowerShell `Win32_Process`                                | `pgrep -fl codex`                                               | `pgrep -fa codex`                                               |
-| Click-to-focus a terminal                      | user32 via PowerShell                                     | `ps` + System Events (`osascript`)                              | **Unsupported** — falls back to viewer                          |
-| Live transcript viewer                         | Windows Terminal / PowerShell                             | Terminal.app via `osascript`                                    | `x-terminal-emulator` → … → `xterm`                             |
-| Write a message into a session's console       | **Verified — the default**                                | **Disabled** (relay instead)                                    | **Unsupported** (relay instead)                                 |
-| Relay a message to a named session             | Supported — the fallback                                  | Supported — the default                                         | Supported — the default                                         |
-| Queue a message to a Codex CLI session         | **Verified** — a native, npm or pnpm install alike (#413) | Expected to work (spawns `codex`)                               | Expected to work (spawns `codex`)                               |
-| Answer a permission or question at the console | **Verified**                                              | **Unsupported** — the card sends you to the terminal instead    | **Unsupported** — the card sends you to the terminal instead    |
-| Attach files to a message                      | **Verified** — console or held Claude session             | Held Claude session only — no console attach control            | Held Claude session only — no console attach control            |
-| Kick a session running in a terminal           | **Verified** — clean exit, then force                     | Implemented (SIGTERM, then SIGKILL); unreachable until measured | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
-| Start at login                                 | HKCU Run key                                              | `~/Library/LaunchAgents` plist                                  | `~/.config/autostart` desktop entry                             |
-| Packaging                                      | NSIS + portable                                           | dmg + zip (arm64 & x64)                                         | AppImage + deb                                                  |
+| Capability                                     | Windows                                                   | macOS                                                                             | Linux                                                           |
+| ---------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Overall                                        | **Verified**                                              | Run, lighter coverage                                                             | Run, lighter coverage                                           |
+| Session detection (Claude Code / Codex)        | Verified                                                  | Expected to work (home-relative paths)                                            | Expected to work                                                |
+| Antigravity session detection                  | Verified                                                  | Expected to work (home-relative paths)                                            | Expected to work                                                |
+| OpenCode session detection                     | Verified                                                  | Expected to work (no per-OS branch — one SQLite store, `~/.local/share/opencode`) | Expected to work                                                |
+| Codex liveness probe                           | PowerShell `Win32_Process`                                | `pgrep -fl codex`                                                                 | `pgrep -fa codex`                                               |
+| Click-to-focus a terminal                      | user32 via PowerShell                                     | `ps` + System Events (`osascript`)                                                | **Unsupported** — falls back to viewer                          |
+| Live transcript viewer                         | Windows Terminal / PowerShell                             | Terminal.app via `osascript`                                                      | `x-terminal-emulator` → … → `xterm`                             |
+| Write a message into a session's console       | **Verified — the default**                                | **Disabled** (relay instead)                                                      | **Unsupported** (relay instead)                                 |
+| Relay a message to a named session             | Supported — the fallback                                  | Supported — the default                                                           | Supported — the default                                         |
+| Queue a message to a Codex CLI session         | **Verified** — a native, npm or pnpm install alike (#413) | Expected to work (spawns `codex`)                                                 | Expected to work (spawns `codex`)                               |
+| Answer a permission or question at the console | **Verified**                                              | **Unsupported** — the card sends you to the terminal instead                      | **Unsupported** — the card sends you to the terminal instead    |
+| Attach files to a message                      | **Verified** — console or held Claude session             | Held Claude session only — no console attach control                              | Held Claude session only — no console attach control            |
+| Kick a session running in a terminal           | **Verified** — clean exit, then force                     | Implemented (SIGTERM, then SIGKILL); unreachable until measured                   | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
+| Start at login                                 | HKCU Run key                                              | `~/Library/LaunchAgents` plist                                                    | `~/.config/autostart` desktop entry                             |
+| Packaging                                      | NSIS + portable                                           | dmg + zip (arm64 & x64)                                                           | AppImage + deb                                                  |
 
 The two message rows are one decision seen from two sides, and it reversed twice —
 [`docs/console-hosting.md` §4b](docs/console-hosting.md) records every reversal. Where the panel can
@@ -239,9 +240,10 @@ Notes on the three honest gaps:
   with a registry name still takes the relay, and one without gets a Send and a Kick rendered
   disabled with their reason rather than silently typing nowhere. A per-OS console-write path for
   macOS and Linux is a follow-up, not a gap in this one.
-- **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`) are assumed
-  platforms. They are home-relative already and nothing in the formats is Windows-specific, but
-  this has not been confirmed against real macOS/Linux fixtures.
+- **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`,
+  `~/.local/share/opencode`) are assumed platforms. They are home-relative already and nothing in
+  the formats is Windows-specific, but this has not been confirmed against real macOS/Linux
+  fixtures.
 
 </details>
 
@@ -256,6 +258,7 @@ arrive live.
 | Claude Code | yes  | yes    | yes    | Uses `~/.claude*/sessions/<pid>.json`, verifies a live PID, and reads parent/subagent transcripts. Multiple Claude roots are supported. The one provider with a complete held-session surface: interrupt, context reading, and answers to its own question and permission prompts.                                                                                                                                                                                                                                                         |
 | Codex       | yes  | yes    | no     | Uses the `state_5.sqlite` registry, `logs_2.sqlite` heartbeats, rollout growth and open-turn events; mtime is the last resort, never the lead (#1). `thread_spawn.parent_thread_id` gives verified worker/foreman relationships. A launch is detached — `codex exec` in the mine's folder, discovered afterwards by the poll. Messages go to Codex's own queue, reached through the same npm/pnpm `.cmd`-shim resolution the launcher already had, so an npm or pnpm install works and `CODEX_CLI_PATH` is no longer needed for it (#413). |
 | Antigravity | yes  | yes    | partly | Reads the `agy` CLI's own store under `~/.gemini/antigravity-cli`: a presence lock per running conversation, `history.jsonl` for the workspace, and the conversation's `transcript.jsonl` for the feed and for whether a turn is open. A held `agy` session can be spoken to; see [Providers in depth](docs/guide.md#providers-in-depth) for what its protocol does not offer.                                                                                                                                                             |
+| OpenCode    | yes  | no     | no     | Reads `opencode.db` (SQLite) under `~/.local/share/opencode` read-only: session rows, an event log for liveness, and message/part rows for the feed. A subagent spawned with the `task` tool is drawn as a worker beside its foreman. Observed only — no launch invocation for it has been measured, and its schema carries no pid or process column, so there is no send, kick or held session; see [Providers in depth](docs/guide.md#providers-in-depth).                                                                               |
 
 Each provider's limits, effort levels and how foremen and workers are told apart are in the
 [user guide](docs/guide.md#providers-in-depth).
