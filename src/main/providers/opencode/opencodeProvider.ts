@@ -12,7 +12,7 @@ import {
 import { cursorIndex, feedPageOf, textCount, trimFeed, type FeedWindowRead } from '../feedWindow'
 import type { Provider } from '../provider'
 import { pollProfiler } from '../../runtime/perf'
-import { lastAssistantText, openCodeFeedRows } from './parse'
+import { lastAssistantText, openCodeFeedRows, type OpenCodeMessage } from './parse'
 import {
   readOpenCodeEventSeqs,
   readOpenCodeMessages,
@@ -63,8 +63,13 @@ import { opencodeDbPath, opencodeWalPath } from './store'
  *
  * `opencode.db` and `opencode.db-wal` sizes are STORE-level: growth proves
  * writes happened somewhere, not which session. Both unchanged since the
- * previous scan reuses that generation whole, with zero `openReadOnly` calls
- * — the same idiom `codexProvider.ts` uses for its own rollout files.
+ * previous scan skips the READ — zero `openReadOnly` calls, the same idiom
+ * `codexProvider.ts` uses for its own rollout files — and nothing else: the
+ * generation is drawn again from the facts the last read left behind, with
+ * the current clock, because `busy`'s stall guard and the silence windows
+ * are measured against time and not against the store (#461). Republishing
+ * the previous generation left a dwarf `working` and a finished worker on the
+ * board for as long as nobody wrote a byte.
  *
  * ## Feed, with no file to tail
  *
@@ -104,10 +109,53 @@ export interface OpenCodeProviderOptions {
   now?: () => number
 }
 
-interface SeqMemory {
+/**
+ * Everything one full read learned about a session — the FACTS, kept apart
+ * from the verdicts drawn from them (#461). Two verdicts depend on the clock
+ * rather than on the store: `busy` (the stall guard, and D3's `seqAdvanced`
+ * half on the one scan that saw the seq move) and retention. A scan on an
+ * unchanged store runs no SQL (D2) but the clock has still moved, so it draws
+ * both again from these rather than republishing the previous generation —
+ * which is what left a finished dwarf `working` for as long as nobody wrote.
+ */
+interface SessionFacts {
+  sessionId: string
+  /** `session.directory`, normalized. Never '' — #166 drops that row before it gets here. */
+  cwd: string
+  parentSessionId?: string
+  agent?: string
+  modelId?: string
+  /** `session.time_updated`. */
+  updatedMs: number
+  /** The newest `role: 'assistant'` row; absent while the session has not replied yet. */
+  newest?: OpenCodeMessage
+  /** Max `event.seq` at the last full read. */
   seq: number
-  /** When this session's seq last actually moved — the stall clock for BUSY_WINDOW_MS. */
-  changedAtMs: number
+  /**
+   * When a scan last saw `seq` move — the stall clock for BUSY_WINDOW_MS.
+   * First sight counts as a move: the guard has to start somewhere, and a
+   * fresh instance cannot prove the seq stood still before it looked.
+   */
+  seqChangedAtMs: number
+  /** Redacted newest assistant text — read only for a session still inside its silence window. */
+  lastMessage?: string
+}
+
+/** The newest assistant row's own time: completed once it has one, else created. */
+function newestRowMs(facts: SessionFacts): number {
+  return facts.newest?.timeCompletedMs ?? facts.newest?.timeCreatedMs ?? 0
+}
+
+/**
+ * When this session was last known to move — per-session facts only. The
+ * WAL's mtime is deliberately absent: one file for the whole store, so its
+ * freshness proves writes somewhere, not which session (D3); it gates the
+ * re-read cost above and must not keep a frozen dwarf alive (#444). The scan
+ * that saw the seq move counts as now; a later scan on a quiet store does not,
+ * and that is what lets a finished worker leave once its window has run (#461).
+ */
+function activityOf(facts: SessionFacts, seqAdvanced: boolean, nowMs: number): number {
+  return Math.max(seqAdvanced ? nowMs : 0, newestRowMs(facts), facts.updatedMs)
 }
 
 export class OpenCodeProvider implements Provider {
@@ -119,13 +167,17 @@ export class OpenCodeProvider implements Provider {
   private readonly walPath: string
   private readonly now: () => number
 
-  /** Sizes at the previous scan; both unchanged reuses the previous generation whole. */
+  /** Sizes at the previous scan; both unchanged skips the read, never the verdict (#461). */
   private lastDbSize: number | undefined
   private lastWalSize: number | undefined
-  private previousSnapshots: ProviderSnapshot[] = []
 
-  /** sessionId -> its max event.seq and when that seq last changed, this generation. */
-  private seqMemory = new Map<string, SeqMemory>()
+  /**
+   * sessionId -> what the last full read learned about it, for EVERY
+   * non-archived session with a directory — including one already past its
+   * silence window, so the seq it comes back with is compared against a
+   * remembered one rather than counted as first sight.
+   */
+  private facts = new Map<string, SessionFacts>()
   /**
    * Every session id ever OBSERVED as a parent, across every scan — never
    * cleared, so a foreman keeps its rank after its crew is gone (D4, the same
@@ -159,7 +211,10 @@ export class OpenCodeProvider implements Provider {
       this.lastWalSize !== undefined &&
       walSize !== undefined &&
       this.lastWalSize === walSize
-    if (unchanged) return this.previousSnapshots
+    // D2 saves the READ, never the verdict (#461): nothing was written, so no
+    // SQL runs and no seq can have advanced — but the clock moved, and the
+    // stall guard and the silence windows are measured against it.
+    if (unchanged) return this.publish(nowMs, new Set())
 
     this.lastDbSize = dbSize
     this.lastWalSize = walSize
@@ -187,85 +242,109 @@ export class OpenCodeProvider implements Provider {
       readOpenCodeEventSeqs(db)
     )
     const newestAssistant = readOpenCodeNewestAssistant(db, sessionIds)
-    const seqMemory = new Map<string, SeqMemory>()
-    const knownSessionIds = new Set<string>()
-    const snapshots: ProviderSnapshot[] = []
+    const facts = new Map<string, SessionFacts>()
+    const advanced = new Set<string>()
 
     for (const session of sessions) {
       // #166: an empty directory names no honest project, so the session is
       // dropped rather than placed under a phantom one.
       if (session.cwd === '') continue
-      const cwd = normalize(session.cwd)
 
-      const newSeq = eventSeqs.get(session.sessionId) ?? 0
-      const previous = this.seqMemory.get(session.sessionId)
-      const seqAdvanced = previous !== undefined && newSeq > previous.seq
-      const changedAtMs = seqAdvanced ? nowMs : (previous?.changedAtMs ?? nowMs)
-      seqMemory.set(session.sessionId, { seq: newSeq, changedAtMs })
+      const seq = eventSeqs.get(session.sessionId) ?? 0
+      const previous = this.facts.get(session.sessionId)
+      const seqAdvanced = previous !== undefined && seq > previous.seq
+      if (seqAdvanced) advanced.add(session.sessionId)
 
+      const read: SessionFacts = {
+        sessionId: session.sessionId,
+        cwd: normalize(session.cwd),
+        updatedMs: session.updatedMs,
+        seq,
+        seqChangedAtMs: seqAdvanced ? nowMs : (previous?.seqChangedAtMs ?? nowMs)
+      }
+      if (session.parentSessionId !== undefined) read.parentSessionId = session.parentSessionId
+      if (session.agent !== undefined) read.agent = session.agent
+      if (session.modelId !== undefined) read.modelId = session.modelId
       const newest = newestAssistant.get(session.sessionId)
+      if (newest !== undefined) read.newest = newest
+
+      // The one per-session query. Not paid for a session already past its
+      // window: publish() below will drop it before anyone reads the text.
+      const role = this.roleOf(session.sessionId, session.parentSessionId)
+      if (nowMs - activityOf(read, seqAdvanced, nowMs) <= dwarfSilenceWindowMs(role, 'unknown')) {
+        const { messages, parts } = readOpenCodeMessages(
+          db,
+          session.sessionId,
+          LAST_MESSAGE_READ_LIMIT
+        )
+        const lastMessage = redactSecrets(lastAssistantText(messages, parts))
+        if (lastMessage !== undefined) read.lastMessage = lastMessage
+      }
+      facts.set(session.sessionId, read)
+    }
+
+    // Only reached on success (#12): a throwing scan leaves the previous
+    // generation in place, and a concurrent feed() call mid-scan reads it
+    // until every await above has resolved.
+    this.facts = facts
+    return this.publish(nowMs, advanced)
+  }
+
+  /**
+   * Draw this scan's generation from the remembered facts with the clock as
+   * it stands NOW — the pure half of scan(), and the whole of it on an
+   * unchanged store. `advanced` names the sessions whose seq moved on THIS
+   * read: D3's second busy half is true only on the scan that saw the write,
+   * so a quiet store passes none and the row alone decides.
+   */
+  private publish(nowMs: number, advanced: ReadonlySet<string>): ProviderSnapshot[] {
+    const knownSessionIds = new Set<string>()
+    const snapshots: ProviderSnapshot[] = []
+
+    for (const facts of this.facts.values()) {
+      const seqAdvanced = advanced.has(facts.sessionId)
+      const role = this.roleOf(facts.sessionId, facts.parentSessionId)
+      const activityMs = activityOf(facts, seqAdvanced, nowMs)
+      if (nowMs - activityMs > dwarfSilenceWindowMs(role, 'unknown')) continue
+
+      const { newest } = facts
       const streaming = newest === undefined || newest.timeCompletedMs === undefined
       const intermediateStep =
         newest !== undefined && newest.timeCompletedMs !== undefined && newest.finish !== 'stop'
-      const stalled = nowMs - changedAtMs >= BUSY_WINDOW_MS
+      const stalled = nowMs - facts.seqChangedAtMs >= BUSY_WINDOW_MS
       const busy = streaming || seqAdvanced || (intermediateStep && !stalled)
 
-      // Per-session facts only — the WAL's mtime is deliberately absent: one
-      // file for the whole store, so its freshness proves writes somewhere,
-      // not which session (D3). It gates the re-read cost above and must not
-      // keep a frozen dwarf alive (#444).
-      const activityMs = Math.max(
-        seqAdvanced ? nowMs : 0,
-        newest?.timeCompletedMs ?? newest?.timeCreatedMs ?? 0,
-        session.updatedMs
-      )
-
-      const role = this.roleOf(session.sessionId, session.parentSessionId)
-      if (nowMs - activityMs > dwarfSilenceWindowMs(role, 'unknown')) continue
-
-      const { messages, parts } = readOpenCodeMessages(
-        db,
-        session.sessionId,
-        LAST_MESSAGE_READ_LIMIT
-      )
-      const lastMessage = redactSecrets(lastAssistantText(messages, parts))
-
       const dwarf: Dwarf = {
-        id: `opencode:${session.sessionId}`,
+        id: `opencode:${facts.sessionId}`,
         provider: 'opencode',
         role,
-        name: session.agent ?? `opencode-${session.sessionId.slice(0, 8)}`,
+        name: facts.agent ?? `opencode-${facts.sessionId.slice(0, 8)}`,
         status: busy ? 'working' : 'waiting',
-        sessionId: session.sessionId,
+        sessionId: facts.sessionId,
         // D4: every case reports 'unknown' — stated explicitly (mirroring
         // claudeProvider.ts's own attendance field) rather than left to the
         // contract's absent-reads-as-'unknown' fallback, so design and code
         // agree out loud (#444).
         attendance: 'unknown'
       }
-      if (session.modelId !== undefined) dwarf.model = session.modelId
-      if (session.parentSessionId !== undefined) {
-        dwarf.parentId = `opencode:${session.parentSessionId}`
+      if (facts.modelId !== undefined) dwarf.model = facts.modelId
+      if (facts.parentSessionId !== undefined) {
+        dwarf.parentId = `opencode:${facts.parentSessionId}`
       }
-      if (lastMessage !== undefined) dwarf.lastMessage = lastMessage
+      if (facts.lastMessage !== undefined) dwarf.lastMessage = facts.lastMessage
 
-      knownSessionIds.add(session.sessionId)
+      knownSessionIds.add(facts.sessionId)
       snapshots.push({
         provider: 'opencode',
-        sessionId: session.sessionId,
-        cwd,
+        sessionId: facts.sessionId,
+        cwd: facts.cwd,
         status: busy ? 'busy' : 'idle',
         dwarfs: [dwarf],
         updatedAt: activityMs
       })
     }
 
-    // Only reached on success (#12): a throwing scan leaves the previous
-    // generation in place, and a concurrent feed() call mid-scan reads it
-    // until every await above has resolved.
-    this.seqMemory = seqMemory
     this.knownSessionIds = knownSessionIds
-    this.previousSnapshots = snapshots
     return snapshots
   }
 
@@ -277,7 +356,7 @@ export class OpenCodeProvider implements Provider {
 
   /** A scan that found nothing to publish still counts as success: the generation swaps to empty. */
   private publishNothing(): ProviderSnapshot[] {
-    this.previousSnapshots = []
+    this.facts = new Map()
     this.knownSessionIds = new Set()
     return []
   }

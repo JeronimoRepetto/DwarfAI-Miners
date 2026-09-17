@@ -74,14 +74,26 @@ function unknownSqlite(): MemorySqlite {
   return sqlite
 }
 
-/** Counts openReadOnly calls, so the size-gate's "zero calls" claim is provable. */
+/**
+ * Counts openReadOnly AND all() calls, so the size-gate's "no SQL" claim is
+ * provable — a handle kept open across scans would pass an openReadOnly-only
+ * count while still querying (#461).
+ */
 function countingSqlite(inner: SqliteLike): { sqlite: SqliteLike; calls: () => number } {
   let calls = 0
   return {
     sqlite: {
       async openReadOnly(path: string): Promise<SqliteDb | null> {
         calls++
-        return inner.openReadOnly(path)
+        const db = await inner.openReadOnly(path)
+        if (db === null) return null
+        return {
+          all(sql, params) {
+            calls++
+            return db.all(sql, params)
+          },
+          close: () => db.close()
+        }
       }
     },
     calls: () => calls
@@ -815,5 +827,148 @@ describe('OpenCodeProvider — topology (D4)', () => {
     const mid = dwarfs.find((dwarf) => dwarf.id === 'opencode:ses_mid')
     expect(mid?.role).toBe('foreman')
     expect(mid?.parentId).toBe('opencode:ses_root')
+  })
+})
+
+/** A closed assistant turn: `time.completed` set, `finish: 'stop'` — D3's `idle` shape. */
+function settledTurn(createdMs: number, completedMs: number): unknown {
+  return { role: 'assistant', time: { created: createdMs, completed: completedMs }, finish: 'stop' }
+}
+
+/*
+ * #461. The size gate (D2) exists to save the READ: both `opencode.db` and
+ * `opencode.db-wal` unchanged means nothing was written, so no SQL runs. It
+ * used to save the VERDICT too — the previous generation came back whole —
+ * and two verdicts depend on the clock rather than on the store: `busy`
+ * (the scan that saw the turn's last write had `seqAdvanced`, so `working`
+ * was republished for as long as the store stayed quiet) and retention
+ * (`nowMs - activityMs` was never re-evaluated, so a finished worker never
+ * left). Every case below holds the store still across the scan under test
+ * and proves, through the counting seam, that the gate still ran no query.
+ */
+describe('OpenCodeProvider.scan — an unchanged store re-derives the verdict, never republishes it (#461)', () => {
+  it('turns waiting on the first scan after the one that saw the turn end, with no new query', async () => {
+    const fake = new FakeFs()
+    seedStore(fake, 100, 10)
+    const sqlite = realSqlite()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW - 10_000 })
+    )
+    sqlite.exec(DB_PATH, eventInsert('e1', 'ses_a', 1))
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm1',
+        sessionId: 'ses_a',
+        timeCreatedMs: NOW - 10_000,
+        data: settledTurn(NOW - 10_000, NOW - 9_000)
+      })
+    )
+    let clock = NOW
+    const { sqlite: counting, calls } = countingSqlite(sqlite)
+    const provider = makeProvider({ fs: fake, sqlite: counting, now: () => clock })
+    const [first] = await provider.scan()
+    expect(first?.dwarfs[0]?.status).toBe('waiting')
+
+    // A whole turn runs and closes between two polls: a finished assistant
+    // row, seq moved, the store grew. The scan that sees it reads `working`
+    // because the seq advanced since the previous poll — D3's second half.
+    clock += 5_000
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm2',
+        sessionId: 'ses_a',
+        timeCreatedMs: clock - 3_000,
+        data: settledTurn(clock - 3_000, clock - 1_000)
+      })
+    )
+    sqlite.exec(DB_PATH, eventInsert('e2', 'ses_a', 2))
+    sqlite.exec(DB_PATH, `UPDATE session SET time_updated = ${clock - 1_000} WHERE id = 'ses_a'`)
+    fake.addFile(WAL_PATH, 'y'.repeat(40), NOW)
+    const [second] = await provider.scan()
+    expect(second?.dwarfs[0]?.status).toBe('working')
+    const callsAfterSecond = calls()
+
+    // The store goes quiet. The seq has not advanced since the previous
+    // poll any more, so the only busy evidence left is the row itself —
+    // completed, finish: stop — and the dwarf must read `waiting`.
+    clock += 5_000
+    const [third] = await provider.scan()
+    expect(third?.dwarfs[0]?.status).toBe('waiting')
+    expect(third?.status).toBe('idle')
+    expect(calls()).toBe(callsAfterSecond)
+  })
+
+  it('settles a stuck tool-calls row after BUSY_WINDOW_MS even though the store never moves again', async () => {
+    const fake = new FakeFs()
+    seedStore(fake, 100, 10)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(DB_PATH, eventInsert('e1', 'ses_a', 1))
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm1',
+        sessionId: 'ses_a',
+        timeCreatedMs: NOW - 5_000,
+        data: {
+          role: 'assistant',
+          time: { created: NOW - 5_000, completed: NOW - 4_000 },
+          finish: 'tool-calls'
+        }
+      })
+    )
+    let clock = NOW
+    const { sqlite: counting, calls } = countingSqlite(sqlite)
+    const provider = makeProvider({ fs: fake, sqlite: counting, now: () => clock })
+    const [first] = await provider.scan()
+    expect(first?.status).toBe('busy')
+    const callsAfterFirst = calls()
+
+    // Unlike the D3 stall case above, NOTHING bumps the store: the crash that
+    // left this row behind writes no further byte, which is exactly when the
+    // stall guard has to fire on its own.
+    clock += 130_000
+    const [second] = await provider.scan()
+    expect(second?.status).toBe('idle')
+    expect(calls()).toBe(callsAfterFirst)
+  })
+
+  it('drops a worker on the first scan after the short window, and a root after the long one, while the store stands still', async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_child',
+        directory: '/home/j/p',
+        parentId: 'ses_parent',
+        timeUpdatedMs: NOW
+      })
+    )
+    let clock = NOW
+    const { sqlite: counting, calls } = countingSqlite(sqlite)
+    const provider = makeProvider({ fs: fake, sqlite: counting, now: () => clock })
+    const first = await provider.scan()
+    expect(first.map((snapshot) => snapshot.sessionId).sort()).toEqual(['ses_child', 'ses_parent'])
+    const callsAfterFirst = calls()
+
+    clock = NOW + dwarfSilenceWindowMs('worker', 'unknown') + 1_000
+    const afterShort = (await provider.scan()).map((snapshot) => snapshot.sessionId)
+    expect(afterShort).toEqual(['ses_parent'])
+    // Gone from the board means gone from feed() too: the id is no longer
+    // one the latest scan published.
+    expect(await provider.feed('opencode:ses_child', 5)).toBeNull()
+
+    clock = NOW + dwarfSilenceWindowMs('foreman', 'unknown') + 1_000
+    expect(await provider.scan()).toEqual([])
+    expect(calls()).toBe(callsAfterFirst)
   })
 })

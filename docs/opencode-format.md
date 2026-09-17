@@ -150,6 +150,20 @@ No regression has been measured on a real store yet — this is instrumentation,
 query. If that stage's own line grows unbounded on a store that has run for months, the fallback is
 `WHERE aggregate_id IN (…live ids…)`, narrowing the scan to sessions this poll already found.
 
+### The size gate saves the read, never the verdict
+
+A scan first `stat`s `opencode.db` and `opencode.db-wal`; both sizes unchanged since the previous
+scan means nothing was written anywhere in the store, so no query runs at all. That is the whole of
+what unchanged sizes prove. They say nothing about time, and two of the provider's verdicts are
+measured against the clock rather than against the store: the `finish: "tool-calls"` stall guard
+(`BUSY_WINDOW_MS`) and the silence windows retention drops on. A quiet-store scan therefore draws
+its generation again from the facts the last read left behind — per session: max `event.seq` and
+when it was last seen to move, the newest assistant row, `session.time_updated`, the last assistant
+text — with the current clock, and with `event.seq` counted as advanced only on the scan that saw
+it move. Republishing the previous generation instead (#461) left a dwarf `working` forty minutes
+after its turn had closed on disk, and a finished subagent worker on the board until somebody
+wrote a byte; a fresh provider instance against the same store answered `idle` at once.
+
 ## Negative results, stated plainly
 
 - No `storage/` JSON tree on this build (Row 1).
