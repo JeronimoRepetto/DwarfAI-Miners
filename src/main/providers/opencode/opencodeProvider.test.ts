@@ -30,6 +30,14 @@ const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime()
 
 const FIXTURES = join(import.meta.dirname, '..', '__fixtures__', 'opencode')
 
+/*
+ * A minute after the row-4 fixtures' own `time_updated` (2025-09-15) — the
+ * clock the measured-pair topology test runs against, since retention no
+ * longer floors on the store-wide WAL mtime and the fixtures' timestamps are
+ * a year stale against the default NOW (#444).
+ */
+const MEASUREMENT_NOW = 1_757_900_060_000 + 60_000
+
 /** A row fixture (session-parent.json / session-child.json), as an INSERT-ready row. */
 function sessionRowFixture(name: string): Record<string, unknown> {
   return JSON.parse(readFileSync(join(FIXTURES, name), 'utf8')) as Record<string, unknown>
@@ -154,7 +162,8 @@ describe('OpenCodeProvider.scan — discovery', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p' }))
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
     const { sqlite: counting, calls } = countingSqlite(sqlite)
 
     const provider = makeProvider({ fs: fake, sqlite: counting })
@@ -271,7 +280,8 @@ describe('OpenCodeProvider.scan — D3 liveness', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p' }))
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
     const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
     expect(['busy', 'idle']).toContain(snapshot?.status)
   })
@@ -342,7 +352,8 @@ describe('OpenCodeProvider.scan — retention', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_parent', directory: '/home/j/p' }))
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW }))
     sqlite.exec(
       DB_PATH,
       sessionInsert({
@@ -362,6 +373,71 @@ describe('OpenCodeProvider.scan — retention', () => {
     const ids = (await provider.scan()).flatMap((snapshot) => snapshot.dwarfs.map((d) => d.id))
     expect(ids).not.toContain('opencode:ses_child')
   })
+
+  it('drops a frozen session even while another session keeps the store WAL hot', async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    const settledTurn = {
+      role: 'assistant',
+      time: { created: NOW - 5_000, completed: NOW - 4_000 },
+      finish: 'stop'
+    }
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_frozen',
+        directory: '/home/j/p',
+        timeCreatedMs: NOW - 5_000,
+        timeUpdatedMs: NOW
+      })
+    )
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm1',
+        sessionId: 'ses_frozen',
+        timeCreatedMs: NOW - 5_000,
+        data: settledTurn
+      })
+    )
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_active',
+        directory: '/home/j/p',
+        timeCreatedMs: NOW - 5_000,
+        timeUpdatedMs: NOW
+      })
+    )
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm2',
+        sessionId: 'ses_active',
+        timeCreatedMs: NOW - 5_000,
+        data: settledTurn
+      })
+    )
+
+    let clock = NOW
+    const provider = makeProvider({ fs: fake, sqlite, now: () => clock })
+    const first = await provider.scan()
+    expect(first.map((snapshot) => snapshot.sessionId).sort()).toEqual(['ses_active', 'ses_frozen'])
+
+    // Both are roots, so the long window governs. Advance past it: the
+    // active session's own row moves at the new now while every fact of the
+    // frozen one stands still — and the store-wide WAL's mtime is stamped at
+    // the new now, the write any session makes that must not count as the
+    // frozen session's own activity (#444).
+    clock = NOW + dwarfSilenceWindowMs('foreman', 'unknown') + 1_000
+    sqlite.exec(DB_PATH, `UPDATE session SET time_updated = ${clock} WHERE id = 'ses_active'`)
+    fake.addFile(DB_PATH, 'x'.repeat(101), NOW)
+    fake.addFile(WAL_PATH, 'y'.repeat(20), clock)
+
+    const ids = (await provider.scan()).map((snapshot) => snapshot.sessionId)
+    expect(ids).toEqual(['ses_active'])
+  })
 })
 
 describe('OpenCodeProvider.scan — mid-scan stability (#12)', () => {
@@ -369,7 +445,8 @@ describe('OpenCodeProvider.scan — mid-scan stability (#12)', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p' }))
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
 
     const gate = { promise: Promise.resolve() }
     const provider = makeProvider({ fs: gatedFs(fake, gate), sqlite })
@@ -401,7 +478,8 @@ describe('OpenCodeProvider — feed', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p' }))
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
     return { fake, sqlite }
   }
 
@@ -571,7 +649,9 @@ describe('OpenCodeProvider — topology (D4)', () => {
     insertSessionFixture(sqlite, 'session-parent.json')
     insertSessionFixture(sqlite, 'session-child.json')
 
-    const dwarfs = (await makeProvider({ fs: fake, sqlite }).scan()).flatMap((s) => s.dwarfs)
+    const dwarfs = (
+      await makeProvider({ fs: fake, sqlite, now: () => MEASUREMENT_NOW }).scan()
+    ).flatMap((s) => s.dwarfs)
     const child = dwarfs.find((dwarf) => dwarf.id === 'opencode:ses_placeholder_child')
     const foreman = dwarfs.find((dwarf) => dwarf.id === 'opencode:ses_placeholder_parent')
     expect(child?.role).toBe('worker')
@@ -583,9 +663,15 @@ describe('OpenCodeProvider — topology (D4)', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
     sqlite.exec(
       DB_PATH,
-      sessionInsert({ id: 'ses_orphan', directory: '/home/j/p', parentId: 'ses_nowhere' })
+      sessionInsert({
+        id: 'ses_orphan',
+        directory: '/home/j/p',
+        parentId: 'ses_nowhere',
+        timeUpdatedMs: NOW
+      })
     )
     const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
     expect(snapshot?.dwarfs[0]?.id).toBe('opencode:ses_orphan')
@@ -599,7 +685,8 @@ describe('OpenCodeProvider — topology (D4)', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_root', directory: '/home/j/p' }))
+    // #444: fresh per-session fact — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_root', directory: '/home/j/p', timeUpdatedMs: NOW }))
     const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
     expect(snapshot?.dwarfs[0]?.role).toBe('foreman')
     expect(snapshot?.dwarfs[0]?.parentId).toBeUndefined()
@@ -609,10 +696,16 @@ describe('OpenCodeProvider — topology (D4)', () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
-    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_parent', directory: '/home/j/p' }))
+    // #444: fresh per-session facts — retention no longer floors on the store-wide WAL mtime.
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW }))
     sqlite.exec(
       DB_PATH,
-      sessionInsert({ id: 'ses_child', directory: '/home/j/p', parentId: 'ses_parent' })
+      sessionInsert({
+        id: 'ses_child',
+        directory: '/home/j/p',
+        parentId: 'ses_parent',
+        timeUpdatedMs: NOW
+      })
     )
     const provider = makeProvider({ fs: fake, sqlite })
     const first = (await provider.scan()).flatMap((s) => s.dwarfs)

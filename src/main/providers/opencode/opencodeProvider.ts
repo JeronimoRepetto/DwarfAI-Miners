@@ -210,11 +210,14 @@ export class OpenCodeProvider implements Provider {
       const stalled = nowMs - changedAtMs >= BUSY_WINDOW_MS
       const busy = streaming || seqAdvanced || (intermediateStep && !stalled)
 
+      // Per-session facts only — the WAL's mtime is deliberately absent: one
+      // file for the whole store, so its freshness proves writes somewhere,
+      // not which session (D3). It gates the re-read cost above and must not
+      // keep a frozen dwarf alive (#444).
       const activityMs = Math.max(
         seqAdvanced ? nowMs : 0,
         newest?.timeCompletedMs ?? newest?.timeCreatedMs ?? 0,
-        session.updatedMs,
-        walStat?.mtimeMs ?? 0
+        session.updatedMs
       )
 
       const role = this.roleOf(session.sessionId, session.parentSessionId)

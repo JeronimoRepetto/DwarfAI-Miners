@@ -140,3 +140,72 @@ change: `ef02e6c` (evidence/fixtures + SDD artifacts), `e22358d` (pure store/par
 `a02e44f` (contract growth, provider, wiring), `71d0afd` (documentation rows). Per this run's
 delivery decision (`exception-ok` / `size:exception`), all of this lands as ONE pull request — the
 orchestrator pushes and opens it; nothing here does.
+
+## Remediation — verify findings
+
+Verify (`verify-report.md`, evidence_revision `sha256:3a28c155…`, verdict **FAIL**) found two
+critical findings. This section records their fixes; no other finding was in remediation scope.
+
+### CRITICAL 1 — false redaction (privacy)
+
+- **What was wrong**: `src/main/providers/__fixtures__/opencode/README.md` stated the maintainer's
+  configured OpenCode agent nickname "is replaced here with the same placeholder throughout". It
+  was not — the machine's real configured agent name appeared verbatim in five fixture files,
+  `parse.test.ts` (7 occurrences), `docs/opencode-format.md:58` and
+  `measurements-2026-09-17.md:99,126`. CI's guard greps four hardcoded literals and this value is
+  none of them — the exact class `privacy-guard` warns a green build does not cover.
+- **What changed**: every occurrence now reads `sample-agent` (9 files); the README paragraph
+  names what the files actually carry (`sample-agent` standing in for the configured nickname,
+  `general` — OpenCode's built-in subagent name — for the measured delegated child); the two
+  "(the agent name OpenCode ran as)" parentheticals in `docs/opencode-format.md` and the
+  measurements log now say "a placeholder for", so the measurement record stays true next to the
+  substituted value.
+- **Tests that prove it**: `pnpm exec vitest run src/main/providers/opencode` — 5 files, 69/69
+  passed with the new placeholder (`parse.test.ts` 25/25), plus a repo-wide grep for the old value
+  (tracked and untracked files, `node_modules`/`.git`/`out` excluded) printing zero files.
+- **Commit**: `0569e53` `fix(opencode-observer): scrub the machine identifier from fixtures and
+  document the true contents (#444)`.
+
+### CRITICAL 2 — retention neutralised by the store-wide WAL mtime
+
+- **What was wrong**: `opencodeProvider.ts`'s per-session `activityMs` included
+  `walStat?.mtimeMs`. `opencode.db-wal` is one file for the whole store, so any session's write
+  refreshed every session's `activityMs` — in the normal multi-session case no dwarf ever went
+  stale, contradicting D3's own "store growth proves writes somewhere, not which session; it only
+  gates cost".
+- **RED (test first)**: appended `drops a frozen session even while another session keeps the
+  store WAL hot` to `opencodeProvider.test.ts`'s retention describe — two root sessions, the
+  frozen one's facts still, the active one's `time_updated` moved to the new now, the shared WAL
+  re-added with its mtime stamped at the new now (`FakeFs.addFile` stamps a fixed mtime, so the
+  WAL is registered with the future time directly). Run before the fix it **failed** with
+  `AssertionError: expected [ 'ses_frozen', 'ses_active' ] to deeply equal [ 'ses_active' ]` — the
+  frozen dwarf survived on the shared WAL's freshness, exactly the reported defect.
+- **GREEN**: removed `walStat?.mtimeMs ?? 0` from the `Math.max` (the WAL still gates re-read cost
+  through sizes, D2; a comment at the site records why the term is deliberately absent). The new
+  test passed.
+- **Knock-on seeds, stated out loud**: nine existing tests failed after the fix — every one a seed
+  without a fresh per-session timestamp that the WAL floor had been carrying (`sessionInsert`
+  defaults `time_updated` to 0; the row-4 fixtures' measured `time_updated` is a year stale
+  against the test clock). Amended per `test-safety`: eight seeds gained `timeUpdatedMs: NOW`
+  (the size-gate discovery case, never-waiting, mid-scan stability, the feed `seededSession`
+  helper, the orphan, the null-parent root, both foreman-after-crew inserts, the worker-retention
+  parent) and the row-4 test's clock now stands at `MEASUREMENT_NOW`, a minute after the fixtures'
+  own `time_updated`. **No assertion was weakened, deleted or skipped** — each amendment is
+  commented in place with `#444`. Side effect: the feed's "no reply yet" case is no longer
+  vacuously satisfied, since the session now genuinely publishes.
+- **Tests that prove it**: `pnpm exec vitest run src/main/providers/opencode` — 5 files, **70/70**
+  passed.
+- **Commit**: this commit — `fix(opencode-observer): never let the store-wide WAL mtime count as
+  per-session activity (#444)`.
+
+### Checks run for the remediation
+
+| Check                                                              | Result                                                                                          |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `pnpm exec vitest run src/main/providers/opencode`                 | ✅ 5 files, 70/70 passed                                                                         |
+| `node skills/test-safety/assets/test-census.mjs --base main`       | ✅ exit 0 — no file lost test statements (net +88 across 16 files; `opencodeProvider.test.ts` 0→26 as a new file vs main) |
+| `pnpm typecheck`                                                   | ✅ exit 0 (node + web)                                                                           |
+| `pnpm lint`                                                        | ✅ exit 0                                                                                        |
+
+The full suite and `pnpm build` were deliberately not run — remediation scope is the two
+criticals and their blast radius only.

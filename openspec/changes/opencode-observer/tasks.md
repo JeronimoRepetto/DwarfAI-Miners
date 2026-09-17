@@ -120,3 +120,31 @@ lists, so **the generated region does not change** and no `MAIN_TREE_GLOSSES` en
 - [x] 4.4 `docs/provider-formats.md`: a pointer row to `docs/opencode-format.md` · dep: 4.1 · ~10
 - [x] 4.5 State the topology outcome where users read it: `docs/guide.md` §Providers in depth and the `docs/session-topology-and-roles.md` pointer gain the measured row-4 result — a `task`-tool delegation draws a worker beside its foreman in the same mine · dep: 4.2 · ~15
 - [x] 4.6 Run the seven CI checks in order and report the change done · dep: 4.1–4.5 · ~0 — typecheck/lint/format:check/skill-sync/test(7135 passed)/build all green; privacy guard manually reviewed (docs-only slice, no paths/identifiers introduced)
+
+---
+
+## Remediation (post-verify)
+
+Verify (`verify-report.md`, verdict FAIL) found two criticals against the full verification; both
+are fixed on this branch, each with its own commit.
+
+- [x] R1 **CRITICAL 1 — false redaction (privacy).** The fixtures README claimed the maintainer's
+  configured OpenCode agent nickname "is replaced here with the same placeholder throughout"; it
+  was not — the real value sat verbatim in five fixtures, `parse.test.ts` (7 occurrences),
+  `docs/opencode-format.md:58` and `measurements-2026-09-17.md:99,126`. Scrubbed to the neutral
+  placeholder `sample-agent` in all nine files and rewrote the README paragraph to describe what
+  the files actually carry (`sample-agent` standing in for the configured nickname, `general` for
+  the built-in subagent the measured delegation spawned). Proof: repo-wide grep prints zero files
+  for the old value; `parse.test.ts` 25/25 and the whole `src/main/providers/opencode` directory
+  passed with the new placeholder. Commit `0569e53`.
+- [x] R2 **CRITICAL 2 — retention neutralised by the store-wide WAL mtime.** `opencodeProvider.ts`
+  computed per-session `activityMs` including `walStat.mtimeMs` — one file for the whole store, so
+  any session's write refreshed every session's activity and no dwarf ever went stale. Removed the
+  term (the WAL still gates re-read cost via sizes, D2) and added the missing test: a frozen
+  session beside an active one, the shared WAL stamped past the frozen session's window — RED
+  (`expected [ 'ses_frozen', 'ses_active' ] to deeply equal [ 'ses_active' ]`) then GREEN. Nine
+  existing seeds that had silently leaned on the WAL floor gained explicit fresh per-session
+  timestamps or a clock at measurement time (stated amendments, no assertion touched). Whole
+  directory 70/70. Commit: the second remediation commit (subject
+  `fix(opencode-observer): never let the store-wide WAL mtime count as per-session activity (#444)`),
+  which also carries this appendix.
