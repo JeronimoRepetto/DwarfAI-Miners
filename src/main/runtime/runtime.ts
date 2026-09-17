@@ -10,6 +10,7 @@ import {
   codexModelCatalog,
   unavailableAntigravityModelCatalog,
   unavailableClaudeModelCatalog,
+  unavailableOpenCodeModelCatalog,
   type AntigravityModelInfo,
   type ClaudeModelInfo,
   type CodexThreadModel
@@ -3461,7 +3462,13 @@ export class AgentRuntime {
           )
         : unavailableAntigravityModelCatalog()
 
-    return { catalogs: [claude, codexModelCatalog(codexThreads), antigravity] }
+    // #444. Unasked, unlike the three above: OpenCode has no live model-list
+    // command this app has measured and no launch that could ever carry a
+    // chosen model, so there is nothing to ask a detector for in the first
+    // place — the answer is always this one, fixed value.
+    const opencode = unavailableOpenCodeModelCatalog()
+
+    return { catalogs: [claude, codexModelCatalog(codexThreads), antigravity, opencode] }
   }
 
   /**

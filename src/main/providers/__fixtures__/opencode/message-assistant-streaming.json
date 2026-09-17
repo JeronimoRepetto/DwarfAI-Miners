@@ -1,0 +1,17 @@
+{
+  "role": "assistant",
+  "parentID": "msg_placeholder_user",
+  "mode": "build",
+  "agent": "sample-agent",
+  "path": { "cwd": "~/Sample-Project" },
+  "modelID": "qwen3.6-plus",
+  "providerID": "opencode-go",
+  "time": { "created": 1757900001000 },
+  "tokens": {
+    "input": 100,
+    "output": 0,
+    "reasoning": 0,
+    "cache": { "read": 0, "write": 0 }
+  },
+  "cost": 0
+}

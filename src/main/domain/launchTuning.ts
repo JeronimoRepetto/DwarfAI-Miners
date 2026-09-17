@@ -79,7 +79,10 @@ export const PROVIDER_EFFORT_LEVELS: Record<DwarfProvider, readonly string[]> = 
   // AMENDED for #282 (was: `[]`, because Antigravity was an observer absent
   // from LAUNCHABLE_PROVIDERS — #237 gave it a launch path, and this is its
   // own documented three, verified live above).
-  antigravity: ['low', 'medium', 'high']
+  antigravity: ['low', 'medium', 'high'],
+  // #444. OpenCode is observed only — LAUNCHABLE_PROVIDERS does not grow —
+  // so no launch can ever carry an effort level for it.
+  opencode: []
 }
 
 /**

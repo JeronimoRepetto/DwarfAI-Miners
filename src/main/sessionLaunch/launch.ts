@@ -1,3 +1,4 @@
+import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { DwarfProvider } from '../domain/types'
 
@@ -269,6 +270,13 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
       // gives it its own live model list and effort levels, so it is
       // dispatched exactly like Claude's and Codex's.
       return buildAntigravityLaunchArgs(tuning)
+    case 'opencode':
+      // #444. OpenCode reads opencode.db only; it has no launch invocation
+      // this app has measured, so this arm refuses rather than invents one.
+      // Unreachable once the launchRunner.ts gate refuses first — this
+      // documents the invariant at the type level and is covered by its own
+      // unit test regardless.
+      throw new Error(NOT_LAUNCHABLE)
   }
 }
 

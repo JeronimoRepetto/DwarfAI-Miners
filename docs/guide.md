@@ -30,8 +30,8 @@ observer, and eventually part game.
 
 ### What it is today
 
-- **Observer:** reads the session data Claude Code, Codex and Antigravity already write locally and
-  turns projects, agents, status, messages, and mined materials into a living colony.
+- **Observer:** reads the session data Claude Code, Codex, Antigravity and OpenCode already write
+  locally and turns projects, agents, status, messages, and mined materials into a living colony.
 - **Control surface:** lets you launch supported sessions, choose their model and effort, focus
   their external terminal, open a live transcript viewer, send messages, kick work, and answer
   agent questions.
@@ -39,8 +39,9 @@ observer, and eventually part game.
   a terminal emulator. The panel is already the interactive surface for the actions it supports;
   the underlying provider still owns the actual process and terminal.
 
-All three providers can be **read** and **launched**; how far past that the panel can go differs
-per provider, and the [provider table](../README.md#provider-support) is the detail. More providers
+Three of the four providers can be **read** and **launched**; OpenCode is read-only, because no
+launch invocation for it has been measured yet. How far past reading each one can go differs by
+provider, and the [provider table](../README.md#provider-support) is the detail. More providers
 can be added once their session artifacts and interaction paths meet the project's verification
 bar.
 
@@ -443,12 +444,27 @@ CLI's default and report success. Model names are never hardcoded here: each pro
 catalogue is read live from that CLI. For a Claude session the panel is holding, the same model and
 effort can be changed later, from the session strip in the mine.
 
+**OpenCode is observed only, and says so.** DwarfAI-Miners reads `opencode.db` — the SQLite store
+OpenCode 1.18.31 keeps under `~/.local/share/opencode` — and nothing else: no launch invocation for
+it has been measured, so the Add Panel shows it installed but not launchable, and its dwarf offers
+no Send, Kick or Boost, with the same fixed reason every un-launchable provider gets. There is no
+per-session file either, so there is nothing for the terminal-focus fallback to tail; the message
+panel's own feed, paged from the store, is the whole reading surface. An OpenCode dwarf mines no
+ore: token counts sit in the store but are not read onto the wire in this release.
+`OPENCODE_CLI_PATH` documents a working binary for a broken PATH shim (a package-manager global
+install can skip the postinstall step that downloads the platform binary); `XDG_DATA_HOME` is
+deliberately not read, since the default store root is fixed rather than derived from the
+environment. Delegating to a subagent through OpenCode's own `task` tool draws a worker beside its
+foreman in the same mine, exactly like Codex's `thread_spawn` link — see
+[`docs/session-topology-and-roles.md`](session-topology-and-roles.md) §6 for how that reading was
+anticipated before it was measured.
+
 For Claude, the main session dwarf is always the foreman — it is the orchestrator whether or
 not it currently has subagents out — and subagents are always workers. A subagent leaves the
 crew as soon as its `<task-notification>` reports `completed`, `failed` or `killed`, and
 DwarfAI-Miners remembers that so an agent whose notification later scrolls out of the transcript
 tail can never come back as a ghost. Codex promotion still comes from a verified
-`thread_spawn` parent link.
+`thread_spawn` parent link, and OpenCode's own promotion comes from `session.parent_id` the same way.
 
 ## Sound
 
@@ -664,34 +680,36 @@ first.
 Use these names as `.env` keys in a development checkout, and as JSON keys in the config file
 above for an installed app.
 
-| Variable                          | Default                     | Meaning                                                                                                      |
-| --------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `POLL_INTERVAL_MS`                | `2000`                      | Provider scan interval in milliseconds.                                                                      |
-| `LIVENESS_WINDOW_S`               | `90`                        | Reserved general activity window.                                                                            |
-| `CODEX_LIVENESS_WINDOW_S`         | `300`                       | Maximum rollout mtime age considered live.                                                                   |
-| `CODEX_HEARTBEAT_WINDOW_S`        | `300`                       | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                                   |
-| `CODEX_SCAN_DAYS`                 | `7`                         | How many day-directories (today back N-1 days) to scan for rollouts.                                         |
-| `CODEX_IDLE_RETENTION_S`          | `3600`                      | Extra time a quiet-but-open rollout stays visible while a codex process is running.                          |
-| `CODEX_SESSIONS_ROOT`             | `~/.codex/sessions`         | The Codex rollout directory to scan. A leading `~` is expanded.                                              |
-| `CODEX_STATE_DB`                  | `~/.codex/state_5.sqlite`   | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                             |
-| `CODEX_LOGS_DB`                   | `~/.codex/logs_2.sqlite`    | Codex's structured log stream, used read-only as a liveness heartbeat.                                       |
-| `ANTIGRAVITY_STORE_ROOT`          | `~/.gemini/antigravity-cli` | The Antigravity CLI (`agy`) store to observe. A leading `~` is expanded.                                     |
-| `ANTIGRAVITY_BUSY_WINDOW_S`       | `120`                       | How recent a still-`RUNNING` transcript step must be to count as an open turn.                               |
-| `ANTIGRAVITY_LOCK_GRACE_S`        | `30`                        | How long a conversation survives its presence lock no longer being listed.                                   |
-| `ANTIGRAVITY_STALE_LOCK_WINDOW_S` | `86400`                     | How silent a locked conversation may be before its lock is read as stale.                                    |
-| `DWARF_LEAVE_GRACE_S`             | `20`                        | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                                |
-| `TIER_CACHE_TTL_S`                | `600`                       | Mine-tier cache lifetime.                                                                                    |
-| `TIER_COPPER_KB`                  | `100`                       | Source-code byte-weight threshold for copper, in KB.                                                         |
-| `TIER_SILVER_KB`                  | `500`                       | Source-code byte-weight threshold for silver, in KB.                                                         |
-| `TIER_GOLD_KB`                    | `2048`                      | Source-code byte-weight threshold for gold, in KB.                                                           |
-| `TIER_URANIUM_KB`                 | `8192`                      | Source-code byte-weight threshold for uranium, in KB.                                                        |
-| `CLAUDE_CONFIG_DIRS`              | `~/.claude`                 | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`.        |
-| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs. The relay only forwards a string, so the cheapest wins.           |
-| `SENDTEXT_TIMEOUT_S`              | `60`                        | Base seconds for a relay delivery's timeout; the actual budget adds 5ms per character in the message (#439). |
-| `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                            |
-| `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.            |
-| `CODEX_CLI_PATH`                  | _(detect)_                  | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.             |
-| `ANTIGRAVITY_CLI_PATH`            | _(detect)_                  | Explicit path to the `agy` binary. Blank detects it in the known install locations, then PATH.               |
+| Variable                          | Default                     | Meaning                                                                                                                                                                                                                                                           |
+| --------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POLL_INTERVAL_MS`                | `2000`                      | Provider scan interval in milliseconds.                                                                                                                                                                                                                           |
+| `LIVENESS_WINDOW_S`               | `90`                        | Reserved general activity window.                                                                                                                                                                                                                                 |
+| `CODEX_LIVENESS_WINDOW_S`         | `300`                       | Maximum rollout mtime age considered live.                                                                                                                                                                                                                        |
+| `CODEX_HEARTBEAT_WINDOW_S`        | `300`                       | How recent a `logs_2.sqlite` row must be to count as a liveness heartbeat.                                                                                                                                                                                        |
+| `CODEX_SCAN_DAYS`                 | `7`                         | How many day-directories (today back N-1 days) to scan for rollouts.                                                                                                                                                                                              |
+| `CODEX_IDLE_RETENTION_S`          | `3600`                      | Extra time a quiet-but-open rollout stays visible while a codex process is running.                                                                                                                                                                               |
+| `CODEX_SESSIONS_ROOT`             | `~/.codex/sessions`         | The Codex rollout directory to scan. A leading `~` is expanded.                                                                                                                                                                                                   |
+| `CODEX_STATE_DB`                  | `~/.codex/state_5.sqlite`   | Codex's thread registry, opened read-only. Missing file: rollout-only detection.                                                                                                                                                                                  |
+| `CODEX_LOGS_DB`                   | `~/.codex/logs_2.sqlite`    | Codex's structured log stream, used read-only as a liveness heartbeat.                                                                                                                                                                                            |
+| `ANTIGRAVITY_STORE_ROOT`          | `~/.gemini/antigravity-cli` | The Antigravity CLI (`agy`) store to observe. A leading `~` is expanded.                                                                                                                                                                                          |
+| `ANTIGRAVITY_BUSY_WINDOW_S`       | `120`                       | How recent a still-`RUNNING` transcript step must be to count as an open turn.                                                                                                                                                                                    |
+| `ANTIGRAVITY_LOCK_GRACE_S`        | `30`                        | How long a conversation survives its presence lock no longer being listed.                                                                                                                                                                                        |
+| `ANTIGRAVITY_STALE_LOCK_WINDOW_S` | `86400`                     | How silent a locked conversation may be before its lock is read as stale.                                                                                                                                                                                         |
+| `OPENCODE_STORE_ROOT`             | `~/.local/share/opencode`   | The OpenCode CLI's `opencode.db` store to observe. A leading `~` is expanded; no per-OS variant.                                                                                                                                                                  |
+| `DWARF_LEAVE_GRACE_S`             | `20`                        | How long a dwarf whose agent finished/disappeared stays visible as "leaving".                                                                                                                                                                                     |
+| `TIER_CACHE_TTL_S`                | `600`                       | Mine-tier cache lifetime.                                                                                                                                                                                                                                         |
+| `TIER_COPPER_KB`                  | `100`                       | Source-code byte-weight threshold for copper, in KB.                                                                                                                                                                                                              |
+| `TIER_SILVER_KB`                  | `500`                       | Source-code byte-weight threshold for silver, in KB.                                                                                                                                                                                                              |
+| `TIER_GOLD_KB`                    | `2048`                      | Source-code byte-weight threshold for gold, in KB.                                                                                                                                                                                                                |
+| `TIER_URANIUM_KB`                 | `8192`                      | Source-code byte-weight threshold for uranium, in KB.                                                                                                                                                                                                             |
+| `CLAUDE_CONFIG_DIRS`              | `~/.claude`                 | Semicolon-separated Claude roots. Add more to scan several accounts, e.g. `~/.claude;~/.claude-work`.                                                                                                                                                             |
+| `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs. The relay only forwards a string, so the cheapest wins.                                                                                                                                                                |
+| `SENDTEXT_TIMEOUT_S`              | `60`                        | Base seconds for a relay delivery's timeout; the actual budget adds 5ms per character in the message (#439).                                                                                                                                                      |
+| `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                                                                                                                                                                                 |
+| `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.                                                                                                                                                                 |
+| `CODEX_CLI_PATH`                  | _(detect)_                  | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.                                                                                                                                                                  |
+| `ANTIGRAVITY_CLI_PATH`            | _(detect)_                  | Explicit path to the `agy` binary. Blank detects it in the known install locations, then PATH.                                                                                                                                                                    |
+| `OPENCODE_CLI_PATH`               | _(detect)_                  | Explicit path to a working `opencode` binary. The observer itself never detects one — it reads the store — but a broken PATH shim (a package-manager global install that skipped the postinstall step) can still be named here for anything that does look it up. |
 
 Tier thresholds must be strictly increasing.
 

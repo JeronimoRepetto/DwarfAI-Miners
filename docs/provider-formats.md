@@ -1072,3 +1072,4 @@ Suggested poller: every 1–2 s read `~/.claude/sessions/*.json` (tiny files) + 
 | Antigravity: `subagent_info` appears on a held stream                                         | Documented on the page; **not observed live** - no crew is claimed for a held session                                     |
 | Antigravity: a `models` subcommand exists and lists available models                          | Verified live, 2026-09-07 (step 5's probe and #282's own capture): a status line, then one `<id>	<label>` line per model   |
 | Click-to-focus via PPID walk to terminal                                                      | Process data verified; focusing mechanics inferred                                                                        |
+| OpenCode CLI store: `opencode.db` schema, liveness signals, topology                          | Verified on 1.18.31, 2026-09-17 (native Windows install, read-only); full detail in `docs/opencode-format.md`             |

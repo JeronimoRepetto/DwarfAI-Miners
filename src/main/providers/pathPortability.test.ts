@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import { ClaudeProvider } from './claude/claudeProvider'
 import { CodexProvider } from './codex/codexProvider'
+import { opencodeDbPath, opencodeWalPath } from './opencode/store'
 
 /**
  * Provider directory walking used to concatenate `\` by hand, which made every
@@ -146,5 +147,25 @@ describe('CodexProvider path building', () => {
     expect(posix.transcriptPath(`codex:${CODEX_SESSION_ID}`)).toBe(
       join('/home/j/.codex/sessions', '2026', '08', '28', 'rollout-2026-08-28T14-10-45.jsonl')
     )
+  })
+})
+
+/*
+ * Issue #444. OpenCode has no per-OS branch at all — no Platform parameter,
+ * no directory walk — so its own path surface is exactly the two pure
+ * builders `store.ts` exports. Pinned here alongside Claude's and Codex's own
+ * cases so a future edit to either builder is caught by the same suite.
+ */
+describe('OpenCodeProvider path building', () => {
+  it('builds opencode.db and opencode.db-wal from a POSIX root', () => {
+    const root = '/home/j/.local/share/opencode'
+    expect(opencodeDbPath(root)).toBe(join(root, 'opencode.db'))
+    expect(opencodeWalPath(root)).toBe(join(root, 'opencode.db-wal'))
+  })
+
+  it('builds the same pair from a Windows root', () => {
+    const root = 'C:\\Users\\j\\.local\\share\\opencode'
+    expect(opencodeDbPath(root)).toBe(join(root, 'opencode.db'))
+    expect(opencodeWalPath(root)).toBe(join(root, 'opencode.db-wal'))
   })
 })

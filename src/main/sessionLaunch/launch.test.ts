@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
   buildAntigravityLaunchArgs,
@@ -67,6 +68,17 @@ describe('buildLaunchArgs', () => {
    */
   it("answers Antigravity with Antigravity's own print-mode argv, now that it is launchable", () => {
     expect(buildLaunchArgs('antigravity')).toEqual(buildAntigravityLaunchArgs())
+  })
+
+  /*
+   * Issue #444. OpenCode is observed only — LAUNCHABLE_PROVIDERS does not
+   * grow (launchProviders.test.ts:84) — so the switch's fourth arm refuses
+   * rather than invents an argv nothing has measured. Unreachable once the
+   * launchRunner.ts gate lands (#444, launchRunner.test.ts), and documents
+   * the invariant at the type level regardless.
+   */
+  it('refuses OpenCode: observed only, never launched, and invents no argv', () => {
+    expect(() => buildLaunchArgs('opencode')).toThrow(NOT_LAUNCHABLE)
   })
 })
 

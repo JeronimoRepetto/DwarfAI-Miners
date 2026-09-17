@@ -131,8 +131,15 @@ export type MaterialTotals = Record<Material, number>
  * the held protocol still cannot do. Membership in `DWARF_PROVIDERS` alone
  * says only that a store can be READ; the other two lists are what say how
  * far past reading this app may go.
+ *
+ * `opencode` is the fourth (#444), and it is the plainest member so far:
+ * `opencode.db` is read and nothing else is claimed. No launch (the CLI's own
+ * argv was never measured against a probe this app owns), no hold, and no
+ * delivery channel — the schema carries no pid or process column anywhere
+ * (`docs/opencode-format.md`, row 5) — so it joins this table alone and
+ * neither `LAUNCHABLE_PROVIDERS` nor `HELDABLE_PROVIDERS` grows.
  */
-export const DWARF_PROVIDERS = ['claude', 'codex', 'antigravity'] as const
+export const DWARF_PROVIDERS = ['claude', 'codex', 'antigravity', 'opencode'] as const
 
 export type DwarfProvider = (typeof DWARF_PROVIDERS)[number]
 

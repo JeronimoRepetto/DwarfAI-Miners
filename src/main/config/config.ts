@@ -125,6 +125,21 @@ export interface AntigravityConfig extends ProviderConfig {
 }
 
 /**
+ * OpenCode's settings block: where `opencode.db` lives (#444).
+ *
+ * The plainest block so far: one setting, no window of any kind. There is
+ * nothing to bound because the provider takes no liveness signal off a file's
+ * age at all — `event.seq` and the message rows themselves decide that (see
+ * `opencodeProvider.ts`) — and no retention constant of its own, because
+ * retention is `dwarfSilenceWindowMs(role, attendance)`, the same shared rule
+ * every provider answers to.
+ */
+export interface OpenCodeConfig extends ProviderConfig {
+  /** The `~/.local/share/opencode` store root; `opencode.db` lives directly under it. */
+  storeRoot: string
+}
+
+/**
  * One settings block per provider identity.
  *
  * Keyed by `DwarfProvider` on purpose: this is a `Record` over the shared
@@ -137,6 +152,7 @@ export interface ProviderConfigs extends Record<DwarfProvider, ProviderConfig> {
   claude: ClaudeConfig
   codex: CodexConfig
   antigravity: AntigravityConfig
+  opencode: OpenCodeConfig
 }
 
 export interface AppConfig {
@@ -216,6 +232,10 @@ export function defaultConfig(): AppConfig {
         // its owner will come back to; a lock a crash left behind is not, and
         // this is the line between them.
         staleLockWindowS: 86_400
+      },
+      opencode: {
+        cliPath: '',
+        storeRoot: '~/.local/share/opencode'
       }
     }
   }
@@ -388,6 +408,19 @@ function readAntigravityConfig(env: ConfigEnv, fallback: AntigravityConfig): Ant
   }
 }
 
+/**
+ * OpenCode's block (#444). One setting: `readTrimmed` already gives blank the
+ * fall-through-to-file behaviour every other setting has, so there is nothing
+ * else here to parse — no window, and no `Platform` parameter, because the
+ * default's shape does not branch on the host OS (D6).
+ */
+function readOpenCodeConfig(env: ConfigEnv, fallback: OpenCodeConfig): OpenCodeConfig {
+  return {
+    ...readProviderConfig(env, { cliPath: 'OPENCODE_CLI_PATH' }, fallback),
+    storeRoot: readTrimmed(env, 'OPENCODE_STORE_ROOT', fallback.storeRoot)
+  }
+}
+
 export function loadConfig(env: ConfigEnv = process.env): AppConfig {
   const defaults = defaultConfig()
   return {
@@ -405,7 +438,8 @@ export function loadConfig(env: ConfigEnv = process.env): AppConfig {
     providers: {
       claude: readClaudeConfig(env, defaults.providers.claude),
       codex: readCodexConfig(env, defaults.providers.codex),
-      antigravity: readAntigravityConfig(env, defaults.providers.antigravity)
+      antigravity: readAntigravityConfig(env, defaults.providers.antigravity),
+      opencode: readOpenCodeConfig(env, defaults.providers.opencode)
     }
   }
 }

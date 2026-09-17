@@ -1,0 +1,6 @@
+{
+  "type": "tool",
+  "tool": "glob",
+  "callID": "call_placeholder_glob",
+  "state": { "status": "completed" }
+}

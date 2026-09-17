@@ -1,0 +1,12 @@
+{
+  "type": "step-finish",
+  "reason": "stop",
+  "snapshot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tokens": {
+    "input": 700,
+    "output": 120,
+    "reasoning": 0,
+    "cache": { "read": 300, "write": 0 }
+  },
+  "cost": 0.005
+}

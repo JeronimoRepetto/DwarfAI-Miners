@@ -39,6 +39,15 @@ describe('PROVIDER_EFFORT_LEVELS', () => {
   it("carries Antigravity's own three documented levels, not borrowed from either neighbour", () => {
     expect(PROVIDER_EFFORT_LEVELS.antigravity).toEqual(['low', 'medium', 'high'])
   })
+
+  /*
+   * Issue #444. OpenCode is not in LAUNCHABLE_PROVIDERS, so no launch can ever
+   * reach it — the same reasoning that gave Antigravity `[]` before #282, and
+   * the same empty answer for the same reason.
+   */
+  it('gives OpenCode no effort levels, because no launch can reach it', () => {
+    expect(PROVIDER_EFFORT_LEVELS.opencode).toEqual([])
+  })
 })
 
 describe('parseLaunchTuning', () => {
