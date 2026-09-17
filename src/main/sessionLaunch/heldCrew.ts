@@ -84,6 +84,21 @@ export type HeldSessionSubagentSignal =
    * call. Neither says who the parent is on its own.
    */
   | { kind: 'tool-call'; toolUseId: string; insideToolUseId: string }
+  /**
+   * The model an assistant turn made from INSIDE a task reported running on
+   * (#447).
+   *
+   * `task_started` announces a subagent without ever naming its model — id,
+   * description, depth, task type and the call it came from are the whole
+   * message — so the only place a held subagent's model is stated is the turns
+   * the agent itself writes. Those carry the tool-use id of the task they
+   * belong to, which is the identity `tool-call` already joins the topology on,
+   * so the model rides the same proven join rather than a second one.
+   *
+   * This exists only for tasks: the root session's own turns carry no parent
+   * tool-use id at all, and its model has its own writer (`init`, issue #96).
+   */
+  | { kind: 'agent-model'; insideToolUseId: string; model: string }
 
 /** One live subagent of a held session. */
 export interface HeldCrewMember {
@@ -140,12 +155,32 @@ export class HeldCrew {
   private readonly taskByCall = new Map<string, string>()
   /** tool-use id -> the tool-use id of the task whose turn made that call. */
   private readonly callOwner = new Map<string, string>()
+  /**
+   * tool-use id -> the model the task started from it last reported. Kept for
+   * the life of the session rather than consumed, because the turn that proves
+   * a model can reach this panel before the `task_started` it belongs to — the
+   * same ordering the parent join already has to survive — and because the
+   * newest turn supersedes the one before it.
+   */
+  private readonly modelByCall = new Map<string, string>()
   /** Whether a subagent has ever been live. Latches; see heldRootRole. */
   private coordinated = false
 
   apply(signal: HeldSessionSubagentSignal): void {
     if (signal.kind === 'tool-call') {
       this.callOwner.set(signal.toolUseId, signal.insideToolUseId)
+      return
+    }
+    if (signal.kind === 'agent-model') {
+      this.modelByCall.set(signal.insideToolUseId, signal.model)
+      const taskId = this.taskByCall.get(signal.insideToolUseId)
+      if (taskId === undefined) return
+      const member = this.live.get(taskId)
+      // A call this crew cannot resolve to a live member touches nobody.
+      // Stamping the nearest one would be inheritance arrived at sideways, and
+      // a model is the one field on a subagent that must be its own or absent.
+      if (member === undefined) return
+      this.live.set(taskId, { ...member, model: signal.model })
       return
     }
     if (signal.kind === 'task-ended') {
@@ -158,12 +193,16 @@ export class HeldCrew {
     if (this.ended.has(signal.taskId)) return
     if (signal.toolUseId !== undefined) this.taskByCall.set(signal.toolUseId, signal.taskId)
     this.coordinated = true
+    // Whatever the announcement itself said, or — since it never says one — the
+    // model this task's own turns have already reported. Both are the agent's
+    // own evidence; nothing here falls back to the session or the agent above.
+    const model = signal.model ?? this.modelOf(signal.toolUseId)
     this.live.set(signal.taskId, {
       taskId: signal.taskId,
       name: signal.description ?? `agent-${signal.taskId.slice(0, 7)}`,
       ...(signal.description === undefined ? {} : { description: signal.description }),
       ...(signal.spawnDepth === undefined ? {} : { spawnDepth: signal.spawnDepth }),
-      ...(signal.model === undefined ? {} : { model: signal.model }),
+      ...(model === undefined ? {} : { model }),
       ...this.parentField(signal.toolUseId)
     })
   }
@@ -186,6 +225,11 @@ export class HeldCrew {
    * established nothing — "I was spawned" and "here is who by" are different
    * facts, and the first survives the second going missing.
    */
+  /** The model already reported for the task started from this call, if any. */
+  private modelOf(toolUseId: string | undefined): string | undefined {
+    return toolUseId === undefined ? undefined : this.modelByCall.get(toolUseId)
+  }
+
   private parentField(toolUseId: string | undefined): { parentTaskId?: string } {
     if (toolUseId === undefined) return {}
     const ownerCall = this.callOwner.get(toolUseId)

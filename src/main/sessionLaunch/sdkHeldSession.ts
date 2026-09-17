@@ -131,15 +131,27 @@ const TERMINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
  *   task, so every tool call it writes was made from within that task. That is
  *   the only thing in the stream connecting a nested agent to its parent, and
  *   it arrives BEFORE the `task_started` that needs it (measured 2026-09-03).
+ *   The SAME message names the model that turn ran on, and it is the only place
+ *   a held subagent's model is ever stated: `SDKTaskStartedMessage` has no
+ *   model field at all (#447). A turn with `parent_tool_use_id: null` is the
+ *   root session's own and is not a crew signal — its model arrives on `init`.
  */
 function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
   if (message.type === 'assistant' && message.parent_tool_use_id !== null) {
     const insideToolUseId = message.parent_tool_use_id
+    const model = message.message.model
+    const signals: HeldSessionSubagentSignal[] =
+      typeof model === 'string' && model !== ''
+        ? [{ kind: 'agent-model', insideToolUseId, model }]
+        : []
     const content = message.message.content
-    if (!Array.isArray(content)) return []
-    return content
-      .filter((block) => block.type === 'tool_use')
-      .map((block) => ({ kind: 'tool-call', toolUseId: block.id, insideToolUseId }))
+    if (!Array.isArray(content)) return signals
+    for (const block of content) {
+      if (block.type === 'tool_use') {
+        signals.push({ kind: 'tool-call', toolUseId: block.id, insideToolUseId })
+      }
+    }
+    return signals
   }
   if (message.type !== 'system') return []
   if (message.subtype === 'task_started') {
