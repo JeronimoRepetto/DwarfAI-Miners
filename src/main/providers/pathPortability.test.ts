@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
+import { defaultConfig } from '../config/config'
+import { expandHomePath } from '../runtime/runtime'
 import { ClaudeProvider } from './claude/claudeProvider'
 import { CodexProvider } from './codex/codexProvider'
 import { opencodeDbPath, opencodeWalPath } from './opencode/store'
@@ -157,15 +159,32 @@ describe('CodexProvider path building', () => {
  * cases so a future edit to either builder is caught by the same suite.
  */
 describe('OpenCodeProvider path building', () => {
-  it('builds opencode.db and opencode.db-wal from a POSIX root', () => {
+  // AMENDED (#453, WARNING 4): both cases ran GREEN on first run against
+  // 2.2's already-correct builders — pins against future edits, stated as
+  // such, rather than titled as if they drove the implementation.
+  it('pins opencode.db and opencode.db-wal built from a POSIX root', () => {
     const root = '/home/j/.local/share/opencode'
     expect(opencodeDbPath(root)).toBe(join(root, 'opencode.db'))
     expect(opencodeWalPath(root)).toBe(join(root, 'opencode.db-wal'))
   })
 
-  it('builds the same pair from a Windows root', () => {
+  it('pins the same pair built from a Windows root', () => {
     const root = 'C:\\Users\\j\\.local\\share\\opencode'
     expect(opencodeDbPath(root)).toBe(join(root, 'opencode.db'))
     expect(opencodeWalPath(root)).toBe(join(root, 'opencode.db-wal'))
+  })
+
+  /*
+   * DET-R1 ("The default shape is the same on every OS"): config.test.ts
+   * pins the unexpanded default string; this expands it with a FIXED home
+   * through the real expandHomePath, asserted via node:path.join like every
+   * case above, so the same expectation holds whichever host runs the suite
+   * — proving the expansion itself rather than only the string before it.
+   */
+  it('expands the default OpenCode store root identically, given a fixed home', () => {
+    const home = '/home/j'
+    expect(expandHomePath(defaultConfig().providers.opencode.storeRoot, home)).toBe(
+      join(home, '.local', 'share', 'opencode')
+    )
   })
 })

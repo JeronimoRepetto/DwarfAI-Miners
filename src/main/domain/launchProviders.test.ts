@@ -143,8 +143,13 @@ describe('agentProviderList', () => {
    * describe — installed, but not launchable, with the fixed refusal copy —
    * the case NOT_LAUNCHABLE had no real provider left to prove itself
    * against once #237 gave Antigravity a launch path.
+   *
+   * AMENDED (#453, WARNING 4): titled as a pin rather than as if it drove the
+   * implementation — it passed GREEN on first run, since `agentProviderList`
+   * was already generic over `DWARF_PROVIDERS`/`LAUNCHABLE_PROVIDERS` before
+   * this case existed.
    */
-  it('marks a detected OpenCode installed but not launchable, with NOT_LAUNCHABLE as its reason', () => {
+  it('pins that a detected OpenCode is marked installed but not launchable, with NOT_LAUNCHABLE as its reason', () => {
     const [, , , opencode] = agentProviderList([found('opencode')]).providers
 
     expect(opencode).toEqual({

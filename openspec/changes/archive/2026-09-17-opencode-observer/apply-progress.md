@@ -296,3 +296,101 @@ condition `AGENTS.md` describes as routine, not a defect in this batch's own dif
 
 WARNING 4 and WARNING 5 were not in this remediation's assigned scope and remain open for a later
 batch or the maintainer's own review.
+
+## Follow-up #453 — closing the remaining PARTIAL rows and WARNING 4/5
+
+Scope: `verify-report.md`'s "Re-verification after remediation (HEAD aa1e982)" section — the four
+remaining PARTIAL scenario rows (SUGGESTIONs 1, 2, 3, 5) and the two open WARNINGs (4, 5). Worked in
+a dedicated worktree (`agent-name-worktrees/observer-453`) on `fix/opencode-observer-verify-exceptions`,
+branched from `origin/main` `f61c6ed`. Strict TDD; every new assertion below was proven fallible by
+mutation before being reported, per this batch's own instruction.
+
+### TDD Cycle Evidence
+
+| Item                                                                 | RED                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | GREEN                                                                                                                     | Notes                                                                             |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| SUGGESTION 1 (DET-R1, blank-env-over-file for `OPENCODE_STORE_ROOT`) | Test added GREEN on first run (the shared `withConfigFileFallback` mechanism was already correct — only the OpenCode-specific pin was missing). Proved fallible: temporarily changed `withConfigFileFallback`'s blank check from `fromEnv === undefined \|\| fromEnv.trim() === ''` to `fromEnv === undefined` → `AssertionError: expected '~/.local/share/opencode' to be '~/from-file/opencode'` (and the sibling generic case at line ~109 failed the same way)                                                                                                                                                                                                                            | Reverted the one-line break; both tests pass                                                                              | `src/main/config/configFile.test.ts`                                              |
+| SUGGESTION 2 (DET-R1, OS-invariant default expansion)                | Test added GREEN on first run. Proved fallible: temporarily changed `expandHomePath`'s tilde branch from `join(home, path.slice(2))` to `path.slice(2)` (dropping `home` entirely) → `AssertionError: expected '.local/share/opencode' to be '\home\j\.local\share\opencode'`                                                                                                                                                                                                                                                                                                                                                                                                                 | Reverted; test passes, asserted through `node:path.join` on both sides so the same expectation holds on Windows and POSIX | `src/main/providers/pathPortability.test.ts`                                      |
+| SUGGESTION 3 (DET-R2, `snapshot.cwd`)                                | Test added GREEN on first run. Proved fallible: temporarily changed the scan loop's `cwd,` to `cwd: session.sessionId,` → `AssertionError: expected 'ses_a' to be '\home\j\Sample-Project'`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Reverted; test passes                                                                                                     | `src/main/providers/opencode/opencodeProvider.test.ts`                            |
+| SUGGESTION 5 (DET-R6, panel actions)                                 | Three cases added. (a) Chat/NO_CHANNEL_REASON: broke the `chatAction` fallback hint (`NO_CHANNEL_REASON` → `SESSION_ENDED_REASON`) → RED (3 tests, including this new one). (b) Kick dismiss: broke the `DISMISS_HINT` arm of `kickAction`'s ternary → RED (7 tests, including this new one). (c) Kick mid-turn refusal: broke `openTurn` to `false` → RED (3 tests, including this new one)                                                                                                                                                                                                                                                                                                  | Reverted each break in turn; all pass                                                                                     | `src/renderer/src/lib/delivery/actionBar.test.ts` — see the spec correction below |
+| WARNING 4 (promotion-to-foreman line)                                | Discovered the report's own proposed test target ("ranks a child below the root and promotes the parent to foreman") does **not** actually depend on the named line — every fixture's foreman has `parentSessionId === undefined`, so `roleOf` returns `'foreman'` from its second branch regardless of the `parentSessions` set. Removing `if (session.parentSessionId !== undefined) this.parentSessions.add(...)` left **all 27** existing tests in the file GREEN. Wrote a new, genuinely load-bearing case — a 3-level hierarchy where the middle session is both a child and a parent — which **was** RED against the same removal: `AssertionError: expected 'worker' to be 'foreman'` | Restored the line; the new test and the full file (28/28) pass                                                            | `src/main/providers/opencode/opencodeProvider.test.ts`; see "Deviations" below    |
+
+### Work Unit Evidence
+
+| Evidence                                          | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Focused test command and exact result             | `node node_modules/vitest/vitest.mjs run src/main/config/configFile.test.ts src/main/config/config.test.ts src/main/providers/pathPortability.test.ts src/main/providers/opencode src/main/domain/launchProviders.test.ts src/renderer/src/lib/delivery/actionBar.test.ts src/main/domain/permissionSummary.test.ts src/main/sessionLaunch/launch.test.ts src/main/sessionLaunch/launchRunner.test.ts src/main/domain/launchTuning.test.ts src/main/domain/agentModelCatalog.test.ts src/main/runtime/runtime.test.ts` — 16 files, 826 passed |
+| Runtime harness command/scenario and exact result | N/A — this batch adds test coverage and two doc/comment corrections over already-shipped, already-verified provider behavior; no new runtime surface. `node node_modules/electron-vite/bin/electron-vite.js build` succeeded as the closest available check                                                                                                                                                                                                                                                                                   |
+| Rollback boundary                                 | Each touched file's own hunk (see per-commit diffs): `configFile.test.ts`, `pathPortability.test.ts`, `opencodeProvider.test.ts`, `actionBar.test.ts`, `launchProviders.test.ts`, `launchProviders.ts`, and the one `specs/opencode-session-detection/spec.md` scenario correction — each revertible alone without touching the others                                                                                                                                                                                                        |
+
+Full suite: `node node_modules/vitest/vitest.mjs run` — 267 files, 7089 passed, 5 skipped, 0 failed.
+Typecheck (`tsc --noEmit -p tsconfig.node.json --composite false`, `vue-tsc --noEmit -p
+tsconfig.web.json --composite false`) clean. Lint (`eslint .`) clean. Format
+(`prettier --check` on every file this batch touched) clean. `node skills/skill-sync/assets/sync.mjs
+--check` → `AGENTS.md already up to date (10 skill(s))`. Build succeeded. Privacy: no fixtures, real
+paths, hostnames or usernames introduced — every path in the new tests reuses the project's existing
+placeholders (`j`, `/home/j/...`, `ses_*`).
+
+### Test census
+
+`node skills/test-safety/assets/test-census.mjs --base origin/main`:
+
+```
+file                                                  before   after  delta
+----------------------------------------------------------------------------
+src/main/config/configFile.test.ts                        30      31  +1
+src/main/domain/launchProviders.test.ts                   13      13  0
+src/main/providers/opencode/opencodeProvider.test.ts      28      29  +1
+src/main/providers/pathPortability.test.ts                 8       9  +1
+src/renderer/src/lib/delivery/actionBar.test.ts           54      57  +3
+
+net +6 across 5 file(s).
+
+No file lost test statements.
+```
+
+`launchProviders.test.ts`'s delta is 0 — a title-only amendment (WARNING 4), stated here since the
+census cannot show a rename as a delta.
+
+### Deviations from design / from the verify report
+
+- **WARNING 4's own proposed mutation target was wrong for the test it named.** The report said to
+  remove `this.parentSessions.add(...)` and expect `ranks a child below the root and promotes the
+parent to foreman` to fail. It does not: every existing topology fixture's foreman session has no
+  `parentSessionId` of its own, so `roleOf`'s `parentSessionId === undefined` branch already answers
+  `'foreman'` without ever consulting `parentSessions`. Verified by running the full file with the
+  line removed — all 27 pre-existing tests stayed GREEN. Rather than record a false RED, this batch
+  (a) renamed the named test to state plainly that it is a pin
+  (`pins that a child ranks below the root and the parent shows foreman`), and (b) added a new test
+  for the case the line actually decides — a middle-tier session that is simultaneously a child and
+  a parent — which genuinely goes RED on the same mutation. Noted here rather than silently
+  substituting a different target without saying so.
+- **DET-R6's spec scenario had a stale Kick clause, corrected rather than worked around.**
+  `specs/opencode-session-detection/spec.md`'s "Panel offers actions for an observed OpenCode dwarf"
+  scenario said "Send and Kick are disabled with `NO_CHANNEL_REASON`". Kick has not disabled itself
+  for want of a channel since #293 (predating this change): a null `capabilities.cancel` decides
+  which kick to offer (dismiss from the board) rather than whether to offer one — see
+  `DwarfCapabilities.cancel`'s own doc comment in `contracts.ts` and `kickAction` in `actionBar.ts`,
+  which never returns `NO_CHANNEL_REASON` (that string is Chat's alone). Writing the test literally
+  per the old scenario text would have asserted something false about already-correct, intentional
+  behavior. The scenario is amended in place (stated out loud, same convention as the topology
+  spec's own amendment note) to describe what the action bar actually does, and the new
+  `actionBar.test.ts` cases prove the corrected clause specifically for an OpenCode dwarf rather than
+  only through the generic `PANEL_OBSERVER` case that already existed.
+
+### Files changed
+
+| File                                                                          | Action  | What was done                                                                                                                                                                                              |
+| ----------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/config/configFile.test.ts`                                          | Amended | Added the OpenCode-specific blank-over-file pin (SUGGESTION 1 / DET-R1)                                                                                                                                    |
+| `src/main/providers/pathPortability.test.ts`                                  | Amended | Added the OS-invariant `expandHomePath` expansion test (SUGGESTION 2 / DET-R1); renamed the two existing OpenCode path-builder cases to state they are pins (WARNING 4)                                    |
+| `src/main/providers/opencode/opencodeProvider.test.ts`                        | Amended | Added the `snapshot.cwd` pin (SUGGESTION 3 / DET-R2); renamed the row-4 topology pin and added the new middle-tier promotion test that is genuinely load-bearing for the `parentSessions` line (WARNING 4) |
+| `src/renderer/src/lib/delivery/actionBar.test.ts`                             | Amended | Added three `observed OpenCode dwarf (DET-R6)` cases proving Send/Kick behavior for the provider itself                                                                                                    |
+| `openspec/changes/opencode-observer/specs/opencode-session-detection/spec.md` | Amended | Corrected the stale Kick clause in the DET-R6 scenario, stated out loud as an amendment                                                                                                                    |
+| `src/main/domain/launchProviders.test.ts`                                     | Amended | Renamed the OpenCode `NOT_LAUNCHABLE` case to state it is a pin (WARNING 4)                                                                                                                                |
+| `src/main/domain/launchProviders.ts`                                          | Amended | Rewrote the `NOT_LAUNCHABLE` doc comment to name OpenCode as the provider that reaches it (WARNING 5)                                                                                                      |
+
+### Status
+
+All five named items closed (SUGGESTIONs 1, 2, 3, 5; WARNINGs 4 and 5). No new CRITICAL, WARNING or
+GAP discovered besides the two deviations stated above, both resolved in this same batch.

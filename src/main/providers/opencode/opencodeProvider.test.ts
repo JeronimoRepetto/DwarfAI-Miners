@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../../adapters/fakeFs'
 import type { FsLike } from '../../adapters/fsLike'
@@ -135,6 +135,11 @@ describe('OpenCodeProvider.scan — discovery', () => {
     const provider = makeProvider({ fs: fake, sqlite })
     const [snapshot] = await provider.scan()
     expect(snapshot?.dwarfs.map((dwarf) => dwarf.id)).toEqual(['opencode:ses_a'])
+    // DET-R2 ("The measured store shape"): the `directory`-as-cwd half was
+    // proven at the state layer only (state.test.ts); pinned here too so the
+    // scan's own published snapshot carries it, normalised the same way
+    // opencodeProvider.ts itself normalises `session.cwd`.
+    expect(snapshot?.cwd).toBe(normalize('/home/j/Sample-Project'))
   })
 
   it('reports unknown attendance, as D4 and task 3.6 both state (#444)', async () => {
@@ -677,7 +682,16 @@ describe('OpenCodeProvider — feed', () => {
  * the session level, since it is a message-level fact).
  */
 describe('OpenCodeProvider — topology (D4)', () => {
-  it('ranks a child below the root and promotes the parent to foreman — the measured row-4 pair', async () => {
+  /*
+   * AMENDED (#453, WARNING 4): titled as a pin rather than as if it drove the
+   * implementation. It ran GREEN immediately, and mutation-testing confirmed
+   * why: the fixture's root has no `parentSessionId` of its own, so `roleOf`
+   * already answers 'foreman' from its `parentSessionId === undefined`
+   * branch alone — the `parentSessions` promotion this describe block is
+   * named for is never actually read here. See "promotes a middle-tier
+   * worker to foreman" below for the case that line is load-bearing for.
+   */
+  it('pins that a child ranks below the root and the parent shows foreman — the measured row-4 pair', async () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
@@ -758,5 +772,48 @@ describe('OpenCodeProvider — topology (D4)', () => {
     const second = (await provider.scan()).flatMap((s) => s.dwarfs)
     expect(second.map((d) => d.id)).toEqual(['opencode:ses_parent'])
     expect(second[0]?.role).toBe('foreman')
+  })
+
+  /*
+   * #453, WARNING 4. Every other case in this describe block has its root
+   * (foreman) session carrying NO `parentSessionId` of its own, so `roleOf`
+   * already returns `'foreman'` from its second branch alone and the
+   * `parentSessions` set built by the loop above (opencodeProvider.ts) never
+   * gets read for any of them — proven by mutation: removing that loop's one
+   * line left every one of those tests, and the whole file, GREEN. This is
+   * the one case that line actually decides: a session that is itself a
+   * CHILD (so it would otherwise be a plain 'worker') and is ALSO somebody
+   * else's parent — a middle tier D4 never wrote fixtures for until now.
+   */
+  it('promotes a middle-tier worker to foreman once it becomes a parent itself, without losing its own parentId', async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_root', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_mid',
+        directory: '/home/j/p',
+        parentId: 'ses_root',
+        timeUpdatedMs: NOW
+      })
+    )
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_leaf',
+        directory: '/home/j/p',
+        parentId: 'ses_mid',
+        timeUpdatedMs: NOW
+      })
+    )
+    const dwarfs = (await makeProvider({ fs: fake, sqlite }).scan()).flatMap((s) => s.dwarfs)
+    const mid = dwarfs.find((dwarf) => dwarf.id === 'opencode:ses_mid')
+    expect(mid?.role).toBe('foreman')
+    expect(mid?.parentId).toBe('opencode:ses_root')
   })
 })

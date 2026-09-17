@@ -163,9 +163,19 @@ level. `LAUNCHABLE_PROVIDERS` and `HELDABLE_PROVIDERS` MUST NOT gain `'opencode'
 
 #### Scenario: Panel offers actions for an observed OpenCode dwarf
 
+> **AMENDED 2026-09-17, stated out loud (#453).** The THEN clause below used to read "Send and
+> Kick are disabled with `NO_CHANNEL_REASON`" for both controls. Kick has not disabled itself for
+> want of a channel since #293, which predates this change: a null `capabilities.cancel` decides
+> WHICH kick to offer (dismiss the dwarf from the board) rather than whether to offer one at all —
+> see `DwarfCapabilities.cancel` and `kickAction` in `actionBar.ts`. `NO_CHANNEL_REASON` is a Chat
+> string; nothing in `kickAction` ever returns it. The scenario is corrected to what the action bar
+> actually does for an observed-only dwarf, rather than restate a refusal #293 already removed.
+
 - GIVEN an OpenCode dwarf on the board
 - WHEN the action bar resolves
-- THEN Send and Kick are disabled with `NO_CHANNEL_REASON`
+- THEN Send is disabled with `NO_CHANNEL_REASON`
+- AND Kick dismisses the dwarf from the board instead of interrupting a turn (or, mid-turn, is
+  itself disabled with the turn-in-progress reason — never with `NO_CHANNEL_REASON`)
 - AND nothing is spawned, focused or signalled
 
 #### Scenario: Add Panel shows OpenCode
