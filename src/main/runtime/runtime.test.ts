@@ -3540,6 +3540,14 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
    * The composer stays disabled, and that is the right behaviour with the
    * right reason at last: the queue is NOT widened to admit an exec thread,
    * because `codex exec` has exited by the time anything could drain one.
+   *
+   * AMENDED for #450 — the assertions are unchanged and the world they pin is
+   * narrower than it was. `execProvider` reports no channel at all, which is
+   * now the case of a thread the registry never recorded rather than of every
+   * exec thread: a registry row tagged `source='exec'` gains the
+   * 'codex-exec-resume' channel, and the launched dwarf's own two states are
+   * pinned in the #450 block at the end of this describe. The queue gate is
+   * still untouched, which is the part of this comment that has not moved.
    */
   it('offers a cancel and no send channel on the dwarf it launched', async () => {
     const { runtime } = await runtimeWithLaunch()
@@ -3556,6 +3564,13 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     })
   })
 
+  /*
+   * AMENDED for #450 — assertions unchanged, reachability narrowed. This is
+   * the race behind a composer that is already disabled, and it stays the
+   * right sentence for a launched dwarf whose thread nothing can resume. A
+   * dwarf whose provider DOES offer the resume never reaches it: the message
+   * is delivered instead, which the #450 block below pins.
+   */
   it('refuses a message for it with the launch shape as the reason, not the generic one', async () => {
     const { runtime } = await runtimeWithLaunch()
 
@@ -3716,6 +3731,171 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       log.mockRestore()
     }
   })
+
+  /* --- The launched session's way back in (#450) — appended ---------------- */
+
+  /**
+   * The same dwarf, once its thread turned out to be reachable after all.
+   *
+   * `codex exec resume <id> -` continues the very thread the opening launch
+   * wrote, so a session started here is no longer mute — and the two facts have
+   * to be kept in order, because a resume spawned while the opening turn is
+   * still running would be a SECOND codex process on one thread. Whatever Codex
+   * does with that, this panel must not be the thing that causes it.
+   */
+  describe('and resuming its thread once that process has gone', () => {
+    const CWD = MINE_PATH
+
+    /** The provider a real Codex is now: an exec thread answers with the resume. */
+    function resumableProvider(): Provider {
+      const base = execProvider()
+      return {
+        ...base,
+        textDelivery: (dwarfId: string) =>
+          dwarfId === DWARF_ID
+            ? { kind: 'codex-exec-resume' as const, threadId: THREAD_ID, cwd: CWD }
+            : null
+      }
+    }
+
+    function resumePort(overrides: Partial<Record<keyof TextDeliveryPort, unknown>> = {}) {
+      return {
+        sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+        relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+        sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+        resumeCodexThread: vi.fn().mockResolvedValue({ delivered: true }),
+        ...overrides
+      } as TextDeliveryPort
+    }
+
+    async function runtimeWithResumableLaunch(port: TextDeliveryPort = resumePort()) {
+      const handle = retained()
+      const launched = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(true)
+      })
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [resumableProvider()],
+        textDelivery: port,
+        launchedSessions: launched,
+        onMinesUpdated: vi.fn()
+      })
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: handle.process,
+        knownSessionIds: []
+      })
+      await runtime.refresh()
+      return { runtime, handle, port }
+    }
+
+    /**
+     * The launch wins while it lasts, and the ordering is the answer to the
+     * serialization question #450 raised: the opening turn is running, the one
+     * act that reaches it is ending it, and a resume started underneath it
+     * would open a second turn on the same thread.
+     */
+    it('keeps the launch’s exit and no composer while the opening turn is still running', async () => {
+      const { runtime } = await runtimeWithResumableLaunch()
+      const dwarf = runtime.getMines()[0]?.dwarfs[0]
+
+      expect(dwarf?.textDelivery).toBeUndefined()
+      expect(dwarf?.capabilities?.cancel).toBe('launched-process')
+      expect(dwarf?.capabilities?.sendText).toBeNull()
+    })
+
+    /**
+     * And it stops winning the moment the process exits — which is exactly when
+     * a person wants to reply. LaunchedSessionRegistry forgets a launch on its
+     * own exit handle, so nothing here has to be told.
+     */
+    it('hands the dwarf its composer once the opening process has exited', async () => {
+      const { runtime, handle } = await runtimeWithResumableLaunch()
+      handle.exit()
+      await runtime.refresh()
+      const dwarf = runtime.getMines()[0]?.dwarfs[0]
+
+      expect(dwarf?.textDelivery).toBe('codex-exec-resume')
+      expect(dwarf?.capabilities?.sendText).toBe('codex-exec-resume')
+      // No kick: the turn a resume starts runs in a process nothing here
+      // holds, and the one this panel did hold has exited.
+      expect(dwarf?.capabilities?.cancel).toBeNull()
+      // The message is stdin, so no command line bounds it (#437).
+      expect(dwarf?.capabilities?.maxTextChars).toBe(MAX_DWARF_TEXT_CHARS)
+    })
+
+    it('resumes the thread in its own folder, rather than refusing the message', async () => {
+      const { runtime, handle, port } = await runtimeWithResumableLaunch()
+      handle.exit()
+      await runtime.refresh()
+
+      await expect(
+        runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+      ).resolves.toEqual({ delivered: true, via: 'codex-exec-resume' })
+      expect(port.resumeCodexThread).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: 'run the tests'
+      })
+      expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+    })
+
+    /**
+     * A port with no resume tier says so, exactly as one with no queue tier
+     * does (NO_QUEUE_TIER): a stated refusal, never a silent no-op.
+     */
+    it('states the refusal when the port has no resume tier at all', async () => {
+      const { runtime, handle } = await runtimeWithResumableLaunch(
+        resumePort({ resumeCodexThread: undefined })
+      )
+      handle.exit()
+      await runtime.refresh()
+
+      const result = await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'run the tests',
+        pressEnter: true
+      })
+      expect(result.delivered).toBe(false)
+      expect(result.via).toBe('codex-exec-resume')
+      expect(result.error).toBeDefined()
+    })
+
+    /** A kick has nothing to end here, so it takes the dwarf off the board (#293). */
+    it('dismisses the dwarf rather than claiming an exit it does not have', async () => {
+      const { runtime, handle } = await runtimeWithResumableLaunch()
+      handle.exit()
+      await runtime.refresh()
+
+      await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+        delivered: true,
+        via: 'dismiss'
+      })
+    })
+
+    /** The privacy rule every delivery log holds: the length, never the words. */
+    it('logs the channel, the verdict and the length, and never the message', async () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+      try {
+        const { runtime, handle } = await runtimeWithResumableLaunch()
+        handle.exit()
+        await runtime.refresh()
+        await runtime.sendDwarfText({
+          dwarfId: DWARF_ID,
+          text: 'sk-do-not-log-this',
+          pressEnter: true
+        })
+        const lines = log.mock.calls.map((call) => String(call[0])).join('\n')
+        expect(lines).toContain('codex-exec-resume')
+        expect(lines).toContain('delivered (18 chars)')
+        expect(lines).not.toContain('sk-do-not-log-this')
+      } finally {
+        log.mockRestore()
+      }
+    })
+  })
+  /* --- end of the #450 block ----------------------------------------------- */
 })
 
 /*

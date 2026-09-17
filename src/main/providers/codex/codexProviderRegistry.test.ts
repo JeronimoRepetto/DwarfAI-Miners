@@ -492,6 +492,92 @@ describe('CodexProvider with the Codex SQLite registry', () => {
   })
 
   /**
+   * The second Codex channel, and the one the queue above deliberately does
+   * not become (#450).
+   *
+   * `codex exec [OPTIONS] resume <SESSION_ID> -` was measured continuing the
+   * SAME thread — same id, context intact, one registry row still tagged
+   * `source='exec'`. So the queue gate keeps refusing an exec thread, exactly
+   * as queue.ts argues it must, and this answers the other half of the row.
+   */
+  describe('textDelivery over a resumed codex exec thread (#450)', () => {
+    it('offers the resume to an exec-source thread, with the folder its turn runs in', async () => {
+      seedLiveThread({ source: 'exec', cliVersion: '0.153.4' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toEqual({
+        kind: 'codex-exec-resume',
+        threadId: LIVE_ID,
+        // The thread's OWN folder, normalized the way the snapshot's is: Codex
+        // declines to run outside a Git repository, and this app's own working
+        // directory is nothing anybody chose.
+        cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name'
+      })
+    })
+
+    /*
+     * The two gates are separate answers to two different questions, and this
+     * is what keeps them from collapsing into one: a thread somebody is sitting
+     * in front of is queued, never resumed — a resume would start a second turn
+     * underneath a session that is already taking them.
+     */
+    it('leaves a cli-source thread on the queue it already had, never the resume', async () => {
+      seedLiveThread({ source: 'cli', cliVersion: '0.153.4' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toEqual({
+        kind: 'codex-queue',
+        threadId: LIVE_ID
+      })
+    })
+
+    it('offers nothing to a desktop-app thread, which is neither', async () => {
+      seedLiveThread({ source: 'vscode', cliVersion: '0.153.4' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+
+    /*
+     * No version floor, unlike the queue (#97), and the difference is the
+     * failure shape rather than a lower evidence bar. A queue that accepts an
+     * item and never drains it exits 0 and loses the message in silence; a
+     * Codex with no `exec resume` refuses the argv and dies at once, which the
+     * delivery tier's start window reports as a failure a person can read.
+     */
+    it('offers the resume whatever build opened the thread, because a build without it fails loudly', async () => {
+      seedLiveThread({ source: 'exec', cliVersion: '0.140.0' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toMatchObject({
+        kind: 'codex-exec-resume'
+      })
+    })
+
+    it('offers nothing for a rollout the registry never recorded', async () => {
+      // The source tag is a REGISTRY fact, exactly as the queue's is: a rollout
+      // the registry never recorded proves nothing about the shape of the
+      // session that wrote it.
+      fake.addFile(LIVE_ROLLOUT, idleRollout(LIVE_ID), NOW - 30_000)
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+
+    it('stops offering the resume once the thread is gone from a later scan', async () => {
+      seedLiveThread({ source: 'exec', cliVersion: '0.153.4' })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).not.toBeNull()
+
+      fake.removeFile(LIVE_ROLLOUT)
+      sqlite.exec(STATE_DB, `UPDATE threads SET archived = 1 WHERE id = '${LIVE_ID}'`)
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+  })
+
+  /**
    * The other question the same registry row answers (#231).
    *
    * A headless `codex exec` run has no channel here and, once this app has

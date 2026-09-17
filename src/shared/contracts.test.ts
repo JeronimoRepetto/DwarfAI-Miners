@@ -846,13 +846,23 @@ describe('maxTextCharsFor', () => {
    * it. Every other endpoint — the relay included, since its instruction moved
    * to stdin — is bounded by the wire's sanity ceiling and by nothing nearer.
    */
+  /*
+   * AMENDED for #450: 'codex-exec-resume' joined the list.
+   *
+   * It is the second Codex channel and it is on the OTHER side of this split,
+   * which is the whole reason it had to be a separate channel: `codex exec
+   * resume <id> -` reads its prompt from stdin, so no command line bounds it
+   * and the queue's argv-derived ceiling would refuse a message this route can
+   * carry.
+   */
   it('gives every endpoint but the Codex queue the wire ceiling', () => {
     for (const channel of [
       'claude-relay',
       'foreman-relay',
       'held-session',
       'hosted-stdin',
-      'launched-process'
+      'launched-process',
+      'codex-exec-resume'
     ] as const) {
       expect(maxTextCharsFor(channel)).toBe(MAX_DWARF_TEXT_CHARS)
     }
@@ -881,6 +891,17 @@ describe('messageTooLongReason', () => {
 
   it('names a different carrier for a different channel', () => {
     expect(messageTooLongReason(20_000, MAX_DWARF_TEXT_CHARS, 'codex-queue')).toContain('queue')
+  })
+
+  /*
+   * #450. The two Codex channels are different acts against the same session
+   * and the refusal has to tell them apart, or a person reading it goes looking
+   * for a queue that was never involved.
+   */
+  it('tells the two Codex channels apart by what would have carried the message', () => {
+    const resumed = messageTooLongReason(20_000, MAX_DWARF_TEXT_CHARS, 'codex-exec-resume')
+    expect(resumed).toContain('Codex')
+    expect(resumed).not.toContain('queue')
   })
 
   it('says nothing was sent, because nothing was', () => {

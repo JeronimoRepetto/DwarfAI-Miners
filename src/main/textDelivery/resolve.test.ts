@@ -982,5 +982,70 @@ describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
     expect(MAX_CODEX_QUEUE_TEXT_CHARS).toBeLessThan(MAX_DWARF_TEXT_CHARS)
   })
   /* --- end of the #437 block ----------------------------------------------- */
+
+  /* --- The Codex resume channel (#450) — appended -------------------------- */
+
+  /**
+   * The third asymmetric channel, and the queue's mirror read the other way
+   * (#450). A `codex exec` thread has no process left to interrupt, so there is
+   * no cancel — but `codex exec resume <id> -` starts its next turn, so there
+   * IS a send. The matrix therefore carries a sendText without a cancel, which
+   * is the queue's shape arrived at from the opposite direction.
+   */
+  it('stamps the resume for sending and nothing for cancelling on an exec thread', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf({ id: 'codex:t1', provider: 'codex' })])],
+      targetsFrom({
+        'codex:t1': { kind: 'codex-exec-resume', threadId: 't1', cwd: 'C:\\work\\sample' }
+      })
+    )
+    expect(stamped?.dwarfs[0]?.textDelivery).toBe('codex-exec-resume')
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'codex-exec-resume',
+      cancel: null,
+      adjustEffort: null,
+      // The message is stdin and nothing else; no file was measured onto it.
+      attach: null,
+      // #437's split, taken the other way: this route's prompt is on stdin, so
+      // no command line bounds it and the queue's tighter number would refuse
+      // a message it can carry.
+      maxTextChars: MAX_DWARF_TEXT_CHARS
+    })
+  })
+  /* --- end of the #450 block ----------------------------------------------- */
 })
 /* --- end of the #431 block -------------------------------------------------- */
+
+/* --- The Codex resume channel (#450) — appended ------------------------------ */
+
+describe('resolving a resumed Codex thread (#450)', () => {
+  const TARGET: TextDeliveryTarget = {
+    kind: 'codex-exec-resume',
+    threadId: 't1',
+    cwd: 'C:\\work\\sample'
+  }
+
+  /**
+   * The folder travels WITH the endpoint rather than being looked up later:
+   * Codex declines to run outside a Git repository, and the working directory
+   * of a packaged app is nothing anybody chose.
+   */
+  it('resolves an exec thread to its resume endpoint, folder and all', () => {
+    expect(resolveTextDelivery('codex:t1', targetsFrom({ 'codex:t1': TARGET }))).toEqual({
+      channel: 'codex-exec-resume',
+      endpoint: TARGET,
+      prefix: ''
+    })
+  })
+
+  /**
+   * The send/kick split again, and for a reason of its own: the turn a resume
+   * starts runs in a process nothing on this board holds a handle to. The
+   * launch this panel DID hold was the opening turn's, and it has exited — so a
+   * kick routed here would have to invent a pid. The panel dismisses instead.
+   */
+  it('refuses to route a kick over it, because nothing here holds that process', () => {
+    expect(resolveKickDelivery('codex:t1', targetsFrom({ 'codex:t1': TARGET }))).toBeNull()
+  })
+})
+/* --- end of the #450 block --------------------------------------------------- */

@@ -605,4 +605,58 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
     await expect(launched.end(launchId)).resolves.toBe('ended')
     expect(endProcessTree).toHaveBeenCalledWith(4242)
   })
+
+  /* --- Whether a process is still running (#450) — appended ---------------- */
+
+  /**
+   * The narrower question one caller needs (#450): not "did this panel start
+   * it" but "is there a process to be careful about right now". A Codex thread
+   * can be continued with `codex exec resume`, and doing that while the opening
+   * process is still running would put two of them on one thread — so the
+   * runtime asks this, and asks `launchIdOfDwarf` for the exit as it always did.
+   */
+  describe('holdsRunningProcess', () => {
+    function bound() {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      const launchId = launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: []
+      })
+      launched.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+      return { launched, exiting, launchId }
+    }
+
+    it('says yes while the launch it claimed is still running', () => {
+      const { launched } = bound()
+      expect(launched.holdsRunningProcess('codex:thread-new')).toBe(true)
+    })
+
+    /*
+     * The exit handle is what answers, not a probe: libuv telling this process
+     * its child is gone is the one fact that cannot be a recycled pid.
+     */
+    it('says no once that process has exited, while the exit stays on offer', () => {
+      const { launched, exiting, launchId } = bound()
+      exiting.exit()
+      expect(launched.holdsRunningProcess('codex:thread-new')).toBe(false)
+      // Unchanged, and deliberately: "this panel started it" is still true, and
+      // an exit answering "already ended" is still the honest answer to give.
+      expect(launched.launchIdOfDwarf('codex:thread-new')).toBe(launchId)
+    })
+
+    it('says no once the panel has ended it itself', async () => {
+      const { launched, launchId } = bound()
+      await launched.end(launchId)
+      expect(launched.holdsRunningProcess('codex:thread-new')).toBe(false)
+    })
+
+    it('says no for a dwarf this panel never launched', () => {
+      const { launched } = bound()
+      expect(launched.holdsRunningProcess('codex:somebody-elses')).toBe(false)
+    })
+  })
+  /* --- end of the #450 block ----------------------------------------------- */
 })

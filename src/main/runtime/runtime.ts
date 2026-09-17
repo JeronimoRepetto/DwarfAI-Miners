@@ -231,6 +231,8 @@ const NO_SUCH_DWARF = 'That dwarf has left the mine.'
 const NO_CHANNEL = "This session type can't receive messages yet."
 const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
+/** The same refusal for the resume tier, which is optional on the port too (#450). */
+const NO_RESUME_TIER = "This build can't start a new turn on a Codex session."
 /**
  * A console the runtime resolved a message to, on a port with no message tier
  * (#319). It carries `neverStarted`, so the relay behind it takes the message:
@@ -2347,6 +2349,27 @@ export class AgentRuntime {
     for (const provider of this.providers) {
       const target = provider.textDelivery?.(dwarfId)
       if (target === undefined || target === null) continue
+      // Ownership once more, and the only place it outranks a channel a
+      // provider really does have (#450). A resume is a NEW `codex exec`
+      // process on a thread, so offering one while the OPENING process this
+      // panel launched is still running would put two of them on a single
+      // thread — whatever Codex makes of that, the panel must not be what
+      // causes it. So the launch keeps the dwarf for as long as its process
+      // RUNS, which is also the window in which ending it is the only act that
+      // reaches anything at all.
+      //
+      // `holdsRunningProcess` rather than `launchIdOfDwarf`, and the
+      // difference is the whole behaviour: this panel started that session for
+      // the rest of the run either way, and what matters here is whether there
+      // is still a process to be careful about. Once it exits, the dwarf
+      // trades an exit that can only answer "already ended" for a composer
+      // that works — which is the trade #450 is for. Scoped to this one kind
+      // rather than to the loop, and it has to be: every other
+      // channel a provider reports addresses a session rather than starting a
+      // process, and none of them can collide with a launch this way.
+      if (target.kind === 'codex-exec-resume' && this.launched.holdsRunningProcess(dwarfId)) {
+        break
+      }
       return target
     }
     // LAST, and deliberately: this is the channel of last resort (#217). It
@@ -2588,6 +2611,25 @@ export class AgentRuntime {
     const queue = this.textDelivery.queueToCodexThread
     if (queue === undefined) return { delivered: false, error: NO_QUEUE_TIER }
     return queue.call(this.textDelivery, { threadId, text })
+  }
+
+  /**
+   * The Codex resume tier, on the same terms as the queue above (#450): an
+   * optional port method, so a port without one states a refusal rather than
+   * quietly doing nothing.
+   *
+   * The folder comes off the endpoint rather than from this process, because
+   * Codex declines to run outside a Git repository and a packaged app's own
+   * working directory is nothing anybody chose.
+   */
+  private async resumeCodexThread(
+    threadId: string,
+    cwd: string,
+    text: string
+  ): Promise<TextDeliveryOutcome> {
+    const resume = this.textDelivery.resumeCodexThread
+    if (resume === undefined) return { delivered: false, error: NO_RESUME_TIER }
+    return resume.call(this.textDelivery, { threadId, cwd, text })
   }
 
   /**
@@ -3298,6 +3340,19 @@ export class AgentRuntime {
           // console line to leave unsent: the message is either handed over or
           // it is not, exactly as the relay tier already works.
           return timer.measure('spawn', () => this.queueToCodexThread(endpoint.threadId, payload))
+        }
+        if (endpoint.kind === 'codex-exec-resume') {
+          // 'spawn' beside the queue, and for a reason that is nearly the
+          // opposite of the queue's: this really does start a model turn, and
+          // the stage does NOT measure it. The tier answers once the process
+          // has taken the message on stdin and survived its start window,
+          // never at the turn's end — see codexResume.ts, which holds why.
+          //
+          // request.pressEnter is dropped, exactly as the queue and the relay
+          // drop it: there is no console line here to leave unsent.
+          return timer.measure('spawn', () =>
+            this.resumeCodexThread(endpoint.threadId, endpoint.cwd, payload)
+          )
         }
         return timer.measure('relay', () =>
           this.textDelivery.relayToClaudeSession({

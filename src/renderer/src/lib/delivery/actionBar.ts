@@ -66,19 +66,43 @@ const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
 }
 
 /**
- * Why a session this panel launched takes no messages — a fact about the
- * world, where the generic no-channel string reads as a bug (#217).
+ * What comes AFTER the launch, for the one CLI where something does (#450).
+ *
+ * Per provider and sparse rather than one sentence, on exactly the terms
+ * LAUNCH_COMMAND is per provider: this is evidence, and it was measured on
+ * Codex. `codex exec [OPTIONS] resume <SESSION_ID> -` continues the very same
+ * thread, so the panel offers the composer as soon as the opening process is
+ * gone (see the 'codex-exec-resume' channel). A CLI with no such route gets no
+ * clause, because a promise nobody measured is the kind this file exists not
+ * to make.
+ */
+const AFTER_THE_TURN: Partial<Record<DwarfProvider, string>> = {
+  codex: ' You can write to it again once that turn ends.'
+}
+
+/**
+ * Why a session this panel launched takes no messages RIGHT NOW — a fact about
+ * the world, where the generic no-channel string reads as a bug (#217).
  *
  * Both launch shapes are one prompt on stdin and one turn: the process exits
  * when it finishes, so there is no inbox to reach and no process left to read
  * one. Widening a queue to accept text for it would be worse than this
  * refusal — the composer would take the message and lose it. So the sentence
  * names the shape, and then names the one control that does do something.
+ *
+ * AMENDED for #450 (was: 'takes no messages: it reads one prompt and exits with
+ * its turn. Kick ends it.', full stop). Nothing in it was untrue and all of it
+ * read as permanent, which for Codex it is not: the THREAD that process writes
+ * can be continued, so this is now the refusal for as long as that process
+ * runs — the window in which ending it really is the only act that reaches
+ * anything — and it says what follows. The clause is per provider, because the
+ * fact behind it is.
  */
 export function launchedNoInboxReason(provider: DwarfProvider): string {
   return (
-    `A session launched with ${LAUNCH_COMMAND[provider]} takes no messages: ` +
-    'it reads one prompt and exits with its turn. Kick ends it.'
+    `A session launched with ${LAUNCH_COMMAND[provider]} takes no messages while its turn ` +
+    'runs: it read one prompt and exits when it finishes. Kick ends it.' +
+    (AFTER_THE_TURN[provider] ?? '')
   )
 }
 
@@ -95,6 +119,16 @@ export function launchedNoInboxReason(provider: DwarfProvider): string {
  *
  * One sentence for both controls, because one fact refuses both. Said plainly
  * rather than as a "not yet": nothing about this session is coming later.
+ *
+ * AMENDED for #450 — the sentence is unchanged and the set it describes has
+ * shrunk by one. Codex no longer reaches it: `oneShot` is stamped from a
+ * registry row tagged `source='exec'`, and that is the very row the resume
+ * channel is offered from, so such a dwarf always carries a `textDelivery` and
+ * `chatAction` returns before this is ever asked for. What is left is precisely
+ * what the parameter was always for — a one-shot run of a CLI with no route
+ * back into its session — and Codex is no longer one of them. The words are
+ * kept rather than narrowed because they stay true of that set, and rewriting
+ * copy nobody can currently see would be guessing at the next provider.
  */
 export function oneShotNoExitReason(provider: DwarfProvider): string {
   return (
@@ -142,7 +176,14 @@ export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   // that it kept the pipe instead of closing it. Says stdin rather than
   // "the session", because what is on the other end is the person's own
   // program and this app knows nothing about what it does with a line.
-  'hosted-stdin': 'Written onto the stdin of the process this panel is holding.'
+  'hosted-stdin': 'Written onto the stdin of the process this panel is holding.',
+  // The one channel whose act is STARTING a turn rather than handing a message
+  // to something already running (#450), and the sentence has to say so: a
+  // person who thinks the session is sitting there reading would not expect the
+  // reply to take as long as a turn does. Says "starts" rather than promising
+  // an answer — what a ✓ means here is still only that the turn began.
+  'codex-exec-resume':
+    'Starts the next turn on this Codex session, with your message as its prompt.'
 }
 
 /**
@@ -218,7 +259,14 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   // interrupt to offer: this app knows nothing about what somebody else's
   // program treats as one, and a byte it happened to accept would be the panel
   // guessing at another program's key bindings.
-  'hosted-stdin': 'Ends the process this panel is holding — the whole process, not the turn.'
+  'hosted-stdin': 'Ends the process this panel is holding — the whole process, not the turn.',
+  // Never a kick channel, and present because the map is total (#450). A resume
+  // starts its own process for its own turn and this panel never held it — the
+  // launch it did hold was the OPENING turn's, and that one has exited. So the
+  // honest thing is the dismissal beside it, and this line is only ever read if
+  // something routes a kick here by mistake.
+  'codex-exec-resume':
+    "Nothing: the turn a resume starts runs in its own process, which this panel doesn't hold."
 }
 
 /**
