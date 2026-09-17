@@ -94,7 +94,10 @@ export const PRODUCT_NAME: Readonly<Record<DwarfProvider, string>> = {
   // Reachable since #237 step 4: a detached Antigravity launch runs through
   // the same engine, and a refusal — not installed, could not be started —
   // must name the product, not its `agy` executable.
-  antigravity: 'Antigravity CLI'
+  antigravity: 'Antigravity CLI',
+  // #444. Observed only — this name reaches the panel through NOT_LAUNCHABLE
+  // and nothing else, since OpenCode never reaches a launch attempt.
+  opencode: 'OpenCode'
 }
 
 /** That name inside the one sentence both launch engines say about a missing CLI. */

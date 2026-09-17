@@ -9,6 +9,7 @@ import {
 } from '../projects/projectsStore'
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
 import type { PlatformAdapters } from '../platform/platformAdapters'
+import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
@@ -5214,6 +5215,57 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     expect('model' in launchSession.mock.calls[0]![0]).toBe(false)
     expect('effort' in launchSession.mock.calls[0]![0]).toBe(false)
   })
+
+  /*
+   * Issue #444. Unlike every other test in this block, `launchSession` is
+   * NOT overridden here — the point is to exercise the runtime's own DEFAULT
+   * composition (launchClaudeSession + platform.cliDetector), so the gate
+   * `launchRunner.ts` gained is proven through the real path a crafted IPC
+   * request would actually take, not against a seam only the test can see.
+   */
+  it('refuses to launch OpenCode before ever probing its own detector', async () => {
+    const cliDetector = {
+      detect: vi.fn().mockResolvedValue({ cli: 'opencode', installed: true, path: '/opt/opencode' }),
+      peek: vi.fn().mockReturnValue('unprobed')
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      platformAdapters: {
+        platform: 'linux',
+        focusPid: vi.fn().mockResolvedValue(false),
+        launchTranscriptViewer: vi.fn().mockResolvedValue(false),
+        viewerScriptPath: '/viewer.mjs',
+        textDelivery: {
+          sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+          relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+          sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+        },
+        processProbe: {
+          isCodexProcessRunning: vi.fn().mockResolvedValue(false),
+          processStartTimeMs: vi.fn().mockResolvedValue(undefined)
+        },
+        processEnd: {
+          endProcessTree: vi.fn().mockResolvedValue(false),
+          terminateProcess: vi.fn().mockResolvedValue(false),
+          killProcess: vi.fn().mockResolvedValue(false)
+        },
+        cliDetector
+      } as unknown as PlatformAdapters,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
+    ).resolves.toEqual({
+      launched: false,
+      provider: 'opencode',
+      error: NOT_LAUNCHABLE
+    })
+    expect(cliDetector.detect).not.toHaveBeenCalledWith('opencode')
+  })
 })
 
 /*
@@ -7955,8 +8007,16 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
   }
 
   it('answers one entry per provider, in DWARF_PROVIDERS order', async () => {
+    // AMENDED for #444 (was: ['claude', 'codex', 'antigravity']). OpenCode
+    // joined DWARF_PROVIDERS and listAgentModels answers a fourth, unasked
+    // entry for it — source: 'none', because no launch can ever reach it.
     const list = await runtimeWith({ claudeInstalled: false }).listAgentModels()
-    expect(list.catalogs.map((entry) => entry.provider)).toEqual(['claude', 'codex', 'antigravity'])
+    expect(list.catalogs.map((entry) => entry.provider)).toEqual([
+      'claude',
+      'codex',
+      'antigravity',
+      'opencode'
+    ])
   })
 
   it("asks the SDK for Claude's own live models when the CLI is installed", async () => {
@@ -8013,7 +8073,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     })
     // Codex and Antigravity still answer: one provider's failure never
     // silences the other two.
-    expect(list.catalogs).toHaveLength(3)
+    // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
+    // the answer, so the count these cases pin grew from 3 to 4.
+    expect(list.catalogs).toHaveLength(4)
     warn.mockRestore()
   })
 
@@ -8044,7 +8106,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         source: 'none'
       })
-      expect(list.catalogs).toHaveLength(3)
+      // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
+    // the answer, so the count these cases pin grew from 3 to 4.
+    expect(list.catalogs).toHaveLength(4)
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
     } finally {
@@ -8081,7 +8145,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
       efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       source: 'history'
     })
-    expect(list.catalogs).toHaveLength(3)
+    // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
+    // the answer, so the count these cases pin grew from 3 to 4.
+    expect(list.catalogs).toHaveLength(4)
     warn.mockRestore()
   })
 
@@ -8165,7 +8231,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     })
     // Claude and Codex still answer: one provider's failure never silences
     // the other two.
-    expect(list.catalogs).toHaveLength(3)
+    // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
+    // the answer, so the count these cases pin grew from 3 to 4.
+    expect(list.catalogs).toHaveLength(4)
     warn.mockRestore()
   })
 
@@ -8192,7 +8260,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
         efforts: ['low', 'medium', 'high'],
         source: 'none'
       })
-      expect(list.catalogs).toHaveLength(3)
+      // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
+    // the answer, so the count these cases pin grew from 3 to 4.
+    expect(list.catalogs).toHaveLength(4)
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
     } finally {

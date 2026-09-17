@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
+import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
@@ -163,6 +164,27 @@ describe('launchClaudeSession', () => {
       launched: false,
       provider: 'none',
       error: 'Type a prompt first.'
+    })
+    expect(run).not.toHaveBeenCalled()
+    expect(cli.detect).not.toHaveBeenCalled()
+  })
+
+  /*
+   * Issue #444. The gate `launchRunner.ts` lacked entirely: `parseLaunchRequest`
+   * admits any `isDwarfProvider`, and until this gate a crafted request for a
+   * non-launchable provider reached `buildLaunchArgs` inside a try. Cheapest
+   * refusal first (the function's own `:609` order) — LAUNCHABLE_PROVIDERS is
+   * checked BEFORE `detector.detect`, so an unlaunchable provider costs no
+   * disk probe either, exactly as an empty prompt costs none above.
+   */
+  it('refuses OpenCode before ever probing the disk for it', async () => {
+    const cli = detector({ cli: 'opencode', installed: true, path: '/opt/opencode/opencode' })
+    const { run, result } = launch({ provider: 'opencode', cli })
+
+    await expect(result).resolves.toEqual({
+      launched: false,
+      provider: 'opencode',
+      error: NOT_LAUNCHABLE
     })
     expect(run).not.toHaveBeenCalled()
     expect(cli.detect).not.toHaveBeenCalled()

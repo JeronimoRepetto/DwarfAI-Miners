@@ -6,6 +6,7 @@ import type { PlatformAdapters } from '../platform/platformAdapters'
 import { AntigravityProvider } from './antigravity/antigravityProvider'
 import { ClaudeProvider } from './claude/claudeProvider'
 import { CodexProvider } from './codex/codexProvider'
+import { OpenCodeProvider } from './opencode/opencodeProvider'
 import type { Provider } from './provider'
 
 /**
@@ -146,6 +147,16 @@ export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
       busyWindowS: config.providers.antigravity.busyWindowS,
       lockGraceS: config.providers.antigravity.lockGraceS,
       staleLockWindowS: config.providers.antigravity.staleLockWindowS
+    }),
+
+  // The plainest row so far (#444): one setting, no platform, no probe, no
+  // held-session lookup. opencode.db is the single source; there is no path
+  // set to fold for any OS, so no Platform is taken either.
+  opencode: ({ config, fs, sqlite, expandPath }) =>
+    new OpenCodeProvider({
+      fs,
+      sqlite,
+      storeRoot: expandPath(config.providers.opencode.storeRoot)
     })
 }
 

@@ -4,7 +4,7 @@ import { closeSync, fstatSync, openSync, readSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
-import { PRODUCT_NAME, notInstalledReason } from '../domain/launchProviders'
+import { LAUNCHABLE_PROVIDERS, NOT_LAUNCHABLE, PRODUCT_NAME, notInstalledReason } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
 import { resolveProgram, type CliDetector } from '../platform/cliDetection'
@@ -608,6 +608,15 @@ export async function launchClaudeSession(
   const prompt = prepareLaunchPrompt(options.prompt)
   // Cheapest refusal first, so an empty box never costs a disk probe.
   if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
+
+  // #444. `parseLaunchRequest` admits any `isDwarfProvider`, and until this
+  // gate a crafted request for a non-launchable provider (OpenCode observes
+  // opencode.db and has no launch invocation this app has measured) reached
+  // buildLaunchArgs inside the try below. Checked before detection — the
+  // gate is absent for every non-launchable provider, not only OpenCode.
+  if (!LAUNCHABLE_PROVIDERS.includes(options.provider)) {
+    return { launched: false, provider: options.provider, error: NOT_LAUNCHABLE }
+  }
 
   const detection = await options.detector.detect(options.provider)
   if (!detection.installed || detection.path === undefined) {

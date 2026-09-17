@@ -191,3 +191,12 @@ export function antigravityModelCatalog(
 export function unavailableAntigravityModelCatalog(): AgentModelCatalog {
   return { provider: 'antigravity', models: [], efforts: effortsFor('antigravity'), source: 'none' }
 }
+
+/**
+ * OpenCode's catalogue (#444) — always `source: 'none'`, unasked: it has no
+ * live model-list command this app has measured and no launch could ever
+ * carry a chosen model, so there is nothing to ask for and nothing to offer.
+ */
+export function unavailableOpenCodeModelCatalog(): AgentModelCatalog {
+  return { provider: 'opencode', models: [], efforts: effortsFor('opencode'), source: 'none' }
+}

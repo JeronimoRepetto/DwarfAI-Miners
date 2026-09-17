@@ -4,7 +4,8 @@ import {
   claudeModelCatalog,
   codexModelCatalog,
   unavailableAntigravityModelCatalog,
-  unavailableClaudeModelCatalog
+  unavailableClaudeModelCatalog,
+  unavailableOpenCodeModelCatalog
 } from './agentModelCatalog'
 
 describe('claudeModelCatalog (#239)', () => {
@@ -243,6 +244,23 @@ describe('unavailableAntigravityModelCatalog (#282)', () => {
       provider: 'antigravity',
       models: [],
       efforts: ['low', 'medium', 'high'],
+      source: 'none'
+    })
+  })
+})
+
+/*
+ * Issue #444. OpenCode has no live model-list command this app has measured,
+ * so its catalogue is always `source: 'none'` with no effort levels — the
+ * same answer PROVIDER_EFFORT_LEVELS.opencode gives, because no launch can
+ * ever reach it to offer one.
+ */
+describe('unavailableOpenCodeModelCatalog (#444)', () => {
+  it('answers source: none with no models and no effort levels', () => {
+    expect(unavailableOpenCodeModelCatalog()).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: [],
       source: 'none'
     })
   })

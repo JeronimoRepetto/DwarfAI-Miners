@@ -45,6 +45,12 @@ describe('defaultConfig', () => {
           busyWindowS: 120,
           lockGraceS: 30,
           staleLockWindowS: 86_400
+        },
+        // AMENDED for #444 (was: no opencode block). One setting: the store
+        // root is OS-invariant, so there is no window and no per-OS branch.
+        opencode: {
+          cliPath: '',
+          storeRoot: '~/.local/share/opencode'
         }
       }
     })
@@ -171,6 +177,39 @@ describe('per-provider settings blocks', () => {
 
   it('fails fast on an Antigravity window that is not a positive integer', () => {
     expect(() => loadConfig({ ANTIGRAVITY_LOCK_GRACE_S: '0' })).toThrow(/ANTIGRAVITY_LOCK_GRACE_S/)
+  })
+
+  /*
+   * Issue #444. The fourth block, and the plainest: one setting, no window —
+   * OpenCode's store is a database this provider reads and nothing else.
+   */
+  it('reads the OpenCode block from its own documented variable names', () => {
+    const config = loadConfig({
+      OPENCODE_STORE_ROOT: '~/custom/opencode',
+      OPENCODE_CLI_PATH: '/opt/opencode/opencode'
+    })
+    expect(config.providers.opencode).toEqual({
+      cliPath: '/opt/opencode/opencode',
+      storeRoot: '~/custom/opencode'
+    })
+  })
+
+  it('falls through to the default when OPENCODE_STORE_ROOT is blank rather than past it', () => {
+    expect(loadConfig({ OPENCODE_STORE_ROOT: '   ' }).providers.opencode.storeRoot).toBe(
+      '~/.local/share/opencode'
+    )
+  })
+
+  /*
+   * D6 / the detection spec's own requirement: the default's SHAPE never
+   * branches on the host OS. There is no Platform parameter anywhere in
+   * readOpenCodeConfig or defaultConfig to vary in the first place, so the
+   * same fixed string is what every host reads, and process.platform is
+   * never consulted to build it.
+   */
+  it('defaults the OpenCode store to the same OS-invariant path, whatever the host', () => {
+    expect(defaultConfig().providers.opencode.storeRoot).toBe('~/.local/share/opencode')
+    expect(loadConfig({}).providers.opencode.storeRoot).toBe('~/.local/share/opencode')
   })
 })
 

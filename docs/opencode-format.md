@@ -140,6 +140,15 @@ all, since it reads the store directly.
 | `transcriptPath` | Always `undefined` — there is no per-session file to tail (Row 2).                                                          |
 | `tokensObserved` | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                           |
 
+## Poll cost
+
+`readOpenCodeEventSeqs` (`MAX(seq) GROUP BY aggregate_id` over `event`) is wrapped in
+`pollProfiler.measureSync('opencode.eventSeqs', ...)` (`DWARFAI_PERF=1`), because it is a full scan
+of the `event` table even though it rides the unique `(aggregate_id, seq)` index as a covering scan.
+No regression has been measured on a real store yet — this is instrumentation, not a narrowed
+query. If that stage's own line grows unbounded on a store that has run for months, the fallback is
+`WHERE aggregate_id IN (…live ids…)`, narrowing the scan to sessions this poll already found.
+
 ## Negative results, stated plainly
 
 - No `storage/` JSON tree on this build (Row 1).

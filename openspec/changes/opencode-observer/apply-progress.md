@@ -8,7 +8,7 @@ merge into it, never overwrite it, on a later apply run.
 
 ## Status
 
-49 tasks total. **23/49 done** (PR 1 and PR 2 complete). PR 3, PR 4 remain.
+49 tasks total. **43/49 done** (PR 1, PR 2, PR 3 complete). PR 4 remains (documentation rows only).
 
 ## TDD Cycle Evidence
 
@@ -20,6 +20,16 @@ merge into it, never overwrite it, on a later apply run.
 | 2.5/2.6 `parse.ts` part+feed half | Appended part/feed describe blocks; red — `parseOpenCodePartData`/`openCodeFeedRows`/`lastAssistantText`/row types missing | `parseOpenCodePartData`, `openCodeFeedRows`, `lastAssistantText` — 25/25 pass (whole file) | `permissionSummary.ts`'s `TOOL_ACTIVITY_KINDS` gained one entry (`glob: 'search'`) so a tool part can produce a line at all — see deviation note in tasks.md 2.6 | |
 | 2.7/2.8 `state.ts` + `stateSeed.ts` | `state.test.ts` against `MemorySqlite`; red — `Cannot find module './state'` | `readOpenCodeSessions`, `readOpenCodeEventSeqs`, `readOpenCodeNewestAssistant`, `readOpenCodeMessages` — 13/13 pass | Two fixes mid-GREEN: (a) test fixtures needed a `session` row inserted first — `message`/`part` carry real FK constraints `node:sqlite` enforces; (b) `readOpenCodeMessages` reads DESC+LIMIT for the newest N then reverses to the ascending `time_created, id` order the design and the test both expect | |
 | 2.9/2.10 `feedWindow.ts` export | Appended `cursorIndex` describe block to `feedWindow.test.ts`; red — `cursorIndex is not a function` | Added `export` to the already-standalone `cursorIndex` — 57/57 pass (whole file) | none needed | |
+| 3.1/3.2 `contracts.ts` | Amended `contracts.test.ts:62`'s pinned array; red — expected 4 entries, got 3 | Added `'opencode'` to `DWARF_PROVIDERS` — 170/171 pass, only the amended assertion moved | none needed | |
+| 3.3/3.4 `config.ts` | Appended `config.test.ts`/`configFile.test.ts` cases; red — `providers.opencode` undefined | `OpenCodeConfig`, `readOpenCodeConfig`, `defaultConfig`/`loadConfig` entries — 114/114 pass | none needed | |
+| 3.5/3.6 `opencodeProvider.ts` scan/D3 | New `opencodeProvider.test.ts` (discovery+liveness+retention+#12); red — module missing | `OpenCodeProvider.scan()` — 14/14 pass first GREEN pass, then a barrel-omission fix (below) | Discovered `dwarfSilenceWindowMs` was never re-exported by `main/domain/types.ts` (only `dwarfSilenceWindowKey` was) — added it, a pre-existing barrel gap no main-process file had needed until now | |
+| 3.7/3.8 `opencodeProvider.ts` feed | Appended feed describe block; red — 4/20 failing (lastMessage, feedPage missing, redaction marker) | `feed`/`feedPage`/`lastMessage` wired over `state.ts`+`parse.ts`+`feedWindow.ts` — 20/20 pass | Fixed one wrong test literal (`'REDACTED'` → `'[redacted]'`, the real `REDACTED` constant) | |
+| 3.9/3.10 topology | Appended topology describe block (measured row-4 fixture pair + 3 more cases); ran GREEN immediately | N/A — logic already correct from 3.6's single-pass `parentSessions` population | Confirms the single-pass design (all sessions read in one query) needed no separate "post-scan promotion" pass, unlike Codex's incremental discovery | |
+| 3.11/3.12 registry row | New `opencodeProviderRegistry.test.ts`; red — `PROVIDER_REGISTRY.opencode is not a function` | Added the registry row — 9/9 pass (registry.test.ts + new file) | Fixed a stale-clock test bug (session row needs `timeUpdatedMs` near `Date.now()` since the registry-built provider uses the real clock) | |
+| 3.13 pathPortability pin | Appended OpenCode path case; ran GREEN immediately (builders already correct) | N/A | none needed | |
+| 3.14/3.15 compile-site arms | Appended cases to `launch.test.ts`, `launchProviders.test.ts`, `launchTuning.test.ts`; red — 2 failing (undefined effort levels, no throw) | `PRODUCT_NAME.opencode`, `PROVIDER_EFFORT_LEVELS.opencode: []`, `buildLaunchArgs`'s refusing arm, `actionBar.ts`'s `LAUNCH_COMMAND.opencode` — 70/70 pass | `launchProviders.test.ts`'s "installed && !launchable" case passed even before the GREEN step, since `agentProviderList` was already generic over `DWARF_PROVIDERS`/`LAUNCHABLE_PROVIDERS` | |
+| 3.16/3.17 launch gate | Appended to `launchRunner.test.ts` and `runtime.test.ts`; red — both failing (no gate, wrong error text) | `LAUNCHABLE_PROVIDERS.includes(provider)` gate before `detector.detect` in `launchClaudeSession` — 57/57 and 376/376 pass | none needed | |
+| 3.18/3.19 model catalogue | Appended `agentModelCatalog.test.ts` case, amended `runtime.test.ts`'s order + 5 length assertions; red — 1 failing (function missing) | `unavailableOpenCodeModelCatalog()` + `runtime.ts`'s 4th catalogue entry — 395/395 pass | none needed | |
 
 ## Work Unit Evidence — PR 2
 
@@ -43,6 +53,39 @@ net +45 across 4 file(s).
 
 No file lost test statements.
 ```
+
+## Work Unit Evidence — PR 3
+
+| Evidence | Value |
+| --- | --- |
+| Focused test command and exact result | `pnpm test src/main src/shared` — 267 files / 7135 passed, 5 skipped (full suite; PR 3 touches too many cross-cutting files for a narrower command to be meaningful) |
+| Runtime harness command/scenario and exact result | N/A this apply session — no live `npx opencode-ai` install/run available in this sandbox. `pnpm build` succeeded (electron-vite build, 923ms); a real `npx opencode-ai` turn + `pnpm dev` check is left for the maintainer/verify phase per the design's own runtime-harness column |
+| Rollback boundary | The contract arm (`contracts.ts:135`+test), `config.ts`'s `OpenCodeConfig` block, `src/main/providers/opencode/{opencodeProvider,opencodeProviderRegistry}.ts(.test.ts)`, `registry.ts`'s row, the six compile/gate sites (`launchProviders.ts`, `launchTuning.ts`, `launch.ts`, `actionBar.ts`, `launchRunner.ts`, `agentModelCatalog.ts`+`runtime.ts`), and `permissionSummary.ts`'s one added table entry — revert this slice's commit(s) alone |
+
+Test census (`node skills/test-safety/assets/test-census.mjs`), run against HEAD (the PR 2 commit):
+
+```
+file                                                          before   after  delta
+------------------------------------------------------------------------------------
+src/main/config/config.test.ts                                    56      59  +3
+src/main/config/configFile.test.ts                                28      30  +2
+src/main/domain/agentModelCatalog.test.ts                         18      19  +1
+src/main/domain/launchProviders.test.ts                           11      13  +2
+src/main/domain/launchTuning.test.ts                              20      21  +1
+src/main/providers/opencode/opencodeProvider.test.ts               0      25  +25  (new file)
+src/main/providers/opencode/opencodeProviderRegistry.test.ts       0       3  +3  (new file)
+src/main/providers/pathPortability.test.ts                         6       8  +2
+src/main/runtime/runtime.test.ts                                 377     378  +1
+src/main/sessionLaunch/launch.test.ts                             35      36  +1
+src/main/sessionLaunch/launchRunner.test.ts                       57      58  +1
+src/shared/contracts.test.ts                                      94      94  0
+
+net +42 across 12 file(s).
+
+No file lost test statements.
+```
+
+Full seven-check run for PR 3: typecheck (node+web) clean; lint clean; format:check clean on every touched source file (pre-existing openspec planning docs still excluded, see PR 1 risk note); skill-sync --check clean; `pnpm test` 7135 passed / 5 skipped; `pnpm build` succeeded. Privacy guard: same as PR 1/PR 2, manually reviewed (no real paths/usernames/hostnames introduced — all fixtures and test data use placeholders already established).
 
 ## Work Unit Evidence — PR 1
 
@@ -77,7 +120,10 @@ No file lost test statements.
 - Pre-existing openspec planning artifacts from earlier SDD phases fail `prettier --check` (see 1.12 above). Not fixed here; flagged for whoever finalizes/archives this change, since reformatting another phase's content is outside apply's assigned task surface.
 - Privacy guard could not be run with the real CI pattern locally (secret-gated); relied on manual placeholder review per `skills/privacy-guard/SKILL.md`.
 - The `permissionSummary.ts` deviation above touches a file every provider's feed shares; its own test file (`permissionSummary.test.ts`) was re-run and is unaffected (existing assertions untouched, no new case added there since the OpenCode coverage lives in `opencode/parse.test.ts`).
+- PR 3 deviation: `main/domain/types.ts` (the main-process barrel) did not re-export the `dwarfSilenceWindowMs` function — only `dwarfSilenceWindowKey` and `DWARF_SILENCE_WINDOW_MS` were re-exported, and only the renderer barrel had the function. This is a pre-existing gap (no main-process provider needed it before OpenCode), fixed by adding the one missing re-export line, following the exact AGENTS.md convention for barrel omissions. Called out per the apply skill's deviation rule even though it is a fix rather than new content.
+- No live `npx opencode-ai` install was available in this apply session to exercise the design's own runtime harness ("`npx opencode-ai` one turn in a project folder, `pnpm dev`: dwarf appears, works, rests, leaves"). All behavior is proven against the measured fixtures (`measurements-2026-09-17.md`) and `MemorySqlite`/`FakeFs`; a real end-to-end check is recommended before/during `sdd-verify` or by the maintainer directly.
+- Maintainer questions still open per design's Open Questions: row 3 residue (interactive TUI vs `opencode run` writing `session_message`/`session_input` — treated as closed per the addendum in `measurements-2026-09-17.md`), `tokensObserved`/ore (Q3, deliberately omitted in this slice), and the `readOpenCodeEventSeqs` poll-cost narrowing (instrumented only, not narrowed — see 3.20).
 
 ## Remaining tasks
 
-PR 3 (3.1–3.21), PR 4 (4.1–4.6) — 26 tasks remain.
+PR 4 (4.1–4.6) — 6 tasks remain (documentation rows only, no code).

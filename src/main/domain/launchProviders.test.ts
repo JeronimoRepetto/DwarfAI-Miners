@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { DWARF_PROVIDERS, type DwarfProvider } from './types'
-import { LAUNCHABLE_PROVIDERS, agentProviderList, type CliPresence } from './launchProviders'
+import {
+  LAUNCHABLE_PROVIDERS,
+  NOT_LAUNCHABLE,
+  agentProviderList,
+  type CliPresence
+} from './launchProviders'
 
 // AMENDED for #237 (was: 'claude' | 'codex'). Widened to the provider table
 // itself so an observer-only identity can be handed in as a detection.
@@ -15,16 +20,17 @@ describe('agentProviderList', () => {
   it('reports every known provider, found or not, so nothing is silently omitted', () => {
     const list = agentProviderList([found('claude'), missing('codex', 'not on PATH')])
 
-    // AMENDED for #237 (was: ['claude', 'codex'] / [true, false]). The list is
-    // ordered by DWARF_PROVIDERS, so an observer-only provider joins it the
-    // moment its identity exists — reported absent here, because this call
-    // handed in no detection for it.
+    // AMENDED for #444 (was: ['claude', 'codex', 'antigravity'] /
+    // [true, false, false]). OpenCode joined DWARF_PROVIDERS, so the list this
+    // helper builds off it grows by one row — reported absent here, because
+    // this call handed in no detection for it.
     expect(list.providers.map((entry) => entry.provider)).toEqual([
       'claude',
       'codex',
-      'antigravity'
+      'antigravity',
+      'opencode'
     ])
-    expect(list.providers.map((entry) => entry.installed)).toEqual([true, false, false])
+    expect(list.providers.map((entry) => entry.installed)).toEqual([true, false, false, false])
   })
 
   it('marks a detected provider the engine can start as launchable, with no reason', () => {
@@ -129,5 +135,31 @@ describe('agentProviderList', () => {
 
     expect(codex?.installed).toBe(false)
     expect(codex?.launchable).toBe(false)
+  })
+
+  /*
+   * Issue #444. OpenCode reads opencode.db only; the launch chip therefore
+   * behaves for it exactly the way this constant was originally written to
+   * describe — installed, but not launchable, with the fixed refusal copy —
+   * the case NOT_LAUNCHABLE had no real provider left to prove itself
+   * against once #237 gave Antigravity a launch path.
+   */
+  it('marks a detected OpenCode installed but not launchable, with NOT_LAUNCHABLE as its reason', () => {
+    const [, , , opencode] = agentProviderList([found('opencode')]).providers
+
+    expect(opencode).toEqual({
+      provider: 'opencode',
+      installed: true,
+      launchable: false,
+      reason: NOT_LAUNCHABLE
+    })
+  })
+
+  it('offers no refusal copy for an OpenCode nobody has installed', () => {
+    const [, , , opencode] = agentProviderList([missing('opencode', 'nowhere')]).providers
+
+    expect(opencode?.installed).toBe(false)
+    expect(opencode?.launchable).toBe(false)
+    expect(opencode?.reason).toBeUndefined()
   })
 })

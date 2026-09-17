@@ -132,6 +132,24 @@ describe('withConfigFileFallback', () => {
     expect(config.hooksPort).toBe(defaultConfig().hooksPort) // default
   })
 
+  /*
+   * Issue #444. OPENCODE_STORE_ROOT is reachable through the userData config
+   * file exactly like every other provider setting (config-layering) — not
+   * only from a repo .env, which is what #38 exists to prevent recurring.
+   */
+  it('applies OPENCODE_STORE_ROOT from the file when the environment does not set it', () => {
+    const layered = withConfigFileFallback({}, { OPENCODE_STORE_ROOT: '~/custom/opencode' })
+    expect(loadConfig(layered).providers.opencode.storeRoot).toBe('~/custom/opencode')
+  })
+
+  it('lets a real OPENCODE_STORE_ROOT environment variable win over the file', () => {
+    const layered = withConfigFileFallback(
+      { OPENCODE_STORE_ROOT: '~/from-env/opencode' },
+      { OPENCODE_STORE_ROOT: '~/from-file/opencode' }
+    )
+    expect(loadConfig(layered).providers.opencode.storeRoot).toBe('~/from-env/opencode')
+  })
+
   it('still resolves keys the file never mentions', () => {
     const layered = withConfigFileFallback({ HOOKS_PORT: '51000' }, { POLL_INTERVAL_MS: '5000' })
     expect(loadConfig(layered).hooksPort).toBe(51000)

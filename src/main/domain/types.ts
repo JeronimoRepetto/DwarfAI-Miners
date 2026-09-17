@@ -149,6 +149,7 @@ export {
   WINDOWS_COMMAND_LINE_LIMIT,
   clampAudioVolume,
   dwarfSilenceWindowKey,
+  dwarfSilenceWindowMs,
   isDwarfProvider,
   isHeldPermissionMode,
   isMcpConnectionStatus,
