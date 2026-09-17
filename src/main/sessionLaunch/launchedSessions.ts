@@ -416,6 +416,30 @@ export class LaunchedSessionRegistry {
   }
 
   /**
+   * Whether this panel is still holding a RUNNING process for `dwarfId` (#450).
+   *
+   * A narrower question than the one above, and the two are deliberately not
+   * the same. `launchIdOfDwarf` answers "did this panel start it", which stays
+   * true for the rest of the run: that is what the EXIT is offered from, and an
+   * exit answering "that session has already ended" is still the honest answer
+   * to give. This answers "is there a process to be careful about right now",
+   * which is what a caller about to START another one needs — a Codex thread
+   * can be continued with `codex exec resume`, and doing that while the opening
+   * process is still running would put two of them on one thread.
+   *
+   * Read off the exit handle rather than from a probe, for the reason the kill
+   * guard is: libuv telling this process its child is gone cannot be a recycled
+   * pid. A RESTORED record has no such handle and reads as running, which is
+   * the right way round — startup proved that pid was still the process it
+   * started, and nothing since has said otherwise.
+   */
+  holdsRunningProcess(dwarfId: string): boolean {
+    const launchId = this.byDwarf.get(dwarfId)
+    if (launchId === undefined) return false
+    return this.records.get(launchId)?.gone === false
+  }
+
+  /**
    * End one launch's process tree.
    *
    * Never signals a launch already gone, and never claims success the platform

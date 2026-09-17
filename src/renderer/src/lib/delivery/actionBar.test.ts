@@ -440,6 +440,16 @@ describe('buildActionBar', () => {
    * app rather than the session in front of the reader. Both controls carry
    * the one sentence that is true of it, because both are refused by the same
    * fact.
+   *
+   * AMENDED for #450 — every assertion below is unchanged, and the dwarf they
+   * are made about is now a shape rather than a session anybody will meet. A
+   * Codex `oneShot` dwarf is stamped from the registry row the resume channel
+   * is offered from, so in the product it always carries a `textDelivery` and
+   * `chatAction` returns before `oneShotNoExitReason` is reached. What these
+   * pin is the copy itself and its per-provider correctness, which is what the
+   * next CLI with a one-shot run and no way back in will inherit; the world a
+   * Codex one-shot actually lands in now is pinned in the #450 block at the
+   * foot of this file.
    */
   describe('one-shot session this panel did not start', () => {
     function foreign(overrides: Partial<Dwarf> = {}): Dwarf {
@@ -892,3 +902,104 @@ describe('kick while a turn nothing here can interrupt is open (#305)', () => {
     expect(refusalLine(midTurn())).toBeNull()
   })
 })
+
+/* --- The Codex resume channel (#450) — appended ------------------------------ */
+
+/**
+ * A `codex exec` thread is no longer mute, and the copy around it had to stop
+ * saying that it is.
+ *
+ * `codex exec [OPTIONS] resume <SESSION_ID> -` was measured continuing the SAME
+ * thread — same id, context intact, one registry row still tagged
+ * `source='exec'`. Two sentences in this file described that session as having
+ * no inbox; one of them is now qualified, and the other has stopped being
+ * reachable for the provider it was written about.
+ */
+describe('a Codex thread continued with codex exec resume (#450)', () => {
+  function resumable(overrides: Partial<Dwarf> = {}): Dwarf {
+    return capableDwarf({
+      provider: 'codex',
+      oneShot: true,
+      textDelivery: 'codex-exec-resume',
+      capabilities: {
+        sendText: 'codex-exec-resume',
+        cancel: null,
+        adjustEffort: null,
+        attach: null
+      },
+      ...overrides
+    })
+  }
+
+  /**
+   * The composer opens, and #231's sentence does not appear: `oneShot` is still
+   * true of the session's SHAPE — one process, one prompt, one turn — and it no
+   * longer means there is no way back in.
+   */
+  it('enables chat on a one-shot thread, rather than refusing it for being one', () => {
+    const entry = entryFor('chat', resumable())
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(CHANNEL_HINT['codex-exec-resume'])
+    expect(entry.hint).not.toBe(oneShotNoExitReason('codex'))
+  })
+
+  /*
+   * The hint has to say what the act IS. A person who reads "sent to the
+   * session" expects a reply at conversation speed; what actually happens is
+   * that a whole turn starts, which takes as long as a turn takes.
+   */
+  it('says the message starts the next turn, rather than promising an inbox', () => {
+    expect(CHANNEL_HINT['codex-exec-resume']).toContain('next turn')
+    expect(CHANNEL_HINT['codex-exec-resume'].toLowerCase()).not.toContain('queue')
+  })
+
+  /*
+   * The panel has no exit to offer: the turn a resume starts runs in a process
+   * nothing here holds, and the launch this panel did hold was the opening
+   * turn's. So the kick is the dismissal, and it never claims otherwise.
+   */
+  it('offers the dismissal rather than an exit it does not have', () => {
+    const entry = entryFor('kick', resumable({ status: 'waiting' }))
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(DISMISS_HINT)
+  })
+
+  it('says nothing on the panel, because the composer works', () => {
+    expect(refusalLine(resumable())).toBeNull()
+  })
+
+  /**
+   * The launched sentence, qualified (#450). It used to read as permanent, and
+   * for Codex it no longer is — so the refusal is now about the process that is
+   * still running, and it says what comes after.
+   */
+  it('tells a Codex launch it can be written to once its turn ends', () => {
+    const hint = entryFor(
+      'chat',
+      resumable({
+        textDelivery: undefined,
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
+      })
+    ).hint
+    expect(hint).toBe(launchedNoInboxReason('codex'))
+    expect(hint).toContain('codex exec')
+    // The promise #217 made is kept: this session still has an exit here.
+    expect(hint).toContain('Kick ends it')
+    expect(hint).toContain('once that turn ends')
+  })
+
+  /*
+   * Evidence, never symmetry: the resume was measured on Codex and on nothing
+   * else, so no other CLI's launch is told it can be written to later.
+   */
+  it('promises no such thing for a CLI the resume was never measured on', () => {
+    expect(launchedNoInboxReason('claude')).not.toContain('once that turn ends')
+    expect(launchedNoInboxReason('antigravity')).not.toContain('once that turn ends')
+  })
+})
+/* --- end of the #450 block --------------------------------------------------- */

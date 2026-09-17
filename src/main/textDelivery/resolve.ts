@@ -270,10 +270,12 @@ function canCarryText(endpoint: TextDeliveryEndpoint): endpoint is SendEndpoint 
  * resolveKickDelivery and stampTextDelivery read it (#97). Duplicating it is
  * how the panel and the runtime would start disagreeing about the same dwarf.
  *
- * See KickEndpoint in port.ts for why the queue is excluded.
+ * See KickEndpoint in port.ts for why the queue and the resume are excluded —
+ * two Codex channels refused for two different reasons, which is why the
+ * exclusion is a list rather than one rule about Codex.
  */
 function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint {
-  return endpoint.kind !== 'codex-queue'
+  return endpoint.kind !== 'codex-queue' && endpoint.kind !== 'codex-exec-resume'
 }
 
 /**
