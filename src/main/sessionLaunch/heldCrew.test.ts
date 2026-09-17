@@ -170,6 +170,85 @@ describe('HeldCrew', () => {
     const crew = crewOf(started('a2', { spawnDepth: 2 }))
     expect(crew.members()[0]?.parentTaskId).toBeUndefined()
   })
+
+  it('gives a subagent the model its own turns ran on', () => {
+    // `task_started` never names a model — id, description, depth, task type
+    // and the call it came from are the whole message. The model arrives after
+    // it, on the assistant turns the agent itself writes, and those carry the
+    // tool-use id of the task they belong to. So the model joins through the
+    // SAME identity the parent join already turns on (#447).
+    const crew = crewOf(started('a1', { toolUseId: 'toolu-1' }), {
+      kind: 'agent-model',
+      insideToolUseId: 'toolu-1',
+      model: 'claude-sonnet-4-5-20250929'
+    })
+    expect(crew.members()[0]?.model).toBe('claude-sonnet-4-5-20250929')
+  })
+
+  it('attributes each agent in a chain its own model, never the one above it', () => {
+    const crew = crewOf(
+      started('a1', { toolUseId: 'toolu-1' }),
+      { kind: 'agent-model', insideToolUseId: 'toolu-1', model: 'claude-opus-4-1-20250805' },
+      { kind: 'tool-call', toolUseId: 'toolu-2', insideToolUseId: 'toolu-1' },
+      started('a2', { toolUseId: 'toolu-2', spawnDepth: 2 }),
+      { kind: 'agent-model', insideToolUseId: 'toolu-2', model: 'claude-haiku-4-5-20251001' }
+    )
+    expect(crew.members().map((member) => [member.taskId, member.model])).toEqual([
+      ['a1', 'claude-opus-4-1-20250805'],
+      ['a2', 'claude-haiku-4-5-20251001']
+    ])
+  })
+
+  it('leaves the model unknown rather than inheriting it from the agent above', () => {
+    // The direction every unproven reading falls in here. A nested agent whose
+    // own turns this panel has not seen yet has said nothing about its model,
+    // and the agent that launched it cannot say it on its behalf: a subagent is
+    // routinely started on a different model from the one that spawned it.
+    const crew = crewOf(
+      started('a1', { toolUseId: 'toolu-1' }),
+      { kind: 'agent-model', insideToolUseId: 'toolu-1', model: 'claude-opus-4-1-20250805' },
+      { kind: 'tool-call', toolUseId: 'toolu-2', insideToolUseId: 'toolu-1' },
+      started('a2', { toolUseId: 'toolu-2', spawnDepth: 2 })
+    )
+    expect(crew.members()[1]?.model).toBeUndefined()
+  })
+
+  it('attaches a model to nobody when no task was ever started from that call', () => {
+    // The root session's own turns carry no parent tool-use id at all and never
+    // reach here; a call this crew cannot resolve to a task is the same kind of
+    // absence, and stamping the nearest member with it would be the inheritance
+    // the test above refuses, arrived at sideways.
+    const crew = crewOf(started('a1', { toolUseId: 'toolu-1' }), {
+      kind: 'agent-model',
+      insideToolUseId: 'toolu-9',
+      model: 'claude-opus-4-1-20250805'
+    })
+    expect(crew.members()[0]?.model).toBeUndefined()
+  })
+
+  it('keeps a model reported before the task it belongs to was announced', () => {
+    // The same ordering hazard the parent join carries: the stream is watched
+    // live and nothing promises the announcement reaches this panel before the
+    // turn that proves the model. What is known is retained until the task it
+    // names exists, rather than being dropped for arriving early.
+    const crew = crewOf(
+      { kind: 'agent-model', insideToolUseId: 'toolu-1', model: 'claude-sonnet-4-5-20250929' },
+      started('a1', { toolUseId: 'toolu-1' })
+    )
+    expect(crew.members()[0]?.model).toBe('claude-sonnet-4-5-20250929')
+  })
+
+  it('lets a later turn supersede the model an earlier one reported', () => {
+    // An agent that fell back to another model mid-run is still that agent, and
+    // the newest turn is the one that speaks for what it is running on now —
+    // the same rule a held session's `init` follows for the root dwarf (#96).
+    const crew = crewOf(
+      started('a1', { toolUseId: 'toolu-1' }),
+      { kind: 'agent-model', insideToolUseId: 'toolu-1', model: 'claude-opus-4-1-20250805' },
+      { kind: 'agent-model', insideToolUseId: 'toolu-1', model: 'claude-sonnet-4-5-20250929' }
+    )
+    expect(crew.members()[0]?.model).toBe('claude-sonnet-4-5-20250929')
+  })
 })
 
 describe('heldRootRole', () => {
@@ -235,6 +314,21 @@ describe('heldCrewDwarfs', () => {
     for (const dwarf of heldCrewDwarfs(root({ attendance: 'attended' }), crew)) {
       expect(dwarf.attendance, dwarf.id).toBe('unattended')
     }
+  })
+
+  it('draws each worker with its own model, and an unreported one with none', () => {
+    // What the tooltip actually reads (#447). The root's model is deliberately
+    // set to something else here: a crew dwarf takes its model from its own
+    // turns or carries none, and `Model unknown` is the honest answer for a
+    // worker this stream has not heard speak yet.
+    const crew = crewOf(
+      started('a1', { toolUseId: 'toolu-1' }),
+      { kind: 'agent-model', insideToolUseId: 'toolu-1', model: 'claude-sonnet-4-5-20250929' },
+      started('a2', { toolUseId: 'toolu-2' })
+    )
+    const dwarfs = heldCrewDwarfs(root({ model: 'claude-opus-4-1-20250805' }), crew)
+    expect(dwarfs[0]?.model).toBe('claude-sonnet-4-5-20250929')
+    expect(dwarfs[1] === undefined || 'model' in dwarfs[1]).toBe(false)
   })
 
   it('carries the session and pid of the session that owns them', () => {
