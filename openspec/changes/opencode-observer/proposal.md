@@ -24,15 +24,15 @@ Change: `opencode-observer` · Phase: sdd-propose · Date: 2026-09-17 · Builds 
 
 ### Out of scope (one line each: why, and where it goes)
 
-| Item | Why not here | Where |
-|---|---|---|
-| Launch (`opencode run`, `opencode` TUI) | `buildLaunchArgs` demands a probed argv; none measured yet | `opencode-held` |
-| Hold (SDK over `opencode serve`, or ACP) | No reference implementation; ACP drops subagents today (exploration §2.3) | `opencode-held` |
-| Send / Kick (`textDelivery` returns `null`) | No pid↔session join exists (exploration §5 item 2); absent beats guessed | `opencode-held`, gated on measurement row 5 |
-| Plugin push channel | A JS artifact this repo has never distributed; viability unmeasured (row 9) | Candidate third slice |
-| SSE `/event` from `opencode serve` | Only sees servers this app started; no registry for a TUI opened elsewhere | Enrichment inside `opencode-held` |
-| Mine History and coal backfill for OpenCode | Per-provider readers; history panel value unproven, tokens untrusted | Later refinement |
-| Cost figures | Bug history upstream (#28494, #2891); advisory at best | Never on the wire until measured |
+| Item                                        | Why not here                                                                | Where                                       |
+| ------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------- |
+| Launch (`opencode run`, `opencode` TUI)     | `buildLaunchArgs` demands a probed argv; none measured yet                  | `opencode-held`                             |
+| Hold (SDK over `opencode serve`, or ACP)    | No reference implementation; ACP drops subagents today (exploration §2.3)   | `opencode-held`                             |
+| Send / Kick (`textDelivery` returns `null`) | No pid↔session join exists (exploration §5 item 2); absent beats guessed    | `opencode-held`, gated on measurement row 5 |
+| Plugin push channel                         | A JS artifact this repo has never distributed; viability unmeasured (row 9) | Candidate third slice                       |
+| SSE `/event` from `opencode serve`          | Only sees servers this app started; no registry for a TUI opened elsewhere  | Enrichment inside `opencode-held`           |
+| Mine History and coal backfill for OpenCode | Per-provider readers; history panel value unproven, tokens untrusted        | Later refinement                            |
+| Cost figures                                | Bug history upstream (#28494, #2891); advisory at best                      | Never on the wire until measured            |
 
 ## Capabilities
 
@@ -55,23 +55,23 @@ Mirror `CodexProvider`: a store-reading provider behind the `adapters` seams, bu
 
 ### Milestones and what each proves
 
-| # | Milestone | Proves | Waits on rows (exploration §6) |
-|---|---|---|---|
-| 1 | Measurements on the installed native Windows build | Which storage shape this version writes; real `opencode.db` schema; whether `parentID`, status and token fields are on disk; whether any pid join exists; whether the native binary runs clean | 1, 2, 3, 4, 5, 10 |
-| 2 | Fixtures + `docs/opencode-format.md` | The evidence bar `CONTRIBUTING.md` sets; a parser can be written test-first against real shapes | 1–4 |
-| 3 | `parse.ts` (JSON) and `state.ts` (SQL) with tests | Both shapes yield one session model; unknown schema degrades to no rows | 2 |
-| 4 | `OpenCodeProvider` + registry row + contract growth + compile-time sites | A dwarf appears, works, rests, leaves; no channel is claimed | 3, 5 |
-| 5 | Doc rows | Users and agents can tell what OpenCode support is and is not | 4 |
+| #   | Milestone                                                                | Proves                                                                                                                                                                                         | Waits on rows (exploration §6) |
+| --- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| 1   | Measurements on the installed native Windows build                       | Which storage shape this version writes; real `opencode.db` schema; whether `parentID`, status and token fields are on disk; whether any pid join exists; whether the native binary runs clean | 1, 2, 3, 4, 5, 10              |
+| 2   | Fixtures + `docs/opencode-format.md`                                     | The evidence bar `CONTRIBUTING.md` sets; a parser can be written test-first against real shapes                                                                                                | 1–4                            |
+| 3   | `parse.ts` (JSON) and `state.ts` (SQL) with tests                        | Both shapes yield one session model; unknown schema degrades to no rows                                                                                                                        | 2                              |
+| 4   | `OpenCodeProvider` + registry row + contract growth + compile-time sites | A dwarf appears, works, rests, leaves; no channel is claimed                                                                                                                                   | 3, 5                           |
+| 5   | Doc rows                                                                 | Users and agents can tell what OpenCode support is and is not                                                                                                                                  | 4                              |
 
 ### Design decisions that wait on measurement
 
-| Decision | Row | Default if the row is negative |
-|---|---|---|
-| Source of truth when JSON and `opencode.db` both exist | 1, 2 | **Measured 2026-09-17** (`measurements-2026-09-17.md`): 1.18.31 writes SQLite only, no JSON tree. SQLite is primary; the JSON tree is a compat path for older installs and adds only what the DB lacks |
-| Liveness signal (size growth, row timestamp, process probe) | 3, 5 | Size growth plus a bounded staleness window; no process probe |
-| Topology on disk | 4 | Every session a root `foreman`; no workers drawn |
-| `tokensObserved` and ore | 3 | Field omitted; the dwarf mines no ore (Antigravity precedent, `docs/guide.md` §Providers in depth) |
-| Default store root and XDG handling per OS | 1, 10 | `~/.local/share/opencode` on all three, `Platform` passed in |
+| Decision                                                    | Row   | Default if the row is negative                                                                                                                                                                         |
+| ----------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source of truth when JSON and `opencode.db` both exist      | 1, 2  | **Measured 2026-09-17** (`measurements-2026-09-17.md`): 1.18.31 writes SQLite only, no JSON tree. SQLite is primary; the JSON tree is a compat path for older installs and adds only what the DB lacks |
+| Liveness signal (size growth, row timestamp, process probe) | 3, 5  | Size growth plus a bounded staleness window; no process probe                                                                                                                                          |
+| Topology on disk                                            | 4     | Every session a root `foreman`; no workers drawn                                                                                                                                                       |
+| `tokensObserved` and ore                                    | 3     | Field omitted; the dwarf mines no ore (Antigravity precedent, `docs/guide.md` §Providers in depth)                                                                                                     |
+| Default store root and XDG handling per OS                  | 1, 10 | `~/.local/share/opencode` on all three, `Platform` passed in                                                                                                                                           |
 
 ### Business rules the provider must respect
 
@@ -82,30 +82,30 @@ Mirror `CodexProvider`: a store-reading provider behind the `adapters` seams, bu
 
 ## Affected areas
 
-| Area | Impact | Description |
-|---|---|---|
-| `src/shared/contracts.ts:135` | Modified (cross-boundary) | `'opencode'` in `DWARF_PROVIDERS`. No new wire symbol, so both barrels (`src/main/domain/types.ts`, `src/renderer/src/types.ts`) need no new line. |
-| `src/main/config/config.ts:136` | Modified | `ProviderConfigs` gains `opencode.storeRoot`; env + file + default, precedence tests beside the existing ones. |
-| `src/main/providers/registry.ts:107` | Modified | One factory row. |
-| `src/main/providers/opencode/` | New | `opencodeProvider.ts`, `parse.ts`, `state.ts`, tests beside each. |
-| `src/main/providers/__fixtures__/opencode/` | New | Redacted session/message/part JSON, `opencode-schema.sql`, `README.md` (as `antigravity/README.md`). |
-| `src/main/domain/launchProviders.ts:91`, `launchTuning.ts:76` | Modified | `PRODUCT_NAME.opencode`, `PROVIDER_EFFORT_LEVELS.opencode: []`. |
-| `src/main/sessionLaunch/launch.ts:258` | Modified | Exhaustive switch gains a refusing arm; no argv is invented. |
-| `src/renderer/src/lib/delivery/actionBar.ts:50` | Modified | `LAUNCH_COMMAND` entry; design decides between a truthful shorthand and narrowing the record. |
-| `src/main/platform/processProbe.ts` | Possibly modified | Only if row 5 justifies an `isOpenCodeProcessRunning` builder per OS (`platform-ports`). |
-| `docs/opencode-format.md` | New | Format evidence, dated and versioned. |
-| `README.md`, `docs/guide.md`, `docs/privacy.md`, `docs/provider-formats.md` | Modified | Rows named under In scope. |
+| Area                                                                        | Impact                    | Description                                                                                                                                        |
+| --------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/shared/contracts.ts:135`                                               | Modified (cross-boundary) | `'opencode'` in `DWARF_PROVIDERS`. No new wire symbol, so both barrels (`src/main/domain/types.ts`, `src/renderer/src/types.ts`) need no new line. |
+| `src/main/config/config.ts:136`                                             | Modified                  | `ProviderConfigs` gains `opencode.storeRoot`; env + file + default, precedence tests beside the existing ones.                                     |
+| `src/main/providers/registry.ts:107`                                        | Modified                  | One factory row.                                                                                                                                   |
+| `src/main/providers/opencode/`                                              | New                       | `opencodeProvider.ts`, `parse.ts`, `state.ts`, tests beside each.                                                                                  |
+| `src/main/providers/__fixtures__/opencode/`                                 | New                       | Redacted session/message/part JSON, `opencode-schema.sql`, `README.md` (as `antigravity/README.md`).                                               |
+| `src/main/domain/launchProviders.ts:91`, `launchTuning.ts:76`               | Modified                  | `PRODUCT_NAME.opencode`, `PROVIDER_EFFORT_LEVELS.opencode: []`.                                                                                    |
+| `src/main/sessionLaunch/launch.ts:258`                                      | Modified                  | Exhaustive switch gains a refusing arm; no argv is invented.                                                                                       |
+| `src/renderer/src/lib/delivery/actionBar.ts:50`                             | Modified                  | `LAUNCH_COMMAND` entry; design decides between a truthful shorthand and narrowing the record.                                                      |
+| `src/main/platform/processProbe.ts`                                         | Possibly modified         | Only if row 5 justifies an `isOpenCodeProcessRunning` builder per OS (`platform-ports`).                                                           |
+| `docs/opencode-format.md`                                                   | New                       | Format evidence, dated and versioned.                                                                                                              |
+| `README.md`, `docs/guide.md`, `docs/privacy.md`, `docs/provider-formats.md` | Modified                  | Rows named under In scope.                                                                                                                         |
 
 ## Risks
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| Storage changes under the provider (mid-migration, tracker issue closed "not planned") | High | Fixtures stamped with the measured version; both shapes parsed; unknown schema degrades to no rows; `docs/opencode-format.md` records the build |
-| Native Windows binary misbehaves (WSL is upstream's recommendation) | Medium | Row 10 first; if WSL is the reality, the store root and any probe change and the proposal is revisited before code |
-| Duplicate dwarfs when JSON and DB describe one session | Medium | Dedupe by session id; test with a fixture holding both |
-| Ghost dwarfs from stale rows or frozen mtimes | Medium | Size growth and row timestamps lead, mtime last (Codex §4 lesson); both silence windows elapse before a drop |
-| Private identifiers in captured fixtures | Medium | `privacy-guard` placeholders (`j`, `placeholder-host`); fixture README states redaction; CI guard |
-| Review load above the 800-line budget | High | Chained PRs (below) |
+| Risk                                                                                   | Likelihood | Mitigation                                                                                                                                      |
+| -------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Storage changes under the provider (mid-migration, tracker issue closed "not planned") | High       | Fixtures stamped with the measured version; both shapes parsed; unknown schema degrades to no rows; `docs/opencode-format.md` records the build |
+| Native Windows binary misbehaves (WSL is upstream's recommendation)                    | Medium     | Row 10 first; if WSL is the reality, the store root and any probe change and the proposal is revisited before code                              |
+| Duplicate dwarfs when JSON and DB describe one session                                 | Medium     | Dedupe by session id; test with a fixture holding both                                                                                          |
+| Ghost dwarfs from stale rows or frozen mtimes                                          | Medium     | Size growth and row timestamps lead, mtime last (Codex §4 lesson); both silence windows elapse before a drop                                    |
+| Private identifiers in captured fixtures                                               | Medium     | `privacy-guard` placeholders (`j`, `placeholder-host`); fixture README states redaction; CI guard                                               |
+| Review load above the 800-line budget                                                  | High       | Chained PRs (below)                                                                                                                             |
 
 ## Rollback plan
 
@@ -141,11 +141,11 @@ Assumptions taken meanwhile: SQLite primary, JSON as compat (measured 2026-09-17
 
 ## Size forecast (against the 800-line review budget)
 
-| Slice | Authored lines (est.) |
-|---|---|
-| PR 1 — `docs/opencode-format.md`, fixtures, fixture README | 300–450 |
-| PR 2 — `parse.ts`, `state.ts`, tests (no contract change) | 400–550 |
-| PR 3 — contract growth, config, provider, registry row, compile-time sites, tests | 700–850 |
-| PR 4 — README, guide, privacy, provider-formats rows | 80–150 |
+| Slice                                                                             | Authored lines (est.) |
+| --------------------------------------------------------------------------------- | --------------------- |
+| PR 1 — `docs/opencode-format.md`, fixtures, fixture README                        | 300–450               |
+| PR 2 — `parse.ts`, `state.ts`, tests (no contract change)                         | 400–550               |
+| PR 3 — contract growth, config, provider, registry row, compile-time sites, tests | 700–850               |
+| PR 4 — README, guide, privacy, provider-formats rows                              | 80–150                |
 
 Total 1,500–2,000. **Chained PRs recommended: Yes.** PR 3 sits at the budget edge and is the one `sdd-tasks` must watch; the contract change cannot be split from the registry row because `PROVIDER_REGISTRY` is a `Record<DwarfProvider, …>`.

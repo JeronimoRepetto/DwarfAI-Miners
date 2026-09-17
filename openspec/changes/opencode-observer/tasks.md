@@ -9,15 +9,15 @@ task names the assertion it changes. Slice boundaries are the design's D9 PR sli
 
 ## Review Workload Forecast
 
-| Field                   | Value                                                                 |
-| ----------------------- | --------------------------------------------------------------------- |
-| Estimated changed lines | 1,430–1,880 authored (PR 1 ~475, PR 2 ~453, PR 3 ~699, PR 4 ~103)      |
-| 400-line budget risk    | High                                                                   |
+| Field                   | Value                                                                     |
+| ----------------------- | ------------------------------------------------------------------------- |
+| Estimated changed lines | 1,430–1,880 authored (PR 1 ~475, PR 2 ~453, PR 3 ~699, PR 4 ~103)         |
+| 400-line budget risk    | High                                                                      |
 | 800-line budget risk    | Medium — PR 3 lands at ~699 and PR 1 rose to ~475 with the row-4 fixtures |
-| Chained PRs recommended | Yes                                                                    |
-| Suggested split         | PR 1 → PR 2 → PR 3 (→ PR 3b if over 800) → PR 4                        |
-| Delivery strategy       | ask-on-risk                                                            |
-| Chain strategy          | pending — orchestrator's call                                          |
+| Chained PRs recommended | Yes                                                                       |
+| Suggested split         | PR 1 → PR 2 → PR 3 (→ PR 3b if over 800) → PR 4                           |
+| Delivery strategy       | ask-on-risk                                                               |
+| Chain strategy          | pending — orchestrator's call                                             |
 
 Decision needed before apply: Yes
 Chained PRs recommended: Yes
@@ -33,12 +33,12 @@ row and compile sites cannot be split
 
 ### Suggested Work Units
 
-| Unit | Goal                                                    | PR   | Focused test command                              | Runtime harness                                                                                  | Rollback boundary                                            |
-| ---- | ------------------------------------------------------- | ---- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| 1    | Evidence: format doc, redacted fixtures, spec amendment | PR 1 | N/A — no code compiles against it yet              | N/A: documents and fixtures only, no runtime surface                                               | `docs/opencode-format.md`, `__fixtures__/opencode/`, the topology spec delta |
-| 2    | Pure store/parse/state modules + cursor helper          | PR 2 | `pnpm test src/main/providers`                     | N/A: modules unreferenced by production until PR 3                                                 | `src/main/providers/opencode/` + the `feedWindow.ts` export  |
-| 3    | `'opencode'` on the wire, provider, registry, launch gate | PR 3 | `pnpm test src/main src/shared`                   | `npx opencode-ai` one turn in a project folder, `pnpm dev`: dwarf appears, works, rests, leaves    | The contract arm and every site in D5's two tables            |
-| 4    | User-facing docs rows                                   | PR 4 | N/A — prose only                                   | Read README + `docs/guide.md` against the shipped panel                                            | The four doc files                                            |
+| Unit | Goal                                                      | PR   | Focused test command                  | Runtime harness                                                                                 | Rollback boundary                                                            |
+| ---- | --------------------------------------------------------- | ---- | ------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1    | Evidence: format doc, redacted fixtures, spec amendment   | PR 1 | N/A — no code compiles against it yet | N/A: documents and fixtures only, no runtime surface                                            | `docs/opencode-format.md`, `__fixtures__/opencode/`, the topology spec delta |
+| 2    | Pure store/parse/state modules + cursor helper            | PR 2 | `pnpm test src/main/providers`        | N/A: modules unreferenced by production until PR 3                                              | `src/main/providers/opencode/` + the `feedWindow.ts` export                  |
+| 3    | `'opencode'` on the wire, provider, registry, launch gate | PR 3 | `pnpm test src/main src/shared`       | `npx opencode-ai` one turn in a project folder, `pnpm dev`: dwarf appears, works, rests, leaves | The contract arm and every site in D5's two tables                           |
+| 4    | User-facing docs rows                                     | PR 4 | N/A — prose only                      | Read README + `docs/guide.md` against the shipped panel                                         | The four doc files                                                           |
 
 Commit subjects end with the issue number (`AGENTS.md`); until task 1.1 lands, use `(#TBD)`.
 

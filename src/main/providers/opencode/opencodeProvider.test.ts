@@ -45,10 +45,7 @@ function insertSessionFixture(sqlite: MemorySqlite, name: string): void {
     if (typeof value === 'number') return String(value)
     return `'${String(value).replaceAll("'", "''")}'`
   })
-  sqlite.exec(
-    DB_PATH,
-    `INSERT INTO session (${columns.join(', ')}) VALUES (${values.join(', ')})`
-  )
+  sqlite.exec(DB_PATH, `INSERT INTO session (${columns.join(', ')}) VALUES (${values.join(', ')})`)
 }
 
 /** Registers a store that stats non-null; content length stands in for size. */
@@ -98,7 +95,11 @@ function gatedFs(inner: FsLike, gate: { promise: Promise<void> }): FsLike {
   }
 }
 
-function makeProvider(options: { fs: FsLike; sqlite: SqliteLike; now?: () => number }): OpenCodeProvider {
+function makeProvider(options: {
+  fs: FsLike
+  sqlite: SqliteLike
+  now?: () => number
+}): OpenCodeProvider {
   return new OpenCodeProvider({
     fs: options.fs,
     sqlite: options.sqlite,
@@ -404,7 +405,7 @@ describe('OpenCodeProvider — feed', () => {
     return { fake, sqlite }
   }
 
-  it("carries the newest assistant text as lastMessage, absent when none exists", async () => {
+  it('carries the newest assistant text as lastMessage, absent when none exists', async () => {
     const { fake, sqlite } = seededSession()
     sqlite.exec(
       DB_PATH,
@@ -451,7 +452,9 @@ describe('OpenCodeProvider — feed', () => {
     const provider = makeProvider({ fs: fake, sqlite })
     await provider.scan()
     expect(await provider.feed('opencode:never-seen', 5)).toBeNull()
-    expect(await provider.feedPage('opencode:never-seen', 5, { timestamp: '', text: 'x' })).toBeNull()
+    expect(
+      await provider.feedPage('opencode:never-seen', 5, { timestamp: '', text: 'x' })
+    ).toBeNull()
   })
 
   it('redacts a secret in a feed row, and a cursor built from the redacted row still matches', async () => {
@@ -588,9 +591,7 @@ describe('OpenCodeProvider — topology (D4)', () => {
     expect(snapshot?.dwarfs[0]?.id).toBe('opencode:ses_orphan')
     expect(snapshot?.dwarfs[0]?.parentId).toBe('opencode:ses_nowhere')
     expect(
-      (await makeProvider({ fs: fake, sqlite }).scan()).some(
-        (s) => s.sessionId === 'ses_nowhere'
-      )
+      (await makeProvider({ fs: fake, sqlite }).scan()).some((s) => s.sessionId === 'ses_nowhere')
     ).toBe(false)
   })
 

@@ -14,10 +14,10 @@ Change: `opencode-provider` · Phase: sdd-explore · Date: 2026-09-17 · Persist
 
 Anvil drives OpenCode two ways, never overlapping:
 
-| Purpose | Mechanism | File |
-|---|---|---|
-| Run one turn, held | ACP over stdio | `src/server/agents/opencode-acp.ts`, `opencode-acp-connection.ts` |
-| Discover models | HTTP `opencode serve` + `@opencode-ai/sdk` client | `opencode-sdk.ts`, `opencode-models.ts` |
+| Purpose            | Mechanism                                         | File                                                              |
+| ------------------ | ------------------------------------------------- | ----------------------------------------------------------------- |
+| Run one turn, held | ACP over stdio                                    | `src/server/agents/opencode-acp.ts`, `opencode-acp-connection.ts` |
+| Discover models    | HTTP `opencode serve` + `@opencode-ai/sdk` client | `opencode-sdk.ts`, `opencode-models.ts`                           |
 
 **Spawn.** `opencode acp --port 0 --hostname 127.0.0.1 --mdns=false` (`opencode-workspace.ts:3`, `OPEN_CODE_ACP_ARGS`), stdio piped (`['pipe','pipe','pipe']`), `windowsHide: true`, `detached: process.platform !== 'win32'` (`opencode-acp-connection.ts:44`). Environment is a workspace-isolated one it builds itself (`openCodeWorkspaceEnvironment`), setting `OPENCODE_PURE=true` and `OPENCODE_CONFIG_CONTENT` inline JSON restricting `enabled_providers` to `openai|anthropic|openrouter|opencode|opencode-go` and `permission.external_directory: allow` (`opencode-workspace.ts:16-24`).
 
@@ -32,6 +32,7 @@ Anvil drives OpenCode two ways, never overlapping:
 **Model discovery is a second, separate process.** `discoverOpenCodeModels` spawns `opencode serve --hostname=127.0.0.1 --port=0 --mdns=false` (`opencode-sdk.ts:47-51`), scrapes the listening URL out of combined stdout/stderr with a regex, asserts the hostname is `127.0.0.1` (refuses anything else), then calls `createOpencodeClient({ baseUrl, directory, throwOnError: true }).provider.list(...)` and shuts the server down when done. A short-lived, throwaway server for one read, not the turn's own server.
 
 **What Anvil deliberately does NOT do**, confirmed by grep across `src/`:
+
 - **Never reads OpenCode's on-disk session storage.** No hit for `storage/session`, `.local/share/opencode`, `readdir`/`fs.watch` against anything OpenCode-shaped.
 - **Never observes a session it did not start.** Every OpenCode interaction traces back to a process Anvil itself spawned. There is no code path that attaches to, lists, or reads an independently-started `opencode`/TUI session.
 - **No pid-based end.** Cancellation is `rpc.cancel` or killing the child process Anvil itself owns — never a signal aimed at a pid discovered by inference.
@@ -71,17 +72,17 @@ Confidence legend: **[V]** = quoted/paraphrased directly from `opencode.ai/docs`
 
 `opencode run [message..]` **[V, opencode.ai/docs/cli/, 2026-09-16]**:
 
-| Flag | Meaning |
-|---|---|
-| `--format` | `default` or `json` (raw JSON events to stdout) |
-| `--model`/`-m` | `provider/model` |
-| `--continue`/`-c` | resume last session |
-| `--session`/`-s` | resume a specific session id |
-| `--fork` | branch a session when continuing |
-| `--attach` | connect to an already-running server instead of spawning one |
-| `--dir` | working directory |
-| `--port` | local server port |
-| `--auto` | auto-approve non-denied permissions |
+| Flag              | Meaning                                                      |
+| ----------------- | ------------------------------------------------------------ |
+| `--format`        | `default` or `json` (raw JSON events to stdout)              |
+| `--model`/`-m`    | `provider/model`                                             |
+| `--continue`/`-c` | resume last session                                          |
+| `--session`/`-s`  | resume a specific session id                                 |
+| `--fork`          | branch a session when continuing                             |
+| `--attach`        | connect to an already-running server instead of spawning one |
+| `--dir`           | working directory                                            |
+| `--port`          | local server port                                            |
+| `--auto`          | auto-approve non-denied permissions                          |
 
 The closest analogue to this repo's `claude -p`/`codex exec` relay. **The same subagent gap reproduces here**: **#49300** ("`run --format json` drops every subagent part") attributes it to `packages/opencode/src/cli/cmd/run.ts` on **v1.18.30**: "the loop tracks child sessions, honours them for permissions, and filters parts against the root session". So neither subprocess surface (ACP, `run --format json`) currently surfaces subagent activity; only the raw SSE `/event` stream from `serve` is confirmed to carry the edge, and even there `session.status` omits it.
 
@@ -103,21 +104,21 @@ Current release **v1.18.31** (2026-09-14), frequent cadence, issue numbers into 
 
 ### 3.1 Observer
 
-| Architecture | What it needs | Fits this repo's rules? | Effort |
-|---|---|---|---|
-| **File/DB-tail** (à la Claude/Codex today) | Read `storage/{session,message,part}` JSON and/or `opencode.db`, poll on the same loop, resolve liveness from mtime/size growth or a process probe | **Yes** — matches `docs/provider-formats.md`/`docs/codex-v2-format.md`'s discipline: verifiable artifacts, no screen scraping, absent beats guessed. Storage volatility (§2.1) needs the same "SQLite is the projection, degrade gracefully" posture Codex earned | **Medium-High** — the parser must tolerate a JSON-only install and a migrated one; the SQLite schema is unconfirmed |
-| **SSE from a server this app starts** | Spawn `opencode serve`, subscribe to `/event` | **No, as the primary mechanism** — it only sees sessions on servers this app started or was told the port of. No registry (#8948) to discover a TUI opened from an unrelated terminal, which is capability 1's whole point. Same verdict `docs/console-hosting.md` reached for Herdr: additive enrichment for sessions this app launched, never the mechanism for observing an arbitrary one | **Low** for the narrow case, **not applicable** for the general one |
-| **Plugin push channel** (à la `main/hooks`) | Author a JS/TS plugin, install globally, have it POST `session.*`/`tool.*`/`permission.*` to the loopback listener | **Partially** — richer vocabulary, genuinely per-session, but a JS module this repo authors and keeps version-compatible with OpenCode's plugin API, not a declarative settings edit. Same "only sessions started after install" gap as hooks | **Medium** — a new artifact class this repo has never distributed |
+| Architecture                                | What it needs                                                                                                                                      | Fits this repo's rules?                                                                                                                                                                                                                                                                                                                                                                      | Effort                                                                                                              |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **File/DB-tail** (à la Claude/Codex today)  | Read `storage/{session,message,part}` JSON and/or `opencode.db`, poll on the same loop, resolve liveness from mtime/size growth or a process probe | **Yes** — matches `docs/provider-formats.md`/`docs/codex-v2-format.md`'s discipline: verifiable artifacts, no screen scraping, absent beats guessed. Storage volatility (§2.1) needs the same "SQLite is the projection, degrade gracefully" posture Codex earned                                                                                                                            | **Medium-High** — the parser must tolerate a JSON-only install and a migrated one; the SQLite schema is unconfirmed |
+| **SSE from a server this app starts**       | Spawn `opencode serve`, subscribe to `/event`                                                                                                      | **No, as the primary mechanism** — it only sees sessions on servers this app started or was told the port of. No registry (#8948) to discover a TUI opened from an unrelated terminal, which is capability 1's whole point. Same verdict `docs/console-hosting.md` reached for Herdr: additive enrichment for sessions this app launched, never the mechanism for observing an arbitrary one | **Low** for the narrow case, **not applicable** for the general one                                                 |
+| **Plugin push channel** (à la `main/hooks`) | Author a JS/TS plugin, install globally, have it POST `session.*`/`tool.*`/`permission.*` to the loopback listener                                 | **Partially** — richer vocabulary, genuinely per-session, but a JS module this repo authors and keeps version-compatible with OpenCode's plugin API, not a declarative settings edit. Same "only sessions started after install" gap as hooks                                                                                                                                                | **Medium** — a new artifact class this repo has never distributed                                                   |
 
 **Recommendation: file/DB-tail first**, mirroring Claude and Codex, with the plugin channel as a plausible **second slice** once storage is confirmed stable, and SSE scoped out except as enrichment for sessions this app launched itself.
 
 ### 3.2 Launch and hold
 
-| Architecture | Subagent visibility | Question/permission loop | Maturity | Effort |
-|---|---|---|---|---|
-| **ACP** (Anvil's path) | **Confirmed broken today** for Task subagents (#32388, #48232, #46685, #11894) | Real: `session/update` `tool_call`, a genuine `requestPermission` RPC this app could route to a person instead of auto-approving | Proven in a shipping product (Anvil 1.2.6) | **Low** — a third `HeldSessionPort` implementation beside `sdkHeldSession.ts`/`antigravityHeldSession.ts`, reusing Anvil's shape |
-| **SDK over a self-started `opencode serve`** | `session.created`/`.updated` carry `parentID` — the one surface documented to keep the edge | Real: dedicated permission-reply SDK method | Vendor's first-party client, but this app would be the first to hold a full turn through it | **Medium** — no reference implementation; this repo authors the SSE-to-`HeldSessionStartRequest` mapping |
-| **`opencode run` relay** | **Confirmed broken** (#49300, v1.18.30) | Coarse only (`--auto`) | Simple, one-shot | **Low**, weakest — matches "relay is the fallback, never the primary, for anything with a real question" |
+| Architecture                                 | Subagent visibility                                                                         | Question/permission loop                                                                                                         | Maturity                                                                                    | Effort                                                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **ACP** (Anvil's path)                       | **Confirmed broken today** for Task subagents (#32388, #48232, #46685, #11894)              | Real: `session/update` `tool_call`, a genuine `requestPermission` RPC this app could route to a person instead of auto-approving | Proven in a shipping product (Anvil 1.2.6)                                                  | **Low** — a third `HeldSessionPort` implementation beside `sdkHeldSession.ts`/`antigravityHeldSession.ts`, reusing Anvil's shape |
+| **SDK over a self-started `opencode serve`** | `session.created`/`.updated` carry `parentID` — the one surface documented to keep the edge | Real: dedicated permission-reply SDK method                                                                                      | Vendor's first-party client, but this app would be the first to hold a full turn through it | **Medium** — no reference implementation; this repo authors the SSE-to-`HeldSessionStartRequest` mapping                         |
+| **`opencode run` relay**                     | **Confirmed broken** (#49300, v1.18.30)                                                     | Coarse only (`--auto`)                                                                                                           | Simple, one-shot                                                                            | **Low**, weakest — matches "relay is the fallback, never the primary, for anything with a real question"                         |
 
 **Anvil's choice should not be copied uncritically here.** Anvil auto-approves every permission and never needed subagent visibility; this repo's topology model (`docs/session-topology-and-roles.md`) is built around exactly the fact ACP throws away. **Recommendation: prototype launch-and-hold against the SDK/`serve` route first**, because it is the only one where docs and tracker agree the subagent edge survives, at the cost of an extra process this app must manage (as `createSdkHeldSession` manages the Agent SDK's `query()` and `antigravityHeldSession.ts` a raw child). ACP stays a credible fallback if the SDK route shows its own gap once measured (§6).
 
@@ -126,14 +127,16 @@ Current release **v1.18.31** (2026-09-14), frequent cadence, issue numbers into 
 ## 4. Where the existing provider contract fits, and where it must grow
 
 **Fits with no change:**
+
 - `DwarfProvider`/`DWARF_PROVIDERS` — adding `'opencode'` is one entry in `src/shared/contracts.ts`, re-exported from both barrels (`src/main/domain/types.ts`, `src/renderer/src/types.ts`) per AGENTS.md.
 - `Provider` (scan/feed/feedPage/transcriptPath/textDelivery) — an `OpenCodeProvider` wired into `registry.ts` beside `CodexProvider`/`ClaudeProvider` is a drop-in for the observer half.
 - `HeldSessionPort`/`HeldSessionStartRequest`/`HeldSessionHandle` — the callback shape (`onSessionId`, `onTelemetry`, `onAsk`, `onPermission`, `onSubagent`, `onMessage`, `onEnd`) already models what an ACP or SDK connection would translate into. `HELDABLE_PROVIDERS` gains `'opencode'` once a live round trip is measured, the gate its own comment states.
 - `parentId`/`DwarfTopology` (designed, not yet implemented per `docs/session-topology-and-roles.md` §6) matches OpenCode's `session.info.parentID`; the design doc explicitly anticipated OpenCode.
 
 **Must grow:**
+
 - `TextDeliveryTarget.kind`: for launch-and-hold **likely no new kind** — `held-session`'s row already describes a held OpenCode session.
-- **The observer's delivery story needs a stated absence**: an *observed* OpenCode session has no proven pid-to-session mapping (§6) and no verifiable console channel. Until measured, an observed OpenCode dwarf ships with **no send/kick channel** (`textDelivery` returns `null`, as `SimulatedProvider` does) — "absent beats guessed" (#10).
+- **The observer's delivery story needs a stated absence**: an _observed_ OpenCode session has no proven pid-to-session mapping (§6) and no verifiable console channel. Until measured, an observed OpenCode dwarf ships with **no send/kick channel** (`textDelivery` returns `null`, as `SimulatedProvider` does) — "absent beats guessed" (#10).
 - `AgentProviderOption`/`AgentModelCatalog`/`ModelOption` — OpenCode's `provider/model` strings and reasoning `variants` map onto the existing `AgentModelCatalog`/`ModelOption.effortLevels` shape; a new `source` and adapter, no wire redesign.
 - `ProviderSnapshot`/`Dwarf` need nothing new structurally; usage/cost fields slot into the existing telemetry shape, **with cost treated as untrusted until measured live** (#28494 cache-read pricing ignored; #2891 cost sometimes `0`).
 
@@ -155,18 +158,18 @@ Current release **v1.18.31** (2026-09-14), frequent cadence, issue numbers into 
 
 Every row ties to a design decision it unblocks, same discipline as `docs/codex-v2-format.md`. To be run once OpenCode is installed on this machine (native Windows binary), read-only unless noted.
 
-| # | Command / file to inspect | Unblocks |
-|---|---|---|
-| 1 | `opencode --version`; check `%USERPROFILE%\.local\share\opencode\` exists and list it (`storage/`, `opencode.db`?) | Current storage shape on THIS machine's version (§2.1) |
-| 2 | If `opencode.db` exists: `PRAGMA table_info` on every table via `node:sqlite` `DatabaseSync(..., {readOnly:true})`, the tool this repo used for Codex | Real schema, replacing §2.1's [I] markers with [V] |
-| 3 | Start an interactive `opencode` TUI in a test project; watch `storage/session/*.json` (or the DB) for `parentID`, status/liveness fields, and whatever plays the role of `~/.claude/sessions/<pid>.json` | Whether an observer can build liveness/topology from disk alone |
-| 4 | Launch a Task subagent inside that session; re-read the same rows | Whether `parentID` is present on disk, deciding if file-tail alone builds topology |
-| 5 | `Get-CimInstance Win32_Process` for `opencode.exe`/its Bun host while the session runs; look for a pid recorded under `~/.local/state/opencode` or the DB | Whether any pid↔session join exists — decides Kick's fate for an observed dwarf |
-| 6 | `opencode serve --port 0`, note the URL, `curl http://127.0.0.1:<port>/doc`; `curl -N .../event` while driving a session via the SDK, capture raw frames for `session.created`, `session.updated`, `session.status`, `message.part.updated` | Ground-truths §2.2's [I] claims, in particular `parentID` absence from `session.status` |
-| 7 | `opencode acp` spawned as Anvil does; drive one turn with a Task-triggering prompt through `@agentclientprotocol/sdk`, log every `session/update` verbatim | Ground-truths the ACP-drops-subagents claim on this build before choosing SDK-over-`serve` over ACP |
-| 8 | `opencode run "<prompt>" --format json --attach http://127.0.0.1:<port>` against a session holding a subagent | Confirms or refutes #49300 locally |
-| 9 | Author a minimal plugin exporting `session.idle`/`tool.execute.before`/`permission.asked`, install it globally, start a fresh session, check whether the handler fires and what the payload contains | Whether the plugin route is viable before authoring a distributable artifact |
-| 10 | Native Windows binary: `opencode --version`, one full turn, then an Anvil-shape spawn (`windowsHide`, `detached: false` on win32) to confirm no console/window artefact — the #208-shaped check run for Claude/Codex/Antigravity | Whether the native install is launch-clean, or WSL passthrough is required |
+| #   | Command / file to inspect                                                                                                                                                                                                                   | Unblocks                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 1   | `opencode --version`; check `%USERPROFILE%\.local\share\opencode\` exists and list it (`storage/`, `opencode.db`?)                                                                                                                          | Current storage shape on THIS machine's version (§2.1)                                              |
+| 2   | If `opencode.db` exists: `PRAGMA table_info` on every table via `node:sqlite` `DatabaseSync(..., {readOnly:true})`, the tool this repo used for Codex                                                                                       | Real schema, replacing §2.1's [I] markers with [V]                                                  |
+| 3   | Start an interactive `opencode` TUI in a test project; watch `storage/session/*.json` (or the DB) for `parentID`, status/liveness fields, and whatever plays the role of `~/.claude/sessions/<pid>.json`                                    | Whether an observer can build liveness/topology from disk alone                                     |
+| 4   | Launch a Task subagent inside that session; re-read the same rows                                                                                                                                                                           | Whether `parentID` is present on disk, deciding if file-tail alone builds topology                  |
+| 5   | `Get-CimInstance Win32_Process` for `opencode.exe`/its Bun host while the session runs; look for a pid recorded under `~/.local/state/opencode` or the DB                                                                                   | Whether any pid↔session join exists — decides Kick's fate for an observed dwarf                     |
+| 6   | `opencode serve --port 0`, note the URL, `curl http://127.0.0.1:<port>/doc`; `curl -N .../event` while driving a session via the SDK, capture raw frames for `session.created`, `session.updated`, `session.status`, `message.part.updated` | Ground-truths §2.2's [I] claims, in particular `parentID` absence from `session.status`             |
+| 7   | `opencode acp` spawned as Anvil does; drive one turn with a Task-triggering prompt through `@agentclientprotocol/sdk`, log every `session/update` verbatim                                                                                  | Ground-truths the ACP-drops-subagents claim on this build before choosing SDK-over-`serve` over ACP |
+| 8   | `opencode run "<prompt>" --format json --attach http://127.0.0.1:<port>` against a session holding a subagent                                                                                                                               | Confirms or refutes #49300 locally                                                                  |
+| 9   | Author a minimal plugin exporting `session.idle`/`tool.execute.before`/`permission.asked`, install it globally, start a fresh session, check whether the handler fires and what the payload contains                                        | Whether the plugin route is viable before authoring a distributable artifact                        |
+| 10  | Native Windows binary: `opencode --version`, one full turn, then an Anvil-shape spawn (`windowsHide`, `detached: false` on win32) to confirm no console/window artefact — the #208-shaped check run for Claude/Codex/Antigravity            | Whether the native install is launch-clean, or WSL passthrough is required                          |
 
 ---
 

@@ -2,13 +2,13 @@
 
 Rows refer to `exploration.md` §6. Nothing was started, prompted or written; the database was opened with `node:sqlite` `DatabaseSync(..., { readOnly: true })` on Node 24.11.1. Machine identifiers are redacted; the home directory is written `~`.
 
-## Row 1 — install, version, store shape  [V]
+## Row 1 — install, version, store shape [V]
 
 - `npx opencode-ai --version` → **1.18.31**. A `pnpm add -g opencode-ai` shim also exists at `%LOCALAPPDATA%\pnpm\bin\opencode(.CMD)` but its `bin/opencode.exe` is a 479-byte placeholder script: pnpm skipped the package's `postinstall` (which downloads the platform binary), so that shim prints "opencode-ai's postinstall script was not run" and exits. `npx` runs the postinstall, which is why only `npx opencode-ai` works. Consequence for CLI detection: the executable on PATH may be a broken shim; presence on PATH is not proof of a working install.
 - Store root: `~/.local/share/opencode/` exists under the Windows user profile (POSIX-shaped path, not `%LOCALAPPDATA%`). Contents: `opencode.db`, `opencode.db-shm`, `opencode.db-wal`, `auth.json`, `log/`, `repos/`. **No `storage/` directory** — this build writes SQLite only; the JSON `storage/{session,message,part}` tree the exploration marked [I] is absent on a fresh 1.18.31 install.
 - State dir: `~/.local/state/opencode/` with `locks/`, `model.json`, `plugin-meta.json`.
 
-## Row 2 — `opencode.db` schema  [V]
+## Row 2 — `opencode.db` schema [V]
 
 - `journal_mode = wal`, `user_version = 0`; 38 rows in `migration`, 0 in `data_migration`. Read-only open works while OpenCode is not running; a WAL database must be read with the `-wal`/`-shm` files present (the Codex reader already handles this).
 - Tables: `account`, `account_state`, `control_account`, `credential`, `data_migration`, `event`, `event_sequence`, `message`, `migration`, `part`, `permission`, `project`, `project_directory`, `session`, `session_context_epoch`, `session_input`, `session_message`, `session_share`, `todo`, `workspace`.
@@ -92,7 +92,7 @@ journal_mode [Object: null prototype] { journal_mode: 'wal' }
 user_version [Object: null prototype] { user_version: 0 }
 ```
 
-## Row 3 — one live turn recorded, read back read-only  [V]  (same day, later)
+## Row 3 — one live turn recorded, read back read-only [V] (same day, later)
 
 The maintainer ran one OpenCode agent turn in a project folder ("what does this project do"), then quit. Read back with `node:sqlite` read-only. Values redacted to `<user>`/`~`; ids are OpenCode's own opaque ids.
 
@@ -109,16 +109,17 @@ The maintainer ran one OpenCode agent turn in a project folder ("what does this 
 
 **SQLite only.** No JSON compatibility path for older OpenCode installs: the provider reads `opencode.db` and nothing else; a machine with the legacy `storage/` tree and no database is "OpenCode not observed", stated in `docs/opencode-format.md` with the version floor (1.18.31 measured). This removes `parse.ts`'s JSON reader, the synthetic compat JSON fixtures and the dual-shape merge/dedupe from the design.
 
-## Row 3, addendum — the measured turn WAS the interactive TUI  [V]
+## Row 3, addendum — the measured turn WAS the interactive TUI [V]
 
 The maintainer launched the agent through the Gentle-AI TUI, which starts OpenCode's own interactive TUI. `~/.local/share/opencode/log/opencode.log` confirms it: every launch writes two `run=` ids within a second of each other — one whose first line is `message="loading tui config" path="~/.config/opencode/tui.json"` (the TUI process) and one whose first line is `message="creating instance" directory=<cwd>` (the server instance the TUI spawns). The measured session's instance is `run=7c4ff842` (08:17:36Z), paired with TUI `run=08f2b1e4` (08:17:35Z).
 
 Consequences:
+
 - **`session_message` and `session_input` are empty after an interactive TUI turn too.** On 1.18.31 an ordinary turn writes `session`, `message`, `part` and `event` only; the two other tables belong to some other flow (queued/steered input is the likely candidate, unmeasured). The feed reads `message` × `part` and nothing else; no second read path is needed. Measurement (b) is closed.
 - **The TUI runs its server as a separate process** (two run ids per launch). Relevant to `opencode-held` (a TUI-opened server has a port the app cannot discover today), not to the observer.
 - Row 4 (a Task subagent populating `session.parent_id`) is still the one open live measurement.
 
-## Row 4 — a Task subagent populates `session.parent_id`  [V]  (same day, interactive TUI)
+## Row 4 — a Task subagent populates `session.parent_id` [V] (same day, interactive TUI)
 
 The maintainer asked the TUI agent to delegate a small job to a subagent. Read back read-only ~5 s after the turn ended (the whole turn took ~16 s, so the streaming state was not caught live; `time.completed` was already set everywhere).
 

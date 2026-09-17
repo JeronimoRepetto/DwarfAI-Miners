@@ -220,7 +220,11 @@ export class OpenCodeProvider implements Provider {
       const role = this.roleOf(session.sessionId, session.parentSessionId)
       if (nowMs - activityMs > dwarfSilenceWindowMs(role, 'unknown')) continue
 
-      const { messages, parts } = readOpenCodeMessages(db, session.sessionId, LAST_MESSAGE_READ_LIMIT)
+      const { messages, parts } = readOpenCodeMessages(
+        db,
+        session.sessionId,
+        LAST_MESSAGE_READ_LIMIT
+      )
       const lastMessage = redactSecrets(lastAssistantText(messages, parts))
 
       const dwarf: Dwarf = {
@@ -325,7 +329,10 @@ export class OpenCodeProvider implements Provider {
     messages: Parameters<typeof openCodeFeedRows>[0],
     parts: Parameters<typeof openCodeFeedRows>[1]
   ): FeedMessage[] {
-    return openCodeFeedRows(messages, parts).map((row) => ({ ...row, text: redactSecrets(row.text) }))
+    return openCodeFeedRows(messages, parts).map((row) => ({
+      ...row,
+      text: redactSecrets(row.text)
+    }))
   }
 
   /** No per-session file exists to tail — the panel pages its own feed instead. */

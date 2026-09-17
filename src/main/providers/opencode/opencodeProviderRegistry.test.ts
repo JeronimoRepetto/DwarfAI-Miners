@@ -15,7 +15,10 @@ import { opencodeDbPath, opencodeWalPath } from './store'
 
 const EXPANDED_ROOT = '/home/j/.local/share/opencode'
 
-function context(expandPath: ProviderContext['expandPath'], sqlite = new MemorySqlite()): ProviderContext {
+function context(
+  expandPath: ProviderContext['expandPath'],
+  sqlite = new MemorySqlite()
+): ProviderContext {
   return {
     config: defaultConfig(),
     fs: new FakeFs(),
@@ -41,7 +44,9 @@ describe('PROVIDER_REGISTRY.opencode', () => {
   })
 
   it("wires the configured store root through expandPath, not the raw '~' value", async () => {
-    const expandPath = vi.fn((path: string) => (path === '~/.local/share/opencode' ? EXPANDED_ROOT : path))
+    const expandPath = vi.fn((path: string) =>
+      path === '~/.local/share/opencode' ? EXPANDED_ROOT : path
+    )
     const fake = new FakeFs()
     const dbPath = opencodeDbPath(EXPANDED_ROOT)
     const walPath = opencodeWalPath(EXPANDED_ROOT)

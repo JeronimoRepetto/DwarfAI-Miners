@@ -5225,7 +5225,9 @@ describe('AgentRuntime.launchAgent (#86)', () => {
    */
   it('refuses to launch OpenCode before ever probing its own detector', async () => {
     const cliDetector = {
-      detect: vi.fn().mockResolvedValue({ cli: 'opencode', installed: true, path: '/opt/opencode' }),
+      detect: vi
+        .fn()
+        .mockResolvedValue({ cli: 'opencode', installed: true, path: '/opt/opencode' }),
       peek: vi.fn().mockReturnValue('unprobed')
     }
     const runtime = new AgentRuntime({
@@ -8107,8 +8109,8 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
         source: 'none'
       })
       // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
-    // the answer, so the count these cases pin grew from 3 to 4.
-    expect(list.catalogs).toHaveLength(4)
+      // the answer, so the count these cases pin grew from 3 to 4.
+      expect(list.catalogs).toHaveLength(4)
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
     } finally {
@@ -8261,8 +8263,8 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
         source: 'none'
       })
       // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
-    // the answer, so the count these cases pin grew from 3 to 4.
-    expect(list.catalogs).toHaveLength(4)
+      // the answer, so the count these cases pin grew from 3 to 4.
+      expect(list.catalogs).toHaveLength(4)
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
     } finally {
