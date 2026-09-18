@@ -140,12 +140,23 @@ function terminalTabWriteScript(submits: boolean): string {
  * osascript that writes `payload` into the Terminal.app tab on `tty` and
  * submits it, or null when there is nothing it could honestly do.
  *
- * An EMPTY payload is the Enter-only write — one call, whose own appended
- * Return is the whole act — and it is a shape rather than an accident, which is
- * why it is no longer refused here. A second call behind it would be a second
- * Return into whatever the composer holds next.
+ * **`submits` is the caller's to state, and was derived here until #471.** It
+ * used to be `payload !== ''`, which was right while a message was the only
+ * caller: a message is a paste, a paste needs the second call (#404), and the
+ * only empty payload was the Enter-only write. A one-digit KEY answer broke
+ * that derivation — a non-empty payload that must stay ONE call, because a lone
+ * digit is read as a keystroke rather than as a paste and its own appended
+ * Return is the confirmation the dialog consumes. Inferring from the payload
+ * would press Return twice on it, and what that second Return would answer is
+ * whatever came next. So the three shapes state it themselves:
  *
- * The refusal that empty payload used to stand in for did not go anywhere. "The
+ * | Caller | payload | `submits` |
+ * | --- | --- | --- |
+ * | a message (#367) | the pastes and the words | `true` |
+ * | the Enter-only write | `''` | `false` |
+ * | a permission or single-select digit (#471) | one digit | `false` |
+ *
+ * The refusal an empty payload used to stand in for did not go anywhere. "The
  * person typed nothing and attached nothing" is known in `terminalTabPayloadFor`
  * below, which returns null for it, and that is the level where it can be told
  * apart from a deliberate Enter. A builder cannot.
@@ -154,13 +165,14 @@ function terminalTabWriteScript(submits: boolean): string {
  * refuse the same way: a tty that is not a device path (it would match no tab,
  * or — worse — be a name this never verified), and a payload past the argv bound.
  */
-export function buildTerminalTabWriteCommand(tty: string, payload: string): ProbeCommand | null {
+export function buildTerminalTabWriteCommand(
+  tty: string,
+  payload: string,
+  submits: boolean
+): ProbeCommand | null {
   if (!/^\/dev\/\S+$/.test(tty)) return null
   if (Array.from(payload).length > MAX_TERMINAL_TAB_PAYLOAD_CODE_POINTS) return null
-  return {
-    command: 'osascript',
-    args: ['-e', terminalTabWriteScript(payload !== ''), tty, payload]
-  }
+  return { command: 'osascript', args: ['-e', terminalTabWriteScript(submits), tty, payload] }
 }
 
 /**

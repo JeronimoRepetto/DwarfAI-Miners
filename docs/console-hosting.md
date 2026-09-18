@@ -1679,12 +1679,38 @@ read as the opposite of the Windows rule above, wrongly, for the few hours betwe
    > lesson, and it has now cost two platforms: a raw-mode receiver that treats a lone `\r` as a
    > submit proves nothing about a TUI that treats a paste as a paste.**
 
-2. **A key that must not submit cannot use this tier at all.** #203's permission digit fires its row
-   by itself and #402's picker keys toggle without confirming; a Return behind either would submit
-   whatever the composer then holds. Those stay on the System Events keystroke path, with its
-   foreground precondition and its Accessibility permission. The split is stated rather than
-   papered over: on macOS the panel can now write a message into a background tab and still be
-   unable to answer a permission prompt in it.
+2. **A key that must not submit was assumed not to fit this tier at all.** #203's permission digit
+   fires its row by itself and #402's picker keys toggle without confirming; a Return behind either
+   looked like it would submit whatever the composer then holds, so all of them stayed on the System
+   Events keystroke path with its foreground precondition and its Accessibility permission.
+
+   > **Measured 2026-09-18 — a single digit DOES fit, and the appended Return is the confirmation
+   > rather than a stray submit (#471).** The assumption above was never measured; it was inferred
+   > from the message shape. Answered through the tab write, against a live Claude Code session:
+   >
+   > |       | Prompt                           | Sent through `do script` | What happened                                                                                                                                                                                   |
+   > | ----- | -------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   > | **A** | Permission dialog                | `4` (No)                 | The dialog closed cleanly. The appended Return was **consumed as the confirmation** — it did not fall through into anything behind the dialog.                                                  |
+   > | **B** | `AskUserQuestion`, single-select | `2`                      | Selected **and** confirmed, in that one call. Same shape as A.                                                                                                                                  |
+   > | **C** | `AskUserQuestion`, multi-select  | `1`, then `1` + Return   | Only partly addressable: the digit **toggled late**, and digit-plus-Return **did not submit**. Submitting needs a **Tab and then a digit** — a sequence nobody has measured through this route. |
+   >
+   > So the routing rule is drawn at the shape that was measured, and no wider: **exactly one digit
+   > `1`–`9` takes the tab write as ONE call** (`submits: false` — the digit is read as a keystroke,
+   > not a paste, so #404's second call does not apply to it and would press Return twice).
+   > **Everything else is handed back to the keystroke path unchanged**: several digits, the Tab,
+   > the cursor-right of #402, the Escape of a deny, and any text that is not one digit. The
+   > adapter says "not mine" by answering `null` rather than by failing, so a key it does not take
+   > is never refused on the tab's behalf — and a key it DOES take is never retried by typing at
+   > the front window when the tab cannot be named, which is #329's refusal arriving on this route.
+   >
+   > Case C is the reason the line is not drawn one step further. Guessing the Tab sequence would
+   > answer a multi-select with a toggle nobody confirmed, which is worse than the keystroke path's
+   > honest preconditions.
+
+   The split is stated rather than papered over, and it is narrower than it was: on macOS the panel
+   can now answer a **permission prompt** and a **single-select picker** in a background tab, with
+   Automation permission alone and no window raised, and it still needs the window in front and
+   Accessibility permission to answer a **multi-select**.
 
 #### The payload rides argv, so no user text is ever escaped
 
