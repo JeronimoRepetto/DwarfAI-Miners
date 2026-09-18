@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process'
 import type { FsLike } from '../adapters/fsLike'
 import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
+import { redactSecrets } from '../domain/redactSecrets'
 import { resolveProgram } from '../platform/cliDetection'
+import { truncate } from '../../shared/truncate'
 import type { TextDeliveryOutcome } from './port'
 
 /**
@@ -46,6 +48,25 @@ import type { TextDeliveryOutcome } from './port'
  */
 export const CODEX_RESUME_START_WINDOW_MS = 2_000
 
+/**
+ * Bound on the stderr this tier reads back from a resumed turn (#457).
+ *
+ * Read at all because exit 1 has at least two causes and this app cannot tell
+ * them apart on its own: the thread id is one Codex no longer knows (#450's
+ * reading), or a turn is already running on that thread (measured 2026-09-18).
+ * Rather than name one and be wrong half the time, the CLI's own words are
+ * quoted — and quoting means bounding, because a chatty refusal must not grow
+ * a sentence a person has to read without limit.
+ *
+ * Bytes on the way in, characters on the way out (CODEX_RESUME_STDERR_CHARS):
+ * the first stops an unbounded buffer, the second stops an unbounded sentence,
+ * and `redactSecrets` runs between them. Same order as the launch failure's
+ * own tail (#263), and for the same reason.
+ */
+export const CODEX_RESUME_STDERR_TAIL_BYTES = 4 * 1024
+/** How much of that tail a person actually reads; see the constant above. */
+export const CODEX_RESUME_STDERR_CHARS = 300
+
 export interface CodexResumeInvocation {
   command: string
   args: string[]
@@ -64,6 +85,30 @@ export interface CodexResumeResult {
    * survived and when it ended by a signal, which carries no code to report.
    */
   exitCode?: number
+  /**
+   * When the process finally ended, for one that outlived the window (#457).
+   *
+   * The whole point of the window is that this tier answers long before its
+   * act finishes — but somebody still has to know when the turn ended, because
+   * Codex refuses a second turn on a thread that is running one. So the runner
+   * keeps the handle it already has and says so here. Resolves and never
+   * rejects: this reports an ENDING, and a turn that failed still ended.
+   *
+   * Absent for a runner that cannot see the end. That is a true statement
+   * about the runner, not a gap: the caller then tracks nothing rather than
+   * waiting on something it will never be told about.
+   */
+  ended?: Promise<void>
+  /**
+   * A bounded, unredacted tail of what the process wrote to stderr before it
+   * died inside the window (#457) — the CLI's own words for why it refused.
+   *
+   * Raw here, exactly as `LaunchFailure.stderrTail` is raw: redaction and the
+   * display cap happen at the boundary this crosses, which is
+   * `deliverViaCodexResume` below. Absent when it wrote nothing, or when the
+   * runner does not capture stderr at all.
+   */
+  stderrTail?: string
 }
 
 export type CodexResumeRunner = (invocation: CodexResumeInvocation) => Promise<CodexResumeResult>
@@ -96,11 +141,23 @@ export function buildCodexResumeArgs(threadId: string, options: readonly string[
 /**
  * Spawn one resumed turn and answer at the start window, never at its exit.
  *
- * stdout and stderr are ignored rather than captured: nothing reads a resumed
- * turn's output — the panel reads the thread's rollout like every other Codex
- * session — and a pipe nobody drains fills and blocks the turn it was meant to
- * observe. The process is left running on purpose; it outlives this promise,
- * which is the entire point of the start window.
+ * stdout is ignored: nothing reads a resumed turn's output — the panel reads
+ * the thread's rollout like every other Codex session — and a pipe nobody
+ * drains fills and blocks the turn it was meant to observe. The process is
+ * left running on purpose; it outlives this promise, which is the entire point
+ * of the start window.
+ *
+ * stderr is PIPED since #457, and drained the moment anything arrives, capped
+ * at CODEX_RESUME_STDERR_TAIL_BYTES. That is the same objection answered
+ * rather than ignored: an undrained pipe fills and blocks, and a drained,
+ * bounded one cannot. What it buys is the difference between the two causes of
+ * exit 1, which this app was naming wrongly half the time.
+ *
+ * The child's own exit is kept too, as `ended`. It is the one signal that is
+ * both immediate and certain about a turn this panel started — the rollout
+ * scan lags it by a poll in both directions — and keeping a listener on a
+ * child that was always going to outlive this promise costs nothing it was not
+ * already costing.
  */
 export function runCodexResumeProcess(
   invocation: CodexResumeInvocation
@@ -109,32 +166,67 @@ export function runCodexResumeProcess(
     const child = spawn(invocation.command, invocation.args, {
       cwd: invocation.cwd,
       windowsHide: true,
-      stdio: ['pipe', 'ignore', 'ignore']
+      stdio: ['pipe', 'pipe', 'pipe']
     })
     let settled = false
+    let stderrTail = ''
+    let exited = false
+    // Resolved by the child's own exit, whenever that is — minutes after this
+    // promise has answered, for an ordinary turn. Never rejected: an ending is
+    // an ending however the process got there.
+    let endTurn = (): void => {}
+    const ended = new Promise<void>((resolveEnd) => {
+      endTurn = resolveEnd
+    })
     const settle = (result: CodexResumeResult): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       resolve(result)
     }
-    const timer = setTimeout(() => settle({ running: true }), invocation.startWindowMs)
+    const timer = setTimeout(
+      // `ended` only for a process that survived: one already gone has no
+      // ending left to report, and the caller would be waiting on a turn that
+      // is over.
+      () => settle({ running: true, ended }),
+      invocation.startWindowMs
+    )
     // The app must not be held open by this wait: the verdict is a moment, and
     // the process it is about is expected to outlive it either way.
     timer.unref?.()
+    child.stdout?.resume() // drained and discarded; see the doc comment above
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', (chunk: string) => {
+      if (stderrTail.length >= CODEX_RESUME_STDERR_TAIL_BYTES) return
+      stderrTail = (stderrTail + chunk).slice(-CODEX_RESUME_STDERR_TAIL_BYTES)
+    })
+    // Errors on either pipe are the exit reported twice, exactly as stdin's
+    // EPIPE below is: a stream that broke belongs to a process that is going.
+    child.stdout?.on('error', () => {})
+    child.stderr?.on('error', () => {})
     child.on('error', (error) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       reject(error) // the binary could not be started at all
     })
-    child.on('exit', (code) =>
-      settle(code === null ? { running: false } : { running: false, exitCode: code })
-    )
+    child.on('exit', (code) => {
+      exited = true
+      endTurn()
+      settle({
+        running: false,
+        ...(code === null ? {} : { exitCode: code }),
+        ...(stderrTail === '' ? {} : { stderrTail })
+      })
+    })
     // A process that died before reading its stdin makes this write fail with
     // EPIPE, which is the exit above reported twice rather than a second fault.
     child.stdin?.on('error', () => {})
     child.stdin?.end(invocation.text)
+    // A child that had already exited before this listener was attached would
+    // otherwise leave `ended` pending for the rest of the run, and every
+    // message held behind that thread waiting out its bound for nothing.
+    if (exited) endTurn()
   })
 }
 
@@ -168,6 +260,35 @@ const NOT_FOUND =
 const NOT_STARTED = 'The codex resume command could not be started.'
 const STOPPED_BY_SIGNAL =
   'Codex stopped straight away, so the turn never started and nothing was delivered.'
+
+/**
+ * Why a resumed turn refused, in Codex's own words where it left any (#457).
+ *
+ * #450 had ONE explanation for a non-zero exit and stated it as fact: "it may
+ * no longer know that session". The 2026-09-18 measurement found a second — a
+ * turn already running on that thread — and stderr was being discarded, so
+ * this tier could not tell them apart and named the wrong one half the time.
+ *
+ * The fix is not a better guess. Codex's own stderr is quoted when there is
+ * any, because the CLI knows which refusal it made and this app does not; and
+ * when there is none, BOTH causes are named rather than one, which is the
+ * honest reading of an exit code that could be either. What never happens is
+ * this app asserting a cause on evidence it has not got.
+ *
+ * `redactSecrets` first and `truncate` after, the order the launch failure's
+ * own tail uses (#263): nothing a CLI wrote to explain itself may reach a
+ * person's screen unredacted, and nothing may grow without bound. The person's
+ * own message is not involved at any point — it went on stdin, and stderr is
+ * the child's own writing.
+ */
+function refusalReason(exitCode: number, stderrTail: string | undefined): string {
+  const said = truncate(redactSecrets(stderrTail ?? ''), CODEX_RESUME_STDERR_CHARS).trim()
+  const opening = `Codex stopped straight away (exit ${exitCode}), so nothing was delivered.`
+  return said === ''
+    ? `${opening} It said nothing about why: a turn may already be running on that session, ` +
+        'or it may no longer know it.'
+    : `${opening} It said: ${said}`
+}
 
 /**
  * Resume one thread with a message, mapping every failure mode to a reason the
@@ -212,17 +333,18 @@ export async function deliverViaCodexResume(
       text: options.text,
       startWindowMs
     })
-    if (result.running) return { delivered: true }
+    if (result.running) {
+      // The ending rides the outcome only when the runner could see one
+      // (#457). Absent stays absent: a caller that tracked a turn it will
+      // never be told the end of would hold every later message behind it
+      // until the wait ran out.
+      return { delivered: true, ...(result.ended === undefined ? {} : { turnEnded: result.ended }) }
+    }
     // Exit 0 inside the window is a turn short enough to have finished, which
     // is the message delivered and answered rather than a failure.
     if (result.exitCode === 0) return { delivered: true }
     if (result.exitCode === undefined) return { delivered: false, error: STOPPED_BY_SIGNAL }
-    return {
-      delivered: false,
-      error:
-        `Codex stopped straight away (exit ${result.exitCode}), so nothing was delivered. ` +
-        'It may no longer know that session.'
-    }
+    return { delivered: false, error: refusalReason(result.exitCode, result.stderrTail) }
   } catch {
     return { delivered: false, error: NOT_STARTED }
   }

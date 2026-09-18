@@ -249,3 +249,105 @@ describe('deliverViaCodexResume resolving a shim (#413)', () => {
     expect(run).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * What a resumed turn still owes the panel after it has answered (#457).
+ *
+ * The start window says the turn BEGAN; nothing said when it ended, and the
+ * process was left running with no handle kept. That was enough until a second
+ * measurement (2026-09-18, codex-cli 0.153.4): a resume started while a turn is
+ * already running on that thread exits 1 at once, and Codex queues nothing —
+ * so the panel has to know when a turn ends before it may start another.
+ */
+describe('deliverViaCodexResume reporting when the turn itself ends (#457)', () => {
+  it('hands up the ending of a turn that is still running', async () => {
+    let end = (): void => {}
+    const ended = new Promise<void>((resolve) => {
+      end = resolve
+    })
+    const outcome = await deliverViaCodexResume(options({ run: runner({ running: true, ended }) }))
+
+    expect(outcome.delivered).toBe(true)
+    expect(outcome.turnEnded).toBeDefined()
+    let settled = false
+    void outcome.turnEnded?.then(() => {
+      settled = true
+    })
+    end()
+    await Promise.resolve()
+    expect(settled).toBe(true)
+  })
+
+  it('reports no ending for a turn that had already ended inside the window', async () => {
+    // Exit 0 inside the start window is a turn that finished, so there is
+    // nothing left to wait for and nothing to say about a thread that is
+    // already free.
+    const outcome = await deliverViaCodexResume(
+      options({ run: runner({ running: false, exitCode: 0 }) })
+    )
+    expect(outcome.delivered).toBe(true)
+    expect(outcome.turnEnded).toBeUndefined()
+  })
+
+  it('reports no ending for a runner that cannot see one', async () => {
+    // A runner with no `ended` at all states a true thing about itself, and
+    // the caller then tracks nothing rather than waiting on a turn it cannot
+    // see finish.
+    const outcome = await deliverViaCodexResume(options({ run: runner({ running: true }) }))
+    expect(outcome.turnEnded).toBeUndefined()
+  })
+})
+
+/**
+ * Which refusal it was, in Codex's own words (#457).
+ *
+ * "It may no longer know that session" was the one explanation #450 had for
+ * exit 1. The 2026-09-18 measurement adds a second — a turn already running on
+ * that thread — and stderr was discarded, so this tier could not tell them
+ * apart and named the wrong one half the time. It still does not GUESS: it
+ * reads a bounded, redacted tail and lets the CLI say which.
+ */
+describe('deliverViaCodexResume saying why codex refused (#457)', () => {
+  it('quotes what codex said rather than naming a cause it cannot know', async () => {
+    const outcome = await deliverViaCodexResume(
+      options({
+        run: runner({
+          running: false,
+          exitCode: 1,
+          stderrTail: 'Error: a turn is already running on this session'
+        })
+      })
+    )
+
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toContain('exit 1')
+    expect(outcome.error).toContain('a turn is already running on this session')
+  })
+
+  it('keeps one honest sentence when codex said nothing at all', async () => {
+    const outcome = await deliverViaCodexResume(
+      options({ run: runner({ running: false, exitCode: 1, stderrTail: '   ' }) })
+    )
+
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toContain('exit 1')
+    // Neither cause is asserted over the other, because neither is known.
+    expect(outcome.error).toMatch(/a turn may already be running/i)
+    expect(outcome.error).toMatch(/may no longer know it/i)
+  })
+
+  it('redacts and caps what it quotes, exactly as every other captured text is', async () => {
+    const outcome = await deliverViaCodexResume(
+      options({
+        run: runner({
+          running: false,
+          exitCode: 1,
+          stderrTail: `Error: bad key sk-${'a'.repeat(40)} in ${'x'.repeat(600)}`
+        })
+      })
+    )
+
+    expect(outcome.error).not.toContain('a'.repeat(40))
+    expect(outcome.error!.length).toBeLessThan(500)
+  })
+})
