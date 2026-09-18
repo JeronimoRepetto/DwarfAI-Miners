@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
+import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import {
   PERMISSION_ESCAPED_LINE,
   PERMISSION_TYPED_LINE,
   PRESS_ENTER_TO_SEND
 } from '../../lib/question/questionAnswer'
-import type { DwarfPermissionRequest } from '../../types'
+import { TYPED_HERE_REACHES_THE_PICKER, type DwarfPermissionRequest } from '../../types'
 import DwarfPermissionCard from './DwarfPermissionCard.vue'
 
 function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {
@@ -285,10 +285,73 @@ describe('DwarfPermissionCard on the terminal channel (#203)', () => {
     expect(wrapper.find('.answer-jump').exists()).toBe(false)
   })
 
-  it('offers no jump while a decision stands, only where one was refused', () => {
+  /*
+   * AMENDED for #481 (was: 'offers no jump while a decision stands, only where
+   * one was refused', asserting `.answer-jump` absent ANYWHERE on the card).
+   * The refused free-text box carries a jump of its own on this channel now, so
+   * "none at all" is no longer the fact. What this pins is the rule it was
+   * written for plus the one #481 added: the REFUSAL row offers none while a
+   * decision stands, and the card never shows two ways to one console.
+   */
+  it('offers no refusal jump while a decision stands, and never two jumps', () => {
     const wrapper = terminalCard({
       answerState: { phase: 'answered', toolUseId: 'toolu_09', decision: 'allow' }
     })
-    expect(wrapper.find('.answer-jump').exists()).toBe(false)
+    expect(wrapper.find('.answer-error').exists()).toBe(false)
+    expect(wrapper.findAll('.answer-jump')).toHaveLength(1)
+  })
+
+  /* --- The free-text box at an open dialog (#481) — one block, appended ---- */
+
+  /*
+   * The question card's stop-gap, on the prompt whose failure shape is the same
+   * (#481). A permission dialog at a terminal is a y/n prompt, and free text
+   * from this card leaves on the ordinary message path — which on this channel
+   * writes into that session's own console, where the dialog reads the keys.
+   */
+  it('offers no free-text box, because the dialog there would read it', () => {
+    const wrapper = terminalCard()
+    expect(wrapper.find('.freeform-input').exists()).toBe(false)
+    expect(wrapper.find('.freeform-refused').text()).toContain(TYPED_HERE_REACHES_THE_PICKER)
+  })
+
+  it('names the two ways out that do work, and no provider', () => {
+    // The wire's sentence verbatim, exactly as the question card prints it: one
+    // fact, one spelling, whichever card a person is looking at.
+    const text = terminalCard().find('.freeform-refused').text()
+    expect(text).toMatch(/picker/i)
+    expect(text).toMatch(/terminal/i)
+    expect(text).not.toMatch(/codex|claude|gemini/i)
+  })
+
+  it('offers the way to that terminal beside the refused box', async () => {
+    const wrapper = terminalCard()
+    const jump = wrapper.find('.freeform-refused .answer-jump')
+    expect(jump.text()).toBe(JUMP_TO_TERMINAL_NAME)
+    expect(jump.attributes('title')).toBe(CONSOLE_HINT)
+    await jump.trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+
+  it('offers exactly one jump once a decision has been refused as well', () => {
+    // The refusal row below already carries the way to that console, and one
+    // affordance must not read as two.
+    const wrapper = terminalCard({
+      answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
+    })
+    expect(wrapper.findAll('.answer-jump')).toHaveLength(1)
+  })
+
+  it('keeps the box on a held prompt, whose text touches no dialog', () => {
+    const wrapper = card()
+    expect(wrapper.find('.freeform-input').exists()).toBe(true)
+    expect(wrapper.find('.freeform-refused').exists()).toBe(false)
+  })
+
+  it('sends nothing on the message path while the box is refused', async () => {
+    const wrapper = terminalCard()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    pressEnter(wrapper.find('.permission-card').element)
+    expect(wrapper.emitted('send-text')).toBeUndefined()
   })
 })

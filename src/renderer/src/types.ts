@@ -122,6 +122,7 @@ export type {
  */
 export {
   ANSWER_ONLY_WHERE_IT_RUNS,
+  TYPED_HERE_REACHES_THE_PICKER,
   ANSWER_LABEL_SEPARATOR,
   joinAnswerLabels,
   splitAnswerLabels,

@@ -933,6 +933,41 @@ export const ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES =
 export const ASK_NO_LONGER_OPEN = 'That question is no longer the one waiting.'
 
 /**
+ * What both cards show in place of their free-text box, and what main returns
+ * for a message sent to a dwarf anyway, while a prompt of its own stands at its
+ * terminal (#481).
+ *
+ * The fact underneath is that a session drawing a picker is not reading a
+ * prompt. Free text from a card leaves on the ordinary MESSAGE path, and on
+ * this channel that path writes into the session's own console (#182, #362,
+ * #371) — so the letters are picker input, digits among them jump between
+ * options, and the Enter behind the message confirms whichever option is
+ * highlighted. The person's words are lost and the agent is handed an answer
+ * nobody chose. Measured by the maintainer on 2026-09-18, on a two-option ask
+ * that received option 1.
+ *
+ * ONE string on the wire for the reason ANSWER_ONLY_WHERE_IT_RUNS is one: two
+ * surfaces say it — the cards up front, so nobody types to find out, and
+ * `sendDwarfText` to anything that sends anyway — and a second copy would be
+ * two sentences for one fact.
+ *
+ * Three clauses, and each is load-bearing. What is happening (a picker at that
+ * terminal), what typing here would really do (that picker reads it, and its
+ * Enter confirms), and the two ways out that do work — the options on the card,
+ * or the person's own words at the terminal. Names no provider, exactly as the
+ * sentences above no longer do (#360): the channel is what decides this.
+ *
+ * Says nothing about an "Other" row. Claude Code's picker has one, and the
+ * keystrokes that would reach it are unmeasured (#481 item 3) — a sentence
+ * promising that route before anybody has watched it work is the kind this file
+ * exists not to make.
+ */
+export const TYPED_HERE_REACHES_THE_PICKER =
+  'This session is showing a picker at its terminal, and anything typed here would be read by ' +
+  'that picker — the Enter behind it confirms whichever option is highlighted. Choose an option ' +
+  'above, or answer in your own words at the terminal.'
+
+/**
  * A tool call a session is blocked on until somebody approves it (#203).
  *
  * A SIBLING of DwarfQuestion, deliberately not a variant of it. That type's
