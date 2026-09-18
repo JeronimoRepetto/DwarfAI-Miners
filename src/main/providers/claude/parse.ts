@@ -971,6 +971,32 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
 const CROSS_SESSION_MESSAGE_RE = /<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/
 
 /**
+ * The whole of a `user` line's content, once the harness's own preface is
+ * stripped, when it is nothing but a hand-back: what Claude Code writes into
+ * the parent transcript when a subagent's turn ends and its result is fed
+ * back in (issue #493). Unlike `<cross-session-message>`, whose inner text is
+ * a person's own words relayed through another session, an `<agent-message>`
+ * hand-back is model output the harness is reporting to itself — there is no
+ * person's text inside it to unwrap, so a match here drops the whole line
+ * rather than publishing what is between the tags.
+ *
+ * `isMeta` already carries this line on every transcript measured for this
+ * issue (39 of 39 `<agent-message>` lines in one live session), so this check
+ * is defense in depth for a harness build that ever stops setting it — never
+ * the primary gate, and it must not start matching a person's own words: a
+ * typed prompt that happens to open with a literal "<agent-message>" tag
+ * still falls through to the ordinary content checks below.
+ *
+ * Only the start of the content is anchored, not the end: a live hand-back
+ * carries a trailing sentence of the harness's own after the closing tag
+ * (the same shape #378 gave the relay envelope), and none of that is a
+ * person's words either, so it does not need its own capture — the whole
+ * line is dropped once the opening is recognized.
+ */
+const AGENT_HANDBACK_RE =
+  /^(?:Another Claude session sent a message:\s*)?<agent-message[^>]*>[\s\S]*<\/agent-message>/
+
+/**
  * What one unwrapped envelope publishes: the words somebody wrote, or undefined
  * when nothing is left of it.
  *
@@ -1035,6 +1061,12 @@ function userContentText(content: unknown): string | undefined {
  * rather than sent by anybody, so either one on its own is enough — and it is
  * the FLAG that decides, never the content shape, so the block array #216
  * added cannot become a way back in.
+ *
+ * A fourth skip is the defensive one (issue #493): a subagent's hand-back
+ * reaches the parent transcript as a `user` line too, `isMeta` among its
+ * flags exactly as an ordinary meta line's, but AGENT_HANDBACK_RE is checked
+ * on its own rather than folded into the `isMeta` branch below, so the line
+ * stays out even on a harness build that ever stops setting the flag.
  */
 function userMessageText(line: Rec): string | undefined {
   if (line.isCompactSummary === true || line.isVisibleInTranscriptOnly === true) return undefined
@@ -1045,6 +1077,7 @@ function userMessageText(line: Rec): string | undefined {
     const relayed = content.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
     if (relayed !== undefined) return relayedWords(relayed)
   }
+  if (AGENT_HANDBACK_RE.test(content.trim())) return undefined
   if (line.isMeta === true || content.startsWith('<')) return undefined
   return content
 }

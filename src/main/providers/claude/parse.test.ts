@@ -1047,6 +1047,63 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
   })
 })
 
+/**
+ * A `user` line exactly as Claude Code writes a subagent's hand-back into the
+ * parent transcript: `isMeta` plus `origin`/`promptSource`, one text block
+ * whose content opens with the harness's own framing sentence and an
+ * `<agent-message>` envelope (issue #493). Structure only — the envelope body
+ * here is invented placeholder text, never a real transcript's.
+ */
+function agentHandbackLine(reportBody: string, meta: { isMeta?: boolean } = {}): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      isMeta: meta.isMeta ?? true,
+      origin: { kind: 'peer' },
+      promptSource: 'agent',
+      timestamp: '2026-09-18T07:58:54.000Z',
+      message: {
+        role: 'user',
+        content:
+          'Another Claude session sent a message:\n' +
+          '<agent-message from="placeholder-agent-id">\n' +
+          `[Subagent hand-back] ${reportBody}\n` +
+          '</agent-message>\n\n' +
+          'This came from another Claude session, not from your user.'
+      }
+    }) + '\n'
+  )
+}
+
+/**
+ * Issue #493. Claude Code writes a subagent's hand-back into the parent
+ * transcript as a `user` line, because that is how the harness feeds a
+ * delegated result back into the turn that launched it. `isMeta` already
+ * keeps it out (it is set on this line exactly as on every other harness
+ * line), so these prove the second, defensive gate: content that is nothing
+ * but an `<agent-message>` envelope is never the person's, with or without
+ * that flag.
+ */
+describe('extractClaudeFeed drops a subagent hand-back (issue #493)', () => {
+  it('keeps a hand-back out of the feed', () => {
+    expect(extractClaudeFeed(agentHandbackLine('Placeholder final report.'), 20)).toEqual([])
+  })
+
+  it('keeps a hand-back out even on a line missing the isMeta flag', () => {
+    // The defensive gate on its own, isolated from the one `isMeta` already
+    // gives every harness line: a build that ever stopped setting the flag
+    // must not turn this into a bubble the person supposedly typed.
+    expect(
+      extractClaudeFeed(agentHandbackLine('Placeholder final report.', { isMeta: false }), 20)
+    ).toEqual([])
+  })
+
+  it('still shows an ordinary typed prompt that is not a hand-back envelope', () => {
+    const feed = extractClaudeFeed(contentUserLine([{ type: 'text', text: 'dig here' }]), 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'dig here']])
+  })
+})
+
 /*
  * Issue #378. A relayed message now leads with RELAY_PROVENANCE_LINE: Claude
  * Code frames a cross-session message for the receiving agent as a peer's and
