@@ -86,6 +86,18 @@ const MESSAGE_UNREACHABLE = 'The message could not be delivered to that terminal
  * nothing was pressed, which is what `neverStarted` says.
  */
 const ANSWER_KEYS_UNBUILDABLE = 'That answer could not be turned into keystrokes.'
+/*
+ * The typed form of an answer — the person's own words for the picker's "Other"
+ * row (#481) — arrives as finished chunks: a digit, the words, a carriage
+ * return. That sequence was measured through the Windows console write; on
+ * this port the tab write has carried digits and nothing else, and a digit
+ * landing in the wrong tab CHOOSES an option there. So the words are refused
+ * before any key is pressed, with `neverStarted` for the reason the two guards
+ * above carry it. Measuring the route here belongs to #471, whose port this is.
+ */
+const TYPED_ANSWER_UNMEASURED_HERE =
+  'Writing an answer in your own words into the picker has not been measured on this ' +
+  'operating system yet. Choose an option, or answer at the terminal.'
 
 export interface PosixTextDeliveryOptions {
   platform: Platform
@@ -401,6 +413,11 @@ export class PosixTextDelivery implements TextDeliveryPort {
     const input = this.consoleInput
     if (input === null) {
       return { delivered: false, error: NO_CONSOLE_INPUT, neverStarted: true }
+    }
+    // The typed form stops here (#481, see TYPED_ANSWER_UNMEASURED_HERE); what
+    // follows is the option form, and only it has been pressed through this port.
+    if (request.chunks !== undefined) {
+      return { delivered: false, error: TYPED_ANSWER_UNMEASURED_HERE, neverStarted: true }
     }
     const chunks = questionAnswerChunks(request.digits, request.submit)
     if (chunks === null) {
