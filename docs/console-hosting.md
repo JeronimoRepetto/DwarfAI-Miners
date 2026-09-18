@@ -461,8 +461,16 @@ letters ARE picker input and the Enter behind the message confirms the highlight
 agent receives an answer nobody chose and the person's words are lost. Watched by the maintainer on
 a two-option ask, which received option 1. Both cards therefore refuse their free-text box while a
 prompt of that session's own is open, and `sendDwarfText` refuses a message for such a dwarf, both
-saying `TYPED_HERE_REACHES_THE_PICKER`. **Other** stays inert and unmeasured either way: the keys
-that reach it are #481's own item 3.
+saying `TYPED_HERE_REACHES_THE_PICKER`.
+
+**Corrected again the same day (#481 item 3), and this is the one to read.** "**Other** stays inert
+and unmeasured" held for a few hours. The row was then measured at the keyboard — the digit **N+1**
+reaches it with its field ready, and one Enter behind the typed text sends it — so a
+single-question, single-select ask on this channel takes a typed answer through that row now, and
+the refusal above is what every other watched prompt keeps. See §6's own dated subsection for the
+readings, the sequences and the four things still unmeasured. The correction is left standing beside
+its successor rather than rewritten, because a reading that was true of the build in front of it and
+then stopped being true is exactly what this register is for.
 
 **A shared terminal window was refused, not answered blind — and is answered now.** This route
 landed its keys wherever the foreground was, so it met the same shared-window refusal every other
@@ -1701,6 +1709,61 @@ way back if a machine we have not seen needs it.
 ---
 
 ---
+
+---
+
+### The picker's own "Other" row — measured 2026-09-18 (#481)
+
+**Reaching the free-text row is the digit one past the agent's last option, and the field is ready
+the moment it is reached.** Measured [V] by the maintainer at the physical keyboard on **Claude Code
+2.1.276, Windows Terminal**, one question per call, single-select, with `AskUserQuestion` asks raised
+by a session in a scratch project:
+
+| Ask                          | Pressed    | What the console showed                                                      | What arrived                                          |
+| ---------------------------- | ---------- | ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| single-select, **2 options** | `3`        | the cursor on the "Other" row with its text field READY — no Enter opened it | the sentence typed, then **one** Enter, as the answer |
+| single-select, **2 options** | Down, Down | the same row in the same state                                               | the same                                              |
+| single-select, **3 options** | `4`        | the same row in the same state                                               | the sentence typed, then one Enter, as the answer     |
+
+**So the reach is N+1**, and that is #402's own finding arriving AT the row rather than past it: the
+subsection above records that with three options the picker numbers its free-text row **4**, because
+it numbers its OWN rows after the agent's. Two independent option counts agreeing is what makes this
+an arithmetic rather than a coincidence.
+
+**What was NOT measured, and is refused rather than derived:**
+
+- **Nine options.** The digit runs out there — every one the picker numbers belongs to an option — so
+  the shipped builder walks down N times instead. That case is **derived from the N+1 rule, not
+  watched**: nobody has counted arrows against a nine-option ask. More than nine is refused outright,
+  because that is where the rows may begin to scroll and a counted walk stops being derivable at all.
+- **A multi-select ask's Other row.** Enter TOGGLES the row a multi-select cursor is on (§4c, round
+  1), so what an Enter behind typed text does there is a different gesture and nobody's finding.
+- **A call carrying several questions**, and **permission dialogs**, which have no Other row at all.
+- **The write by pid.** Every row above was pressed at the physical keyboard. That these keys carry
+  through `WriteConsoleInputW` is by **analogy** with #402, which measured exactly that for the
+  digits and for `ESC [ C`, and measured `ESC [ B` (cursor down) moving an Ink select. The panel
+  route has not been walked end to end; that is the maintainer's to confirm.
+
+**What the panel now writes**, one `WriteConsoleInputW` call per chunk, the builder's split delay
+between them (#404), assembled by `questionFreeTextChunks` in `main/textDelivery/questionKeys.ts`:
+
+| Ask                  | Chunks                         | Calls |
+| -------------------- | ------------------------------ | ----- |
+| single-select, N ≤ 8 | `N+1`, the words, `\r`         | 3     |
+| single-select, N = 9 | `ESC [ B` × 9, the words, `\r` | 11    |
+
+A long answer is split by the same chunk ceiling a message is (#425) — one call carrying too much
+loses its own beginning — so only a short one is the single chunk the table shows. Text carrying a
+control character is **refused rather than repaired**: a carriage return would send the field
+half-written, an escape would steer the picker out of it, and every available repair hands the agent
+a sentence the person did not write.
+
+**Corrects §4c's "Other is left inert" and #484's stop-gap for this one shape.** Both cards refused
+their free-text box on this channel from 2026-09-18 because nothing had watched this row; the
+question card offers it again on a single-question, single-select ask, and what leaves it is an
+ANSWER rather than a message. Every other watched prompt keeps `TYPED_HERE_REACHES_THE_PICKER`, and
+`sendDwarfText` still refuses a MESSAGE for a dwarf whose prompt stands at its terminal — that guard
+is untouched, because a message is not an answer and the picker cannot tell them apart.
 
 ---
 
