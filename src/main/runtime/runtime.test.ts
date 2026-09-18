@@ -23,8 +23,12 @@ import {
   MAX_DWARF_TEXT_CHARS,
   messageTooLongReason,
   NO_ANSWER_KEYSTROKE_TIER,
+  NOTHING_TYPED_TO_ANSWER_WITH,
+  OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
+  TYPED_ANSWER_ONLY_AT_A_PICKER,
+  TYPED_ANSWER_WOULD_STEER_THE_PICKER,
   TYPED_HERE_REACHES_THE_PICKER,
   joinAnswerLabels,
   type Dwarf,
@@ -11394,6 +11398,176 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
     expect(answerLines[0]).toContain('4')
     expect(answerLines.join('\n')).not.toContain('Fig')
     expect(answerLines.join('\n')).not.toContain('Sloe')
+    expect(answerLines.join('\n')).not.toContain('Which fruit?')
+  })
+
+  /*
+   * Answering in the person's OWN words, through the picker's "Other" row
+   * (#481).
+   *
+   * The same route as the digits above — the kick's endpoint, the console-input
+   * capability, the board re-read immediately before the keys — with a
+   * different payload at the end of it: chunks the runtime built from the
+   * measured reach rather than option positions. PR #484 refused this outright
+   * because the row was unmeasured; it has been measured now (2026-09-18,
+   * Claude Code 2.1.276, see questionKeys.ts), and what is still refused is
+   * every shape that measurement does not cover.
+   */
+  function answerInWords(runtime: AgentRuntime, text: string, toolUseId = TOOL_USE_ID) {
+    return runtime.answerDwarfQuestion({ dwarfId: FOREMAN_ID, toolUseId, text })
+  }
+
+  it('types the words through the row one past the ask’s own options', async () => {
+    // Four options, so the Other row is 5: the measured N+1. Then the words as
+    // one chunk, then the single Enter that sends them.
+    const { runtime, port } = await runtimeWith()
+
+    await expect(answerInWords(runtime, 'a quince, actually')).resolves.toEqual({ answered: true })
+    expect(port.answerQuestionAtConsole).toHaveBeenCalledWith({
+      pid: 42,
+      chunks: ['5', 'a quince, actually', '\r']
+    })
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('never hands the words to the message path, whatever tier that would take', async () => {
+    // The whole of #481's defect: free text used to leave as a MESSAGE, and on
+    // this channel that path writes into the console the picker is drawn in.
+    const port = fakePort({ pasteToConsole: vi.fn().mockResolvedValue({ delivered: true }) })
+    const { runtime } = await runtimeWith({ port })
+
+    await answerInWords(runtime, 'a quince')
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses a multi-select ask, whose Other row nobody has reached', async () => {
+    const { runtime, port } = await runtimeWith({ question: askFor({ multiSelect: true }) })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a call that asked several questions, before any keystroke', async () => {
+    const { runtime, port } = await runtimeWith({ question: askFor({ questionCount: 2 }) })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: ANSWER_ONLY_WHERE_IT_RUNS
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses words that are nothing but whitespace', async () => {
+    const { runtime, port } = await runtimeWith()
+
+    await expect(answerInWords(runtime, '   ')).resolves.toEqual({
+      answered: false,
+      error: NOTHING_TYPED_TO_ANSWER_WITH
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it.each([['ship\rit'], ['ship\nit'], ['shipit']])(
+    'refuses %j rather than sanitising a key out of it',
+    async (text) => {
+      const { runtime, port } = await runtimeWith()
+
+      await expect(answerInWords(runtime, text)).resolves.toEqual({
+        answered: false,
+        error: TYPED_ANSWER_WOULD_STEER_THE_PICKER
+      })
+      expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+    }
+  )
+
+  it('refuses a typed answer for a prompt this panel HOLDS, and releases nothing', async () => {
+    // The held path hands the SDK the labels the ask carried (resolveAnswers),
+    // and what it does with anything else is unmeasured. The held card keeps
+    // #125's message box, so nothing on screen reaches this — it is the guard
+    // behind that, not a state the panel can be in.
+    const { runtime, port } = await runtimeWith({ question: askFor({ channel: 'held' }) })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: TYPED_ANSWER_ONLY_AT_A_PICKER
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a typed answer once the ask is no longer the open one', async () => {
+    // The board is re-read immediately before the keys, for the reason the
+    // digit route states: a late answer at the NEXT picker would type a
+    // sentence into it, unread.
+    const { runtime, port } = await runtimeWith({
+      thenQuestion: askFor({ toolUseId: 'toolu_other' })
+    })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: ASK_NO_LONGER_OPEN
+    })
+    expect(port.answerQuestionAtConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses where this build has no tier that types into a console', async () => {
+    const port = fakePort({ answerQuestionAtConsole: undefined })
+    const { runtime } = await runtimeWith({ port })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: NO_ANSWER_KEYSTROKE_TIER
+    })
+  })
+
+  it('reports a typed answer the port could not deliver as unanswered', async () => {
+    const port = fakePort({
+      answerQuestionAtConsole: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, error: 'shared window' })
+    })
+    const { runtime } = await runtimeWith({ port })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NEEDS_ITS_CONSOLE
+    })
+  })
+
+  it('survives a port that throws on a typed answer, and claims nothing', async () => {
+    const port = fakePort({
+      answerQuestionAtConsole: vi.fn().mockRejectedValue(new Error('no window'))
+    })
+    const { runtime } = await runtimeWith({ port })
+
+    await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
+      answered: false,
+      error: ANSWER_NEEDS_ITS_CONSOLE
+    })
+  })
+
+  it('logs that words were typed and never the words themselves', async () => {
+    // Stricter than the digit route's rule and for a stronger reason: an option
+    // label is the agent's text out of a transcript, and this is the PERSON's
+    // own sentence. Neither belongs in a log line.
+    const logged: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logged.push(String(line))
+    })
+    const { runtime } = await runtimeWith()
+
+    await answerInWords(runtime, 'put it in Redis instead')
+    log.mockRestore()
+
+    const answerLines = logged.filter((line) => line.includes('[question]'))
+    expect(answerLines).toHaveLength(1)
+    expect(answerLines.join('\n')).not.toContain('Redis')
+    expect(answerLines.join('\n')).not.toContain('put it in')
     expect(answerLines.join('\n')).not.toContain('Which fruit?')
   })
 })

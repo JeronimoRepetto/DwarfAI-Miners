@@ -333,6 +333,41 @@ describe('preload question-answer contract', () => {
     invoke.mockResolvedValueOnce(refused)
     await expect(api.answerDwarfQuestion(answer)).resolves.toEqual(refused)
   })
+
+  /*
+   * The person's own words, for the picker's "Other" row (#481). The second
+   * form this channel carries, and it crosses as ONE field: the bridge sends
+   * the form it was given and never both, so a payload can only ever say one
+   * thing about what was answered.
+   */
+  it('carries a typed answer as its own field, with no record beside it', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await api.answerDwarfQuestion({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      text: 'neither — put it in Redis'
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      text: 'neither — put it in Redis'
+    })
+  })
+
+  it('drops a typed answer that is not a string rather than coercing it', async () => {
+    // A coerced one would hand the agent a sentence the person never wrote.
+    // Dropped, the payload carries neither form and main refuses its shape.
+    invoke.mockResolvedValueOnce({ answered: false, error: 'That answer could not be delivered.' })
+    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      text: 42
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01'
+    })
+  })
 })
 
 /**

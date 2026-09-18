@@ -24,6 +24,10 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
+  NOTHING_TYPED_TO_ANSWER_WITH,
+  OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
+  TYPED_ANSWER_ONLY_AT_A_PICKER,
+  TYPED_ANSWER_WOULD_STEER_THE_PICKER,
   TYPED_HERE_REACHES_THE_PICKER,
   channelCarriesAttachments,
   DWARF_PROVIDERS,
@@ -144,6 +148,7 @@ import {
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
+  ConsoleAnswerRequest,
   TextDeliveryOutcome,
   TextDeliveryPort,
   TextDeliveryTarget
@@ -158,7 +163,12 @@ import {
 import { CodexHoldQueue, type HeldCodexMessage } from '../textDelivery/codexHold'
 import { heldContentFor, type AttachmentReader } from '../textDelivery/attachmentDelivery'
 import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
-import { questionKeystrokesFor, type QuestionKeystrokeRefusal } from '../textDelivery/questionKeys'
+import {
+  questionFreeTextChunks,
+  questionKeystrokesFor,
+  type QuestionFreeTextRefusal,
+  type QuestionKeystrokeRefusal
+} from '../textDelivery/questionKeys'
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
 import { redactSecrets } from '../domain/redactSecrets'
@@ -497,8 +507,8 @@ function combineFallbackErrors(
  * several labels in it — see joinAnswerLabels in contracts, which is the other
  * half of this encoding and the reason it is not spelled twice.
  */
-function chosenLabelsFor(question: DwarfQuestion, request: DwarfQuestionAnswerRequest): string[] {
-  const given = Object.entries(request.answers)
+function chosenLabelsFor(question: DwarfQuestion, answers: Record<string, string>): string[] {
+  const given = Object.entries(answers)
   if (given.length !== 1) return []
   const [questionText, value] = given[0]!
   return questionText === question.question ? splitAnswerLabels(value) : []
@@ -516,6 +526,22 @@ function answerRefusal(reason: QuestionKeystrokeRefusal): string {
   if (reason === 'several-questions') return ANSWER_ONLY_WHERE_IT_RUNS
   if (reason === 'label-not-offered') return ANSWER_OPTION_NOT_OFFERED
   return ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES
+}
+
+/**
+ * The sentence for a typed answer whose keys could not be derived (#481).
+ *
+ * `answerRefusal`'s sibling and split from it for the reason that one is split
+ * by reason: these are four different facts about the person's own session, and
+ * three of them have no counterpart on the option route at all. The
+ * several-question refusal is the one they share, and it is the same sentence
+ * because it is the same fact about the same ask.
+ */
+function typedAnswerRefusal(reason: QuestionFreeTextRefusal): string {
+  if (reason === 'several-questions') return ANSWER_ONLY_WHERE_IT_RUNS
+  if (reason === 'other-row-not-measured') return OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK
+  if (reason === 'nothing-typed') return NOTHING_TYPED_TO_ANSWER_WITH
+  return TYPED_ANSWER_WOULD_STEER_THE_PICKER
 }
 
 /**
@@ -3126,6 +3152,17 @@ export class AgentRuntime {
     if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
 
     const pending = dwarf.pendingQuestion
+    // An answer in the person's OWN words is a key pressed at a picker, and
+    // only a WATCHED session is standing at one (#481). The held path releases
+    // the blocked call with the labels the ask carried and nothing else — see
+    // TYPED_ANSWER_ONLY_AT_A_PICKER — so this is refused here rather than
+    // reaching the registry, whose refusal would be about the wrong thing.
+    if (request.text !== undefined) {
+      if (pending?.channel !== 'terminal') {
+        return { answered: false, error: TYPED_ANSWER_ONLY_AT_A_PICKER }
+      }
+      return this.typeQuestionAnswer(dwarf, pending, request)
+    }
     // An observed session's ask is answered where it is DRAWN, by keystroke
     // (#362) — the same split answerDwarfPermission draws off the same field,
     // and off the wire's own reading rather than a second guess at it here.
@@ -3219,21 +3256,39 @@ export class AgentRuntime {
     if (resolved === null || resolved.endpoint.kind !== 'terminal' || !this.canTypeIntoConsole()) {
       return { answered: false, error: ANSWER_NEEDS_ITS_CONSOLE }
     }
-    const keystrokes = questionKeystrokesFor(pending, chosenLabelsFor(pending, request))
-    if (!keystrokes.ok) return { answered: false, error: answerRefusal(keystrokes.reason) }
+    // What is pressed, and what may be SAID about it afterwards. The typed
+    // route's log line carries no payload at all, where the option route's
+    // carries positions: an option index is this app's own arithmetic, and a
+    // person's sentence is the one thing on this path that is nobody's but
+    // theirs (#481).
+    let keys: { request: ConsoleAnswerRequest; logged: string }
+    if (request.text === undefined) {
+      const keystrokes = questionKeystrokesFor(pending, chosenLabelsFor(pending, request.answers))
+      if (!keystrokes.ok) return { answered: false, error: answerRefusal(keystrokes.reason) }
+      keys = {
+        request: {
+          pid: resolved.endpoint.pid,
+          digits: keystrokes.digits,
+          submit: keystrokes.submit
+        },
+        logged: `options ${keystrokes.digits.join(',')}`
+      }
+    } else {
+      const typed = questionFreeTextChunks(pending, request.text)
+      if (!typed.ok) return { answered: false, error: typedAnswerRefusal(typed.reason) }
+      keys = {
+        request: { pid: resolved.endpoint.pid, chunks: typed.chunks },
+        logged: `an answer in the person's own words (${typed.chunks.length} keystrokes)`
+      }
+    }
 
     if (!(await this.stillTheOpenAsk(request))) {
       return { answered: false, error: ASK_NO_LONGER_OPEN }
     }
 
-    const pid = resolved.endpoint.pid
     let delivered = false
     try {
-      const outcome = await answerAtConsole.call(this.textDelivery, {
-        pid,
-        digits: keystrokes.digits,
-        submit: keystrokes.submit
-      })
+      const outcome = await answerAtConsole.call(this.textDelivery, keys.request)
       delivered = outcome.delivered
     } catch (error) {
       console.warn(`[question] typing for ${dwarf.id} threw`, error)
@@ -3243,8 +3298,7 @@ export class AgentRuntime {
     // leave the redaction the provider boundary applied. Exactly as the
     // permission tier logs the decision and never the payload.
     console.log(
-      `[question] typed options ${keystrokes.digits.join(',')} for ${dwarf.id}: ` +
-        `${delivered ? 'delivered' : 'failed'}`
+      `[question] typed ${keys.logged} for ${dwarf.id}: ${delivered ? 'delivered' : 'failed'}`
     )
     return delivered ? { answered: true } : { answered: false, error: ANSWER_NEEDS_ITS_CONSOLE }
   }

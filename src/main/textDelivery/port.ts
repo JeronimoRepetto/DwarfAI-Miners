@@ -304,14 +304,44 @@ export interface InterruptRequest {
  * implementing this presses what it is given and decides nothing about which
  * option that is.
  */
-export interface ConsoleAnswerRequest {
+interface ConsoleAnswerAtPid {
   /** The session pid; on Windows its own console input buffer receives the keys (#402). */
   pid: number
+}
+
+/** The option form: positions this app derived, which the port turns into chunks. */
+export interface ConsoleOptionAnswerRequest extends ConsoleAnswerAtPid {
   /** The chosen options' 1-based positions, ascending, as single characters. */
   digits: readonly string[]
   /** Whether the picker needs its confirmation behind the digits (a multi-select does). */
   submit: boolean
+  chunks?: undefined
 }
+
+/**
+ * The typed form: the chunks of an answer in the person's own words, already
+ * built (#481).
+ *
+ * Built by the caller rather than here, and that is the whole reason this is a
+ * second shape rather than a `text` field beside the digits. Reaching the
+ * picker's "Other" row is counted off the ASK — the digit one past its options,
+ * or one cursor-down per option where the digits have run out — and the ask is
+ * something the runtime holds and a platform port does not. So what crosses is
+ * the finished sequence, and the port keeps doing what it has always done:
+ * presses what it is given, and decides nothing about what that means.
+ *
+ * The one thing it does decide is whether the chunks are pressable at all
+ * (`answerChunksPressable`), because this payload carries a person's own words
+ * where the other carries positions, and a fail-closed guard in front of
+ * somebody else's console is not something to hold in one place only.
+ */
+export interface ConsoleTextAnswerRequest extends ConsoleAnswerAtPid {
+  chunks: readonly string[]
+  digits?: undefined
+  submit?: undefined
+}
+
+export type ConsoleAnswerRequest = ConsoleOptionAnswerRequest | ConsoleTextAnswerRequest
 
 /**
  * Kick's terminal path since #329: end the session at this pid, no window

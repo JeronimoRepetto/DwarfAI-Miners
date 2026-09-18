@@ -24,7 +24,6 @@ import type {
   DwarfKickResult,
   DwarfPermissionAnswerRequest,
   DwarfPermissionDecision,
-  DwarfQuestionAnswerRequest,
   DwarfQuestionAnswerResult,
   DwarfTextRequest,
   DwarfTextResult,
@@ -137,6 +136,7 @@ import {
   togglePanel
 } from './shell/window'
 import {
+  parseAnswerRequest,
   parseDwarfDeliveryReport,
   parseMessagePanelHeight,
   parseMessagePanelState
@@ -373,30 +373,6 @@ function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | nu
     ...tuning,
     ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode })
   }
-}
-
-/**
- * Same boundary discipline again, plus the one thing no other channel carries:
- * a RECORD of strings.
- *
- * Every key and value is checked here, and an entry that is not a string pair
- * takes the whole answer down rather than being dropped — a partly-read answer
- * is one the panel would be answering differently from how the user did. What
- * the strings MEAN is not judged here: they are matched against the ask the
- * agent actually made, in main, where the ask is (see HeldSessionRegistry). So
- * this refuses a shape and never a choice.
- */
-function parseAnswerRequest(payload: unknown): DwarfQuestionAnswerRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string' || typeof record.toolUseId !== 'string') return null
-  if (typeof record.answers !== 'object' || record.answers === null) return null
-  const answers: Record<string, string> = {}
-  for (const [question, label] of Object.entries(record.answers as Record<string, unknown>)) {
-    if (typeof label !== 'string') return null
-    answers[question] = label
-  }
-  return { dwarfId: record.dwarfId, toolUseId: record.toolUseId, answers }
 }
 
 const PERMISSION_DECISIONS: readonly DwarfPermissionDecision[] = ['allow', 'deny']

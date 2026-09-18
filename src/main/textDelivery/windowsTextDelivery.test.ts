@@ -1296,6 +1296,67 @@ describe('WindowsTextDelivery.answerQuestionAtConsole', () => {
       port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: false })
     ).resolves.toMatchObject({ delivered: false })
   })
+
+  /*
+   * The second form of this request, which carries CHUNKS the runtime built
+   * rather than digits this port turns into them (#481). The words are the
+   * person's own, so the port cannot derive them — what it keeps is the write
+   * and both of its fail-closed guards.
+   */
+  it('writes a typed answer as the reach, the words and the Enter, one call each', async () => {
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ runConsoleWrite })
+
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, chunks: ['5', 'a quince', '\r'] })
+    ).resolves.toEqual({ delivered: true, stages: { spawnMs: expect.any(Number) } })
+    const script = String(runConsoleWrite.mock.calls[0]?.[0])
+    expect(script).toContain('AttachConsole(42)')
+    expect(chunksOf(script)).toEqual(['5', 'a quince', '\r'])
+    expect(script.match(/WriteConsoleInputW\(\$conin/g)?.length).toBe(3)
+  })
+
+  it('raises no window for a typed answer either', async () => {
+    const focus = vi.fn()
+    const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+    const port = delivery({ focus, runConsoleWrite })
+
+    await port.answerQuestionAtConsole({ pid: 42, chunks: ['3', 'mine', '\r'] })
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('refuses chunks carrying a key nobody measured, and writes nothing', async () => {
+    // The free-text route's own fail-closed guard, run again at the port: the
+    // payload is a person's words, and words that smuggled a carriage return
+    // would submit the picker halfway through them.
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.answerQuestionAtConsole({
+      pid: 42,
+      chunks: ['3', 'ship it\rnow', '\r']
+    })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(runConsoleWrite).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty chunk list for a typed answer', async () => {
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.answerQuestionAtConsole({ pid: 42, chunks: [] })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(runConsoleWrite).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on a junk pid for a typed answer too', async () => {
+    const runConsoleWrite = vi.fn()
+    const port = delivery({ runConsoleWrite })
+
+    const result = await port.answerQuestionAtConsole({ pid: 0, chunks: ['3', 'mine', '\r'] })
+    expect(result).toMatchObject({ delivered: false, neverStarted: true })
+    expect(runConsoleWrite).not.toHaveBeenCalled()
+  })
 })
 
 /* --- The console write's own transport (#433) — one block, appended -------- */

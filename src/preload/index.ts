@@ -807,15 +807,26 @@ const api: DwarfAiMinersApi = {
   // main then sees an answer that names no option and refuses it, which is the
   // right end for a payload nobody could have chosen.
   answerDwarfQuestion: (request) => {
+    const address = {
+      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
+      toolUseId: typeof request?.toolUseId === 'string' ? request.toolUseId : ''
+    }
+    // The person's own words for the picker's "Other" row (#481) — ONE field,
+    // and the record is not rebuilt beside it: the two forms are exclusive on
+    // the wire, and a bridge that sent both would leave main choosing which
+    // answer the person meant. A non-string is dropped rather than coerced, and
+    // then the payload carries neither form and main refuses its shape.
+    if (request?.text !== undefined) {
+      return ipcRenderer.invoke(IPC_CHANNELS.answerDwarfQuestion, {
+        ...address,
+        ...(typeof request.text === 'string' ? { text: request.text } : {})
+      })
+    }
     const answers: Record<string, string> = {}
     for (const [question, label] of Object.entries(request?.answers ?? {})) {
       if (typeof label === 'string') answers[question] = label
     }
-    return ipcRenderer.invoke(IPC_CHANNELS.answerDwarfQuestion, {
-      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
-      toolUseId: typeof request?.toolUseId === 'string' ? request.toolUseId : '',
-      answers
-    })
+    return ipcRenderer.invoke(IPC_CHANNELS.answerDwarfQuestion, { ...address, answers })
   },
   // Same discipline as answerDwarfQuestion: every field crosses as a real
   // string or as '', including `decision` — main refuses an empty one rather

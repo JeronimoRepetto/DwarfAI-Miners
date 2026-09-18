@@ -933,6 +933,44 @@ export const ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES =
 export const ASK_NO_LONGER_OPEN = 'That question is no longer the one waiting.'
 
 /**
+ * The four things main can return for an answer written in the person's own
+ * words (#481).
+ *
+ * Beside the option route's five above, for the reason they are all here: main
+ * returns them and the card prints them verbatim, so the wire boundary is the
+ * only place both processes may read one spelling of each. Each names a
+ * different fact about the person's own session rather than one "could not
+ * answer" — what to do next differs for every one of them.
+ *
+ * None of them says the route does not exist. It does, it is measured
+ * (2026-09-18, see main's questionKeys.ts), and these are the shapes around
+ * its edges.
+ */
+export const OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK =
+  'Only an ask that takes one answer, with nine options or fewer, has a measured way to its ' +
+  'picker\'s own "Other" row. Answer this one at the terminal, in your own words.'
+/** Nothing in the box, so the Enter behind it would answer with an empty field. */
+export const NOTHING_TYPED_TO_ANSWER_WITH =
+  'There was nothing written to send, so nothing was typed.'
+/**
+ * Refused rather than repaired, and the sentence says which words to change:
+ * every repair available here — dropping the line break, turning it into a
+ * space — would hand the agent a sentence the person did not write.
+ */
+export const TYPED_ANSWER_WOULD_STEER_THE_PICKER =
+  'Those words carry a line break or an escape, and the picker reads both as keys of its own — ' +
+  'the line break would send the answer half-written. Take them out, or answer at the terminal.'
+/**
+ * The held channel's own refusal. The held path hands the agent's blocked tool
+ * call the labels the ask carried (`resolveAnswers`), and what it does with
+ * anything else is unmeasured; the held card offers a message box instead, so
+ * nothing on screen reaches this — it is the guard behind that box.
+ */
+export const TYPED_ANSWER_ONLY_AT_A_PICKER =
+  'This panel is holding that session, where an answer can only be one of the options the agent ' +
+  'offered. Write to it as a message instead, or choose an option above.'
+
+/**
  * What both cards show in place of their free-text box, and what main returns
  * for a message sent to a dwarf anyway, while a prompt of its own stands at its
  * terminal (#481).
@@ -3191,14 +3229,50 @@ export interface HostedLaunchResult {
  *
  * `answers` is the shape the agent's own tool takes — keyed by the question's
  * TEXT, valued by the chosen option's LABEL. Both halves are checked in main
- * against the ask the agent actually made, so nothing in an answer is free
- * text: it can only ever repeat the agent's own words back to it.
+ * against the ask the agent actually made, so an answer in that form can only
+ * ever repeat the agent's own words back to it.
+ *
+ * AMENDED for #481: an answer is no longer always that form. The picker has an
+ * "Other" row of its own, the keys that reach it have been measured, and the
+ * `text` form below is a person answering in their own words through that row —
+ * still the agent's own affordance, and still never a label this app invented.
+ * Exactly one of the two forms travels.
  */
-export interface DwarfQuestionAnswerRequest {
+interface DwarfQuestionAnswerAddress {
   dwarfId: string
   toolUseId: string
-  answers: Record<string, string>
 }
+
+/** The answer that repeats the agent's own words back to it — the form #125 shipped. */
+export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
+  answers: Record<string, string>
+  text?: undefined
+}
+
+/**
+ * The answer written in the person's OWN words, for the picker's "Other" row
+ * (#481).
+ *
+ * One string and no record, because it answers the one question on the wire and
+ * there is nothing for a key to distinguish. It is not free text arriving
+ * somewhere — it is an ANSWER, and main types it into the row the agent's own
+ * picker offers for exactly this (see questionFreeTextChunks). The held channel
+ * refuses it for now: `resolveAnswers` hands the SDK the labels the ask carried,
+ * and what that path does with anything else is unmeasured.
+ */
+export interface DwarfQuestionTextAnswer extends DwarfQuestionAnswerAddress {
+  text: string
+  answers?: undefined
+}
+
+/**
+ * A UNION rather than one shape with two optional fields, because the two are
+ * exclusive and the type is where that is cheapest to hold: a reader narrows on
+ * `text` and gets the other form's field typed away, instead of every reader
+ * asking "and if both are here?". The boundary (`parseAnswerRequest`) is what
+ * makes the exclusion true of anything that arrives.
+ */
+export type DwarfQuestionAnswerRequest = DwarfQuestionLabelAnswer | DwarfQuestionTextAnswer
 
 /**
  * How several chosen labels ride in the ONE string an answer's value is

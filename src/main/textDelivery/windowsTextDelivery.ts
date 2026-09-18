@@ -46,7 +46,7 @@ import {
   consoleWriteFailureFor
 } from './consoleInputWrite'
 import { consoleChunksFor } from './attachmentDelivery'
-import { questionAnswerChunks } from './questionKeys'
+import { answerChunksPressable, questionAnswerChunks } from './questionKeys'
 import { buildGracefulExitCommand, buildSendInterruptCommand } from './sendKeys'
 import { createStageTimer, type StageTimings } from './timing'
 import type { ShellResult } from '../platform/focus'
@@ -729,8 +729,16 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * content rather than as a keystroke (#404).
    */
   async answerQuestionAtConsole(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome> {
-    const chunks = questionAnswerChunks(request.digits, request.submit)
-    if (chunks === null) {
+    // The typed form arrives already built, because the sequence that reaches
+    // the picker's "Other" row is counted off the ask and the ask is not
+    // something a platform port holds (#481). What is checked here either way
+    // is that every chunk is a key this app has measured: the guard is the same
+    // discipline the digit check below is, aimed at the payload that changed.
+    const chunks =
+      request.chunks === undefined
+        ? questionAnswerChunks(request.digits, request.submit)
+        : [...request.chunks]
+    if (chunks === null || !answerChunksPressable(chunks)) {
       return { delivered: false, error: ANSWER_KEYS_UNBUILDABLE, neverStarted: true }
     }
     const command = buildConsoleInputSequenceCommand(request.pid, chunks)
