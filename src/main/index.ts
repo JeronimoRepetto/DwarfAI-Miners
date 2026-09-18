@@ -76,7 +76,7 @@ import {
   ensureDefaultAutostart,
   migrateLegacyAutostart
 } from './shell/autostart'
-import { darwinConsoleInputEnabled, loadConfig } from './config/config'
+import { darwinConsoleInputOverride, loadConfig } from './config/config'
 import {
   CONFIG_FILE_NAME,
   createConfigFileStore,
@@ -815,6 +815,11 @@ async function init(): Promise<void> {
   const launchedSessionStore =
     projects === null ? null : createSqliteLaunchedSessionStore({ database: appDatabase })
 
+  // Unset (the common case) leaves DARWIN_CONSOLE_INPUT_ENABLED — now `true`
+  // — in charge; a stated override wins in either direction (#367 items 1
+  // and 3).
+  const darwinConsoleInputSetting = darwinConsoleInputOverride()
+
   runtime = new AgentRuntime({
     config,
     ledger,
@@ -827,9 +832,9 @@ async function init(): Promise<void> {
     },
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
     readAttachment,
-    // Passed only when the variable is set (#367): unset leaves the shipped
-    // constant in charge rather than pinning it to false from here.
-    ...(darwinConsoleInputEnabled() ? { darwinConsoleInput: true } : {}),
+    ...(darwinConsoleInputSetting !== undefined
+      ? { darwinConsoleInput: darwinConsoleInputSetting }
+      : {}),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the

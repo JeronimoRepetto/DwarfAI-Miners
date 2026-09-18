@@ -624,30 +624,48 @@ export function loadSimulationConfig(env: ConfigEnv = process.env): SimulationCo
 
 /*
  * ---------------------------------------------------------------------------
- * The macOS console-input opt-in (issue #367)
+ * The macOS console-input override (issue #367)
  * ---------------------------------------------------------------------------
  *
- * `platformAdapters.ts` ships `DARWIN_CONSOLE_INPUT_ENABLED = false`, with
+ * `platformAdapters.ts` shipped `DARWIN_CONSOLE_INPUT_ENABLED = false`, with
  * `PlatformAdapterOptions.darwinConsoleInput?: boolean` there to override it
  * "for tests and a future opt-in" — but until now nothing read an environment
  * to supply that override, so the only way to try the feature was editing the
- * constant and rebuilding.
+ * constant and rebuilding. The maintainer decided on 2026-09-18, before the
+ * end-to-end walk from the panel, that the constant itself becomes `true`
+ * (#367 item 3) — Terminal.app's tab write is real, measured, and permission
+ * cheap enough to ship on. This variable is the way back if that turns out
+ * wrong on a machine we have not seen: unlike the old one-way opt-in, it now
+ * reads three states rather than two.
  *
  * A REAL environment variable only, never a config-v1.json key: this is a
- * capability gate for a route that types keystrokes into another program
- * (System Events, via osascript), and the config-layering skill's split
- * applies exactly as it does to DWARFAI_SIMULATE above — an operator's
- * debugging device does not belong in the file a packaged app reads on every
- * launch. Mirrors perf.ts's DWARFAI_PERF, tierService.ts's TIER_DEBUG,
- * codexProvider.ts's CODEX_DEBUG and window.ts's SHELL_DEBUG: on for `1` or
- * `true`, off otherwise — including unset, which is why the shipped default
- * stays DARWIN_CONSOLE_INPUT_ENABLED (still `false`) rather than moving. This
- * switch only unblocks testing (#367 item 1); flipping the shipped default
- * still waits on the darwin focus reach verdict (#367 item 2).
+ * capability gate for a route that reaches another program (Terminal.app via
+ * `do script`, or System Events for the keystroke-only keys), and the
+ * config-layering skill's split applies exactly as it does to
+ * DWARFAI_SIMULATE above — an operator's debugging device does not belong in
+ * the file a packaged app reads on every launch. `DARWIN_CONSOLE_INPUT=0` (or
+ * `false`) forces the path OFF; `=1` (or `true`) forces it ON; unset — the
+ * common case now — leaves DARWIN_CONSOLE_INPUT_ENABLED to decide, which is
+ * `true`. Mirrors perf.ts's DWARFAI_PERF, tierService.ts's TIER_DEBUG,
+ * codexProvider.ts's CODEX_DEBUG and window.ts's SHELL_DEBUG for its accepted
+ * spellings, but unlike those two-state flags this one is tri-state: it must
+ * distinguish "not set" from "set to false" so the shipped default can still
+ * win when nobody has opted out.
  */
 export const DARWIN_CONSOLE_INPUT_ENV_VAR = 'DARWIN_CONSOLE_INPUT'
 
-/** Whether the macOS console-input opt-in is switched on for this process. */
-export function darwinConsoleInputEnabled(env: ConfigEnv = process.env): boolean {
-  return readFlag(env, DARWIN_CONSOLE_INPUT_ENV_VAR, false)
+/**
+ * The macOS console-input override for this process: `true`/`false` when the
+ * operator has stated one, `undefined` when unset so the caller falls back
+ * to `DARWIN_CONSOLE_INPUT_ENABLED`. Accepts the same spellings `readFlag`
+ * does (`1`/`true`, `0`/`false`, case-insensitive, trimmed); anything else —
+ * including junk — is treated as unset rather than guessed at.
+ */
+export function darwinConsoleInputOverride(env: ConfigEnv = process.env): boolean | undefined {
+  const raw = env[DARWIN_CONSOLE_INPUT_ENV_VAR]
+  if (raw === undefined || raw.trim() === '') return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true') return true
+  if (normalized === '0' || normalized === 'false') return false
+  return undefined
 }

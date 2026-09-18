@@ -4,7 +4,7 @@ import {
   DARWIN_CONSOLE_INPUT_ENV_VAR,
   SIMULATION_ENV_VAR,
   cliOverridesFrom,
-  darwinConsoleInputEnabled,
+  darwinConsoleInputOverride,
   defaultConfig,
   defaultSimulationConfig,
   loadConfig,
@@ -496,21 +496,29 @@ describe('loadSimulationConfig', () => {
  * setting is (see the "never leaks into AppConfig" tripwire below, mirrored
  * from loadSimulationConfig's own).
  */
-describe('darwinConsoleInputEnabled', () => {
+// AMENDED for #367 item 3: darwinConsoleInputEnabled (a one-way opt-in) became
+// darwinConsoleInputOverride, a two-way override that must distinguish
+// "unset" from "set to false" so the now-`true` shipped default can still be
+// forced off.
+describe('darwinConsoleInputOverride', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
   })
 
-  it('is off for an empty environment', () => {
-    expect(darwinConsoleInputEnabled({})).toBe(false)
+  it('is undefined for an empty environment, leaving the shipped default in charge', () => {
+    expect(darwinConsoleInputOverride({})).toBeUndefined()
   })
 
-  it.each(['1', 'true', 'TRUE'])('turns on for the affirmative value %j', (value) => {
-    expect(darwinConsoleInputEnabled({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBe(true)
+  it.each(['1', 'true', 'TRUE'])('forces the path on for the affirmative value %j', (value) => {
+    expect(darwinConsoleInputOverride({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBe(true)
   })
 
-  it.each(['0', 'false', 'yes', 'on', '', '   '])('stays off for the value %j', (value) => {
-    expect(darwinConsoleInputEnabled({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBe(false)
+  it.each(['0', 'false', 'FALSE'])('forces the path off for the negative value %j', (value) => {
+    expect(darwinConsoleInputOverride({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBe(false)
+  })
+
+  it.each(['yes', 'on', '', '   '])('treats the unconsidered value %j as unset', (value) => {
+    expect(darwinConsoleInputOverride({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: value })).toBeUndefined()
   })
 
   it('never leaks into AppConfig, so the userData config file cannot carry it', () => {
@@ -526,9 +534,9 @@ describe('darwinConsoleInputEnabled', () => {
     // The default argument matters for the same reason loadSimulationConfig's
     // does: a caller must read the REAL environment, never anything layered
     // in from the config file.
-    vi.stubEnv(DARWIN_CONSOLE_INPUT_ENV_VAR, '1')
-    expect(darwinConsoleInputEnabled()).toBe(true)
+    vi.stubEnv(DARWIN_CONSOLE_INPUT_ENV_VAR, '0')
+    expect(darwinConsoleInputOverride()).toBe(false)
     vi.stubEnv(DARWIN_CONSOLE_INPUT_ENV_VAR, '')
-    expect(darwinConsoleInputEnabled()).toBe(false)
+    expect(darwinConsoleInputOverride()).toBeUndefined()
   })
 })

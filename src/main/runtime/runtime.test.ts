@@ -87,13 +87,17 @@ function datePath(date: Date): string {
 describe('expandHomePath', () => {
   const home = 'C:\\Users\\j'
 
+  // AMENDED for #470: the fixture is a Windows-shaped home, so the join must
+  // say 'win32' explicitly rather than letting it default to the host running
+  // the test — the whole point of this case is a home from a platform other
+  // than the one this suite runs on.
   it.each([
     ['~', home],
     ['~/.claude', 'C:\\Users\\j\\.claude'],
     ['~\\.claude-work', 'C:\\Users\\j\\.claude-work'],
     ['C:\\custom\\claude', 'C:\\custom\\claude']
   ])('expands %s', (input, expected) => {
-    expect(expandHomePath(input, home)).toBe(expected)
+    expect(expandHomePath(input, home, 'win32')).toBe(expected)
   })
 })
 
@@ -126,6 +130,9 @@ describe('AgentRuntime activation', () => {
   it('focuses a known dwarf before consulting its transcript', async () => {
     const source = provider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(true),
@@ -150,6 +157,9 @@ describe('AgentRuntime activation', () => {
     }
     const launchTerminal = vi.fn().mockResolvedValue(true)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
@@ -177,6 +187,9 @@ describe('AgentRuntime activation', () => {
     }
     const launchTerminal = vi.fn().mockResolvedValue(false)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
@@ -199,6 +212,9 @@ describe('AgentRuntime activation', () => {
     const source = provider(feed)
     const launchTerminal = vi.fn().mockResolvedValue(true)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
@@ -229,6 +245,9 @@ describe('AgentRuntime activation', () => {
       const focus = vi.fn().mockResolvedValue(true)
       const launchTerminal = vi.fn().mockResolvedValue(true)
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         focus,
@@ -251,6 +270,9 @@ describe('AgentRuntime activation', () => {
       // Two different facts, and the panel shows two different things: "this
       // session has written nothing yet" is not "there is no way to read it".
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [provider([])],
         onMinesUpdated: vi.fn()
@@ -266,6 +288,9 @@ describe('AgentRuntime activation', () => {
     it('reads nothing for a dwarf that is not on the board', async () => {
       const source = provider()
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -282,6 +307,9 @@ describe('AgentRuntime activation', () => {
     it("reports unreadable when the provider does not know the dwarf's transcript", async () => {
       const source: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue(null) }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -343,6 +371,9 @@ describe('AgentRuntime activation', () => {
 
     it("names the foreman that launched a worker as the issuer of the worker's prompt", async () => {
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [crewProvider(CREW_FEED)],
         onMinesUpdated: vi.fn()
@@ -367,6 +398,9 @@ describe('AgentRuntime activation', () => {
       // The other half of #175, and the one that was already right: nobody
       // launched the root, so its first message carries no issuer at all.
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [crewProvider(CREW_FEED)],
         onMinesUpdated: vi.fn()
@@ -428,6 +462,9 @@ describe('AgentRuntime activation', () => {
         feed: vi.fn().mockResolvedValue(CREW_FEED)
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [codexCrew],
         onMinesUpdated: vi.fn()
@@ -484,6 +521,9 @@ describe('AgentRuntime activation', () => {
         feed: vi.fn().mockResolvedValue(final)
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
         providers: [source],
         onMinesUpdated: vi.fn(),
@@ -508,6 +548,9 @@ describe('AgentRuntime activation', () => {
         feed: vi.fn().mockRejectedValue(new Error('the file went away'))
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -547,6 +590,9 @@ describe('AgentRuntime activation', () => {
     it("asks the provider for a page of the panel's own size, and carries the flag back", async () => {
       const source = pagingProvider({ messages: OLDER, reachedStart: true })
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -564,6 +610,9 @@ describe('AgentRuntime activation', () => {
     it('reads nothing for a dwarf that is not on the board', async () => {
       const source = pagingProvider({ messages: OLDER, reachedStart: false })
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -583,6 +632,9 @@ describe('AgentRuntime activation', () => {
       const noPages: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }
       for (const source of [noPages, pagingProvider(null)]) {
         const runtime = new AgentRuntime({
+          // AMENDED for #470: see worktreePlatformAdapters above.
+          platformAdapters: worktreePlatformAdapters(),
+
           config: defaultConfig(),
           providers: [source],
           onMinesUpdated: vi.fn()
@@ -603,6 +655,9 @@ describe('AgentRuntime activation', () => {
         feedPage: vi.fn().mockRejectedValue(new Error('the file went away'))
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -654,6 +709,9 @@ describe('AgentRuntime activation', () => {
         })
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -717,6 +775,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
       .mockResolvedValue([{ role: 'assistant', text: 'hi', timestamp: 'now' } as FeedMessage])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated
@@ -737,6 +798,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
     const feed = vi.fn().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated: vi.fn()
@@ -751,6 +815,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
     const feed = vi.fn().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated: vi.fn()
@@ -772,6 +839,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     scan.mockResolvedValueOnce(scanWith(200))
     const feed = vi.fn().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated: vi.fn()
@@ -792,6 +862,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
       .mockResolvedValue([{ role: 'assistant', text: 'hi', timestamp: 'now' } as FeedMessage])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed }],
       // #348: the poll now resolves each session's project off the filesystem,
@@ -855,6 +928,9 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
         }
       ])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       onMinesUpdated: vi.fn(),
@@ -901,6 +977,9 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
       }
     ])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       onMinesUpdated: vi.fn(),
@@ -950,6 +1029,9 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
       }
     ])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       onMinesUpdated: vi.fn(),
@@ -1019,6 +1101,9 @@ describe('AgentRuntime activation for a leaving dwarf', () => {
     }
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [source],
       focus,
@@ -1053,6 +1138,9 @@ describe('AgentRuntime activation for a leaving dwarf', () => {
     }
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [source],
       focus,
@@ -1147,6 +1235,9 @@ describe('AgentRuntime.sendDwarfText', () => {
       textDelivery: (dwarfId: string) => targets[dwarfId] ?? null
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
@@ -1817,6 +1908,9 @@ describe('AgentRuntime.sendDwarfText', () => {
     const port = fakePort()
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [
         {
@@ -2353,6 +2447,9 @@ describe('AgentRuntime.kickDwarf', () => {
       textDelivery: (dwarfId: string) => targets[dwarfId] ?? null
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
@@ -2482,6 +2579,9 @@ describe('AgentRuntime.kickDwarf', () => {
     const port = fakePort()
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [
         {
@@ -2868,6 +2968,9 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
   ) {
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [
         {
@@ -3209,6 +3312,9 @@ describe('AgentRuntime over the Codex message queue', () => {
         dwarfId === DWARF_ID ? { kind: 'codex-queue', threadId: THREAD_ID } : null
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
@@ -3514,6 +3620,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
     const launched = new LaunchedSessionRegistry({ endProcessTree })
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [options.provider ?? execProvider()],
       launchedSessions: launched,
@@ -3677,6 +3786,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       .mockResolvedValueOnce([snapshot('was-here-first')])
       .mockResolvedValue([snapshot('was-here-first'), snapshot(THREAD_ID)])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         { kind: 'codex', scan, feed: vi.fn().mockResolvedValue([]), textDelivery: () => null }
@@ -3804,6 +3916,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
       const launched = new LaunchedSessionRegistry({ endProcessTree })
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [resumableProvider(options.observed ?? {})],
         textDelivery: port,
@@ -4596,6 +4711,9 @@ describe('AgentRuntime provider wiring', () => {
     )
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home,
       fs: fake,
@@ -4615,6 +4733,9 @@ describe('AgentRuntime.nudge', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       // #348: as above — no real disk inside a tick driven by fake timers.
@@ -4646,6 +4767,9 @@ describe('AgentRuntime.nudge', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       // #348: as above — no real disk inside a tick driven by fake timers.
@@ -4691,6 +4815,9 @@ describe('AgentRuntime.nudge', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 2_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       onMinesUpdated
@@ -4711,6 +4838,9 @@ describe('AgentRuntime.nudge', () => {
     vi.useFakeTimers()
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       onMinesUpdated: vi.fn()
@@ -4768,6 +4898,9 @@ describe('AgentRuntime delivery instrumentation', () => {
     clock: { value: number }
   ) {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         {
@@ -5076,6 +5209,9 @@ describe('AgentRuntime kick escalation policy', () => {
       endConsoleSession: vi.fn().mockResolvedValue({ delivered: true })
     } satisfies TextDeliveryPort
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         {
@@ -5245,6 +5381,9 @@ describe('AgentRuntime material vault', () => {
     tiers.tierOf(VAULT_PROJECT)
     await tiers.settle()
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers,
       ledger,
@@ -5322,6 +5461,9 @@ describe('AgentRuntime material vault', () => {
     const onMinesUpdated = vi.fn()
     const { provider } = countingProvider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [provider],
       ledger,
@@ -5363,6 +5505,9 @@ describe('AgentRuntime material vault', () => {
     // with no vault; that must stay a working, disk-free configuration.
     const { provider, setTokens } = countingProvider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [provider],
       onMinesUpdated: vi.fn()
@@ -5413,6 +5558,9 @@ describe('AgentRuntime material vault', () => {
     await ledger.load()
     const { provider, setTokens } = countingProvider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: [provider],
       ledger,
@@ -5616,6 +5764,9 @@ describe('AgentRuntime.launchAgent (#86)', () => {
 
   async function runtimeWith(launchSession: SessionLauncher) {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
       launchSession,
@@ -5937,6 +6088,9 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     onLaunchFailed?: (push: LaunchFailedPush) => void
   ) {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
       launchSession,
@@ -6077,6 +6231,9 @@ describe('AgentRuntime proving which dwarf a detached launch became (#191)', () 
      */
     const onBoard = [...sessions]
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         {
@@ -6227,7 +6384,11 @@ describe('AgentRuntime projects wiring (#93)', () => {
   }
 
   function projectsStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   async function rows(store: ProjectsStore): Promise<ProjectRecord[]> {
@@ -6239,6 +6400,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
   it('records every project a session is seen working in', async () => {
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects,
@@ -6260,6 +6424,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // actually produced an answer (#41).
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects,
@@ -6278,6 +6445,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // The store refuses loudly by design, and index.ts turns that refusal into
     // a null. A broken projects database costs the declared mines, nothing else.
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects: null,
@@ -6295,6 +6465,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // and /simulated-valley/... is not a project on anybody's disk.
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home: 'C:\\Users\\test',
       fs: new FakeFs(),
@@ -6317,6 +6490,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // and a folder nobody has run an agent in has never been opened.
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       projects,
@@ -6338,6 +6514,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     const upsert = vi.spyOn(projects, 'upsertObserved')
     let now = 5_000
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects,
@@ -6398,6 +6577,9 @@ describe('AgentRuntime declared mines (#85)', () => {
     ledger?: MaterialLedger
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       // A zero grace window so a departed crew is gone the moment it stops
       // being reported: what remains on the board is then the declaration, and
       // nothing borrowed from the leaving-dwarf path.
@@ -6412,7 +6594,11 @@ describe('AgentRuntime declared mines (#85)', () => {
   }
 
   function projectsStoreFor(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   /*
@@ -6428,7 +6614,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ADOPTED, 'win32') })
     expect(result.reason).toBeUndefined()
   })
 
@@ -6441,7 +6627,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     runtime.stop()
 
     expect(result.project).toMatchObject({
-      id: mineIdForPath(ADOPTED),
+      id: mineIdForPath(ADOPTED, 'win32'),
       path: ADOPTED,
       declared: true
     })
@@ -6508,7 +6694,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     // under this path attaches to the mine the moment the user adopts it.
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 40_000)
     const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
 
     await runtime.declareMine()
@@ -6626,7 +6812,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     // what makes a re-add find its materials still there.
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 40_000)
     const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
 
     const declared = await runtime.declareMine()
@@ -6647,7 +6833,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     // the user deleted until they delete them again.
     const projects = projectsStoreFor()
     const declared = await projects.declare({ path: ADOPTED, at: 1 })
-    await projects.forget({ id: mineIdForPath(ADOPTED), at: 2 })
+    await projects.forget({ id: mineIdForPath(ADOPTED, 'win32'), at: 2 })
     expect(declared.ok).toBe(true)
     const runtime = declaredRuntime({ projects })
 
@@ -6798,6 +6984,9 @@ describe('AgentRuntime project queries (#92)', () => {
     tiers?: TierService
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       // A zero grace window for the reason the #85 block uses one: a crew that
       // stopped being reported is gone at once, so `live` is answered from the
       // board rather than from the leaving-dwarf window.
@@ -6812,7 +7001,11 @@ describe('AgentRuntime project queries (#92)', () => {
   }
 
   function queryStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   const newest = { sortBy: 'addedAt', direction: 'desc' } as const
@@ -6828,7 +7021,7 @@ describe('AgentRuntime project queries (#92)', () => {
     expect(result.answered).toBe(true)
     expect(result.projects).toEqual([
       {
-        id: mineIdForPath(WORKED),
+        id: mineIdForPath(WORKED, 'win32'),
         path: WORKED,
         name: 'Cafetería-Ñandú',
         declared: false,
@@ -6879,7 +7072,7 @@ describe('AgentRuntime project queries (#92)', () => {
     await projects.upsertObserved({ path: WORKED, at: 4_000 })
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(WORKED), 9_000)
+    ledger.creditCoal(mineIdForPath(WORKED, 'win32'), 9_000)
     const runtime = queryRuntime({ projects, ledger })
 
     const [project] = (await runtime.queryProjects(newest)).projects
@@ -6939,8 +7132,8 @@ describe('AgentRuntime project queries (#92)', () => {
     await projects.upsertObserved({ path: ADOPTED, at: 1_000 })
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(WORKED), 2_000)
-    ledger.creditCoal(mineIdForPath(ADOPTED), 5_000)
+    ledger.creditCoal(mineIdForPath(WORKED, 'win32'), 2_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 5_000)
     const { provider, setWorking } = toggleProvider(WORKED)
     setWorking(true)
     const runtime = queryRuntime({ projects, providers: [provider], ledger })
@@ -7227,6 +7420,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     providers?: Provider[]
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: options.providers ?? [],
       heldSessions: options.heldSessions,
@@ -7246,7 +7442,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await expect(
       runtime.launchHeldSession({
         provider: 'claude',
-        mineId: mineIdForPath(MINE_PATH),
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig here'
       })
     ).resolves.toEqual({ launched: true })
@@ -7281,6 +7477,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // nobody's folder.
     const port = heldPort()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
       appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
@@ -7319,7 +7518,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7357,7 +7556,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7390,7 +7589,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7441,7 +7640,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7481,7 +7680,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7546,7 +7745,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig here'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7593,7 +7792,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig here'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7618,7 +7817,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7666,6 +7865,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     )
     const port = heldPort()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home,
       fs: fake,
@@ -7673,7 +7875,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
-    const mineId = mineIdForPath(MINE_PATH)
+    const mineId = mineIdForPath(MINE_PATH, 'win32')
     const dwarfsOf = (): readonly Dwarf[] =>
       runtime.getMines().find((mine) => mine.id === mineId)?.dwarfs ?? []
 
@@ -7721,7 +7923,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7827,7 +8029,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7881,7 +8083,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7926,7 +8128,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       await runtime.refresh()
       await runtime.launchHeldSession({
         provider: 'claude',
-        mineId: mineIdForPath(MINE_PATH),
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig'
       })
       port.reportSessionId(0, 'sess-1')
@@ -8065,7 +8267,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig',
       model: 'sonnet',
       effort: 'xhigh'
@@ -8086,7 +8288,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     runtime.stop()
@@ -8105,7 +8307,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig',
       permissionMode: 'plan'
     })
@@ -8124,7 +8326,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     runtime.stop()
@@ -8162,6 +8364,9 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
     ledger.creditCoal('mine:a', 9_000)
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       ledger,
@@ -8180,15 +8385,21 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
   it('never touches a declared mine while resetting its metrics', async () => {
     const ADOPTED = 'C:\\X\\Adopted'
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
     const store = fakeLedgerStore()
     const ledger = new MaterialLedger({ store })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(ADOPTED), 500)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 500)
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       projects,
@@ -8218,6 +8429,9 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
     ledger.creditCoal('mine:a', 500)
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       ledger,
@@ -8247,7 +8461,11 @@ describe('AgentRuntime map placement (#136)', () => {
   const WALKED = 'C:\\X\\Walked'
 
   function placementStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   /** A provider reporting one working session in `cwd`, every scan. */
@@ -8282,6 +8500,9 @@ describe('AgentRuntime map placement (#136)', () => {
     providers?: Provider[]
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? placementStore() : options.projects,
@@ -8341,7 +8562,7 @@ describe('AgentRuntime map placement (#136)', () => {
     const mines = runtime.getMines()
     runtime.stop()
 
-    const stored = await projects.get(mineIdForPath(WALKED))
+    const stored = await projects.get(mineIdForPath(WALKED, 'win32'))
     expect(mines[0]!.mapSite).toBe(stored.ok ? stored.value?.mapSite : null)
     expect(mines[0]!.mapSite).toBeGreaterThan(0)
   })
@@ -8365,6 +8586,9 @@ describe('AgentRuntime map placement (#136)', () => {
     // real table is untouched by a run whose whole point is that it is a demo.
     const projects = placementStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home: 'C:\\Users\\test',
       fs: new FakeFs(),
@@ -8428,6 +8652,9 @@ describe('AgentRuntime map placement (#136)', () => {
       .mockResolvedValue([])
     const projects = placementStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       projects,
@@ -8466,6 +8693,9 @@ describe('AgentRuntime map placement (#136)', () => {
     // walk is what has to produce a verdict here, and it must weigh an
     // in-memory folder rather than whatever the host happens to have.
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: [],
       fs: new FakeFs(),
@@ -8482,7 +8712,7 @@ describe('AgentRuntime map placement (#136)', () => {
       await runtime.settleProjects()
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
-    const stored = await projects.get(mineIdForPath(WALKED))
+    const stored = await projects.get(mineIdForPath(WALKED, 'win32'))
     runtime.stop()
 
     expect(stored.ok && stored.value?.knownTier).not.toBeNull()
@@ -8905,7 +9135,11 @@ describe('AgentRuntime board-and-list coherence (#165)', () => {
   const WORKED = 'C:\\X\\Worked'
 
   function coherenceStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   /** One session in `cwd` whose single dwarf is in `status`. */
@@ -8940,6 +9174,9 @@ describe('AgentRuntime board-and-list coherence (#165)', () => {
     providers?: Provider[]
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? coherenceStore() : options.projects,
@@ -9051,6 +9288,9 @@ describe('AgentRuntime.mineHistory', () => {
   it("resolves the mine to its folder and answers with the folder's speakers", async () => {
     const readAcross = vi.fn().mockResolvedValue([SPEAKER])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       history: { read: vi.fn(), readAcross },
@@ -9058,10 +9298,12 @@ describe('AgentRuntime.mineHistory', () => {
     })
     await runtime.refresh()
 
-    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project'))).resolves.toEqual({
-      readable: true,
-      speakers: [SPEAKER]
-    })
+    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project', 'win32'))).resolves.toEqual(
+      {
+        readable: true,
+        speakers: [SPEAKER]
+      }
+    )
     // #348: every folder this mine's work happens in — for a mine nothing
     // folded into, exactly the one folder it always was.
     expect(readAcross).toHaveBeenCalledWith(['C:\\work\\project'])
@@ -9070,6 +9312,9 @@ describe('AgentRuntime.mineHistory', () => {
   it('reads nothing for a mine that is not on the board, and says it could not', async () => {
     const readAcross = vi.fn().mockResolvedValue([SPEAKER])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       history: { read: vi.fn(), readAcross },
@@ -9087,6 +9332,9 @@ describe('AgentRuntime.mineHistory', () => {
   it('answers unreadable rather than throwing when the read itself fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       history: { read: vi.fn(), readAcross: vi.fn().mockRejectedValue(new Error('disk')) },
@@ -9094,10 +9342,12 @@ describe('AgentRuntime.mineHistory', () => {
     })
     await runtime.refresh()
 
-    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project'))).resolves.toEqual({
-      readable: false,
-      speakers: []
-    })
+    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project', 'win32'))).resolves.toEqual(
+      {
+        readable: false,
+        speakers: []
+      }
+    )
     warn.mockRestore()
   })
 })
@@ -9132,17 +9382,25 @@ describe('AgentRuntime.mineFolderOf', () => {
 
   it('resolves a mine on the board to its own folder', async () => {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
 
-    expect(runtime.mineFolderOf(mineIdForPath('C:\\work\\project'))).toBe('C:\\work\\project')
+    expect(runtime.mineFolderOf(mineIdForPath('C:\\work\\project', 'win32'))).toBe(
+      'C:\\work\\project'
+    )
   })
 
   it('answers undefined for a mine that is not on the board', async () => {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       onMinesUpdated: vi.fn()
@@ -9260,6 +9518,9 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
     const fs = new FakeFs()
     fs.addFile(CLAUDE, '#!/bin/sh\n')
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [heldProvider()],
       textDelivery: port,
@@ -9278,7 +9539,7 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     // The CLI names its own session, and that name is the only link between
@@ -9516,6 +9777,12 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
       providers: [options.provider ?? claudeInHostedMine()],
       hostedProcesses: hosted,
       now: () => clock.now,
+      // AMENDED for #470: HOSTED_MINE and every fixture in this describe
+      // block are Windows-shaped, and mine-id lookups key on
+      // `normalizePathKey`, which folds case only on win32/darwin — the
+      // host's own platform must never decide that fold (see
+      // worktreePlatformAdapters above).
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -9856,6 +10123,8 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
         env: {}
       }),
       simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      // AMENDED for #470: see runtimeWithHost above.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -9915,10 +10184,15 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     return runtime.getMines()[0]?.dwarfs[0]?.waitingReason
   }
 
+  // AMENDED for #470: PROMPT_MINE is Windows-shaped, and mine-id lookups
+  // key on `normalizePathKey`, which folds case only on win32/darwin — the
+  // host running the suite must never decide that fold (see
+  // worktreePlatformAdapters above).
   it('marks the dwarf of the session Claude Code says has a dialog open', async () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [observedForeman()],
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -9935,6 +10209,7 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [observedForeman()],
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     runtime.noteHookEvent(permissionPrompt('sess-nobody'))
@@ -9951,6 +10226,7 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [observedForeman()],
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     runtime.noteHookEvent(permissionPrompt('sess-9'))
@@ -9994,12 +10270,13 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
       config: defaultConfig(),
       providers: [observedForeman()],
       heldSessions,
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(PROMPT_MINE),
+      mineId: mineIdForPath(PROMPT_MINE, 'win32'),
       prompt: 'dig here'
     })
     started[0]!.onSessionId('sess-9')
@@ -10110,6 +10387,10 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
+      // AMENDED for #470: the snapshot's cwd above is Windows-shaped, so the
+      // board must fold it on the platform it names, not on the host running
+      // the suite (see worktreePlatformAdapters above).
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       ...(wiring.keystroke === undefined ? {} : { permissionKeystroke: wiring.keystroke })
     })
@@ -10326,6 +10607,39 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
   })
 })
 
+// AMENDED for #470: every fixture below is Windows-shaped ('C:\Code\Anvil...'),
+// and the fold every describe block below exercises must run against that
+// platform, never the host running the suite (see platform-ports) — omitting
+// it let a POSIX host walk this Windows path with `posix.dirname`, which
+// never matches its own '.git', while a real `.git` a few folders up the
+// actual worktree this suite runs from silently did.
+function worktreePlatformAdapters(): PlatformAdapters {
+  return {
+    platform: 'win32',
+    focusPid: vi.fn().mockResolvedValue(false),
+    launchTranscriptViewer: vi.fn().mockResolvedValue(false),
+    viewerScriptPath: 'C:\\viewer.mjs',
+    textDelivery: {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+    },
+    processProbe: {
+      isCodexProcessRunning: vi.fn().mockResolvedValue(false),
+      processStartTimeMs: vi.fn().mockResolvedValue(null)
+    },
+    processEnd: {
+      endProcessTree: vi.fn().mockResolvedValue(false),
+      terminateProcess: vi.fn().mockResolvedValue(false),
+      killProcess: vi.fn().mockResolvedValue(false)
+    },
+    cliDetector: {
+      detect: vi.fn().mockResolvedValue({ cli: 'claude', installed: false }),
+      peek: vi.fn().mockReturnValue('unprobed')
+    }
+  }
+}
+
 /**
  * Every worktree of one repository is one mine — the main working tree's
  * (#348). The board is a map of projects, and a worktree is a place a project
@@ -10387,6 +10701,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
         { kind: 'claude', scan: vi.fn().mockResolvedValue(snapshots), feed: vi.fn() } as Provider
       ],
       fs,
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000,
       ...extra
@@ -10403,7 +10718,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
     expect(mines).toHaveLength(1)
     expect(mines[0]!.path).toBe(ROOT)
     expect(mines[0]!.name).toBe('Anvil')
-    expect(mines[0]!.id).toBe(mineIdForPath(ROOT))
+    expect(mines[0]!.id).toBe(mineIdForPath(ROOT, 'win32'))
     expect(mines[0]!.dwarfs.map((dwarf) => dwarf.id).sort()).toEqual(['claude:s1', 'claude:s2'])
   })
 
@@ -10468,7 +10783,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
     const runtime = runtimeOver([sessionIn(FORGE, 's1'), sessionIn(BELL, 's2')], repoFs())
 
     await runtime.refresh()
-    const id = mineIdForPath(ROOT)
+    const id = mineIdForPath(ROOT, 'win32')
     const forge = runtime.mineFolderOf(id, 'claude:s1')
     const bell = runtime.mineFolderOf(id, 'claude:s2')
     const noDwarf = runtime.mineFolderOf(id)
@@ -10490,7 +10805,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
     })
 
     await runtime.refresh()
-    await runtime.mineHistory(mineIdForPath(ROOT))
+    await runtime.mineHistory(mineIdForPath(ROOT, 'win32'))
     runtime.stop()
 
     expect(readAcross).toHaveBeenCalledWith([ROOT, FORGE, BELL])
@@ -10520,6 +10835,10 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
       providers: [],
       projects,
       fs,
+      // AMENDED for #470: see worktreePlatformAdapters above — this
+      // describe block's fixtures are Windows-shaped, and the fold must run
+      // against that platform rather than the host running the suite.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -10527,6 +10846,9 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
 
   it('draws a declared worktree as its project, on the very first read', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
@@ -10544,6 +10866,9 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
 
   it('teaches the store the project, and stops the worktree row drawing a card', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
@@ -10555,11 +10880,11 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
     runtime.stop()
 
     const byId = new Map((rows.ok ? rows.value : []).map((row) => [row.id, row]))
-    expect(byId.get(mineIdForPath(ROOT))?.origin).toBe('declared')
-    expect(byId.get(mineIdForPath(ROOT))?.hiddenAt).toBeNull()
+    expect(byId.get(mineIdForPath(ROOT, 'win32'))?.origin).toBe('declared')
+    expect(byId.get(mineIdForPath(ROOT, 'win32'))?.hiddenAt).toBeNull()
     // FLAGGED, never deleted: the row keeps the ore already credited to that
     // folder's mine id (see ProjectsStore.forget).
-    expect(byId.get(mineIdForPath(FORGE))?.hiddenAt).not.toBeNull()
+    expect(byId.get(mineIdForPath(FORGE, 'win32'))?.hiddenAt).not.toBeNull()
   })
 
   /**
@@ -10570,11 +10895,14 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
    */
   it('never lets a HIDDEN worktree hide the project it folds into', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
     await projects.declare({ path: FORGE, at: 1 })
-    await projects.forget({ id: mineIdForPath(FORGE), at: 2 })
+    await projects.forget({ id: mineIdForPath(FORGE, 'win32'), at: 2 })
     const runtime = new AgentRuntime({
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: [
@@ -10604,6 +10932,8 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
       ],
       projects,
       fs: repoFs(),
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -10619,11 +10949,11 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
     expect(mines.map((mine) => mine.path)).toEqual([ROOT])
     expect(mines[0]!.dwarfs).toHaveLength(1)
     const byId = new Map((rows.ok ? rows.value : []).map((row) => [row.id, row]))
-    expect(byId.get(mineIdForPath(FORGE))?.hiddenAt).not.toBeNull()
+    expect(byId.get(mineIdForPath(FORGE, 'win32'))?.hiddenAt).not.toBeNull()
     // The project's own row is the observer's ordinary sighting of a mine with
     // a crew in it — DISCOVERED, never declared on the user's behalf, because
     // they never declared this project, only one of its worktrees.
-    const project = byId.get(mineIdForPath(ROOT))
+    const project = byId.get(mineIdForPath(ROOT, 'win32'))
     expect(project?.origin).toBe('discovered')
     expect(project?.hiddenAt).toBeNull()
   })
@@ -10654,11 +10984,16 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
       projects:
         projects ??
         createProjectsStore({
+          // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+          platform: 'win32',
+
           filePath: 'C:\\userData\\projects-v1.db',
           sqlite: new MemoryWritableSqlite()
         }),
       chooseDirectory: async () => picked,
       fs,
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -10666,6 +11001,9 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
 
   it('asks about a picked worktree instead of declaring it', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
@@ -10698,7 +11036,7 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT, 'win32') })
   })
 
   it('adopts the project on the answer, and lands exactly where a plain Add lands', async () => {
@@ -10708,8 +11046,12 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
     const result = await runtime.declareMainProject()
     runtime.stop()
 
-    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
-    expect(result.project).toMatchObject({ id: mineIdForPath(ROOT), path: ROOT, declared: true })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT, 'win32') })
+    expect(result.project).toMatchObject({
+      id: mineIdForPath(ROOT, 'win32'),
+      path: ROOT,
+      declared: true
+    })
   })
 
   it('refuses an answer to a question nobody asked, and never guesses a folder', async () => {
@@ -10820,6 +11162,9 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
       textDelivery: (dwarfId: string) => (dwarfId === FOREMAN_ID ? target : null)
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
