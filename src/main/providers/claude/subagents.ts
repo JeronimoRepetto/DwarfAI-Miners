@@ -1,5 +1,5 @@
-import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
+import { currentPlatform, pathFor, type Platform } from '../../platform/platform'
 
 /**
  * The files Claude Code writes for one session's subagents, and the one reader
@@ -24,9 +24,18 @@ import type { FsLike } from '../../adapters/fsLike'
  */
 const SIDECAR_MAX_BYTES = 4 * 1024
 
-/** Where one session's subagent transcripts and sidecars live, all depths together. */
-export function claudeSubagentDir(projectDir: string, sessionId: string): string {
-  return join(projectDir, sessionId, 'subagents')
+/**
+ * Where one session's subagent transcripts and sidecars live, all depths
+ * together. `projectDir` names a path on `platform`, never on the running
+ * host (see platform-ports) — `node:path`'s bare `join` reads the host, wrong
+ * the moment the two disagree (#470).
+ */
+export function claudeSubagentDir(
+  projectDir: string,
+  sessionId: string,
+  platform: Platform = currentPlatform()
+): string {
+  return pathFor(platform).join(projectDir, sessionId, 'subagents')
 }
 
 /**
@@ -37,18 +46,26 @@ export function claudeSubagentDir(projectDir: string, sessionId: string): string
 export function claudeSubagentTranscriptPath(
   projectDir: string,
   sessionId: string,
-  agentId: string
+  agentId: string,
+  platform: Platform = currentPlatform()
 ): string {
-  return join(claudeSubagentDir(projectDir, sessionId), `agent-${agentId}.jsonl`)
+  return pathFor(platform).join(
+    claudeSubagentDir(projectDir, sessionId, platform),
+    `agent-${agentId}.jsonl`
+  )
 }
 
 /** Where one subagent's sidecar lives, beside the transcript it describes. */
 export function claudeSubagentSidecarPath(
   projectDir: string,
   sessionId: string,
-  agentId: string
+  agentId: string,
+  platform: Platform = currentPlatform()
 ): string {
-  return join(claudeSubagentDir(projectDir, sessionId), `agent-${agentId}.meta.json`)
+  return pathFor(platform).join(
+    claudeSubagentDir(projectDir, sessionId, platform),
+    `agent-${agentId}.meta.json`
+  )
 }
 
 /**

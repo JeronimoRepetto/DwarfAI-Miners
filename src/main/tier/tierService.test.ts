@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { win32 } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import {
@@ -362,6 +362,9 @@ describe('sumSourceBytes: bundle and duplicate exclusion (#39)', () => {
     expect(await sumSourceBytes(fake, PROJECT, 3000)).toBe(60)
   })
 
+  // AMENDED for #470: the expected skip paths below are backslash-joined, so
+  // the walk needs 'win32' named explicitly rather than defaulting to the
+  // host running the suite.
   it('reports every skip with its reason, path, and (for duplicates) the original path', async () => {
     const body = 'y'.repeat(40)
     fake.addFile(`${PROJECT}\\keep.ts`, 'k'.repeat(5))
@@ -371,7 +374,7 @@ describe('sumSourceBytes: bundle and duplicate exclusion (#39)', () => {
     fake.addFile(`${PROJECT}\\copy.ts`, body)
 
     const skips: SkippedFile[] = []
-    await sumSourceBytes(fake, PROJECT, 3000, { onSkip: (skipped) => skips.push(skipped) })
+    await sumSourceBytes(fake, PROJECT, 3000, { onSkip: (skipped) => skips.push(skipped) }, 'win32')
 
     expect(skips).toEqual(
       expect.arrayContaining([
@@ -468,6 +471,10 @@ describe('TierService debug reporting (#39)', () => {
 // on this Windows test host, which is the same class of defect that silently
 // picks the wrong separator on POSIX.
 describe('sumSourceBytes: joins path segments with path.join, not a hard-coded separator', () => {
+  // AMENDED for #470: the fixture names a Windows path, so the walk is asked
+  // to treat it as one explicitly — the joiner it checks against must be
+  // `win32`'s own, never `node:path`'s bare `join`, which reads the host
+  // running the suite rather than the platform this fixture names.
   it('does not double a trailing separator on the project root when descending into it', async () => {
     const PROJECT = 'C:\\Users\\j\\Desktop\\Proj'
     const fake = new FakeFs()
@@ -475,9 +482,9 @@ describe('sumSourceBytes: joins path segments with path.join, not a hard-coded s
     const listDirSpy = vi.spyOn(fake, 'listDir')
     const statSpy = vi.spyOn(fake, 'stat')
 
-    await sumSourceBytes(fake, `${PROJECT}\\`, 3000)
+    await sumSourceBytes(fake, `${PROJECT}\\`, 3000, {}, 'win32')
 
-    expect(listDirSpy).toHaveBeenCalledWith(join(PROJECT, 'src'))
-    expect(statSpy).toHaveBeenCalledWith(join(PROJECT, 'src', 'a.ts'))
+    expect(listDirSpy).toHaveBeenCalledWith(win32.join(PROJECT, 'src'))
+    expect(statSpy).toHaveBeenCalledWith(win32.join(PROJECT, 'src', 'a.ts'))
   })
 })
