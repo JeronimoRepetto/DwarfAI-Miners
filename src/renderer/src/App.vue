@@ -1103,6 +1103,23 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 /*
+ * The row while a fold is standing over a column it has not unmounted yet
+ * (#472). Set from useShellFold, off the list of held columns it already keeps.
+ *
+ * main resizes the window the moment the fold ends, and the row it resizes
+ * around is one `--space-nav-gap` wider than the rectangle it is making: the
+ * held column is `flex: 1` and collapses to nothing, but the gap beside it does
+ * not collapse with it. Packed from the free edge that gap overflows at the
+ * DOCKED one, which is where the mine stands — the interior clipped for those
+ * frames, and the blink when the column finally goes. Packed against the docked
+ * edge instead, the overflow falls on the free side, which is the band the fold
+ * has already clipped away and main is taking: pixels that are transparent
+ * already, which is the rule the whole fold exists to keep.
+ */
+.shell.is-holding {
+  justify-content: flex-end;
+}
+/*
  * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,
  * the 8px padding, the radius and the shadow belong to any composition that has
  * something in it, not only to the one with a secondary panel.

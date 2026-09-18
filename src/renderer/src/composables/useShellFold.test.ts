@@ -681,4 +681,59 @@ describe('useShellFold', () => {
     await settled()
     expect(folded).toBe(true)
   })
+  /*
+   * APPENDED for #472. The measured symptom: with a mine open, closing the
+   * secondary clips ~one gap off the mine's docked edge for the frames between
+   * main's resize and the column being unmounted. The row main shrinks around
+   * still holds the leaving column, which is `flex: 1` and collapses to 0 but
+   * keeps its gap, so the row is one gap wider than the rectangle — and a row
+   * packed from the free edge overflows at the DOCKED one, which is the mine.
+   */
+  it('packs the row against the docked edge while a fold waits for the window (#472)', async () => {
+    const test = harness()
+    test.fold.settle(false)
+    test.state.remaining = 'mine'
+    void test.fold.hold(test.column(555))
+    await settled()
+    // Nothing is shrinking yet: the row is the row, packed as the composition
+    // packs it.
+    expect(test.shell.classList.contains('is-holding')).toBe(false)
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.shell.classList.contains('is-holding')).toBe(true)
+    sized(test.shell, 438)
+    test.fold.settle(false)
+    await settled()
+    expect(test.shell.classList.contains('is-holding')).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  it('gives the row back to the composition one bound after a fold main never answers (#472)', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    test.fold.settle(false)
+    test.state.remaining = 'mine'
+    void test.fold.hold(test.column(555))
+    await vi.advanceTimersByTimeAsync(0)
+    test.animations[0]!.finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.shell.classList.contains('is-holding')).toBe(true)
+    await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+    expect(test.shell.classList.contains('is-holding')).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  it('gives the row back to the composition when the shell goes away beneath the row (#472)', async () => {
+    const test = harness()
+    test.fold.settle(false)
+    test.state.remaining = 'mine'
+    void test.fold.hold(test.column(555))
+    await settled()
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.shell.classList.contains('is-holding')).toBe(true)
+    test.wrapper.unmount()
+    await settled()
+    expect(test.shell.classList.contains('is-holding')).toBe(false)
+  })
 })
