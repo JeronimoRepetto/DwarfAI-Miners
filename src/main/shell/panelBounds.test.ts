@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { PanelEdge } from '../domain/types'
+import type { Platform } from '../platform/platform'
 import type { ScreenRect } from '../platform/screenArea'
+import { minWindowWidth } from '../platform/windowMetrics'
 import {
   DESIGN_INTERIOR_WIDTH,
   SHELL_CONTENT_INSET,
@@ -15,7 +17,6 @@ import {
   MAP_FRAME_INSET,
   MESSAGE_PANEL_DESIGN_WIDTH,
   MESSAGE_PANEL_GAP,
-  MIN_WINDOW_WIDTH,
   RAIL_WIDTH,
   clampMessagePanelBounds,
   detachedMessagePanelBounds,
@@ -44,6 +45,15 @@ const AT_2X = { x: 0, y: 0, width: 3840, height: 2160 }
 function scaled(area: ScreenRect, designWidth: number): number {
   return Math.round(designWidth * uiScale(area))
 }
+
+/*
+ * AMENDED for #465. Every case below that pins the collapsed rail against a
+ * platform floor used to import the constant `MIN_WINDOW_WIDTH` and assert it
+ * with no platform named — a Windows measurement the arithmetic applied
+ * everywhere. The floor is per-platform now, so each of those cases says which
+ * platform it is asserting and this file still reads the host's OS zero times.
+ */
+const WIN32_FLOOR = minWindowWidth('win32')
 
 const CLOSED = { expanded: false, mineOpen: false }
 const OPEN = { expanded: true, mineOpen: false }
@@ -74,9 +84,26 @@ describe('panelWidth', () => {
     // The design's rail is 20px and the renderer still draws exactly that; the
     // WINDOW is the platform's 32px floor, because Windows will not make one
     // narrower and asking for 20 docks differently on each edge (see below).
-    expect(panelWidth(AREA, CLOSED)).toBe(MIN_WINDOW_WIDTH)
-    expect(RAIL_WIDTH).toBeLessThan(MIN_WINDOW_WIDTH)
+    expect(panelWidth(AREA, CLOSED, 'win32')).toBe(WIN32_FLOOR)
+    expect(RAIL_WIDTH).toBeLessThan(WIN32_FLOOR)
   })
+
+  /*
+   * ADDED for #465. Those twelve pixels are the Windows measurement, and they
+   * were spent on every platform: on a Mac the collapsed window stood wider
+   * than the rail the renderer paints into it, and the gutter left over is
+   * transparent — which is the rectangle the OS drew its shadow around.
+   */
+  it.each<Platform>(['darwin', 'linux'])(
+    'collapses to exactly the rail on %s, with no transparent gutter beside it (#465)',
+    (platform) => {
+      expect(panelWidth(AT_1X, CLOSED, platform)).toBe(RAIL_WIDTH)
+      expect(panelWidth(AT_1X, CLOSED, platform)).toBeLessThan(panelWidth(AT_1X, CLOSED, 'win32'))
+      // And it scales with the display like every other width here, rather
+      // than being pinned to the design's literal 20.
+      expect(panelWidth(AT_2X, CLOSED, platform)).toBe(RAIL_WIDTH * 2)
+    }
+  )
 
   it('holds the mine column open with the secondary panel closed beside it', () => {
     const mineOnly = { expanded: false, mineOpen: true }
@@ -103,7 +130,7 @@ describe('panelWidth', () => {
     expect(panelWidth(narrow, OPEN)).toBe(480)
     expect(panelWidth(narrow, OPEN_WITH_MINE)).toBe(480)
     // The rail is smaller than any display, so it is never clamped.
-    expect(panelWidth(narrow, CLOSED)).toBe(MIN_WINDOW_WIDTH)
+    expect(panelWidth(narrow, CLOSED, 'win32')).toBe(WIN32_FLOOR)
   })
 
   it('grows with the display, because the whole surface is scaled onto it', () => {
@@ -199,9 +226,9 @@ describe('the scaled window', () => {
 
   it('keeps the closed rail at the platform floor however small the scale makes it', () => {
     const shortLaptop = { x: 0, y: 0, width: 1366, height: 768 }
-    expect(panelWidth(shortLaptop, CLOSED)).toBe(MIN_WINDOW_WIDTH)
+    expect(panelWidth(shortLaptop, CLOSED, 'win32')).toBe(WIN32_FLOOR)
     // And lets it grow past the floor once the scale asks for more.
-    expect(panelWidth(AT_2X, CLOSED)).toBe(RAIL_WIDTH * 2)
+    expect(panelWidth(AT_2X, CLOSED, 'win32')).toBe(RAIL_WIDTH * 2)
   })
 })
 
@@ -313,19 +340,19 @@ describe('the derived columns', () => {
 
 describe('panelBounds', () => {
   it('hangs the closed rail on the right edge by default', () => {
-    expect(panelBounds(AREA, 'right', CLOSED)).toEqual({
-      x: 1920 - MIN_WINDOW_WIDTH,
+    expect(panelBounds(AREA, 'right', CLOSED, 'win32')).toEqual({
+      x: 1920 - WIN32_FLOOR,
       y: 0,
-      width: MIN_WINDOW_WIDTH,
+      width: WIN32_FLOOR,
       height: 1032
     })
   })
 
   it('hangs the closed rail on the left edge when that is the docked side', () => {
-    expect(panelBounds(AREA, 'left', CLOSED)).toEqual({
+    expect(panelBounds(AREA, 'left', CLOSED, 'win32')).toEqual({
       x: 0,
       y: 0,
-      width: MIN_WINDOW_WIDTH,
+      width: WIN32_FLOOR,
       height: 1032
     })
   })
@@ -393,15 +420,19 @@ describe('panelBounds', () => {
    * docked side of it.
    */
   it('never asks for a window narrower than the platform will make', () => {
-    for (const edge of ['left', 'right'] as const) {
-      const bounds = panelBounds(AREA, edge, CLOSED)
-      expect(bounds.width).toBeGreaterThanOrEqual(MIN_WINDOW_WIDTH)
+    // AMENDED for #465: asserted for each platform's own floor rather than for
+    // the Windows one everywhere, which is the untruth that issue removes.
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      for (const edge of ['left', 'right'] as const) {
+        const bounds = panelBounds(AREA, edge, CLOSED, platform)
+        expect(bounds.width).toBeGreaterThanOrEqual(minWindowWidth(platform))
+      }
     }
   })
 
   it('stays on the display it was handed, negative origins included', () => {
     const secondary = { x: -1920, y: 0, width: 1920, height: 1080 }
-    expect(panelBounds(secondary, 'right', CLOSED).x).toBe(-MIN_WINDOW_WIDTH)
+    expect(panelBounds(secondary, 'right', CLOSED, 'win32').x).toBe(-WIN32_FLOOR)
     expect(panelBounds(secondary, 'left', OPEN).x).toBe(-1920)
   })
 
@@ -569,14 +600,14 @@ describe('messagePanelBounds', () => {
     it('still asks for a window the platform will actually make', () => {
       // A display the whole shell spans leaves nothing beside it. A window of
       // no width is not a narrow panel, it is a panel that looks as if it never
-      // opened, so the platform floor MIN_WINDOW_WIDTH applies here too — the
-      // one case where the panel may overlap the shell, by at most 32px.
+      // opened, so `minWindowWidth` applies here too — the one case where the
+      // panel may overlap the shell, by at most that platform's own floor.
       const cramped = { x: 0, y: 0, width: 320, height: 768 }
       for (const edge of ['left', 'right'] as const) {
         const shell = shellAt(cramped, edge, OPEN_WITH_MINE)
         expect(shell.width).toBe(cramped.width)
-        const bounds = messagePanelBounds(cramped, shell, edge, DESIGN_HEIGHT)
-        expect(bounds.width).toBe(MIN_WINDOW_WIDTH)
+        const bounds = messagePanelBounds(cramped, shell, edge, DESIGN_HEIGHT, 'win32')
+        expect(bounds.width).toBe(WIN32_FLOOR)
       }
     })
   })
@@ -654,8 +685,8 @@ describe('detachedMessagePanelWidth', () => {
   it('still asks for a window the platform will actually make', () => {
     // The same floor the docked panel holds: a window of no width is not a
     // narrow panel, it is one that looks as though it never opened.
-    expect(detachedMessagePanelWidth({ x: 0, y: 0, width: 1920, height: 20 })).toBe(
-      MIN_WINDOW_WIDTH
+    expect(detachedMessagePanelWidth({ x: 0, y: 0, width: 1920, height: 20 }, 'win32')).toBe(
+      WIN32_FLOOR
     )
   })
 

@@ -181,6 +181,19 @@ export function buildMainWindowOptions(
      * Windows-only by definition; the other platforms ignore it.
      */
     thickFrame: false,
+    /*
+     * The shell paints its own shadow, and `thickFrame: false` above takes the
+     * native one on Windows only — it is a Windows style and nothing else reads
+     * it. macOS keeps drawing its own around the shape a TRANSPARENT window
+     * presents, which the fold (#388) shrinks to the 20px rail while the window
+     * stays the full height, so what the OS outlined was a rectangle the fill
+     * no longer reached: a second shadow standing past the ends of the rail
+     * (#465). Electron's own `invalidateShadow()` documents transparent windows
+     * leaving exactly these artifacts on macOS; refusing the shadow outright
+     * beats repainting it after every animation, because the rail's own
+     * `--elevation-5` was always the one meant to be seen.
+     */
+    hasShadow: false,
     skipTaskbar: true,
     /*
      * Stated rather than left to Electron's default (#165). The third
@@ -671,6 +684,10 @@ export function buildMessagePanelWindowOptions(
     // For the reason the shell drops it (#394): every height report is a
     // `setBounds`, and a thick frame animates each one across the whole panel.
     thickFrame: false,
+    // And for the reason the shell refuses the native shadow (#465): this
+    // window is transparent too, it is re-bounded on every height report, and
+    // the panel draws its own elevation under its own rounded corners.
+    hasShadow: false,
     skipTaskbar: true,
     parent: input.parent,
     // Stated for the same reason the shell states it (#165): a frameless
