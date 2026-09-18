@@ -142,6 +142,35 @@ export function answerRequest(
 }
 
 /**
+ * Where a card's free-text box would really send what is typed into it (#481).
+ *
+ * Not a style choice and not a capability: it is the same reading of one fact
+ * both cards need, so it is decided once here rather than as a `channel ===`
+ * in two templates that could drift apart.
+ *
+ * - `'message'` — the held channel, unchanged since #125. The words are queued
+ *   on the stream this panel owns, the agent reads them as its user's, and no
+ *   picker is anywhere near them.
+ * - `'picker'` — the terminal channel, and the reason the box is refused there.
+ *   The ordinary message path writes into the session's OWN console, and a
+ *   session drawing a picker reads those keys as picker input: the letters do
+ *   nothing visible, a digit among them jumps to an option, and the Enter that
+ *   ends the message confirms whichever option is highlighted. The person's
+ *   words are lost and the agent is handed a choice nobody made — see
+ *   TYPED_HERE_REACHES_THE_PICKER, which is what the cards show instead.
+ *
+ * Off the prompt's own `channel` and nothing weaker, exactly as the cards'
+ * other terminal rules are: that field is main's own reading of where the
+ * prompt is being drawn, and the renderer may not re-derive it (see
+ * DwarfPromptChannel).
+ */
+export type FreeTextRoute = 'message' | 'picker'
+
+export function freeTextRoute(channel: DwarfPromptChannel): FreeTextRoute {
+  return channel === 'terminal' ? 'picker' : 'message'
+}
+
+/**
  * What is toggled on a multi-select ask, and which ask it was toggled for
  * (#362).
  *

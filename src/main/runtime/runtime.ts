@@ -24,6 +24,7 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
+  TYPED_HERE_REACHES_THE_PICKER,
   channelCarriesAttachments,
   DWARF_PROVIDERS,
   maxTextCharsFor,
@@ -3205,6 +3206,34 @@ export class AgentRuntime {
     // there is nothing safe to write to.
     if (dwarf === undefined || dwarf.status === 'leaving') {
       return { delivered: false, via: 'none', error: NO_SUCH_DWARF }
+    }
+
+    /*
+     * The picker guard, and the one refusal #481 exists to make.
+     *
+     * A prompt of this dwarf's own drawn on the TERMINAL channel means the
+     * session is standing at a picker or a dialog in its own console — the very
+     * console the message tier writes into (#371). There the words are not a
+     * message at all: the letters are picker input, a digit among them jumps to
+     * an option, and the Enter that ends the message CONFIRMS whichever option
+     * is highlighted. The agent is handed an answer nobody chose and the
+     * person's own sentence is lost. Measured on 2026-09-18.
+     *
+     * Before the route is resolved, because what is wrong here is not the tier:
+     * the console tier is what makes it dangerous, and the relay behind it
+     * would only queue words a session stopped at a picker is not reading. Both
+     * are refused with one sentence, which is the one both cards already show
+     * in place of their free-text box — so a person meets the same words
+     * wherever they are standing.
+     *
+     * Read off the prompt's own `channel` and nothing weaker (see
+     * DwarfPromptChannel): a HELD session's prompt is answered through the
+     * stream this panel owns, touches no console, and is untouched here.
+     * Reaching this at all is a race or a caller that is not the panel.
+     */
+    const prompt = dwarf.pendingQuestion ?? dwarf.pendingPermission
+    if (prompt?.channel === 'terminal') {
+      return { delivered: false, via: 'none', error: TYPED_HERE_REACHES_THE_PICKER }
     }
 
     /*

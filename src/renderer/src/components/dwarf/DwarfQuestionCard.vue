@@ -8,6 +8,7 @@ import {
   answerStateForAsk,
   canSendAnswer,
   canSendToggles,
+  freeTextRoute,
   isAnswerable,
   optionState,
   selectOption,
@@ -20,6 +21,7 @@ import {
 import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   MAX_DWARF_TEXT_CHARS,
+  TYPED_HERE_REACHES_THE_PICKER,
   type DwarfAnswerState,
   type DwarfQuestion
 } from '../../types'
@@ -58,6 +60,15 @@ import {
  * sends free-form text as an ANSWER: the answer channel takes back only the
  * agent's own words, so anything typed here leaves on the ordinary message
  * path instead (see the emits below).
+ *
+ * AMENDED for #481: that last sentence is now true of the HELD channel only,
+ * and the box is offered on that channel only. Free text still leaves on the
+ * message path — but on the terminal channel that path writes into the
+ * session's own console, and a session drawing a picker reads the letters as
+ * picker input with the trailing Enter confirming whichever option is
+ * highlighted (see freeTextRoute). A held session's free text is queued on the
+ * stream this panel holds and touches no picker, which is why #125's box stays
+ * exactly as it was there.
  */
 
 const props = defineProps<{
@@ -134,6 +145,17 @@ const refusalLine = computed(() => {
  * stream this panel owns, and there is nowhere to send the person for it.
  */
 const showJump = computed(() => props.question.channel === 'terminal' && refusalLine.value !== null)
+/*
+ * Whether the free-text box may be offered at all (#481), decided in lib rather
+ * than as a `channel ===` here so both cards read one rule.
+ */
+const freeText = computed(() => freeTextRoute(props.question.channel))
+/*
+ * The refused box's own way to the terminal — and ONE jump per card, never two.
+ * The refusal row below already carries it wherever a refusal is showing, and
+ * two buttons doing one act would read as two different acts.
+ */
+const showPickerJump = computed(() => !showJump.value)
 
 function cardClass(label: string): string {
   const state = toggling.value
@@ -247,7 +269,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       composer’s treatment.
     -->
     <textarea
-      v-else
+      v-else-if="freeText === 'message'"
       v-model="freeform"
       class="freeform-input"
       rows="2"
@@ -256,6 +278,24 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       aria-label="Answer this agent in your own words"
       @keydown="onFreeformKeydown"
     ></textarea>
+    <!--
+      The box refused, in its own place, because the console it would be written
+      into is drawing a picker (#481). Said here rather than left to the alert
+      row below: a person who learns this AFTER pressing Enter has already had
+      an option confirmed in their name.
+    -->
+    <p v-else class="freeform-refused" role="note">
+      <span>{{ TYPED_HERE_REACHES_THE_PICKER }}</span>
+      <button
+        v-if="showPickerJump"
+        class="answer-jump"
+        type="button"
+        :title="CONSOLE_HINT"
+        @click="emit('open-console')"
+      >
+        {{ JUMP_TO_TERMINAL_NAME }}
+      </button>
+    </p>
 
     <p v-if="refusalLine" class="answer-error" role="alert">
       <span>{{ refusalLine }}</span>
@@ -392,6 +432,18 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 .freeform-input:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 1px;
+}
+/* What stands where the box was (#481). The refusal row's own ink and size
+   rather than the box's surface: this is a refusal, not a prompt, and it
+   carries the same jump that row does. */
+.freeform-refused {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 0;
+  color: #8c2f14;
+  font-size: var(--text-helper);
+  line-height: 1.25;
 }
 /* Same surface as the input it replaces, so the panel changes its message
    without changing its shape. */

@@ -7,6 +7,7 @@ import {
   answerStateForAsk,
   canSendAnswer,
   decisionForLabel,
+  freeTextRoute,
   isAnswerable,
   optionState,
   permissionStatusLine,
@@ -15,6 +16,7 @@ import {
 } from '../../lib/question/questionAnswer'
 import {
   MAX_DWARF_TEXT_CHARS,
+  TYPED_HERE_REACHES_THE_PICKER,
   type DwarfAnswerState,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest
@@ -40,6 +42,13 @@ import {
  * free-form reply still leaves on the ordinary message path rather than as a
  * decision: the channel here takes back only Allow or Deny, never a third
  * thing typed in.
+ *
+ * AMENDED for #481, exactly as the question card's twin of this paragraph was:
+ * the message path is offered on the HELD channel only. A dialog at a terminal
+ * is a y/n prompt drawn in the console the message path writes into, so the
+ * letters are read by that dialog and the Enter behind them answers it — the
+ * same failure the question picker has (#203's channel, #481's shape). Held
+ * free text is queued on the stream this panel holds and reaches no dialog.
  */
 
 const props = defineProps<{
@@ -83,6 +92,16 @@ const okLine = computed(() => permissionStatusLine(verdict.value, props.permissi
 const showJump = computed(
   () => props.permission.channel === 'terminal' && verdict.value?.phase === 'refused'
 )
+/*
+ * Whether the free-text box may be offered at all (#481) — the question card's
+ * rule, read from lib so the two cards cannot come apart on it.
+ */
+const freeText = computed(() => freeTextRoute(props.permission.channel))
+/*
+ * ONE jump per card, never two: the refusal row below already carries it
+ * wherever a refused decision is showing.
+ */
+const showPickerJump = computed(() => !showJump.value)
 
 function cardClass(label: string): string {
   return `is-${optionState(selection.value, props.permission.toolUseId, label)}`
@@ -170,7 +189,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       composer’s treatment.
     -->
     <textarea
-      v-else
+      v-else-if="freeText === 'message'"
       v-model="freeform"
       class="freeform-input"
       rows="2"
@@ -179,6 +198,23 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       aria-label="Tell this agent something instead of deciding"
       @keydown="onFreeformKeydown"
     ></textarea>
+    <!--
+      The box refused, in its own place, because the console it would be written
+      into is drawing this dialog (#481) — the question card's own treatment,
+      for the same reason it is said before the key rather than after it.
+    -->
+    <p v-else class="freeform-refused" role="note">
+      <span>{{ TYPED_HERE_REACHES_THE_PICKER }}</span>
+      <button
+        v-if="showPickerJump"
+        class="answer-jump"
+        type="button"
+        :title="CONSOLE_HINT"
+        @click="emit('open-console')"
+      >
+        {{ JUMP_TO_TERMINAL_NAME }}
+      </button>
+    </p>
 
     <p v-if="verdict?.phase === 'refused'" class="answer-error" role="alert">
       <span>{{ verdict.error }}</span>
@@ -332,6 +368,17 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 .freeform-input:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 1px;
+}
+/* What stands where the box was (#481) — DwarfQuestionCard's own rule, to the
+   value: the refusal row's ink and size, because this is a refusal. */
+.freeform-refused {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 0;
+  color: #8c2f14;
+  font-size: var(--text-helper);
+  line-height: 1.25;
 }
 /* Same surface as the input it replaces, so the panel changes its message
    without changing its shape. */

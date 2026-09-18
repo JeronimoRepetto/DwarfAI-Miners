@@ -25,6 +25,7 @@ import {
   NO_ANSWER_KEYSTROKE_TIER,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
+  TYPED_HERE_REACHES_THE_PICKER,
   joinAnswerLabels,
   type Dwarf,
   type DwarfPermissionDecision,
@@ -11158,5 +11159,178 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
     expect(answerLines.join('\n')).not.toContain('Fig')
     expect(answerLines.join('\n')).not.toContain('Sloe')
     expect(answerLines.join('\n')).not.toContain('Which fruit?')
+  })
+})
+
+/* --- A message while a prompt stands at its terminal (#481) — one block, appended --- */
+
+/**
+ * Issue #481, defence in depth behind the cards.
+ *
+ * A dwarf whose ask or permission prompt is drawn AT ITS TERMINAL has a picker
+ * or a dialog open on the console a message would be written into: the letters
+ * are read as picker input and the Enter behind them confirms whichever option
+ * is highlighted — an answer nobody chose, in the person's name. Both cards
+ * refuse their free-text box for it, so reaching this guard is a race or a
+ * caller that is not the panel; either way nothing may be typed into that
+ * console.
+ *
+ * Refused on the prompt's own `channel`, which is main's own reading of where
+ * the prompt is being drawn (see DwarfPromptChannel), and never on the send
+ * route: what a held session's card offers is unchanged, whatever tier its
+ * dwarf's messages happen to take.
+ */
+describe('AgentRuntime.sendDwarfText while a prompt stands at its terminal (#481)', () => {
+  const FOREMAN_ID = 'claude:session-1'
+
+  function askFor(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+    return {
+      toolUseId: 'toolu_q1',
+      question: 'Which database should the importer write to?',
+      channel: 'terminal',
+      multiSelect: false,
+      questionCount: 1,
+      options: [{ label: 'Postgres' }, { label: 'SQLite' }],
+      ...overrides
+    }
+  }
+
+  function promptFor(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {
+    return {
+      toolUseId: 'toolu_p1',
+      toolName: 'Bash',
+      input: 'rm -rf /tmp/scratch',
+      channel: 'terminal',
+      askedAt: '2026-09-18T09:00:00.000Z',
+      ...overrides
+    }
+  }
+
+  function fakePort() {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      pasteToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      endConsoleSession: vi.fn().mockResolvedValue({ delivered: true })
+    } satisfies TextDeliveryPort
+  }
+
+  async function runtimeWith(pending: {
+    pendingQuestion?: DwarfQuestion
+    pendingPermission?: DwarfPermissionRequest
+  }) {
+    const port = fakePort()
+    const source: Provider = {
+      kind: 'claude',
+      scan: async () => [
+        {
+          provider: 'claude' as const,
+          sessionId: 'session-1',
+          cwd: 'C:\work\project',
+          status: 'busy' as const,
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: FOREMAN_ID,
+              provider: 'claude' as const,
+              role: 'foreman' as const,
+              name: 'boss',
+              status: 'waiting' as const,
+              waitingReason: 'user-input' as const,
+              sessionId: 'session-1',
+              pid: 42,
+              ...pending
+            }
+          ]
+        }
+      ],
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) =>
+        dwarfId === FOREMAN_ID ? { kind: 'terminal' as const, pid: 42 } : null
+    }
+    const runtime = new AgentRuntime({
+      config: defaultConfig(),
+      providers: [source],
+      textDelivery: port,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, port }
+  }
+
+  function send(runtime: AgentRuntime) {
+    return runtime.sendDwarfText({
+      dwarfId: FOREMAN_ID,
+      text: 'write to Postgres',
+      pressEnter: true
+    })
+  }
+
+  it('refuses a message while an ask of its own is drawn there, and writes nothing', async () => {
+    const { runtime, port } = await runtimeWith({ pendingQuestion: askFor() })
+
+    await expect(send(runtime)).resolves.toEqual({
+      delivered: false,
+      via: 'none',
+      error: TYPED_HERE_REACHES_THE_PICKER
+    })
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+    expect(port.sendToConsole).not.toHaveBeenCalled()
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses it for a permission dialog at that terminal too', async () => {
+    // The same failure shape on a y/n prompt (#203): the dialog reads the keys,
+    // and the Enter behind the message answers it.
+    const { runtime, port } = await runtimeWith({ pendingPermission: promptFor() })
+
+    await expect(send(runtime)).resolves.toEqual({
+      delivered: false,
+      via: 'none',
+      error: TYPED_HERE_REACHES_THE_PICKER
+    })
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+  })
+
+  it('refuses a several-question ask the same way, which no card can answer either', async () => {
+    const { runtime, port } = await runtimeWith({ pendingQuestion: askFor({ questionCount: 2 }) })
+
+    await expect(send(runtime)).resolves.toMatchObject({
+      delivered: false,
+      error: TYPED_HERE_REACHES_THE_PICKER
+    })
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+  })
+
+  it('carries the message when nothing is being asked at all', async () => {
+    // The guard is about an open prompt, never about the channel: an observed
+    // session between tool calls is messaged exactly as it always was.
+    const { runtime, port } = await runtimeWith({})
+
+    await expect(send(runtime)).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'write to Postgres',
+      pressEnter: true
+    })
+  })
+
+  it('carries it for a HELD ask, whose answer never touches a picker', async () => {
+    // The channel decides, not the presence of a prompt: a held session's free
+    // text is queued on the stream this panel holds (#125).
+    const { runtime, port } = await runtimeWith({ pendingQuestion: askFor({ channel: 'held' }) })
+
+    await expect(send(runtime)).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalled()
+  })
+
+  it('carries it for a HELD permission prompt as well', async () => {
+    const { runtime, port } = await runtimeWith({
+      pendingPermission: promptFor({ channel: 'held' })
+    })
+
+    await expect(send(runtime)).resolves.toEqual({ delivered: true, via: 'terminal' })
+    expect(port.pasteToConsole).toHaveBeenCalled()
   })
 })
