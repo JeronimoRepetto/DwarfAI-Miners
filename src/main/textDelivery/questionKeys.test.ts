@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfQuestion } from '../domain/types'
-import { questionAnswerChunks, questionKeystrokesFor } from './questionKeys'
+import { askHasAReachableOtherRow, type DwarfQuestion } from '../domain/types'
+import {
+  answerChunksPressable,
+  questionAnswerChunks,
+  questionFreeTextChunks,
+  questionKeystrokesFor
+} from './questionKeys'
 
 /**
  * Issue #362. The file that decides which digits this app presses in a picker
@@ -191,6 +196,216 @@ describe('questionAnswerChunks (#402)', () => {
       // The whole payload a chunk may carry on this path is a digit, and this
       // guard is what keeps anything else out of somebody else's console.
       expect(questionAnswerChunks([digit], false)).toBeNull()
+    }
+  )
+})
+
+/*
+ * The keys that type a person's OWN words into the picker's "Other" row
+ * (#481).
+ *
+ * Measured live by the maintainer at the keyboard on **Claude Code 2.1.276**,
+ * Windows Terminal, 2026-09-18, one question per call, single-select:
+ *
+ * - On a TWO-option ask, pressing `3` — the digit one past the last option —
+ *   landed on the Other row with its text field READY: no Enter opened it. The
+ *   sentence typed, then ONE Enter, arrived as the tool's answer.
+ * - On a THREE-option ask, `4` did the same. So the digit is N+1, which is
+ *   #402's "the picker numbers its own rows after the agent's" arriving AT the
+ *   row rather than past it.
+ * - Pressing Down N times reached the same row in the same state.
+ *
+ * What is NOT measured and is refused rather than guessed: the Other row of a
+ * MULTI-select ask (Enter toggles there), a call carrying several questions,
+ * and an ask with more options than the picker numbers rows for. The
+ * nine-option arrow route below is DERIVED from the N+1 rule rather than
+ * watched — it is where the digit runs out, not where the arrows were counted.
+ */
+describe('questionFreeTextChunks (#481)', () => {
+  it('reaches the Other row of a two-option ask by the digit one past its options', () => {
+    // Measured: on a two-option ask the row is 3, and its field is ready to
+    // type into the moment it is reached.
+    const two = [{ label: 'Fig' }, { label: 'Plum' }]
+    expect(questionFreeTextChunks(ask({ options: two }), 'both')).toEqual({
+      ok: true,
+      chunks: ['3', 'both', '\r']
+    })
+  })
+
+  it('reaches it by 4 on a three-option ask, which is the same N+1 arithmetic', () => {
+    // The second measurement, and the one that makes N+1 a rule rather than a
+    // coincidence of one reading.
+    const three = [{ label: 'Fig' }, { label: 'Plum' }, { label: 'Pear' }]
+    expect(questionFreeTextChunks(ask({ options: three }), 'a quince')).toEqual({
+      ok: true,
+      chunks: ['4', 'a quince', '\r']
+    })
+  })
+
+  it('still has a digit at eight options, which is the last row past them', () => {
+    const eight = Array.from({ length: 8 }, (_, index) => ({ label: `Option ${index + 1}` }))
+    expect(questionFreeTextChunks(ask({ options: eight }), 'mine')).toEqual({
+      ok: true,
+      chunks: ['9', 'mine', '\r']
+    })
+  })
+
+  it('walks down to it with one arrow per option where the digits run out', () => {
+    // Nine options take every digit the picker numbers, so the Other row has
+    // none: N Down arrows land on it instead, each its own chunk because each
+    // is its own keystroke (#404).
+    const nine = Array.from({ length: 9 }, (_, index) => ({ label: `Option ${index + 1}` }))
+    const down = '\u001b[B'
+    expect(questionFreeTextChunks(ask({ options: nine }), 'mine')).toEqual({
+      ok: true,
+      chunks: [down, down, down, down, down, down, down, down, down, 'mine', '\r']
+    })
+  })
+
+  it('spells that arrow as the VT sequence, never as a virtual key name', () => {
+    // The same finding #402 turned on for cursor-right: ConPTY hands the hosted
+    // process VT input, so Down is the three ordinary characters ESC, '[', 'B'.
+    const nine = Array.from({ length: 9 }, (_, index) => ({ label: `Option ${index + 1}` }))
+    const built = questionFreeTextChunks(ask({ options: nine }), 'mine')
+    const first = built.ok ? (built.chunks[0] ?? '') : ''
+    expect([...first].map((unit) => unit.codePointAt(0))).toEqual([27, 91, 66])
+  })
+
+  it('ends on one Enter, which is the whole of what sends the typed answer', () => {
+    const built = questionFreeTextChunks(ask({ options: [{ label: 'Fig' }] }), 'a quince')
+    expect(built.ok && built.chunks.at(-1)).toBe('\r')
+    expect(built.ok && built.chunks.filter((chunk) => chunk === '\r')).toHaveLength(1)
+  })
+
+  it('carries the words exactly as typed, neither trimmed nor flattened', () => {
+    // A message is flattened before it is written, because a console submits on
+    // a newline. Here the newline is refused instead (below), so nothing is
+    // left to reshape — and reshaping an ANSWER would hand the agent words the
+    // person did not write.
+    const built = questionFreeTextChunks(ask({ options: [{ label: 'Fig' }] }), '  two  spaces  ')
+    expect(built).toEqual({ ok: true, chunks: ['2', '  two  spaces  ', '\r'] })
+  })
+
+  it('refuses an ask that carried more than one question', () => {
+    expect(questionFreeTextChunks(ask({ questionCount: 2 }), 'mine')).toEqual({
+      ok: false,
+      reason: 'several-questions'
+    })
+  })
+
+  it('refuses a multi-select ask, where Enter toggles rather than sends', () => {
+    // Unmeasured on this build, and the gesture underneath is known to differ:
+    // Enter on a multi-select picker toggles the row the cursor is on (#362
+    // round 1), so what it does on that picker's Other row is nobody's finding.
+    expect(questionFreeTextChunks(ask({ multiSelect: true }), 'mine')).toEqual({
+      ok: false,
+      reason: 'other-row-not-measured'
+    })
+  })
+
+  it('refuses an ask with more options than the picker numbers rows', () => {
+    const ten = Array.from({ length: 10 }, (_, index) => ({ label: `Option ${index + 1}` }))
+    expect(questionFreeTextChunks(ask({ options: ten }), 'mine')).toEqual({
+      ok: false,
+      reason: 'other-row-not-measured'
+    })
+  })
+
+  it('refuses an ask offering nothing, whose first row was never counted', () => {
+    expect(questionFreeTextChunks(ask({ options: [] }), 'mine')).toEqual({
+      ok: false,
+      reason: 'other-row-not-measured'
+    })
+  })
+
+  it.each([[''], ['   '], ['\t \t']])(
+    'refuses %j, which would send an empty answer on the Enter behind it',
+    (text) => {
+      expect(questionFreeTextChunks(ask(), text)).toEqual({ ok: false, reason: 'nothing-typed' })
+    }
+  )
+
+  it.each([['a\rb'], ['a\nb'], ['a\r\nb'], ['a\u001bb'], ['a\u001b[Bb'], ['a\tb'], ['a\u0000b']])(
+    'refuses %j rather than sanitising it',
+    (text) => {
+      // Refused and not repaired, because every repair is a different sentence
+      // from the one the person wrote: a carriage return SENDS the field early,
+      // an escape steers the picker out of it, and a tab moves between its
+      // controls. The person is told, and keeps their words.
+      expect(questionFreeTextChunks(ask(), text)).toEqual({
+        ok: false,
+        reason: 'text-would-steer-the-picker'
+      })
+    }
+  )
+
+  it('bounds a long answer into chunks the console reads whole (#425)', () => {
+    // The ceiling measured for a message holds here for the same reason: one
+    // WriteConsoleInputW call carrying too much loses its own beginning
+    // somewhere between ConPTY and a live TUI's reader.
+    const built = questionFreeTextChunks(ask(), 'x'.repeat(1_200))
+    expect(built.ok && built.chunks).toEqual([
+      '5',
+      'x'.repeat(500),
+      'x'.repeat(500),
+      'x'.repeat(200),
+      '\r'
+    ])
+  })
+
+  it('agrees exactly with the rule the renderer draws the box from', () => {
+    // The card offers the box off askHasAReachableOtherRow and main builds the
+    // keys here. A shape one accepts and the other refuses is a box that types
+    // into a refusal, so the two are pinned against each other rather than
+    // trusted to stay aligned.
+    const labelled = (count: number): { label: string }[] =>
+      Array.from({ length: count }, (_, index) => ({ label: `Option ${index + 1}` }))
+    const shapes: DwarfQuestion[] = [
+      ask(),
+      ask({ multiSelect: true }),
+      ask({ questionCount: 2 }),
+      ask({ options: [] }),
+      ask({ options: labelled(9) }),
+      ask({ options: labelled(10) })
+    ]
+    for (const shape of shapes) {
+      expect(questionFreeTextChunks(shape, 'mine').ok).toBe(askHasAReachableOtherRow(shape))
+    }
+  })
+})
+
+/*
+ * The guard the Windows port runs over whatever chunk list it is handed
+ * (#481).
+ *
+ * The digit route has had one since #402 — a chunk is one of the nine digits or
+ * nothing is written — and the free-text route needs its own, because its
+ * payload is a person's own words rather than an option position. Same
+ * fail-closed shape: a key this app has not measured does not reach somebody
+ * else's console.
+ */
+describe('answerChunksPressable (#481)', () => {
+  it('accepts the digit route it has always carried', () => {
+    expect(answerChunksPressable(['2', '4', '\u001b[C', '\r'])).toBe(true)
+  })
+
+  it('accepts a free-text answer: the reach, the words, and the Enter', () => {
+    expect(answerChunksPressable(['3', 'write to Postgres', '\r'])).toBe(true)
+    expect(answerChunksPressable(['\u001b[B', '\u001b[B', 'mine', '\r'])).toBe(true)
+  })
+
+  it('refuses an empty list, which would attach to a console and press nothing', () => {
+    expect(answerChunksPressable([])).toBe(false)
+  })
+
+  it('refuses an empty chunk, which spends a call writing no records', () => {
+    expect(answerChunksPressable(['3', '', '\r'])).toBe(false)
+  })
+
+  it.each([['ship it\r'], ['ship\nit'], ['ship \u001b it'], ['ship\tit']])(
+    'refuses %j, whose control characters are keys rather than letters',
+    (chunk) => {
+      expect(answerChunksPressable(['3', chunk, '\r'])).toBe(false)
     }
   )
 })

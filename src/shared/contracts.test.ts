@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfAttachment, DwarfAttendance, DwarfProvider, DwarfRole } from './contracts'
+import type {
+  DwarfAttachment,
+  DwarfAttendance,
+  DwarfProvider,
+  DwarfQuestion,
+  DwarfRole
+} from './contracts'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
@@ -43,8 +49,12 @@ import {
   parseDwarfText,
   /* --- end of the #431 block ----------------------------------------------- */
   /* --- The relay's prompt on stdin (#437) — one block, appended ------------- */
-  MAX_CODEX_QUEUE_TEXT_CHARS
+  MAX_CODEX_QUEUE_TEXT_CHARS,
   /* --- end of the #437 block ----------------------------------------------- */
+  /* --- The picker's Other row (#481) — one block, appended ------------------ */
+  MAX_PICKER_NUMBERED_ROWS,
+  askHasAReachableOtherRow
+  /* --- end of the #481 block ----------------------------------------------- */
 } from './contracts'
 
 /*
@@ -980,3 +990,77 @@ describe('a 40,000-character message', () => {
   })
 })
 /* --- end of the #437 block ------------------------------------------------- */
+
+/* --- The picker's Other row (#481) — one block, appended ------------------- */
+/*
+ * Issue #481. The one rule both processes act on about Claude Code's picker
+ * "Other" row: which shape of ask has a MEASURED route to it. The renderer
+ * decides whether to draw the box from it and main decides whether to build
+ * the keys from it, so a second spelling would be the two sides disagreeing
+ * about what the person may type.
+ *
+ * Measured by the maintainer on Claude Code 2.1.276, Windows Terminal,
+ * 2026-09-18 — see main's textDelivery/questionKeys.ts for the gestures and
+ * docs/console-hosting.md §6 for the register entry.
+ */
+function otherRowAsk(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+  return {
+    toolUseId: 'toolu_other',
+    question: 'Which store?',
+    channel: 'terminal',
+    multiSelect: false,
+    questionCount: 1,
+    options: [{ label: 'Postgres' }, { label: 'SQLite' }],
+    ...overrides
+  }
+}
+
+describe('askHasAReachableOtherRow (#481)', () => {
+  it('accepts the one shape measured: a single-question, single-select ask', () => {
+    expect(askHasAReachableOtherRow(otherRowAsk())).toBe(true)
+  })
+
+  it('refuses a multi-select ask, whose Other row nobody has watched', () => {
+    // Enter TOGGLES on a multi-select picker (#362 round 1), so what an Enter
+    // behind typed text does there is a different gesture and an unmeasured one.
+    expect(askHasAReachableOtherRow(otherRowAsk({ multiSelect: true }))).toBe(false)
+  })
+
+  it('refuses a call that carried several questions', () => {
+    expect(askHasAReachableOtherRow(otherRowAsk({ questionCount: 2 }))).toBe(false)
+  })
+
+  it('accepts an ask with as many options as the picker numbers rows', () => {
+    const nine = Array.from({ length: MAX_PICKER_NUMBERED_ROWS }, (_, index) => ({
+      label: `Option ${index + 1}`
+    }))
+    expect(askHasAReachableOtherRow(otherRowAsk({ options: nine }))).toBe(true)
+  })
+
+  it('refuses one option more than that, where the rows scroll unwatched', () => {
+    const ten = Array.from({ length: MAX_PICKER_NUMBERED_ROWS + 1 }, (_, index) => ({
+      label: `Option ${index + 1}`
+    }))
+    expect(askHasAReachableOtherRow(otherRowAsk({ options: ten }))).toBe(false)
+  })
+
+  it('refuses an ask offering nothing, whose first row is not the Other one', () => {
+    // Both routes to the row are counted off the options — the digit is N+1 and
+    // the arrows are N of them — so an ask with none of them counts to a row
+    // nobody has seen.
+    expect(askHasAReachableOtherRow(otherRowAsk({ options: [] }))).toBe(false)
+  })
+
+  it('says nothing about the CHANNEL, which each caller already holds', () => {
+    // The shape of the ask and where it is drawn are two facts. The card pairs
+    // this with the prompt's own channel and main pairs it with the guard it
+    // already runs; folding the channel in here would have given each of them a
+    // second reading of something they know.
+    expect(askHasAReachableOtherRow(otherRowAsk({ channel: 'held' }))).toBe(true)
+  })
+
+  it('numbers nine rows, which is what the picker was measured to number', () => {
+    expect(MAX_PICKER_NUMBERED_ROWS).toBe(9)
+  })
+})
+/* --- end of the #481 block ------------------------------------------------- */

@@ -1,11 +1,12 @@
 import { reactive } from 'vue'
-import { answerRequest, permissionRequest } from '../lib/question/questionAnswer'
+import { answerRequest, permissionRequest, textAnswerRequest } from '../lib/question/questionAnswer'
 import {
   defaultDwarfQuestionState,
   type DwarfAnswerState,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
   type DwarfQuestion,
+  type DwarfQuestionAnswerRequest,
   type DwarfQuestionAnswerResult
 } from '../types'
 
@@ -48,13 +49,42 @@ export function useDwarfQuestion() {
    * the same tool call twice.
    */
   async function answer(dwarfId: string, question: DwarfQuestion, label: string): Promise<void> {
+    await release(dwarfId, question, answerRequest(dwarfId, question, label))
+  }
+
+  /**
+   * Answer `question` in the person's own words, through the "Other" row its
+   * picker offers (#481).
+   *
+   * `answer`'s sibling rather than a widening of it, because the two build
+   * different wire forms and the forms are exclusive — one string against a
+   * record of the agent's own labels. What they share is everything else, which
+   * is `release` below: one in-flight guard and one verdict shape, because a
+   * verdict is about a toolUseId whichever way the answer was given. A typed
+   * answer behind an option answer would release the same blocked tool call
+   * twice, and the guard is the store's rather than either function's for
+   * exactly that.
+   */
+  async function answerWithText(
+    dwarfId: string,
+    question: DwarfQuestion,
+    text: string
+  ): Promise<void> {
+    await release(dwarfId, question, textAnswerRequest(dwarfId, question, text))
+  }
+
+  async function release(
+    dwarfId: string,
+    question: DwarfQuestion,
+    request: DwarfQuestionAnswerRequest
+  ): Promise<void> {
     if (state.byDwarfId[dwarfId]?.phase === 'answering') return
     const toolUseId = question.toolUseId
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId }
 
     let result: DwarfQuestionAnswerResult
     try {
-      result = await window.api.answerDwarfQuestion(answerRequest(dwarfId, question, label))
+      result = await window.api.answerDwarfQuestion(request)
     } catch {
       result = { answered: false, error: LOST_BRIDGE }
     }
@@ -108,5 +138,5 @@ export function useDwarfQuestion() {
     for (const dwarfId of Object.keys(state.byDwarfId)) clear(dwarfId)
   }
 
-  return { state, answer, decide, stateFor, clear, clearAll }
+  return { state, answer, answerWithText, decide, stateFor, clear, clearAll }
 }

@@ -933,6 +933,44 @@ export const ANSWER_NOT_A_CHOICE_THIS_ASK_TAKES =
 export const ASK_NO_LONGER_OPEN = 'That question is no longer the one waiting.'
 
 /**
+ * The four things main can return for an answer written in the person's own
+ * words (#481).
+ *
+ * Beside the option route's five above, for the reason they are all here: main
+ * returns them and the card prints them verbatim, so the wire boundary is the
+ * only place both processes may read one spelling of each. Each names a
+ * different fact about the person's own session rather than one "could not
+ * answer" — what to do next differs for every one of them.
+ *
+ * None of them says the route does not exist. It does, it is measured
+ * (2026-09-18, see main's questionKeys.ts), and these are the shapes around
+ * its edges.
+ */
+export const OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK =
+  'Only an ask that takes one answer, with nine options or fewer, has a measured way to its ' +
+  'picker\'s own "Other" row. Answer this one at the terminal, in your own words.'
+/** Nothing in the box, so the Enter behind it would answer with an empty field. */
+export const NOTHING_TYPED_TO_ANSWER_WITH =
+  'There was nothing written to send, so nothing was typed.'
+/**
+ * Refused rather than repaired, and the sentence says which words to change:
+ * every repair available here — dropping the line break, turning it into a
+ * space — would hand the agent a sentence the person did not write.
+ */
+export const TYPED_ANSWER_WOULD_STEER_THE_PICKER =
+  'Those words carry a line break or an escape, and the picker reads both as keys of its own — ' +
+  'the line break would send the answer half-written. Take them out, or answer at the terminal.'
+/**
+ * The held channel's own refusal. The held path hands the agent's blocked tool
+ * call the labels the ask carried (`resolveAnswers`), and what it does with
+ * anything else is unmeasured; the held card offers a message box instead, so
+ * nothing on screen reaches this — it is the guard behind that box.
+ */
+export const TYPED_ANSWER_ONLY_AT_A_PICKER =
+  'This panel is holding that session, where an answer can only be one of the options the agent ' +
+  'offered. Write to it as a message instead, or choose an option above.'
+
+/**
  * What both cards show in place of their free-text box, and what main returns
  * for a message sent to a dwarf anyway, while a prompt of its own stands at its
  * terminal (#481).
@@ -966,6 +1004,60 @@ export const TYPED_HERE_REACHES_THE_PICKER =
   'This session is showing a picker at its terminal, and anything typed here would be read by ' +
   'that picker — the Enter behind it confirms whichever option is highlighted. Choose an option ' +
   'above, or answer in your own words at the terminal.'
+
+/**
+ * The rows Claude Code's `AskUserQuestion` picker numbers, and therefore the
+ * last option that has a digit of its own (#362, #402).
+ *
+ * On the wire rather than in main because the renderer counts to the same
+ * number now (see `askHasAReachableOtherRow`), and a second spelling of a
+ * measured nine is how the card and the keys would come to disagree about which
+ * ask can be typed into. The measurement itself stays where it was taken —
+ * main's `textDelivery/questionKeys.ts` and docs/console-hosting.md §§4c, 6.
+ */
+export const MAX_PICKER_NUMBERED_ROWS = 9
+
+/**
+ * Whether this ask's picker has an "Other" row that a MEASURED sequence of keys
+ * reaches (#481).
+ *
+ * One rule, read by both processes and for two different decisions: the card
+ * offers its free-text box off this, and main builds the keystrokes off it (see
+ * `questionFreeTextChunks`). A box a person may type into that main would then
+ * refuse is the worst of the two failures available here, so the two sides read
+ * one function rather than two spellings of one reading.
+ *
+ * Measured on Claude Code 2.1.276, Windows Terminal, 2026-09-18, at the
+ * keyboard: on a single-question, single-select ask the digit one past the last
+ * option lands on the Other row with its field ready, and one Enter behind the
+ * typed text sends it. Each condition below is a shape that reading does NOT
+ * cover, and each is a refusal rather than an attempt:
+ *
+ * - **Several questions in the call.** Only the first reaches the wire, so an
+ *   answer walks the picker on to one the panel cannot see (see
+ *   ANSWER_ONLY_WHERE_IT_RUNS).
+ * - **A multi-select ask.** Enter TOGGLES the row a multi-select cursor is on
+ *   (#362, round 1), so what it does on that picker's Other row is a different
+ *   gesture and nobody's finding.
+ * - **More options than the picker numbers rows.** The digit runs out and the
+ *   list is where the rows may start scrolling, which is exactly where a
+ *   counted arrow walk stops being derivable from the measurement.
+ * - **No options at all.** Both routes to the row are counted off the options —
+ *   the digit is N+1, the arrows are N of them — so an ask with none of them
+ *   counts to a row nobody has seen.
+ *
+ * Says nothing about the CHANNEL, deliberately: where the prompt is drawn is a
+ * separate fact each caller already holds (see DwarfPromptChannel), and folding
+ * it in here would give both of them a second reading of something they know.
+ */
+export function askHasAReachableOtherRow(question: DwarfQuestion): boolean {
+  return (
+    question.questionCount === 1 &&
+    !question.multiSelect &&
+    question.options.length >= 1 &&
+    question.options.length <= MAX_PICKER_NUMBERED_ROWS
+  )
+}
 
 /**
  * A tool call a session is blocked on until somebody approves it (#203).
@@ -3137,14 +3229,50 @@ export interface HostedLaunchResult {
  *
  * `answers` is the shape the agent's own tool takes — keyed by the question's
  * TEXT, valued by the chosen option's LABEL. Both halves are checked in main
- * against the ask the agent actually made, so nothing in an answer is free
- * text: it can only ever repeat the agent's own words back to it.
+ * against the ask the agent actually made, so an answer in that form can only
+ * ever repeat the agent's own words back to it.
+ *
+ * AMENDED for #481: an answer is no longer always that form. The picker has an
+ * "Other" row of its own, the keys that reach it have been measured, and the
+ * `text` form below is a person answering in their own words through that row —
+ * still the agent's own affordance, and still never a label this app invented.
+ * Exactly one of the two forms travels.
  */
-export interface DwarfQuestionAnswerRequest {
+interface DwarfQuestionAnswerAddress {
   dwarfId: string
   toolUseId: string
-  answers: Record<string, string>
 }
+
+/** The answer that repeats the agent's own words back to it — the form #125 shipped. */
+export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
+  answers: Record<string, string>
+  text?: undefined
+}
+
+/**
+ * The answer written in the person's OWN words, for the picker's "Other" row
+ * (#481).
+ *
+ * One string and no record, because it answers the one question on the wire and
+ * there is nothing for a key to distinguish. It is not free text arriving
+ * somewhere — it is an ANSWER, and main types it into the row the agent's own
+ * picker offers for exactly this (see questionFreeTextChunks). The held channel
+ * refuses it for now: `resolveAnswers` hands the SDK the labels the ask carried,
+ * and what that path does with anything else is unmeasured.
+ */
+export interface DwarfQuestionTextAnswer extends DwarfQuestionAnswerAddress {
+  text: string
+  answers?: undefined
+}
+
+/**
+ * A UNION rather than one shape with two optional fields, because the two are
+ * exclusive and the type is where that is cheapest to hold: a reader narrows on
+ * `text` and gets the other form's field typed away, instead of every reader
+ * asking "and if both are here?". The boundary (`parseAnswerRequest`) is what
+ * makes the exclusion true of anything that arrives.
+ */
+export type DwarfQuestionAnswerRequest = DwarfQuestionLabelAnswer | DwarfQuestionTextAnswer
 
 /**
  * How several chosen labels ride in the ONE string an answer's value is

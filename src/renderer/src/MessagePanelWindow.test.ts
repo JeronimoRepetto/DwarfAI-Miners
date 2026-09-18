@@ -892,6 +892,54 @@ describe('answering an agent question', () => {
       'That session is not one this panel is holding.'
     )
   })
+
+  /* --- Answering in the person's own words (#481) — one block, appended ---- */
+
+  /** The same dwarf, with its ask drawn at its OWN terminal rather than held. */
+  async function openWatchedAsk(overrides: Record<string, unknown> = {}) {
+    return openOn(
+      [
+        {
+          ...ASKING_DWARF,
+          pendingQuestion: { ...PENDING_QUESTION, channel: 'terminal', questionCount: 1 }
+        }
+      ],
+      'claude:s1',
+      overrides
+    )
+  }
+
+  it('carries the typed answer to main over the ANSWER channel, not the message one', async () => {
+    // The whole loop #481 reopened: the box is offered again on a watched
+    // single-select ask, and what leaves it is an answer for the picker's own
+    // "Other" row — never a message, which on that channel writes into the
+    // console the picker is drawn in.
+    const { wrapper, api } = await openWatchedAsk()
+    await wrapper.find('.freeform-input').setValue('put it in Redis')
+    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      text: 'put it in Redis'
+    })
+    expect(api.sendDwarfText).not.toHaveBeenCalled()
+  })
+
+  it('shows main’s reason when the typed answer was refused', async () => {
+    const { wrapper } = await openWatchedAsk({
+      answerDwarfQuestion: vi.fn().mockResolvedValue({
+        answered: false,
+        error: 'There was nothing written to send, so nothing was typed.'
+      })
+    })
+    await wrapper.find('.freeform-input').setValue('put it in Redis')
+    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(wrapper.find('.answer-error').text()).toContain('nothing was typed')
+  })
 })
 
 /**

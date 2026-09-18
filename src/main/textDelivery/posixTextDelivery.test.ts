@@ -773,3 +773,25 @@ describe('PosixTextDelivery.answerQuestionAtConsole', () => {
     expect(outcome.error).not.toContain('7')
   })
 })
+
+// #481: the TYPED form of an answer — the person's own words for the picker's
+// "Other" row — was measured through the Windows console write only. On this
+// port the tab write has pressed digits and nothing else, so the words are
+// refused up front with `neverStarted`, and no key reaches anybody's tab.
+describe('PosixTextDelivery.answerQuestionAtConsole with a typed answer (#481)', () => {
+  it('refuses the typed form before any key is pressed, because it is unmeasured here', async () => {
+    const sendKey = vi.fn().mockResolvedValue({ delivered: true })
+    const sendText = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn().mockResolvedValue(true)
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText, sendKey } })
+    const outcome = await port.answerQuestionAtConsole({
+      pid: 42,
+      chunks: ['3', 'in my words', '\r']
+    })
+    expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
+    expect(outcome.error).toMatch(/not been measured/)
+    expect(sendKey).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+    expect(focus).not.toHaveBeenCalled()
+  })
+})

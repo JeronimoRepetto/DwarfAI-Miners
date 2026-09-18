@@ -198,14 +198,23 @@ here, and the card says so with a jump to the terminal beside it: a call that as
 at once, because only its first reaches the panel and answering that one would move the picker on to
 a question the panel cannot see.
 
-Both cards offer a box for answering in your own words, and it is offered **only for a session the
-panel holds**. A watched session is standing at its own picker or its own y/n dialog, and anything
-this panel writes to it goes into that console — where the picker reads the letters as its own input
-and the Enter behind them confirms whichever option is highlighted, an answer you never chose. So on
-a watched session the box is replaced by a sentence saying that, with the jump to the terminal beside
-it: choose an option on the card, or answer in your own words at the terminal. A message sent to such
-a session from the composer is refused with the same sentence for the same reason, until its prompt
-is dealt with.
+Both cards offer a box for answering in your own words. On a session the panel holds it has always
+worked, and what you write is queued on the stream the panel owns. On a **watched** session it
+depends on the prompt, and the difference is what has been measured rather than what would be
+convenient.
+
+A question card on a watched session offers the box when the ask takes **one answer** and carries
+nine options or fewer. Claude Code's own picker has an "Other" row, and the panel reaches it the way
+you would — the row one past the last option, then your words, then Enter — so what you write is
+sent as the agent's own answer rather than as a message. Every other watched prompt keeps the box
+refused, with a sentence in its place and the jump to the terminal beside it: an ask that takes
+several answers, an ask whose call carried several questions, one with more options than the picker
+numbers rows for, and any permission dialog, which has no such row at all. The reason is what you
+would otherwise be doing without meaning to: anything the panel writes to a watched session goes
+into that session's console, where the picker reads the letters as its own input and the Enter
+behind them confirms whichever option is highlighted — an answer you never chose. A **message** sent
+to such a session from the composer is refused for exactly that reason until its prompt is dealt
+with, and that has not changed: a message is not an answer, and the picker cannot tell them apart.
 
 For a Codex session, a question card shows the same kind of question — Codex's own
 `request_user_input` tool call — and still cannot be answered from here: a Codex thread is reached

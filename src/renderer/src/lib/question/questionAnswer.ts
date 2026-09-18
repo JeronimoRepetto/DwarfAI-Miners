@@ -1,4 +1,5 @@
 import {
+  askHasAReachableOtherRow,
   joinAnswerLabels,
   type DwarfAnswerState,
   type DwarfPermissionAnswerRequest,
@@ -6,8 +7,9 @@ import {
   type DwarfPermissionRequest,
   type DwarfPromptChannel,
   type DwarfQuestion,
-  type DwarfQuestionAnswerRequest,
-  type DwarfQuestionOption
+  type DwarfQuestionLabelAnswer,
+  type DwarfQuestionOption,
+  type DwarfQuestionTextAnswer
 } from '../../types'
 
 /**
@@ -133,12 +135,35 @@ export function answerRequest(
   dwarfId: string,
   question: DwarfQuestion,
   label: string
-): DwarfQuestionAnswerRequest {
+): DwarfQuestionLabelAnswer {
   return {
     dwarfId,
     toolUseId: question.toolUseId,
     answers: { [question.question]: label }
   }
+}
+
+/**
+ * The request that answers `question` in the person's OWN words (#481).
+ *
+ * `answerRequest`'s sibling and the other of the wire's two exclusive forms: no
+ * record, because there is nothing for a key to distinguish — this answers the
+ * one question on the wire, through the "Other" row that question's own picker
+ * offers. Main types it there (see questionFreeTextChunks); it is not a message
+ * and never travels the message path.
+ *
+ * The words are repeated exactly, for the reason the label is: main writes what
+ * this carries into somebody's console, and anything trimmed or folded here
+ * would be a sentence the person did not write. Refusing what cannot be typed —
+ * a line break, an escape, nothing at all — belongs to main, where the
+ * measurement is.
+ */
+export function textAnswerRequest(
+  dwarfId: string,
+  question: DwarfQuestion,
+  text: string
+): DwarfQuestionTextAnswer {
+  return { dwarfId, toolUseId: question.toolUseId, text }
 }
 
 /**
@@ -151,23 +176,38 @@ export function answerRequest(
  * - `'message'` — the held channel, unchanged since #125. The words are queued
  *   on the stream this panel owns, the agent reads them as its user's, and no
  *   picker is anywhere near them.
- * - `'picker'` — the terminal channel, and the reason the box is refused there.
- *   The ordinary message path writes into the session's OWN console, and a
- *   session drawing a picker reads those keys as picker input: the letters do
+ * - `'answer'` — a watched session whose ask has a MEASURED route to its
+ *   picker's own "Other" row. The words go as an ANSWER rather than a message:
+ *   main reaches that row, types them, and presses Enter once (measured
+ *   2026-09-18 — see questionFreeTextChunks in main). This is the row the
+ *   agent's own picker offers for exactly this, so nothing here is invented.
+ * - `'picker'` — every other watched prompt, and the reason the box is refused
+ *   there. The ordinary message path writes into the session's OWN console, and
+ *   a session drawing a picker reads those keys as picker input: the letters do
  *   nothing visible, a digit among them jumps to an option, and the Enter that
  *   ends the message confirms whichever option is highlighted. The person's
  *   words are lost and the agent is handed a choice nobody made — see
  *   TYPED_HERE_REACHES_THE_PICKER, which is what the cards show instead.
  *
+ * `ask` is `null` for a prompt that is not a question at all: a permission
+ * dialog's y/n has no Other row, so there is nothing for a box there to reach.
+ *
  * Off the prompt's own `channel` and nothing weaker, exactly as the cards'
  * other terminal rules are: that field is main's own reading of where the
  * prompt is being drawn, and the renderer may not re-derive it (see
- * DwarfPromptChannel).
+ * DwarfPromptChannel). The ask's SHAPE is the other half, and it is read
+ * through `askHasAReachableOtherRow` — the same function main builds the keys
+ * from, because a box a person may type into that main would then refuse is
+ * the worse of the two failures available here.
  */
-export type FreeTextRoute = 'message' | 'picker'
+export type FreeTextRoute = 'message' | 'answer' | 'picker'
 
-export function freeTextRoute(channel: DwarfPromptChannel): FreeTextRoute {
-  return channel === 'terminal' ? 'picker' : 'message'
+export function freeTextRoute(
+  channel: DwarfPromptChannel,
+  ask: DwarfQuestion | null
+): FreeTextRoute {
+  if (channel !== 'terminal') return 'message'
+  return ask !== null && askHasAReachableOtherRow(ask) ? 'answer' : 'picker'
 }
 
 /**
