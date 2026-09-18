@@ -1,7 +1,10 @@
 import { onBeforeUnmount } from 'vue'
 import { createBoundedMotion } from '../lib/shell/boundedMotion'
 import {
+  foldedRailOffset,
   foldedShellWidth,
+  railFoldKeyframes,
+  railFoldTransform,
   shellFoldClip,
   shellFoldKeyframes,
   type ShellFoldState
@@ -54,6 +57,16 @@ export interface ShellFoldOptions {
   edge: () => PanelEdge
   /** The composition presentation is folding TO. */
   remaining: () => ShellComposition
+  /**
+   * The rail, which travels with the fold (#464).
+   *
+   * It is the one column standing on the FREE side of everything that ever
+   * leaves, so it is the one column the row rearranges — and the fold clips
+   * away the free edge it stands at. `null` is answered honestly where the
+   * component that draws it is not mounted or is not one element: the ground
+   * still folds, and only the travel is lost.
+   */
+  rail: () => HTMLElement | null
 }
 
 export function useShellFold(options: ShellFoldOptions) {
@@ -73,15 +86,45 @@ export function useShellFold(options: ShellFoldOptions) {
    * The shell's OWN width when it last settled, which is not `painted`.
    *
    * What decides an unfold: the window growing, never the ground being narrower
-   * than the box around it. The collapsed shell is the second of those — the
-   * rail is 20 design pixels inside the 32 the platform will not go below (see
-   * MIN_WINDOW_WIDTH) — and reading that gap as room to unfold into would start
-   * an animation on every request that changed nothing.
+   * than the box around it. The collapsed shell is the second of those, where
+   * the platform holds a floor above the design's 20px rail — Windows does, and
+   * since #465 only Windows does (`minWindowWidth` in
+   * main/platform/windowMetrics.ts) — and reading that gap as room to unfold
+   * into would start an animation on every request that changed nothing. Where
+   * the floor IS the rail the gap is zero, which must not read as room either:
+   * both are settled by comparing the box against itself and never against
+   * `painted`.
    */
   let box: number | null = null
 
-  /** `painted` came from a fold, so the window has not caught up with it yet. */
-  let pinned = false
+  /**
+   * Where the rail stood when the shell last settled, measured from the DOCKED
+   * edge — the one edge main never moves, and so the only one a remembered
+   * position survives a resize against.
+   *
+   * It is to the rail what `painted` is to the ground, and it is read for the
+   * same reason: an unfold starts from the footprint the shell had, and the rail
+   * has to start from the place it had inside it.
+   */
+  let railOffset: number | null = null
+
+  /**
+   * The fold the window has not caught up with yet, and how wide it may be and
+   * still be said to have (#464).
+   *
+   * A settle is main REPORTING the layout it applied, which is not the same
+   * event as the viewport becoming that wide: the report crosses one IPC hop
+   * and the window's own resize reaches the renderer on its own schedule. So
+   * the clip is not let go of on the report alone — the ground would be painted
+   * whole inside a window still holding the width the fold started from, which
+   * is the frame the fold exists to remove.
+   *
+   * The allowance is the shell's own frame and never a column: where the
+   * platform holds a floor above the design's 20px rail the collapsed shell
+   * paints the rail inside it (#465), and the narrowest column this shell has is
+   * wider than both paddings put together.
+   */
+  let pinned: { box: number } | null = null
 
   let batch: { widths: number[]; resolve: () => void; promise: Promise<void> } | null = null
 
@@ -110,6 +153,45 @@ export function useShellFold(options: ShellFoldOptions) {
    */
   function unclip(shell: HTMLElement): void {
     shell.style.clipPath = ''
+  }
+
+  /** The rail, when there is one and it has motion of its own to run. */
+  function railOf(): HTMLElement | null {
+    const rail = options.rail()
+    return rail === null || motion.still(rail) ? null : rail
+  }
+
+  /** Where the rail stands now, measured from the docked edge. */
+  function railStand(shell: HTMLElement, rail: HTMLElement): number {
+    const ground = shell.getBoundingClientRect()
+    const strip = rail.getBoundingClientRect()
+    return options.edge() === 'right' ? ground.right - strip.right : strip.left - ground.left
+  }
+
+  /**
+   * Hold the rail `travel` px from where the row puts it, or let it go there.
+   *
+   * Zero is the empty transform rather than `translateX(0px)`: what the row
+   * decides is the answer everywhere except across a fold, and a shell that kept
+   * saying so would be a second opinion about it.
+   */
+  function place(rail: HTMLElement, travel: number): void {
+    rail.style.transform = travel === 0 ? '' : railFoldTransform(travel, options.edge())
+  }
+
+  /**
+   * Carry the rail from one travel to another, and leave it at the second.
+   *
+   * Settled as well as animated for the reason the clip is: cancelling drops
+   * `fill: 'both'`, and a rail that snapped back to the free edge for the frames
+   * between the fold ending and main resizing is the repaint being hidden here.
+   */
+  function carry(rail: HTMLElement, from: number, to: number): void {
+    // A fold that leaves the rail where it is has nothing to carry, and running
+    // the motion anyway would be an animation the shrink then waits on.
+    if (from === to) return
+    place(rail, from)
+    void motion.run(rail, railFoldKeyframes(from, to, options.edge()), () => place(rail, to))
   }
 
   function radiusOf(shell: HTMLElement): string {
@@ -154,15 +236,31 @@ export function useShellFold(options: ShellFoldOptions) {
     // One style resolution for everything this fold reads off the element: the
     // gaps and padding it measures with, and the corners it is drawn with.
     const style = getComputedStyle(shell)
+    // One token, `--space-nav-gap`, spent on both the gaps and the padding —
+    // read off the element rather than restated here.
+    const padding = parseFloat(style.paddingLeft) || 0
+    const remaining = options.remaining()
     const folded = foldedShellWidth({
       width: shell.getBoundingClientRect().width,
       leaving: pending.widths,
-      // One token, `--space-nav-gap`, spent on both the gaps and the padding —
-      // read off the element rather than restated here.
       gap: parseFloat(style.columnGap) || 0,
-      padding: parseFloat(style.paddingLeft) || 0,
-      remaining: options.remaining()
+      padding,
+      remaining
     })
+    const rail = railOf()
+    // Where the row is about to put the rail, and how far that is from where it
+    // stands: the fold's end keyframe is these two as much as it is the strip,
+    // because a strip of the right width is not yet a strip the rail is in.
+    const rests =
+      rail === null
+        ? null
+        : foldedRailOffset({
+            kept: folded,
+            rail: rail.getBoundingClientRect().width,
+            padding,
+            remaining
+          })
+    if (rail !== null && rests !== null) carry(rail, 0, railStand(shell, rail) - rests)
     run(
       shell,
       painted ?? 'whole',
@@ -170,7 +268,11 @@ export function useShellFold(options: ShellFoldOptions) {
       style.borderRadius || '0px',
       () => {
         painted = folded
-        pinned = true
+        railOffset = rests
+        // The two end in the same frame or the rail is left mid-travel over a
+        // ground that has already stopped moving.
+        if (rail !== null) motion.release(rail)
+        pinned = { box: folded + 2 * padding }
       },
       pending.resolve
     )
@@ -230,9 +332,15 @@ export function useShellFold(options: ShellFoldOptions) {
      * fold started from, which a swap can do. A box that did not move is
      * refused by `width > box` already.
      */
-    if (!pinned && box !== null && painted !== null && width > box && !still(shell)) {
+    if (pinned === null && box !== null && painted !== null && width > box && !still(shell)) {
       const radius = radiusOf(shell)
       apply(shell, painted, radius)
+      const rail = railOf()
+      // The row has already put the rail out at the new free edge, which is
+      // outside the footprint this unfolds FROM: it starts where it was inside
+      // that footprint and comes back with the ground.
+      const stand = rail === null ? null : railStand(shell, rail)
+      if (rail !== null && stand !== null && railOffset !== null) carry(rail, stand - railOffset, 0)
       run(
         shell,
         painted,
@@ -241,33 +349,65 @@ export function useShellFold(options: ShellFoldOptions) {
         () => {
           painted = width
           box = width
+          railOffset = stand
+          if (rail !== null) motion.release(rail)
         },
         () => undefined
       )
       return
     }
-    if (pinned) {
-      // The window has caught up with the fold: the strip IS the window now,
-      // so `painted` stands as it is and the clip has nothing left to do.
-      pinned = false
+    if (pinned !== null) {
+      /*
+       * Either the window has caught up with the fold — the strip IS the window
+       * now, so `painted` stands as it is and the clip has nothing left to do —
+       * or it has gone somewhere else entirely and this footprint is spent. A
+       * box that has not moved at all is neither: main's report has arrived
+       * ahead of the resize it describes, and letting go of the clip on it would
+       * paint the whole ground back inside the width the fold started from.
+       */
+      if (width > pinned.box && width === box) return
+      pinned = null
+      const rail = options.rail()
+      // What the row decides is the answer again, and holding the travel on top
+      // of it would carry the rail out of the window main has just made.
+      if (rail !== null) place(rail, 0)
     } else if (box === width) {
       // Nothing moved — a request that was refused, or one that only changed
       // the docked side. `painted` is left exactly as it was, which matters
-      // most where it disagrees with the box: the collapsed shell paints the
-      // design's 20px rail inside the platform's 32px window, and overwriting
-      // that here would lose the footprint the next opening unfolds from.
+      // most where it disagrees with the box: where the platform holds a floor
+      // above the design's rail, the collapsed shell paints 20px inside it, and
+      // overwriting that here would lose the footprint the next opening unfolds
+      // from.
     } else {
-      // The box changed with no fold to cross, so what is painted is the box.
+      // The box changed with no fold to cross, so what is painted is the box,
+      // and the rail is wherever the row has just put it.
       painted = width
+      const rail = railOf()
+      railOffset = rail === null ? null : railStand(shell, rail)
     }
     box = width
     unclip(shell)
   }
 
+  /**
+   * The viewport reaching the width a fold was made for, which main's report of
+   * it is not (#464).
+   *
+   * The renderer cannot be told the moment the native window is resized; this is
+   * the first thing it can observe of it, and it is what keeps the frames
+   * between the two from being painted under a clip that has stopped being true.
+   * It answers nothing outside a fold, which is every resize but these.
+   */
+  function caughtUp(): void {
+    if (pinned !== null) settle(false)
+  }
+  window.addEventListener('resize', caughtUp)
+
   // The fold's own teardown is the batch: a fold that never began still has
   // columns waiting on the promise it would have resolved, and leaving them
   // held would strand the row inside a window nobody is going to resize now.
   onBeforeUnmount(() => {
+    window.removeEventListener('resize', caughtUp)
     motion.dispose()
     batch?.resolve()
   })
